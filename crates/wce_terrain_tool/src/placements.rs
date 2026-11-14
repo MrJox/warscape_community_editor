@@ -134,7 +134,13 @@ impl PlacementsPanel {
     }
 
     /// An edit of the document's battle field onto its history: `f` changes a copy (an error leaves it), the bounds made again.
-    fn edit(e: &mut Editor, doc: DocumentId, name: &str, changes_count: bool, f: impl FnOnce(&mut TileList, &TileDatabase) -> Result<String, String>) -> Result<String, String> {
+    fn edit(
+        e: &mut Editor,
+        doc: DocumentId,
+        name: &str,
+        changes_count: bool,
+        f: impl FnOnce(&mut TileList, &TileDatabase) -> Result<String, String>,
+    ) -> Result<String, String> {
         let d = e.docs.find_as_mut::<MapDocument>(doc).ok_or("no map shown")?;
         Self::edit_document(d, name, changes_count, f)
     }
@@ -145,9 +151,7 @@ impl PlacementsPanel {
         changes_count: bool,
         f: impl FnOnce(&mut TileList, &TileDatabase) -> Result<String, String>,
     ) -> Result<String, String> {
-        let before = Self::list(d)
-            .ok_or("a built map with a terrain.tile_list (Rome 2's pack maps) has placements to edit")?
-            .clone();
+        let before = Self::list(d).ok_or("a built map with a terrain.tile_list (Rome 2's pack maps) has placements to edit")?.clone();
         if before.version >= 11 {
             return Err("placements are edited on Rome 2's tile lists (versions 7 to 9)".to_owned());
         }
@@ -160,12 +164,7 @@ impl PlacementsPanel {
         after.validate_placement_edit(&before)?;
         rebound(&mut after, &db);
         let watch = d.cells.clone();
-        d.push_tile_list(TileListCommand {
-            name: name.to_owned(),
-            before,
-            after,
-            watch,
-        });
+        d.push_tile_list(TileListCommand { name: name.to_owned(), before, after, watch });
         Ok(said)
     }
 
@@ -264,9 +263,17 @@ impl PlacementsPanel {
             return;
         }
 
-        gui::text_disabled(&format!("{} placements, {} tiles; the map's battle field edited as it is (no fill)", l.placements.len(), l.names.len()));
+        gui::text_disabled(&format!(
+            "{} placements, {} tiles; the map's battle field edited as it is (no fill)",
+            l.placements.len(),
+            l.names.len()
+        ));
         let mut m = self.mode as i32;
-        if gui::combo("left button##placements", &mut m, &["off", "select the placement under it", "place the chosen tile", "move the selected placement there"]) {
+        if gui::combo(
+            "left button##placements",
+            &mut m,
+            &["off", "select the placement under it", "place the chosen tile", "move the selected placement there"],
+        ) {
             self.mode = [Mode::Off, Mode::Select, Mode::Place, Mode::Move][m.clamp(0, 3) as usize];
         }
 
@@ -351,7 +358,9 @@ mod integrity_tests;
 fn describe(l: &TileList, db: &TileDatabase, i: usize) -> String {
     let p = &l.placements[i];
     let name = l.names.get(p.name).map_or("?", String::as_str);
-    let variation = tile_of(db, name).and_then(|t| db.tiles[t].variations.get(usize::from(p.climate))).map_or_else(|| p.climate.to_string(), |v| v.location.clone());
+    let variation = tile_of(db, name)
+        .and_then(|t| db.tiles[t].variations.get(usize::from(p.climate)))
+        .map_or_else(|| p.climate.to_string(), |v| v.location.clone());
     let turn = ROTATIONS.iter().position(|&r| r == p.flags & 0xf0).unwrap_or(0) * 90;
     format!("{name} ({variation}) at {}, {} turned {turn}", p.x, p.y)
 }
@@ -385,7 +394,15 @@ fn place(l: &mut TileList, db: &TileDatabase, location: &str, v: i32, turn: i32,
     };
 
     let rotation = ROTATIONS[turn.rem_euclid(4) as usize];
-    l.placements.push(TileListPlacement { name, x: at.0 as i16, y: at.1 as i16, flags: flags | rotation, climate: v as u8, lf: [0.0; 2], old });
+    l.placements.push(TileListPlacement {
+        name,
+        x: at.0 as i16,
+        y: at.1 as i16,
+        flags: flags | rotation,
+        climate: v as u8,
+        lf: [0.0; 2],
+        old,
+    });
     Ok(format!("{} ({}) placed at {}, {}", tile.location, tile.variations.get(v).map_or("", |x| x.location.as_str()), at.0, at.1))
 }
 

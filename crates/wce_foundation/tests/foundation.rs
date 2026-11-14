@@ -90,7 +90,11 @@ fn assembly_kits() {
     // The old single kit becomes the first of the list, once.
     let paths = Paths::in_dir(&dir.path().join("config"));
     std::fs::create_dir_all(paths.config_dir()).unwrap();
-    std::fs::write(paths.settings_file(), format!("[games.attila]\nassembly_kit = {:?}\nassembly_kits = [{:?}]\n", a.display().to_string(), b.display().to_string())).unwrap();
+    std::fs::write(
+        paths.settings_file(),
+        format!("[games.attila]\nassembly_kit = {:?}\nassembly_kits = [{:?}]\n", a.display().to_string(), b.display().to_string()),
+    )
+    .unwrap();
     let mut settings = Settings::load(paths.clone());
     assert_eq!(settings.assembly_kit_dirs(), [a.clone(), b.clone()]);
     settings.save().unwrap();
@@ -120,7 +124,9 @@ fn settings_per_game() {
     let paths = Paths::in_dir(dir.path());
 
     // A file from before: one output folder and the tile tool's recent list shared by both games.
-    std::fs::write(paths.settings_file(), r#"
+    std::fs::write(
+        paths.settings_file(),
+        r#"
 game = "rome_2"
 output_dir = "/out"
 [games.attila]
@@ -130,7 +136,9 @@ dir = "/games/rome2"
 [tools.tile]
 kits = ["/recent"]
 show_sea = true
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let mut s = Settings::load(paths.clone());
     s.set_game_fields("tile", &["kits"]);
 
@@ -204,7 +212,11 @@ fn db_schemas_folder() {
 #[test]
 fn settings_from_the_old_ini() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("wce.ini"), "# comment\r\ngame_dir=/games/attila\r\nmod_packs=a.pack;b.pack\nframe_cap=30\ntile_show_sea=0\ntile_kits=/k1;/k2\nempty=\n").unwrap();
+    std::fs::write(
+        dir.path().join("wce.ini"),
+        "# comment\r\ngame_dir=/games/attila\r\nmod_packs=a.pack;b.pack\nframe_cap=30\ntile_show_sea=0\ntile_kits=/k1;/k2\nempty=\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.path().join("layouts")).unwrap();
     let s = Settings::load(Paths::in_dir(dir.path()));
     assert_eq!(s.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
@@ -212,6 +224,29 @@ fn settings_from_the_old_ini() {
     assert_eq!(s.frame_cap, 30);
     assert_eq!(s.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/k1".to_owned(), "/k2".to_owned()], show_sea: false });
     assert!(dir.path().join("settings.toml").is_file());
+}
+
+#[test]
+fn settings_that_cannot_be_opened_are_not_replaced() {
+    // A settings.toml that is there but does not open (a folder here; a file another program holds is the same to the reader), with an
+    // old wce.ini next to it: neither the defaults nor the old file's settings may replace it.
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+    std::fs::create_dir(paths.settings_file()).unwrap();
+    std::fs::write(dir.path().join("wce.ini"), "frame_cap=30\n").unwrap();
+    let s = Settings::load(paths.clone());
+    assert_eq!(s.frame_cap, 60, "the defaults, not the old wce.ini");
+    assert!(s.save().is_err(), "not written over");
+    assert!(paths.settings_file().is_dir());
+
+    // Not UTF-8: not settings, kept aside as a file that does not parse is.
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+    std::fs::write(paths.settings_file(), b"frame_cap = 30\n\xff\xfe").unwrap();
+    let s = Settings::load(paths.clone());
+    assert_eq!(s.frame_cap, 60);
+    assert!(dir.path().join("settings.toml.bad").exists());
+    s.save().unwrap();
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -249,7 +284,12 @@ fn job_pool_order() {
     let (release, gate) = mpsc::channel::<()>();
 
     // The first job holds the only thread while the others queue up.
-    pool.post(move || { let _ = gate.recv(); }, 0.0);
+    pool.post(
+        move || {
+            let _ = gate.recv();
+        },
+        0.0,
+    );
     while pool.running() == 0 {
         std::thread::yield_now();
     }
@@ -309,4 +349,30 @@ fn rome_2_graphics_presets() {
     assert_eq!(very_high.get("gfx_texture_quality").map(String::as_str), Some("2"));
     assert_eq!(very_high.get("gfx_shadow_quality").map(String::as_str), Some("3"));
     assert_eq!(ROME_2.matching_preset(&very_high, 8 << 30).map(|p| p.name), Some("Very High"));
+}
+
+#[test]
+fn two_editors_saving_keep_each_others_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+    Settings::load(paths.clone()).save().unwrap();
+
+    // Both started from the same file; each changes something else and saves, the second after the first.
+    let mut a = Settings::load(paths.clone());
+    let mut b = Settings::load(paths.clone());
+    a.frame_cap = 144;
+    a.save().unwrap();
+    b.game_mut().dir = Some("/games/attila".into());
+    b.save().unwrap();
+
+    let both = Settings::load(paths.clone());
+    assert_eq!(both.frame_cap, 144, "the first editor's change is still there");
+    assert_eq!(both.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
+
+    // Then the first saves again without touching the frame cap: the second's change stays, and its own is still its own.
+    a.set_tool("tile", &ToolSettings { kits: vec!["/kit".to_owned()], show_sea: true });
+    a.save().unwrap();
+    let again = Settings::load(paths);
+    assert_eq!(again.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
+    assert_eq!((again.frame_cap, again.tool::<ToolSettings>("tile").kits), (144, vec!["/kit".to_owned()]));
 }

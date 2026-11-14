@@ -25,7 +25,11 @@ fn main() -> std::io::Result<()> {
             let v = f32::from_bits(bits);
             let mut line = bits.to_string();
             for keep_one in [false, true] {
-                line += &format!(" {} {}", format_number(v, NumStyle::Stripped { keep_one }), format_number(v, NumStyle::Shortest { keep_one }));
+                line += &format!(
+                    " {} {}",
+                    format_number(v, NumStyle::Stripped { keep_one }),
+                    format_number(v, NumStyle::Shortest { keep_one })
+                );
             }
 
             for decimals in 1..=9 {

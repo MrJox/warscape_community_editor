@@ -29,7 +29,11 @@ pub fn file_any_case(dir: &Path, name: &str) -> Option<PathBuf> {
         return Some(exact);
     }
 
-    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
 }
 
 /// A tile with no scene of its own, a mesh instead (the `cliff_custom` set): its mesh file, the kit's CS2 first, else the packs' model.
@@ -49,6 +53,46 @@ pub fn is_tile_folder(dir: &Path) -> bool {
 /// The folder of a placement's tile in the first of `roots` (`raw_data` folders in the order above) that has it.
 pub fn find_tile(roots: &[PathBuf], location: &str, variation: &str) -> Option<PathBuf> {
     roots.iter().map(|r| tile_dir(r, location, variation)).find(|d| is_tile_folder(d))
+}
+
+/// The `raw_data` folders kit-layout data is looked for in, in the order above: the projects' kit layout, then every Assembly Kit in the
+/// settings' order (`Settings::assembly_kit_raw_dirs`, `WCE_ASSEMBLY_KIT`), each once. Every kit, whatever it holds (one with only prefabs or
+/// only a map is as much a source as one with the tiles). The packs, the fallback, are the caller's: they are not in the kit's layout.
+pub fn kit_raw_roots(settings: &wce_foundation::settings::Settings) -> Vec<PathBuf> {
+    let mut roots = vec![];
+    let projects = settings.kit_projects_dir().join("raw_data");
+    if projects.is_dir() {
+        roots.push(projects);
+    }
+
+    for raw in settings.assembly_kit_raw_dirs() {
+        if !roots.contains(&raw) {
+            roots.push(raw);
+        }
+    }
+
+    roots
+}
+
+/// The Assembly Kits among them (`kit_raw_roots` without the projects' layout): what a whole kit is needed for (both tile databases,
+/// TEd's own files).
+pub fn assembly_kit_roots(settings: &wce_foundation::settings::Settings) -> Vec<PathBuf> {
+    let projects = settings.kit_projects_dir().join("raw_data");
+    kit_raw_roots(settings).into_iter().filter(|r| *r != projects).collect()
+}
+
+/// A file below `raw_data` (`/` or `\` separated) in the first of `roots` that has it, its name's case aside (BOB runs on Windows, the kit's
+/// names are not all one case).
+pub fn first_file(roots: &[PathBuf], rel: &str) -> Option<PathBuf> {
+    let rel = rel.replace('\\', "/");
+    let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
+    roots.iter().find_map(|r| file_any_case(&r.join(dir), name))
+}
+
+/// A folder below `raw_data` in the first of `roots` that has it.
+pub fn first_dir(roots: &[PathBuf], rel: &str) -> Option<PathBuf> {
+    let rel = rel.replace('\\', "/");
+    roots.iter().map(|r| r.join(&rel)).find(|d| d.is_dir())
 }
 
 #[cfg(test)]
@@ -73,6 +117,27 @@ mod tests {
         // A custom-mesh tile, its file's case aside.
         assert!(custom_mesh(&tile_dir(&other, loc, "aa")).is_some());
         assert_eq!(find_tile(&[other.clone()], loc, "aa"), Some(tile_dir(&other, loc, "aa")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_first_root_with_a_file_or_folder_wins_its_names_case_aside() {
+        let base = std::env::temp_dir().join(format!("wce_sources_files_{}", std::process::id()));
+        let (project, kit) = (base.join("project"), base.join("kit"));
+        let settings = "terrain/tiles/battle/_tile_database/_settings.xml";
+        for root in [&project, &kit] {
+            std::fs::create_dir_all(root.join("terrain/tiles/battle/_tile_database")).unwrap();
+        }
+
+        std::fs::write(kit.join(settings), b"kit").unwrap();
+        std::fs::write(kit.join("terrain/tiles/battle/_tile_database/_SETTINGS.XML.other"), b"x").unwrap();
+        let roots = [project.clone(), kit.clone()];
+        assert_eq!(first_file(&roots, settings), Some(kit.join(settings)), "only the kit has it");
+        std::fs::write(project.join("terrain/tiles/battle/_tile_database/_Settings.xml"), b"project").unwrap();
+        let found = first_file(&roots, "terrain\\tiles\\battle\\_tile_database\\_settings.xml").unwrap();
+        assert_eq!(std::fs::read(found).unwrap(), b"project", "the projects' first, its name's case aside");
+        assert_eq!(first_file(&roots, "terrain/none.xml"), None);
+        assert_eq!(first_dir(&roots, "terrain/tiles/battle"), Some(project.join("terrain/tiles/battle")));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -22,13 +22,28 @@ fn main() {
     let dir = PathBuf::from(map);
     let m = if dir.join("tile_map.tiles").is_file() {
         let r = |n: &str| std::fs::read(dir.join(n)).ok();
-        load_game_map("game", &db, &r("tile_map.index").expect("index"), &r("tile_map.tiles").expect("tiles"), r("lf_height_map.dds").as_deref())
+        load_game_map(
+            "game",
+            &db,
+            &r("tile_map.index").expect("index"),
+            &r("tile_map.tiles").expect("tiles"),
+            r("lf_height_map.dds").as_deref(),
+        )
     } else {
         load_kit_map(&db, &raw.join("terrain/battles").join(map))
     }
     .expect("map");
 
-    println!("{}: {} x {}, {} placements, lf {:?}, unknown {:?} ({:.1} s)", m.name, m.width, m.height, m.placements.len(), m.lf.as_ref().map(|f| (f.w, f.h)), m.unknown, t0.elapsed().as_secs_f64());
+    println!(
+        "{}: {} x {}, {} placements, lf {:?}, unknown {:?} ({:.1} s)",
+        m.name,
+        m.width,
+        m.height,
+        m.placements.len(),
+        m.lf.as_ref().map(|f| (f.w, f.h)),
+        m.unknown,
+        t0.elapsed().as_secs_f64()
+    );
     if let Some(k) = a.iter().position(|v| v == "--window") {
         let w: Vec<i32> = a[k + 1..].iter().take(4).filter_map(|v| v.parse().ok()).collect();
         let [x0, y0, x1, y1] = w[..] else { panic!("--window x0 y0 x1 y1") };
@@ -47,7 +62,16 @@ fn main() {
     for &i in found.iter().take(8) {
         let p = &m.placements[i];
         let c = m.context(&Spot { x: p.x, y: p.y, rotation: p.rotation }, p.w, p.h, radius);
-        println!("  ({}, {}) rot {:#x}: {} neighbours in {:?}, lf median {:.1} m range {:.1} m", p.x, p.y, p.rotation, c.neighbours.len(), c.window, c.lf_level, c.lf_range);
+        println!(
+            "  ({}, {}) rot {:#x}: {} neighbours in {:?}, lf median {:.1} m range {:.1} m",
+            p.x,
+            p.y,
+            p.rotation,
+            c.neighbours.len(),
+            c.window,
+            c.lf_level,
+            c.lf_range
+        );
         if a.iter().any(|v| v == "--names") {
             for (n, _) in &c.neighbours {
                 let q = &m.placements[*n];

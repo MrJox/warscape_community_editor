@@ -39,32 +39,41 @@ fn main() {
     let sc = &project.scene;
     let extent_z = project.extent_z();
     let inst = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == class.as_str()).collect::<Vec<_>>();
-    println!("{} records, {} {class} in tile.ted, extent z {extent_z}", root.children.iter().filter(|c| c.class == "record").count(), inst.len());
+    println!(
+        "{} records, {} {class} in tile.ted, extent z {extent_z}",
+        root.children.iter().filter(|c| c.class == "record").count(),
+        inst.len()
+    );
     for (i, rec) in root.children.iter().filter(|c| c.class == "record").enumerate().take(n) {
-        let m = rec.get("transform").and_then(Value::as_floats).map(<[f64]>::to_vec).or_else(|| {
-            Some(vec![rec.get("x")?.as_f64()?, rec.get("y")?.as_f64()?, rec.get("z")?.as_f64()?])
-        });
+        let m = rec
+            .get("transform")
+            .and_then(Value::as_floats)
+            .map(<[f64]>::to_vec)
+            .or_else(|| Some(vec![rec.get("x")?.as_f64()?, rec.get("y")?.as_f64()?, rec.get("z")?.as_f64()?]));
 
         let m = m.unwrap_or_default();
         let (tx, ty, tz) = if m.len() == 16 { (m[12], m[13], m[14]) } else { (m[0], m[1], m[2]) };
-        println!("record {i}: key {} matrix {:?}", key_of.get(&i).cloned().unwrap_or_default(), m.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>());
+        println!(
+            "record {i}: key {} matrix {:?}",
+            key_of.get(&i).cloned().unwrap_or_default(),
+            m.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>()
+        );
         let other = rec.props().iter().filter(|p| p.name != "transform").map(|p| format!("{}={:?}", p.name, p.value)).collect::<Vec<_>>();
         println!("  fields {}", other.join(" "));
         // Nearest kit instance of the class to the building frame's guess (scene x = 2 tx, z = 2 (extent - tz)).
         let guess = (2.0 * tx, ty, 2.0 * (extent_z - tz));
-        let best = inst
-            .iter()
-            .map(|&e| (e, world_transform(sc, e)))
-            .min_by(|a, b| {
-                let d = |w: &wce_tile::world_transform::WorldTransform| (w.position.x - guess.0).hypot(w.position.z - guess.2);
-                d(&a.1).total_cmp(&d(&b.1))
-            });
+        let best = inst.iter().map(|&e| (e, world_transform(sc, e))).min_by(|a, b| {
+            let d = |w: &wce_tile::world_transform::WorldTransform| (w.position.x - guess.0).hypot(w.position.z - guess.2);
+            d(&a.1).total_cmp(&d(&b.1))
+        });
 
         if let Some((e, w)) = best {
             println!(
                 "  nearest {class} {e}: key {:?} world pos ({:.4}, {:.4}, {:.4}) rot {:?} scale {:?} orientation {:?} ({})",
                 sc.doc().get(e, "key").or_else(|| sc.doc().get(e, "vfx")),
-                w.position.x, w.position.y, w.position.z,
+                w.position.x,
+                w.position.y,
+                w.position.z,
                 w.rotation.m.iter().map(|r| r.map(|x| format!("{x:.4}"))).collect::<Vec<_>>(),
                 sc.doc().get(e, "scale"),
                 sc.doc().get(e, "orientation"),

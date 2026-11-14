@@ -15,3 +15,6 @@ wce_render = { path = "../wce_render" }
 wce_scene = { path = "../wce_scene" }
 wce_vfs = { path = "../wce_vfs" }
 wce_weather = { path = "../wce_weather" }
+
+[lints]
+workspace = true

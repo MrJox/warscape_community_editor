@@ -56,10 +56,14 @@ fn quoted<'a>(s: &'a str, key: &str) -> Option<(&'a str, &'a str)> {
 }
 
 fn flags(s: &str) -> Vec<(String, String)> {
-    s.split(',').map(str::trim).filter(|f| !f.is_empty()).map(|f| match f.split_once('=') {
-        Some((n, v)) => (n.trim().to_owned(), v.trim().to_owned()),
-        None => (f.to_owned(), String::new()),
-    }).collect()
+    s.split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(|f| match f.split_once('=') {
+            Some((n, v)) => (n.trim().to_owned(), v.trim().to_owned()),
+            None => (f.to_owned(), String::new()),
+        })
+        .collect()
 }
 
 fn fragment_line(slot: &str, rest: &str) -> Option<FragmentEntry> {
@@ -70,7 +74,13 @@ fn fragment_line(slot: &str, rest: &str) -> Option<FragmentEntry> {
     let (filename, rest) = quoted(rest, "filename")?;
     let (metadata, rest) = quoted(rest, "metadata").unwrap_or(("", rest));
     let (metadata_sound, rest) = quoted(rest, "metadata_sound").unwrap_or(("", rest));
-    Some(FragmentEntry { slot: slot.to_owned(), filename: filename.to_owned(), metadata: metadata.to_owned(), metadata_sound: metadata_sound.to_owned(), flags: flags(rest) })
+    Some(FragmentEntry {
+        slot: slot.to_owned(),
+        filename: filename.to_owned(),
+        metadata: metadata.to_owned(),
+        metadata_sound: metadata_sound.to_owned(),
+        flags: flags(rest),
+    })
 }
 
 /// Parses a fragment; `None` when a line isn't one.
@@ -135,18 +145,27 @@ mod tests {
         let f = parse_fragment("version 1\r\n\r\nskeleton_type\t\tboar\r\ncinematic\t\tfalse\r\n\r\nSTAND\t\t\t\tfilename = \"a.anim\"\t\tmetadata = \"\"\t\tmetadata_sound = \"a.snd.meta\"\t\tblend_in_time = 0.20, weapon_bone_2 = on, \r\nRIDER_SHIELD_UP\t\t\t\tcancel, \r\n").expect("parses");
         assert_eq!((f.skeleton.as_str(), f.cinematic, f.entries.len()), ("boar", false, 2));
         let e = &f.entries[0];
-        assert_eq!((e.slot.as_str(), e.filename.as_str(), e.metadata.as_str(), e.metadata_sound.as_str()), ("STAND", "a.anim", "", "a.snd.meta"));
+        assert_eq!(
+            (e.slot.as_str(), e.filename.as_str(), e.metadata.as_str(), e.metadata_sound.as_str()),
+            ("STAND", "a.anim", "", "a.snd.meta")
+        );
         assert_eq!((e.flag("blend_in_time"), e.flag("weapon_bone_2"), e.flag("other")), (Some("0.20"), Some("on"), None));
         assert_eq!((f.entries[1].filename.as_str(), f.entries[1].flag("cancel")), ("", Some("")));
         let f = parse_fragment("STAND\t\tfilename = \"a.anim\"\t\tmetadata = \"a.meta\"    blend_in_time = 0.10,\n").expect("parses");
-        assert_eq!((f.entries[0].metadata.as_str(), f.entries[0].metadata_sound.as_str(), f.entries[0].flag("blend_in_time")), ("a.meta", "", Some("0.10")));
+        assert_eq!(
+            (f.entries[0].metadata.as_str(), f.entries[0].metadata_sound.as_str(), f.entries[0].flag("blend_in_time")),
+            ("a.meta", "", Some("0.10"))
+        );
     }
 
     #[test]
     fn reads_the_tables() {
         let t = parse_tables("version 1\n\nanimation_table rider\n{\n\tskeleton_type\t\trome_man_game\n\tskeleton_type_cinematic\t\trome_man\n\tmount_table\t\tmount\n\n\tfragment\t\ta\n\tfragment\t\tb\n}\n\nanimation_table mount\n{\n\tskeleton_type\t\thorse_r2\n}\n").expect("parses");
         assert_eq!(t.len(), 2);
-        assert_eq!((t[0].skeleton_cinematic.as_deref(), t[0].mount_table.as_deref(), t[0].fragments.len()), (Some("rome_man"), Some("mount"), 2));
+        assert_eq!(
+            (t[0].skeleton_cinematic.as_deref(), t[0].mount_table.as_deref(), t[0].fragments.len()),
+            (Some("rome_man"), Some("mount"), 2)
+        );
         assert_eq!((t[1].name.as_str(), t[1].skeleton.as_str(), t[1].mount_table.as_deref()), ("mount", "horse_r2", None));
         assert!(parse_tables("animation_table a\n{\n\tother x\n}\n").is_none());
     }

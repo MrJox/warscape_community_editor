@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, Encodeable};
+use wce_foundation::game::GameProfile;
 use wce_tile::vegetation::{GenerationParams, grass::GrassParams};
 use wce_tile_model::Blob;
-use wce_foundation::game::GameProfile;
 use wce_vfs::{Config, Vfs};
 
 use super::compile::{CompileContext, CompileNotes, compile};
@@ -30,8 +30,12 @@ pub struct Game {
     /// The game's packs, as the editor mounted them.
     pub files: Arc<Vfs>,
 
-    /// The kit's `raw_data`, when it has the tiles (`terrain/tiles`; not Rome 2's).
-    pub kit_raw: Option<PathBuf>,
+    /// The Assembly Kits' `raw_data` folders that have the tiles (`terrain/tiles`; not Rome 2's), in the settings' order: the first that
+    /// has a file wins (`wce_tile::sources`).
+    pub kits: Vec<PathBuf>,
+
+    /// The `raw_data` folders it was made with (`from_vfs`), for its users' caches.
+    roots: Vec<PathBuf>,
     pub data: GameData,
     vegetation: Option<(GenerationParams, Option<GrassParams>)>,
 
@@ -51,42 +55,62 @@ impl Game {
         config.use_mods = false;
         config.mod_packs = Some(profile.available_mod_packs(dir));
         let files = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
-        Self::from_vfs(files, Some(&dir.join("assembly_kit")))
+        Self::from_vfs(files, &[dir.join("assembly_kit").join("raw_data")])
     }
 
-    /// The game of mounted packs (their profile) and its kit (the folder with `raw_data`, if any): the packs' tile data and the kit's
-    /// vegetation parameters.
+    /// The game of mounted packs (their profile) and its kits (`raw_data` folders in the order they are looked in, `wce_tile::sources`;
+    /// those without the tiles are left out): the packs' tile data and the vegetation parameters of the first kit that has them.
     ///
     /// # Errors
     ///
     /// None for now: what can't be read is a warning.
-    pub fn from_vfs(files: Arc<Vfs>, kit: Option<&Path>) -> Result<Self, String> {
+    pub fn from_vfs(files: Arc<Vfs>, roots: &[PathBuf]) -> Result<Self, String> {
         let profile = files.profile().clone();
         let data = GameData::from_vfs(&files, super::game_data::default_schema_path(&profile).as_deref())?;
         let mut warnings = data.warnings.clone();
-        let kit_raw = kit.map(|k| k.join("raw_data")).filter(|r| r.join("terrain/tiles").is_dir());
-        let vegetation = match &kit_raw {
-            Some(raw) => match super::stage_c::kit_params(raw) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    warnings.push(format!("no vegetation parameters in the kit ({e}): tree and grass lists are carried only"));
-                    None
+        let kits = roots.iter().filter(|r| r.join("terrain/tiles").is_dir()).cloned().collect::<Vec<_>>();
+        let mut vegetation = None;
+        let mut why = vec![];
+        for raw in roots {
+            match super::stage_c::kit_params(raw) {
+                Ok(v) => {
+                    vegetation = Some(v);
+                    break;
                 }
-            },
 
-            None => {
-                warnings.push(format!("{}: no Assembly Kit with the tiles: the vegetation is carried only, BOB's inputs are the projects'", profile.display_name));
-                None
+                Err(e) => why.push(format!("{}: {e}", raw.display())),
             }
-        };
+        }
 
-        Ok(Self { profile, files, kit_raw, data, vegetation, warnings })
+        if kits.is_empty() {
+            warnings.push(format!(
+                "{}: no Assembly Kit with the tiles: BOB's inputs are the projects'{}",
+                profile.display_name,
+                if vegetation.is_none() { ", the vegetation is carried only" } else { "" }
+            ));
+        } else if vegetation.is_none() {
+            warnings.push(format!("no vegetation parameters in the kits ({}): tree and grass lists are carried only", why.join("; ")));
+        }
+
+        Ok(Self { profile, files, kits, roots: roots.to_vec(), data, vegetation, warnings })
     }
 
-    /// The `raw_data` BOB's stages read for a project under `project_raw` (a workspace's or a kit's `raw_data`): the kit's when the game
-    /// has one with the tiles, else the project's own (the workspace has the database's settings).
-    pub fn bob_raw_data(&self, project_raw: &Path) -> PathBuf {
-        self.kit_raw.clone().unwrap_or_else(|| project_raw.to_path_buf())
+    /// Whether it was made with these `raw_data` folders (a cached one stays right while the settings' kits are the same).
+    pub fn made_for(&self, roots: &[PathBuf]) -> bool {
+        self.roots == roots
+    }
+
+    /// Whether the game has an Assembly Kit with the tiles (not Rome 2): its tile database's files are the kit's.
+    pub fn has_kit(&self) -> bool {
+        !self.kits.is_empty()
+    }
+
+    /// The `raw_data` folders BOB's stages read for a project under `project_raw` (a workspace's or a kit's `raw_data`), the first that has
+    /// a file winning: the project's own, then the kits'.
+    pub fn bob_roots(&self, project_raw: &Path) -> Vec<PathBuf> {
+        let mut roots = vec![project_raw.to_path_buf()];
+        roots.extend(self.kits.iter().filter(|k| k.as_path() != project_raw).cloned());
+        roots
     }
 
     /// An exported tile's files from the game's packs (`terrain/tiles/battle/.../aa`).
@@ -152,8 +176,9 @@ impl Game {
     ///
     /// Neither has it.
     pub fn kit_settings(&self, kind: &str) -> Result<Vec<u8>, String> {
-        if let Some(raw) = &self.kit_raw {
-            let path = raw.join("terrain/tiles").join(kind).join("_tile_database/_settings.xml");
+        if self.has_kit() {
+            let rel = format!("terrain/tiles/{kind}/_tile_database/_settings.xml");
+            let path = wce_tile::sources::first_file(&self.kits, &rel).ok_or_else(|| format!("no kit has {rel}"))?;
             return std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()));
         }
 
@@ -192,10 +217,10 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     // A kit's settings are copied once; without a kit (Rome 2) they are made from the packs' database, so a stale copy (an older
     // conversion) is made again.
     let settings = database.join("_settings.xml");
-    if !settings.is_file() || game.kit_raw.is_none() {
+    if !settings.is_file() || !game.has_kit() {
         let bytes = game.kit_settings(&kind_of(folder))?;
         if std::fs::read(&settings).ok().as_deref() != Some(bytes.as_slice()) {
-            std::fs::write(&settings, bytes).map_err(|e| format!("{}: {e}", settings.display()))?;
+            wce_foundation::files::write_replacing(&settings, bytes).map_err(|e| format!("{}: {e}", settings.display()))?;
         }
     }
 
@@ -221,7 +246,10 @@ pub fn merge_entries(base: &TileDatabase, settings: &str, entries: &[&str]) -> R
             Ok(db) => break db,
             Err(e) => {
                 let text = e.to_string();
-                let missing = text.split_once("missing attribute '").and_then(|(_, r)| r.split_once("' on <")).and_then(|(a, r)| Some((a.to_owned(), r.split_once('>')?.0.to_owned())));
+                let missing = text
+                    .split_once("missing attribute '")
+                    .and_then(|(_, r)| r.split_once("' on <"))
+                    .and_then(|(a, r)| Some((a.to_owned(), r.split_once('>')?.0.to_owned())));
                 let Some((attr, element)) = missing.filter(|_| tries < 64) else { return Err(text) };
                 tries += 1;
                 settings = with_attribute(&settings, &element, &attr);
@@ -300,7 +328,11 @@ pub fn save_exported_scene(game: &Game, project_dir: &Path, scene: Option<Vec<u8
 ///
 /// As `save_exported`.
 pub fn save_exported_with(
-    game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, out: &Path, base_of: &(dyn Fn(&str) -> Option<String> + Sync),
+    game: &Game,
+    project_dir: &Path,
+    scene: Option<Vec<u8>>,
+    out: &Path,
+    base_of: &(dyn Fn(&str) -> Option<String> + Sync),
 ) -> Result<(PathBuf, CompileNotes), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE};
 
@@ -320,33 +352,45 @@ pub fn save_exported_with(
         }
     }
 
-    let entry_xml = files.entry.as_ref().map(|(_, b)| b.bytes().map(|b| String::from_utf8_lossy(&b).into_owned())).transpose().map_err(|e| e.to_string())?;
+    let entry_xml = files
+        .entry
+        .as_ref()
+        .map(|(_, b)| b.bytes().map(|b| String::from_utf8_lossy(&b).into_owned()))
+        .transpose()
+        .map_err(|e| e.to_string())?;
     let (raw, _) = {
         wce_foundation::wce_prof!("export.read_project");
         let _a = wce_foundation::activity::start("Reading the project (tile.ted, maps, entry)");
         TedProject.read(&files).map_err(|e| e.to_string())?
     };
 
-    let project_raw = project_dir.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("raw_data"))).unwrap_or(project_dir);
-    let kit_raw = game.bob_raw_data(project_raw);
+    let project_raw =
+        project_dir.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("raw_data"))).unwrap_or(project_dir);
+    let roots = game.bob_roots(project_raw);
     let mut early_notes = vec![];
-    if game.kit_raw.is_none()
-        && let Err(e) = provide_linking_tiles(game, &raw, &kit_raw)
+    if !game.has_kit()
+        && let Err(e) = provide_linking_tiles(game, &raw, project_raw)
     {
         early_notes.push(format!("the linking tiles for stage B: {e}"));
     }
 
     let models = |k: &str| game.files.read(k).ok();
     let exists = |k: &str| game.files.owner(k).is_some();
-    let settings = kit_raw.join("terrain/tiles/battle/_tile_database/_settings.xml");
+    let battle_settings = "terrain/tiles/battle/_tile_database/_settings.xml";
+    let settings = wce_tile::sources::first_file(&roots, battle_settings).unwrap_or_else(|| project_raw.join(battle_settings));
     let mut ctx: CompileContext = game.data.compile_context();
     let (levels, thresholds) = (ctx.building_levels, ctx.building_thresholds);
     let levels_or_base = |k: &str| levels.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
     let thresholds_or_base = |k: &str| thresholds.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
     ctx.building_levels = Some(&levels_or_base);
     ctx.building_thresholds = Some(&thresholds_or_base);
-    ctx.stage_b = Some(StageB { raw_data: &kit_raw, models: &models });
-    ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC { params, grass: grass.as_ref(), settings: Some(&settings), model_exists: &exists });
+    ctx.stage_b = Some(StageB { roots: &roots, models: &models });
+    ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC {
+        params,
+        grass: grass.as_ref(),
+        settings: Some(&settings),
+        model_exists: &exists,
+    });
     ctx.model_exists = Some(&exists);
     let (compiled, mut notes) = {
         wce_foundation::wce_prof!("export.compile");
@@ -380,7 +424,12 @@ pub fn save_exported_with(
         .filter(|n| !written.folder.contains_key(n))
         .collect::<Vec<_>>();
     if !stale.is_empty() {
-        notes.notes.push(format!("{} files already in {} were not written now (left as they are): {}", stale.len(), dir.display(), stale.join(", ")));
+        notes.notes.push(format!(
+            "{} files already in {} were not written now (left as they are): {}",
+            stale.len(),
+            dir.display(),
+            stale.join(", ")
+        ));
     }
 
     written.write_to(&dir, None).map_err(|e| e.to_string())?;
@@ -401,8 +450,15 @@ pub fn save_exported_with(
                 // Rome 2: the tile's set file (and the settings, for a new texture group).
                 Some(xml) => {
                     let (location, _) = super::decompile::split_location(&folder);
-                    let tile = db.tiles().iter().find(|t| t.location().eq_ignore_ascii_case(&location)).ok_or("the merged database lacks the tile")?;
-                    xml.with_tile(tile)?.into_iter().map(|(name, bytes)| (format!("{}{name}", crate::rome2::tile_database::Rome2TileDatabase::folder(&kind)), bytes)).collect()
+                    let tile = db
+                        .tiles()
+                        .iter()
+                        .find(|t| t.location().eq_ignore_ascii_case(&location))
+                        .ok_or("the merged database lacks the tile")?;
+                    xml.with_tile(tile)?
+                        .into_iter()
+                        .map(|(name, bytes)| (format!("{}{name}", crate::rome2::tile_database::Rome2TileDatabase::folder(&kind)), bytes))
+                        .collect()
                 }
 
                 None => {
@@ -415,7 +471,7 @@ pub fn save_exported_with(
             for (name, bytes) in written {
                 let path = out.join(&name);
                 std::fs::create_dir_all(path.parent().unwrap_or(out)).map_err(|e| e.to_string())?;
-                std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+                wce_foundation::files::write_replacing(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
             }
         }
 
@@ -436,10 +492,15 @@ pub fn save_exported_with(
 fn provide_linking_tiles(game: &Game, raw: &wce_tile_model::Tile, raw_data: &Path) -> Result<(), String> {
     use super::bob_tile::{HeightNumbers, InfluenceLinks, dds_r32f, final_heights};
     let Some(entry) = raw.entry.as_ref() else { return Ok(()) };
-    let linking = super::terrain_mesh::linking_tiles(raw_data);
+    let linking = super::terrain_mesh::linking_tiles(&[raw_data.to_path_buf()]);
     let own = entry.root.get("tile_set").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
     let mut wanted = std::collections::BTreeSet::new();
-    let sets = entry.root.wrapped("TILE_LINKS").iter().filter_map(|l| l.get("link_set").and_then(|v| v.as_str()).map(str::to_owned)).chain([own, "sea".to_owned()]);
+    let sets = entry
+        .root
+        .wrapped("TILE_LINKS")
+        .iter()
+        .filter_map(|l| l.get("link_set").and_then(|v| v.as_str()).map(str::to_owned))
+        .chain([own, "sea".to_owned()]);
     for set in sets {
         if let Some(tile) = linking.get(&set).filter(|t| !t.is_empty()) {
             wanted.insert(tile.replace('\\', "/").to_lowercase());
@@ -459,8 +520,10 @@ fn provide_linking_tiles(game: &Game, raw: &wce_tile_model::Tile, raw_data: &Pat
         let (link, _) = TedProject.read(&tile).map_err(|e| e.to_string())?;
         let hm = link.map(wce_tile_model::MapKind::Height, 0).ok_or_else(|| format!("{folder}: no height map"))?;
         let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err(format!("{folder}: the height map is not 16 bit")) };
-        let (f, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &HeightNumbers::of(&link), &InfluenceLinks::default())?;
-        std::fs::write(dir.join("final_heights.dds"), dds_r32f(&f, w, h)).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let (f, w, h) =
+            final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &HeightNumbers::of(&link), &InfluenceLinks::default())?;
+        wce_foundation::files::write_replacing(dir.join("final_heights.dds"), dds_r32f(&f, w, h))
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
     }
 
     Ok(())
@@ -487,11 +550,12 @@ pub fn neighbour_root(game: &Game, root: &Path) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&tiles).map_err(|e| format!("{}: {e}", tiles.display()))?;
         for (i, t) in db.tiles().iter().enumerate() {
             let path = tiles.join(super::decompile::entry_file_name(t.location()));
-            std::fs::write(&path, super::decompile::entry_xml(db, i)).map_err(|e| format!("{}: {e}", path.display()))?;
+            wce_foundation::files::write_replacing(&path, super::decompile::entry_xml(db, i))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
         }
 
         // Last: the folder is complete once the settings are there.
-        std::fs::write(&settings, game.kit_settings(kind)?).map_err(|e| format!("{}: {e}", settings.display()))?;
+        wce_foundation::files::write_replacing(&settings, game.kit_settings(kind)?).map_err(|e| format!("{}: {e}", settings.display()))?;
     }
 
     Ok(raw)
@@ -529,7 +593,8 @@ pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) 
     if custom {
         // The model, and the blend map the decompile made (its ground); not the scene, which would make it a scene tile.
         let model = game.files.read(&model_path).map_err(|e| format!("{model_path}: {e}"))?;
-        std::fs::write(dir.join(wce_tile::sources::CUSTOM_MESH_MODEL), &model[..]).map_err(|e| format!("{}: {e}", dir.display()))?;
+        wce_foundation::files::write_replacing(dir.join(wce_tile::sources::CUSTOM_MESH_MODEL), &model[..])
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
         for scene in [wce_tile::project_files::TED_FILE, wce_tile::project_files::WCE_FILE] {
             let p = dir.join(scene);
             if p.is_file() {
@@ -547,7 +612,12 @@ pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) 
 /// # Errors
 ///
 /// As `save_exported`, or the pack can't be read or written.
-pub fn save_exported_to_pack(game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, pack: &Path) -> Result<(String, CompileNotes), String> {
+pub fn save_exported_to_pack(
+    game: &Game,
+    project_dir: &Path,
+    scene: Option<Vec<u8>>,
+    pack: &Path,
+) -> Result<(String, CompileNotes), String> {
     let (folder, files, notes) = exported_pack_files(game, project_dir, scene, &|_| None)?;
     wce_vfs::mod_pack::write_files(&game.profile, pack, &[&folder], &files)?;
     Ok((folder, notes))
@@ -563,9 +633,16 @@ pub const NOT_IN_PACKS: [&str; 2] = ["tile.agf", "building_list.xml"];
 ///
 /// As `save_exported`.
 pub fn exported_pack_files(
-    game: &Game, project_dir: &Path, scene: Option<Vec<u8>>, base_of: &(dyn Fn(&str) -> Option<String> + Sync),
+    game: &Game,
+    project_dir: &Path,
+    scene: Option<Vec<u8>>,
+    base_of: &(dyn Fn(&str) -> Option<String> + Sync),
 ) -> Result<(String, Vec<(String, Vec<u8>)>, CompileNotes), String> {
-    let scratch = std::env::temp_dir().join(format!("wce_pack_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
+    let scratch = std::env::temp_dir().join(format!(
+        "wce_pack_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
+    ));
     let result = (|| {
         let (dir, notes) = save_exported_with(game, project_dir, scene, &scratch, base_of)?;
         let folder = dir.strip_prefix(&scratch).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");

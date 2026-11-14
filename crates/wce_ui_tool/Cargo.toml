@@ -15,3 +15,6 @@ wce_scene = { path = "../wce_scene" }
 wce_ui_format = { path = "../wce_ui_format" }
 wce_ui_model = { path = "../wce_ui_model" }
 wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

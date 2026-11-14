@@ -44,13 +44,60 @@ fn imgui_key(keycode: SDL_Keycode, scancode: SDL_Scancode) -> Option<Key> {
     }
 
     const LETTERS: [Key; 26] = [
-        Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I, Key::J, Key::K, Key::L, Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T,
-        Key::U, Key::V, Key::W, Key::X, Key::Y, Key::Z,
+        Key::A,
+        Key::B,
+        Key::C,
+        Key::D,
+        Key::E,
+        Key::F,
+        Key::G,
+        Key::H,
+        Key::I,
+        Key::J,
+        Key::K,
+        Key::L,
+        Key::M,
+        Key::N,
+        Key::O,
+        Key::P,
+        Key::Q,
+        Key::R,
+        Key::S,
+        Key::T,
+        Key::U,
+        Key::V,
+        Key::W,
+        Key::X,
+        Key::Y,
+        Key::Z,
     ];
-    const DIGITS: [Key; 10] = [Key::Key0, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Key6, Key::Key7, Key::Key8, Key::Key9];
+    const DIGITS: [Key; 10] =
+        [Key::Key0, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Key6, Key::Key7, Key::Key8, Key::Key9];
     const FUNCTIONS: [Key; 24] = [
-        Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6, Key::F7, Key::F8, Key::F9, Key::F10, Key::F11, Key::F12, Key::F13, Key::F14, Key::F15, Key::F16, Key::F17,
-        Key::F18, Key::F19, Key::F20, Key::F21, Key::F22, Key::F23, Key::F24,
+        Key::F1,
+        Key::F2,
+        Key::F3,
+        Key::F4,
+        Key::F5,
+        Key::F6,
+        Key::F7,
+        Key::F8,
+        Key::F9,
+        Key::F10,
+        Key::F11,
+        Key::F12,
+        Key::F13,
+        Key::F14,
+        Key::F15,
+        Key::F16,
+        Key::F17,
+        Key::F18,
+        Key::F19,
+        Key::F20,
+        Key::F21,
+        Key::F22,
+        Key::F23,
+        Key::F24,
     ];
 
     let k = keycode.0;
@@ -165,7 +212,6 @@ pub struct Sdl3Platform {
 }
 
 impl Sdl3Platform {
-
     /// The backend for one window.
     ///
     /// # Safety
@@ -177,8 +223,17 @@ impl Sdl3Platform {
         let _ = imgui.set_platform_name(Some("wce_sdl3"));
         imgui.set_clipboard_backend(SdlClipboard);
         let shapes = [
-            SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_MOVE, SDL_SYSTEM_CURSOR_NS_RESIZE, SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_NESW_RESIZE,
-            SDL_SYSTEM_CURSOR_NWSE_RESIZE, SDL_SYSTEM_CURSOR_POINTER, SDL_SYSTEM_CURSOR_WAIT, SDL_SYSTEM_CURSOR_PROGRESS, SDL_SYSTEM_CURSOR_NOT_ALLOWED,
+            SDL_SYSTEM_CURSOR_DEFAULT,
+            SDL_SYSTEM_CURSOR_TEXT,
+            SDL_SYSTEM_CURSOR_MOVE,
+            SDL_SYSTEM_CURSOR_NS_RESIZE,
+            SDL_SYSTEM_CURSOR_EW_RESIZE,
+            SDL_SYSTEM_CURSOR_NESW_RESIZE,
+            SDL_SYSTEM_CURSOR_NWSE_RESIZE,
+            SDL_SYSTEM_CURSOR_POINTER,
+            SDL_SYSTEM_CURSOR_WAIT,
+            SDL_SYSTEM_CURSOR_PROGRESS,
+            SDL_SYSTEM_CURSOR_NOT_ALLOWED,
         ];
 
         // SAFETY: plain SDL calls.

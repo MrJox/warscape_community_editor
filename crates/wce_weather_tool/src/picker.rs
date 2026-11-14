@@ -52,7 +52,11 @@ pub struct Candidates {
 fn candidates_of(db: &AssetVariationDb, query: &VariationQuery) -> Candidates {
     let m = db.matches("environment", query);
     Candidates {
-        candidates: m.variations.iter().map(|v| Candidate { filename: v.filename().clone(), flags: *v.flags(), allowed_values: v.flags().count_ones() }).collect(),
+        candidates: m
+            .variations
+            .iter()
+            .map(|v| Candidate { filename: v.filename().clone(), flags: *v.flags(), allowed_values: v.flags().count_ones() })
+            .collect(),
         used_default_map: m.used_default_map,
     }
 }
@@ -324,13 +328,18 @@ impl WeatherPicker {
                 }
 
                 _ if self.db.is_none() => Err("no database".to_owned()),
-                ("add-value", Some(eq)) => self.db.as_mut().expect("checked").add_value(&arg[..eq], &arg[eq + 1..]).map_err(|e| e.to_string()),
-                ("remove-value", Some(eq)) => self.db.as_mut().expect("checked").remove_value(&arg[..eq], &arg[eq + 1..]).map_err(|e| e.to_string()),
+                ("add-value", Some(eq)) => {
+                    self.db.as_mut().expect("checked").add_value(&arg[..eq], &arg[eq + 1..]).map_err(|e| e.to_string())
+                }
+                ("remove-value", Some(eq)) => {
+                    self.db.as_mut().expect("checked").remove_value(&arg[..eq], &arg[eq + 1..]).map_err(|e| e.to_string())
+                }
                 ("rename-value" | "clone-value", Some(eq)) if arrow(eq).is_some() => {
                     let gt = arrow(eq).expect("checked");
                     let db = self.db.as_mut().expect("checked");
                     let (category, from, to) = (&arg[..eq], &arg[eq + 1..gt], &arg[gt + 1..]);
-                    let result = if op == "rename-value" { db.rename_value(category, from, to) } else { db.clone_value(category, from, to) };
+                    let result =
+                        if op == "rename-value" { db.rename_value(category, from, to) } else { db.clone_value(category, from, to) };
                     result.map_err(|e| e.to_string())
                 }
 
@@ -511,7 +520,11 @@ impl WeatherPicker {
         gui::same_line();
         if gui::button("Convert...")
             && let Some(from) = file_dialog(false, &loose_dir.join(VDB_XML), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
-            && let Some(to) = file_dialog(true, &other_format(&from), &if is_xml(&from).unwrap_or(false) { db_filters() } else { db_filters().into_iter().rev().collect() })
+            && let Some(to) = file_dialog(
+                true,
+                &other_format(&from),
+                &if is_xml(&from).unwrap_or(false) { db_filters() } else { db_filters().into_iter().rev().collect() },
+            )
         {
             self.convert(&from, &to);
         }
@@ -593,7 +606,8 @@ impl WeatherPicker {
 
             gui::same_line();
             if gui::button("Open...")
-                && let Some(path) = file_dialog(false, &loose_dir.join(VDB_BIN), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
+                && let Some(path) =
+                    file_dialog(false, &loose_dir.join(VDB_BIN), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
             {
                 self.load_file(&path);
             }
@@ -655,7 +669,9 @@ impl WeatherPicker {
 
         match db.query_mask(&self.query) {
             Some(bits) => gui::text_colored(theme::dim(), &format!("query bits 0x{bits:08X}")),
-            None => gui::text_colored(theme::warning(), "A value of these conditions is in no list: the game's first query matches nothing."),
+            None => {
+                gui::text_colored(theme::warning(), "A value of these conditions is in no list: the game's first query matches nothing.")
+            }
         }
 
         gui::separator();
@@ -664,7 +680,11 @@ impl WeatherPicker {
         let r = candidates_of(db, &self.query);
         if r.used_default_map {
             gui::text_colored(
-                theme::warning(), &format!("Nothing matched map '{}', so the game asks again with map 'default_map'.", self.query.get("map").map_or("", String::as_str)),
+                theme::warning(),
+                &format!(
+                    "Nothing matched map '{}', so the game asks again with map 'default_map'.",
+                    self.query.get("map").map_or("", String::as_str)
+                ),
             );
         }
 
@@ -673,7 +693,9 @@ impl WeatherPicker {
             gui::text_colored(theme::error(), "The database has no environment file for these conditions.");
         } else {
             gui::text(&format!(
-                "{} candidate(s); the game picks one uniformly at random ({:.1}% each).", r.candidates.len(), 100.0 / r.candidates.len() as f64,
+                "{} candidate(s); the game picks one uniformly at random ({:.1}% each).",
+                r.candidates.len(),
+                100.0 / r.candidates.len() as f64,
             ));
             if gui::begin_table("cands", 4, gui::TABLE_ROW_BG | gui::TABLE_BORDERS | gui::TABLE_SCROLL_Y, gui::v2(0.0, 220.0)) {
                 gui::table_setup_column("File", gui::COLUMN_WIDTH_STRETCH, 0.0);
@@ -716,7 +738,10 @@ impl WeatherPicker {
         // Reverse lookup for the open document.
         gui::separator();
         if active_environment.is_empty() {
-            gui::text_colored(theme::dim(), "Open an .environment file from the pack list to see the conditions under which the game picks it.");
+            gui::text_colored(
+                theme::dim(),
+                "Open an .environment file from the pack list to see the conditions under which the game picks it.",
+            );
         } else {
             gui::text(&format!("Open file: {active_environment}"));
             let mut found = 0;

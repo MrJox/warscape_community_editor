@@ -21,17 +21,24 @@ fn is_block(f: DXGI_FORMAT) -> bool {
 
 fn row_bytes(f: DXGI_FORMAT, w: u32) -> usize {
     if is_block(f) {
-        let bb = if (DXGI_FORMAT_BC1_TYPELESS..=DXGI_FORMAT_BC1_UNORM_SRGB).contains(&f) || (DXGI_FORMAT_BC4_TYPELESS..=DXGI_FORMAT_BC4_SNORM).contains(&f) { 8 } else { 16 };
+        let bb = if (DXGI_FORMAT_BC1_TYPELESS..=DXGI_FORMAT_BC1_UNORM_SRGB).contains(&f)
+            || (DXGI_FORMAT_BC4_TYPELESS..=DXGI_FORMAT_BC4_SNORM).contains(&f)
+        {
+            8
+        } else {
+            16
+        };
         return w.div_ceil(4).max(1) as usize * bb;
     }
 
-    w as usize * match f {
-        DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_UNORM => 8,
-        DXGI_FORMAT_R32G32B32A32_FLOAT => 16,
-        DXGI_FORMAT_R8_UNORM | DXGI_FORMAT_A8_UNORM => 1,
-        DXGI_FORMAT_R8G8_UNORM | DXGI_FORMAT_R16_FLOAT | DXGI_FORMAT_B5G6R5_UNORM | DXGI_FORMAT_B5G5R5A1_UNORM => 2,
-        _ => 4,
-    }
+    w as usize
+        * match f {
+            DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_UNORM => 8,
+            DXGI_FORMAT_R32G32B32A32_FLOAT => 16,
+            DXGI_FORMAT_R8_UNORM | DXGI_FORMAT_A8_UNORM => 1,
+            DXGI_FORMAT_R8G8_UNORM | DXGI_FORMAT_R16_FLOAT | DXGI_FORMAT_B5G6R5_UNORM | DXGI_FORMAT_B5G5R5A1_UNORM => 2,
+            _ => 4,
+        }
 }
 
 fn rows(f: DXGI_FORMAT, h: u32) -> u32 {
@@ -46,7 +53,13 @@ unsafe fn readback(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, srv: Option<&I
         if let Ok(t2) = resource.cast::<ID3D11Texture2D>() {
             let mut d = D3D11_TEXTURE2D_DESC::default();
             t2.GetDesc(&mut d);
-            let s = D3D11_TEXTURE2D_DESC { Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0, ..d };
+            let s = D3D11_TEXTURE2D_DESC {
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+                MiscFlags: 0,
+                ..d
+            };
             let mut st = None;
             if dev.CreateTexture2D(&s, None, Some(&mut st)).is_err() {
                 return "nostaging".to_owned();
@@ -76,7 +89,13 @@ unsafe fn readback(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, srv: Option<&I
         if let Ok(t3) = resource.cast::<ID3D11Texture3D>() {
             let mut d = D3D11_TEXTURE3D_DESC::default();
             t3.GetDesc(&mut d);
-            let s = D3D11_TEXTURE3D_DESC { Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0, ..d };
+            let s = D3D11_TEXTURE3D_DESC {
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+                MiscFlags: 0,
+                ..d
+            };
             let mut st = None;
             if dev.CreateTexture3D(&s, None, Some(&mut st)).is_err() {
                 return "nostaging".to_owned();
@@ -130,7 +149,18 @@ fn main() {
     let (mut dev, mut ctx) = (None, None);
     // SAFETY: device creation with valid arguments.
     unsafe {
-        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), 0, None, D3D11_SDK_VERSION as u32, Some(&mut dev), None, Some(&mut ctx)).unwrap();
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            0,
+            None,
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .unwrap();
     }
 
     let (dev, ctx) = (dev.unwrap(), ctx.unwrap());
@@ -161,8 +191,16 @@ fn main() {
     all.sort();
     for d in &all {
         for kind in ["_diffuse.dds", "_normal.dds"] {
-            let mut files = std::fs::read_dir(d).unwrap().flatten().map(|e| e.path())
-                .filter(|p| p.file_name().is_some_and(|n| { let n = n.to_string_lossy(); n.len() > kind.len() && n.ends_with(kind) }))
+            let mut files = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name().is_some_and(|n| {
+                        let n = n.to_string_lossy();
+                        n.len() > kind.len() && n.ends_with(kind)
+                    })
+                })
                 .collect::<Vec<_>>();
             if files.is_empty() {
                 continue;
@@ -191,7 +229,10 @@ fn main() {
 
     let mut cbs = ConstantBuffers::default();
     let mut lib = ShaderLibrary::new(&dev);
-    let mut names = std::fs::read_dir(root.join("fxc")).unwrap().flatten().map(|e| e.path())
+    let mut names = std::fs::read_dir(root.join("fxc"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "fxc"))
         .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
         .collect::<Vec<_>>();
@@ -199,17 +240,21 @@ fn main() {
     for n in &names {
         match lib.get(&read, &mut cbs, n) {
             Ok(s) => {
-                let maps = [&s.cbuffers, &s.textures, &s.samplers, &s.uavs].iter()
+                let maps = [&s.cbuffers, &s.textures, &s.samplers, &s.uavs]
+                    .iter()
                     .map(|m| format!(" |{}", m.iter().map(|(k, v)| format!(" {k}={v}")).collect::<String>()))
                     .collect::<String>();
-                println!("shader {n} stage{}{maps}", match s.stage {
-                    wce_render::shader_lib::Stage::Vs => 0,
-                    wce_render::shader_lib::Stage::Ps => 1,
-                    wce_render::shader_lib::Stage::Gs => 2,
-                    wce_render::shader_lib::Stage::Cs => 3,
-                    wce_render::shader_lib::Stage::Hs => 4,
-                    wce_render::shader_lib::Stage::Ds => 5,
-                });
+                println!(
+                    "shader {n} stage{}{maps}",
+                    match s.stage {
+                        wce_render::shader_lib::Stage::Vs => 0,
+                        wce_render::shader_lib::Stage::Ps => 1,
+                        wce_render::shader_lib::Stage::Gs => 2,
+                        wce_render::shader_lib::Stage::Cs => 3,
+                        wce_render::shader_lib::Stage::Hs => 4,
+                        wce_render::shader_lib::Stage::Ds => 5,
+                    }
+                );
             }
 
             Err(error) => println!("shader {n} error {error}"),

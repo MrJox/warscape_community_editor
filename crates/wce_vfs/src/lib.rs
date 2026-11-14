@@ -13,8 +13,8 @@
 //! forward slashes; each pack keeps its own spelling for reading.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use rpfm_lib::files::pack::Pack as RpfmPack;
@@ -25,6 +25,7 @@ pub use wce_foundation::game::{GameFeatures, GameProfile, LaunchFacts, PackOrder
 pub mod files;
 pub mod generated;
 pub mod mod_pack;
+pub mod steam_detect;
 
 /// Errors of the file system.
 #[derive(Debug, thiserror::Error)]
@@ -67,7 +68,6 @@ pub struct Config {
 }
 
 impl Config {
-
     /// The packs of a game in its folder, with its enabled mods and no overlay folders.
     pub fn new(game_dir: impl Into<PathBuf>, profile: GameProfile) -> Self {
         Self { game_dir: game_dir.into(), profile, use_mods: true, mod_packs: None, overlay_folders: vec![] }
@@ -118,10 +118,18 @@ pub struct Vfs {
 
     /// Path -> every pack that removes it (an empty file), highest priority first.
     removed_by: HashMap<String, Vec<usize>>,
+
+    /// Which files these are (`Files::mount_id`): new with every mount and every change of the loose folders' index.
+    mount_id: u64,
+}
+
+/// A new [`Files::mount_id`]: unique in the process, never 0.
+pub fn next_mount_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Vfs {
-
     /// Mounts the packs and overlay folders of a configuration.
     ///
     /// # Errors
@@ -144,6 +152,7 @@ impl Vfs {
             owners: HashMap::new(),
             spelling: vec![],
             removed_by: HashMap::new(),
+            mount_id: next_mount_id(),
         };
 
         for folder in &config.overlay_folders {
@@ -160,10 +169,19 @@ impl Vfs {
         for pack_ref in order.packs {
             let pack = RpfmPack::read_and_merge(std::slice::from_ref(&pack_ref.path), game, true, false, false)
                 .map_err(|error| VfsError::Pack(pack_ref.path.clone(), error.to_string()))?;
-            let (paths, removed) = pack.files().iter().map(|(path, file)| (path.clone(), file.stored_size() == Some(0))).partition::<Vec<_>, _>(|(_, empty)| !empty);
+            let (paths, removed) = pack
+                .files()
+                .iter()
+                .map(|(path, file)| (path.clone(), file.stored_size() == Some(0)))
+                .partition::<Vec<_>, _>(|(_, empty)| !empty);
             let paths = paths.into_iter().map(|(path, _)| path).collect();
             let removed = removed.into_iter().map(|(path, _)| path).collect();
-            vfs.add(Pack { name: pack_ref.name, path: pack_ref.path, is_mod: pack_ref.is_mod, loose: false }, Source::Pack(Box::new(Mutex::new(pack))), paths, removed);
+            vfs.add(
+                Pack { name: pack_ref.name, path: pack_ref.path, is_mod: pack_ref.is_mod, loose: false },
+                Source::Pack(Box::new(Mutex::new(pack))),
+                paths,
+                removed,
+            );
         }
 
         vfs.files.retain(|_, pack| *pack != REMOVED);
@@ -198,6 +216,7 @@ impl Vfs {
     /// Indexes one path of the loose folders again, after a file was written into one of them or deleted from it since the mount (an
     /// editor's save, a revert): which folders have it now, and which pack it is read from.
     pub fn refresh_loose(&mut self, path: &str) {
+        self.mount_id = next_mount_id();
         let normalized = normalize(path);
         let mut owners = self.owners.remove(&normalized).unwrap_or_default();
         owners.retain(|&i| !self.packs[i].loose);
@@ -249,7 +268,8 @@ impl Vfs {
     pub fn list(&self, prefix: &str, extension: &str) -> Vec<&str> {
         let prefix = normalize(prefix);
         let extension = normalize(extension);
-        self.files.range(prefix.clone()..)
+        self.files
+            .range(prefix.clone()..)
             .take_while(|(path, _)| path.starts_with(&prefix))
             .filter(|(path, _)| path.ends_with(&extension))
             .map(|(path, _)| path.as_str())

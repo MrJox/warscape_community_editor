@@ -51,7 +51,6 @@ pub(crate) struct LightGpu {
 }
 
 impl Renderer {
-
     fn make_light_resources(&mut self) {
         if self.lights.cube_vb.is_some() {
             return;
@@ -61,20 +60,38 @@ impl Renderer {
         let l = &mut self.lights;
         let mut verts = vec![];
         for k in 0..8 {
-            verts.extend([if k & 1 != 0 { 1.0f32 } else { -1.0 }, if k & 2 != 0 { 1.0 } else { -1.0 }, if k & 4 != 0 { 1.0 } else { -1.0 }]);
+            verts.extend([
+                if k & 1 != 0 { 1.0f32 } else { -1.0 },
+                if k & 2 != 0 { 1.0 } else { -1.0 },
+                if k & 4 != 0 { 1.0 } else { -1.0 },
+            ]);
         }
 
         // Every face wound clockwise seen from outside (D3D's front faces): (b - a) x (c - a) points out.
         let idx: [u16; 36] = [0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3];
         l.cube_vb = immutable_buffer(&dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER);
         l.cube_ib = immutable_buffer(&dev, &idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_FRONT, DepthClipEnable: false.into(), ..Default::default() };
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_FRONT,
+            DepthClipEnable: false.into(),
+            ..Default::default()
+        };
         l.rs = dev.create_rasterizer_state(&rd).ok();
         let rgb = (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE) as u8;
-        l.bs = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: true.into(), SrcBlend: D3D11_BLEND_ONE, DestBlend: D3D11_BLEND_ONE, BlendOp: D3D11_BLEND_OP_ADD,
-            SrcBlendAlpha: D3D11_BLEND_ONE, DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: rgb,
-        });
+        l.bs = crate::particles::blend_state(
+            &dev,
+            D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_ONE,
+                DestBlend: D3D11_BLEND_ONE,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ONE,
+                DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: rgb,
+            },
+        );
     }
 
     pub(crate) fn pass_point_lights(&mut self, scene: &RenderScene) {
@@ -104,7 +121,16 @@ impl Renderer {
 
             let k = |v: f32| v * level * SUN_HDR_SCALE;
             let o = self.camera.origin;
-            out.extend([k(l.colour[0]), k(l.colour[1]), k(l.colour[2]), 1.0, (c[0] - o.x) * u, (c[1] - o.y) * u, (c[2] - o.z) * u, l.radius * u]);
+            out.extend([
+                k(l.colour[0]),
+                k(l.colour[1]),
+                k(l.colour[2]),
+                1.0,
+                (c[0] - o.x) * u,
+                (c[1] - o.y) * u,
+                (c[2] - o.z) * u,
+                l.radius * u,
+            ]);
         }
 
         // The placed effects' lights (fire VFX): their colour already carries its level. The particles are in game units: culled in scene units.
@@ -116,7 +142,16 @@ impl Renderer {
             }
 
             let out = if l.smooth { &mut smooth } else { &mut linear };
-            out.extend([l.colour[0] * SUN_HDR_SCALE, l.colour[1] * SUN_HDR_SCALE, l.colour[2] * SUN_HDR_SCALE, 1.0, c[0], c[1], c[2], l.radius]);
+            out.extend([
+                l.colour[0] * SUN_HDR_SCALE,
+                l.colour[1] * SUN_HDR_SCALE,
+                l.colour[2] * SUN_HDR_SCALE,
+                1.0,
+                c[0],
+                c[1],
+                c[2],
+                l.radius,
+            ]);
         }
 
         let (n_smooth, n_linear) = ((smooth.len() / INSTANCE_FLOATS) as u32, (linear.len() / INSTANCE_FLOATS) as u32);
@@ -153,8 +188,10 @@ impl Renderer {
 
         let skin = self.skin_drawn();
         for (vs, ps, stencil, count, first) in [
-            (SMOOTH_VS, SMOOTH_PS, 1, n_smooth, 0), (LINEAR_VS, LINEAR_PS, 1, n_linear, n_smooth),
-            (SMOOTH_VS, SMOOTH_SKIN_PS, SKIN_STENCIL, n_smooth, 0), (LINEAR_VS, LINEAR_SKIN_PS, SKIN_STENCIL, n_linear, n_smooth),
+            (SMOOTH_VS, SMOOTH_PS, 1, n_smooth, 0),
+            (LINEAR_VS, LINEAR_PS, 1, n_linear, n_smooth),
+            (SMOOTH_VS, SMOOTH_SKIN_PS, SKIN_STENCIL, n_smooth, 0),
+            (LINEAR_VS, LINEAR_SKIN_PS, SKIN_STENCIL, n_linear, n_smooth),
         ] {
             if count == 0 || (stencil == SKIN_STENCIL && !skin) {
                 continue;

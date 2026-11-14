@@ -46,7 +46,9 @@ fn pack_samples_round_trip() {
     }
 
     // The game's tile databases, a mod's own before them.
-    let read = |name: &str| Pack::read_and_merge(&[game.join("data").join(name)], attila, true, false, false).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let read = |name: &str| {
+        Pack::read_and_merge(&[game.join("data").join(name)], attila, true, false, false).unwrap_or_else(|e| panic!("{name}: {e}"))
+    };
     let game_dbs = databases(&mut read("tiles.pack"));
     for (pack_name, dirs) in by_pack {
         let mut pack = read(pack_name);
@@ -54,7 +56,8 @@ fn pack_samples_round_trip() {
         dbs.extend(game_dbs.iter().cloned());
         for dir in dirs {
             let prefix = format!("{dir}/");
-            let names = pack.files().keys().filter(|n| n.starts_with(&prefix) && !n[prefix.len()..].contains('/')).cloned().collect::<Vec<_>>();
+            let names =
+                pack.files().keys().filter(|n| n.starts_with(&prefix) && !n[prefix.len()..].contains('/')).cloned().collect::<Vec<_>>();
             if names.is_empty() {
                 failures.push(format!("{pack_name}:{dir}: not in the pack"));
                 continue;
@@ -108,7 +111,8 @@ fn pack_samples_round_trip() {
 
 /// The tile databases of a pack (`terrain/tiles/*/tile_database.bin`).
 fn databases(pack: &mut Pack) -> Vec<TileDatabase> {
-    let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
+    let names =
+        pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/tile_database.bin")).cloned().collect::<Vec<_>>();
     names
         .iter()
         .filter_map(|n| {

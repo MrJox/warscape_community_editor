@@ -4,6 +4,8 @@
 tile "%TILE%"
 frames 5
 add_polygon "WceWallSpline|roman_fort_straight|20,120;220,120"
+frames 2
+tile_edit selected Procedural true
 frames 400
 tile_wait_jobs
 frames 3

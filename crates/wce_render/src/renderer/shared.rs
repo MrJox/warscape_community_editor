@@ -95,7 +95,6 @@ pub(crate) struct SharedResources {
 pub(crate) const CLOUD_GRID: usize = 6;
 
 impl SharedResources {
-
     /// # Errors
     ///
     /// Fails if the helper shaders don't compile.
@@ -104,7 +103,14 @@ impl SharedResources {
         let vs2 = compile(HELPER_HLSL, "helpers", "fs_vs2", "vs_5_0")?;
         let ps = compile(HELPER_HLSL, "helpers", "display_ps", "ps_5_0")?;
         let ts = compile(HELPER_HLSL, "helpers", "ts_maps_ps", "ps_5_0")?;
-        let cb = D3D11_BUFFER_DESC { ByteWidth: 16, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
+        let cb = D3D11_BUFFER_DESC {
+            ByteWidth: 16,
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+            StructureByteStride: 0,
+        };
         let mut r = Self {
             fs_vs: dev.create_vertex_shader(&vs).ok(),
             fs_vs2: dev.create_vertex_shader(&vs2).ok(),
@@ -137,8 +143,12 @@ impl SharedResources {
 
         // The lens flare / vignette quad (the engine's full-screen quad): POSITION xy in [-1, 1], COLOR, TEXCOORD0 uv.
         let q: [[f32; 10]; 6] = [
-            [-1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0], [-1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
-            [-1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0], [1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            [-1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+            [-1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+            [-1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+            [1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
         ];
 
         r.flare_vb = immutable_buffer(dev, &f32_bytes(q.as_flattened()), D3D11_BIND_VERTEX_BUFFER);

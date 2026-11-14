@@ -1,4 +1,4 @@
-//! Tile > Save tile as... (Phase 6b of docs/plans/tile_ted_parity.md): TEd's Save Tile As, the open tile as a battle tile of another tile
+//! File > Save tile as... (Phase 6b of docs/plans/tile_ted_parity.md): TEd's Save Tile As, the open tile as a battle tile of another tile
 //! set, name and variation in the projects folder (`TileDocument::save_tile_as`).
 
 use wce_editor::editor::Editor;
@@ -33,10 +33,17 @@ impl TileTool {
     }
 
     /// Saves the open tile as `set/name/variation`; the status says how it went.
-    pub(crate) fn save_tile_as(&mut self, e: &mut Editor, id: DocumentId, set: &str, name: &str, variation: &str) -> Result<String, String> {
-        let kit = self.battle_database_root(e);
+    pub(crate) fn save_tile_as(
+        &mut self,
+        e: &mut Editor,
+        id: DocumentId,
+        set: &str,
+        name: &str,
+        variation: &str,
+    ) -> Result<String, String> {
+        let kits = self.battle_database_roots(e);
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile")?;
-        let msg = d.save_tile_as(set, name, variation, kit.as_deref())?;
+        let msg = d.save_tile_as(set, name, variation, &kits)?;
         self.status = msg.clone();
         Ok(msg)
     }
@@ -53,10 +60,19 @@ impl TileTool {
         }
 
         let mut ui = self.save_as.take().unwrap_or_default();
-        gui::text_wrapped("The tile as a battle tile of the projects folder: terrain/tiles/battle/<tile set>/<name>/<variation>, with an entry of its own. A tile of that name and size takes it as one more variation (keeping its other properties); one of another size is refused, as TEd does.");
-        for (label, v) in [("tile set", &mut ui.set), ("name", &mut ui.name), ("variation", &mut ui.variation)] {
+        gui::text_wrapped(
+            "The tile as a battle tile of the projects folder: terrain/tiles/battle/<tile set>/<name>/<variation>, with an entry of its own. A tile of that name and size takes it as one more variation (keeping its other properties); one of another size is refused, as TEd does.",
+        );
+        for (label, v, tip) in [
+            ("tile set", &mut ui.set, "The tile set the tile goes into (a folder under terrain/tiles/battle)."),
+            ("name", &mut ui.name, "The tile's name: its folder in the set (lower case, no spaces)."),
+            ("variation", &mut ui.variation, "The variation's name: its folder in the tile's (lower case, no spaces)."),
+        ] {
             gui::set_next_item_width(240.0);
             gui::input_text(label, None, v, 64, 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
         }
 
         if !ui.error.is_empty() {
@@ -64,7 +80,12 @@ impl TileTool {
         }
 
         let mut keep = true;
-        if gui::button("Save") {
+        let save = gui::button("Save");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the tile there in the projects folder, with its entry.");
+        }
+
+        if save {
             let id = document_id(e);
             match id.map(|id| self.save_tile_as(e, id, &ui.set, &ui.name, &ui.variation)) {
                 Some(Ok(msg)) => {

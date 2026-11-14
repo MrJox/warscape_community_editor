@@ -17,7 +17,18 @@ fn main() {
     let (mut dev, mut ctx) = (None, None);
     // SAFETY: device creation with valid arguments.
     unsafe {
-        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), 0, None, D3D11_SDK_VERSION as u32, Some(&mut dev), None, Some(&mut ctx)).unwrap();
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            0,
+            None,
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .unwrap();
     }
 
     let (dev, ctx) = (dev.unwrap(), ctx.unwrap());

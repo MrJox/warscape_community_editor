@@ -10,6 +10,7 @@ pub mod grass;
 pub mod height_alpha;
 pub mod msvc_sort;
 pub mod params;
+pub mod static_cover;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -50,6 +51,13 @@ fn param_kits(project: &TileProject) -> impl Iterator<Item = PathBuf> + '_ {
     project.raw_root.as_ref().and_then(|raw| raw.parent()).map(Path::to_path_buf).into_iter().chain(project.game_kit.clone())
 }
 
+/// The kit (its folder) whose vegetation parameters a tile without its own uses (`TileProject::game_kit`): the first of `roots` (`raw_data`
+/// folders, `wce_tile::sources::kit_raw_roots`: the projects' kit layout, then every Assembly Kit in the settings' order) that has them. The
+/// packs have none (the exported tiles carry their tree lists).
+pub fn params_kit(roots: &[PathBuf]) -> Option<PathBuf> {
+    roots.iter().filter_map(|raw| raw.parent()).find(|kit| kit_params_dir(kit).is_some()).map(Path::to_path_buf)
+}
+
 /// The Assembly Kit's `max_grass.xml` for a tile (BOB names it `<raw>/terrain/...`; the kit has it in working_data).
 pub fn grass_params_path(project: &TileProject) -> Option<PathBuf> {
     param_kits(project)
@@ -59,6 +67,11 @@ pub fn grass_params_path(project: &TileProject) -> Option<PathBuf> {
 
 /// The `VegetationExclusionPolygonInstance` outlines in the generator's frame, which is tile.ted's scene (x, z); hidden ones too.
 pub fn exclusions(scene: &TedScene) -> Vec<Vec<(f32, f32)>> {
+    exclusion_outlines(scene).into_iter().map(|(_, p)| p).collect()
+}
+
+/// [`exclusions`] with their elements.
+pub fn exclusion_outlines(scene: &TedScene) -> Vec<(usize, Vec<(f32, f32)>)> {
     let doc = scene.doc();
     let mut out = vec![];
     for (elem, e) in doc.elements().iter().enumerate() {
@@ -77,7 +90,7 @@ pub fn exclusions(scene: &TedScene) -> Vec<Vec<(f32, f32)>> {
             })
             .collect();
         if points.len() >= 3 {
-            out.push(points);
+            out.push((elem, points));
         }
     }
 
@@ -133,7 +146,9 @@ fn blending_links(entry: &wce_formats::tile_entry::TileEntry, settings: Option<&
         return vec![];
     }
 
-    let Some(doc) = settings.and_then(|p| std::fs::read(p).ok()).and_then(|b| wce_formats::xml_doc::XmlDoc::parse(b).ok()) else { return vec![] };
+    let Some(doc) = settings.and_then(|p| std::fs::read(p).ok()).and_then(|b| wce_formats::xml_doc::XmlDoc::parse(b).ok()) else {
+        return vec![];
+    };
     let linking: HashSet<String> = doc
         .elements()
         .iter()
@@ -209,7 +224,13 @@ pub fn tile_inputs_from(
     // BOB's image conversion multiplies by 1 / 65535 (dividing is an ulp off in places).
     let heights = height.iter().map(|&h| (f32::from(h) * (1.0 / 65535.0)) * scale + min).collect();
     let cells = cells(entry.width(), entry.height(), &entry.mask());
-    let height_alpha = height_alpha::HeightAlpha::build(entry.width(), entry.height(), variation.raw_data_tri_density, &cells, &blending_links(entry, settings));
+    let height_alpha = height_alpha::HeightAlpha::build(
+        entry.width(),
+        entry.height(),
+        variation.raw_data_tri_density,
+        &cells,
+        &blending_links(entry, settings),
+    );
     let tg = entry.texture_group();
     Ok(TileInputs {
         heights,
@@ -230,13 +251,26 @@ pub fn tile_inputs_from(
 }
 
 /// The generated trees of a category's tree list (no static trees), in BOB's order.
-pub fn generated_trees(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, model_exists: &dyn Fn(&str) -> bool) -> Vec<ListTree> {
+pub fn generated_trees(
+    inputs: &TileInputs,
+    params: &GenerationParams,
+    category: usize,
+    seeds: Seeds,
+    model_exists: &dyn Fn(&str) -> bool,
+) -> Vec<ListTree> {
     tree_list(inputs, params, category, seeds, &[], model_exists)
 }
 
 /// A category's tree list as BOB writes it: the generated trees and the static ones (`statics`, from [`static_trees`]) converted for the
 /// category, in the list's order.
-pub fn tree_list(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, statics: &[StaticTree], model_exists: &dyn Fn(&str) -> bool) -> Vec<ListTree> {
+pub fn tree_list(
+    inputs: &TileInputs,
+    params: &GenerationParams,
+    category: usize,
+    seeds: Seeds,
+    statics: &[StaticTree],
+    model_exists: &dyn Fn(&str) -> bool,
+) -> Vec<ListTree> {
     let density = params.densities.get(category).map_or(0.0, |d| d.trees);
     let name = params.categories.get(category).map(String::as_str).unwrap_or_default();
     let statics: Vec<Chosen> = statics.iter().map(|s| static_chosen(params, name, s, model_exists)).collect();
@@ -248,7 +282,13 @@ pub fn tree_list(inputs: &TileInputs, params: &GenerationParams, category: usize
 /// tree generator: BOB runs it twice with the same category, mask, seed and density, which give the same map (the generator depends on
 /// nothing else), and the tree list's static trees are added to a copy of it. Each `None` when not asked for.
 pub fn trees_and_props(
-    inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, statics: &[StaticTree], model_exists: &dyn Fn(&str) -> bool, trees: bool,
+    inputs: &TileInputs,
+    params: &GenerationParams,
+    category: usize,
+    seeds: Seeds,
+    statics: &[StaticTree],
+    model_exists: &dyn Fn(&str) -> bool,
+    trees: bool,
     props: bool,
 ) -> (Option<Vec<ListTree>>, Option<Vec<generate::ListProp>>) {
     if !trees && !props {
@@ -290,7 +330,13 @@ pub fn prepare_candidates(inputs: &TileInputs, params: &GenerationParams, seeds:
 }
 
 /// The decal generator's props of a category (the second part of [`generated_props`]), grouped with the tree generator's `props` by key.
-pub fn with_decals(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds, props: Vec<generate::ListProp>) -> Vec<generate::ListProp> {
+pub fn with_decals(
+    inputs: &TileInputs,
+    params: &GenerationParams,
+    category: usize,
+    seeds: Seeds,
+    props: Vec<generate::ListProp>,
+) -> Vec<generate::ListProp> {
     let d = params.densities.get(category).copied().unwrap_or_default();
     let decals = generate::to_decal_list(inputs, &generate::generate(params, inputs, category, params::DECAL, seeds.decals, d.trees));
     by_key(props.into_iter().chain(decals), |p| p.key.clone())
@@ -400,7 +446,11 @@ fn static_chosen(params: &GenerationParams, category: &str, s: &StaticTree, mode
     }
 
     let shrub = format!("shrubs\\{species}\\{variant}");
-    let model = if model_exists(&format!("battleterrain/vegetation/{shrub}.rigid_model_v2")) { shrub } else { format!("trees\\{species}\\{variant}") };
+    let model = if model_exists(&format!("battleterrain/vegetation/{shrub}.rigid_model_v2")) {
+        shrub
+    } else {
+        format!("trees\\{species}\\{variant}")
+    };
     Chosen {
         model,
         x: s.x,
@@ -455,7 +505,8 @@ pub fn static_tree_list(inputs: &TileInputs, statics: &[StaticTree], model_exist
 /// (`max_trees_per_metre_squared`, not `max_decals`), as BOB does.
 pub fn generated_props(inputs: &TileInputs, params: &GenerationParams, category: usize, seeds: Seeds) -> Vec<generate::ListProp> {
     let d = params.densities.get(category).copied().unwrap_or_default();
-    let props = generate::to_prop_list(inputs, &generate::generate(params, inputs, category, params::TREE | params::PROP, seeds.trees, d.trees));
+    let props =
+        generate::to_prop_list(inputs, &generate::generate(params, inputs, category, params::TREE | params::PROP, seeds.trees, d.trees));
     let decals = generate::to_decal_list(inputs, &generate::generate(params, inputs, category, params::DECAL, seeds.decals, d.trees));
     by_key(props.into_iter().chain(decals), |p| p.key.clone())
 }
@@ -490,9 +541,11 @@ mod tests {
 
     #[test]
     fn a_tree_outside_every_exclusion_polygon_is_left_out() {
-        let tile = |polygon: &str| format!(
-            "<project version=\"16\">\n    <scene>\n        <SCENE_GRAPH name=\"root\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n            <children>\n{polygon}                <VEGETATION_INSTANCE key=\"oak.oak_a\" name=\"in\" position=\"vector(10,0,10)\" orientation=\"euler(0,0,0)\"/>\n                <VEGETATION_INSTANCE key=\"oak.oak_a\" name=\"out\" position=\"vector(100,0,100)\" orientation=\"euler(0,0,0)\"/>\n            </children>\n        </SCENE_GRAPH>\n    </scene>\n</project>\n"
-        );
+        let tile = |polygon: &str| {
+            format!(
+                "<project version=\"16\">\n    <scene>\n        <SCENE_GRAPH name=\"root\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n            <children>\n{polygon}                <VEGETATION_INSTANCE key=\"oak.oak_a\" name=\"in\" position=\"vector(10,0,10)\" orientation=\"euler(0,0,0)\"/>\n                <VEGETATION_INSTANCE key=\"oak.oak_a\" name=\"out\" position=\"vector(100,0,100)\" orientation=\"euler(0,0,0)\"/>\n            </children>\n        </SCENE_GRAPH>\n    </scene>\n</project>\n"
+            )
+        };
         let polygon = "                <VegetationExclusionPolygonInstance name=\"p\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n                    <points>\n                        <point position=\"0,0,0\"/>\n                        <point position=\"20,0,0\"/>\n                        <point position=\"20,0,20\"/>\n                        <point position=\"0,0,20\"/>\n                    </points>\n                </VegetationExclusionPolygonInstance>\n";
         let scene = TedScene::parse(tile(polygon).into_bytes()).unwrap();
         let out = trees_outside_exclusions(&scene);

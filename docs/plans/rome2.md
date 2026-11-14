@@ -16,7 +16,14 @@ Status legend: **done**, **partial**, **todo**.
   the campaign battle map, the default environment, where the vanilla packs come from (Attila's manifest; a list for Rome 2), and
   `GameFeatures` (`kit_tiles`), and `unsupported_tools`: the ids of built tools the game hides (the switcher, Ctrl+1.., the files they
   open, their settings pages and the `tool` command skip them; a hidden active tool gives way to the first shown one). Empty for both games. `GameProfile::ALL`, `by_key`, `from_env` (`$WCE_GAME_KEY` for the examples and gates).
-- The pack order puts the patch packs (header type 2) before the release ones; an empty file in a pack removes the file below it.
+- The pack order puts the patch packs (header type 2) before the release ones; an empty file in a pack removes the file below it. Rome 2's
+  list is taken in name order (ASCII, case aside) inside each type, the first winning, as the engine loads them: `models3_rome2.pack` has the
+  soldiers' parts (`man/tunics/e3_tunic` ...) that `models_rome2.pack` empties, and in the list's own order they were gone (2026-11-12).
+- The references (2026-11-12): Rome 2 has no `unit_variants_ships`; a naval unit's ship is the definition named after its `ship_dbs.model`
+  (`variantmeshdefinitions/pel_three.variantmeshdefinition`; all 49 models have one), so `ref_ship` lists its 697 naval units. Its
+  `weightedcommon` vertex shaders sample the bone palette (`s_animation_map`, a line per palette, `1 / width` and `1 / height` in
+  `variant_animation_size`; `renderer/skinned.rs`): bound as Attila's, the skinned meshes collapsed and the units showed their shields and
+  weapons only.
 - Settings: `game` picks the profile (`Settings::game_profile`); File > Game and the Settings window's Game page switch it live
   (`Editor::switch_game`: the documents close, asking about unsaved ones; `Tool::game_changed`; the packs and the renderer are made
   again; a game not set up opens the first-run dialog, which has the game's combo).

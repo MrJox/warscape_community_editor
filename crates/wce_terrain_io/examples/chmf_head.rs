@@ -4,7 +4,18 @@
 use wce_formats::chmf::ChmfFile;
 
 fn head(f: &ChmfFile) {
-    println!("v{} {} x {} cells {} x {} min {} max {} spacing {} regions {}", f.version, f.width, f.height, f.cells_x, f.cells_y, f.min, f.max, f.spacing, f.regions.len());
+    println!(
+        "v{} {} x {} cells {} x {} min {} max {} spacing {} regions {}",
+        f.version,
+        f.width,
+        f.height,
+        f.cells_x,
+        f.cells_y,
+        f.min,
+        f.max,
+        f.spacing,
+        f.regions.len()
+    );
     for r in f.regions.iter().take(3) {
         println!("  rect {:?} tag {:?} data {}", r.rect, r.tag, r.data.len());
     }
@@ -25,12 +36,28 @@ fn main() {
         }
 
         let (sx, sy) = (f.region_samples(i).expect("ours"), g.region_samples(i).expect("theirs"));
-        if sx == sy { encoding += 1 } else { samples += 1 }
+        if sx == sy {
+            encoding += 1
+        } else {
+            samples += 1
+        }
         if shown < 3 {
             shown += 1;
             let first = sx.2.iter().zip(&sy.2).position(|(p, q)| p != q);
-            println!("region {i}: rects {:?} / {:?} tags {:?} / {:?} sizes {} x {} / {} x {} data {} / {}; first differing sample {first:?} {:?}",
-                x.rect, y.rect, x.tag, y.tag, sx.0, sx.1, sy.0, sy.1, x.data.len(), y.data.len(), first.map(|k| (sx.2[k], sy.2[k])));
+            println!(
+                "region {i}: rects {:?} / {:?} tags {:?} / {:?} sizes {} x {} / {} x {} data {} / {}; first differing sample {first:?} {:?}",
+                x.rect,
+                y.rect,
+                x.tag,
+                y.tag,
+                sx.0,
+                sx.1,
+                sy.0,
+                sy.1,
+                x.data.len(),
+                y.data.len(),
+                first.map(|k| (sx.2[k], sy.2[k]))
+            );
         }
     }
 

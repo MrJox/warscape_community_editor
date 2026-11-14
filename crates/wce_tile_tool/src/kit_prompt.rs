@@ -60,6 +60,10 @@ impl TileTool {
             if gui::button(&format!("{}##kit{i}", kit.display())) {
                 chosen = Some(raw.clone());
             }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves into this Assembly Kit's raw_data.");
+            }
         }
 
         gui::separator();

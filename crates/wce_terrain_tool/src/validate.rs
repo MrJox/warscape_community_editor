@@ -51,20 +51,30 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
     let mut out = vec![];
     let db = &d.db;
     let Some(m) = d.model() else {
-        out.push(Finding { severity: Severity::Warning, text: "a map of the game's packs: only a kit map is checked".to_owned(), cell: None });
+        out.push(Finding {
+            severity: Severity::Warning,
+            text: "a map of the game's packs: only a kit map is checked".to_owned(),
+            cell: None,
+        });
         return out;
     };
 
     // Colours that name nothing: the fill leaves those cells empty.
     if let Some(l) = m.layer(&LayerRole::TileMap) {
         let known = |c: [u8; 4]| {
-            c[..3] == [0, 0, 0] || db.sets.iter().any(|s| eq(s.colour, c)) || db.tiles.iter().any(|t| eq(t.colour, c) || t.variations.iter().any(|v| eq(v.colour, c)))
+            c[..3] == [0, 0, 0]
+                || db.sets.iter().any(|s| eq(s.colour, c))
+                || db.tiles.iter().any(|t| eq(t.colour, c) || t.variations.iter().any(|v| eq(v.colour, c)))
         };
 
         for (c, n, at) in unknown_colours(l.get(), known) {
             out.push(Finding {
-                severity: Severity::Error, cell: Some(at),
-                text: format!("tile map: colour {}, {}, {} is no tile set, tile or variation of the database ({n} cells, the first at {}, {})", c[0], c[1], c[2], at.0, at.1),
+                severity: Severity::Error,
+                cell: Some(at),
+                text: format!(
+                    "tile map: colour {}, {}, {} is no tile set, tile or variation of the database ({n} cells, the first at {}, {})",
+                    c[0], c[1], c[2], at.0, at.1
+                ),
             });
         }
     }
@@ -72,8 +82,12 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
     if let Some(l) = m.layer(&LayerRole::Climate) {
         for (c, n, at) in unknown_colours(l.get(), |c| db.climates.iter().any(|k| eq(k.colour, c))) {
             out.push(Finding {
-                severity: Severity::Warning, cell: Some(at),
-                text: format!("climates: colour {}, {}, {} is no climate of the database ({n} cells, the first at {}, {}): its tiles take the first", c[0], c[1], c[2], at.0, at.1),
+                severity: Severity::Warning,
+                cell: Some(at),
+                text: format!(
+                    "climates: colour {}, {}, {} is no climate of the database ({n} cells, the first at {}, {}): its tiles take the first",
+                    c[0], c[1], c[2], at.0, at.1
+                ),
             });
         }
     }
@@ -87,16 +101,28 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
     // Explicit tiles the database does not know, or off the map; lines BOB does not read.
     if let Some(x) = &m.explicit {
         for n in x.get().bad_lines() {
-            out.push(Finding { severity: Severity::Error, cell: None, text: format!("explicit_tiles.txt line {n} is no x,y,tile,rotation (an empty last line too): BOB's Tilemap fails on it") });
+            out.push(Finding {
+                severity: Severity::Error,
+                cell: None,
+                text: format!("explicit_tiles.txt line {n} is no x,y,tile,rotation (an empty last line too): BOB's Tilemap fails on it"),
+            });
         }
 
         for t in x.get().tiles() {
             match crate::explicit_tiles::tile_size(db, &t.path) {
-                None => out.push(Finding { severity: Severity::Error, cell: Some((t.x, t.y)), text: format!("explicit tile {} at {}, {}: not in the tile database (BOB skips it)", t.path, t.x, t.y) }),
+                None => out.push(Finding {
+                    severity: Severity::Error,
+                    cell: Some((t.x, t.y)),
+                    text: format!("explicit tile {} at {}, {}: not in the tile database (BOB skips it)", t.path, t.x, t.y),
+                }),
                 Some(s) => {
                     let r = crate::explicit_tiles::rect(t, s);
                     if r[0] < 0 || r[1] < 0 || r[2] > i64::from(d.placed.width) || r[3] > i64::from(d.placed.height) {
-                        out.push(Finding { severity: Severity::Error, cell: Some((t.x, t.y)), text: format!("explicit tile {} at {}, {}: reaches off the map", t.path, t.x, t.y) });
+                        out.push(Finding {
+                            severity: Severity::Error,
+                            cell: Some((t.x, t.y)),
+                            text: format!("explicit tile {} at {}, {}: reaches off the map", t.path, t.x, t.y),
+                        });
                     }
                 }
             }
@@ -108,7 +134,14 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
         for z in p.with_component("ECDeploymentZone") {
             let under_bca = p.parent_of(z.id).and_then(|b| p.entity(b)).is_some_and(|b| p.component(b, "ECBattleCatchmentArea").is_some());
             if !under_bca {
-                out.push(Finding { severity: Severity::Warning, cell: None, text: format!("deployment zone {} ({:x}) belongs to no battle catchment area: BOB writes no deployment of it", z.name, z.id) });
+                out.push(Finding {
+                    severity: Severity::Warning,
+                    cell: None,
+                    text: format!(
+                        "deployment zone {} ({:x}) belongs to no battle catchment area: BOB writes no deployment of it",
+                        z.name, z.id
+                    ),
+                });
             }
         }
 
@@ -129,7 +162,8 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
 
             if !on {
                 out.push(Finding {
-                    severity: Severity::Warning, cell: Some((cx, cy)),
+                    severity: Severity::Warning,
+                    cell: Some((cx, cy)),
                     text: format!("{} ({t}) at cell {cx}, {cy}: on no settlement or port tile", e.name),
                 });
             }

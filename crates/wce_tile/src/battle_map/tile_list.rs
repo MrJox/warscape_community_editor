@@ -88,7 +88,7 @@ impl Reader<'_> {
     /// A UTF-16 string (u16 characters, then the characters).
     fn wide(&mut self) -> Result<String, String> {
         let n = usize::from(self.u16()?);
-        let units: Vec<u16> = self.take(n * 2)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = self.take(n * 2)?.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         Ok(String::from_utf16_lossy(&units))
     }
 
@@ -99,7 +99,6 @@ impl Reader<'_> {
 }
 
 impl TileList {
-
     /// Structural identity with floating-point payloads compared as stored bits, without serialization or normalization.
     pub fn same_bits(&self, other: &Self) -> bool {
         self.version == other.version
@@ -139,9 +138,7 @@ impl TileList {
         }
 
         let b = &self.tail;
-        let names = b
-            .get(4..8)
-            .ok_or("v9 paired metadata: truncated name count")?;
+        let names = b.get(4..8).ok_or("v9 paired metadata: truncated name count")?;
         let names = u32::from_le_bytes(names.try_into().unwrap());
         // Each name needs at least its u16 length, followed by the u32 row count.
         let minimum = u64::from(names) * 2 + 4;
@@ -150,34 +147,19 @@ impl TileList {
         }
         let mut at: usize = 8;
         for _ in 0..names {
-            let end = at
-                .checked_add(2)
-                .ok_or("v9 paired metadata: name offset overflow")?;
-            let len = b
-                .get(at..end)
-                .ok_or("v9 paired metadata: truncated name length")?;
-            at = end
-                .checked_add(usize::from(u16::from_le_bytes([len[0], len[1]])))
-                .ok_or("v9 paired metadata: name size overflow")?;
+            let end = at.checked_add(2).ok_or("v9 paired metadata: name offset overflow")?;
+            let len = b.get(at..end).ok_or("v9 paired metadata: truncated name length")?;
+            at = end.checked_add(usize::from(u16::from_le_bytes([len[0], len[1]]))).ok_or("v9 paired metadata: name size overflow")?;
             if at > b.len() {
                 return Err("v9 paired metadata: truncated name".into());
             }
         }
-        let end = at
-            .checked_add(4)
-            .ok_or("v9 paired metadata: count offset overflow")?;
-        let count = b
-            .get(at..end)
-            .ok_or("v9 paired metadata: truncated label or row count")?;
+        let end = at.checked_add(4).ok_or("v9 paired metadata: count offset overflow")?;
+        let count = b.get(at..end).ok_or("v9 paired metadata: truncated label or row count")?;
         let count = u32::from_le_bytes([count[0], count[1], count[2], count[3]]);
-        let bytes = usize::try_from(count)
-            .ok()
-            .and_then(|n| n.checked_mul(32))
-            .and_then(|n| end.checked_add(n));
+        let bytes = usize::try_from(count).ok().and_then(|n| n.checked_mul(32)).and_then(|n| end.checked_add(n));
         if bytes != Some(b.len()) {
-            return Err(format!(
-                "v9 paired metadata: {count} rows do not match the payload length"
-            ));
+            return Err(format!("v9 paired metadata: {count} rows do not match the payload length"));
         }
 
         Ok(Some(count))
@@ -195,14 +177,10 @@ impl TileList {
         }
 
         let check = || {
-            let count = self.v9_paired_metadata_count()?.ok_or(
-                "unknown v9 metadata layout; keep the original placements unchanged".to_owned(),
-            )?;
+            let count =
+                self.v9_paired_metadata_count()?.ok_or("unknown v9 metadata layout; keep the original placements unchanged".to_owned())?;
             if count != 0 && usize::try_from(count).ok() != Some(self.placements.len()) {
-                return Err(format!(
-                    "v9 placement count {} differs from paired metadata count {count}",
-                    self.placements.len()
-                ));
+                return Err(format!("v9 placement count {} differs from paired metadata count {count}", self.placements.len()));
             }
 
             if changes_count && count != 0 {
@@ -225,15 +203,10 @@ impl TileList {
         }
 
         if self.version != original.version {
-            return Err(
-                "save/export placements: changing a v9 list's version is unsupported".to_owned(),
-            );
+            return Err("save/export placements: changing a v9 list's version is unsupported".to_owned());
         }
 
-        self.check_placement_edit(
-            "save/export placements",
-            self.placements.len() != original.placements.len(),
-        )?;
+        self.check_placement_edit("save/export placements", self.placements.len() != original.placements.len())?;
         original.check_placement_edit("save/export placements (original)", false)?;
         if self.tail != original.tail {
             return Err("save/export placements: changing opaque v9 paired metadata is unsupported; keep the original metadata".to_owned());
@@ -241,7 +214,6 @@ impl TileList {
 
         Ok(())
     }
-
     /// # Errors
     ///
     /// Fails on a truncated file.
@@ -366,11 +338,20 @@ mod tests {
 
     fn list(version: u32) -> TileList {
         TileList {
-            version, lf_position: [0.5, 0.5], lf_scale: [1.0, 1.0], unknown: [500.0, 1.333], strings: ["a".to_owned(), String::new()],
-            battle_size: [64, 64], battle_centre: [32, 32], origin_offset: [-32.0, -32.0], bounds: [26, 26, 34, 34], is_campaign: false,
+            version,
+            lf_position: [0.5, 0.5],
+            lf_scale: [1.0, 1.0],
+            unknown: [500.0, 1.333],
+            strings: ["a".to_owned(), String::new()],
+            battle_size: [64, 64],
+            battle_centre: [32, 32],
+            origin_offset: [-32.0, -32.0],
+            bounds: [26, 26, 34, 34],
+            is_campaign: false,
             names: vec![r"terrain\tiles\battle\plains\8x8".to_owned()],
             placements: vec![TileListPlacement { name: 0, x: 30, y: 30, flags: 0xb710, climate: 2, lf: [0.0; 2], old: [1, 2, 3] }],
-            rects: vec![[-8, -8, 72, 72]], tail: if version == 9 { vec![9, 9, 9] } else { vec![] },
+            rects: vec![[-8, -8, 72, 72]],
+            tail: if version == 9 { vec![9, 9, 9] } else { vec![] },
         }
     }
 

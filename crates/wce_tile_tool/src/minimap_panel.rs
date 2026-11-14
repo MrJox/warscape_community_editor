@@ -8,9 +8,10 @@
 use std::sync::mpsc;
 
 use wce_editor::editor::Editor;
-use wce_editor_core::camera_controller::CameraMode;
 use wce_editor::gui::{self, Vec2, col32, v2};
 use wce_editor::{icons, theme};
+use wce_editor_core::camera_controller::CameraMode;
+use wce_editor_core::document::Document;
 use wce_foundation::log;
 use wce_scene::render_scene::DocumentId;
 use wce_siege::{EdgeKind, NodeKind, P, ZoneKind};
@@ -37,13 +38,30 @@ const SIEGE_EVERY: f64 = 0.5;
 enum Base {
     Ground(TerrainView),
     Height,
+
+    /// The radar the tile would ship (`wce_tile_editor::radar`, docs/plans/radar.md).
+    Radar,
     None,
 }
 
 /// The bases of the minimap only (after the ground views), with their names and the `minimap` command's words; the ground views' words.
-const OWN_BASES: [(Base, &str, &str); 2] = [(Base::Height, "height", "height"), (Base::None, "none", "none")];
+const OWN_BASES: [(Base, &str, &str); 3] =
+    [(Base::Height, "height", "height"), (Base::Radar, "radar", "radar"), (Base::None, "none", "none")];
+
+/// Seconds between two radars while the tile is edited (it waits for the buttons to be released too).
+const RADAR_EVERY: f64 = 1.0;
+
+/// The radar's file in the tile's folder: the game reads a JPEG by this name (CA's: 512 x 512 baseline RGB), the export carries it.
+pub const RADAR_FILE: &str = "loading_screen_radar.jpg";
+/// JPEG quality of a written radar (CA's 512 x 512 radars are about 190 kB, a high quality).
+const RADAR_JPEG_QUALITY: u8 = 92;
+/// The JPEG comment (COM segment) marking a radar the editor wrote: one without it is hand-made and is only replaced with `force`.
+const RADAR_MARK: &[u8] = b"wce radar generator";
 const VIEW_WORDS: [(TerrainView, &str); 5] = [
-    (TerrainView::Colour, "colour"), (TerrainView::BlendGroups, "groups"), (TerrainView::GroundTypes, "ground"), (TerrainView::Protection, "protection"),
+    (TerrainView::Colour, "colour"),
+    (TerrainView::BlendGroups, "groups"),
+    (TerrainView::GroundTypes, "ground"),
+    (TerrainView::Protection, "protection"),
     (TerrainView::WaterDepth, "water"),
 ];
 
@@ -51,6 +69,7 @@ fn base_name(base: Base) -> &'static str {
     match base {
         Base::Ground(v) => view_name(v),
         Base::Height => "height",
+        Base::Radar => "radar",
         Base::None => "none",
     }
 }
@@ -92,13 +111,13 @@ struct GroundKey {
     view: TerrainView,
     climate: String,
     season: String,
-    maps: (usize, usize, usize),
+    maps: (u64, u64, usize),
 }
 
 fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey {
     let (p, t) = (d.project(), d.tile());
-    let blend = p.blend.as_ref().map_or(0, BlendField::edit_depth);
-    let ground = p.ground.as_ref().map_or(0, GroundTypeField::edit_depth);
+    let blend = p.blend.as_ref().map_or(0, BlendField::top_id);
+    let ground = p.ground.as_ref().map_or(0, GroundTypeField::top_id);
     let water = t.water_depth().map_or(0, |w| std::ptr::from_ref(w) as usize);
     let maps = match view {
         TerrainView::Colour | TerrainView::BlendGroups => (blend, 0, 0),
@@ -108,7 +127,11 @@ fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey
     };
 
     let look = t.terrain_look();
-    let (climate, season) = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) { (look.climate.clone(), look.season.clone()) } else { Default::default() };
+    let (climate, season) = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) {
+        (look.climate.clone(), look.season.clone())
+    } else {
+        Default::default()
+    };
     GroundKey { doc, view, climate, season, maps }
 }
 
@@ -200,7 +223,9 @@ impl GroundPicture {
         match (&self.job, &self.failed, &self.baked) {
             (Some((k, _)), _, _) => format!("baking the {}...", view_name(k.view)),
             (None, Some((k, why)), _) if self.baked.as_ref().is_none_or(|(b, _)| b != k) => format!("no {}: {why}", view_name(k.view)),
-            (None, _, Some((k, _))) if k.view == TerrainView::Colour => format!("{}, {} (the blend's CPU stand-in)", k.climate, season_name(&k.season)),
+            (None, _, Some((k, _))) if k.view == TerrainView::Colour => {
+                format!("{}, {} (the blend's CPU stand-in)", k.climate, season_name(&k.season))
+            }
             (None, _, Some((_, b))) => b.report.clone(),
             _ => String::new(),
         }
@@ -241,6 +266,12 @@ pub struct MinimapUi {
     height_time: f64,
     height_range: (f64, f64),
 
+    /// The radar: its picture, what it was drawn from (the history's version, whether the water depth and the no-go areas were in, how many
+    /// models had their bounds: the water planes' footprints), when.
+    radar: Picture,
+    radar_for: Option<(u64, bool, bool, usize)>,
+    radar_time: f64,
+
     siege: Option<MinimapSiege>,
     siege_for: u64,
     siege_time: f64,
@@ -248,14 +279,40 @@ pub struct MinimapUi {
     /// The middle button is panning from this cursor position.
     pan_from: Option<Vec2>,
     wheel_owned: bool,
+    /// The fit pill's size last frame (it sits in the map's bottom right corner).
+    fit_size: Vec2,
 }
 
 impl Default for MinimapUi {
     fn default() -> Self {
         Self {
-            base: Base::Ground(TerrainView::Colour), show_siege: true, show_zones: true, show_cells: false, show_nogo: false, show_camera: true, zoom: 1.0, centre: None,
-            visible: false, doc: 0, serial: 0, note: String::new(), colour: GroundPicture::default(), ground: GroundPicture::default(), heights: Picture::default(),
-            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false,
+            base: Base::Ground(TerrainView::Colour),
+            show_siege: true,
+            show_zones: true,
+            show_cells: false,
+            show_nogo: false,
+            show_camera: true,
+            zoom: 1.0,
+            centre: None,
+            visible: false,
+            doc: 0,
+            serial: 0,
+            note: String::new(),
+            colour: GroundPicture::default(),
+            ground: GroundPicture::default(),
+            heights: Picture::default(),
+            height_for: None,
+            height_time: -1e9,
+            height_range: (0.0, 0.0),
+            radar: Picture::default(),
+            radar_for: None,
+            radar_time: -1e9,
+            siege: None,
+            siege_for: 0,
+            siege_time: -1e9,
+            pan_from: None,
+            wheel_owned: false,
+            fit_size: v2(0.0, 0.0),
         }
     }
 }
@@ -270,7 +327,10 @@ struct Frame {
 
 impl Frame {
     fn screen(&self, x: f64, z: f64) -> Vec2 {
-        v2((f64::from(self.mid.x) + (x - self.centre[0]) * self.scale) as f32, (f64::from(self.mid.y) - (z - self.centre[1]) * self.scale) as f32)
+        v2(
+            (f64::from(self.mid.x) + (x - self.centre[0]) * self.scale) as f32,
+            (f64::from(self.mid.y) - (z - self.centre[1]) * self.scale) as f32,
+        )
     }
 
     fn world(&self, p: Vec2) -> [f64; 2] {
@@ -310,9 +370,14 @@ impl MinimapUi {
         }
     }
 
-    /// The automatic no-go areas show on it (the tool works them out).
+    /// The automatic no-go areas show on it (the tool works them out); the radar's cliffs are drawn from them too.
     pub fn shows_auto_nogos(&self) -> bool {
-        self.visible && self.show_nogo
+        self.visible && (self.show_nogo || self.base == Base::Radar)
+    }
+
+    /// The radar shows: the tool works out the water depth for its rivers.
+    pub fn wants_radar(&self) -> bool {
+        self.visible && self.base == Base::Radar
     }
 
     /// The ground's colour picture, for the Tile panel's valid cells (its bake starts now when it is not made): the texture and the ground
@@ -343,7 +408,6 @@ impl MinimapUi {
             self.doc = id;
         }
 
-        self.draw_bar();
         self.refresh(e, id);
         if !self.note.is_empty() {
             gui::text_disabled(&self.note);
@@ -364,7 +428,9 @@ impl MinimapUi {
         let area = d.tile().minimap_area();
         let fit = (f64::from(avail.x) / area[2]).min(f64::from(avail.y) / area[3]);
         let mut frame = Frame {
-            mid: v2((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5), centre: self.centre.unwrap_or([area[0] + area[2] * 0.5, area[1] + area[3] * 0.5]), scale: fit * self.zoom,
+            mid: v2((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5),
+            centre: self.centre.unwrap_or([area[0] + area[2] * 0.5, area[1] + area[3] * 0.5]),
+            scale: fit * self.zoom,
         };
 
         // Zoom around the cursor, pan with the middle button.
@@ -400,6 +466,7 @@ impl MinimapUi {
             Base::Ground(TerrainView::Colour) => self.colour.image(e),
             Base::Ground(_) => self.ground.image(e),
             Base::Height => self.heights.image(e),
+            Base::Radar => self.radar.image(e),
             Base::None => None,
         };
 
@@ -439,8 +506,8 @@ impl MinimapUi {
         draw_north(&dl, hi, lo, e.viewport.north);
         dl.pop_clip_rect();
 
-        // The base's chip at the top left, over the map.
-        let hovered = self.draw_chip(lo) && hovered;
+        // The chips over the map: the base's and the overlays' at the top left, fit at the bottom right (the north marker has the top right).
+        let hovered = self.draw_chip(lo) && self.draw_fit(hi) && hovered;
 
         // The left button: the camera goes there.
         if active && gui::is_mouse_down(0) {
@@ -452,25 +519,31 @@ impl MinimapUi {
             let at = frame.world(mouse);
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let h = d.project().height_at(at[0], at[1]);
-            let cell = if self.show_cells { cell_at(d, at).map_or_else(String::new, |(x, y, ok)| format!(", cell ({x}, {y}) {}", if ok { "valid" } else { "not the tile's" })) } else { String::new() };
+            let cell = if self.show_cells {
+                cell_at(d, at)
+                    .map_or_else(String::new, |(x, y, ok)| format!(", cell ({x}, {y}) {}", if ok { "valid" } else { "not the tile's" }))
+            } else {
+                String::new()
+            };
             gui::set_tooltip(&format!("{:.0}, {:.0} m, ground {h:.1} m{cell}\nleft: camera here, wheel: zoom, middle: pan", at[0], at[1]));
         }
 
         hovered
     }
 
-    /// The base's chip and its popup (the ground views, then the minimap's own bases); false while the cursor is over the chip.
+    /// The base's chip and its popup (the ground views, then the minimap's own bases), and the overlays' chip; false while the cursor is
+    /// over the pill.
     fn draw_chip(&mut self, lo: Vec2) -> bool {
         gui::set_cursor_screen_pos(v2(lo.x + 6.0, lo.y + 6.0));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         let mut over = false;
         if gui::begin_pill("##minimapchip") {
-            let tip = format!("Minimap: {}\nClick: the ground views, the heights or nothing", base_name(self.base));
+            let tip = format!("Minimap: {}\nClick: the ground views, the heights, the radar or nothing", base_name(self.base));
             if chip(self.base != Base::Ground(TerrainView::Colour), icons::LAYERS, "minimapbase", &tip) {
                 gui::open_popup("minimapbase");
             }
 
-            over = gui::is_item_hovered();
+            over |= gui::is_item_hovered();
             if begin_chip_popup("minimapbase") {
                 gui::text_disabled("Minimap");
                 let current = match self.base {
@@ -487,8 +560,41 @@ impl MinimapUi {
                     if gui::radio_button(&format!("{name}##minimapbase"), self.base == base) {
                         self.base = base;
                     }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(match base {
+                            Base::Height => "A picture of the ground's heights.",
+                            Base::Radar => "The radar the tile would ship (its radar map in the game).",
+                            _ => "No picture under the overlays.",
+                        });
+                    }
                 }
 
+                gui::end_popup();
+            }
+
+            gui::same_line_touching();
+            let shown = [
+                (self.show_siege, "siege AI"),
+                (self.show_zones, "deployment"),
+                (self.show_cells, "cells"),
+                (self.show_nogo, "no-go"),
+                (self.show_camera, "camera"),
+            ]
+            .into_iter()
+            .filter_map(|(on, name)| on.then_some(name))
+            .collect::<Vec<_>>();
+            let tip = format!(
+                "Overlays: {}\nClick: what is drawn over the map",
+                if shown.is_empty() { "none".to_owned() } else { shown.join(", ") }
+            );
+            if chip(!shown.is_empty(), icons::EYE, "minimapoverlays", &tip) {
+                gui::open_popup("minimapoverlays");
+            }
+
+            over |= gui::is_item_hovered();
+            if begin_chip_popup("minimapoverlays") {
+                self.draw_overlays();
                 gui::end_popup();
             }
         }
@@ -498,29 +604,55 @@ impl MinimapUi {
         !over
     }
 
-    fn draw_bar(&mut self) {
-        gui::checkbox("siege AI", &mut self.show_siege);
-        gui::same_line_or_wrap(gui::checkbox_width("deployment"));
-        gui::checkbox("deployment", &mut self.show_zones);
-        gui::same_line_or_wrap(gui::checkbox_width("cells"));
-        gui::checkbox("cells", &mut self.show_cells);
+    fn draw_overlays(&mut self) {
+        gui::text_disabled("Overlays");
+        gui::checkbox("Siege AI##minimap", &mut self.show_siege);
         if gui::is_item_hovered() {
-            gui::set_tooltip("The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).");
+            gui::set_tooltip("The siege AI's layout: perimeter, nodes and edges, approaches, captures, the forts' pieces.");
         }
 
-        gui::same_line_or_wrap(gui::checkbox_width("no-go"));
-        gui::checkbox("no-go", &mut self.show_nogo);
+        gui::checkbox("Deployment##minimap", &mut self.show_zones);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The deployment zones: the defender's blue, the attacker's red, any other alliance's yellow.");
+        }
+
+        gui::checkbox("Cells##minimap", &mut self.show_cells);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).",
+            );
+        }
+
+        gui::checkbox("No-go##minimap", &mut self.show_nogo);
         if gui::is_item_hovered() {
             gui::set_tooltip(AUTO_NOGO_TIP);
         }
 
-        gui::same_line_or_wrap(gui::checkbox_width("camera"));
-        gui::checkbox("camera", &mut self.show_camera);
-        gui::same_line_or_wrap(gui::button_width("fit"));
-        if gui::small_button("fit") {
-            self.zoom = 1.0;
-            self.centre = None;
+        gui::checkbox("Camera##minimap", &mut self.show_camera);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The viewport's camera: where it is, what it sees and what it looks at.");
         }
+    }
+
+    /// The fit pill at the bottom right of the map (`hi`): the whole tile again; false while the cursor is over it.
+    fn draw_fit(&mut self, hi: Vec2) -> bool {
+        gui::set_cursor_screen_pos(v2(hi.x - self.fit_size.x - 6.0, hi.y - self.fit_size.y - 6.0));
+        gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+        let mut over = false;
+        if gui::begin_pill("##minimapfit") {
+            if chip(false, icons::FOCUS, "minimapfit", "Fit: the whole tile in the panel again (undoes the zoom and the pan)") {
+                self.zoom = 1.0;
+                self.centre = None;
+            }
+
+            over = gui::is_item_hovered();
+        }
+
+        gui::end_child();
+        let (l, h) = gui::item_rect();
+        self.fit_size = v2(h.x - l.x, h.y - l.y);
+        gui::pop_style_color(1);
+        !over
     }
 
     /// Makes what is out of date: the base picture, the siege AI.
@@ -530,6 +662,7 @@ impl MinimapUi {
         match self.base {
             Base::None => {}
             Base::Height => self.refresh_heights(e, id, now),
+            Base::Radar => self.refresh_radar(e, id, now),
             Base::Ground(TerrainView::Colour) => {
                 self.colour.update(e, &mut self.serial, id, TerrainView::Colour);
                 self.note = self.colour.note();
@@ -557,6 +690,74 @@ impl MinimapUi {
                 self.siege_time = now;
             }
         }
+    }
+
+    fn refresh_radar(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let key =
+            (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some(), d.tile().radar_models_resolved());
+        let idle = !(0..3).any(gui::is_mouse_down);
+        if self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY)) {
+            let started = std::time::Instant::now();
+            let (size, rgba, area) = draw_radar(e, id);
+            self.radar.set(e, &mut self.serial, size, size, rgba, area);
+            self.radar_for = Some(key);
+            self.radar_time = now;
+            log::info(format!("radar drawn in {:.2} s ({} models with their bounds)", started.elapsed().as_secs_f64(), key.3));
+        }
+
+        let (water, nogo) = (key.1, key.2);
+        self.note = match (water, nogo) {
+            (true, true) => format!("the radar the tile would ship (`radar_save` writes {RADAR_FILE})"),
+            _ => "radar: working out the rivers and the cliffs...".to_owned(),
+        };
+    }
+
+    /// Writes the open tile's radar to `path` (a PNG when it ends in `.png`, else the game's JPEG; the tile's folder's `RADAR_FILE`
+    /// without one). A JPEG the editor did not write (a hand-made radar, CA's in a decompiled tile) is only replaced with `force`.
+    ///
+    /// # Errors
+    ///
+    /// No tile, a hand-made radar in the way without `force`, or the file does not write.
+    pub fn save_radar(&mut self, e: &mut Editor, path: Option<&str>, force: bool) -> Result<String, String> {
+        let id = document_id(e).ok_or("no tile")?;
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let (water, nogo) = (d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some());
+        let path = path.map_or_else(|| d.project().dir.join(RADAR_FILE), std::path::PathBuf::from);
+        let png = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("png"));
+        if !force
+            && !png
+            && let Ok(old) = std::fs::read(&path)
+            && !radar_is_generated(&old)
+        {
+            return Err(format!("{} is a hand-made radar: `radar_save force` replaces it", path.display()));
+        }
+        let (size, rgba, _) = draw_radar(e, id);
+        // Back to rows from the north.
+        let row = size as usize * 4;
+        let pixels: Vec<u8> = rgba.chunks(row).rev().flatten().copied().collect();
+        let bytes = if png {
+            let png = wce_formats::png_file::PngFile {
+                width: size,
+                height: size,
+                bit_depth: 8,
+                color_type: 6,
+                pixels,
+                pixels_edited: true,
+                ..Default::default()
+            };
+            png.encode().map_err(|e| e.to_string())?
+        } else {
+            radar_jpeg(size, &pixels)?
+        };
+        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let missing = match (water, nogo) {
+            (true, true) => String::new(),
+            (false, false) => " (without rivers and cliffs: show the radar on the minimap first)".to_owned(),
+            (false, true) => " (without rivers: show the radar on the minimap first)".to_owned(),
+            (true, false) => " (without cliffs: show the radar on the minimap first)".to_owned(),
+        };
+        Ok(format!("radar written to {}{missing}", path.display()))
     }
 
     fn refresh_heights(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
@@ -629,8 +830,15 @@ impl MinimapUi {
         });
 
         Ok(format!(
-            "minimap: {}, siege {}, deployment {}, cells {}, no-go {}, camera {}, zoom {:.2}{siege}{}", base_name(self.base), self.show_siege, self.show_zones,
-            self.show_cells, self.show_nogo, self.show_camera, self.zoom, if self.note.is_empty() { String::new() } else { format!(" ({})", self.note) },
+            "minimap: {}, siege {}, deployment {}, cells {}, no-go {}, camera {}, zoom {:.2}{siege}{}",
+            base_name(self.base),
+            self.show_siege,
+            self.show_zones,
+            self.show_cells,
+            self.show_nogo,
+            self.show_camera,
+            self.zoom,
+            if self.note.is_empty() { String::new() } else { format!(" ({})", self.note) },
         ))
     }
 
@@ -639,11 +847,33 @@ impl MinimapUi {
         self.colour.clear(e);
         self.ground.clear(e);
         self.heights.clear(e);
+        self.radar.clear(e);
         *self = Self {
-            base: self.base, show_siege: self.show_siege, show_zones: self.show_zones, show_cells: self.show_cells, show_nogo: self.show_nogo, show_camera: self.show_camera,
-            visible: self.visible, serial: self.serial, wheel_owned: self.wheel_owned, ..Self::default()
+            base: self.base,
+            show_siege: self.show_siege,
+            show_zones: self.show_zones,
+            show_cells: self.show_cells,
+            show_nogo: self.show_nogo,
+            show_camera: self.show_camera,
+            visible: self.visible,
+            serial: self.serial,
+            wheel_owned: self.wheel_owned,
+            ..Self::default()
         };
     }
+}
+
+/// The radar of a tile as it is (with the water depth and the no-go areas the tool has worked out): its side, its pixels with rows along +z
+/// (as the minimap's pictures), the ground it covers.
+fn draw_radar(e: &mut Editor, id: DocumentId) -> (u32, Vec<u8>, [f64; 4]) {
+    wce_foundation::wce_prof!("tile.minimap.radar");
+    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+    let water = d.tile().water_depth().cloned();
+    let input = d.tile_mut().radar_input(water.as_ref());
+    let img = wce_tile_editor::radar::render(&input, &wce_tile_editor::radar::RadarStyle::default());
+    let row = img.size as usize * 4;
+    let rgba = img.rgba.chunks(row).rev().flatten().copied().collect();
+    (img.size, rgba, input.area)
 }
 
 /// The entry's cells (x, rows from the +z edge, as the entry counts them) and whether each is valid (its mask; all without one).
@@ -771,9 +1001,12 @@ fn draw_siege(dl: &gui::DrawList, f: &Frame, s: &MinimapSiege) {
         fill(p, col32(200, 200, 200, 110));
     }
 
-    for w in &input.walls {
-        for r in &w.footprint {
-            fill(r, if w.gate { col32(170, 51, 204, 220) } else { col32(110, 110, 110, 220) });
+    // The walls: their footprints' triangles, cut once (`MinimapSiege::wall_fills`).
+    for (gate, tris) in &s.wall_fills {
+        let col = if *gate { col32(170, 51, 204, 220) } else { col32(110, 110, 110, 220) };
+        let at = |q: [f32; 2]| f.screen(f64::from(q[0]) / u, f64::from(q[1]) / u);
+        for t in tris {
+            dl.triangle_filled(at(t[0]), at(t[1]), at(t[2]), col);
         }
     }
 
@@ -898,4 +1131,66 @@ fn draw_north(dl: &gui::DrawList, hi: Vec2, lo: Vec2, north: [f32; 2]) {
     dl.circle_filled(c, 14.0, col32(0, 0, 0, 110));
     dl.triangle_filled(tip, v2(tail.x + px, tail.y + py), v2(tail.x - px, tail.y - py), col32(235, 70, 60, 255));
     dl.text(v2(tail.x - dx * 6.0 - 4.0, tail.y - dy * 6.0 - 7.0), col32(255, 255, 255, 230), "N");
+}
+
+/// The radar (rows from the north) as the game's JPEG: RGB (the alpha dropped), baseline, `RADAR_JPEG_QUALITY`, with `RADAR_MARK` as
+/// a comment after the JFIF header (APP0 has to follow SOI).
+///
+/// # Errors
+///
+/// The encoder fails.
+pub fn radar_jpeg(size: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let mut jpeg = vec![];
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, RADAR_JPEG_QUALITY)
+        .encode(&rgb, size, size, image::ExtendedColorType::Rgb8)
+        .map_err(|e| e.to_string())?;
+    let len = u16::try_from(RADAR_MARK.len() + 2).expect("a short mark");
+    let mut com = vec![0xFF, 0xFE];
+    com.extend_from_slice(&len.to_be_bytes());
+    com.extend_from_slice(RADAR_MARK);
+    let at = if jpeg[2..4] == [0xFF, 0xE0] { 4 + usize::from(u16::from_be_bytes([jpeg[4], jpeg[5]])) } else { 2 };
+    jpeg.splice(at..at, com);
+    Ok(jpeg)
+}
+
+/// Whether a radar file is one the editor wrote (`RADAR_MARK` in a COM segment before the image data).
+fn radar_is_generated(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return false;
+    }
+    let mut at = 2;
+    while at + 4 <= bytes.len() && bytes[at] == 0xFF {
+        let marker = bytes[at + 1];
+        let len = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
+        if marker == 0xDA || len < 2 || at + 2 + len > bytes.len() {
+            return false;
+        }
+        if marker == 0xFE && &bytes[at + 4..at + 2 + len] == RADAR_MARK {
+            return true;
+        }
+        at += 2 + len;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radar_jpeg_decodes_and_is_marked() {
+        let size = 16;
+        let rgba: Vec<u8> = (0..size * size).flat_map(|i| [(i % 256) as u8, 120, 80, 255]).collect();
+        let jpeg = radar_jpeg(size, &rgba).unwrap();
+        assert!(radar_is_generated(&jpeg));
+        assert_eq!(&jpeg[..4], &[0xFF, 0xD8, 0xFF, 0xE0], "JFIF's APP0 right after SOI");
+        let img = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg).unwrap();
+        assert_eq!((img.width(), img.height(), img.color()), (size, size, image::ColorType::Rgb8));
+        // A JPEG without the mark (a hand-made radar) is not ours, nor is anything that is not a JPEG.
+        let mut plain = vec![];
+        image::codecs::jpeg::JpegEncoder::new(&mut plain).encode(&[0; 3 * 4], 2, 2, image::ExtendedColorType::Rgb8).unwrap();
+        assert!(!radar_is_generated(&plain));
+        assert!(!radar_is_generated(b"\x89PNG"));
+    }
 }

@@ -71,6 +71,7 @@ run variation_check   ex wce_weather variation_check
 run rmv2_check        ex wce_formats rmv2_check "$CACHE"
 run vfx_check_rain    ex wce_assets vfx_check "rain heavy"
 run unit_formats      ex wce_assets unit_formats_check "$GAME"
+run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)
 run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
 [ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
 

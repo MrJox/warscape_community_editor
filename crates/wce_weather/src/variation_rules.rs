@@ -106,9 +106,13 @@ pub fn engine_reason(category: &str, value: Option<&str>) -> String {
         Some(DEFAULT_MAP) if category == "map" => format!("The game asks again with '{DEFAULT_MAP}' when nothing matched a battle's map."),
         Some(DEFAULT_CLIMATE) if category == "climate" => format!("The game sends '{DEFAULT_CLIMATE}' for a battle without a climate."),
         Some(DEFAULT_CLIMATE_CHANGE) if category == "climate_change_index" => {
-            format!("The game sends '{DEFAULT_CLIMATE_CHANGE}' for battles outside a campaign and in campaigns without climate change phases.")
+            format!(
+                "The game sends '{DEFAULT_CLIMATE_CHANGE}' for battles outside a campaign and in campaigns without climate change phases."
+            )
         }
-        Some(value) => format!("The game sends '{value}' as the {category} of a battle; without it those battles get no weather from the database."),
+        Some(value) => {
+            format!("The game sends '{value}' as the {category} of a battle; without it those battles get no weather from the database.")
+        }
         None => format!("The game sends a {category} value in every battle; without its values no battle gets weather from the database."),
     }
 }
@@ -163,11 +167,19 @@ impl GameFacts {
         }
 
         let schema = wce_foundation::settings::rpfm_schema_path(vfs.profile());
-        let phases = schema.ok_or_else(|| format!("no rpfm schema ({} in the DB schemas folder or rpfm's; Help > Update Manager downloads it)", vfs.profile().rpfm_schema)).and_then(|path| {
-            let schema = Schema::load(&path, None).map_err(|e| format!("{}: {e}", path.display()))?;
-            let tables = vfs.list(&format!("db/{CLIMATE_PHASES_TABLE}/"), "").into_iter().filter_map(|p| vfs.read(p).ok()).collect::<Vec<_>>();
-            climate_phases(&tables, &schema)
-        });
+        let phases = schema
+            .ok_or_else(|| {
+                format!(
+                    "no rpfm schema ({} in the DB schemas folder or rpfm's; Help > Update Manager downloads it)",
+                    vfs.profile().rpfm_schema
+                )
+            })
+            .and_then(|path| {
+                let schema = Schema::load(&path, None).map_err(|e| format!("{}: {e}", path.display()))?;
+                let tables =
+                    vfs.list(&format!("db/{CLIMATE_PHASES_TABLE}/"), "").into_iter().filter_map(|p| vfs.read(p).ok()).collect::<Vec<_>>();
+                climate_phases(&tables, &schema)
+            });
         match phases {
             Ok(phases) => facts.climate_phases = Some(phases),
             Err(e) => facts.notes.push(format!("The climate change phases were not read ({e}): climate_change_index is not checked.")),
@@ -202,12 +214,18 @@ fn finding(severity: Severity, text: String) -> Finding {
 /// lack are never asked for.
 fn check_data(out: &mut Vec<Finding>, db: &AssetVariationDb, category: &str, default: &str, known: &[String], what: &str, source: &str) {
     for value in known.iter().filter(|v| db.category_of(v).is_none()) {
-        out.push(finding(Severity::Error, format!("{what} '{value}' of {source} is in no list: its battles get no weather from the database.")));
+        out.push(finding(
+            Severity::Error,
+            format!("{what} '{value}' of {source} is in no list: its battles get no weather from the database."),
+        ));
     }
 
     for value in db.category(category).map(|c| c.values().as_slice()).unwrap_or_default() {
         if value != default && !known.contains(value) {
-            out.push(finding(Severity::Warning, format!("{source} has no {what} '{value}': the game never asks for it until one is added there.")));
+            out.push(finding(
+                Severity::Warning,
+                format!("{source} has no {what} '{value}': the game never asks for it until one is added there."),
+            ));
         }
     }
 }
@@ -229,9 +247,16 @@ pub fn check(db: &AssetVariationDb, facts: &GameFacts) -> Vec<Finding> {
             Values::Fixed(values) => {
                 for value in values {
                     match db.category_of(value) {
-                        None => out.push(finding(Severity::Error, format!("'{value}' is in no list: battles with {} '{value}' get no weather from the database.", engine.name))),
+                        None => out.push(finding(
+                            Severity::Error,
+                            format!("'{value}' is in no list: battles with {} '{value}' get no weather from the database.", engine.name),
+                        )),
                         Some(other) if other != engine.name => out.push(finding(
-                            Severity::Info, format!("'{value}' is under '{other}', not '{}': the game finds it anyway (it looks values up by name).", engine.name),
+                            Severity::Info,
+                            format!(
+                                "'{value}' is under '{other}', not '{}': the game finds it anyway (it looks values up by name).",
+                                engine.name
+                            ),
                         )),
                         Some(_) => {}
                     }
@@ -239,7 +264,10 @@ pub fn check(db: &AssetVariationDb, facts: &GameFacts) -> Vec<Finding> {
 
                 if let Some(category) = db.category(engine.name) {
                     for value in category.values().iter().filter(|v| !values.contains(&v.as_str())) {
-                        out.push(finding(Severity::Info, format!("The game never sends '{value}' ({}): removing it frees a bit.", engine.name)));
+                        out.push(finding(
+                            Severity::Info,
+                            format!("The game never sends '{value}' ({}): removing it frees a bit.", engine.name),
+                        ));
                     }
                 }
             }
@@ -255,11 +283,15 @@ pub fn check(db: &AssetVariationDb, facts: &GameFacts) -> Vec<Finding> {
                     out.push(finding(Severity::Error, format!("'{default}' is in no list: {}", engine_reason(engine.name, Some(default)))));
                 }
 
-                if engine.values == Values::Climates && let Some(climates) = &facts.climates {
+                if engine.values == Values::Climates
+                    && let Some(climates) = &facts.climates
+                {
                     check_data(&mut out, db, engine.name, default, climates, "climate", "the battle tile database");
                 }
 
-                if engine.values == Values::Phases && let Some(phases) = &facts.climate_phases {
+                if engine.values == Values::Phases
+                    && let Some(phases) = &facts.climate_phases
+                {
                     let known = phases.iter().map(|p| format!("cc{p}")).collect::<Vec<_>>();
                     check_data(&mut out, db, engine.name, default, &known, "climate change phase", CLIMATE_PHASES_TABLE);
                 }
@@ -268,7 +300,10 @@ pub fn check(db: &AssetVariationDb, facts: &GameFacts) -> Vec<Finding> {
     }
 
     for category in db.categories().iter().filter(|c| engine_category(c.name()).is_none()) {
-        out.push(finding(Severity::Info, format!("The game never asks for '{}': its {} value(s) only take bits.", category.name(), category.values().len())));
+        out.push(finding(
+            Severity::Info,
+            format!("The game never asks for '{}': its {} value(s) only take bits.", category.name(), category.values().len()),
+        ));
     }
 
     out.extend(facts.notes.iter().map(|n| finding(Severity::Info, n.clone())));

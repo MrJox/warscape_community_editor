@@ -33,7 +33,8 @@ fn tiles(dir: &Path, out: &mut Vec<PathBuf>) {
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mods = args.iter().position(|a| a == "--mods").and_then(|i| args.get(i + 1)).cloned();
-    let positional: Vec<&String> = args.iter().enumerate().filter(|(i, a)| *a != "--mods" && (*i == 0 || args[i - 1] != "--mods")).map(|(_, a)| a).collect();
+    let positional: Vec<&String> =
+        args.iter().enumerate().filter(|(i, a)| *a != "--mods" && (*i == 0 || args[i - 1] != "--mods")).map(|(_, a)| a).collect();
     let [game, out, dirs @ ..] = positional.as_slice() else {
         return Err("usage: siege_check <game folder> <out folder> <tile folder>... [--mods a.pack;b.pack]".to_owned());
     };
@@ -74,8 +75,14 @@ fn main() -> Result<(), String> {
         ca_bad += usize::from(!rc.problems.is_empty() || !cc.is_empty());
         println!(
             "{name}: input {} fort pieces ({} gates), {} obstacles, {} no-go, {} captures{} in {:.1} s; generated in {:.1} s",
-            input.walls.len(), input.walls.iter().filter(|w| w.gate).count(), input.obstacles.len(), input.nogo.len(), input.captures.len(),
-            if input.sea.is_some() { ", sea" } else { "" }, (t1 - t0).as_secs_f64(), (t2 - t1).as_secs_f64(),
+            input.walls.len(),
+            input.walls.iter().filter(|w| w.gate).count(),
+            input.obstacles.len(),
+            input.nogo.len(),
+            input.captures.len(),
+            if input.sea.is_some() { ", sea" } else { "" },
+            (t1 - t0).as_secs_f64(),
+            (t2 - t1).as_secs_f64(),
         );
         println!("  ours: {}", ours.summary());
         println!("  CA:   {}", ca.summary());
@@ -109,9 +116,14 @@ fn main() -> Result<(), String> {
         if ours.perimeter.len() >= 3 {
             let made = doc.generate_siege_ai()?;
             let back = doc.tile().current_siege_layout();
-            let same = back.nodes.len() == made.nodes.len() && back.edges.len() == made.edges.len() && back.approaches.len() == made.approaches.len()
-                && back.defender.polygons.len() == made.defender.polygons.len() && back.attacker.polygons.len() == made.attacker.polygons.len()
-                && back.nodes.iter().zip(&made.nodes).all(|(a, b)| a.kind == b.kind && a.bbox.iter().zip(&b.bbox).all(|(p, q)| (p[0] - q[0]).abs() < 0.01 && (p[1] - q[1]).abs() < 0.01));
+            let same = back.nodes.len() == made.nodes.len()
+                && back.edges.len() == made.edges.len()
+                && back.approaches.len() == made.approaches.len()
+                && back.defender.polygons.len() == made.defender.polygons.len()
+                && back.attacker.polygons.len() == made.attacker.polygons.len()
+                && back.nodes.iter().zip(&made.nodes).all(|(a, b)| {
+                    a.kind == b.kind && a.bbox.iter().zip(&b.bbox).all(|(p, q)| (p[0] - q[0]).abs() < 0.01 && (p[1] - q[1]).abs() < 0.01)
+                });
             if !same {
                 round_trip_bad += 1;
                 println!("  document: exports {} (generated {})", back.summary(), made.summary());

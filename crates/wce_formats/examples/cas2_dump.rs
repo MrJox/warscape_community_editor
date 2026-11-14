@@ -14,7 +14,9 @@ fn main() {
                     let class = m.strings.iter().find(|(k, _)| k == "class_rigidINFO").map(|(_, v)| v.join(","));
                     println!("  mesh {} ({class:?}): {} vertices, {} faces", m.name, m.positions.len(), m.faces.len());
                     let range = |v: &mut dyn Iterator<Item = [f32; 3]>| {
-                        v.fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| (std::array::from_fn(|k| lo[k].min(p[k])), std::array::from_fn(|k| hi[k].max(p[k]))))
+                        v.fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
+                            (std::array::from_fn(|k| lo[k].min(p[k])), std::array::from_fn(|k| hi[k].max(p[k])))
+                        })
                     };
                     println!("    positions {:?}", range(&mut m.positions.iter().copied()));
                     println!("    groups (triangles, material) {:?}, uv channels {:?}", m.groups, m.uvs.first().map(Vec::len));

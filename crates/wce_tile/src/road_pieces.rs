@@ -52,7 +52,8 @@ pub const PIECES: [&str; 8] = ["straight", "curve", "corner", "t_junction", "x_j
 /// Variants a road type may have of a piece besides the piece itself (variant, piece): each laid in the piece's place, one or another by
 /// the road's seed (user 2026-11-08: the same straight every 8 m was monotonous). A variant is read as the piece it varies (its guides);
 /// the base has none, and a type without one lays the piece alone.
-pub const VARIANTS: [(&str, &str); 4] = [("straight_2", "straight"), ("straight_3", "straight"), ("straight_4", "straight"), ("straight_5", "straight")];
+pub const VARIANTS: [(&str, &str); 4] =
+    [("straight_2", "straight"), ("straight_3", "straight"), ("straight_4", "straight"), ("straight_5", "straight")];
 
 /// The piece a variant varies.
 #[must_use]
@@ -276,10 +277,15 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
     for e in scene.find_all(ROAD_GUIDE) {
         let Some(role) = scene.doc().get(e, ROLE_ATTR).and_then(|r| Role::parse(&r)) else { continue };
         let w = world_transform(&scene, e);
-        let line = scene.polygon_points(e).iter().filter_map(|&p| scene.point_position(p)).map(|p| {
-            let q = local(w.position + w.rotation * p);
-            [q.x / UNIT, q.z / UNIT]
-        }).collect::<Vec<_>>();
+        let line = scene
+            .polygon_points(e)
+            .iter()
+            .filter_map(|&p| scene.point_position(p))
+            .map(|p| {
+                let q = local(w.position + w.rotation * p);
+                [q.x / UNIT, q.z / UNIT]
+            })
+            .collect::<Vec<_>>();
         if line.len() >= 2 {
             guides.push((role, line));
         }
@@ -330,7 +336,10 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
     let edges = of(Role::Edge).collect::<Vec<_>>();
     let verge = {
         // The nearest a verge comes to an edge: its corners are further, round the edge's.
-        let v = of(Role::Verge).flat_map(|l| l.iter()).map(|&p| edges.iter().map(|e| station(e, p).2).fold(f64::MAX, f64::min)).fold(f64::MAX, f64::min);
+        let v = of(Role::Verge)
+            .flat_map(|l| l.iter())
+            .map(|&p| edges.iter().map(|e| station(e, p).2).fold(f64::MAX, f64::min))
+            .fold(f64::MAX, f64::min);
         (v < f64::MAX && !edges.is_empty()).then_some(v)
     };
 
@@ -347,7 +356,12 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
         let p = local(w.position);
         let at = [p.x / UNIT, p.z / UNIT];
         let key = scene.doc().get(e, "key").unwrap_or_default();
-        let (arm, (along, across, dist)) = arms.iter().enumerate().map(|(i, a)| (i, station(&a.centre, at))).min_by(|a, b| a.1.2.total_cmp(&b.1.2)).unwrap_or((0, (0.0, 0.0, 0.0)));
+        let (arm, (along, across, dist)) = arms
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (i, station(&a.centre, at)))
+            .min_by(|a, b| a.1.2.total_cmp(&b.1.2))
+            .unwrap_or((0, (0.0, 0.0, 0.0)));
         let solid = el.name != "ProjectedDecalInstance";
         let to_edge = edges.iter().map(|l| station(l, at).2).fold(f64::MAX, f64::min);
         let half = width * 0.5;
@@ -391,7 +405,23 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
         };
 
         let length = arms[arm].length.max(1e-9);
-        parts.push(Part { path, kind: el.name.clone(), key, arm, along: along / length, across, up: p.y / UNIT, anchor, solid, size, turn, at, rotation: rot, parent, scale: scene.scale(e) });
+        parts.push(Part {
+            path,
+            kind: el.name.clone(),
+            key,
+            arm,
+            along: along / length,
+            across,
+            up: p.y / UNIT,
+            anchor,
+            solid,
+            size,
+            turn,
+            at,
+            rotation: rot,
+            parent,
+            scale: scene.scale(e),
+        });
     }
 
     Ok(Piece { arms, ports, width, verge, parts, notes })
@@ -407,10 +437,12 @@ fn guide(role: Role, name: &str, line: &[[f64; 2]]) -> Vec<u8> {
 /// An arc about `c` of radius `r`, from angle `a0` to `a1` (radians; 0 towards -x, turning towards +z), every 2.5 degrees.
 fn arc(c: [f64; 2], r: f64, a0: f64, a1: f64) -> Vec<[f64; 2]> {
     let n = (((a1 - a0).abs() / 2.5f64.to_radians()).ceil() as usize).max(1);
-    (0..=n).map(|i| {
-        let a = a0 + (a1 - a0) * i as f64 / n as f64;
-        [c[0] - r * a.cos(), c[1] + r * a.sin()]
-    }).collect()
+    (0..=n)
+        .map(|i| {
+            let a = a0 + (a1 - a0) * i as f64 / n as f64;
+            [c[0] - r * a.cos(), c[1] + r * a.sin()]
+        })
+        .collect()
 }
 
 /// The guides of a base piece, at the standard measures.
@@ -550,8 +582,19 @@ fn contents_of(group_text: &[u8]) -> Option<Vec<u8>> {
 /// What the generations written before the mark existed hashed to (2026-11-08, R1's base pieces and R2's dirt ones): such a file without
 /// the mark is still ours, unedited.
 const UNMARKED_GENERATIONS: [&str; 13] = [
-    "0ea06c28e2cbf9f1", "a119a0807ad50a77", "ae8682a019e54c98", "b28b133b4107e64f", "2de3689d6c29c133", "efc5d95f569d98db",
-    "b4d97e3924d340e1", "7c0571253d797e06", "1290d469aa26f852", "d782de44fe71c570", "a361417b204538bf", "01b363212a0a2570", "122c4720a8834886",
+    "0ea06c28e2cbf9f1",
+    "a119a0807ad50a77",
+    "ae8682a019e54c98",
+    "b28b133b4107e64f",
+    "2de3689d6c29c133",
+    "efc5d95f569d98db",
+    "b4d97e3924d340e1",
+    "7c0571253d797e06",
+    "1290d469aa26f852",
+    "d782de44fe71c570",
+    "a361417b204538bf",
+    "01b363212a0a2570",
+    "122c4720a8834886",
 ];
 
 /// Whether a generated piece (`children`, its contents) is to be written at `path`: it is missing, or it is an older generation that
@@ -698,15 +741,19 @@ mod tests {
 
     #[test]
     fn parts_are_anchored_by_where_they_stand() {
-        let decal = |x: f64, z: f64| format!(
+        let decal = |x: f64, z: f64| {
+            format!(
             "<ProjectedDecalInstance flags=\"\" scale=\"vector(4,10,8)\" position=\"vector({},0,{})\" key=\"d\" name=\"d\" orientation=\"euler(0,0,0)\"/>\n",
             x * UNIT, z * UNIT
-        ).into_bytes();
+        ).into_bytes()
+        };
         let mut children = base_guides("straight");
         children.push(decal(0.0, 2.0));
         children.push(decal(2.6, -1.0));
         children.push(decal(-4.5, 0.0));
-        children.push(b"<BUILDING_INSTANCE flags=\"\" position=\"vector(1,0,0)\" key=\"fence\" name=\"f\" orientation=\"euler(0,0,0)\"/>\n".to_vec());
+        children.push(
+            b"<BUILDING_INSTANCE flags=\"\" position=\"vector(1,0,0)\" key=\"fence\" name=\"f\" orientation=\"euler(0,0,0)\"/>\n".to_vec(),
+        );
         children.push(b"<BUILDING_INSTANCE flags=\"\" position=\"vector(0,0,0)\" key=\"post\" name=\"p\" road_anchor=\"fixed\" orientation=\"euler(0,0,0)\"/>\n".to_vec());
         let p = read(&group_text("road_test_straight", &children)).unwrap();
         let anchors = p.parts.iter().map(|q| q.anchor).collect::<Vec<_>>();
@@ -750,7 +797,10 @@ mod tests {
     #[test]
     fn an_older_generation_nobody_edited_is_replaced_and_an_edited_one_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let old = vec![("straight", vec![guide(Role::Centre, "c", &[[0.0, -4.0], [0.0, 4.0]]), guide(Role::Port, "p", &[[-3.0, 4.0], [3.0, 4.0]])])];
+        let old = vec![(
+            "straight",
+            vec![guide(Role::Centre, "c", &[[0.0, -4.0], [0.0, 4.0]]), guide(Role::Port, "p", &[[-3.0, 4.0], [3.0, 4.0]])],
+        )];
         assert_eq!(write_generated(dir.path(), "t", &old).unwrap().len(), 1);
         assert!(write_generated(dir.path(), "t", &old).unwrap().is_empty(), "the same generation is not written again");
 
@@ -774,7 +824,8 @@ mod tests {
 
     #[test]
     fn a_kit_save_leaves_the_guides_out() {
-        let (ted, report) = crate::project_files::to_ted(crate::prefabs::file_text(&group_text("road_base_end", &base_guides("end")))).unwrap();
+        let (ted, report) =
+            crate::project_files::to_ted(crate::prefabs::file_text(&group_text("road_base_end", &base_guides("end")))).unwrap();
         assert!(!String::from_utf8_lossy(&ted).contains(ROAD_GUIDE), "{}", String::from_utf8_lossy(&ted));
         assert!(!report.dropped.is_empty());
     }

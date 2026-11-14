@@ -3,6 +3,7 @@
 
 pub mod building_effects;
 pub mod climate_db;
+pub mod radar;
 pub mod terrain_bake;
 pub mod terrain_material;
 pub mod tile_document;

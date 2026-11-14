@@ -62,9 +62,55 @@ pub struct Raster {
 }
 
 impl Raster {
-
     /// Whether the sample count matches the size.
     pub fn is_consistent(&self) -> bool {
         self.samples.len() == self.width as usize * self.height as usize * self.channels as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Samples;
+
+    /// Equal samples give equal fingerprints; one sample changed, one more sample, or the same bytes as another sample type give another.
+    #[test]
+    fn the_fingerprint_follows_the_samples() {
+        let all = [
+            Samples::U8((0..=255).collect()),
+            Samples::U16((0..300).map(|i| i * 211).collect()),
+            Samples::F32((0..77).map(|i| i as f32 * 0.25 - 3.0).collect()),
+        ];
+        for s in &all {
+            assert_eq!(s.fingerprint(), s.clone().fingerprint());
+            let mut changed = s.clone();
+            let mut longer = s.clone();
+            match (&mut changed, &mut longer) {
+                (Samples::U8(c), Samples::U8(l)) => {
+                    c[100] ^= 1;
+                    l.push(0);
+                }
+                (Samples::U16(c), Samples::U16(l)) => {
+                    c[299] ^= 0x100;
+                    l.push(0);
+                }
+                (Samples::F32(c), Samples::F32(l)) => {
+                    c[3] = -c[3];
+                    l.push(0.0);
+                }
+                _ => unreachable!(),
+            }
+
+            assert_ne!(s.fingerprint(), changed.fingerprint());
+            assert_ne!(s.fingerprint(), longer.fingerprint());
+        }
+
+        // The tail bytes past the last 8-byte word count too.
+        let a = Samples::U8(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        let b = Samples::U8(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]);
+        assert_ne!(a.fingerprint(), b.fingerprint());
+
+        // The same bytes as another sample type: [0x0201, 0x0403] are the bytes 1, 2, 3, 4.
+        assert_ne!(Samples::U8(vec![1, 2, 3, 4]).fingerprint(), Samples::U16(vec![0x0201, 0x0403]).fingerprint());
+        assert_ne!(Samples::U8(vec![]).fingerprint(), Samples::U16(vec![]).fingerprint());
     }
 }

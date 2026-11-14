@@ -44,7 +44,12 @@ fn main() {
         let vfs = wce_vfs::Vfs::mount(&wce_vfs::Config::new(game, wce_vfs::GameProfile::ATTILA)).expect("mount");
         for path in vfs.files().keys() {
             let name = path.rsplit('/').next().unwrap_or(path);
-            let ui_like = path.starts_with("ui/") && (!name.contains('.') || name.ends_with(".twui") || name.ends_with(".cml") || name.ends_with(".fc") || name.ends_with(".twui.images"));
+            let ui_like = path.starts_with("ui/")
+                && (!name.contains('.')
+                    || name.ends_with(".twui")
+                    || name.ends_with(".cml")
+                    || name.ends_with(".fc")
+                    || name.ends_with(".twui.images"));
             if ui_like {
                 if let Ok(d) = vfs.read(path) {
                     pack_files.push((path.clone(), d));
@@ -52,7 +57,8 @@ fn main() {
             }
         }
     }
-    let mut corpus: Vec<(String, Vec<u8>)> = files.iter().filter_map(|f| std::fs::read(f).ok().map(|d| (f.display().to_string(), d))).collect();
+    let mut corpus: Vec<(String, Vec<u8>)> =
+        files.iter().filter_map(|f| std::fs::read(f).ok().map(|d| (f.display().to_string(), d))).collect();
     corpus.extend(pack_files);
 
     let mut per_version: BTreeMap<u32, (usize, usize)> = BTreeMap::new();

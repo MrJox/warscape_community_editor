@@ -19,3 +19,6 @@ wce_vfs = { path = "../wce_vfs" }
 
 [dev-dependencies]
 serde_derive = "1"
+
+[lints]
+workspace = true

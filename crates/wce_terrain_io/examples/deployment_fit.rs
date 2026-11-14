@@ -20,10 +20,19 @@ fn main() {
     let blm = BattleLocations::parse(&read("locations.blm")).expect("blm");
     let (w, h) = (map.width as i32, map.height as i32);
     // Cells of a river tile.
-    let wet: Vec<bool> = map.layers[0].iter().map(|c| {
-        let o = if c.index > 0 { c.index } else if c.index < 0 { map.layers[0][(-1 - c.index) as usize].index } else { 0 };
-        o > 0 && map.names.get(o as usize - 1).is_some_and(|n| n.to_lowercase().contains("river"))
-    }).collect();
+    let wet: Vec<bool> = map.layers[0]
+        .iter()
+        .map(|c| {
+            let o = if c.index > 0 {
+                c.index
+            } else if c.index < 0 {
+                map.layers[0][(-1 - c.index) as usize].index
+            } else {
+                0
+            };
+            o > 0 && map.names.get(o as usize - 1).is_some_and(|n| n.to_lowercase().contains("river"))
+        })
+        .collect();
     let near_wet = |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h && wet[(y * w + x) as usize];
 
     // (centre cell, rect, points)
@@ -39,9 +48,11 @@ fn main() {
             let text = String::from_utf8_lossy(&x).into_owned();
             let mut pts = vec![];
             for part in text.split("<position ").skip(1) {
-                let v = |k: &str| part.split(&format!("{k}='")).nth(1).and_then(|r| r.split('\'').next()).and_then(|s| s.parse::<f64>().ok());
+                let v =
+                    |k: &str| part.split(&format!("{k}='")).nth(1).and_then(|r| r.split('\'').next()).and_then(|s| s.parse::<f64>().ok());
                 if let (Some(px), Some(py)) = (v("x"), v("y"))
-                    && px.abs() < 950.0 && py.abs() < 950.0
+                    && px.abs() < 950.0
+                    && py.abs() < 950.0
                 {
                     pts.push((px, py));
                 }
@@ -61,7 +72,11 @@ fn main() {
                     let (dx, dy) = (f64::from(ox) / 2.0, f64::from(oy) / 2.0);
                     let mut hits = 0;
                     for (c, r, pts) in &sets {
-                        let (bx, by) = if anchor == "centre" { (f64::from(c[0]), f64::from(c[1])) } else { (f64::from(r[0] + r[2] + 1) / 2.0, f64::from(r[1] + r[3] + 1) / 2.0) };
+                        let (bx, by) = if anchor == "centre" {
+                            (f64::from(c[0]), f64::from(c[1]))
+                        } else {
+                            (f64::from(r[0] + r[2] + 1) / 2.0, f64::from(r[1] + r[3] + 1) / 2.0)
+                        };
                         for &(px, py) in pts {
                             let (x, y) = (bx + dx + px / 256.0, by + dy - s * py / 256.0);
                             if near_wet(x.floor() as i32, y.floor() as i32) {
@@ -78,7 +93,14 @@ fn main() {
 
     results.sort_by(|a, b| b.0.cmp(&a.0));
     for r in results.iter().take(8) {
-        println!("  {:.1} %  y {}  from the {}  offset {:+.1}, {:+.1} cells", 100.0 * r.0 as f64 / total.max(1) as f64, if r.1 > 0.0 { "north" } else { "south" }, r.2, r.3, r.4);
+        println!(
+            "  {:.1} %  y {}  from the {}  offset {:+.1}, {:+.1} cells",
+            100.0 * r.0 as f64 / total.max(1) as f64,
+            if r.1 > 0.0 { "north" } else { "south" },
+            r.2,
+            r.3,
+            r.4
+        );
     }
 
     if let Some(r) = results.iter().find(|r| r.1 > 0.0 && r.2 == "centre" && r.3 == 0.5 && r.4 == -0.5) {

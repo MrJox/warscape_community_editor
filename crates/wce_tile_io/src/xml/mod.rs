@@ -46,7 +46,6 @@ pub struct DocStyle {
 }
 
 impl DocStyle {
-
     /// TEd's tile.ted style: CRLF, four spaces, double quotes, a CRLF after the root.
     pub fn ted() -> Self {
         Self { prolog: vec![], epilog: b"\r\n".to_vec(), newline: b"\r\n".to_vec(), indent: b"    ".to_vec(), quote: b'"' }
@@ -349,8 +348,12 @@ impl Reader<'_> {
                 }
 
                 if self.t[self.pos..].starts_with(b"<!--") {
-                    let Some(e) = self.t[self.pos..].windows(3).position(|w| w == b"-->") else { return err(self.pos, "unterminated comment") };
-                    let Ok(body) = std::str::from_utf8(&self.t[self.pos + 4..self.pos + e]) else { return err(self.pos, "comment is not UTF-8") };
+                    let Some(e) = self.t[self.pos..].windows(3).position(|w| w == b"-->") else {
+                        return err(self.pos, "unterminated comment");
+                    };
+                    let Ok(body) = std::str::from_utf8(&self.t[self.pos + 4..self.pos + e]) else {
+                        return err(self.pos, "comment is not UTF-8");
+                    };
                     let mut child = Node::new(COMMENT);
                     child.push_read(Sym::new("text"), Value::Str(body.to_owned()), None);
                     let gap = self.t[gap_start..gap_end].to_vec();
@@ -450,7 +453,15 @@ pub fn read(bytes: &[u8], schema: &dyn Schema) -> Result<(Node, DocStyle, ReadSt
 
     let mut style = detect_style(bytes, p);
     style.prolog = bytes[..p].to_vec();
-    let mut r = Reader { t: bytes, pos: p, style, kinds: Kinds { schema, cache: HashMap::new() }, syms: SymCache::default(), stats: ReadStats::default(), text: String::new() };
+    let mut r = Reader {
+        t: bytes,
+        pos: p,
+        style,
+        kinds: Kinds { schema, cache: HashMap::new() },
+        syms: SymCache::default(),
+        stats: ReadStats::default(),
+        text: String::new(),
+    };
     let root = r.element(0)?;
     if root.trivia().is_some_and(|t| !t.layout.is_empty()) {
         r.stats.layout_nodes += 1;

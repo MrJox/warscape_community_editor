@@ -97,7 +97,11 @@ fn append_utf8(out: &mut Vec<u8>, code_point: u32) {
     } else if code_point < 0x800 {
         out.extend_from_slice(&[0xC0 | (code_point >> 6) as u8, 0x80 | (code_point & 0x3F) as u8]);
     } else if code_point < 0x10000 {
-        out.extend_from_slice(&[0xE0 | (code_point >> 12) as u8, 0x80 | ((code_point >> 6) & 0x3F) as u8, 0x80 | (code_point & 0x3F) as u8]);
+        out.extend_from_slice(&[
+            0xE0 | (code_point >> 12) as u8,
+            0x80 | ((code_point >> 6) & 0x3F) as u8,
+            0x80 | (code_point & 0x3F) as u8,
+        ]);
     } else {
         out.extend_from_slice(&[
             0xF0 | (code_point >> 18) as u8,

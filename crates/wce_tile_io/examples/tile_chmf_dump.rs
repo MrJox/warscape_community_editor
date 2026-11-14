@@ -15,13 +15,28 @@ fn main() {
     let f = ChmfFile::parse(&std::fs::read(path).expect("read")).expect("CHMF");
     println!(
         "version {}, {} x {} samples, cells {} x {}, min {}, max {}, spacing {} m, {} regions",
-        f.version, f.width, f.height, f.cells_x, f.cells_y, f.min, f.max, f.spacing, f.regions.len()
+        f.version,
+        f.width,
+        f.height,
+        f.cells_x,
+        f.cells_y,
+        f.min,
+        f.max,
+        f.spacing,
+        f.regions.len()
     );
 
     for (i, r) in f.regions.iter().enumerate() {
         let (w, h, samples) = f.region_samples(i).expect("region");
         let (lo, hi) = samples.iter().fold((u16::MAX, 0), |(lo, hi), &s| (lo.min(s), hi.max(s)));
-        println!("region {i}: rect {:?}, tag {:?}, {} blocks, {w} x {h}, samples {lo} ..= {hi} ({} .. {} m)", r.rect, r.tag, r.offsets.len(), f.metres(lo), f.metres(hi));
+        println!(
+            "region {i}: rect {:?}, tag {:?}, {} blocks, {w} x {h}, samples {lo} ..= {hi} ({} .. {} m)",
+            r.rect,
+            r.tag,
+            r.offsets.len(),
+            f.metres(lo),
+            f.metres(hi)
+        );
         if i == 0
             && let Some(out) = args.get(1)
         {

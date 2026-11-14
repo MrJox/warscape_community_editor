@@ -111,17 +111,27 @@ impl GameData {
     pub fn from_vfs(vfs: &Vfs, schema: Option<&Path>) -> Result<Self, String> {
         let mut warnings = vec![];
         let schema = match schema {
-            Some(p) => match { wce_foundation::wce_prof!("game_data.schema"); Schema::load(p, None) } {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    warnings.push(format!("{}: {e}", p.display()));
-                    None
+            Some(p) => {
+                let loaded = {
+                    wce_foundation::wce_prof!("game_data.schema");
+                    Schema::load(p, None)
+                };
+                match loaded {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        warnings.push(format!("{}: {e}", p.display()));
+                        None
+                    }
                 }
-            },
+            }
+
             None => None,
         };
         if schema.is_none() {
-            warnings.push("no rpfm schema (Help > Update Manager downloads it): the buildings' categories and destruction thresholds are not known".to_owned());
+            warnings.push(
+                "no rpfm schema (Help > Update Manager downloads it): the buildings' categories and destruction thresholds are not known"
+                    .to_owned(),
+            );
         }
 
         // The destruction levels: the building's collision file lists each piece's destructs, the building's count is the most over its
@@ -149,8 +159,21 @@ impl GameData {
         let from_cs2: BTreeMap<String, u32> = {
             use rayon::prelude::*;
             wce_foundation::wce_prof!("game_data.cs2");
-            let levels = cs2.par_iter().map(|(key, n)| vfs.read(n).ok().and_then(|bytes| destruction_levels(&bytes)).map(|l| (key.to_string(), l))).collect::<Vec<_>>();
-            levels.into_iter().flatten().collect()
+            let levels = cs2
+                .par_iter()
+                .map(|(key, n)| match vfs.read(n) {
+                    Ok(bytes) => Ok(destruction_levels(&bytes).map(|l| (key.to_string(), l))),
+                    Err(e) => Err(format!("{n}: {e}")),
+                })
+                .collect::<Vec<_>>();
+            // One that does not read is a building whose destruction levels fall back (the decompiled damage values change): said.
+            let failed = levels.iter().filter_map(|r| r.as_ref().err()).collect::<Vec<_>>();
+            if !failed.is_empty() {
+                let some = failed.iter().take(3).map(|s| s.as_str()).collect::<Vec<_>>().join("; ");
+                warnings.push(format!("{} collision files did not read, their destruction levels fall back: {some}", failed.len()));
+            }
+
+            levels.into_iter().filter_map(Result::ok).flatten().collect()
         };
 
         let rows = schema.as_ref().map_or_else(Vec::new, |schema| building_table_rows(vfs, schema, &mut warnings));

@@ -57,12 +57,33 @@ fn main() {
             }
 
             for (k, (l, h)) in &per {
-                println!("    {k}: size {:.2} x {:.2} x {:.2} (x {:.2}..{:.2}, z {:.2}..{:.2})", h[0] - l[0], h[1] - l[1], h[2] - l[2], l[0], h[0], l[2], h[2]);
+                println!(
+                    "    {k}: size {:.2} x {:.2} x {:.2} (x {:.2}..{:.2}, z {:.2}..{:.2})",
+                    h[0] - l[0],
+                    h[1] - l[1],
+                    h[2] - l[2],
+                    l[0],
+                    h[0],
+                    l[2],
+                    h[2]
+                );
             }
 
-            let kinds: std::collections::BTreeSet<String> = lod.mesh_blocks().iter().map(|b| format!("{:?}", b.mesh().material_type())).collect();
-            println!("{p}: x {:.2}..{:.2} y {:.2}..{:.2} z {:.2}..{:.2} (size {:.2} x {:.2} x {:.2}), {} meshes {kinds:?}", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
-                hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], lod.mesh_blocks().len());
+            let kinds: std::collections::BTreeSet<String> =
+                lod.mesh_blocks().iter().map(|b| format!("{:?}", b.mesh().material_type())).collect();
+            println!(
+                "{p}: x {:.2}..{:.2} y {:.2}..{:.2} z {:.2}..{:.2} (size {:.2} x {:.2} x {:.2}), {} meshes {kinds:?}",
+                lo[0],
+                hi[0],
+                lo[1],
+                hi[1],
+                lo[2],
+                hi[2],
+                hi[0] - lo[0],
+                hi[1] - lo[1],
+                hi[2] - lo[2],
+                lod.mesh_blocks().len()
+            );
         }
     }
 }

@@ -16,7 +16,9 @@ fn main() {
     let u = |o: usize| u32::from_le_bytes(lf[o..o + 4].try_into().unwrap());
     let (h, w) = (u(12), u(16));
     println!("normal {} x {}, lf {w} x {h}", normal.w, normal.h);
-    let at = |x: u32, y: u32| f64::from(u16::from_le_bytes([lf[128 + 2 * (y * w + x) as usize], lf[129 + 2 * (y * w + x) as usize]])) / 65535.0 * lf_height;
+    let at = |x: u32, y: u32| {
+        f64::from(u16::from_le_bytes([lf[128 + 2 * (y * w + x) as usize], lf[129 + 2 * (y * w + x) as usize]])) / 65535.0 * lf_height
+    };
     let step = 128.0 / per_cell;
     let mut ratios = vec![];
     let mut channels = [[0f64; 2]; 4];

@@ -61,7 +61,10 @@ fn main() {
     let tests: Vec<(&str, Box<dyn Fn(f32, f32) -> (f64, f64)>)> = vec![
         ("terry cell 0.32, z north", Box::new(|x, z| (f64::from(x) / 0.32, ch - f64::from(z) / 0.32))),
         ("terry cell 0.32, z south", Box::new(|x, z| (f64::from(x) / 0.32, f64::from(z) / 0.32))),
-        ("bounds, z north", Box::new(move |x, z| (f64::from(x) / f64::from(bounds[2]) * cw, (1.0 - f64::from(z) / f64::from(bounds[3])) * ch))),
+        (
+            "bounds, z north",
+            Box::new(move |x, z| (f64::from(x) / f64::from(bounds[2]) * cw, (1.0 - f64::from(z) / f64::from(bounds[3])) * ch)),
+        ),
         ("bounds, z south", Box::new(move |x, z| (f64::from(x) / f64::from(bounds[2]) * cw, f64::from(z) / f64::from(bounds[3]) * ch))),
     ];
     for (name, f) in &tests {

@@ -19,7 +19,9 @@ pub struct Converted {
     pub version: u32,
 }
 
-/// Escape for XML text the way the original does (apostrophes and quotes too, CR and 0x1f as character references).
+/// Escape for XML text the way the original does (apostrophes and quotes too, CR as a character reference). 0x1f, which XML cannot hold
+/// as a character, is the reference `&#x1F;`, and U+E01F is `&#xE01F;`. etwng wrote 0x1f as `&#xE01F;`, so a string holding U+E01F came
+/// back as 0x1f.
 pub fn xml_escape(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 8);
     for c in s.chars() {
@@ -30,7 +32,8 @@ pub fn xml_escape(s: &str) -> String {
             '"' => o.push_str("&quot;"),
             '\'' => o.push_str("&apos;"),
             '\r' => o.push_str("&#xD;"),
-            '\u{1f}' => o.push_str("&#xE01F;"),
+            '\u{1f}' => o.push_str("&#x1F;"),
+            '\u{e01f}' => o.push_str("&#xE01F;"),
             c => o.push(c),
         }
     }
@@ -162,7 +165,7 @@ impl<'a> Reader<'a> {
     fn get_unicode(&mut self) -> R<String> {
         let n = self.get_u2()? as usize;
         let b = self.get(n * 2)?;
-        let units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         match String::from_utf16(&units) {
             Ok(s) => Ok(s),
             Err(_) => self.err("Unicode string has an unpaired surrogate"),
@@ -220,7 +223,14 @@ impl<'a> Reader<'a> {
 
     fn c_uuid(&mut self, c: Option<&str>) -> R<()> {
         let b = self.get(16)?;
-        let vv = [hex_bytes(&b[0..4], ""), hex_bytes(&b[4..6], ""), hex_bytes(&b[6..8], ""), hex_bytes(&b[8..10], ""), hex_bytes(&b[10..16], "")].join("-");
+        let vv = [
+            hex_bytes(&b[0..4], ""),
+            hex_bytes(&b[4..6], ""),
+            hex_bytes(&b[6..8], ""),
+            hex_bytes(&b[8..10], ""),
+            hex_bytes(&b[10..16], ""),
+        ]
+        .join("-");
         self.cmt_out(format!("<uuid>{}</uuid>", vv), c);
         Ok(())
     }
@@ -332,10 +342,8 @@ impl<'a> Reader<'a> {
 
     fn c_data(&mut self, size: usize, c: Option<&str>, zero: bool) -> R<()> {
         let v = self.get(size)?;
-        if !zero {
-            if let Some(c) = c {
-                self.out(&format!("<!-- {} -->", c));
-            }
+        if !zero && let Some(c) = c {
+            self.out(&format!("<!-- {} -->", c));
         }
         self.out(&format!("<data size=\"{}\">", size));
         for slice in v.chunks(16) {
@@ -1172,15 +1180,17 @@ impl<'a> Reader<'a> {
     }
 
     fn c_event_list(&mut self) -> R<()> {
-        self.tag("events", &[], |s| loop {
-            let e = s.get_s()?;
-            if e == "events_end" {
-                return Ok(());
+        self.tag("events", &[], |s| {
+            loop {
+                let e = s.get_s()?;
+                if e == "events_end" {
+                    return Ok(());
+                }
+                s.tag("event", &[], |s| {
+                    s.out(&format!("<s>{}</s>", xml_escape(&e)));
+                    Ok(())
+                })?;
             }
-            s.tag("event", &[], |s| {
-                s.out(&format!("<s>{}</s>", xml_escape(&e)));
-                Ok(())
-            })?;
         })
     }
 
@@ -1270,7 +1280,12 @@ impl<'a> Reader<'a> {
                     }
                     Ok(())
                 })
-            })
+            })?;
+            // Bytes after the images would not be written back.
+            if s.bytes_left() > 0 {
+                return s.err(format!("{} bytes after the images", s.bytes_left()));
+            }
+            Ok(())
         })
     }
 
@@ -1295,5 +1310,877 @@ impl<'a> Reader<'a> {
             25..=999 => self.c_ui(),
             _ => self.err("Not supported yet"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{convert, xml_escape};
+    use crate::writer;
+
+    /// A binary UI file written primitive by primitive, in the order the reader reads them.
+    struct B {
+        d: Vec<u8>,
+        v: u32,
+    }
+
+    impl B {
+        fn new(v: u32) -> Self {
+            Self { d: format!("Version{v:03}").into_bytes(), v }
+        }
+
+        fn raw(&mut self, b: &[u8]) -> &mut Self {
+            self.d.extend_from_slice(b);
+            self
+        }
+
+        fn u(&mut self, v: u32) -> &mut Self {
+            self.raw(&v.to_le_bytes())
+        }
+
+        fn i(&mut self, v: i32) -> &mut Self {
+            self.raw(&v.to_le_bytes())
+        }
+
+        fn u2(&mut self, v: u16) -> &mut Self {
+            self.raw(&v.to_le_bytes())
+        }
+
+        fn byte(&mut self, v: u8) -> &mut Self {
+            self.raw(&[v])
+        }
+
+        /// `n` booleans, true and false in turn.
+        fn flags(&mut self, n: usize) -> &mut Self {
+            for k in 0..n {
+                self.byte((k % 2) as u8);
+            }
+            self
+        }
+
+        fn s(&mut self, s: &str) -> &mut Self {
+            self.u2(s.len() as u16).raw(s.as_bytes())
+        }
+
+        fn uni(&mut self, s: &str) -> &mut Self {
+            let units: Vec<u16> = s.encode_utf16().collect();
+            self.u2(units.len() as u16);
+            for u in units {
+                self.u2(u);
+            }
+            self
+        }
+
+        fn flt(&mut self, f: f32) -> &mut Self {
+            self.raw(&f.to_le_bytes())
+        }
+
+        fn flts(&mut self, f: &[f32]) -> &mut Self {
+            for x in f {
+                self.flt(*x);
+            }
+            self
+        }
+
+        fn uuid(&mut self) -> &mut Self {
+            self.raw(&[0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])
+        }
+
+        fn bgra(&mut self) -> &mut Self {
+            self.raw(&[1, 2, 3, 255])
+        }
+
+        /// An ID, with its UUID from version 126 on.
+        fn id(&mut self, id: u32) -> &mut Self {
+            self.u(id);
+            if self.v >= 126 {
+                self.uuid();
+            }
+            self
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Extra {
+        None,
+        List,
+        Table,
+        Radial,
+    }
+
+    const EXTRAS: [Extra; 4] = [Extra::None, Extra::List, Extra::Table, Extra::Radial];
+
+    fn image(b: &mut B) {
+        let v = b.v;
+        b.id(42).s("ui/skins/button.png").i(64).i(-32);
+        if v < 74 {
+            b.bgra();
+        }
+        if v >= 78 {
+            b.byte(1);
+        }
+    }
+
+    fn image_use(b: &mut B) {
+        let v = b.v;
+        b.id(43).u(1).u(2).u(3).u(4).bgra();
+        if v >= 119 {
+            b.s("colour");
+        }
+        b.flags(3).i(5);
+        if v >= 77 {
+            b.i(-6).i(7);
+        }
+        b.flags(2).flt(std::f32::consts::FRAC_PI_2).flt(0.5).flt(-0.5);
+        if v >= 74 {
+            if v >= 103 {
+                b.flts(&[0.0, 0.0, 1.0]).s("shader");
+            } else {
+                b.s("shader").flts(&[0.0, 0.0, 1.0]).i(0);
+            }
+            if v <= 77 {
+                b.byte(1);
+            }
+            if v >= 103 {
+                b.flts(&[0.25; 4]);
+            }
+            if v >= 92 {
+                b.flts(&[1.0, 2.0, 3.0, 4.0]);
+            } else {
+                b.flts(&[1.0, 2.0]);
+            }
+            if v >= 125 {
+                b.byte(0);
+            }
+        } else {
+            if v >= 51 {
+                b.byte(1);
+            }
+            if v == 31 {
+                b.i(9);
+            }
+            if v == 30 {
+                b.byte(1);
+            }
+        }
+    }
+
+    fn state(b: &mut B) {
+        let v = b.v;
+        b.id(44).s("NewState").i(100).i(50).uni("State text \u{fc}").uni("").i(1).i(2).i(3).i(4).byte(1).uni("label");
+        if v >= 116 {
+            b.uni("loc_id").byte(0).byte(0);
+            if v == 121 || v == 122 || v >= 129 {
+                b.s("v129 string");
+            }
+        } else {
+            b.byte(0).byte(1).uni("loc").uni("tip_id");
+            if v >= 90 {
+                b.s("before font");
+            }
+        }
+        if v >= 27 {
+            b.s("font_name");
+        }
+        b.i(12).i(0).i(-1);
+        if v >= 74 {
+            b.bgra();
+        }
+        if v >= 43 {
+            b.s("font_category");
+        }
+        if v >= 86 {
+            b.i(1).i(2).i(3).i(4);
+        } else {
+            b.i(-1).i(-2);
+        }
+        b.i(0);
+        let nbool = match v {
+            90.. => 0,
+            83.. => 4,
+            29.. => 3,
+            27.. => 2,
+            25.. => 6,
+            _ => 0,
+        };
+        b.flags(nbool);
+        b.s("shader").flts(&[0.1, 1e-7, -0.0, 3.0e38]);
+        if v >= 77 {
+            b.s("text_shader").flts(&[1.0, 16_777_216.0, f32::MIN_POSITIVE, 1e-45]);
+        }
+        if v < 74 {
+            b.s("description").s("event text");
+        }
+        b.u(1);
+        image_use(b);
+        b.i(0).i(0);
+        if v < 74 {
+            b.u(1).i(1).id(45);
+            if v >= 39 {
+                b.s("transition").i(2).i(3);
+            }
+            if v >= 43 {
+                b.s("x").i(4);
+            }
+        } else {
+            b.u(1).i(1).id(46).i(0).i(0).u(1).id(47).s("a").s("b").s("c");
+        }
+        if v >= 129 {
+            b.s("material.xml").u(1).s("point").flts(&[1.0, 2.0, 3.0, 4.0]).u(1).s("k").s("v");
+        } else if v >= 124 {
+            b.s("");
+        }
+    }
+
+    fn anim(b: &mut B) {
+        let v = b.v;
+        if v >= 124 {
+            b.u2(5).s("sound_event");
+        } else if v >= 113 {
+            b.i(-1);
+        }
+        b.flt(1.5).flt(-2.25).i(10).i(20).bgra().flts(&[0.0, 0.1, 0.2, 0.3]).flt(0.785).i(0).i(1);
+        if v >= 113 {
+            b.flt(1.0);
+        }
+        b.i(250).i(7).flt(0.5).s("ease_in");
+        b.u(1).id(48).s("anim").s("state").s("property");
+        if v >= 90 {
+            b.byte(1);
+        }
+        if v >= 104 {
+            b.byte(0);
+        }
+        if v <= 112 {
+            if v >= 100 {
+                b.s("end2");
+            }
+            if v >= 106 {
+                b.s("end3");
+            }
+        }
+        if v >= 124 {
+            b.s("v124");
+        }
+    }
+
+    fn func(b: &mut B) {
+        let v = b.v;
+        b.s("OnClick").byte(1).byte(0).u(1);
+        anim(b);
+        if (91..100).contains(&v) {
+            b.s("v91");
+        }
+        if v >= 113 {
+            b.s("a").s("b");
+        }
+    }
+
+    fn additional(b: &mut B, extra: Extra) {
+        let v = b.v;
+        match extra {
+            Extra::None => {
+                b.byte(0);
+            }
+            Extra::List => {
+                b.byte(1).s("List").u(2).flts(&[0.5, 1.5]).i(1).i(2).byte(1).i(4);
+                if v >= 54 && v != 77 {
+                    b.byte(0);
+                }
+                if v >= 96 {
+                    b.byte(1).i(7);
+                }
+                if v == 101 {
+                    b.i(8).byte(0);
+                } else if (102..=104).contains(&v) {
+                    b.i(8).raw(&[0; 5]);
+                } else if v == 105 {
+                    b.i(8).raw(&[0; 10]);
+                } else if v >= 106 {
+                    b.i(1).i(2).i(3).i(4).byte(1).byte(0).i(5);
+                    if v >= 113 {
+                        b.i(0);
+                    }
+                    if v >= 119 {
+                        b.i(0).byte(1);
+                    }
+                    if v >= 122 {
+                        b.i(9).i(10);
+                    }
+                    if v >= 129 {
+                        b.raw(&[0, 0]);
+                    }
+                }
+            }
+            Extra::Table => {
+                b.byte(1).s("Table").u(1).u(1).flts(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+            }
+            Extra::Radial => {
+                b.byte(1).s("RadialList").flts(&[0.0, std::f32::consts::PI, -std::f32::consts::FRAC_PI_2, 2.0]).byte(1);
+                if v == 121 {
+                    b.byte(0);
+                }
+            }
+        }
+    }
+
+    fn uientry_gen1(b: &mut B, title: &str, full: bool, extra: Extra) {
+        let v = b.v;
+        b.id(7).s(title);
+        if v >= 43 {
+            b.s("title2");
+        }
+        b.i(-5).i(12);
+        let n = 7 + usize::from(v >= 47) + if v >= 50 { 3 } else { 0 } + usize::from(v >= 52);
+        b.flags(n).s("parent").i(0).uni("Tooltip \u{fc}").uni("").i(3);
+        if v >= 33 {
+            b.byte(1);
+        }
+        if v >= 39 {
+            b.i(-1);
+        }
+        b.s("script");
+        if full {
+            b.u(1);
+            image(b);
+        } else {
+            b.u(0);
+        }
+        if v >= 28 {
+            b.i(1);
+        }
+        if v >= 32 {
+            b.i(2);
+        }
+        if full {
+            b.u(1);
+            state(b);
+        } else {
+            b.u(0);
+        }
+        b.i(0);
+        if full {
+            b.s("OnClick").s("On<Hover> & \"more\"");
+        }
+        b.s("events_end").i(0);
+        if v >= 39 {
+            if full {
+                b.u(1).s("effect").byte(1).byte(0).u(1);
+                for k in 0..11 {
+                    b.i(k);
+                }
+                if v >= 50 {
+                    b.i(-1).i(-2).i(-3);
+                }
+                b.i(1).i(9).s("a").s("b");
+            } else {
+                b.u(0);
+            }
+        }
+        if full {
+            b.u(1);
+            uientry_gen1(b, "child", false, Extra::None);
+        } else {
+            b.u(0);
+        }
+        b.s("template");
+        if v >= 44 {
+            additional(b, extra);
+        }
+        if v >= 49 {
+            b.s("");
+        }
+    }
+
+    fn subtemplate(b: &mut B) {
+        let v = b.v;
+        b.s("source").s("dest");
+        if v >= 129 {
+            b.uuid().u(1).s("name").uuid().uuid();
+        }
+        b.s("x");
+        if v >= 119 {
+            b.u(1).s("e1").s("e2").s("e3");
+            if v >= 121 {
+                b.u(1).s("k").s("v");
+            }
+        } else {
+            b.s("type");
+        }
+        b.s("func").flts(&[1.0, 2.0, 3.0, 4.0]).i(1).i(2).byte(1);
+        if v >= 128 {
+            b.byte(0);
+        }
+        b.i(3).i(4).raw(&[0, 0]).uni("tip id").uni("tip");
+        if v >= 128 {
+            b.byte(1);
+        }
+        // One state of the uncounted list: its name's first two bytes are not zero, so the reader's guess takes it.
+        b.s("st").uni("a").uni("").uni("c").uni("d");
+        if v >= 128 {
+            b.byte(0);
+        }
+        b.u(0).u(1).s("image.png");
+        if v >= 128 {
+            b.i(0).u(1).s("a").s("b").flts(&[0.1, 0.2, 0.3, 0.4]).u(1).s("path").uuid();
+        }
+    }
+
+    fn model(b: &mut B) {
+        let v = b.v;
+        let header = match v {
+            74 => 37,
+            84..=86 => 50,
+            _ => 74,
+        };
+        b.s("mdl").raw(&(0..header).map(|k| k as u8).collect::<Vec<_>>()).i(1).s("mesh path").s("mesh name");
+        let size = if v <= 77 {
+            21
+        } else if (84..=86).contains(&v) {
+            29
+        } else {
+            1
+        };
+        b.raw(&vec![0xab; size]).i(-1).s("anim").s("anim path").raw(&[1, 2, 3, 4]);
+    }
+
+    fn uientry_gen2(b: &mut B, title: &str, full: bool, extra: Extra, floats: &[f32]) {
+        let v = b.v;
+        b.id(11).s(title);
+        if v >= 43 {
+            b.s("title2");
+        }
+        if (100..113).contains(&v) {
+            b.s("v100 extra");
+        } else if v == 113 {
+            b.s("e1").s("e2").s("e3");
+        } else if v >= 115 {
+            if full {
+                b.u(1).s("OnClick").s("ctx").s("fn");
+                if v >= 121 {
+                    b.u(1).s("k").s("v");
+                }
+            } else {
+                b.u(0);
+            }
+        }
+        b.i(-10).i(10);
+        for k in 1..=12u8 {
+            b.byte(if k == 3 { 200 } else { k % 2 });
+        }
+        if v < 90 {
+            b.byte(0);
+        }
+        b.uni("tooltip \u{1f600}").uni("").i(-1);
+        if v >= 77 {
+            b.i(-2).i(-3);
+        }
+        b.byte(1).i(0);
+        if full {
+            b.u(1);
+            image(b);
+        } else {
+            b.u(0);
+        }
+        b.i(-1);
+        if v < 110 {
+            b.i(0);
+        }
+        if v >= 126 {
+            b.uuid();
+        }
+        if full {
+            b.u(1);
+            state(b);
+        } else {
+            b.u(0);
+        }
+        if v >= 126 {
+            b.uuid();
+        }
+        if full {
+            b.u(1).s("key").s("value");
+        } else {
+            b.u(0);
+        }
+        b.i(3);
+        if full {
+            b.u(1);
+            func(b);
+        } else {
+            b.u(0);
+        }
+        if !full {
+            b.u(0);
+        } else if v <= 99 {
+            b.u(1);
+            uientry_gen2(b, "child", false, Extra::None, &[]);
+        } else {
+            b.u(2).raw(&[0, 0]);
+            uientry_gen2(b, "child", false, Extra::None, &[]);
+            b.s("template");
+            if v >= 119 {
+                b.id(12);
+            }
+            b.u(1);
+            subtemplate(b);
+            b.u(1);
+            uientry_gen2(b, "template child", false, Extra::None, &[]);
+        }
+        additional(b, extra);
+        b.s("end1").s("");
+        if floats.is_empty() {
+            b.byte(0);
+        } else {
+            b.byte(1).u(floats.len() as u32).flts(floats);
+        }
+        if v == 97 {
+            b.byte(1).i(5).u(2).i(1).i(2).i(-1);
+        }
+        if full {
+            b.byte(1);
+            model(b);
+        } else {
+            b.byte(0);
+        }
+        if v <= 84 && v != 77 && v != 78 {
+            b.byte(1);
+        } else {
+            b.byte(1).byte(0);
+        }
+        if v >= 94 {
+            b.byte(0);
+        }
+        if v >= 113 {
+            b.flts(&[0.0, 1.0, -1.0]);
+        }
+    }
+
+    fn ui_gen1(v: u32, full: bool, extra: Extra) -> Vec<u8> {
+        let mut b = B::new(v);
+        uientry_gen1(&mut b, "root", full, extra);
+        b.d
+    }
+
+    fn ui_gen2(v: u32, full: bool, extra: Extra, floats: &[f32]) -> Vec<u8> {
+        let mut b = B::new(v);
+        uientry_gen2(&mut b, "root", full, extra, floats);
+        b.d
+    }
+
+    /// Bytes -> XML -> bytes gives the same bytes, and that XML -> bytes -> XML gives the same XML. Returns the XML.
+    fn check(bytes: &[u8]) -> String {
+        let c = convert(bytes).unwrap_or_else(|e| panic!("read failed: {e}"));
+        let back = writer::convert(&c.xml).unwrap_or_else(|e| panic!("write failed: {e}\n{}", c.xml));
+        assert!(back == bytes, "bytes differ after a round trip\n{}", c.xml);
+        assert_eq!(convert(&back).unwrap().xml, c.xml);
+        assert_eq!(crate::round_trip(bytes), Ok(true));
+        c.xml
+    }
+
+    /// Every prefix of a file reads without a panic; one that reads is a whole file that round trips, and none of `from` bytes
+    /// or more does.
+    fn check_prefixes(bytes: &[u8], from: usize) {
+        for n in 0..bytes.len() {
+            if let Ok(c) = convert(&bytes[..n]) {
+                assert!(n < from, "a prefix of {n} of {} bytes was read", bytes.len());
+                assert_eq!(writer::convert(&c.xml).unwrap(), &bytes[..n], "the prefix of {n} bytes");
+            }
+        }
+    }
+
+    /// A simple generator, so the fuzz tests are the same every run.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 33) as u32
+        }
+    }
+
+    fn find(hay: &[u8], needle: &[u8]) -> usize {
+        hay.windows(needle.len()).position(|w| w == needle).expect("needle")
+    }
+
+    /// The error of reading bytes that must not read.
+    fn read_err(data: &[u8]) -> String {
+        convert(data).err().expect("an error")
+    }
+
+    #[test]
+    fn cml_round_trips_with_empty_unicode_and_escaped_strings() {
+        let mut b = B::new(2);
+        b.s("").s("").s("key").s("value \u{fc}\u{1f600}").s("<a href=\"x\">&'</a>").s("line1\nline2\ttab\rcr\u{1f}us").s("  ").s("\u{0}");
+        let xml = check(&b.d);
+        assert!(xml.starts_with("<cml version=\"002\">\n"));
+        assert!(xml.contains("<key></key>\n  <value></value>"));
+        assert!(xml.contains("<key>&lt;a href=&quot;x&quot;&gt;&amp;&apos;&lt;/a&gt;</key>"));
+        assert!(xml.contains("&#xD;cr&#x1F;us"));
+        check_prefixes(&b.d, usize::MAX);
+
+        // No pairs at all is a file too.
+        assert_eq!(check(b"Version002"), "<cml version=\"002\">\n</cml>\n");
+    }
+
+    #[test]
+    fn fc_round_trips_in_each_version() {
+        for v in [44, 50, 51, 52, 53] {
+            let mut b = B::new(v);
+            for name in ["default", "header \u{e9}"] {
+                b.s(name).u(1).s("font").u(2).u(u32::MAX);
+                if v >= 50 {
+                    b.u(4).u(5);
+                }
+                if v >= 51 {
+                    b.u(6);
+                }
+                b.raw(&[10, 20, 30, 255]);
+                if v >= 53 {
+                    b.s("");
+                }
+                if v >= 52 {
+                    b.s("T0").u(7).u(8).u(9).u(10);
+                }
+            }
+            let xml = check(&b.d);
+            assert!(xml.starts_with(&format!("<fc version=\"{v:03}\">")), "{v}");
+            assert_eq!(xml.matches("<fcentry>").count(), 2);
+            assert!(xml.contains("<u>4294967295</u>"));
+            check_prefixes(&b.d, usize::MAX);
+        }
+    }
+
+    #[test]
+    fn twui_images_round_trip_in_each_version() {
+        for v in [119, 129] {
+            let mut b = B::new(v);
+            b.u(2);
+            b.s("ui/a.png").raw(&[0; 19]).i(-7).raw(&[0; 6]).u2(2).u2(1).u2(9).raw(&[1, 2, 3, 4, 5, 6, 7, 8]);
+            b.s("").raw(&[0; 19]).i(0).raw(&[0; 6]).u2(0).u2(3).u2(0);
+            let xml = check(&b.d);
+            assert!(xml.contains("<i2>2</i2><!-- x -->") && xml.contains("<!-- 2*1 datapoints -->"));
+            check_prefixes(&b.d, 0);
+        }
+    }
+
+    #[test]
+    fn gen1_layouts_round_trip_in_each_version() {
+        for v in [25, 27, 28, 29, 30, 31, 32, 33, 39, 43, 44, 47, 49, 50, 51, 52, 53, 54] {
+            for (k, extra) in EXTRAS.into_iter().enumerate() {
+                if v < 44 && k > 0 {
+                    continue;
+                }
+                let bytes = ui_gen1(v, true, extra);
+                let xml = check(&bytes);
+                assert!(xml.starts_with(&format!("<ui version=\"{v:03}\">")), "{v} {extra:?}");
+                assert!(xml.contains("<s>On&lt;Hover&gt; &amp; &quot;more&quot;</s>"), "{v}");
+                assert!(xml.contains("<unicode>Tooltip \u{fc}</unicode>"), "{v}");
+                check(&ui_gen1(v, false, extra));
+            }
+            check_prefixes(&ui_gen1(v, true, Extra::List), 36);
+        }
+    }
+
+    #[test]
+    fn gen2_layouts_round_trip_in_each_version() {
+        let floats = [0.1, 1e-7, -0.0, 0.0, 3.0, 1e20, f32::MAX, f32::MIN, 1e-45, f32::EPSILON];
+        let versions = [
+            55, 70, 74, 77, 78, 83, 84, 85, 86, 90, 91, 92, 94, 96, 97, 99, 100, 101, 102, 103, 104, 105, 106, 110, 112, 113, 115, 116,
+            119, 121, 122, 124, 125, 126, 128, 129,
+        ];
+        for v in versions {
+            for extra in EXTRAS {
+                let xml = check(&ui_gen2(v, true, extra, &floats));
+                assert!(xml.starts_with(&format!("<ui version=\"{v:03}\">")), "{v} {extra:?}");
+                assert!(xml.contains("<unicode>tooltip \u{1f600}</unicode>"), "{v}");
+                assert_eq!(xml.contains("<uientry type=\"normal\">"), v >= 100, "{v}");
+                assert_eq!(xml.contains("<template>"), v >= 100, "{v}");
+                assert_eq!(xml.contains("<uuid>"), v >= 126, "{v}");
+                check(&ui_gen2(v, false, extra, &[]));
+            }
+            check_prefixes(&ui_gen2(v, true, Extra::List, &floats), 36);
+        }
+    }
+
+    #[test]
+    fn floats_are_written_as_ruby_does_and_read_back_to_the_same_bits() {
+        let xml = check(&ui_gen2(70, false, Extra::None, &[0.1, 1e-7, -0.0, 0.0, 3.0, 16_777_216.0, 1e-45, -12.25, 0.00001]));
+        for text in ["0.1", "1.0000000116860974e-07", "-0.0", "0.0", "3.0", "16777216.0", "1.401298464324817e-45", "-12.25", "1.0e-05"] {
+            assert!(xml.contains(&format!("<flt>{text}</flt>")), "{text} not in\n{xml}");
+        }
+
+        // Any finite f32, by its bits.
+        let mut rng = Lcg(1);
+        let mut floats = Vec::new();
+        while floats.len() < 20_000 {
+            let f = f32::from_bits(rng.next());
+            if f.is_finite() {
+                floats.push(f);
+            }
+        }
+        check(&ui_gen2(70, false, Extra::None, &floats));
+    }
+
+    #[test]
+    fn angles_get_a_degree_comment() {
+        let xml = check(&ui_gen2(113, false, Extra::Radial, &[]));
+        assert!(xml.contains("<flt>3.1415927410125732</flt><!-- 180.0 degrees -->"), "{xml}");
+        assert!(xml.contains("<!-- -90.0 degrees -->"));
+    }
+
+    #[test]
+    fn a_bad_header_is_an_error() {
+        let bad: [&[u8]; 9] =
+            [b"", b"Version", b"Version04", b"Versionabc", b"version044", b"XVersion044", b"Version001", b"Version024", b"Version000"];
+        for data in bad {
+            assert!(convert(data).is_err(), "{:?}", String::from_utf8_lossy(data));
+        }
+        assert!(!crate::looks_like_ui(b"Version04") && !crate::looks_like_ui(b"Version0a4") && crate::looks_like_ui(b"Version044"));
+    }
+
+    #[test]
+    fn huge_counts_and_lengths_are_errors() {
+        // An array count over 65535 is refused before anything is read.
+        let mut b = B::new(119);
+        b.u(u32::MAX);
+        assert!(read_err(&b.d).contains("impossibly high"));
+
+        // Counts and lengths the data does not have.
+        let mut b = B::new(119);
+        b.u(0xffff);
+        assert!(convert(&b.d).is_err());
+        let mut b = B::new(119);
+        b.u(1).s("a").raw(&[0; 19]).i(0).raw(&[0; 6]).u2(0xffff).u2(0xffff).u2(0);
+        assert!(convert(&b.d).is_err());
+        let mut b = B::new(2);
+        b.u2(0xffff).raw(b"abc");
+        assert!(convert(&b.d).is_err());
+
+        // The uncapped List count and model count.
+        let mut list = ui_gen2(70, false, Extra::List, &[]);
+        let at = find(&list, b"List") + 4;
+        list[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(convert(&list).is_err());
+        let mut models = ui_gen2(70, true, Extra::None, &[]);
+        let at = find(&models, b"mdl") + 3 + 74;
+        assert_eq!(models[at..at + 4], 1i32.to_le_bytes());
+        models[at..at + 4].copy_from_slice(&i32::MAX.to_le_bytes());
+        assert!(convert(&models).is_err());
+    }
+
+    #[test]
+    fn bad_values_are_errors() {
+        // A boolean of 2 (the first flag after the offsets of a v44 root entry).
+        let mut bytes = ui_gen1(44, false, Extra::None);
+        assert_eq!(bytes[36], 0);
+        bytes[36] = 2;
+        assert!(read_err(&bytes).contains("Invalid boolean"));
+
+        // A string that is not UTF-8, and a UTF-16 string with an unpaired surrogate.
+        let mut b = B::new(2);
+        b.u2(2).raw(&[0xff, 0xfe]).s("");
+        assert!(read_err(&b.d).contains("UTF-8"));
+        let mut bytes = ui_gen1(44, false, Extra::None);
+        let at = find(&bytes, &[b'T', 0, b'o', 0]);
+        bytes[at..at + 2].copy_from_slice(&0xd800u16.to_le_bytes());
+        assert!(read_err(&bytes).contains("surrogate"));
+
+        // Floats that are not finite.
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut bytes = ui_gen2(70, false, Extra::None, &[98_765.43]);
+            let at = find(&bytes, &98_765.43f32.to_le_bytes());
+            bytes[at..at + 4].copy_from_slice(&bad.to_le_bytes());
+            assert!(read_err(&bytes).contains("Non-finite"));
+        }
+
+        // Bytes after the root entry, and a byte that must be zero.
+        let mut bytes = ui_gen2(70, false, Extra::None, &[]);
+        bytes.push(0);
+        assert!(read_err(&bytes).contains("bytes left"));
+        let mut b = B::new(119);
+        b.u(1).s("a").raw(&[0; 18]).byte(1).i(0).raw(&[0; 6]).u2(0).u2(0).u2(0);
+        assert!(read_err(&b.d).contains("all zeroes"));
+    }
+
+    #[test]
+    fn changed_bytes_never_panic_and_what_reads_round_trips() {
+        let files = [ui_gen1(44, true, Extra::List), ui_gen2(97, true, Extra::Table, &[1.0]), ui_gen2(129, true, Extra::List, &[0.5])];
+        for file in files {
+            for at in 10..file.len() {
+                for value in [0x00, 0x01, 0x7f, 0xff] {
+                    let mut data = file.clone();
+                    data[at] = value;
+                    if let Ok(c) = convert(&data) {
+                        assert_eq!(writer::convert(&c.xml).unwrap(), data, "byte {at} set to {value}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn random_bytes_never_panic_and_what_reads_round_trips() {
+        random_bytes(&[2, 30, 44, 53, 70, 100]);
+    }
+
+    #[test]
+    fn twui_images_keep_or_refuse_bytes_after_the_images() {
+        let mut b = B::new(119);
+        b.u(0).byte(0x29);
+        if let Ok(c) = convert(&b.d) {
+            assert_eq!(writer::convert(&c.xml).unwrap(), b.d);
+        }
+        random_bytes(&[119, 129]);
+    }
+
+    fn random_bytes(versions: &[u32]) {
+        let mut rng = Lcg(7);
+        for &v in versions {
+            for _ in 0..500 {
+                let len = rng.next() as usize % 200;
+                let mut data = format!("Version{v:03}").into_bytes();
+                // Mostly small values, so the reader gets past the first counts and lengths.
+                data.extend((0..len).map(|_| {
+                    let r = rng.next();
+                    if r.is_multiple_of(4) { (r >> 8) as u8 } else { (r >> 8) as u8 % 3 }
+                }));
+                if let Ok(c) = convert(&data) {
+                    assert_eq!(writer::convert(&c.xml).unwrap(), data);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hand_written_xml_converts_and_round_trips() {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- written by hand -->\n<cml version=\"2\">\
+                   <key>a &amp; b</key><value/>\n<key><![CDATA[x<y]]></key>  <value>&#252;&#x1F600;</value></cml>";
+        let bytes = writer::convert(xml).unwrap();
+        let mut b = B::new(2);
+        b.s("a & b").s("").s("x<y").s("\u{fc}\u{1f600}");
+        assert_eq!(bytes, b.d);
+        check(&bytes);
+
+        let xml = "<fc version=\"044\"><fcentry><s>f</s><u> 1 </u><s/><u>2</u><u>3</u><byte>1</byte><byte>2</byte><byte>3</byte>\
+                   <byte>4</byte></fcentry></fc>";
+        let bytes = writer::convert(xml).unwrap();
+        let mut b = B::new(44);
+        b.s("f").u(1).s("").u(2).u(3).raw(&[1, 2, 3, 4]);
+        assert_eq!(bytes, b.d);
+        check(&bytes);
+    }
+
+    #[test]
+    fn xml_escape_escapes_what_the_original_does() {
+        assert_eq!(xml_escape("<>&\"'\r\u{1f}\n\t\u{fc}\u{e01f}"), "&lt;&gt;&amp;&quot;&apos;&#xD;&#x1F;\n\t\u{fc}&#xE01F;");
+        assert_eq!(xml_escape(""), "");
+    }
+
+    #[test]
+    fn a_private_use_e01f_character_round_trips() {
+        let mut b = B::new(2);
+        b.s("a\u{e01f}b").s("");
+        check(&b.d);
     }
 }

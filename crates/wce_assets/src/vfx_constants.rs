@@ -339,7 +339,8 @@ pub fn build_emitter_constants(em: &VfxEmitterDef, chain: Option<&VfxChain>) -> 
                 k.ps_lighting_legacy_params[3] = m.f("directionality", 0.0);
 
                 // Verified (rain and snow dumps): the scattering path divides by small + large, so these must be set.
-                k.ps_lighting_params = [m.f("average_size", 0.0), m.f("additive_blend_mul", 0.0), m.f("small_particles", 0.0), m.f("large_particles", 0.0)];
+                k.ps_lighting_params =
+                    [m.f("average_size", 0.0), m.f("additive_blend_mul", 0.0), m.f("small_particles", 0.0), m.f("large_particles", 0.0)];
                 k.additive = m.b("additive_blend", false);
             }
 
@@ -355,4 +356,242 @@ pub fn build_emitter_constants(em: &VfxEmitterDef, chain: Option<&VfxChain>) -> 
     }
 
     k
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vfx_bits::*;
+    use super::*;
+    use crate::vfx_def::{VfxFile, parse_vfx};
+    use wce_formats::xml_doc::XmlDoc;
+
+    const LAST: usize = VFX_CURVE_WIDTH - 1;
+
+    fn vfx(text: &str) -> VfxFile {
+        parse_vfx(&XmlDoc::parse(text.as_bytes().to_vec()).unwrap())
+    }
+
+    /// The constants of an emitter with the given properties, drawn with a chain of the given modifiers (none: no chain).
+    fn constants(emitter: &str, modifiers: Option<&str>) -> EmitterConstants {
+        let f = vfx(&format!(
+            "<vfx><emitters><emitter id=\"e\" type=\"continuous_mesh\">{emitter}</emitter></emitters>\
+             <behaviour_chains><behaviour_chain id=\"c\">{}</behaviour_chain></behaviour_chains></vfx>",
+            modifiers.unwrap_or_default()
+        ));
+        build_emitter_constants(f.emitter("e").unwrap(), modifiers.and(f.chain("c")))
+    }
+
+    #[test]
+    fn texture_paths() {
+        assert_eq!(vfx_texture_path(""), "");
+        assert_eq!(vfx_texture_path("Rain_Drop.DDS"), "vfx/textures/rain_drop.dds");
+        assert_eq!(vfx_texture_path("VFX\\Other\\x.dds"), "vfx/other/x.dds");
+        assert_eq!(vfx_texture_path("/x.dds"), "/x.dds");
+    }
+
+    #[test]
+    fn segment_helpers() {
+        assert_eq!((three_point(0.0, 1.0, 2.0, 0.5, 0.25), three_point(0.0, 1.0, 2.0, 0.5, 0.75)), (0.5, 1.5));
+        // The colour curve clamps its middle time, so 0 still starts at the start.
+        assert_eq!((three_point(5.0, 1.0, 2.0, 0.0, 0.0), three_point(0.0, 1.0, 5.0, 1.0, 1.0)), (5.0, 5.0));
+        // The scale baker does not: 0 never uses the start, 1 never the end.
+        assert_eq!((scale_point(5.0, 1.0, 2.0, 0.0, 0.0), scale_point(0.0, 2.0, 5.0, 1.0, 0.5)), (1.0, 1.0));
+        assert_eq!((column_t(0), column_t(LAST)), (0.0, 1.0));
+        assert_eq!((flag(true), flag(false), flag_f(true), flag_f(false)), (1, 0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn an_emitter_without_properties_or_chain_gets_the_defaults() {
+        let k = constants("", None);
+        assert_eq!(k.behaviour_mask, [0, 0, 0, VFX_MAIN_VIEW_ID]);
+        assert_eq!(k.ps_sim_gravity_params, [0.0; 4]);
+        assert_eq!(k.ps_sim_following_emitter_params, [0.0, 10.0, 10.0, 10.0]);
+        assert_eq!(k.ps_sim_turbulence_params, [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(k.vs_culling_distances, [0.0, 0.0, 500.0, 550.0]);
+        assert_eq!(k.vs_atlas_texture_params, [1.0, 1.0, 0.0, 0.0]);
+        assert!(k.curves[..2].iter().all(|row| row.iter().all(|c| *c == [1.0, 1.0, 0.0, 0.0])));
+        assert!(k.curves[2..].iter().all(|row| row.iter().all(|c| *c == [1.0; 4])));
+        assert!(k.diffuse.is_empty() && k.normal.is_empty() && !k.additive);
+
+        // A chain without modifiers changes nothing.
+        assert_eq!(constants("", Some("")), k);
+    }
+
+    #[test]
+    fn simulation_parameters() {
+        let k = constants(
+            r#"<ranged_property name="GravityAmount" min="-9.8" max="-12"/><property name="EffectedByWindFactor" value="0.5"/>
+               <property name="WindVarianceFactor" value="0.25"/><ranged_property name="DecelerationStartTime" min="1" max="2"/>
+               <ranged_property name="DecelerationAmount" min="3" max="4"/><property name="Deceleration" value="false"/>
+               <property name="RecycleClippedBox" x="5"/><property name="ParticlesLocalSpace" value="true"/>
+               <property name="ParticlesFollowEmitter" value="true"/><property name="TurbulenceStart" value="1"/>
+               <property name="TurbulenceEnd" value="2"/><property name="VectorFieldScale" value="0"/>
+               <property name="ParticlesFollowTerrain" value="1"/><property name="ParticleCullDistances" x="10" y="20"/>"#,
+            None,
+        );
+        assert_eq!(k.ps_sim_gravity_params, [-9.8, -12.0, 0.5, 0.25]);
+        assert_eq!(k.ps_sim_deceleration_params, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(k.ps_sim_following_emitter_params, [2.0, 5.0, 10.0, 10.0]);
+        assert_eq!(k.ps_sim_turbulence_params, [1.0, 2.0, 0.0, 0.0]);
+        assert_eq!(k.ps_sim_game_logic_params[0], 1.0);
+        assert_eq!(k.vs_culling_distances, [10.0, 20.0, 500.0, 550.0]);
+
+        // RecycleClipped wins over the follow modes; following alone is 1.
+        let k = constants(r#"<property name="RecycleClipped" value="1"/><property name="ParticlesLocalSpace" value="true"/>"#, None);
+        assert_eq!(k.ps_sim_following_emitter_params[0], 3.0);
+        let k = constants(r#"<property name="ParticlesFollowEmitter" value="true"/>"#, None);
+        assert_eq!(k.ps_sim_following_emitter_params[0], 1.0);
+    }
+
+    #[test]
+    fn scale_rows_follow_start_mid_and_end() {
+        let k = constants(
+            r#"<property name="ParticleScaleStart" x="1" y="2"/><property name="ParticleScaleMid" x="3" y="4"/>
+               <property name="ParticleScaleEnd" x="5" y="6"/><property name="ParticleScaleVariation" value="-0.5"/>"#,
+            None,
+        );
+        // A negative variation counts as positive: row 0 is the curve * 0.5, row 1 * 1.5. Column x samples t = x / 256.
+        assert_eq!((&k.curves[0][0][..2], &k.curves[1][0][..2]), (&[0.5, 1.0][..], &[1.5, 3.0][..]));
+        assert_eq!(k.curves[0][64][..2], [1.0, 1.5]);
+        assert_eq!(k.curves[0][128][..2], [1.5, 2.0]);
+
+        // Mid point at 0: no start at all.
+        let k = constants(r#"<property name="ParticleScaleStart" x="9"/><property name="ParticleScaleMidPointTime" value="0"/>"#, None);
+        assert_eq!(k.curves[0][0][0], 1.0);
+    }
+
+    #[test]
+    fn rotation_translation_and_alpha_crush() {
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="vs_rotation"><ranged_property name="initial_rotation" min="1" max="2"/>
+                   <ranged_property name="rotation_over_life" min="-1" max="3"/></modifier>
+                   <modifier fragment="vs_translation"><property name="pivot_x" value="0.25"/><property name="restriction" value="2"/></modifier>
+                   <modifier fragment="ps_alpha_crush"><property name="sharp_transition" value="true"/>
+                   <ranged_property name="alpha_crush" min="0.2" max="0.8"/><property name="variation" value="0.1"/></modifier>"#,
+            ),
+        );
+        assert_eq!(k.behaviour_mask[0], ROTATION | TRANSLATION | PS_ALPHA_CRUSH);
+        assert_eq!(k.vs_rotation_params, [1.0, 2.0, -1.0, 3.0]);
+        assert_eq!(k.vs_translation_params, [0.25, 0.5, 2.0, 0.0]);
+        assert_eq!(k.ps_alpha_crush_params, [1.0, 0.2, 0.8, 0.1]);
+
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="vs_translation_velocity_v2"><property name="orientation_mode" value="3"/>
+                   <property name="restriction" value="9"/><property name="velocity_stretch_mul" value="1.5"/></modifier>"#,
+            ),
+        );
+        assert_eq!((k.behaviour_mask[0], k.vs_translation_params), (TRANSLATION_VELOCITY, [0.5, 0.5, 3.0, 1.5]));
+
+        let k =
+            constants("", Some(r#"<modifier fragment="vs_translation_screen_space"><property name="pivot_y" value="0.1"/></modifier>"#));
+        assert_eq!((k.behaviour_mask[0], k.vs_translation_params), (TRANSLATION_SCREEN_SPACE, [0.5, 0.1, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn colour_and_alpha_rows() {
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="vs_colour"><ranged_property name="start_colour" min="float4(0,0,0,0)" max="float4(1,1,1,1)"/>
+                   <ranged_property name="end_colour" min="float4(1,0,0,1)" max="float4(0,1,0,1)"/></modifier>
+                   <modifier fragment="vs_vertex_alpha"><property name="curve_alpha">alpha_min,1;0,0;1,1</property></modifier>"#,
+            ),
+        );
+        assert_eq!(k.behaviour_mask[0], COLOUR | VERTEX_ALPHA);
+        assert_eq!((k.curves[2][0], k.curves[3][0]), ([0.0; 4], [1.0; 4]));
+        assert_eq!((k.curves[2][LAST], k.curves[3][LAST]), ([1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]));
+        // No alpha_max: the max row is the min row.
+        assert_eq!((k.curves[6][0], k.curves[6][LAST], k.curves[7][LAST]), ([0.0; 4], [1.0; 4], [1.0; 4]));
+
+        // A vertex alpha without its curve is opaque.
+        let k = constants("", Some(r#"<modifier fragment="vs_vertex_alpha"/>"#));
+        assert!(k.curves[6].iter().chain(k.curves[7].iter()).all(|c| *c == [1.0; 4]));
+    }
+
+    #[test]
+    fn atlas_cells_and_animation() {
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="vs_cell_texture"><property name="atlas_number_of_cells_x" value="4"/>
+                   <property name="atlas_number_of_cells_y" value="2"/><property name="atlas_cell" value="5"/>
+                   <property name="number_of_cells_x" value="0"/><property name="number_of_cells_y" value="3"/>
+                   <property name="cell" value="-2"/><property name="randomize_cell" value="true"/></modifier>"#,
+            ),
+        );
+        assert_eq!(k.behaviour_mask[0], CELL_TEXTURE);
+        assert_eq!(k.vs_atlas_texture_params, [0.25, 0.5, 0.25, 0.5]);
+        assert_eq!(k.vs_cell_texture_params, [1, 3, 0, 1]);
+
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="vs_animated_texture"><property name="no_cells_xy" value="float2(8,4)"/>
+                   <property name="no_loops" value="float2(2,0.5)"/><property name="cell_blend" value="true"/>
+                   <property name="loop" value="1"/><property name="randomize_row" value="true"/>
+                   <property name="row_restriction" value="3"/></modifier>"#,
+            ),
+        );
+        assert_eq!(k.behaviour_mask[0], ANIMATED_TEXTURE);
+        assert_eq!(k.vs_atlas_texture_params, [1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(k.vs_cell_texture_params, [8, 4, 0, 0]);
+        assert_eq!(k.vs_animated_texture_params, [1, 1, 0, 1]);
+        assert_eq!(k.vs_animated_texture_params1, [2.0, 0.5, 3.0, 0.0]);
+    }
+
+    #[test]
+    fn bad_atlas_numbers_never_divide_by_zero() {
+        for (x, y, cell) in [("0", "0", "0"), ("abc", "", "7"), ("-4", "-1", "-1"), ("2147483647", "1", "-2147483648")] {
+            for fragment in ["vs_cell_texture", "vs_animated_texture"] {
+                let k = constants(
+                    "",
+                    Some(&format!(
+                        r#"<modifier fragment="{fragment}"><property name="atlas_number_of_cells_x" value="{x}"/>
+                           <property name="atlas_number_of_cells_y" value="{y}"/><property name="atlas_cell" value="{cell}"/>
+                           <property name="number_of_cells_x" value="{x}"/><property name="no_cells_xy" value="float2(-3,abc)"/></modifier>"#
+                    )),
+                );
+                let atlas = k.vs_atlas_texture_params;
+                assert!(atlas.iter().all(|v| v.is_finite()), "{fragment} {x} {y} {cell}: {atlas:?}");
+                assert!(k.vs_cell_texture_params[0] >= 1 && k.vs_cell_texture_params[1] == 1, "{fragment} {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn pixel_shader_fragments() {
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="ps_texture"><texture_property name="normal" path="N.dds"/></modifier>
+                   <modifier fragment="ps_lighting"><property name="legacy_lighting" value="true"/><property name="emissive" value="0.5"/>
+                   <property name="directionality" value="0.25"/><property name="average_size" value="1"/>
+                   <property name="additive_blend_mul" value="2"/><property name="small_particles" value="3"/>
+                   <property name="large_particles" value="4"/><property name="additive_blend" value="1"/></modifier>
+                   <modifier fragment="ps_soft_edge"><property name="soft_edge_distance" value="2"/></modifier>
+                   <modifier fragment="ps_colour"/><modifier fragment="ps_fog"/><modifier fragment="not_a_fragment"/><modifier/>"#,
+            ),
+        );
+        assert_eq!(k.behaviour_mask[0], PS_NORMAL | PS_LIGHTING | PS_SOFT_EDGE | PS_COLOUR | PS_FOG);
+        assert_eq!((k.diffuse.as_str(), k.normal.as_str()), ("", "vfx/textures/n.dds"));
+        assert_eq!(k.ps_lighting_legacy_params, [1.0, 0.0, 0.5, 0.25]);
+        assert_eq!(k.ps_lighting_params, [1.0, 2.0, 3.0, 4.0]);
+        assert!(k.additive);
+        assert_eq!(k.ps_soft_edge_params[0], 2.0);
+
+        // soft_factor wins over soft_edge_distance, and the default is 1.
+        let k = constants(
+            "",
+            Some(
+                r#"<modifier fragment="ps_soft_edge"><property name="soft_factor" value="0.5"/><property name="soft_edge_distance" value="2"/></modifier>"#,
+            ),
+        );
+        assert_eq!(k.ps_soft_edge_params[0], 0.5);
+        let k = constants("", Some(r#"<modifier fragment="ps_soft_edge"/>"#));
+        assert_eq!(k.ps_soft_edge_params[0], 1.0);
+    }
 }

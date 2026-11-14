@@ -53,12 +53,19 @@ pub enum KeyKind {
     U32,
 }
 
+use crate::bytes::{ByteReader, Short, format_reader};
 use Field::*;
 
 const MATRIX: Field = Matrix("transform");
 const DECAL: [Field; 6] = [IfByte(65), F32("parallax_scale"), U8("tiled"), F32("scale_x"), F32("scale_y"), F32("scale_z")];
-const PROP_HEAD: [Field; 7] = [MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68"), U8("unknown_69")];
-const VISIBILITY: [Field; 4] = [U8("visible_inside_snow_zone"), U8("visible_outside_snow_zone"), U8("visible_inside_destruction_zone"), U8("visible_outside_destruction_zone")];
+const PROP_HEAD: [Field; 7] =
+    [MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68"), U8("unknown_69")];
+const VISIBILITY: [Field; 4] = [
+    U8("visible_inside_snow_zone"),
+    U8("visible_outside_snow_zone"),
+    U8("visible_inside_destruction_zone"),
+    U8("visible_outside_destruction_zone"),
+];
 
 macro_rules! cat {
     ($($part:expr),* $(,)?) => {{
@@ -85,7 +92,9 @@ macro_rules! cat {
 pub fn layout(class: &str, version: u32) -> Option<(&'static [Field], KeyKind)> {
     Some(match (class, version) {
         // Rome 2's version 4: the head without its last flag (the water plane's, `unknown_69`).
-        ("PROP_MARKER", 4) => (cat!([MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68")], DECAL), KeyKind::Wide),
+        ("PROP_MARKER", 4) => {
+            (cat!([MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68")], DECAL), KeyKind::Wide)
+        }
         ("PROP_MARKER", 5) => (cat!(PROP_HEAD, DECAL), KeyKind::Wide),
         ("PROP_MARKER", 6) => (cat!(PROP_HEAD, [U32("seasons")], DECAL), KeyKind::Wide),
         ("PROP_MARKER", 8) => (cat!(PROP_HEAD, [U32("seasons"), Bytes("unknown_74", 3)], DECAL), KeyKind::Wide),
@@ -100,15 +109,39 @@ pub fn layout(class: &str, version: u32) -> Option<(&'static [Field], KeyKind)> 
         ),
         ("POINT_LIGHT_MARKER", 2) => (
             cat!([
-                F32("x"), F32("y"), F32("z"), F32("radius"), F32("red"), F32("green"), F32("blue"), F32("colour_scale"), Str("animation_type"),
-                F32("animation_speed_x"), F32("animation_speed_y"), F32("colour_min"), F32("random_offset"), Str("falloff_type"),
+                F32("x"),
+                F32("y"),
+                F32("z"),
+                F32("radius"),
+                F32("red"),
+                F32("green"),
+                F32("blue"),
+                F32("colour_scale"),
+                Str("animation_type"),
+                F32("animation_speed_x"),
+                F32("animation_speed_y"),
+                F32("colour_min"),
+                F32("random_offset"),
+                Str("falloff_type"),
             ]),
             KeyKind::Wide,
         ),
         ("POINT_LIGHT_MARKER", 3) => (
             cat!([
-                F32("x"), F32("y"), F32("z"), F32("radius"), F32("red"), F32("green"), F32("blue"), F32("colour_scale"), U8("unknown_32"),
-                Str("animation_type"), F32("animation_speed_x"), F32("animation_speed_y"), F32("colour_min"), F32("random_offset"),
+                F32("x"),
+                F32("y"),
+                F32("z"),
+                F32("radius"),
+                F32("red"),
+                F32("green"),
+                F32("blue"),
+                F32("colour_scale"),
+                U8("unknown_32"),
+                Str("animation_type"),
+                F32("animation_speed_x"),
+                F32("animation_speed_y"),
+                F32("colour_min"),
+                F32("random_offset"),
                 Str("falloff_type"),
             ]),
             KeyKind::Wide,
@@ -168,33 +201,18 @@ pub struct MarkersFile {
     pub groups: Option<Vec<MarkerGroup>>,
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
+format_reader!(Reader);
+
+impl From<Short> for MarkersError {
+    fn from(s: Short) -> Self {
+        MarkersError(format!("truncated at {}", s.at))
+    }
 }
 
 impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], MarkersError> {
-        let r = self.b.get(self.p..self.p + n).ok_or_else(|| MarkersError(format!("truncated at {}", self.p)))?;
-        self.p += n;
-        Ok(r)
-    }
-
-    fn u32(&mut self) -> Result<u32, MarkersError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn u16(&mut self) -> Result<u16, MarkersError> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().expect("2 bytes")))
-    }
-
-    fn f32(&mut self) -> Result<f32, MarkersError> {
-        Ok(f32::from_bits(self.u32()?))
-    }
-
     fn wide(&mut self) -> Result<Vec<u16>, MarkersError> {
         let n = usize::from(self.u16()?);
-        Ok(self.take(2 * n)?.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect())
+        Ok(self.utf16(n)?)
     }
 
     fn narrow(&mut self) -> Result<Vec<u8>, MarkersError> {
@@ -208,14 +226,11 @@ impl<'a> Reader<'a> {
             return fail(format!("an id at {} does not start with 12 zero bytes", self.p - 12));
         }
 
-        self.u32()
+        Ok(self.u32()?)
     }
 
     fn points(&mut self) -> Result<Vec<[f32; 2]>, MarkersError> {
-        let n = self.u32()? as usize;
-        if n > self.b.len() / 8 {
-            return fail("point count");
-        }
+        let n = self.count(8).map_err(|_| MarkersError("point count".into()))?;
 
         (0..n).map(|_| Ok([self.f32()?, self.f32()?])).collect()
     }
@@ -246,10 +261,7 @@ impl<'a> Reader<'a> {
                 Str(n) => (n, Value::Str(self.narrow()?)),
                 Points(n) => (n, Value::Points(self.points()?)),
                 PointLists(n) => {
-                    let count = self.u32()? as usize;
-                    if count > self.b.len() / 4 {
-                        return fail("polyline count");
-                    }
+                    let count = self.count(4).map_err(|_| MarkersError("polyline count".into()))?;
 
                     (n, Value::PointLists((0..count).map(|_| self.points()).collect::<Result<_, _>>()?))
                 }
@@ -279,12 +291,11 @@ fn put_id(o: &mut Vec<u8>, id: u32) {
 }
 
 impl MarkersFile {
-
     /// # Errors
     ///
     /// Not a markers file, a truncated one, or records of a class / version without a layout.
     pub fn parse(bytes: &[u8]) -> Result<Self, MarkersError> {
-        let mut r = Reader { b: bytes, p: 0 };
+        let mut r = Reader(ByteReader::new(bytes));
         let repository = String::from_utf16_lossy(&r.wide()?);
         if repository != "BASE_MARKER_REPOSITORY" {
             return fail("not a markers file");
@@ -333,10 +344,7 @@ impl MarkersFile {
                     })
                     .collect::<Result<Vec<_>, MarkersError>>()?;
 
-                let k = r.u32()? as usize;
-                if k > bytes.len() / 4 {
-                    return fail("index count");
-                }
+                let k = r.count(4).map_err(|_| MarkersError("index count".into()))?;
 
                 groups.push(MarkerGroup { key, indices: (0..k).map(|_| r.u32()).collect::<Result<_, _>>()? });
             }
@@ -400,7 +408,7 @@ impl MarkersFile {
     pub fn fields(&self, i: usize) -> Result<Vec<(&'static str, Value)>, MarkersError> {
         let Some((layout, _)) = layout(&self.class_name, self.version) else { return fail("no layout") };
         let mut out = vec![];
-        let mut r = Reader { b: &self.records[i], p: 0 };
+        let mut r = Reader(ByteReader::new(&self.records[i]));
         r.fields(layout, 0, Some(&mut out))?;
         Ok(out)
     }
@@ -469,8 +477,15 @@ mod tests {
 
     fn file(class: &str, version: u32, records: &[Vec<u8>], groups: Option<Vec<MarkerGroup>>) -> MarkersFile {
         MarkersFile {
-            repository: "BASE_MARKER_REPOSITORY".into(), repository_id: 0x9D9BB, repository_u32: 1, repository_u16: 1, class_id: 0x00B7_E42E,
-            class_name: class.into(), version, records: records.to_vec(), groups,
+            repository: "BASE_MARKER_REPOSITORY".into(),
+            repository_id: 0x9D9BB,
+            repository_u32: 1,
+            repository_u16: 1,
+            class_id: 0x00B7_E42E,
+            class_name: class.into(),
+            version,
+            records: records.to_vec(),
+            groups,
         }
     }
 

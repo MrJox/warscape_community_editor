@@ -12,9 +12,21 @@ use crate::tool::TileTool;
 
 /// The flags of the entry and what each does (their tooltips), with the kit's counts (battle, 626 entries).
 const FLAGS: [(&str, &str, &str); 4] = [
-    ("random_rotatable", "Random rotatable", "The map fill may turn the tile by 90, 180 or 270 degrees. Off for tiles that must keep their orientation (the wonders, Hadrian's wall, Rome: 8 of the kit's 626)."),
-    ("encampable", "Encampable", "An army may set up its encampment on it (the kit's 9: plains, marsh and dunes of 2 x 2 and 2 x 3 cells). The game reads it; not traced further."),
-    ("scalable", "Scalable", "The kit's 10: the encampments, a few custom and settlement tiles. The game reads it; what it does was not traced."),
+    (
+        "random_rotatable",
+        "Random rotatable",
+        "The map fill may turn the tile by 90, 180 or 270 degrees. Off for tiles that must keep their orientation (the wonders, Hadrian's wall, Rome: 8 of the kit's 626).",
+    ),
+    (
+        "encampable",
+        "Encampable",
+        "An army may set up its encampment on it (the kit's 9: plains, marsh and dunes of 2 x 2 and 2 x 3 cells). The game reads it; not traced further.",
+    ),
+    (
+        "scalable",
+        "Scalable",
+        "The kit's 10: the encampments, a few custom and settlement tiles. The game reads it; what it does was not traced.",
+    ),
     ("requires_infield_lodding", "Infield lodding", "TEd turns it on for a new tile (583 of the kit's 626 have it). Not traced."),
 ];
 
@@ -26,7 +38,11 @@ impl TileTool {
     /// Inside the Tile database entry section.
     pub(crate) fn draw_tile_properties(&mut self, e: &mut Editor, id: DocumentId) {
         // The minimap's ground colour over the valid cells (baked by the minimap when it is not).
-        let ground = if self.cells_ground > 0.0 && e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.project().has_entry()) { self.minimap.colour_picture(e, id) } else { None };
+        let ground = if self.cells_ground > 0.0 && e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.project().has_entry()) {
+            self.minimap.colour_picture(e, id)
+        } else {
+            None
+        };
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         let Some(entry) = d.project().entry.as_ref() else {
             gui::text_disabled("no tile database entry: no properties");
@@ -86,8 +102,11 @@ impl TileTool {
                 }
 
                 if gui::is_item_hovered() {
-                    gui::set_tooltip(&format!("Cell ({x}, {y}): {}.
-{MASK_TIP}", if on { "valid" } else { "not the tile's" }));
+                    gui::set_tooltip(&format!(
+                        "Cell ({x}, {y}): {}.
+{MASK_TIP}",
+                        if on { "valid" } else { "not the tile's" }
+                    ));
                 }
             }
         }
@@ -98,7 +117,14 @@ impl TileTool {
             let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
             let uv = |x: f64, z: f64| gui::v2(((x - x0) / pw) as f32, ((z - z0) / ph) as f32);
             let hi = gui::v2(origin.x + w as f32 * side - 1.0, origin.y + h as f32 * side - 1.0);
-            dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, (self.cells_ground.clamp(0.0, 1.0) * 255.0).round() as u8));
+            dl.image(
+                tex,
+                origin,
+                hi,
+                uv(0.0, ez),
+                uv(ex, 0.0),
+                gui::col32(255, 255, 255, (self.cells_ground.clamp(0.0, 1.0) * 255.0).round() as u8),
+            );
         }
 
         // The rest beside the cells, where there is room for it, else under them.
@@ -106,7 +132,11 @@ impl TileTool {
         let (grid_w, grid_h) = (w as f32 * side, h as f32 * side);
         let room = window_right - (origin.x + grid_w) - 2.0 * gui::item_spacing().x;
         let beside = room >= BESIDE;
-        let at = if beside { gui::v2(origin.x + grid_w + 2.0 * gui::item_spacing().x, origin.y) } else { gui::v2(origin.x, origin.y + grid_h + 4.0) };
+        let at = if beside {
+            gui::v2(origin.x + grid_w + 2.0 * gui::item_spacing().x, origin.y)
+        } else {
+            gui::v2(origin.x, origin.y + grid_h + 4.0)
+        };
         gui::set_cursor_screen_pos(at);
         gui::begin_group();
         for (i, (a, label, tip)) in FLAGS.iter().enumerate() {
@@ -123,7 +153,9 @@ impl TileTool {
         gui::set_next_item_width(-1.0);
         gui::slider_float("##maskground", &mut self.cells_ground, 0.0, 1.0, "Ground %.2f");
         if gui::is_item_hovered() {
-            gui::set_tooltip("The ground's colour over the valid cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.");
+            gui::set_tooltip(
+                "The ground's colour over the valid cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.",
+            );
         }
 
         gui::end_group();

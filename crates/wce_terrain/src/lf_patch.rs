@@ -39,7 +39,14 @@ fn turned(rotation: u16, w: u32, h: u32, u: u32, v: u32) -> (u32, u32) {
 /// Lays `patch` into `field` under a placement at cell `origin` turned by `rotation`, `per_cell` field samples a cell; the samples go
 /// through `stroke` (one undo record for every patch). The mask's samples written and how many of them changed the LF; none when the
 /// placement leaves the field (skipped).
-pub fn apply(stroke: &mut LfStroke, field: &mut PagedU16, patch: &LfPatch, origin: (i32, i32), rotation: u16, per_cell: u32) -> Option<(usize, usize)> {
+pub fn apply(
+    stroke: &mut LfStroke,
+    field: &mut PagedU16,
+    patch: &LfPatch,
+    origin: (i32, i32),
+    rotation: u16,
+    per_cell: u32,
+) -> Option<(usize, usize)> {
     let (w, h) = (patch.w, patch.h);
     if w == 0 || h == 0 || patch.values.len() < (w * h) as usize {
         return None;

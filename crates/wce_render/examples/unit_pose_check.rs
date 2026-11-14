@@ -73,28 +73,33 @@ fn add_part(pic: &mut Picture, path: &str, f: &Figure, rigid: Option<Float4x4>) 
             continue;
         }
 
-        let posed: Vec<[f32; 3]> = block.mesh().vertices().iter().map(|v| {
-            let p = v.position();
-            let p = Float3::new(p.x, p.y, p.z);
-            let q = if let Some(m) = rigid {
-                m.transform_point(p)
-            } else if *format == VertexFormat::Static {
-                p
-            } else {
-                let (idx, w) = (*v.bone_indices(), vertex_weights(*format == VertexFormat::Weighted, (*v.weights()).into()));
-                let mut q = Float3::new(0.0, 0.0, 0.0);
-                for k in 0..4 {
-                    if w[k] > 0.0 {
-                        let s = f.skin[usize::from(idx[k])].transform_point(p);
-                        q = Float3::new(q.x + s.x * w[k], q.y + s.y * w[k], q.z + s.z * w[k]);
+        let posed: Vec<[f32; 3]> = block
+            .mesh()
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.position();
+                let p = Float3::new(p.x, p.y, p.z);
+                let q = if let Some(m) = rigid {
+                    m.transform_point(p)
+                } else if *format == VertexFormat::Static {
+                    p
+                } else {
+                    let (idx, w) = (*v.bone_indices(), vertex_weights(*format == VertexFormat::Weighted, (*v.weights()).into()));
+                    let mut q = Float3::new(0.0, 0.0, 0.0);
+                    for k in 0..4 {
+                        if w[k] > 0.0 {
+                            let s = f.skin[usize::from(idx[k])].transform_point(p);
+                            q = Float3::new(q.x + s.x * w[k], q.y + s.y * w[k], q.z + s.z * w[k]);
+                        }
                     }
-                }
 
-                q
-            };
+                    q
+                };
 
-            [q.x, q.y, q.z]
-        }).collect();
+                [q.x, q.y, q.z]
+            })
+            .collect();
         for t in block.mesh().indices().chunks_exact(3) {
             pic.tris.push([posed[t[0] as usize], posed[t[1] as usize], posed[t[2] as usize]]);
         }
@@ -130,12 +135,27 @@ fn origin(m: &Float4x4) -> [f32; 3] {
 
 fn report(f: &Figure) {
     let dist = |a: [f32; 3], b: [f32; 3]| (0..3).map(|c| (a[c] - b[c]) * (a[c] - b[c])).sum::<f32>().sqrt();
-    let stray = f.parents.iter().enumerate().filter_map(|(i, &p)| {
-        let p = usize::try_from(p).ok()?;
-        Some(((dist(origin(&f.pose[i]), origin(&f.pose[p])) - dist(origin(&f.bind[i]), origin(&f.bind[p]))).abs(), i))
-    }).fold((0.0f32, 0), |a, b| if b.0 > a.0 { b } else { a });
+    let stray = f
+        .parents
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &p)| {
+            let p = usize::try_from(p).ok()?;
+            Some(((dist(origin(&f.pose[i]), origin(&f.pose[p])) - dist(origin(&f.bind[i]), origin(&f.bind[p]))).abs(), i))
+        })
+        .fold((0.0f32, 0), |a, b| if b.0 > a.0 { b } else { a });
     println!("  largest change of a bone's length: {:.5} ({})", stray.0, f.bones[stray.1]);
-    for name in ["bn_hips", "bn_head", "bn_lefthand", "bn_righthand", "bn_weapon_01", "bn_weapon_02", "bn_weapon_03", "bn_lefttoebase", "bn_righttoebase"] {
+    for name in [
+        "bn_hips",
+        "bn_head",
+        "bn_lefthand",
+        "bn_righthand",
+        "bn_weapon_01",
+        "bn_weapon_02",
+        "bn_weapon_03",
+        "bn_lefttoebase",
+        "bn_righttoebase",
+    ] {
         if let Some(i) = f.bones.iter().position(|b| b == name) {
             let [x, y, z] = origin(&f.pose[i]);
             println!("  {name:<18} {x:7.3} {y:7.3} {z:7.3}");
@@ -209,7 +229,8 @@ fn main() {
 
     let with_skeleton = !args.iter().any(|a| a == "--no-skeleton");
     let text = std::fs::read_to_string(manifest).expect("the manifest");
-    let lines: Vec<Vec<&str>> = text.lines().map(|l| l.split_whitespace().collect()).filter(|l: &Vec<&str>| !l.is_empty() && !l[0].starts_with('#')).collect();
+    let lines: Vec<Vec<&str>> =
+        text.lines().map(|l| l.split_whitespace().collect()).filter(|l: &Vec<&str>| !l.is_empty() && !l[0].starts_with('#')).collect();
     let mut pic = Picture::default();
     let mut yaw = 0.0;
     let mut current: Option<Figure> = None;
@@ -217,7 +238,11 @@ fn main() {
         match l[0] {
             "view" => yaw = l[1].parse().expect("degrees"),
             "figure" => {
-                let clip = lines[i + 1..].iter().take_while(|n| n[0] != "figure").find(|n| n[0] == "clip").map(|n| (n[1], n[2].parse().expect("seconds")));
+                let clip = lines[i + 1..]
+                    .iter()
+                    .take_while(|n| n[0] != "figure")
+                    .find(|n| n[0] == "clip")
+                    .map(|n| (n[1], n[2].parse().expect("seconds")));
                 println!("figure {}", l[1]);
                 let f = figure(l[1], clip, with_skeleton);
                 report(&f);

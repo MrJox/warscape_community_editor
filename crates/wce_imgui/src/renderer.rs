@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 
+use dear_imgui_rs::BackendFlags;
 use dear_imgui_rs::Context;
 use dear_imgui_rs::render::{DrawCmd, DrawData, DrawIdx, DrawVert, PendingFrame, SynchronousRendererConsumer, TextureFeedback, TextureOp};
 use dear_imgui_rs::texture::{TextureFormat, TextureId};
-use dear_imgui_rs::BackendFlags;
 use wce_d3d11::*;
 
 const SHADERS: &str = r#"
@@ -86,7 +86,6 @@ pub struct D3D11Renderer {
 }
 
 impl D3D11Renderer {
-
     /// The renderer on a device; tells the context that it creates and updates textures itself.
     ///
     /// # Errors
@@ -100,29 +99,75 @@ impl D3D11Renderer {
         let (vs_code, ps_code) = (compile("vs", "vs_4_0")?, compile("ps", "ps_4_0")?);
         let element = |name, format, offset| InputElement::new(name, 0, format, 0, offset, false);
 
-        let elements = [element(c"POSITION", DXGI_FORMAT_R32G32_FLOAT, 0), element(c"TEXCOORD", DXGI_FORMAT_R32G32_FLOAT, 8), element(c"COLOR", DXGI_FORMAT_R8G8B8A8_UNORM, 16)];
+        let elements = [
+            element(c"POSITION", DXGI_FORMAT_R32G32_FLOAT, 0),
+            element(c"TEXCOORD", DXGI_FORMAT_R32G32_FLOAT, 8),
+            element(c"COLOR", DXGI_FORMAT_R8G8B8A8_UNORM, 16),
+        ];
         let blend_desc = D3D11_BLEND_DESC {
-            AlphaToCoverageEnable: false.into(), IndependentBlendEnable: false.into(),
+            AlphaToCoverageEnable: false.into(),
+            IndependentBlendEnable: false.into(),
             RenderTarget: [D3D11_RENDER_TARGET_BLEND_DESC {
-                BlendEnable: true.into(), SrcBlend: D3D11_BLEND_SRC_ALPHA, DestBlend: D3D11_BLEND_INV_SRC_ALPHA, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ONE,
-                DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ONE,
+                DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
             }; 8],
         };
 
-        let raster_desc = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, ScissorEnable: true.into(), DepthClipEnable: true.into(), ..Default::default() };
-        let depth_desc = D3D11_DEPTH_STENCIL_DESC { DepthEnable: false.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL, DepthFunc: D3D11_COMPARISON_ALWAYS, ..Default::default() };
+        let raster_desc = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_NONE,
+            ScissorEnable: true.into(),
+            DepthClipEnable: true.into(),
+            ..Default::default()
+        };
+        let depth_desc = D3D11_DEPTH_STENCIL_DESC {
+            DepthEnable: false.into(),
+            DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL,
+            DepthFunc: D3D11_COMPARISON_ALWAYS,
+            ..Default::default()
+        };
         let sampler = |filter| D3D11_SAMPLER_DESC {
-            Filter: filter, AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, ComparisonFunc: D3D11_COMPARISON_ALWAYS,
+            Filter: filter,
+            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+            ComparisonFunc: D3D11_COMPARISON_ALWAYS,
             ..Default::default()
         };
 
-        let cb_desc = D3D11_BUFFER_DESC { ByteWidth: 64, Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, ..Default::default() };
+        let cb_desc = D3D11_BUFFER_DESC {
+            ByteWidth: 64,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+            ..Default::default()
+        };
         Ok(Self {
-            dev: dev.clone(), ctx: ctx.clone(), consumer, vs: dev.create_vertex_shader(&vs_code)?, ps: dev.create_pixel_shader(&ps_code)?,
-            layout: dev.create_input_layout(&elements, &vs_code)?, cb: dev.create_buffer(&cb_desc, None)?, blend: dev.create_blend_state(&blend_desc)?,
-            raster: dev.create_rasterizer_state(&raster_desc)?, depth: dev.create_depth_stencil_state(&depth_desc)?,
-            linear: dev.create_sampler_state(&sampler(D3D11_FILTER_MIN_MAG_MIP_LINEAR))?, nearest: dev.create_sampler_state(&sampler(D3D11_FILTER_MIN_MAG_MIP_POINT))?,
-            vb: None, ib: None, vb_size: 0, ib_size: 0, textures: HashMap::new(), managed: HashMap::new(), next_id: 1,
+            dev: dev.clone(),
+            ctx: ctx.clone(),
+            consumer,
+            vs: dev.create_vertex_shader(&vs_code)?,
+            ps: dev.create_pixel_shader(&ps_code)?,
+            layout: dev.create_input_layout(&elements, &vs_code)?,
+            cb: dev.create_buffer(&cb_desc, None)?,
+            blend: dev.create_blend_state(&blend_desc)?,
+            raster: dev.create_rasterizer_state(&raster_desc)?,
+            depth: dev.create_depth_stencil_state(&depth_desc)?,
+            linear: dev.create_sampler_state(&sampler(D3D11_FILTER_MIN_MAG_MIP_LINEAR))?,
+            nearest: dev.create_sampler_state(&sampler(D3D11_FILTER_MIN_MAG_MIP_POINT))?,
+            vb: None,
+            ib: None,
+            vb_size: 0,
+            ib_size: 0,
+            textures: HashMap::new(),
+            managed: HashMap::new(),
+            next_id: 1,
         })
     }
 
@@ -151,8 +196,16 @@ impl D3D11Renderer {
     fn create_texture(&mut self, format: TextureFormat, width: u32, height: u32, pixels: &[u8]) -> Result<u64, RendererError> {
         let rgba = to_rgba(format, pixels);
         let desc = D3D11_TEXTURE2D_DESC {
-            Width: width, Height: height, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let tex = self.dev.create_texture_2d(&desc, Some(&[InitData::new(&rgba, width * 4)]))?;
@@ -167,7 +220,14 @@ impl D3D11Renderer {
         let Some(tex) = self.textures.get(&id).and_then(|t| t.tex.clone()) else { return };
         for r in rects {
             let rgba = to_rgba(format, &r.data);
-            let b = D3D11_BOX { left: u32::from(r.rect.x), top: u32::from(r.rect.y), front: 0, right: u32::from(r.rect.x + r.rect.w), bottom: u32::from(r.rect.y + r.rect.h), back: 1 };
+            let b = D3D11_BOX {
+                left: u32::from(r.rect.x),
+                top: u32::from(r.rect.y),
+                front: 0,
+                right: u32::from(r.rect.x + r.rect.w),
+                bottom: u32::from(r.rect.y + r.rect.h),
+                back: 1,
+            };
             let _ = self.ctx.update_subresource(&tex, 0, Some(&b), &rgba, u32::from(r.rect.w) * 4, 0);
         }
     }
@@ -217,7 +277,13 @@ impl D3D11Renderer {
 
     fn ensure_buffers(&mut self, vtx: usize, idx: usize) -> Result<(), RendererError> {
         let make = |dev: &ID3D11Device, bytes: usize, bind: i32| -> Result<Option<ID3D11Buffer>, RendererError> {
-            let desc = D3D11_BUFFER_DESC { ByteWidth: bytes as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: bind as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, ..Default::default() };
+            let desc = D3D11_BUFFER_DESC {
+                ByteWidth: bytes as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: bind as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+                ..Default::default()
+            };
             Ok(Some(dev.create_buffer(&desc, None)?))
         };
 
@@ -238,8 +304,32 @@ impl D3D11Renderer {
         let [w, h] = dd.display_size();
         let [l, t] = dd.display_pos();
         let (r, b) = (l + w, t + h);
-        let mvp: [f32; 16] = [2.0 / (r - l), 0.0, 0.0, 0.0, 0.0, 2.0 / (t - b), 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, (r + l) / (l - r), (t + b) / (b - t), 0.5, 1.0];
-        let viewport = D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: w * dd.framebuffer_scale()[0], Height: h * dd.framebuffer_scale()[1], MinDepth: 0.0, MaxDepth: 1.0 };
+        let mvp: [f32; 16] = [
+            2.0 / (r - l),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.0 / (t - b),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.5,
+            0.0,
+            (r + l) / (l - r),
+            (t + b) / (b - t),
+            0.5,
+            1.0,
+        ];
+        let viewport = D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: w * dd.framebuffer_scale()[0],
+            Height: h * dd.framebuffer_scale()[1],
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        };
         let index_format = if size_of::<DrawIdx>() == 2 { DXGI_FORMAT_R16_UINT } else { DXGI_FORMAT_R32_UINT };
         if let Ok(mut ms) = self.ctx.map(&self.cb, 0, D3D11_MAP_WRITE_DISCARD, 0) {
             ms.write(0, &mvp);
@@ -305,7 +395,11 @@ impl D3D11Renderer {
                         let srv = self.textures.get(&cmd_params.texture_id.id()).map(|t| t.srv.clone());
                         self.ctx.set_scissor_rects(&[scissor]);
                         self.ctx.ps_set_shader_resources(0, &[srv]);
-                        self.ctx.draw_indexed(count as u32, (cmd_params.idx_offset + idx_base) as u32, (cmd_params.vtx_offset + vtx_base) as i32);
+                        self.ctx.draw_indexed(
+                            count as u32,
+                            (cmd_params.idx_offset + idx_base) as u32,
+                            (cmd_params.vtx_offset + vtx_base) as i32,
+                        );
                     }
 
                     DrawCmd::ResetRenderState => self.setup_state(dd, &vb, &ib),

@@ -101,7 +101,12 @@ fn main() {
             Ok(out) => {
                 e.differ += 1;
                 let i = out.iter().zip(&bytes).take_while(|(a, b)| a == b).count();
-                problems.lock().expect("problems").push(format!("{}: differs at byte {i} (sizes {} / {})", p.display(), bytes.len(), out.len()));
+                problems.lock().expect("problems").push(format!(
+                    "{}: differs at byte {i} (sizes {} / {})",
+                    p.display(),
+                    bytes.len(),
+                    out.len()
+                ));
             }
 
             Err(err) => {
@@ -116,7 +121,15 @@ fn main() {
     let mut bad = 0;
     for ((kind, codec), c) in counts.into_inner().expect("counts") {
         bad += c.differ + c.failed;
-        println!("{kind:<44} {:<18} {:>7} {:>9} {:>7} {:>7} {:>9.1}", format!("{codec:?}"), c.files, c.identical, c.differ, c.failed, c.bytes as f64 / 1e6);
+        println!(
+            "{kind:<44} {:<18} {:>7} {:>9} {:>7} {:>7} {:>9.1}",
+            format!("{codec:?}"),
+            c.files,
+            c.identical,
+            c.differ,
+            c.failed,
+            c.bytes as f64 / 1e6
+        );
     }
 
     let mut problems = problems.into_inner().expect("problems");

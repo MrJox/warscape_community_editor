@@ -64,7 +64,11 @@ fn block_bytes(f: DXGI_FORMAT) -> usize {
 
 fn pixel_bytes(f: DXGI_FORMAT) -> usize {
     match f {
-        DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_B8G8R8A8_UNORM | DXGI_FORMAT_B8G8R8X8_UNORM | DXGI_FORMAT_R16G16_UNORM | DXGI_FORMAT_R32_FLOAT
+        DXGI_FORMAT_R8G8B8A8_UNORM
+        | DXGI_FORMAT_B8G8R8A8_UNORM
+        | DXGI_FORMAT_B8G8R8X8_UNORM
+        | DXGI_FORMAT_R16G16_UNORM
+        | DXGI_FORMAT_R32_FLOAT
         | DXGI_FORMAT_R10G10B10A2_UNORM => 4,
         DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_UNORM => 8,
         DXGI_FORMAT_R32G32B32A32_FLOAT => 16,
@@ -77,10 +81,22 @@ fn pixel_bytes(f: DXGI_FORMAT) -> usize {
 fn from_masks(bits: u32, r: u32, g: u32, b: u32, a: u32) -> DXGI_FORMAT {
     match (bits, r, g, b) {
         (32, 0xFF, 0xFF00, 0xFF_0000) => DXGI_FORMAT_R8G8B8A8_UNORM,
-        (32, 0xFF_0000, 0xFF00, 0xFF) => if a != 0 { DXGI_FORMAT_B8G8R8A8_UNORM } else { DXGI_FORMAT_B8G8R8X8_UNORM },
+        (32, 0xFF_0000, 0xFF00, 0xFF) => {
+            if a != 0 {
+                DXGI_FORMAT_B8G8R8A8_UNORM
+            } else {
+                DXGI_FORMAT_B8G8R8X8_UNORM
+            }
+        }
         (32, 0xFFFF, 0xFFFF_0000, _) => DXGI_FORMAT_R16G16_UNORM,
         (16, 0xF800, 0x7E0, 0x1F) => DXGI_FORMAT_B5G6R5_UNORM,
-        (8, _, _, _) if r == 0xFF || a == 0xFF => if r != 0 { DXGI_FORMAT_R8_UNORM } else { DXGI_FORMAT_A8_UNORM },
+        (8, _, _, _) if r == 0xFF || a == 0xFF => {
+            if r != 0 {
+                DXGI_FORMAT_R8_UNORM
+            } else {
+                DXGI_FORMAT_A8_UNORM
+            }
+        }
         _ => DXGI_FORMAT_UNKNOWN,
     }
 }
@@ -243,8 +259,15 @@ fn build_dds(dev: &ID3D11Device, l: &DdsLayout, data: &[u8], data_offset: usize,
 
     if l.volume {
         let vd = D3D11_TEXTURE3D_DESC {
-            Width: width, Height: height, Depth: l.depth, MipLevels: mips, Format: resource_format, Usage: D3D11_USAGE_IMMUTABLE,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: width,
+            Height: height,
+            Depth: l.depth,
+            MipLevels: mips,
+            Format: resource_format,
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let Ok(tex) = dev.create_texture_3d(&vd, Some(&subs)) else { return fail("dds: CreateTexture3D failed") };
@@ -256,9 +279,16 @@ fn build_dds(dev: &ID3D11Device, l: &DdsLayout, data: &[u8], data_offset: usize,
     }
 
     let td = D3D11_TEXTURE2D_DESC {
-        Width: width, Height: height, MipLevels: mips, ArraySize: l.faces, Format: resource_format,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
-        CPUAccessFlags: 0, MiscFlags: if l.cube { D3D11_RESOURCE_MISC_TEXTURECUBE as u32 } else { 0 },
+        Width: width,
+        Height: height,
+        MipLevels: mips,
+        ArraySize: l.faces,
+        Format: resource_format,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: if l.cube { D3D11_RESOURCE_MISC_TEXTURECUBE as u32 } else { 0 },
     };
 
     let Ok(tex) = dev.create_texture_2d(&td, Some(&subs)) else { return fail("dds: CreateTexture2D failed") };
@@ -463,15 +493,30 @@ pub fn load_dds_array(dev: &ID3D11Device, files: &[Option<&[u8]>], srgb: bool, f
     }
 
     let td = D3D11_TEXTURE2D_DESC {
-        Width: r.width, Height: r.height, MipLevels: r.mips, ArraySize: files.len() as u32, Format: if srgb { to_typeless(r.fmt) } else { r.fmt },
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
-        CPUAccessFlags: 0, MiscFlags: 0,
+        Width: r.width,
+        Height: r.height,
+        MipLevels: r.mips,
+        ArraySize: files.len() as u32,
+        Format: if srgb { to_typeless(r.fmt) } else { r.fmt },
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let tex = match dev.create_texture_2d(&td, Some(&subs)) {
         Ok(tex) => tex,
         Err(error) => {
-            wce_foundation::log::warn(format!("texture array {}x{} x{}, {} mips, format {}: CreateTexture2D 0x{:08x}", r.width, r.height, files.len(), r.mips, td.Format, error.code().0 as u32));
+            wce_foundation::log::warn(format!(
+                "texture array {}x{} x{}, {} mips, format {}: CreateTexture2D 0x{:08x}",
+                r.width,
+                r.height,
+                files.len(),
+                r.mips,
+                td.Format,
+                error.code().0 as u32
+            ));
             return (Texture::default(), mismatched);
         }
     };
@@ -487,12 +532,22 @@ pub fn load_dds_array(dev: &ID3D11Device, files: &[Option<&[u8]>], srgb: bool, f
 /// A 1 x 1 texture of one colour (0xAABBGGRR).
 pub fn make_solid_texture(dev: &ID3D11Device, rgba: u32) -> Texture {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: 1, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: 1,
+        Height: 1,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let texel = rgba.to_le_bytes();
-    let srv = dev.create_texture_2d(&td, Some(&[InitData { data: &texel, row_pitch: 4, slice_pitch: 4 }])).and_then(|tex| dev.create_shader_resource_view(&tex, None));
+    let srv = dev
+        .create_texture_2d(&td, Some(&[InitData { data: &texel, row_pitch: 4, slice_pitch: 4 }]))
+        .and_then(|tex| dev.create_shader_resource_view(&tex, None));
     Texture { srv: srv.ok(), width: 1, height: 1, mips: 1, depth: 1, format: td.Format, ..Default::default() }
 }
 
@@ -511,7 +566,8 @@ pub fn rgba_mip_chain(w: u32, h: u32, rgba: &[u8]) -> (Vec<Vec<u8>>, Vec<u32>, V
             for x in 0..nw {
                 let (x0, x1, y0, y1) = ((2 * x).min(pw - 1), (2 * x + 1).min(pw - 1), (2 * y).min(ph - 1), (2 * y + 1).min(ph - 1));
                 for k in 0..4 {
-                    let s = [(y0, x0), (y0, x1), (y1, x0), (y1, x1)].iter().map(|&(y, x)| u32::from(src[(y * pw + x) * 4 + k])).sum::<u32>();
+                    let s =
+                        [(y0, x0), (y0, x1), (y1, x0), (y1, x1)].iter().map(|&(y, x)| u32::from(src[(y * pw + x) * 4 + k])).sum::<u32>();
                     row[x * 4 + k] = ((s + 2) / 4) as u8;
                 }
             }
@@ -534,8 +590,16 @@ pub fn make_rgba_texture(dev: &ID3D11Device, w: u32, h: u32, rgba: &[u8], srgb: 
     let (levels, lw, _) = rgba_mip_chain(w, h, rgba);
     let format = if srgb { DXGI_FORMAT_R8G8B8A8_UNORM_SRGB } else { DXGI_FORMAT_R8G8B8A8_UNORM };
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: levels.len() as u32, ArraySize: 1, Format: format, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: w,
+        Height: h,
+        MipLevels: levels.len() as u32,
+        ArraySize: 1,
+        Format: format,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let subs = levels.iter().zip(&lw).map(|(level, w)| InitData::new(level, w * 4)).collect::<Vec<_>>();
@@ -573,8 +637,16 @@ impl PatchableRgba {
         let (levels, lw, lh) = rgba_mip_chain(w, h, rgba);
         let format = DXGI_FORMAT_R8G8B8A8_UNORM;
         let td = D3D11_TEXTURE2D_DESC {
-            Width: w, Height: h, MipLevels: levels.len() as u32, ArraySize: 1, Format: format, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: w,
+            Height: h,
+            MipLevels: levels.len() as u32,
+            ArraySize: 1,
+            Format: format,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let subs = levels.iter().zip(&lw).map(|(level, w)| InitData::new(level, w * 4)).collect::<Vec<_>>();
@@ -615,7 +687,10 @@ impl PatchableRgba {
                 for x in x0 as usize..x1 as usize {
                     let (sx0, sx1, sy0, sy1) = ((2 * x).min(pw - 1), (2 * x + 1).min(pw - 1), (2 * y).min(ph - 1), (2 * y + 1).min(ph - 1));
                     for k in 0..4 {
-                        let s = [(sy0, sx0), (sy0, sx1), (sy1, sx0), (sy1, sx1)].iter().map(|&(y, x)| u32::from(src[(y * pw + x) * 4 + k])).sum::<u32>();
+                        let s = [(sy0, sx0), (sy0, sx1), (sy1, sx0), (sy1, sx1)]
+                            .iter()
+                            .map(|&(y, x)| u32::from(src[(y * pw + x) * 4 + k]))
+                            .sum::<u32>();
                         dst[(y * nw as usize + x) * 4 + k] = ((s + 2) / 4) as u8;
                     }
                 }

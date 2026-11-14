@@ -314,8 +314,8 @@ fn edges(region: &Region) -> Edges {
     }
 
     for (k, (y0, y1, s)) in bands.iter().enumerate() {
-        let above = (k > 0 && bands[k - 1].1 + 1 == *y0).then(|| bands[k - 1].2.as_slice()).unwrap_or(&[]);
-        let below = (k + 1 < bands.len() && bands[k + 1].0 == y1 + 1).then(|| bands[k + 1].2.as_slice()).unwrap_or(&[]);
+        let above = if k > 0 && bands[k - 1].1 + 1 == *y0 { bands[k - 1].2.as_slice() } else { &[] };
+        let below = if k + 1 < bands.len() && bands[k + 1].0 == y1 + 1 { bands[k + 1].2.as_slice() } else { &[] };
         let index = |x: i32| first[k] + s.iter().position(|&(a, b)| a <= x && x <= b).unwrap_or(0);
         for (a, b) in uncovered(s, above) {
             for x in a..=b {
@@ -332,10 +332,13 @@ fn edges(region: &Region) -> Edges {
         }
     }
 
-    timed.into_iter().map(|(k, mut v)| {
-        v.sort_by_key(|e| e.0);
-        (k, v.into_iter().map(|e| e.1).collect())
-    }).collect()
+    timed
+        .into_iter()
+        .map(|(k, mut v)| {
+            v.sort_by_key(|e| e.0);
+            (k, v.into_iter().map(|e| e.1).collect())
+        })
+        .collect()
 }
 
 /// fn 0x1005c990 as it is: each edge added, its reverse cancelled (the reference for `edges`).
@@ -528,8 +531,17 @@ fn split(zones: &[Polygon], width: f32) -> Option<(Polygon, Polygon)> {
 /// two zones (or fewer) and its errors.
 #[allow(clippy::too_many_arguments)]
 pub fn zones(
-    spec: &Spec, dep: &DeploymentSpec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32],
-    masks: &HashMap<(usize, usize), DeploymentMask>, config: i32, centre: (i32, i32), inset: i32,
+    spec: &Spec,
+    dep: &DeploymentSpec,
+    db: &TileDatabase,
+    w: u32,
+    h: u32,
+    instances: &[Placement],
+    cells: &[i32],
+    masks: &HashMap<(usize, usize), DeploymentMask>,
+    config: i32,
+    centre: (i32, i32),
+    inset: i32,
 ) -> (Vec<Polygon>, Vec<String>) {
     let mut gathered = vec![];
     for dy in -4..4 {

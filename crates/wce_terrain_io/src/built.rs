@@ -83,7 +83,11 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
     if let Some(blm) = locations(&m) {
         let mut deployments = BTreeMap::new();
         for (path, blob) in &m.carried {
-            let n = path.strip_prefix("deployment/").and_then(|f| f.strip_prefix("deployment_")).and_then(|f| f.strip_suffix(".xml")).and_then(|f| f.parse::<u32>().ok());
+            let n = path
+                .strip_prefix("deployment/")
+                .and_then(|f| f.strip_prefix("deployment_"))
+                .and_then(|f| f.strip_suffix(".xml"))
+                .and_then(|f| f.parse::<u32>().ok());
             if let Some(n) = n {
                 deployments.insert(n, wce_tile::vegetation::ca_xml::parse(&blob.bytes()?));
             }
@@ -93,6 +97,7 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
         m.project = Some(Item::new(SCENE, p, Blob::Bytes(Arc::from(&[][..]))));
     }
 
+    crate::campaign_props::load(&mut m)?;
     Ok(m)
 }
 
@@ -146,10 +151,11 @@ pub fn chmf(field: &PagedU16, cells: (u32, u32), shipped: Option<&[u8]>) -> Opti
 /// An original file can't be read, or edited v9 placements fail the metadata-integrity guard.
 pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDatabase>) -> Result<MapFiles> {
     let mut folder: BTreeMap<String, Blob> = m.carried.clone();
+    crate::campaign_props::write(m, &mut folder)?;
     if let Some(p) = m.project.as_ref().filter(|p| p.edited())
         && let Some(original) = locations(m)
     {
-        let (blm, deployments) = scene::write(p.get(), &original);
+        let (blm, deployments) = scene::write(p.get(), &original)?;
         let key = folder.keys().find(|k| k.eq_ignore_ascii_case(BLM)).cloned().unwrap_or_else(|| BLM.to_owned());
         folder.insert(key, Blob::Bytes(Arc::from(blm)));
         for (name, bytes) in deployments {
@@ -202,10 +208,19 @@ pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDataba
         // The LF normal chunks the edit reaches, from the shipped ones (docs/formats/map_files.md: Rome 2 has no `normal.dds`).
         if let Some(cells) = cells(m) {
             let n = f.width() as usize * f.height() as usize;
-            let original: Vec<u16> = origin.get(128..128 + n * 2).map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()).unwrap_or_default();
+            let original: Vec<u16> = origin
+                .get(128..128 + n * 2)
+                .map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect())
+                .unwrap_or_default();
             let chunk_name = |i: i64| format!("normals/normal_{i}.dds");
-            let count = m.carried.keys().filter(|k| k.to_ascii_lowercase().starts_with("normals/normal_") && k.to_ascii_lowercase().ends_with(".dds")).count();
-            let shipped = |i: i64| m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case(&chunk_name(i))).and_then(|(_, b)| b.bytes().ok()).map(|b| b.to_vec());
+            let count = m
+                .carried
+                .keys()
+                .filter(|k| k.to_ascii_lowercase().starts_with("normals/normal_") && k.to_ascii_lowercase().ends_with(".dds"))
+                .count();
+            let shipped = |i: i64| {
+                m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case(&chunk_name(i))).and_then(|(_, b)| b.bytes().ok()).map(|b| b.to_vec())
+            };
             for (name, bytes) in crate::attila::normals::edited_shipped_chunks(f, &original, cells, count, &shipped) {
                 let key = folder.keys().find(|k| k.eq_ignore_ascii_case(&name)).cloned().unwrap_or(name);
                 folder.insert(key, Blob::Bytes(Arc::from(bytes)));
@@ -230,11 +245,15 @@ mod integrity_tests;
 
 /// The files of `written` that differ from `read` (or are new): what an export of an edited built map needs.
 pub fn changed(read: &MapFiles, written: &MapFiles) -> Vec<(String, Vec<u8>)> {
-    written.folder.iter().filter_map(|(p, b)| {
-        let new = b.bytes().ok()?;
-        let old = read.folder.get(p).and_then(|o| o.bytes().ok());
-        (old.as_deref() != Some(&new[..])).then(|| (p.clone(), new.to_vec()))
-    }).collect()
+    written
+        .folder
+        .iter()
+        .filter_map(|(p, b)| {
+            let new = b.bytes().ok()?;
+            let old = read.folder.get(p).and_then(|o| o.bytes().ok());
+            (old.as_deref() != Some(&new[..])).then(|| (p.clone(), new.to_vec()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -253,10 +272,12 @@ mod tests {
     #[test]
     fn unedited_writes_back_and_an_edit_changes_the_dds() {
         let samples: Vec<u16> = (0..64u16).map(|i| 400 + i).collect();
-        let files = MapFiles { folder: BTreeMap::from([
-            (LF.to_owned(), Blob::Bytes(Arc::from(dds(8, 8, &samples)))),
-            ("terrain.tile_list".to_owned(), Blob::Bytes(Arc::from(vec![1u8, 2, 3]))),
-        ]) };
+        let files = MapFiles {
+            folder: BTreeMap::from([
+                (LF.to_owned(), Blob::Bytes(Arc::from(dds(8, 8, &samples)))),
+                ("terrain.tile_list".to_owned(), Blob::Bytes(Arc::from(vec![1u8, 2, 3]))),
+            ]),
+        };
 
         let mut m = read("x", &files).unwrap();
         assert!(m.built && m.lf.len() == 1 && m.carried.len() == 1);

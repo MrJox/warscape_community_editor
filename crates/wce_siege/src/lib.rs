@@ -37,7 +37,11 @@ impl Sea {
     /// The height at a point (the nearest sample; 0 off the grid).
     pub fn height(&self, p: P) -> f64 {
         let (i, j) = (((p[0] - self.x0) / self.cell).floor(), ((p[1] - self.z0) / self.cell).floor());
-        if i >= 0.0 && j >= 0.0 && (i as usize) < self.w && (j as usize) < self.h { f64::from(self.height[j as usize * self.w + i as usize]) } else { 0.0 }
+        if i >= 0.0 && j >= 0.0 && (i as usize) < self.w && (j as usize) < self.h {
+            f64::from(self.height[j as usize * self.w + i as usize])
+        } else {
+            0.0
+        }
     }
 
     pub fn at(&self, p: P) -> bool {
@@ -236,8 +240,16 @@ impl Layout {
         };
         format!(
             "{} areas, {} intersections, {} entries; {} streets, {} area connections, {} wall edges, {} palisade edges; {} separators; {} approach lines{port}; {} warning(s)",
-            count(NodeKind::Area), count(NodeKind::Intersection), count(NodeKind::Entry), edges(EdgeKind::Street), edges(EdgeKind::AreaConnection),
-            edges(EdgeKind::Wall), edges(EdgeKind::Palisade), self.separators.len(), self.approaches.len(), self.warnings.len(),
+            count(NodeKind::Area),
+            count(NodeKind::Intersection),
+            count(NodeKind::Entry),
+            edges(EdgeKind::Street),
+            edges(EdgeKind::AreaConnection),
+            edges(EdgeKind::Wall),
+            edges(EdgeKind::Palisade),
+            self.separators.len(),
+            self.approaches.len(),
+            self.warnings.len(),
         )
     }
 }

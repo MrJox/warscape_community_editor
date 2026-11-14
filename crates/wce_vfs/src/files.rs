@@ -7,7 +7,6 @@ use crate::{GameProfile, Vfs, generated, list_folder, normalize};
 
 /// The game's files, readable from any thread.
 pub trait Files: Send + Sync {
-
     /// The bytes of a file.
     ///
     /// # Errors
@@ -24,6 +23,12 @@ pub trait Files: Send + Sync {
     /// The game the files are of, when they know it (the mounted packs do; an extracted copy doesn't: Attila's, by default).
     fn game(&self) -> Option<&GameProfile> {
         None
+    }
+
+    /// Which set of files these are, for caches of what was found in them: another mount (mods added or taken away, a loose file written)
+    /// has another id. 0: the files do not say (a cache keyed by it is never made again).
+    fn mount_id(&self) -> u64 {
+        0
     }
 }
 
@@ -47,6 +52,10 @@ impl Files for Vfs {
     fn game(&self) -> Option<&GameProfile> {
         Some(self.profile())
     }
+
+    fn mount_id(&self) -> u64 {
+        self.mount_id
+    }
 }
 
 /// Files under a folder, by their normalized path (an extracted copy of the packs).
@@ -69,7 +78,11 @@ impl Files for FolderFiles {
 
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
         let (prefix, extension) = (normalize(prefix), normalize(extension));
-        let mut paths = list_folder(&self.0).into_iter().map(|p| normalize(&p)).filter(|p| p.starts_with(&prefix) && p.ends_with(&extension)).collect::<Vec<_>>();
+        let mut paths = list_folder(&self.0)
+            .into_iter()
+            .map(|p| normalize(&p))
+            .filter(|p| p.starts_with(&prefix) && p.ends_with(&extension))
+            .collect::<Vec<_>>();
         paths.sort();
         paths
     }

@@ -13,7 +13,6 @@ pub struct BuildingFiles {
 }
 
 impl BuildingFiles {
-
     /// The folder of `key` as the packs have it (each file from the pack with the highest priority).
     ///
     /// # Errors
@@ -70,10 +69,14 @@ impl BuildingFiles {
     /// The same files under another key: a file named after the key (`<key>_piece01_destruct01.rigid_model_v2`, `<key>_tech.cs2.parsed`)
     /// takes the new one. The contents are not changed: what they name (pieces, attached buildings) does not depend on the key.
     pub fn renamed(self, key: &str) -> Self {
-        let files = self.files.into_iter().map(|(name, bytes)| match name.strip_prefix(self.key.as_str()) {
-            Some(rest) => (format!("{key}{rest}"), bytes),
-            None => (name, bytes),
-        }).collect();
+        let files = self
+            .files
+            .into_iter()
+            .map(|(name, bytes)| match name.strip_prefix(self.key.as_str()) {
+                Some(rest) => (format!("{key}{rest}"), bytes),
+                None => (name, bytes),
+            })
+            .collect();
         Self { key: key.to_owned(), files }
     }
 
@@ -134,8 +137,14 @@ mod tests {
 
     #[test]
     fn numbered_copies() {
-        assert_eq!(numbered_copy_of("gondor_fort_straight_piece01_destruct01_0.rigid_model_v2").as_deref(), Some("gondor_fort_straight_piece01_destruct01.rigid_model_v2"));
-        assert_eq!(numbered_copy_of("gondor_fort_straight_piece01_destruct02_anim_0.anim").as_deref(), Some("gondor_fort_straight_piece01_destruct02_anim.anim"));
+        assert_eq!(
+            numbered_copy_of("gondor_fort_straight_piece01_destruct01_0.rigid_model_v2").as_deref(),
+            Some("gondor_fort_straight_piece01_destruct01.rigid_model_v2")
+        );
+        assert_eq!(
+            numbered_copy_of("gondor_fort_straight_piece01_destruct02_anim_0.anim").as_deref(),
+            Some("gondor_fort_straight_piece01_destruct02_anim.anim")
+        );
         assert_eq!(numbered_copy_of("gondor_fort_straight_tech_0.cs2.parsed").as_deref(), Some("gondor_fort_straight_tech.cs2.parsed"));
         assert_eq!(numbered_copy_of("roman_fort_straight_piece01_destruct01.rigid_model_v2"), None);
     }

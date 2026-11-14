@@ -68,7 +68,10 @@ fn main() {
                     }
 
                     if list && big && off_big <= 400 {
-                        println!("component off: {path} {} dock {dock} off {:?} stored ({}, {}) docked ({}, {})", en.name, doff, en.ax, en.ay, r.x, r.y);
+                        println!(
+                            "component off: {path} {} dock {dock} off {:?} stored ({}, {}) docked ({}, {})",
+                            en.name, doff, en.ax, en.ay, r.x, r.y
+                        );
                     }
                 }
             }
@@ -88,7 +91,12 @@ fn main() {
                     if ((b.x - a.x) - col * dw / 2.0).abs() > 1.01 || ((b.y - a.y) - row * dh / 2.0).abs() > 1.01 {
                         dock_wrong += 1;
                         if list {
-                            println!("docked child moved wrongly: {path} {} dock {dock} moved ({}, {}) for growth ({dw}, {dh})", en.name, b.x - a.x, b.y - a.y);
+                            println!(
+                                "docked child moved wrongly: {path} {} dock {dock} moved ({}, {}) for growth ({dw}, {dh})",
+                                en.name,
+                                b.x - a.x,
+                                b.y - a.y
+                            );
                         }
                     }
                 }
@@ -112,13 +120,17 @@ fn main() {
                 pics += 1;
                 let ints: Vec<i64> = u.elems().filter(|c| c.name == "i").filter_map(|c| c.text().trim().parse().ok()).collect();
                 let us: Vec<i64> = u.elems().filter(|c| c.name == "u").filter_map(|c| c.text().trim().parse::<i64>().ok()).collect();
-                let stored = (us.get(1).map(|v| *v as u32 as i32).unwrap_or(0) as f32, us.get(2).map(|v| *v as u32 as i32).unwrap_or(0) as f32);
+                let stored =
+                    (us.get(1).map(|v| *v as u32 as i32).unwrap_or(0) as f32, us.get(2).map(|v| *v as u32 as i32).unwrap_or(0) as f32);
                 if ints.first().copied().unwrap_or(0) > 0 {
                     dpics += 1;
                     if (p.x - stored.0).abs() > 0.5 || (p.y - stored.1).abs() > 0.5 {
                         poff += 1;
                         if list && poff <= 25 {
-                            println!("picture off: {path} {} dock {} stored {:?} docked ({}, {}) size {:?}", en.name, ints[0], stored, p.x, p.y, size);
+                            println!(
+                                "picture off: {path} {} dock {} stored {:?} docked ({}, {}) size {:?}",
+                                en.name, ints[0], stored, p.x, p.y, size
+                            );
                         }
                     }
                 }
@@ -126,11 +138,15 @@ fn main() {
         }
     }
 
-    println!("{comps} components, {docked} docked, {off} docked components not where their dock puts them ({off_big} by more than a pixel)");
+    println!(
+        "{comps} components, {docked} docked, {off} docked components not where their dock puts them ({off_big} by more than a pixel)"
+    );
     println!("{pics} pictures, {dpics} docked, {poff} docked pictures not where their dock puts them");
     println!("{moved_undocked} undocked root children moved when the screen grew (must be 0)");
 
-    println!("{dock_checked} docked children of the root checked ({dock_grew} on a screen that grew), {dock_wrong} moved wrongly (must be 0)");
+    println!(
+        "{dock_checked} docked children of the root checked ({dock_grew} on a screen that grew), {dock_wrong} moved wrongly (must be 0)"
+    );
 
     // the check must not be empty: some layout must have a docked root child that kept its size on a larger screen
     if moved_undocked > 0 || dock_wrong > 0 || dock_grew == 0 {

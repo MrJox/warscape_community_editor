@@ -10,8 +10,18 @@ use wce_formats::tile_entry::TileEntry;
 /// without the file.
 pub fn kit_tile_sets(raw_root: &std::path::Path) -> Vec<String> {
     let path = raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml");
-    let Ok(doc) = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| wce_formats::xml_doc::XmlDoc::parse(b).map_err(|e| e.to_string())) else { return vec![] };
-    let mut names = doc.elements().iter().enumerate().filter(|(_, el)| el.name == "TILE_SET").filter_map(|(i, _)| doc.get(i, "name")).collect::<Vec<_>>();
+    let Ok(doc) =
+        std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| wce_formats::xml_doc::XmlDoc::parse(b).map_err(|e| e.to_string()))
+    else {
+        return vec![];
+    };
+    let mut names = doc
+        .elements()
+        .iter()
+        .enumerate()
+        .filter(|(_, el)| el.name == "TILE_SET")
+        .filter_map(|(i, _)| doc.get(i, "name"))
+        .collect::<Vec<_>>();
     names.sort();
     names.dedup();
     names
@@ -51,9 +61,14 @@ pub fn link_problems(entry: &TileEntry, sets: &[String]) -> Vec<LinkProblem> {
         }
 
         let next = [(t.x - 1, t.y), (t.x + 1, t.y), (t.x, t.y - 1), (t.x, t.y + 1)];
-        let asked = links.iter().any(|l| l.link_set == t.tile_set && l.test != "TLT_NOT_EQUALS" && !inside(l.x, l.y) && next.contains(&(l.x, l.y)));
+        let asked =
+            links.iter().any(|l| l.link_set == t.tile_set && l.test != "TLT_NOT_EQUALS" && !inside(l.x, l.y) && next.contains(&(l.x, l.y)));
         if !asked {
-            add(true, i, format!("{what}: no rule asks for {} on the cell just outside it (the kit pairs every target with one)", t.tile_set));
+            add(
+                true,
+                i,
+                format!("{what}: no rule asks for {} on the cell just outside it (the kit pairs every target with one)", t.tile_set),
+            );
         }
 
         if targets[..i].iter().any(|o| o.tile_set == t.tile_set && (o.x, o.y) == (t.x, t.y)) {

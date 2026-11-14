@@ -37,10 +37,7 @@ fn general_name_counts_and_zero_or_paired_rows_preserve_exact_trailers() {
                 } else {
                     edited.placements.remove(1);
                 }
-                assert_eq!(
-                    loaded.check_placement_edit("change count", true).is_ok(),
-                    rows == 0
-                );
+                assert_eq!(loaded.check_placement_edit("change count", true).is_ok(), rows == 0);
                 assert_eq!(edited.validate_placement_edit(&loaded).is_ok(), rows == 0);
                 assert_eq!(edited.tail, loaded.tail);
                 assert_eq!(TileList::parse(&edited.write()).unwrap().tail, loaded.tail);
@@ -57,10 +54,7 @@ fn general_names_reject_truncation_overflow_extra_bytes_and_inconsistent_rows() 
         for size in 4..t.tail.len() {
             let mut bad = t.clone();
             bad.tail.truncate(size);
-            assert!(
-                bad.v9_paired_metadata_count().is_err(),
-                "K={k}, size={size}"
-            );
+            assert!(bad.v9_paired_metadata_count().is_err(), "K={k}, size={size}");
             assert_eq!(TileList::parse(&bad.write()).unwrap().tail, bad.tail);
             assert!(bad.validate_placement_edit(&bad).is_ok());
         }
@@ -89,10 +83,7 @@ fn representative_native_v9_witnesses_preserve_bytes_and_apply_row_rules() {
         let t = TileList::parse(&bytes).unwrap();
         assert_eq!(t.version, 9);
         assert_eq!(t.write(), bytes);
-        let rows = t
-            .v9_paired_metadata_count()
-            .unwrap()
-            .expect("recognized native trailer");
+        let rows = t.v9_paired_metadata_count().unwrap().expect("recognized native trailer");
         let mut edited = t.clone();
         edited.placements[0].x = edited.placements[0].x.wrapping_add(1);
         assert!(edited.validate_placement_edit(&t).is_ok());
@@ -100,11 +91,7 @@ fn representative_native_v9_witnesses_preserve_bytes_and_apply_row_rules() {
         assert_eq!(edited.validate_placement_edit(&t).is_ok(), rows == 0);
         assert_eq!(edited.tail, t.tail);
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        println!(
-            "{}: {} placements, {rows} rows; byte-exact and guard checks passed",
-            path.display(),
-            t.placements.len()
-        );
+        println!("{}: {} placements, {rows} rows; byte-exact and guard checks passed", path.display(), t.placements.len());
         seen += 1;
     }
     assert!(seen > 0);
@@ -120,12 +107,7 @@ fn paired() -> TileList {
     TileList {
         version: 9,
         names: vec!["tile".to_owned()],
-        placements: (0..3)
-            .map(|x| TileListPlacement {
-                x,
-                ..Default::default()
-            })
-            .collect(),
+        placements: (0..3).map(|x| TileListPlacement { x, ..Default::default() }).collect(),
         tail,
         ..Default::default()
     }
@@ -201,11 +183,7 @@ fn unknown_original_layout_is_lossless_but_placement_edits_are_not_assumed_safe(
     let b = t.write();
     assert_eq!(TileList::parse(&b).unwrap().write(), b);
     assert!(t.validate_placement_edit(&t).is_ok());
-    assert!(
-        t.check_placement_edit("remove a placement", true)
-            .unwrap_err()
-            .contains("unknown v9 metadata")
-    );
+    assert!(t.check_placement_edit("remove a placement", true).unwrap_err().contains("unknown v9 metadata"));
     let mut moved = t.clone();
     moved.placements[0].x += 1;
     assert!(moved.validate_placement_edit(&t).is_err());
@@ -228,11 +206,7 @@ fn recognized_same_count_edits_keep_rows_and_other_versions_keep_their_behavior(
         original.version = version;
         let mut edited = original.clone();
         edited.placements.pop();
-        assert!(
-            original
-                .check_placement_edit("remove a placement", true)
-                .is_ok()
-        );
+        assert!(original.check_placement_edit("remove a placement", true).is_ok());
         assert!(edited.validate_placement_edit(&original).is_ok());
         let b = edited.write();
         assert_eq!(TileList::parse(&b).unwrap().write(), b);

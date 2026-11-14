@@ -19,18 +19,18 @@ impl TileTool {
 
     /// The sets, read on first use and again after a change.
     pub(crate) fn vegetation_sets(&mut self, e: &mut Editor) -> Arc<Vec<VegetationSet>> {
-        if let Some(sets) = &self.veg_sets {
+        if let Some(sets) = &self.veg_sets.list {
             return sets.clone();
         }
 
         let sets = Arc::new(scan(&Self::sets_folder(e)));
-        self.veg_sets = Some(sets.clone());
+        self.veg_sets.list = Some(sets.clone());
         sets
     }
 
     /// The set being placed or painted, as it is now.
     pub(crate) fn set_in_use(&mut self, e: &mut Editor) -> Option<VegetationSet> {
-        match self.veg_set.clone()? {
+        match self.veg_sets.current.clone()? {
             SetInUse::New => self.scratch_set.clone(),
             SetInUse::Saved(name) => self.vegetation_sets(e).iter().find(|s| s.name == name).cloned(),
         }
@@ -38,8 +38,8 @@ impl TileTool {
 
     /// The sets changed: read them again (the Create panel's entries follow).
     pub(crate) fn rescan_vegetation_sets(&mut self) {
-        self.veg_sets = None;
-        self.veg_sets_version += 1;
+        self.veg_sets.list = None;
+        self.veg_sets.version += 1;
     }
 
     /// The keys of the selected trees (in the selected groups and layers too), once per tree.
@@ -47,7 +47,12 @@ impl TileTool {
         let sel = selected(e);
         let Some(d) = document(e) else { return vec![] };
         let sc = d.tile().tscene();
-        d.tile().instances_below(&sel).into_iter().filter(|&el| sc.type_of(el) == "VEGETATION_INSTANCE").filter_map(|el| sc.doc().get(el, "key")).collect()
+        d.tile()
+            .instances_below(&sel)
+            .into_iter()
+            .filter(|&el| sc.type_of(el) == "VEGETATION_INSTANCE")
+            .filter_map(|el| sc.doc().get(el, "key"))
+            .collect()
     }
 
     /// A new set from the selected trees (each key weighted by how many there are), in the projects' sets.
@@ -75,8 +80,8 @@ impl TileTool {
 
     /// Asks for the name of a new set from the selected trees (the dialog opens on the next frame).
     pub(crate) fn request_new_vegetation_set(&mut self) {
-        self.new_set_name = Some(String::new());
-        self.new_set_open = true;
+        self.veg_sets.new_name = Some(String::new());
+        self.veg_sets.new_open = true;
     }
 
     /// Whether some trees are selected (the "New vegetation set" action).
@@ -86,7 +91,7 @@ impl TileTool {
 
     /// The "New vegetation set" dialog.
     pub(crate) fn draw_new_set_popup(&mut self, e: &mut Editor) {
-        if std::mem::take(&mut self.new_set_open) {
+        if std::mem::take(&mut self.veg_sets.new_open) {
             gui::open_popup("New vegetation set");
         }
 
@@ -94,25 +99,31 @@ impl TileTool {
             return;
         }
 
-        let Some(mut name) = self.new_set_name.clone() else {
+        let Some(mut name) = self.veg_sets.new_name.clone() else {
             gui::close_current_popup();
             gui::end_popup();
             return;
         };
 
-        gui::text_wrapped("A set of the selected trees (each kind weighted by how many there are), saved in the projects' vegetation sets.");
+        gui::text_wrapped(
+            "A set of the selected trees (each kind weighted by how many there are), saved in the projects' vegetation sets.",
+        );
         gui::set_next_item_width(320.0);
         let enter = gui::input_text("Name", Some("the set's file name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
-        self.new_set_name = Some(name.clone());
+        self.veg_sets.new_name = Some(name.clone());
         if gui::button("Save") || enter {
             self.status = self.new_vegetation_set(e, &name).unwrap_or_else(|err| err);
-            self.new_set_name = None;
+            self.veg_sets.new_name = None;
             gui::close_current_popup();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Saves the selected trees as a set under this name (Enter).");
         }
 
         gui::same_line();
         if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
-            self.new_set_name = None;
+            self.veg_sets.new_name = None;
             gui::close_current_popup();
         }
 
@@ -122,7 +133,7 @@ impl TileTool {
     /// The saved set in use, in the Inspector (its box): its trees, their weights and scale ranges, remove; saved at once (the new one has
     /// its own box, `inspect_new_set`).
     pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor) {
-        if !matches!(self.veg_set, Some(SetInUse::Saved(_))) {
+        if !matches!(self.veg_sets.current, Some(SetInUse::Saved(_))) {
             return;
         }
 
@@ -155,7 +166,7 @@ impl TileTool {
         }
 
         let kinds = set.entries.len();
-        if self.veg_set != Some(SetInUse::New) {
+        if self.veg_sets.current != Some(SetInUse::New) {
             self.start_new_set(e);
         }
 
@@ -175,18 +186,29 @@ impl TileTool {
             let can_save = !name.trim().is_empty() && !set.entries.is_empty();
             gui::begin_disabled(!can_save);
             save = gui::small_button(&format!("{}  Save", icons::SAVE)) || (enter && can_save);
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Saves the set under its name in the projects' vegetation sets (a name and a tree first).");
+            }
+
             gui::end_disabled();
 
             // Placing with it already from the first tree; again after Esc.
-            if self.veg_set != Some(SetInUse::New) {
+            if self.veg_sets.current != Some(SetInUse::New) {
                 gui::same_line();
                 gui::begin_disabled(set.entries.is_empty());
                 use_it = gui::small_button(&format!("{}  Place / paint", icons::MOUSE_POINTER_2));
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip("Places or paints trees with the set again; Esc stops.");
+                }
+
                 gui::end_disabled();
             }
 
             gui::same_line();
             drop = gui::small_button(&format!("{}  Discard", icons::X));
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Throws the new set away, unsaved, and stops placing with it.");
+            }
             self.scratch_name = name;
         }
 
@@ -199,7 +221,7 @@ impl TileTool {
             self.start_new_set(e);
         } else if drop {
             // Placed or painted with: that stops too.
-            if self.veg_set == Some(SetInUse::New) {
+            if self.veg_sets.current == Some(SetInUse::New) {
                 self.stop_making();
             }
 
@@ -226,8 +248,8 @@ impl TileTool {
         self.scratch_set = None;
         self.scratch_name.clear();
         self.rescan_vegetation_sets();
-        if self.veg_set == Some(SetInUse::New) {
-            self.veg_set = Some(SetInUse::Saved(name.clone()));
+        if self.veg_sets.current == Some(SetInUse::New) {
+            self.veg_sets.current = Some(SetInUse::Saved(name.clone()));
         }
 
         Ok(format!("vegetation set {name} saved ({})", set.path.display()))
@@ -242,7 +264,10 @@ impl TileTool {
 
 /// A set's name as its file's: trimmed, not empty, with no character or name a file system refuses (Windows' the strictest).
 fn set_file_name(name: &str) -> Result<&str, String> {
-    const RESERVED: [&str; 22] = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4",
+        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
     let name = name.trim();
     let bad = name.is_empty()
         || name.ends_with('.')
@@ -311,6 +336,10 @@ fn set_rows(set: &mut VegetationSet) {
                 gui::set_next_item_width(-1.0);
                 if gui::drag_float2("##scale", &mut v, 0.01, "%.2f") {
                     (*lo, *hi) = (v[0].clamp(0.1, 3.0), v[1].clamp(0.1, 3.0));
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The smallest and largest scale this tree is placed at (0.1 to 3).");
                 }
             } else {
                 gui::text_disabled("brush's");

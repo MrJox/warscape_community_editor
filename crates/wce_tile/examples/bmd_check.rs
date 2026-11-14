@@ -23,7 +23,22 @@ const SUFFIX: &str = "_procedural_bmd_data.bin";
 
 fn floats(t: &Transform4x4) -> [u32; 16] {
     [
-        t.m00(), t.m01(), t.m02(), t.m03(), t.m10(), t.m11(), t.m12(), t.m13(), t.m20(), t.m21(), t.m22(), t.m23(), t.m30(), t.m31(), t.m32(), t.m33(),
+        t.m00(),
+        t.m01(),
+        t.m02(),
+        t.m03(),
+        t.m10(),
+        t.m11(),
+        t.m12(),
+        t.m13(),
+        t.m20(),
+        t.m21(),
+        t.m22(),
+        t.m23(),
+        t.m30(),
+        t.m31(),
+        t.m32(),
+        t.m33(),
     ]
     .map(|v| (v + 0.0).to_bits())
 }
@@ -49,7 +64,13 @@ fn compare(kind: &str, theirs: &[String], mine: &[String], diff: bool) -> Vec<St
         let k = t.split(' ').next().unwrap_or_default();
         of_key(theirs, k) == of_key(mine, k)
     });
-    let order = if theirs == mine { "same" } else if per_key_same && theirs.len() == mine.len() { "same per key" } else { "differs" };
+    let order = if theirs == mine {
+        "same"
+    } else if per_key_same && theirs.len() == mine.len() {
+        "same per key"
+    } else {
+        "differs"
+    };
     let per_key = |l: &[String]| {
         let mut m: Vec<(String, usize)> = vec![];
         for e in l {
@@ -109,7 +130,8 @@ fn main() {
         tiles.entry(folder.to_owned()).or_default().push(file.trim_end_matches(SUFFIX).to_owned());
     }
 
-    let mut folders: Vec<(String, Vec<String>)> = tiles.into_iter().filter(|(f, _)| f.contains(&filter) && raw.join(f).join("tile.ted").is_file()).collect();
+    let mut folders: Vec<(String, Vec<String>)> =
+        tiles.into_iter().filter(|(f, _)| f.contains(&filter) && raw.join(f).join("tile.ted").is_file()).collect();
     folders.sort();
     let results: Vec<String> = folders
         .par_iter()
@@ -128,7 +150,9 @@ fn main() {
                 let Some(category) = params.category(&name) else { continue };
                 let bytes = match oracle_dir.as_ref() {
                     Some(dir) => std::fs::read_dir(dir.join(folder)).ok().and_then(|rd| {
-                        rd.flatten().find(|e| e.file_name().to_string_lossy().to_lowercase() == format!("{name}{SUFFIX}")).and_then(|e| std::fs::read(e.path()).ok())
+                        rd.flatten()
+                            .find(|e| e.file_name().to_string_lossy().to_lowercase() == format!("{name}{SUFFIX}"))
+                            .and_then(|e| std::fs::read(e.path()).ok())
                     }),
                     None => vfs.read(&format!("{folder}/{name}{SUFFIX}")).ok(),
                 };
@@ -144,13 +168,22 @@ fn main() {
                     .markers()
                     .iter()
                     .map(|m| {
-                        format!("{} {} {:?} rate {} scale {} outfield {}", m.key(), m.instance_name(), floats(m.transform()), m.emission_rate(), m.scale(), m.use_in_outfield())
+                        format!(
+                            "{} {} {:?} rate {} scale {} outfield {}",
+                            m.key(),
+                            m.instance_name(),
+                            floats(m.transform()),
+                            m.emission_rate(),
+                            m.scale(),
+                            m.use_in_outfield()
+                        )
                     })
                     .collect();
                 let mine: Vec<String> = vegetation::generated_vfx(&inputs, &params, category, seeds)
                     .iter()
                     .map(|v| {
-                        let t = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, v.x, v.y, v.z, 1.0f32].map(|f| (f + 0.0).to_bits());
+                        let t = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, v.x, v.y, v.z, 1.0f32]
+                            .map(|f| (f + 0.0).to_bits());
                         format!("{} {} {:?} rate 1 scale {} outfield {}", v.key, v.instance_name, t, v.scale, v.use_in_outfield)
                     })
                     .collect();
@@ -171,14 +204,32 @@ fn main() {
                         } else {
                             format!("{} {:?}", m.decal_parallax().to_bits(), [*s.x(), *s.y(), *s.z()].map(f32::to_bits))
                         };
-                        format!("{} {:?} type {} outfield {} decal {decal} tiled {}", m.key(), floats(m.transform()), m.prop_type(), m.allow_in_outfield(), *m.decal_tiled() != 0)
+                        format!(
+                            "{} {:?} type {} outfield {} decal {decal} tiled {}",
+                            m.key(),
+                            floats(m.transform()),
+                            m.prop_type(),
+                            m.allow_in_outfield(),
+                            *m.decal_tiled() != 0
+                        )
                     })
                     .collect();
                 let mine: Vec<String> = vegetation::generated_props(&inputs, &params, category, seeds)
                     .iter()
                     .map(|p| {
-                        let decal = if p.prop_type == 0 { String::from("-") } else { format!("{} {:?}", p.decal_parallax.to_bits(), p.decal_scale.map(f32::to_bits)) };
-                        format!("{} {:?} type {} outfield {} decal {decal} tiled {}", p.key, p.transform.map(|f| (f + 0.0).to_bits()), p.prop_type, p.allow_in_outfield, p.decal_tiled)
+                        let decal = if p.prop_type == 0 {
+                            String::from("-")
+                        } else {
+                            format!("{} {:?}", p.decal_parallax.to_bits(), p.decal_scale.map(f32::to_bits))
+                        };
+                        format!(
+                            "{} {:?} type {} outfield {} decal {decal} tiled {}",
+                            p.key,
+                            p.transform.map(|f| (f + 0.0).to_bits()),
+                            p.prop_type,
+                            p.allow_in_outfield,
+                            p.decal_tiled
+                        )
                     })
                     .collect();
                 if !(theirs.is_empty() && mine.is_empty()) {

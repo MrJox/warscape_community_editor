@@ -20,7 +20,8 @@ pub fn euler_from_matrix(m: &Double3x3) -> Double3 {
     #[allow(clippy::manual_clamp, reason = "a NaN becomes 1 as in the C++ max(-1, min(1, x)); clamp would keep the NaN")]
     let sa = (-m[2][0]).min(1.0).max(-1.0);
     let a = sa.asin();
-    let (beta, c) = if sa.abs() < 1.0 - 1e-12 { (m[2][1].atan2(m[2][2]), m[1][0].atan2(m[0][0])) } else { ((-m[1][2]).atan2(m[1][1]), 0.0) };
+    let (beta, c) =
+        if sa.abs() < 1.0 - 1e-12 { (m[2][1].atan2(m[2][2]), m[1][0].atan2(m[0][0])) } else { ((-m[1][2]).atan2(m[1][1]), 0.0) };
     Double3::new(a, -beta, c)
 }
 

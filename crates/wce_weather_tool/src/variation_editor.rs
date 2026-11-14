@@ -96,7 +96,9 @@ fn role_label(role: Role) -> (&'static str, [f32; 4]) {
 fn role_tooltip(category: &str, value: &str, role: Role) -> String {
     match role {
         Role::Engine => variation_rules::engine_reason(category, Some(value)),
-        Role::Data => "From the game files (a campaign map, a battle climate or a climate change phase): free to add, rename and remove.".to_owned(),
+        Role::Data => {
+            "From the game files (a campaign map, a battle climate or a climate change phase): free to add, rename and remove.".to_owned()
+        }
         Role::Unused => "The game never sends this value: it only takes a flag bit.".to_owned(),
     }
 }
@@ -121,7 +123,9 @@ pub fn draw_variation_editor(db: &mut AssetVariationDb, st: &mut VariationEditSt
     let mut changed = false;
     gui::checkbox("Expert", &mut st.expert);
     if gui::is_item_hovered() {
-        gui::set_tooltip("Unlocks the values and categories the game's code sends (season, precipitation, ...). Changing them costs battles their weather.");
+        gui::set_tooltip(
+            "Unlocks the values and categories the game's code sends (season, precipitation, ...). Changing them costs battles their weather.",
+        );
     }
 
     gui::same_line();
@@ -212,7 +216,12 @@ fn draw_categories(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bo
         if gui::tree_node_id(&name, &format!("{name} ({}) - {kind}", values.len())) {
             let mut rename = None;
             let mut remove = None;
-            if gui::begin_table("values", 5, gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V | gui::TABLE_SIZING_FIXED_FIT, gui::v2(0.0, 0.0)) {
+            if gui::begin_table(
+                "values",
+                5,
+                gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V | gui::TABLE_SIZING_FIXED_FIT,
+                gui::v2(0.0, 0.0),
+            ) {
                 gui::table_setup_column("Value", gui::COLUMN_WIDTH_FIXED, 240.0);
                 gui::table_setup_column("Bit", gui::COLUMN_WIDTH_FIXED, 30.0);
                 gui::table_setup_column("Allowed by", gui::COLUMN_WIDTH_FIXED, 90.0);
@@ -263,7 +272,9 @@ fn draw_categories(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bo
                     }
 
                     if data && gui::is_item_hovered() {
-                        gui::set_tooltip(&format!("A new {name} with the weather of '{value}': every variation that allows '{value}' allows it too"));
+                        gui::set_tooltip(&format!(
+                            "A new {name} with the weather of '{value}': every variation that allows '{value}' allows it too"
+                        ));
                     }
 
                     if data {
@@ -277,7 +288,10 @@ fn draw_categories(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bo
 
                     gui::end_disabled();
                     if !editable && gui::is_item_hovered_allow_disabled() {
-                        gui::set_tooltip(&format!("Locked. {} Tick Expert to change it anyway.", variation_rules::engine_reason(&name, Some(value))));
+                        gui::set_tooltip(&format!(
+                            "Locked. {} Tick Expert to change it anyway.",
+                            variation_rules::engine_reason(&name, Some(value))
+                        ));
                     }
 
                     gui::pop_id();
@@ -291,7 +305,11 @@ fn draw_categories(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bo
             }
 
             if let Some(value) = remove {
-                let warn = if variation_rules::value_role(&name, &value) == Role::Engine { " - the game still sends it, see Problems" } else { "" };
+                let warn = if variation_rules::value_role(&name, &value) == Role::Engine {
+                    " - the game still sends it, see Problems"
+                } else {
+                    ""
+                };
                 changed |= report(st, db.remove_value(&name, &value), format!("Removed {value}{warn}"));
             }
 
@@ -350,7 +368,10 @@ fn draw_categories(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bo
         }
     }
 
-    gui::text_colored(theme::dim(), "Adding or removing a value moves the flag bits of later values; every variation keeps allowing the same values.");
+    gui::text_colored(
+        theme::dim(),
+        "Adding or removing a value moves the flag bits of later values; every variation keeps allowing the same values.",
+    );
     changed
 }
 
@@ -456,7 +477,13 @@ fn draw_coverage(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bool
                 let m = db.matches(&key, &query(&cell));
                 let fallback = m.used_default_map && map != DEFAULT_MAP && !m.variations.is_empty();
                 let label = format!("{}{}##{row}{ci}", m.variations.len(), if fallback { "*" } else { "" });
-                let colour = if m.variations.is_empty() { theme::error() } else if fallback { theme::warning() } else { theme::text() };
+                let colour = if m.variations.is_empty() {
+                    theme::error()
+                } else if fallback {
+                    theme::warning()
+                } else {
+                    theme::text()
+                };
                 gui::push_style_color(gui::COL_TEXT, theme::v4(colour));
                 if gui::selectable(&label, st.cell.as_ref() == Some(&cell), 0) {
                     st.cell = Some(cell.clone());
@@ -467,7 +494,10 @@ fn draw_coverage(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bool
                     let mut tip = format!("{row}, {a}, {b}: ");
                     tip += &match m.variations.len() {
                         0 => "no weather from the database".to_owned(),
-                        n => format!("{n} file(s), each picked 1 in {n}{}", if fallback { ", after asking again with default_map" } else { "" }),
+                        n => format!(
+                            "{n} file(s), each picked 1 in {n}{}",
+                            if fallback { ", after asking again with default_map" } else { "" }
+                        ),
                     };
 
                     for v in m.variations.iter().take(12) {
@@ -484,7 +514,8 @@ fn draw_coverage(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bool
 
     gui::push_text_wrap_pos(0.0);
     gui::text_colored(
-        theme::dim(), "Files the game picks from. * only after asking again with default_map; red: no weather. Click a cell for its files. Values the game never sends are left out.",
+        theme::dim(),
+        "Files the game picks from. * only after asking again with default_map; red: no weather. Click a cell for its files. Values the game never sends are left out.",
     );
     gui::pop_text_wrap_pos();
 
@@ -520,7 +551,9 @@ fn draw_coverage(db: &mut AssetVariationDb, st: &mut VariationEditState) -> bool
     }
 
     if gui::is_item_hovered() {
-        gui::set_tooltip("The new variation allows exactly the values shown above the grid and this cell's; widen its conditions under Variations.");
+        gui::set_tooltip(
+            "The new variation allows exactly the values shown above the grid and this cell's; widen its conditions under Variations.",
+        );
     }
 
     false
@@ -533,7 +566,8 @@ fn draw_variations(db: &mut AssetVariationDb, st: &mut VariationEditState, vfs: 
     gui::same_line();
     gui::text(&format!("{} variations", db.entries()[st.entry].variations().len()));
 
-    if gui::begin_table("vars", 3, gui::TABLE_ROW_BG | gui::TABLE_BORDERS | gui::TABLE_SCROLL_Y | gui::TABLE_RESIZABLE, gui::v2(0.0, 260.0)) {
+    if gui::begin_table("vars", 3, gui::TABLE_ROW_BG | gui::TABLE_BORDERS | gui::TABLE_SCROLL_Y | gui::TABLE_RESIZABLE, gui::v2(0.0, 260.0))
+    {
         gui::table_setup_scroll_freeze(0, 1);
         gui::table_setup_column("File", gui::COLUMN_WIDTH_STRETCH, 3.0);
         gui::table_setup_column("Allowed when", gui::COLUMN_WIDTH_STRETCH, 2.0);
@@ -611,8 +645,11 @@ fn draw_conditions(db: &mut AssetVariationDb, st: &mut VariationEditState, sel: 
     };
 
     gui::separator_text(&format!("Conditions of {filename}"));
-    let mut allowed: BTreeMap<String, Vec<String>> =
-        db.allowed_values(flags).into_iter().map(|(cat, values)| (cat.to_owned(), values.into_iter().map(str::to_owned).collect())).collect();
+    let mut allowed: BTreeMap<String, Vec<String>> = db
+        .allowed_values(flags)
+        .into_iter()
+        .map(|(cat, values)| (cat.to_owned(), values.into_iter().map(str::to_owned).collect()))
+        .collect();
     let mut edited = false;
     if gui::begin_table("conditions", 2, gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V, gui::v2(0.0, 0.0)) {
         gui::table_setup_column("Category", gui::COLUMN_WIDTH_FIXED, 230.0);

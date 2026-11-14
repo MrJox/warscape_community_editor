@@ -79,10 +79,11 @@ pub fn bake_water_depth(req: &BakeRequest, water: &WaterDepth, ground: Option<&G
 
             // The painted water's edges: a painted pixel with a neighbour painted otherwise.
             let p = painted(i, j);
-            let edge = p != 0 && [(0, 1), (2, 1), (1, 0), (1, 2)].iter().any(|&(di, dj)| {
-                let (x, y) = ((i + di).wrapping_sub(1), (j + dj).wrapping_sub(1));
-                x < w && y < h && painted(x, y) != p
-            });
+            let edge = p != 0
+                && [(0, 1), (2, 1), (1, 0), (1, 2)].iter().any(|&(di, dj)| {
+                    let (x, y) = ((i + di).wrapping_sub(1), (j + dj).wrapping_sub(1));
+                    x < w && y < h && painted(x, y) != p
+                });
 
             let c = match (edge, p) {
                 (true, 1) => [255, 255, 255],
@@ -97,11 +98,21 @@ pub fn bake_water_depth(req: &BakeRequest, water: &WaterDepth, ground: Option<&G
     let report = if water.depth.iter().all(|d| !d.is_finite()) {
         "water depth: the tile has no river or water plane".to_owned()
     } else {
-        format!("water depth: {wet} wet points (cyan shallow .. blue {WATER_VIEW_DEEP_M} m and deeper); painted deep water edged white, shallow yellow")
+        format!(
+            "water depth: {wet} wet points (cyan shallow .. blue {WATER_VIEW_DEEP_M} m and deeper); painted deep water edged white, shallow yellow"
+        )
     };
 
     BakedColour {
-        x0: 0.0, z0: 0.0, w_m: req.w_m - 2.0 * (-req.x0), h_m: req.h_m - 2.0 * (-req.z0), w: w as u32, h: h as u32, rgba, climate: "water depth".to_owned(), report,
+        x0: 0.0,
+        z0: 0.0,
+        w_m: req.w_m - 2.0 * (-req.x0),
+        h_m: req.h_m - 2.0 * (-req.z0),
+        w: w as u32,
+        h: h as u32,
+        rgba,
+        climate: "water depth".to_owned(),
+        report,
         ..Default::default()
     }
 }
@@ -187,8 +198,16 @@ pub struct BakeRequest {
 impl Default for BakeRequest {
     fn default() -> Self {
         Self {
-            blend_map: PathBuf::new(), groups: TileTextureGroup::default(), folder: PathBuf::new(), x0: 0.0, z0: 0.0, w_m: 0.0, h_m: 0.0, look: TerrainLook::default(),
-            max_dim: 2048, max_texels_per_metre: 4.0,
+            blend_map: PathBuf::new(),
+            groups: TileTextureGroup::default(),
+            folder: PathBuf::new(),
+            x0: 0.0,
+            z0: 0.0,
+            w_m: 0.0,
+            h_m: 0.0,
+            look: TerrainLook::default(),
+            max_dim: 2048,
+            max_texels_per_metre: 4.0,
         }
     }
 }
@@ -232,7 +251,12 @@ pub(crate) fn group_names(g: &TileTextureGroup) -> [&str; 4] {
 /// # Errors
 ///
 /// The tile has no usable blend map, or no texture was found at all.
-pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climates: &ClimateList, files: &dyn Files) -> Result<BakedColour, String> {
+pub fn bake_terrain_colour(
+    req: &BakeRequest,
+    blend: Option<&BlendField>,
+    climates: &ClimateList,
+    files: &dyn Files,
+) -> Result<BakedColour, String> {
     wce_prof!("tile.terrain_bake");
     // The map in memory (painted), else the file.
     let read;
@@ -281,7 +305,8 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
 
         let ct = climate.and_then(|cl| cl.find(group)).or_else(|| climates.find("default").and_then(|d| d.find(group)));
         let scale = ct.filter(|ct| ct.blend_pixel_scale > 0.5).map_or(40.1, |ct| ct.blend_pixel_scale);
-        let path = if group.is_empty() { None } else { climates.texture_path(&folder, group, (c % 4) as i32, &req.look.season, false, exists) };
+        let path =
+            if group.is_empty() { None } else { climates.texture_path(&folder, group, (c % 4) as i32, &req.look.season, false, exists) };
         let Some(path) = path else {
             missing += 1;
             continue;
@@ -330,8 +355,18 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
     }
 
     let mut out = BakedColour {
-        x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: ow, h: oh, rgba: vec![255; ow as usize * oh as usize * 4],
-        climate: climate.map_or_else(|| "default".to_owned(), |c| c.name.clone()), season: req.look.season.clone(), layers: wanted, missing, report: String::new(),
+        x0: req.x0,
+        z0: req.z0,
+        w_m: req.w_m,
+        h_m: req.h_m,
+        w: ow,
+        h: oh,
+        rgba: vec![255; ow as usize * oh as usize * 4],
+        climate: climate.map_or_else(|| "default".to_owned(), |c| c.name.clone()),
+        season: req.look.season.clone(),
+        layers: wanted,
+        missing,
+        report: String::new(),
         set: 0,
     };
 
@@ -403,7 +438,11 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
 /// row).
 pub fn ground_types_set(rgba: &[u8], w: u32, (x0, y0, x1, y1): (u32, u32, u32, u32)) -> usize {
     let w = w as usize;
-    (y0 as usize..y1 as usize).map(|y| rgba[(y * w + x0 as usize) * 4..(y * w + x1 as usize) * 4].as_chunks::<4>().0.iter().filter(|p| p[0] | p[1] | p[2] != 0).count()).sum()
+    (y0 as usize..y1 as usize)
+        .map(|y| {
+            rgba[(y * w + x0 as usize) * 4..(y * w + x1 as usize) * 4].as_chunks::<4>().0.iter().filter(|p| p[0] | p[1] | p[2] != 0).count()
+        })
+        .sum()
 }
 
 /// The ground types view's report.
@@ -437,8 +476,17 @@ pub fn bake_terrain_map_view(req: &BakeRequest, ground: Option<&GroundTypeField>
         let rgba = ground.rgba();
         let set = ground_types_set(&rgba, ground.width(), (0, 0, ground.width(), ground.height()));
         return Ok(BakedColour {
-            x0: req.x0, z0: req.z0, w_m: req.w_m, h_m: req.h_m, w: ground.width(), h: ground.height(), rgba, climate: "ground types".to_owned(),
-            report: ground_types_report(set), set, ..Default::default()
+            x0: req.x0,
+            z0: req.z0,
+            w_m: req.w_m,
+            h_m: req.h_m,
+            w: ground.width(),
+            h: ground.height(),
+            rgba,
+            climate: "ground types".to_owned(),
+            report: ground_types_report(set),
+            set,
+            ..Default::default()
         });
     }
 
@@ -472,7 +520,15 @@ pub fn bake_terrain_map_view(req: &BakeRequest, ground: Option<&GroundTypeField>
     }
 
     Ok(BakedColour {
-        x0: 0.0, z0: 0.0, w_m: req.w_m - 2.0 * (-req.x0), h_m: req.h_m - 2.0 * (-req.z0), w, h, rgba, climate: "protection".to_owned(),
-        report: format!("protection: {set} of {n} cells protected (red)"), ..Default::default()
+        x0: 0.0,
+        z0: 0.0,
+        w_m: req.w_m - 2.0 * (-req.x0),
+        h_m: req.h_m - 2.0 * (-req.z0),
+        w,
+        h,
+        rgba,
+        climate: "protection".to_owned(),
+        report: format!("protection: {set} of {n} cells protected (red)"),
+        ..Default::default()
     })
 }

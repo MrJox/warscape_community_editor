@@ -28,8 +28,11 @@ fn main() {
     if let Ok(dir) = std::env::var("BCA_TILEMAP") {
         // The battle field of another tile map (TILE_MAP::build_battle_field over the whole map).
         let dir = PathBuf::from(dir);
-        let m = wce_tile::battle_map::tile_map::TileMap::parse(&std::fs::read(dir.join("tile_map.index")).expect("index"),
-            &std::fs::read(dir.join("tile_map.tiles")).expect("tiles")).expect("tile map");
+        let m = wce_tile::battle_map::tile_map::TileMap::parse(
+            &std::fs::read(dir.join("tile_map.index")).expect("index"),
+            &std::fs::read(dir.join("tile_map.tiles")).expect("tiles"),
+        )
+        .expect("tile map");
         let mut by_name = std::collections::HashMap::new();
         for (t, tile) in db.tiles.iter().enumerate() {
             for v in 0..tile.variations.len() {
@@ -46,10 +49,18 @@ fn main() {
                     continue;
                 }
 
-                let Some(&(tile, variation)) = by_name.get(&m.names[(cell.index - 1) as usize].to_lowercase()) else { missing += 1; continue };
+                let Some(&(tile, variation)) = by_name.get(&m.names[(cell.index - 1) as usize].to_lowercase()) else {
+                    missing += 1;
+                    continue;
+                };
                 instances.push(wce_tile::battle_map::fill::Placement {
-                    tile, variation, x: cell.origin[0] as i16, y: cell.origin[1] as i16, flags: cell.flags | if cell.flipped != 0 { 4 } else { 0 },
-                    climate: cell.climate, lf: cell.lf,
+                    tile,
+                    variation,
+                    x: cell.origin[0] as i16,
+                    y: cell.origin[1] as i16,
+                    flags: cell.flags | if cell.flipped != 0 { 4 } else { 0 },
+                    climate: cell.climate,
+                    lf: cell.lf,
                 });
             }
         }
@@ -58,13 +69,25 @@ fn main() {
     }
 
     let spec = Spec::parse(&std::fs::read(spec).expect("spec"));
-    println!("spec: {} types ({}), border {}, delete_invalid {}", spec.types.len(), spec.types.iter().map(|t| format!("{} {}", t.name, t.infield.len())).collect::<Vec<_>>().join(", "), spec.map_border_for_outfield, spec.delete_invalid);
+    println!(
+        "spec: {} types ({}), border {}, delete_invalid {}",
+        spec.types.len(),
+        spec.types.iter().map(|t| format!("{} {}", t.name, t.infield.len())).collect::<Vec<_>>().join(", "),
+        spec.map_border_for_outfield,
+        spec.delete_invalid
+    );
     let masks = wce_terrain::bca::load_masks(&db, &instances, &[terrain.parent().map(PathBuf::from).unwrap_or_default()]);
     let t0 = std::time::Instant::now();
     let ours = generate(&spec, &db, w, h, &instances, &masks);
     println!("generated in {:.1} s", t0.elapsed().as_secs_f64());
     let kept: Vec<_> = ours.iter().filter(|b| !(spec.delete_invalid && !b.errors.is_empty())).collect();
-    println!("{map}: {w} x {h} cells, {} tile instances, {} deployment masks; {} BCAs made, {} kept", instances.len(), masks.len(), ours.len(), kept.len());
+    println!(
+        "{map}: {w} x {h} cells, {} tile instances, {} deployment masks; {} BCAs made, {} kept",
+        instances.len(),
+        masks.len(),
+        ours.len(),
+        kept.len()
+    );
 
     let p = TerryProject::parse(std::fs::read(oracle).expect("oracle")).expect("xml");
     if let Ok(out) = std::env::var("BCA_WRITE") {
@@ -104,12 +127,18 @@ fn main() {
         let (a, b) = r.split_once('-').map(|(a, b)| (a.parse::<usize>().unwrap_or(0), b.parse::<usize>().unwrap_or(0))).unwrap_or((0, 0));
         for k in a..=b {
             let name = format!("BCA {k:05}");
-            let Some((kind, cell)) = theirs.get(&name) else { println!("  {name}: (Terry: none)"); continue };
+            let Some((kind, cell)) = theirs.get(&name) else {
+                println!("  {name}: (Terry: none)");
+                continue;
+            };
             match ours.iter().find(|x| &x.kind == kind && x.cell == *cell) {
                 Some(x) => {
                     let p = &instances[x.instance];
                     let t = &db.tiles[p.tile];
-                    println!("  {name} {kind} {cell:?}: instance {} origin ({}, {}) flags {:#x} {} {}x{} (ours {})", x.instance, p.x, p.y, p.flags, t.location, t.width, t.height, x.name);
+                    println!(
+                        "  {name} {kind} {cell:?}: instance {} origin ({}, {}) flags {:#x} {} {}x{} (ours {})",
+                        x.instance, p.x, p.y, p.flags, t.location, t.width, t.height, x.name
+                    );
                 }
                 None => println!("  {name} {kind} {cell:?}: not made by us"),
             }
@@ -137,14 +166,29 @@ fn main() {
             terry_dzs.push((dz.name.clone(), regions));
         }
 
-        let ours_dzs: Vec<(String, Vec<Vec<[f64; 2]>>)> = b.zones.iter().map(|z| (z.name.clone(), z.regions.iter()
-            .map(|r| r.points.iter().map(|&(x, y)| [(f64::from(x) - cw) * 256.0, (ch - f64::from(y)) * 256.0]).collect()).collect())).collect();
+        let ours_dzs: Vec<(String, Vec<Vec<[f64; 2]>>)> = b
+            .zones
+            .iter()
+            .map(|z| {
+                (
+                    z.name.clone(),
+                    z.regions
+                        .iter()
+                        .map(|r| r.points.iter().map(|&(x, y)| [(f64::from(x) - cw) * 256.0, (ch - f64::from(y)) * 256.0]).collect())
+                        .collect(),
+                )
+            })
+            .collect();
         dz_total += 1;
         dz_counts.0 += terry_dzs.len();
         dz_counts.1 += terry_dzs.iter().map(|d| d.1.len()).sum::<usize>();
         dz_counts.2 += terry_dzs.iter().flat_map(|d| d.1.iter()).map(Vec::len).sum::<usize>();
-        let close = |a: &[Vec<[f64; 2]>], b: &[Vec<[f64; 2]>]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.len() == y.len()
-            && x.iter().zip(y).all(|(p, q)| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05));
+        let close = |a: &[Vec<[f64; 2]>], b: &[Vec<[f64; 2]>]| {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(x, y)| {
+                    x.len() == y.len() && x.iter().zip(y).all(|(p, q)| (p[0] - q[0]).abs() < 0.05 && (p[1] - q[1]).abs() < 0.05)
+                })
+        };
         let same = terry_dzs.len() == ours_dzs.len() && terry_dzs.iter().zip(&ours_dzs).all(|(a, b)| a.0 == b.0 && close(&a.1, &b.1));
         if same {
             dz_same += 1;
@@ -161,11 +205,20 @@ fn main() {
         }
     }
 
-    println!("deployment zones: {dz_same} of {dz_total} BCAs the same ({} DZs, {} DZRs, {} points of Terry's compared)", dz_counts.0, dz_counts.1, dz_counts.2);
+    println!(
+        "deployment zones: {dz_same} of {dz_total} BCAs the same ({} DZs, {} DZRs, {} points of Terry's compared)",
+        dz_counts.0, dz_counts.1, dz_counts.2
+    );
     let set = |m: &BTreeMap<String, (String, (i32, i32))>| m.values().cloned().collect::<std::collections::BTreeSet<_>>();
     let (a, b) = (set(&mine), set(&theirs));
-    println!("BCAs by type and cell: {} common, {} only ours, {} only Terry's", a.intersection(&b).count(), a.difference(&b).count(), b.difference(&a).count());
-    let removed: Vec<String> = ours.iter().filter(|b| !b.errors.is_empty()).map(|b| format!("{} {} {:?}", b.name, b.kind, b.cell)).collect();
+    println!(
+        "BCAs by type and cell: {} common, {} only ours, {} only Terry's",
+        a.intersection(&b).count(),
+        a.difference(&b).count(),
+        b.difference(&a).count()
+    );
+    let removed: Vec<String> =
+        ours.iter().filter(|b| !b.errors.is_empty()).map(|b| format!("{} {} {:?}", b.name, b.kind, b.cell)).collect();
     println!("with errors: {}: {}", removed.len(), removed.iter().take(12).cloned().collect::<Vec<_>>().join("; "));
     if same != mine.len() || mine.len() != theirs.len() || dz_same != dz_total {
         std::process::exit(1);

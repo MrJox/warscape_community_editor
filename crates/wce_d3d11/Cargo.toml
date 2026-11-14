@@ -15,3 +15,6 @@ windows-link.workspace = true
 windows-bindgen.workspace = true
 rpfm_lib.workspace = true
 wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

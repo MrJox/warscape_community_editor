@@ -20,7 +20,6 @@ pub struct GroundTypeField {
 }
 
 impl GroundTypeField {
-
     /// # Errors
     ///
     /// The image is not 8-bit RGB or RGBA.
@@ -90,7 +89,7 @@ impl GroundTypeField {
         let v = self.layer.values();
         for y in y0 as usize..y1 as usize {
             let (a, b) = (y * w + x0 as usize, y * w + x1 as usize);
-            for (o, p) in out[a * 4..b * 4].chunks_exact_mut(4).zip(v[a * c..b * c].chunks_exact(c)) {
+            for (o, p) in out[a * 4..b * 4].as_chunks_mut::<4>().0.iter_mut().zip(v[a * c..b * c].chunks_exact(c)) {
                 o.copy_from_slice(&[p[0], p[1], p[2], 255]);
             }
         }
@@ -171,6 +170,19 @@ impl GroundTypeField {
         self.layer.end_edit();
     }
 
+    /// Mirrors the map about the tile's middle during an edit (`PixelLayer::mirror`, as cells); the pixels changed.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open.
+    pub fn mirror(&mut self, across_x: bool) -> Result<usize> {
+        if !self.layer.is_editing() {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        Ok(self.layer.mirror(across_x, false))
+    }
+
     pub fn is_editing(&self) -> bool {
         self.layer.is_editing()
     }
@@ -195,7 +207,15 @@ mod tests {
 
     #[test]
     fn painting_and_undoing_gives_the_bytes_back() {
-        let png = PngFile { width: 40, height: 30, bit_depth: 8, color_type: 6, pixels: [0, 0, 0, 255].repeat(1200), pixels_edited: true, ..Default::default() };
+        let png = PngFile {
+            width: 40,
+            height: 30,
+            bit_depth: 8,
+            color_type: 6,
+            pixels: [0, 0, 0, 255].repeat(1200),
+            pixels_edited: true,
+            ..Default::default()
+        };
         let bytes = png.encode().unwrap();
         let mut f = GroundTypeField::from_png(PngFile::parse(&bytes).unwrap()).unwrap();
         assert_eq!(f.to_bytes().unwrap(), bytes);

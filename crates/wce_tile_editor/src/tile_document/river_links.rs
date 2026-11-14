@@ -99,16 +99,28 @@ impl TileDocument {
         let mut out = vec![];
         for &(x, y) in &targets {
             if !ends.iter().any(|en| en.cell == (x, y)) {
-                out.push((None, format!("river target cell ({x}, {y}) has no river end at its edge: a neighbour's river would stop there")));
+                out.push((
+                    None,
+                    format!("river target cell ({x}, {y}) has no river end at its edge: a neighbour's river would stop there"),
+                ));
             }
         }
 
         for en in &ends {
             let name = self.tile().tscene().name(en.elem);
             if !targets.contains(&en.cell) {
-                out.push((Some(en.elem), format!("'{name}' ends at the edge in cell ({}, {}), which the tile offers no river link at", en.cell.0, en.cell.1)));
+                out.push((
+                    Some(en.elem),
+                    format!("'{name}' ends at the edge in cell ({}, {}), which the tile offers no river link at", en.cell.0, en.cell.1),
+                ));
             } else if en.off_centre > RIVER_END_TOLERANCE_M {
-                out.push((Some(en.elem), format!("'{name}' ends {:.1} m off the centre of its target cell ({}, {}): a neighbour's river would not meet it", en.off_centre, en.cell.0, en.cell.1)));
+                out.push((
+                    Some(en.elem),
+                    format!(
+                        "'{name}' ends {:.1} m off the centre of its target cell ({}, {}): a neighbour's river would not meet it",
+                        en.off_centre, en.cell.0, en.cell.1
+                    ),
+                ));
             }
         }
 
@@ -133,7 +145,16 @@ impl TileDocument {
         use wce_tile::new_instances::point_text;
 
         let targets = self.river_targets();
-        let moves = self.river_ends().into_iter().filter(|en| targets.contains(&en.cell) && { let d = en.snapped - en.at; d.x.abs() + d.z.abs() > 1e-3 }).collect::<Vec<_>>();
+        let moves = self
+            .river_ends()
+            .into_iter()
+            .filter(|en| {
+                targets.contains(&en.cell) && {
+                    let d = en.snapped - en.at;
+                    d.x.abs() + d.z.abs() > 1e-3
+                }
+            })
+            .collect::<Vec<_>>();
         if moves.is_empty() {
             return Ok(0);
         }
@@ -147,7 +168,8 @@ impl TileDocument {
             let point = sc.polygon_points(en.elem)[en.point];
             let (old, new) = (t.to_local(en.elem, en.at), t.to_local(en.elem, en.snapped));
             let d = new - old;
-            let handles = ["controlIn", "controlOut"].map(|h| (h, sc.doc().get(point, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
+            let handles =
+                ["controlIn", "controlOut"].map(|h| (h, sc.doc().get(point, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
             let sc = self.tscene_mut();
             sc.set_attr(point, "position", &point_text(new));
 

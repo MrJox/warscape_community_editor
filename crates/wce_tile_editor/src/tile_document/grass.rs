@@ -1,6 +1,8 @@
-//! The tile's grass: BOB's `default.grass_list.bin` (of the packed tile, or in the tile's folder), drawn by the renderer's grass pass near the
-//! camera. A raw tile without one (or when the display asks) has it generated as BOB would (`wce_tile::vegetation::grass`) from the tile as
-//! it is: its `<Grass generation_seed>`, the saved blend map and the kit's `max_grass.xml`. Each key (`grass/2`, `forest/0`...) is a model of the climate, `terrain/vegetation/battle/grass/<climate>/<key>.rigid_model_v2`
+//! The tile's grass, drawn by the renderer's grass pass near the camera: generated as BOB would (`wce_tile::vegetation::grass`) from the
+//! tile as it is: its `<Grass generation_seed>`, the saved blend map and the kit's `max_grass.xml`. The packed tile's
+//! `default.grass_list.bin` (BOB's from before) is not drawn: a decompiled tile's came from a seed it does not have, and it goes stale with
+//! the first edit of the heights or the painting; it is drawn only when the grass can't be generated (no kit `max_grass.xml`, as Rome 2's; a
+//! tile outside a kit's raw_data; no seed). The generator runs on a thread of its own: the patches drawn stay until the new ones are done. The grass is generated again when what it is made from changes (`follow_vegetation_inputs`). Each key (`grass/2`, `forest/0`...) is a model of the climate, `terrain/vegetation/battle/grass/<climate>/<key>.rigid_model_v2`
 //! (a key the climate has no model for is not drawn, as in the game).
 //!
 //! How the game places a patch (empire.retail.dll "Grass Display" FUN_105103e0 and its job FUN_10515960, docs/re/vegetation.md): at the stored
@@ -18,17 +20,23 @@ use wce_formats::old_lists::{OldList, OldListKind};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, Grass, LayerId, Payload, RenderScene};
-use wce_tile::vegetation::{self, grass::{GrassParams, generate_grass}};
+use wce_tile::vegetation::{
+    self,
+    grass::{GrassParams, generate_grass},
+};
 
 use super::vegetation::tilt;
+
+/// The packed list's name.
+const LIST: &str = "default";
+
+/// The older grass list's extension.
+const OLD_GRASS_LIST_EXTENSION: &str = ".grass_list";
 use super::{TERRAIN, Tile};
 
 const SEED: u32 = 0x4971_0ae3;
 
-/// The older grass list's extension.
-const OLD_GRASS_LIST_EXTENSION: &str = ".grass_list";
 const YAW_STEP: f32 = f32::from_bits(0x38c9_10a4);
-const LIST: &str = "default";
 
 /// The `GRASS_ANGLE_CULL_AMOUNT` tweaker's default: a patch stays where the terrain normal's y is above its cosine.
 const ANGLE_CULL: f32 = 0.7;
@@ -39,19 +47,45 @@ const MIN_SPAN: f32 = 0.4;
 /// The decoded or generated list (per key: its patches' x and z) and the entities drawing it.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GrassState {
-    /// Whether it was generated, and the list.
-    pub list: Option<(bool, Arc<Vec<(String, Vec<(f32, f32)>)>>)>,
+    /// The generated list.
+    pub list: Option<Arc<Vec<(String, Vec<(f32, f32)>)>>>,
 
-    /// What the entities show (whether grass is shown, and generated) and their ids.
-    pub shown: Option<(bool, bool)>,
+    /// The grass being generated (`grass_list`): drawn once it is done; the patches drawn before stay until then.
+    pub job: Option<super::vegetation::Job<Vec<(String, Vec<(f32, f32)>)>>>,
+
+    /// What the entities show (whether grass is shown) and their ids.
+    pub shown: Option<bool>,
     pub entities: std::ops::Range<EntityId>,
 }
 
 impl Tile {
+    /// What the grass drawn is, for the ground chip: the reason it is not generated, and whether the packed list is drawn instead.
+    pub fn grass_note(&mut self) -> Option<String> {
+        let why = self.grass_unavailable()?;
+        Some(if self.grass_list().is_empty() {
+            format!("not generated: {why}; the tile has no packed list either")
+        } else {
+            format!("not generated: {why}; the packed default list is drawn (BOB's, as shipped)")
+        })
+    }
 
+    /// Why the grass can't be generated; None when it can.
+    pub fn grass_unavailable(&self) -> Option<&'static str> {
+        if vegetation::grass_params_path(&self.project).is_none() {
+            Some("no Assembly Kit max_grass.xml (Rome 2's kit has none)")
+        } else if self.project.raw_root.is_none() {
+            Some("the tile is not under an Assembly Kit's raw_data")
+        } else if vegetation::grass_seed(self.tscene()).is_none() {
+            Some("tile.ted has no <Grass> seed")
+        } else {
+            None
+        }
+    }
+
+    /// The packed `default.grass_list.bin` (or the older list): in the tile's folder, the game files, then carried by a decompiled project;
+    /// mirrored as the tile was flipped since. None without one.
     fn read_grass_list(&self) -> Option<Vec<(String, Vec<(f32, f32)>)>> {
-        // Without the kit's grass parameters, a decompiled project's carried list too.
-        let carried = vegetation::grass_params_path(&self.project).is_none().then(|| self.project.dir.join(super::vegetation::CARRIED_DIR));
+        let carried = Some(self.project.dir.join(super::vegetation::CARRIED_DIR));
         let read = |file: &str| {
             std::fs::read(self.project.dir.join(file))
                 .ok()
@@ -72,7 +106,13 @@ impl Tile {
             };
         };
         match GrassListFile::decode(&mut Cursor::new(bytes), &None) {
-            Ok(f) => Some(f.grass_list().grass_list().iter().map(|v| (v.key().replace('\\', "/").to_lowercase(), v.value().iter().map(|i| (*i.x(), *i.z())).collect())).collect()),
+            Ok(f) => Some(
+                f.grass_list()
+                    .grass_list()
+                    .iter()
+                    .map(|v| (v.key().replace('\\', "/").to_lowercase(), v.value().iter().map(|i| (*i.x(), *i.z())).collect()))
+                    .collect(),
+            ),
             Err(error) => {
                 log::warn(format!("{file}: {error}"));
                 Some(vec![])
@@ -80,53 +120,91 @@ impl Tile {
         }
     }
 
-    /// BOB's grass from the tile as it is, grouped by key in the generator's order.
-    fn generate_grass_list(&self) -> Result<Vec<(String, Vec<(f32, f32)>)>, String> {
+    /// BOB's grass from the tile as it is, grouped by key in the generator's order, on a thread of its own (what it reads of the tile is
+    /// taken here).
+    fn start_grass_job(&self) -> Result<super::vegetation::Job<Vec<(String, Vec<(f32, f32)>)>>, String> {
         let path = vegetation::grass_params_path(&self.project).ok_or("no Assembly Kit max_grass.xml")?;
         let params = GrassParams::load(&path)?;
         let seed = vegetation::grass_seed(self.tscene()).ok_or("tile.ted has no <Grass> seed")?;
         let inputs = vegetation::tile_inputs(&self.project)?;
-        let start = std::time::Instant::now();
-        let items = generate_grass(&inputs, &params, seed);
-        log::info(format!("grass: {} patches generated in {:.2} s", items.len(), start.elapsed().as_secs_f32()));
-        let mut keys: Vec<(String, Vec<(f32, f32)>)> = vec![];
-        for g in items {
-            match keys.iter_mut().find(|(k, _)| *k == g.key) {
-                Some((_, v)) => v.push((g.x, g.z)),
-                None => keys.push((g.key, vec![(g.x, g.z)])),
+        Ok(super::vegetation::Job::start("grass".to_owned(), move || {
+            let start = std::time::Instant::now();
+            let items = generate_grass(&inputs, &params, seed);
+            log::info(format!("grass: {} patches generated in {:.2} s", items.len(), start.elapsed().as_secs_f32()));
+            let mut keys: Vec<(String, Vec<(f32, f32)>)> = vec![];
+            for g in items {
+                match keys.iter_mut().find(|(k, _)| *k == g.key) {
+                    Some((_, v)) => v.push((g.x, g.z)),
+                    None => keys.push((g.key, vec![(g.x, g.z)])),
+                }
             }
-        }
 
-        Ok(keys)
+            Ok(keys)
+        }))
     }
 
-    /// The list the display asks for: the packed one (unless generating is asked), else generated for a raw tile.
+    /// A finished grass generation: its patches are the list, drawn again at the next update.
+    fn poll_grass_job(&mut self) {
+        let Some(result) = self.grass.job.as_ref().and_then(super::vegetation::Job::take) else { return };
+        self.grass.job = None;
+        let list = result.unwrap_or_else(|error| {
+            log::warn(format!("generating the grass: {error}"));
+            vec![]
+        });
+        self.grass.list = Some(Arc::new(list));
+        self.grass.shown = None;
+    }
+
+    /// The grass generated for the tile, once (until `reload_grass`); when it can't be, the packed list as shipped (empty without one).
     fn grass_list(&mut self) -> Arc<Vec<(String, Vec<(f32, f32)>)>> {
-        let generate = self.display.generate_grass;
-        if let Some((g, list)) = &self.grass.list
-            && *g == generate
-        {
+        if let Some(list) = &self.grass.list {
             return list.clone();
         }
 
-        let packed = if generate { None } else { self.read_grass_list() };
-        let list = packed.unwrap_or_else(|| {
-            if self.project.raw_root.is_none() {
-                return vec![];
-            }
+        let list = match self.grass_unavailable() {
+            // The packed list, as shipped, mirrored as the tile was flipped since.
+            Some(_) => {
+                let (fx, fz) = self.list_flip();
+                let (ex, ez) = (self.project.extent_x() as f32, self.project.extent_z() as f32);
+                let mut list = self.read_grass_list().unwrap_or_default();
+                for (_, patches) in &mut list {
+                    for (x, z) in patches.iter_mut() {
+                        if fx {
+                            *x = ex - *x;
+                        }
 
-            self.generate_grass_list().unwrap_or_else(|error| {
-                log::warn(format!("generating the grass: {error}"));
-                vec![]
-            })
-        });
+                        if fz {
+                            *z = ez - *z;
+                        }
+                    }
+                }
+
+                list
+            }
+            // Generated on a thread: nothing new until it is done (`poll_grass_job`).
+            None => {
+                if self.grass.job.is_none() {
+                    match self.start_grass_job() {
+                        Ok(job) => self.grass.job = Some(job),
+                        Err(error) => {
+                            log::warn(format!("generating the grass: {error}"));
+                            self.grass.list = Some(Arc::default());
+                        }
+                    }
+                }
+
+                return Arc::default();
+            }
+        };
         let list = Arc::new(list);
-        self.grass.list = Some((generate, list.clone()));
+        self.grass.list = Some(list.clone());
         list
     }
 
     /// Drops the list, so the next update reads or generates it again (after editing the seed or the painting).
     pub fn reload_grass(&mut self) {
+        // A generation of the tile as it was is not wanted any more.
+        self.grass.job = None;
         self.grass.list = None;
         self.grass.shown = None;
     }
@@ -173,9 +251,18 @@ impl Tile {
         scene.game_units = self.unit() as f32;
         scene.battle_centre = [(self.project.extent_x() / 2.0) as f32, (self.project.extent_z() / 2.0) as f32];
 
-        let want = (self.display.show_grass, self.display.generate_grass);
+        self.poll_grass_job();
+        let want = self.display.show_grass;
         if !published && self.grass.shown.as_ref() == Some(&want) {
             return;
+        }
+
+        // Grass being generated: the patches drawn stay until it is done.
+        if !published && want && self.grass.list.is_none() {
+            let _ = self.grass_list();
+            if self.grass.job.is_some() {
+                return;
+            }
         }
 
         if !published {
@@ -183,7 +270,7 @@ impl Tile {
         }
 
         let first = scene.next_id();
-        let added = if want.0 { self.add_grass(scene, layer) } else { 0 };
+        let added = if want { self.add_grass(scene, layer) } else { 0 };
         self.grass.entities = first..first + added as EntityId;
         self.grass.shown = Some(want);
     }
@@ -234,7 +321,12 @@ impl Tile {
                 instances.push([a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], c[0], c[1], c[2], c[3]]);
             }
 
-            let e = scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Grass(Grass { model, instances: Arc::new(instances) }), self.source(TERRAIN));
+            let e = scene.add(
+                layer,
+                wce_foundation::math::Float4x4::IDENTITY,
+                Payload::Grass(Grass { model, instances: Arc::new(instances) }),
+                self.source(TERRAIN),
+            );
             if let Some(en) = scene.find_mut(e) {
                 en.locked = true;
             }

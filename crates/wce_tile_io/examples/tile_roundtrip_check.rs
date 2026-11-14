@@ -245,7 +245,8 @@ fn cross_check(scene: &Node, ted: &[u8], t: &mut Totals, name: &str) {
         return;
     }
 
-    let near = |a: [f64; 3], b: wce_foundation::math::Double3| (0..3).all(|i| a[i] as f32 == b[i] as f32 || (a[i].is_nan() && b[i].is_nan()));
+    let near =
+        |a: [f64; 3], b: wce_foundation::math::Double3| (0..3).all(|i| a[i] as f32 == b[i] as f32 || (a[i].is_nan() && b[i].is_nan()));
     for (i, n) in nodes.iter().enumerate() {
         let class_ok = elems[i].name == n.class.as_str();
         let vec_ok = |attr: &str, prefix: &str| match (n.get(attr), old.doc().get(i, attr).and_then(|s| parse_vec3(&s, prefix))) {
@@ -256,10 +257,13 @@ fn cross_check(scene: &Node, ted: &[u8], t: &mut Totals, name: &str) {
             _ => n.class == "point",
         };
 
-        let name_ok = n.get("name").map(|v| v.as_str().map(str::to_owned).unwrap_or_default()) == old.doc().get(i, "name").map(|_| old.name(i));
-        let flags_ok = n.get("flags").is_none_or(|f| f.has_flag("OIF_VISIBLE") == old.visible(i) && f.has_flag("OIF_ACTIVE") == old.active(i))
-            || n.get("flags").is_some_and(|f| f.as_str().is_some());
-        if !(class_ok && vec_ok("position", "vector") && vec_ok("orientation", "euler") && vec_ok("scale", "vector") && name_ok && flags_ok) {
+        let name_ok =
+            n.get("name").map(|v| v.as_str().map(str::to_owned).unwrap_or_default()) == old.doc().get(i, "name").map(|_| old.name(i));
+        let flags_ok =
+            n.get("flags").is_none_or(|f| f.has_flag("OIF_VISIBLE") == old.visible(i) && f.has_flag("OIF_ACTIVE") == old.active(i))
+                || n.get("flags").is_some_and(|f| f.as_str().is_some());
+        if !(class_ok && vec_ok("position", "vector") && vec_ok("orientation", "euler") && vec_ok("scale", "vector") && name_ok && flags_ok)
+        {
             t.cross_fail += 1;
             t.problems.push(format!("{name}: element {i} ({}) differs from TedScene", n.class));
             return;
@@ -409,7 +413,10 @@ fn main() {
     println!("tiles: {} of {} folders with a tile.ted ({:.0} s)", t.tiles, dirs.len(), started.elapsed().as_secs_f64());
     println!("files the model holds (identical / differ / kept as original bytes / did not read, carried along):");
     for (k, c) in &t.per_kind {
-        println!("  {k:<24} {:>6} files: {:>6} identical, {} differ, {} kept, {} did not read", c.files, c.identical, c.differ, c.kept, c.failed);
+        println!(
+            "  {k:<24} {:>6} files: {:>6} identical, {} differ, {} kept, {} did not read",
+            c.files, c.identical, c.differ, c.kept, c.failed
+        );
     }
 
     println!("xml: {} elements, {} values, {} nodes with layout trivia", t.elements, t.props, t.layout_nodes);
@@ -424,7 +431,10 @@ fn main() {
     }
 
     println!("model read back from the written files differs: {}", t.model_mismatch);
-    println!("edits: {} values; edit then revert changed bytes: {} tiles; edit then re-read lost a value: {} tiles", t.edits, t.edit_revert_fail, t.edit_reread_fail);
+    println!(
+        "edits: {} values; edit then revert changed bytes: {} tiles; edit then re-read lost a value: {} tiles",
+        t.edits, t.edit_revert_fail, t.edit_reread_fail
+    );
     if cross {
         println!("cross check against TedScene: {} elements, {} tiles disagree", t.cross_elements, t.cross_fail);
     }

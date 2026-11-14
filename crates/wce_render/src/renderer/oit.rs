@@ -69,7 +69,12 @@ impl Renderer {
             let firsts = self.upload_instances([&draws, &draws], [&vis, &empty]);
             self.ctx.set_input_layout(Some(&layout));
             self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+            self.ctx.set_vertex_buffers(
+                1,
+                std::slice::from_ref(&self.draw_lists.ring.buffer),
+                &[(size_of::<RigidInstance>() as u32)],
+                &[0],
+            );
             let slots = self.slots_of(&leaf_ps);
             let mut bound = false;
             let (_, triangles) = self.draw_batches_flags([&draws, &draws], [&vis, &empty], firsts, |r, m, _, faded| {

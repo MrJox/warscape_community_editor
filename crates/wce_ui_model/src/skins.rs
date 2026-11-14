@@ -29,7 +29,9 @@ pub fn loose_names(project: &Path) -> Vec<String> {
 }
 
 fn count_files(dir: &Path) -> usize {
-    std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum()).unwrap_or(0)
+    std::fs::read_dir(dir)
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum())
+        .unwrap_or(0)
 }
 
 fn entry<'a>(map: &'a mut BTreeMap<String, Skin>, name: &str) -> &'a mut Skin {
@@ -73,10 +75,10 @@ pub fn list(vfs: &Vfs, project: Option<&Path>) -> Vec<Skin> {
 /// each with the other picture extensions.
 pub fn candidates(path: &str, skin: Option<&str>) -> Vec<String> {
     let mut v = Vec::new();
-    if let Some(s) = skin.filter(|s| !s.is_empty() && *s != "default") {
-        if let Some(rest) = path.strip_prefix("ui/skins/default/") {
-            v.extend(images::candidates(&format!("ui/skins/{s}/{rest}")));
-        }
+    if let Some(s) = skin.filter(|s| !s.is_empty() && *s != "default")
+        && let Some(rest) = path.strip_prefix("ui/skins/default/")
+    {
+        v.extend(images::candidates(&format!("ui/skins/{s}/{rest}")));
     }
 
     for c in images::candidates(path) {

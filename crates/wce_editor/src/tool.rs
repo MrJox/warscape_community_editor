@@ -33,6 +33,19 @@ pub enum ViewportEventKind {
     ContextMenu,
 }
 
+/// The groups of the File menu a tool adds to (`Tool::file_menu`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileMenu {
+    /// After Open file: what the tool makes or opens its own way (New tile..., Open tile...).
+    Open,
+
+    /// After Save as: the tool's own saves (Save tile as...).
+    Save,
+
+    /// In the Revert submenu, after To saved and To the game's version.
+    Revert,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ViewportEvent {
     pub kind: ViewportEventKind,
@@ -69,7 +82,6 @@ pub fn default_layout(dockspace: gui::ImGuiID, title: &str) {
 }
 
 pub trait Tool: Any {
-
     /// "weather", "tile", ...
     fn id(&self) -> &str;
     fn title(&self) -> &str;
@@ -115,9 +127,48 @@ pub trait Tool: Any {
         vec![]
     }
 
-    /// Buttons of the tool in the toolbar, after the gizmo's.
-    fn toolbar(&mut self, editor: &mut Editor) {
+    /// The tool's modes in the viewport's mode strip (`chips::draw_mode_strip`), under the editor's Select / Move / Rotate / Scale and
+    /// Global / Local: chips of what the left mouse does in the tool (the Tile tool's sculpt and paint brushes). True while one of them is
+    /// on (the gizmo's buttons then show unlit).
+    fn viewport_modes(&mut self, editor: &mut Editor) -> bool {
         let _ = editor;
+        false
+    }
+
+    /// Whether the move gizmo's centre is a handle of the tool's: a drag there moves the selection over the surface under the cursor
+    /// (`begin_centre_drag`). The viewport draws the handle only then.
+    fn can_centre_drag(&self, editor: &Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// A press on the move gizmo's centre: the tool starts moving the selection with the mouse (the Tile tool's grab); the Drag and
+    /// Release events that follow are the tool's. False when it did not start.
+    fn begin_centre_drag(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// One of the mode strip's Select / Move / Rotate / Scale was clicked: the tool leaves its own mode (a brush).
+    fn leave_mode(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// Items of the tool in a group of the File menu (`FileMenu`): what the tool opens or makes, saves its own way, or reverts to.
+    fn file_menu(&mut self, editor: &mut Editor, part: FileMenu) {
+        let _ = (editor, part);
+    }
+
+    /// Items of the tool at the end of the View menu (its windows, what its viewport shows).
+    fn view_menu(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// File > Revert > To saved for a tool that reverts its document its own way (the Prefab tool reads its prefab again); `None`: the
+    /// document's own `Document::revert`.
+    fn revert(&mut self, editor: &mut Editor) -> Option<Result<String, String>> {
+        let _ = editor;
+        None
     }
 
     /// Items of the tool at the end of the Edit menu.
@@ -125,11 +176,24 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// Items of the File menu after Export: sharing the tool's projects with other users (a zip to give, one to import). True when the
+    /// tool drew any.
+    fn share_menu(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
     /// Items of File > Export: what the tool writes for the game or for TEd (a kit, a mod pack, an exported tile...), each asking for its
     /// destination. Saves go into the project; exports go where they are asked to. True when the tool drew any.
     fn export_menu(&mut self, editor: &mut Editor) -> bool {
         let _ = editor;
         false
+    }
+
+    /// Drawn on the viewport's image right after it, under the editor's own overlays (the compass, the coordinates) and the tool's
+    /// `viewport_overlay`: a picture that stands in for part of the image (the Weather tool's split compare).
+    fn viewport_underlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        let _ = (editor, origin, size);
     }
 
     /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen
@@ -160,6 +224,13 @@ pub trait Tool: Any {
         false
     }
 
+    /// What the tool's part of the Inspector shows, as a key (its mode, what it places, its brush's settings): when it changes, the Inspector
+    /// is brought to the front of its dock. None when the tool shows nothing there of its own.
+    fn inspector_subject(&mut self, editor: &Editor) -> Option<u64> {
+        let _ = editor;
+        None
+    }
+
     /// Rows of the tool's below what the document shows of the selection, in the Inspector.
     fn inspect_below(&mut self, _editor: &mut Editor) {}
 
@@ -173,6 +244,19 @@ pub trait Tool: Any {
     fn viewport_input(&mut self, editor: &mut Editor, event: &ViewportEvent) -> bool {
         let _ = (editor, event);
         false
+    }
+
+    /// A write the tool has under way on another thread (an export into a pack), named for the status line: quitting waits for it, as the
+    /// process ending would cut the file short. `None` without one.
+    fn writing(&self) -> Option<String> {
+        None
+    }
+
+    /// The edit the tool has under way (a grab, a drag of a handle, a brush stroke), as the status line names it; `None` without one. Undo
+    /// and redo are refused meanwhile: the gesture's entries merge and it keeps where it began in the history and which items it moves, which
+    /// an undo under it would take apart.
+    fn open_gesture(&self) -> Option<&'static str> {
+        None
     }
 
     /// True while the left mouse button belongs to the tool (a brush is active, a polygon is being drawn): Press always goes to the tool, the
@@ -217,7 +301,13 @@ pub trait Tool: Any {
 
     /// Where the rotate gizmo leaves `item` (its world matrix `moved`, from `frame` at the drag's start): the tool's snapping. The default
     /// leaves it.
-    fn snap_gizmo_rotate(&self, editor: &Editor, item: SourceRef, frame: &wce_foundation::math::Float4x4, moved: wce_foundation::math::Float4x4) -> wce_foundation::math::Float4x4 {
+    fn snap_gizmo_rotate(
+        &self,
+        editor: &Editor,
+        item: SourceRef,
+        frame: &wce_foundation::math::Float4x4,
+        moved: wce_foundation::math::Float4x4,
+    ) -> wce_foundation::math::Float4x4 {
         let _ = (editor, item, frame);
         moved
     }
@@ -322,7 +412,9 @@ impl Tool for PlaceholderTool {
         if gui::begin(&self.title, None, 0) {
             gui::text_wrapped(&self.plan);
             gui::separator();
-            gui::text_disabled("Registered so that the tool switcher, the layout files and document routing are exercised. No features yet.");
+            gui::text_disabled(
+                "Registered so that the tool switcher, the layout files and document routing are exercised. No features yet.",
+            );
         }
 
         gui::end();

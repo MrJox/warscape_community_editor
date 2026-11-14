@@ -66,12 +66,14 @@ impl RoadTables {
     /// From the db (`list` the paths under a prefix, `read` a path's bytes): `campaign`'s rows of `campaign_map_roads` and the road
     /// effect's rows of `building_effects_junction`.
     pub fn read(schema: &Schema, campaign: &str, list: &dyn Fn(&str) -> Vec<String>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Self {
-        let mut thresholds: Vec<f64> = table_rows(schema, "campaign_map_roads_tables", list, read).iter()
+        let mut thresholds: Vec<f64> = table_rows(schema, "campaign_map_roads_tables", list, read)
+            .iter()
             .filter(|r| r.get("campaign").is_some_and(|c| c == campaign))
             .filter_map(|r| r.get("threshold")?.parse().ok())
             .collect();
         thresholds.sort_by(f64::total_cmp);
-        let values = table_rows(schema, "building_effects_junction_tables", list, read).iter()
+        let values = table_rows(schema, "building_effects_junction_tables", list, read)
+            .iter()
             // Attila's `att_effect_building_road`; Thrones' `vik_road_mod` (in the db, given by nothing in vanilla: its roads stay level 0).
             .filter(|r| r.get("effect").is_some_and(|e| e.ends_with("_building_road") || e.ends_with("_road_mod")))
             .filter_map(|r| Some((r.get("building")?.clone(), r.get("value")?.parse::<f64>().ok()?)))
@@ -79,11 +81,15 @@ impl RoadTables {
                 *m.entry(b).or_default() += v;
                 m
             });
-        let superchains: HashMap<String, String> = table_rows(schema, "building_chains_tables", list, read).into_iter()
+        let superchains: HashMap<String, String> = table_rows(schema, "building_chains_tables", list, read)
+            .into_iter()
             .filter_map(|r| Some((r.get("key")?.clone(), r.get("building_superchain")?.clone())))
             .collect();
-        let chain_levels = table_rows(schema, "building_levels_tables", list, read).into_iter()
-            .filter_map(|r| Some((r.get("level_name")?.clone(), (superchains.get(r.get("chain")?)?.clone(), r.get("level")?.parse::<u32>().ok()?))))
+        let chain_levels = table_rows(schema, "building_levels_tables", list, read)
+            .into_iter()
+            .filter_map(|r| {
+                Some((r.get("level_name")?.clone(), (superchains.get(r.get("chain")?)?.clone(), r.get("level")?.parse::<u32>().ok()?)))
+            })
             .collect();
         Self { thresholds, values, chain_levels }
     }
@@ -105,9 +111,15 @@ impl Upgrades {
     pub fn parse(xml: &[u8]) -> Self {
         let root = wce_tile::vegetation::ca_xml::parse(xml);
         let top = if root.name == "TILE_UPGRADES" { Some(&root) } else { root.child("TILE_UPGRADES") };
-        let groups = top.into_iter().flat_map(|t| t.children.iter()).filter(|g| g.name == "UPGRADE_GROUP")
+        let groups = top
+            .into_iter()
+            .flat_map(|t| t.children.iter())
+            .filter(|g| g.name == "UPGRADE_GROUP")
             .filter_map(|g| {
-                let ups = g.children.iter().filter(|u| u.name == "UPGRADE")
+                let ups = g
+                    .children
+                    .iter()
+                    .filter(|u| u.name == "UPGRADE")
                     .filter_map(|u| Some((norm(u.attribute("src")?), u.attribute("dst")?.replace('/', "\\"))))
                     .collect();
                 Some((g.attribute("name")?.to_owned(), ups))
@@ -141,23 +153,37 @@ impl HexMap {
         let md = ESF::decode(&mut Cursor::new(map_data), &None).map_err(|e| format!("map_data.esf: {e}"))?;
         let root = as_record(md.root_node()).ok_or("map_data.esf: no root record")?;
         let rd = child(root, "REGIONS_DATA").ok_or("map_data.esf: no REGIONS_DATA")?;
-        let world = rd.children().iter().find_map(|g| {
-            g.iter().filter_map(|n| match n {
-                NodeType::Coord2d(c) => Some((f64::from(*c.x()), f64::from(*c.y()))),
-                _ => None,
-            }).nth(1)
-        }).ok_or("map_data.esf: no world size")?;
-        let regions = child(rd, "REGIONS_BLOCK").into_iter().flat_map(|b| b.children().iter().flatten().filter_map(as_record))
+        let world = rd
+            .children()
+            .iter()
+            .find_map(|g| {
+                g.iter()
+                    .filter_map(|n| match n {
+                        NodeType::Coord2d(c) => Some((f64::from(*c.x()), f64::from(*c.y()))),
+                        _ => None,
+                    })
+                    .nth(1)
+            })
+            .ok_or("map_data.esf: no world size")?;
+        let regions = child(rd, "REGIONS_BLOCK")
+            .into_iter()
+            .flat_map(|b| b.children().iter().flatten().filter_map(as_record))
             .filter(|r| r.name() == "REGION_DATA")
             .map(|r| r.children().first().and_then(|g| g.iter().find_map(str_of)).unwrap_or_default().to_owned())
             .collect();
-        let hex = child(rd, "theatres").and_then(|t| child(t, "CAMPAIGN_THEATRE")).and_then(|t| child(t, "HEX_MAP_DATA")).ok_or("map_data.esf: no HEX_MAP_DATA")?;
+        let hex = child(rd, "theatres")
+            .and_then(|t| child(t, "CAMPAIGN_THEATRE"))
+            .and_then(|t| child(t, "HEX_MAP_DATA"))
+            .ok_or("map_data.esf: no HEX_MAP_DATA")?;
         let g = hex.children().first().ok_or("map_data.esf: an empty HEX_MAP_DATA")?;
         let dims: Vec<u32> = g.iter().filter_map(u32_of).take(2).collect();
-        let cells = g.iter().find_map(|n| match n {
-            NodeType::U8Array(v) => Some(v.clone()),
-            _ => None,
-        }).ok_or("map_data.esf: HEX_MAP_DATA without its cells")?;
+        let cells = g
+            .iter()
+            .find_map(|n| match n {
+                NodeType::U8Array(v) => Some(v.clone()),
+                _ => None,
+            })
+            .ok_or("map_data.esf: HEX_MAP_DATA without its cells")?;
         let [w, h] = dims[..] else { return Err("map_data.esf: HEX_MAP_DATA without its size".to_owned()) };
         if cells.len() != w as usize * h as usize * CELL_BYTES {
             return Err(format!("map_data.esf: {} bytes of hex cells for {w} x {h}", cells.len()));
@@ -213,8 +239,12 @@ impl HexMap {
 /// turn 1 has it) and climate stage (`WORLD/CLIMATE`; 0).
 pub fn campaign_start(startpos: &[u8]) -> (Option<u32>, Option<u32>) {
     let Ok(sp) = ESF::decode(&mut Cursor::new(startpos), &None) else { return (None, None) };
-    let Some(model) = as_record(sp.root_node()).and_then(|r| child(r, "CAMPAIGN_ENV")).and_then(|r| child(r, "CAMPAIGN_MODEL")) else { return (None, None) };
-    let first = |r: &rpfm_lib::files::esf::RecordNode, n: usize| r.children().first().and_then(|g| g.iter().filter(|x| as_record(x).is_none()).filter_map(u32_of).nth(n));
+    let Some(model) = as_record(sp.root_node()).and_then(|r| child(r, "CAMPAIGN_ENV")).and_then(|r| child(r, "CAMPAIGN_MODEL")) else {
+        return (None, None);
+    };
+    let first = |r: &rpfm_lib::files::esf::RecordNode, n: usize| {
+        r.children().first().and_then(|g| g.iter().filter(|x| as_record(x).is_none()).filter_map(u32_of).nth(n))
+    };
     let season = child(model, "CAMPAIGN_CALENDAR").and_then(|c| child(c, "DATE")).and_then(|d| first(d, 1));
     let stage = child(model, "WORLD").and_then(|w| child(w, "CLIMATE")).and_then(|c| first(c, 0));
     (season, stage)
@@ -236,7 +266,10 @@ pub fn region_buildings(startpos: &[u8]) -> Result<HashMap<String, Vec<String>>,
             let Some(key) = leaf(g, None, 2).and_then(str_of) else { continue };
             let Some(manager) = g.iter().filter_map(as_record).find(|r| r.name() == "REGION_SLOT_MANAGER") else { continue };
             let list = out.entry(key.to_owned()).or_default();
-            let slots = child(manager, "REGION_SLOT_ARRAY").into_iter().flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "REGION_SLOT");
+            let slots = child(manager, "REGION_SLOT_ARRAY")
+                .into_iter()
+                .flat_map(|a| a.children().iter().flatten().filter_map(as_record))
+                .filter(|r| r.name() == "REGION_SLOT");
             for slot in slots {
                 list.extend(super::cities::slot_of(slot).1);
             }
@@ -264,7 +297,9 @@ pub struct ResourceArea {
 /// Not an ESF, or not `CAMPAIGN_DYNAMIC_RESOURCES`.
 pub fn dynamic_resources(esf: &[u8]) -> Result<Vec<ResourceArea>, String> {
     let e = ESF::decode(&mut Cursor::new(esf), &None).map_err(|e| format!("dynamic_resources.esf: {e}"))?;
-    let root = as_record(e.root_node()).filter(|r| r.name() == "CAMPAIGN_DYNAMIC_RESOURCES").ok_or("dynamic_resources.esf: not CAMPAIGN_DYNAMIC_RESOURCES")?;
+    let root = as_record(e.root_node())
+        .filter(|r| r.name() == "CAMPAIGN_DYNAMIC_RESOURCES")
+        .ok_or("dynamic_resources.esf: not CAMPAIGN_DYNAMIC_RESOURCES")?;
     let mut out = vec![];
     for info in root.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "REGION_RESOURCE_INFO_BLOCK") {
         for g in info.children() {
@@ -275,7 +310,10 @@ pub fn dynamic_resources(esf: &[u8]) -> Result<Vec<ResourceArea>, String> {
                     let mut texts = ag.iter().filter_map(str_of);
                     let (Some(superchain), Some(group)) = (texts.next(), texts.next()) else { continue };
                     let level = ag.iter().find_map(u32_of).unwrap_or(0);
-                    let cells = ag.iter().filter_map(as_record).filter(|r| r.name() == "REGION_RESOURCE_AREAS_BLOCK")
+                    let cells = ag
+                        .iter()
+                        .filter_map(as_record)
+                        .filter(|r| r.name() == "REGION_RESOURCE_AREAS_BLOCK")
                         .flat_map(|r| r.children().iter().flatten())
                         .filter_map(|n| match n {
                             NodeType::U16Array(v) => Some(v.as_chunks::<2>().0.iter().map(|c| (c[0], c[1])).collect::<Vec<_>>()),
@@ -316,16 +354,26 @@ pub struct CampaignRoads {
 }
 
 impl CampaignRoads {
-    pub fn new(hex: HexMap, buildings: &HashMap<String, Vec<String>>, tables: &RoadTables, upgrades: Upgrades, areas: &[ResourceArea]) -> Self {
-        let values: Vec<f64> = hex.regions.iter()
-            .map(|r| buildings.get(r).map_or(0.0, |b| b.iter().filter_map(|b| tables.values.get(b)).sum()))
-            .collect();
+    pub fn new(
+        hex: HexMap,
+        buildings: &HashMap<String, Vec<String>>,
+        tables: &RoadTables,
+        upgrades: Upgrades,
+        areas: &[ResourceArea],
+    ) -> Self {
+        let values: Vec<f64> =
+            hex.regions.iter().map(|r| buildings.get(r).map_or(0.0, |b| b.iter().filter_map(|b| tables.values.get(b)).sum())).collect();
         let levels = values.iter().map(|&v| tables.level(v)).collect();
         let mut farms = HashMap::new();
         let (mut areas_on, mut areas_off) = (0, 0);
         for a in areas {
             // The region's highest level in the superchain.
-            let reached = hex.regions.get(a.region).and_then(|r| buildings.get(r)).into_iter().flatten()
+            let reached = hex
+                .regions
+                .get(a.region)
+                .and_then(|r| buildings.get(r))
+                .into_iter()
+                .flatten()
                 .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| *l))
                 .max();
             if reached.is_some_and(|l| l >= a.level) {
@@ -427,9 +475,16 @@ impl CampaignRoads {
 /// # Errors
 ///
 /// A file can't be read as it should.
-pub fn read(map_data: &[u8], startpos: &[u8], tile_upgrades: &[u8], tables: &RoadTables, dynamic: Option<&[u8]>) -> Result<CampaignRoads, String> {
+pub fn read(
+    map_data: &[u8],
+    startpos: &[u8],
+    tile_upgrades: &[u8],
+    tables: &RoadTables,
+    dynamic: Option<&[u8]>,
+) -> Result<CampaignRoads, String> {
     let areas = dynamic.map(dynamic_resources).transpose()?.unwrap_or_default();
-    let mut roads = CampaignRoads::new(HexMap::read(map_data)?, &region_buildings(startpos)?, tables, Upgrades::parse(tile_upgrades), &areas);
+    let mut roads =
+        CampaignRoads::new(HexMap::read(map_data)?, &region_buildings(startpos)?, tables, Upgrades::parse(tile_upgrades), &areas);
     (roads.start_season, roads.climate_stage) = campaign_start(startpos);
     Ok(roads)
 }
@@ -441,14 +496,20 @@ mod tests {
     #[test]
     fn levels_by_threshold() {
         let t = RoadTables { thresholds: vec![0.0, 10.0, 40.0], ..Default::default() };
-        assert_eq!([t.level(-1.0), t.level(0.0), t.level(9.9), t.level(10.0), t.level(39.0), t.level(40.0), t.level(95.0)], [0, 1, 1, 2, 2, 3, 3]);
+        assert_eq!(
+            [t.level(-1.0), t.level(0.0), t.level(9.9), t.level(10.0), t.level(39.0), t.level(40.0), t.level(95.0)],
+            [0, 1, 1, 2, 2, 3, 3]
+        );
     }
 
     #[test]
     fn upgrades_parse_by_group() {
         let xml = b"<TILE_UPGRADES>\n<UPGRADE_GROUP name='road0_to_road2'>\n<UPGRADE src='terrain\\tiles\\campaign\\roads_climate\\2x2_endpiece_l' dst='terrain\\tiles\\campaign\\roads_stone\\2x2_endpiece_l' />\n</UPGRADE_GROUP>\n</TILE_UPGRADES>";
         let u = Upgrades::parse(xml);
-        assert_eq!(u.groups["road0_to_road2"]["terrain\\tiles\\campaign\\roads_climate\\2x2_endpiece_l"], "terrain\\tiles\\campaign\\roads_stone\\2x2_endpiece_l");
+        assert_eq!(
+            u.groups["road0_to_road2"]["terrain\\tiles\\campaign\\roads_climate\\2x2_endpiece_l"],
+            "terrain\\tiles\\campaign\\roads_stone\\2x2_endpiece_l"
+        );
     }
 
     #[test]

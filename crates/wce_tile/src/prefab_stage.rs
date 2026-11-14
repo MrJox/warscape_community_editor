@@ -59,8 +59,15 @@ pub fn make(root: &Path, settings: &StageSettings, group_text: &[u8]) -> Result<
         std::fs::remove_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     }
 
-    let t = NewTile { name: STAGE_NAME.to_owned(), cells_x: settings.cells, cells_y: settings.cells, height: settings.height, density: settings.density, seed: 1 };
-    let dir = new_tile::create(&t, root, None)?;
+    let t = NewTile {
+        name: STAGE_NAME.to_owned(),
+        cells_x: settings.cells,
+        cells_y: settings.cells,
+        height: settings.height,
+        density: settings.density,
+        seed: 1,
+    };
+    let dir = new_tile::create(&t, root, &[])?;
     let mut project = TileProject::open(&dir).map_err(|e| e.to_string())?;
     let graph = project.scene.scene_graph().ok_or("the stage has no scene graph")?;
     let group = project.scene.insert_element_text(graph, group_text).map_err(|e| e.to_string())?;

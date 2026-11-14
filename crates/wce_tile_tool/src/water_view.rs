@@ -3,8 +3,6 @@
 //! (`Tile::set_water_depth`) while a view shows it, and the automatic no-go areas of the same final heights (`Tile::set_auto_nogos`) while
 //! they show; worked out again once the tile has not changed for a moment after an edit.
 
-use std::path::Path;
-
 use wce_editor::editor::Editor;
 use wce_editor_core::document::Document;
 use wce_foundation::log;
@@ -30,7 +28,9 @@ impl TileTool {
             return;
         }
 
-        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth || self.minimap.view() == Some(TerrainView::WaterDepth);
+        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth
+            || self.minimap.view() == Some(TerrainView::WaterDepth)
+            || self.minimap.wants_radar();
         let wants_nogo = d.tile().display().show_auto_nogo || self.minimap.shows_auto_nogos();
         let version = d.history().version();
         let key = Some((id, version));
@@ -62,7 +62,11 @@ impl TileTool {
             }
         };
 
-        log::info(format!("{} worked out in {:.2} s", if nogo { "water depth and no-go areas" } else { "water depth" }, started.elapsed().as_secs_f64()));
+        log::info(format!(
+            "{} worked out in {:.2} s",
+            if nogo { "water depth and no-go areas" } else { "water depth" },
+            started.elapsed().as_secs_f64()
+        ));
         self.water_for = key;
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().set_water_depth(&mut e.scene, depth);
@@ -97,13 +101,39 @@ impl TileTool {
     }
 }
 
+impl TileTool {
+    /// The water depth and the automatic no-go areas of the open tile worked out now when it has none (the radar's rivers and cliffs).
+    ///
+    /// # Errors
+    ///
+    /// No tile, or stage B failed.
+    pub(crate) fn ensure_radar_water(&mut self, e: &mut Editor, id: DocumentId) -> Result<(), String> {
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile")?;
+        if d.tile().water_depth().is_some() && d.tile().auto_nogos().is_some() {
+            return Ok(());
+        }
+
+        let game = self.exported_game(e).ok();
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let (water, nogos) = stage_b_of(d, game.as_deref(), true)?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        d.tile_mut().set_water_depth(&mut e.scene, Some(water));
+        d.tile_mut().set_auto_nogos(nogos);
+        Ok(())
+    }
+}
+
 /// The tile as it is in memory (its scene, its heights in the range the next save gives them, its entry with that range) through stage B's
 /// water map; the water planes' models from the game's packs when they are known.
 /// Polygons in metres (tile frame).
-type Outlines = Vec<Vec<[f32; 2]>>;
+pub type Outlines = Vec<Vec<[f32; 2]>>;
 
 /// With `nogos`, the automatic no-go areas too.
-fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
+pub fn stage_b_of(
+    d: &TileDocument,
+    game: Option<&wce_tile_io::attila::workflow::Game>,
+    nogos: bool,
+) -> Result<(WaterDepth, Option<Outlines>), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
 
     let p = d.project();
@@ -128,11 +158,16 @@ fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Gam
     }
 
     let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
-    let kit_raw = game.and_then(|g| g.kit_raw.clone()).or_else(|| p.raw_root.clone()).unwrap_or_default();
+    // As the export reads them: the tile's own raw_data first, then the kits'.
+    let roots = match (game, &p.raw_root) {
+        (Some(g), Some(raw)) => g.bob_roots(raw),
+        (Some(g), None) => g.kits.clone(),
+        (None, raw) => raw.iter().cloned().collect(),
+    };
     let none = |_: &str| None;
     let packs = |k: &str| game.and_then(|g| g.files.read(k).ok());
     let models: &dyn Fn(&str) -> Option<Vec<u8>> = if game.is_some() { &packs } else { &none };
-    let f = water_fields(&raw, Path::new(&kit_raw), models)?;
+    let f = water_fields(&raw, &roots, models)?;
     let depth = match &f.water {
         Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
         None => vec![f32::NAN; f.w * f.h],

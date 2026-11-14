@@ -28,6 +28,10 @@ const STAGING: &str = ".wce-update";
 /// The list of the files an update renamed aside (one path per line, relative to the build's folder), for [`remove_leftovers`].
 const LEFTOVERS: &str = ".wce-update-leftovers";
 
+/// The files the last update installed (one path per line, relative to the build's folder): one the next release no longer has is
+/// retired (renamed aside, then deleted as a leftover) instead of staying beside the new build (an old DLL loaded instead of none).
+const INSTALLED: &str = ".wce-update-installed";
+
 /// The running build's version.
 pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("the workspace version is semver")
@@ -108,8 +112,12 @@ impl Progress {
 
 /// An HTTP client; `whole` bounds the whole request (the release list), else only connecting is (a download takes what it takes).
 fn agent(whole: Option<Duration>) -> ureq::Agent {
-    ureq::Agent::config_builder().user_agent(format!("wce/{}", env!("CARGO_PKG_VERSION"))).timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_global(whole).build().into()
+    ureq::Agent::config_builder()
+        .user_agent(format!("wce/{}", env!("CARGO_PKG_VERSION")))
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_global(whole)
+        .build()
+        .into()
 }
 
 /// Asks GitHub for the releases and returns the newest one above `current`, if any. Pre-releases count only with `prereleases`.
@@ -119,7 +127,10 @@ fn agent(whole: Option<Duration>) -> ureq::Agent {
 /// GitHub can't be reached or answers with something that isn't its release list.
 pub fn check(current: &Version, prereleases: bool) -> Result<Option<Release>, String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=30");
-    let text = agent(Some(Duration::from_secs(30))).get(&url).header("Accept", "application/vnd.github+json").call()
+    let text = agent(Some(Duration::from_secs(30)))
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .call()
         .and_then(|mut r| r.body_mut().read_to_string())
         .map_err(|e| format!("cannot reach GitHub: {e}"))?;
     newest(&text, current, prereleases, asset_name)
@@ -131,7 +142,12 @@ pub fn check(current: &Version, prereleases: bool) -> Result<Option<Release>, St
 /// # Errors
 ///
 /// `json` isn't a release list.
-pub fn newest(json: &str, current: &Version, prereleases: bool, asset_for: fn(&Version) -> Option<String>) -> Result<Option<Release>, String> {
+pub fn newest(
+    json: &str,
+    current: &Version,
+    prereleases: bool,
+    asset_for: fn(&Version) -> Option<String>,
+) -> Result<Option<Release>, String> {
     let list: Vec<GhRelease> = serde_json::from_str(json).map_err(|e| format!("GitHub's release list can't be read: {e}"))?;
     let mut best: Option<Release> = None;
     for r in list {
@@ -195,6 +211,11 @@ fn download_to(asset: &Asset, dest: &Path, progress: &Progress) -> Result<(), St
         file.write_all(&buf[..n]).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
         done += n as u64;
         progress.done.store(done, Ordering::Relaxed);
+
+        // More than the release says the file is: not that file (nothing is read on until the server stops).
+        if asset.size > 0 && done > asset.size {
+            return Err(format!("{} is larger than the release says ({} bytes)", asset.name, asset.size));
+        }
     }
 
     file.flush().map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
@@ -230,7 +251,12 @@ pub fn install(zip: &Path, dir: &Path) -> Result<Vec<PathBuf>, String> {
         let mut moved: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
         for rel in &files {
             match replace(&staging.join(rel), &dir.join(rel)) {
-                Ok(aside) => moved.push((dir.join(rel), aside)),
+                Ok(aside) => {
+                    // Listed as it is made: an install cut short (a crash) still has its old files deleted at the next start.
+                    add_leftovers(dir, aside.iter().filter_map(|a| a.strip_prefix(dir).ok().map(Path::to_path_buf)));
+                    moved.push((dir.join(rel), aside));
+                }
+
                 Err(e) => {
                     for (target, aside) in moved.into_iter().rev() {
                         let _ = std::fs::remove_file(&target);
@@ -244,8 +270,7 @@ pub fn install(zip: &Path, dir: &Path) -> Result<Vec<PathBuf>, String> {
             }
         }
 
-        let asides = moved.iter().filter_map(|(_, aside)| aside.as_ref()?.strip_prefix(dir).ok().map(Path::to_path_buf));
-        add_leftovers(dir, asides);
+        retire(dir, &files);
         Ok(files)
     });
 
@@ -253,20 +278,52 @@ pub fn install(zip: &Path, dir: &Path) -> Result<Vec<PathBuf>, String> {
     result
 }
 
+/// A list of paths relative to `dir` (`LEFTOVERS`, `INSTALLED`): only plain relative paths below it (not one that would reach outside).
+/// A line with a colon is none: a drive (`C:/x.dll`) is a prefix on Windows but reads as a folder named `C:` elsewhere, and no release
+/// file has one in its name (Windows allows none).
+fn read_list(dir: &Path, name: &str) -> Vec<PathBuf> {
+    std::fs::read_to_string(dir.join(name))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.is_empty() && !l.contains(':'))
+        .map(PathBuf::from)
+        .filter(|p| p.components().all(|c| matches!(c, std::path::Component::Normal(_))))
+        .collect()
+}
+
+/// Writes a list (none: removes it), whole or not at all: beside it, then in its place.
+fn write_list(dir: &Path, name: &str, files: &[PathBuf]) {
+    let path = dir.join(name);
+    if files.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+
+    let text = files.iter().map(|f| format!("{}\n", f.display())).collect::<String>();
+    let tmp = dir.join(format!("{name}.tmp"));
+    if std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
 /// The files of [`LEFTOVERS`] in `dir`.
 fn leftovers(dir: &Path) -> Vec<PathBuf> {
-    std::fs::read_to_string(dir.join(LEFTOVERS)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect()
+    read_list(dir, LEFTOVERS)
 }
 
 /// Writes `files` as [`LEFTOVERS`] in `dir` (none: removes it).
 fn write_leftovers(dir: &Path, files: &[PathBuf]) {
-    let path = dir.join(LEFTOVERS);
-    if files.is_empty() {
-        let _ = std::fs::remove_file(path);
-    } else {
-        let text = files.iter().map(|f| format!("{}\n", f.display())).collect::<String>();
-        let _ = std::fs::write(path, text);
-    }
+    write_list(dir, LEFTOVERS, files);
+}
+
+/// The files the last update installed that this one (`files`) does not have: renamed aside as leftovers (deleted at the next start).
+/// `files` becomes the list. The first update that keeps one retires nothing (it can't tell the release's files from the user's).
+fn retire(dir: &Path, files: &[PathBuf]) {
+    let gone = read_list(dir, INSTALLED).into_iter().filter(|old| !files.contains(old) && dir.join(old).is_file()).collect::<Vec<_>>();
+    let asides =
+        gone.iter().filter_map(|old| move_aside(&dir.join(old)).ok()).filter_map(|a| a.strip_prefix(dir).ok().map(Path::to_path_buf));
+    add_leftovers(dir, asides);
+    write_list(dir, INSTALLED, files);
 }
 
 fn add_leftovers(dir: &Path, new: impl Iterator<Item = PathBuf>) {
@@ -319,20 +376,7 @@ fn replace(new: &Path, target: &Path) -> Result<Option<PathBuf>, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
 
-    let aside = if target.exists() {
-        // An update installed without restarting leaves the previous one aside, still in use: the next free name then.
-        let mut aside = leftover_name(target, 0);
-        let mut n = 0;
-        while aside.exists() && std::fs::remove_file(&aside).is_err() {
-            n += 1;
-            aside = leftover_name(target, n);
-        }
-
-        std::fs::rename(target, &aside).map_err(|e| format!("cannot move {} aside: {e}", target.display()))?;
-        Some(aside)
-    } else {
-        None
-    };
+    let aside = if target.exists() { Some(move_aside(target)?) } else { None };
 
     if let Err(e) = std::fs::rename(new, target) {
         if let Some(aside) = &aside {
@@ -342,6 +386,20 @@ fn replace(new: &Path, target: &Path) -> Result<Option<PathBuf>, String> {
         return Err(format!("cannot put {} in place: {e}", target.display()));
     }
 
+    Ok(aside)
+}
+
+/// Renames `target` aside (a running exe or a loaded DLL can be renamed, not overwritten); its new path.
+fn move_aside(target: &Path) -> Result<PathBuf, String> {
+    // An update installed without restarting leaves the previous one aside, still in use: the next free name then.
+    let mut aside = leftover_name(target, 0);
+    let mut n = 0;
+    while aside.exists() && std::fs::remove_file(&aside).is_err() {
+        n += 1;
+        aside = leftover_name(target, n);
+    }
+
+    std::fs::rename(target, &aside).map_err(|e| format!("cannot move {} aside: {e}", target.display()))?;
     Ok(aside)
 }
 
@@ -364,10 +422,13 @@ pub fn remove_leftovers(dir: &Path) {
         return;
     }
 
-    let kept: Vec<PathBuf> = files.into_iter().filter(|f| {
-        let path = dir.join(f);
-        path.exists() && std::fs::remove_file(&path).is_err()
-    }).collect();
+    let kept: Vec<PathBuf> = files
+        .into_iter()
+        .filter(|f| {
+            let path = dir.join(f);
+            path.exists() && std::fs::remove_file(&path).is_err()
+        })
+        .collect();
 
     write_leftovers(dir, &kept);
 }
@@ -469,6 +530,33 @@ mod tests {
         remove_leftovers(&app);
         assert!(!app.join("wce.exe.wce-old").exists() && !app.join("docs/README.md.wce-old").exists());
         assert!(app.join("wce.exe").exists() && app.join("keep.txt").exists() && !app.join(LEFTOVERS).exists());
+    }
+
+    #[test]
+    fn a_file_the_next_release_no_longer_has_is_retired_and_the_users_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("mine.txt"), b"the user's").unwrap();
+        let (one, two) = (dir.path().join("1.zip"), dir.path().join("2.zip"));
+        write_zip(&one, &[("wce.exe", b"1"), ("old.dll", b"1")]);
+        write_zip(&two, &[("wce.exe", b"2")]);
+
+        install(&one, &app).unwrap();
+        install(&two, &app).unwrap();
+        assert!(!app.join("old.dll").exists(), "the first release's DLL is retired");
+        assert!(app.join("old.dll.wce-old").exists() && app.join("mine.txt").exists());
+        remove_leftovers(&app);
+        assert!(!app.join("old.dll.wce-old").exists());
+        assert_eq!(std::fs::read(app.join("mine.txt")).unwrap(), b"the user's");
+        assert_eq!(read_list(&app, INSTALLED), [PathBuf::from("wce.exe")]);
+    }
+
+    #[test]
+    fn a_list_names_nothing_outside_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(INSTALLED), "a.dll\n../outside.dll\nC:/x.dll\n/abs.dll\nsub/b.dll\n").unwrap();
+        assert_eq!(read_list(dir.path(), INSTALLED), [PathBuf::from("a.dll"), PathBuf::from("sub/b.dll")]);
     }
 
     #[test]

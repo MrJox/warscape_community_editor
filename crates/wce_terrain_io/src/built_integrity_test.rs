@@ -2,7 +2,13 @@ use super::*;
 use wce_tile::battle_map::tile_list::{TileList, TileListPlacement};
 
 fn files(version: u32, tail: Vec<u8>) -> MapFiles {
-    let list = TileList { version, names: vec!["tile".to_owned()], placements: (0..3).map(|x| TileListPlacement { x, ..Default::default() }).collect(), tail, ..Default::default() };
+    let list = TileList {
+        version,
+        names: vec!["tile".to_owned()],
+        placements: (0..3).map(|x| TileListPlacement { x, ..Default::default() }).collect(),
+        tail,
+        ..Default::default()
+    };
     MapFiles::from_bytes([(LIST.to_owned(), list.write()), ("unknown.bin".to_owned(), vec![7, 8, 9])])
 }
 

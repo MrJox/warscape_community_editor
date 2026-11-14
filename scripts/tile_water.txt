@@ -2,6 +2,8 @@
 # sea_coast, lakes, river_mouth; the water can be switched off; a height stroke rebuilds landscape rivers on the new terrain. %TILE% is the kit tile
 # river_ford/2x2_lb_rb_ford/aa (one river spline, no sea), %TILE2% lakes/10x10/aa (a lake), %OUT% a folder for the captures.
 tile "%TILE%"
+# the sea at 0 m is a setting (the copied settings may have it either way): off for the river, on for the lake
+tile_sea off
 frames 6
 assert_water 1
 cam 0.5 0.35 160 2
@@ -24,6 +26,7 @@ frames 3
 assert_water 1
 assert_modified 0
 tile "%TILE2%"
+tile_sea on
 frames 6
 assert_water 1
 cam 0.8 0.5 1500 2

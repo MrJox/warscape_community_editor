@@ -120,21 +120,24 @@ pub fn climate_environments(db: &TileDatabase, environment_map: &[u8]) -> Vec<(S
         ("precipitation", &[("dry", 0x40_0000), ("rain", 0x20_0000), ("fog", 0x4_0000), ("snow", 0x10_0000), ("storm", 0x8_0000)]),
     ];
 
-    db.climates.iter().map(|c| {
-        let mut v = 0u32;
-        for f in files.iter().filter(|f| f.attribute("climate").is_some_and(|a| a.contains(c.name.as_str()))) {
-            for (attr, list) in &words {
-                let text = f.attribute(attr).unwrap_or_default();
-                for (w, bit) in list.iter() {
-                    if text.contains(w) {
-                        v |= bit;
+    db.climates
+        .iter()
+        .map(|c| {
+            let mut v = 0u32;
+            for f in files.iter().filter(|f| f.attribute("climate").is_some_and(|a| a.contains(c.name.as_str()))) {
+                for (attr, list) in &words {
+                    let text = f.attribute(attr).unwrap_or_default();
+                    for (w, bit) in list.iter() {
+                        if text.contains(w) {
+                            v |= bit;
+                        }
                     }
                 }
             }
-        }
 
-        (c.name.clone(), v)
-    }).collect()
+            (c.name.clone(), v)
+        })
+        .collect()
 }
 
 /// What follows the records: the cell count and the climate table (in the hash map's order).
@@ -196,9 +199,13 @@ pub fn masks(db: &TileDatabase, map: &TileMap, inputs: &MaskInputs) -> (Vec<u16>
     let (w, h) = (map.width, map.height);
     let n = (w * h) as usize;
     let (mut m0, mut m1) = (vec![0u16; n], vec![0u16; n]);
-    let by_name: std::collections::HashMap<String, usize> = db.tiles.iter().enumerate()
+    let by_name: std::collections::HashMap<String, usize> = db
+        .tiles
+        .iter()
+        .enumerate()
         .flat_map(|(t, tile)| (0..tile.variations.len()).map(move |v| (t, v)))
-        .map(|(t, v)| (db.tile_location_of(t, v).replace('/', "\\").to_lowercase(), t)).collect();
+        .map(|(t, v)| (db.tile_location_of(t, v).replace('/', "\\").to_lowercase(), t))
+        .collect();
     let layer = &map.layers[0];
     let culture_ok = inputs.culture.as_ref().is_some_and(|c| c.width >= w && c.height >= h);
     // The four of one size, and not both sides other than the map's (BOB's test: `width != w && height != h` fails it).
@@ -210,7 +217,8 @@ pub fn masks(db: &TileDatabase, map: &TileMap, inputs: &MaskInputs) -> (Vec<u16>
             let i = (y * w + x) as usize;
             let c = layer[i];
             let origin = if c.index < 0 { layer.get((-c.index - 1) as usize).copied() } else { Some(c) };
-            let tile = origin.filter(|o| o.index > 0)
+            let tile = origin
+                .filter(|o| o.index > 0)
                 .and_then(|o| map.names.get(o.index as usize - 1))
                 .and_then(|name| by_name.get(&name.replace('/', "\\").to_lowercase()))
                 .map(|&t| &db.tiles[t]);
@@ -288,11 +296,14 @@ pub fn culture_colours(tile_upgrades: &[u8]) -> Vec<[u8; 4]> {
         if e.name == "TILE_UPGRADES" { Some(e.clone()) } else { e.children.iter().find(|c| c.name == "TILE_UPGRADES").cloned() }
     };
     let Some(up) = find(&root) else { return vec![] };
-    up.children.iter().filter_map(|c| {
-        c.attribute("id")?;
-        let n = |a: &str| c.attribute(a).and_then(|v| v.trim().parse::<f64>().ok()).map(|v| v as u8);
-        Some([n("red")?, n("green")?, n("blue")?, 255])
-    }).collect()
+    up.children
+        .iter()
+        .filter_map(|c| {
+            c.attribute("id")?;
+            let n = |a: &str| c.attribute(a).and_then(|v| v.trim().parse::<f64>().ok()).map(|v| v as u8);
+            Some([n("red")?, n("green")?, n("blue")?, 255])
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -301,9 +312,53 @@ mod tests {
 
     #[test]
     fn the_engines_orders() {
-        let types = ["land_normal", "naval_normal", "land_ambush", "coastal_battle", "settlement_standard", "port_assault", "settlement_unfortified", "unfortified_port", "land_bridge"];
-        assert_eq!(hash_order(&types), ["land_normal", "settlement_unfortified", "land_ambush", "naval_normal", "port_assault", "coastal_battle", "settlement_standard", "unfortified_port", "land_bridge"]);
-        let climates = ["default", "ROME_Continental", "ROME_Med", "ROME_Atlantic", "ROME_Desert", "ROME_EasternDesert", "ROME_Destruct", "ROME_Destructdes"];
-        assert_eq!(hash_order(&climates), ["ROME_EasternDesert", "ROME_Destructdes", "ROME_Destruct", "default", "ROME_Continental", "ROME_Desert", "ROME_Med", "ROME_Atlantic"]);
+        let types = [
+            "land_normal",
+            "naval_normal",
+            "land_ambush",
+            "coastal_battle",
+            "settlement_standard",
+            "port_assault",
+            "settlement_unfortified",
+            "unfortified_port",
+            "land_bridge",
+        ];
+        assert_eq!(
+            hash_order(&types),
+            [
+                "land_normal",
+                "settlement_unfortified",
+                "land_ambush",
+                "naval_normal",
+                "port_assault",
+                "coastal_battle",
+                "settlement_standard",
+                "unfortified_port",
+                "land_bridge"
+            ]
+        );
+        let climates = [
+            "default",
+            "ROME_Continental",
+            "ROME_Med",
+            "ROME_Atlantic",
+            "ROME_Desert",
+            "ROME_EasternDesert",
+            "ROME_Destruct",
+            "ROME_Destructdes",
+        ];
+        assert_eq!(
+            hash_order(&climates),
+            [
+                "ROME_EasternDesert",
+                "ROME_Destructdes",
+                "ROME_Destruct",
+                "default",
+                "ROME_Continental",
+                "ROME_Desert",
+                "ROME_Med",
+                "ROME_Atlantic"
+            ]
+        );
     }
 }

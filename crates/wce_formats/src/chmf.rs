@@ -18,9 +18,14 @@
 //! [`encode_region`] is the encoder: one value gives mode 0; up to 128 values a palette, unless the delta (bits of max - min) is smaller;
 //! more values the delta, unless it is 513 bytes or more (then raw). The region's two u16 are its smallest and largest sample.
 
+use crate::bytes::{ByteReader, Short};
+
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ChmfError(pub String);
+
+/// More samples than any map has (a campaign map's LF is 8k x 8k): a region past this is a broken file, not one to allocate for.
+const MAX_REGION_SAMPLES: u64 = 1 << 28;
 
 fn fail<T>(what: impl Into<String>) -> Result<T, ChmfError> {
     Err(ChmfError(what.into()))
@@ -53,24 +58,9 @@ pub struct ChmfFile {
     pub regions: Vec<ChmfRegion>,
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
-}
-
-impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], ChmfError> {
-        let r = self.b.get(self.p..self.p + n).ok_or_else(|| ChmfError(format!("truncated at {}", self.p)))?;
-        self.p += n;
-        Ok(r)
-    }
-
-    fn u32(&mut self) -> Result<u32, ChmfError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn u16(&mut self) -> Result<u16, ChmfError> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().expect("2 bytes")))
+impl From<Short> for ChmfError {
+    fn from(s: Short) -> Self {
+        ChmfError(format!("truncated at {}", s.at))
     }
 }
 
@@ -104,7 +94,8 @@ fn bits(data: &[u8], pos: usize, n: u32) -> Result<u32, ChmfError> {
 /// An unknown mode, or a block shorter than its samples need.
 pub fn decode_block(block: &[u8], count: usize, out: &mut Vec<u16>) -> Result<(), ChmfError> {
     let Some(&k) = block.first() else { return fail("empty block") };
-    let rd16 = |o: usize| block.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or_else(|| ChmfError("block too short".to_owned()));
+    let rd16 =
+        |o: usize| block.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or_else(|| ChmfError("block too short".to_owned()));
     let (n, palette) = mode(k)?;
     if k == 143 {
         for i in 0..count {
@@ -136,12 +127,11 @@ pub fn decode_block(block: &[u8], count: usize, out: &mut Vec<u16>) -> Result<()
 }
 
 impl ChmfFile {
-
     /// # Errors
     ///
     /// Not a version 4 or 5 CHMF file, or a truncated one.
     pub fn parse(b: &[u8]) -> Result<Self, ChmfError> {
-        let mut r = Reader { b, p: 0 };
+        let mut r = ByteReader::new(b);
         if r.take(4)? != b"CHMF" {
             return fail("not CHMF");
         }
@@ -159,7 +149,9 @@ impl ChmfFile {
             return fail("region count");
         }
 
-        let mut regions = (0..n).map(|_| Ok(ChmfRegion { rect: [r.u32()?, r.u32()?, r.u32()?, r.u32()?], ..Default::default() })).collect::<Result<Vec<_>, ChmfError>>()?;
+        let mut regions = (0..n)
+            .map(|_| Ok(ChmfRegion { rect: [r.u32()?, r.u32()?, r.u32()?, r.u32()?], ..Default::default() }))
+            .collect::<Result<Vec<_>, ChmfError>>()?;
         for region in &mut regions {
             region.tag = [r.u16()?, r.u16()?];
             let (blocks, size) = (r.u32()? as usize, r.u32()? as usize);
@@ -218,9 +210,16 @@ impl ChmfFile {
     ///
     /// A block that does not decode, or more blocks than the region has.
     pub fn region_samples(&self, region: usize) -> Result<(u32, u32, Vec<u16>), ChmfError> {
-        let r = &self.regions[region];
-        let w = (r.rect[2] - r.rect[0]) * self.cells_x;
-        let h = (r.rect[3] - r.rect[1]) * self.cells_y;
+        let Some(r) = self.regions.get(region) else { return fail(format!("no region {region}")) };
+        let side = |lo: u32, hi: u32, cells: u32| hi.checked_sub(lo).and_then(|n| n.checked_mul(cells));
+        let (Some(w), Some(h)) = (side(r.rect[0], r.rect[2], self.cells_x), side(r.rect[1], r.rect[3], self.cells_y)) else {
+            return fail(format!("region {region}'s rectangle {:?} is not one", r.rect));
+        };
+
+        if u64::from(w) * u64::from(h) > MAX_REGION_SAMPLES {
+            return fail(format!("region {region} is {w} x {h} samples"));
+        }
+
         let (bw, bh) = (w.div_ceil(16), h.div_ceil(16));
         if r.offsets.len() > (bw * bh) as usize {
             return fail(format!("{} blocks for {w} x {h} samples", r.offsets.len()));
@@ -352,6 +351,27 @@ pub fn encode_region(w: u32, h: u32, samples: &[u16]) -> ([u16; 2], Vec<u32>, Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_broken_region_rectangle_is_an_error_not_a_panic() {
+        let file = |rect: [u32; 4]| ChmfFile {
+            version: 5,
+            width: 64,
+            height: 64,
+            cells_x: 16,
+            cells_y: 16,
+            min: 0.0,
+            max: 1.0,
+            spacing: 1,
+            regions: vec![ChmfRegion { rect, ..Default::default() }],
+        };
+
+        assert!(file([2, 0, 1, 1]).region_samples(0).is_err(), "x1 before x0");
+        assert!(file([0, 0, u32::MAX, 1]).region_samples(0).is_err(), "the width overflows");
+        assert!(file([0, 0, 1 << 20, 1 << 20]).region_samples(0).is_err(), "more samples than any map");
+        assert!(file([0, 0, 1, 1]).region_samples(1).is_err(), "no such region");
+        assert_eq!(file([0, 0, 1, 1]).region_samples(0).unwrap(), (16, 16, vec![0; 256]), "no blocks: zeros, as the game reads them");
+    }
 
     #[test]
     fn block_modes() {

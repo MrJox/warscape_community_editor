@@ -12,7 +12,9 @@ use wce_tile::ground_type_field::GroundTypeField;
 use wce_vfs::files::Files;
 
 use super::Tile;
-use crate::terrain_bake::{BakeRequest, BakedColour, TerrainView, WaterDepth, bake_terrain_colour, bake_terrain_map_view, bake_water_depth};
+use crate::terrain_bake::{
+    BakeRequest, BakedColour, TerrainView, WaterDepth, bake_terrain_colour, bake_terrain_map_view, bake_water_depth,
+};
 
 /// A picture of the tile from above: sRGB, `w * h * 4`, rows along +z, over `x0, z0, w_m, h_m` (metres).
 #[derive(Clone, Debug, Default)]
@@ -39,6 +41,10 @@ pub struct MinimapSiege {
 
     /// (alliance_id, zone), every group.
     pub zones: Vec<(String, Deployment)>,
+
+    /// The walls' footprints (`input.walls`) cut into triangles once, with whether each is a gate's: a procedural wall's is one strip of
+    /// thousands of points along its walkway, which a fill of the polygon cut again every frame (100 ms a frame on a 1 km wall).
+    pub wall_fills: Vec<(bool, Vec<[[f32; 2]; 3]>)>,
 }
 
 /// A picture of the ground to bake away from the UI thread (the colour reads the blend map and the climate's textures: seconds on a big
@@ -59,7 +65,9 @@ impl GroundBake {
     /// The maps or the textures do not read; the water depth view's raster is not worked out yet.
     pub fn run(&self) -> Result<BakedColour, String> {
         match self.request.look.view {
-            TerrainView::Colour | TerrainView::BlendGroups => bake_terrain_colour(&self.request, self.blend.as_ref(), &self.climates, self.files.as_ref()),
+            TerrainView::Colour | TerrainView::BlendGroups => {
+                bake_terrain_colour(&self.request, self.blend.as_ref(), &self.climates, self.files.as_ref())
+            }
             TerrainView::GroundTypes | TerrainView::Protection => bake_terrain_map_view(&self.request, self.ground.as_ref()),
             TerrainView::WaterDepth => {
                 let water = self.water.as_ref().ok_or("water depth: being worked out (stage B's water map)")?;
@@ -93,10 +101,13 @@ impl Tile {
         let (w, h) = (((w_m * ppm).round() as u32).max(2), ((h_m * ppm).round() as u32).max(2));
         let (cx, cz) = (w_m / f64::from(w), h_m / f64::from(h));
         let project = &self.project;
-        let heights: Vec<f64> = (0..w * h).into_par_iter().map(|k| {
-            let (i, j) = (k % w, k / w);
-            project.height_at(x0 + (f64::from(i) + 0.5) * cx, z0 + (f64::from(j) + 0.5) * cz)
-        }).collect();
+        let heights: Vec<f64> = (0..w * h)
+            .into_par_iter()
+            .map(|k| {
+                let (i, j) = (k % w, k / w);
+                project.height_at(x0 + (f64::from(i) + 0.5) * cx, z0 + (f64::from(j) + 0.5) * cz)
+            })
+            .collect();
 
         let (lo, hi) = heights.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
         let land_lo = lo.max(0.0);
@@ -110,16 +121,19 @@ impl Tile {
             [l[0] / n, l[1] / n, l[2] / n]
         };
 
-        let rgba = (0..w * h).into_par_iter().flat_map_iter(|k| {
-            let (i, j) = (i64::from(k % w), i64::from(k / w));
-            let v = at(i, j);
-            let (dx, dz) = ((at(i + 1, j) - at(i - 1, j)) / (2.0 * cx), (at(i, j + 1) - at(i, j - 1)) / (2.0 * cz));
-            let n = (dx * dx + dz * dz + 1.0).sqrt();
-            let shade = ((-dx * light[0] - dz * light[1] + light[2]) / n).clamp(0.0, 1.0);
-            let c = if v < 0.0 { sea_colour(-v) } else { land_colour((v - land_lo) / span) };
-            let k = 0.45 + 0.75 * shade;
-            [(c[0] * k).min(255.0) as u8, (c[1] * k).min(255.0) as u8, (c[2] * k).min(255.0) as u8, 255]
-        }).collect();
+        let rgba = (0..w * h)
+            .into_par_iter()
+            .flat_map_iter(|k| {
+                let (i, j) = (i64::from(k % w), i64::from(k / w));
+                let v = at(i, j);
+                let (dx, dz) = ((at(i + 1, j) - at(i - 1, j)) / (2.0 * cx), (at(i, j + 1) - at(i, j - 1)) / (2.0 * cz));
+                let n = (dx * dx + dz * dz + 1.0).sqrt();
+                let shade = ((-dx * light[0] - dz * light[1] + light[2]) / n).clamp(0.0, 1.0);
+                let c = if v < 0.0 { sea_colour(-v) } else { land_colour((v - land_lo) / span) };
+                let k = 0.45 + 0.75 * shade;
+                [(c[0] * k).min(255.0) as u8, (c[1] * k).min(255.0) as u8, (c[2] * k).min(255.0) as u8, 255]
+            })
+            .collect();
 
         Some(MinimapImage { x0, z0, w_m, h_m, w, h, rgba, range: (lo, hi) })
     }
@@ -140,8 +154,16 @@ impl Tile {
         let [x0, z0, w_m, h_m] = self.minimap_area();
         let look = crate::terrain_bake::TerrainLook { blended: true, view, ..self.look.clone() };
         let request = BakeRequest {
-            blend_map: p.dir.join("blend_map.tif"), folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, w_m, h_m,
-            look, max_dim, ..Default::default()
+            blend_map: p.dir.join("blend_map.tif"),
+            folder: p.dir.clone(),
+            groups: p.entry.as_ref().expect("an entry").texture_group(),
+            x0,
+            z0,
+            w_m,
+            h_m,
+            look,
+            max_dim,
+            ..Default::default()
         };
 
         let blend = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) { p.blend.clone() } else { None };
@@ -155,28 +177,76 @@ impl Tile {
         let (w, h) = (img.w, img.h);
         let (cx, cz) = (img.w_m / f64::from(w), img.h_m / f64::from(h));
         let project = &self.project;
-        img.rgba.par_chunks(4).enumerate().flat_map_iter(|(k, px)| {
-            let (i, j) = (k as u32 % w, k as u32 / w);
-            let depth = -project.height_at(img.x0 + (f64::from(i) + 0.5) * cx, img.z0 + (f64::from(j) + 0.5) * cz);
-            if depth <= 0.0 {
-                return [px[0], px[1], px[2], px[3]];
-            }
+        img.rgba
+            .par_chunks(4)
+            .enumerate()
+            .flat_map_iter(|(k, px)| {
+                let (i, j) = (k as u32 % w, k as u32 / w);
+                let depth = -project.height_at(img.x0 + (f64::from(i) + 0.5) * cx, img.z0 + (f64::from(j) + 0.5) * cz);
+                if depth <= 0.0 {
+                    return [px[0], px[1], px[2], px[3]];
+                }
 
-            let (sea, a) = (sea_colour(depth), 0.55 + 0.35 * (depth / 20.0).clamp(0.0, 1.0));
-            let mix = |c: u8, s: f64| (f64::from(c) * (1.0 - a) + s * a) as u8;
-            [mix(px[0], sea[0]), mix(px[1], sea[1]), mix(px[2], sea[2]), px[3]]
-        }).collect()
+                let (sea, a) = (sea_colour(depth), 0.55 + 0.35 * (depth / 20.0).clamp(0.0, 1.0));
+                let mix = |c: u8, s: f64| (f64::from(c) * (1.0 - a) + s * a) as u8;
+                [mix(px[0], sea[0]), mix(px[1], sea[1]), mix(px[2], sea[2]), px[3]]
+            })
+            .collect()
     }
 
     /// The siege AI and the deployment zones for the minimap.
     pub fn minimap_siege(&self) -> MinimapSiege {
-        MinimapSiege { unit: self.unit(), input: self.siege_input_with(false), layout: self.current_siege_layout(), zones: self.deployment_zones() }
+        let input = self.siege_input_with(false);
+        let wall_fills = input
+            .walls
+            .iter()
+            .flat_map(|w| {
+                w.footprint.iter().map(move |r| {
+                    let ring = r.iter().map(|q| [q[0] as f32, q[1] as f32]).collect::<Vec<_>>();
+                    (w.gate, strip_triangles(&ring).unwrap_or_else(|| super::cover::ear_clip(&ring)))
+                })
+            })
+            .collect();
+        MinimapSiege { unit: self.unit(), input, layout: self.current_siege_layout(), zones: self.deployment_zones(), wall_fills }
     }
+}
+
+/// A wall's band (`siege_input_with`: its one side along the walkway, then the other side back, a point of each per sample) cut into
+/// the quads between its samples: `None` for a ring that is not such a band (small, odd, or its sides not about as far apart all along).
+fn strip_triangles(ring: &[[f32; 2]]) -> Option<Vec<[[f32; 2]; 3]>> {
+    if ring.len() < 64 || ring.len() % 2 == 1 {
+        return None;
+    }
+
+    let n = ring.len() / 2;
+    let across = |i: usize| {
+        let (a, b) = (ring[i], ring[2 * n - 1 - i]);
+        (a[0] - b[0]).hypot(a[1] - b[1])
+    };
+    let first = across(0);
+    if first <= 1e-3 || (0..n).any(|i| !(first * 0.5..=first * 2.0).contains(&across(i))) {
+        return None;
+    }
+
+    Some(
+        (0..n - 1)
+            .flat_map(|i| {
+                let (a, b, c, d) = (ring[i], ring[i + 1], ring[2 * n - 2 - i], ring[2 * n - 1 - i]);
+                [[a, b, c], [a, c, d]]
+            })
+            .collect(),
+    )
 }
 
 /// Land at `t` (0 the lowest, 1 the highest): green lowlands, olive, brown hills, grey-white tops.
 fn land_colour(t: f64) -> [f64; 3] {
-    const STOPS: [(f64, [f64; 3]); 5] = [(0.0, [72.0, 112.0, 62.0]), (0.3, [128.0, 140.0, 80.0]), (0.6, [140.0, 112.0, 76.0]), (0.85, [150.0, 140.0, 130.0]), (1.0, [235.0, 235.0, 235.0])];
+    const STOPS: [(f64, [f64; 3]); 5] = [
+        (0.0, [72.0, 112.0, 62.0]),
+        (0.3, [128.0, 140.0, 80.0]),
+        (0.6, [140.0, 112.0, 76.0]),
+        (0.85, [150.0, 140.0, 130.0]),
+        (1.0, [235.0, 235.0, 235.0]),
+    ];
     let t = t.clamp(0.0, 1.0);
     let k = STOPS.iter().position(|s| s.0 >= t).unwrap_or(STOPS.len() - 1).max(1);
     let ((t0, a), (t1, b)) = (STOPS[k - 1], STOPS[k]);
@@ -188,4 +258,26 @@ fn land_colour(t: f64) -> [f64; 3] {
 fn sea_colour(depth: f64) -> [f64; 3] {
     let f = (depth / 30.0).clamp(0.0, 1.0);
     [70.0 - 40.0 * f, 130.0 - 60.0 * f, 170.0 - 40.0 * f]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wall_band_is_cut_into_the_quads_between_its_samples() {
+        // 40 samples along x, 3 across: 39 quads, 78 triangles, area 39 x 3.
+        let mut ring = (0..40).map(|i| [i as f32, 0.0]).collect::<Vec<_>>();
+        ring.extend((0..40).rev().map(|i| [i as f32, 3.0]));
+        let tris = strip_triangles(&ring).unwrap();
+        let area = |t: &[[f32; 2]; 3]| ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])).abs() / 2.0;
+        assert_eq!(tris.len(), 78);
+        assert!((tris.iter().map(area).sum::<f32>() - 117.0).abs() < 1e-3);
+
+        // A small ring, or one whose sides are not a band: not this way.
+        assert!(strip_triangles(&ring[..8]).is_none());
+        let mut odd = ring.clone();
+        odd[50] = [20.0, 40.0];
+        assert!(strip_triangles(&odd).is_none());
+    }
 }

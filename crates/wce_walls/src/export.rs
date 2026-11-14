@@ -3,7 +3,9 @@
 //!
 //! - **Lowering** ([`lower_walls`]): every `WceWallSpline` of the scene is laid out, cut into pieces and replaced by a `BUILDING_INSTANCE`
 //!   per piece, keyed `<prefix>_<wall>_<piece>`; each piece's files are generated in full (every level's meshes, the logic and zone
-//!   files, the collapses left out) from its base (the straight, or the door section).
+//!   files, the collapses left out) from its base (the straight, or the door section). A kit wall (*Procedural* off,
+//!   docs/plans/kit_walls.md) comes laid by the editor ([`KitWall`]): its game pieces become buildings of their own keys as they are, its
+//!   procedural stretches are generated as a procedural wall's pieces (`<prefix>_k<wall>s<stretch>_<piece>`).
 //! - **Rows:** the bases' `battlefield_buildings` and `models_building` rows copied under the new keys (`db::copy_rows`); the
 //!   `models_building` row's firing lines rebuilt from the piece's logic file (their action codes learnt from the bases' rows), its
 //!   docking lines the base's, warped, cut in lines of at most 5 units and left out over the step sections.
@@ -24,8 +26,8 @@ use wce_vfs::files::Files;
 use crate::building::{BuildingFiles, folder};
 use crate::db::{self, bytes_mut, cell_mut};
 use crate::lines::{self, DockingLine};
-use crate::pieces::{Piece, PieceWarp, StepFiles, make_piece, pieces, step_ranges};
 use crate::pack::PROC_PACK;
+use crate::pieces::{Piece, PieceWarp, StepFiles, make_piece, pieces, step_ranges};
 use crate::scene;
 
 /// Docking lines of a generated piece are cut in lines of at most this many units (CA's 20 m radius curve has about 5).
@@ -44,6 +46,17 @@ pub struct LoweredWalls {
     pub bases: Vec<(String, String)>,
 
     pub notes: Vec<String>,
+}
+
+/// A wall of kit pieces as the editor laid it (docs/plans/kit_walls.md phase 5: laid on the ground below its own height layer, which an
+/// export's height map has in it, so it is not laid again here): its key (`scene::wall_key`), the game's pieces placed (their keys and
+/// frames: buildings of the game, no files nor rows of their own) and the plans of its procedural stretches (made as a procedural wall's
+/// pieces are, with its base).
+#[derive(Clone, Debug)]
+pub struct KitWall {
+    pub key: String,
+    pub placed: Vec<(String, Piece)>,
+    pub stretches: Vec<crate::solver::Plan>,
 }
 
 /// A building's files through the editor's sources, read once per key.
@@ -70,16 +83,35 @@ fn extent(files: &dyn Files, key: &str) -> Option<(f64, f64)> {
 }
 
 /// Lowers the scene's walls (see the module), `ground(x, z)` the terrain in scene units, keys prefixed with `prefix`; the pieces go in each
-/// wall's layer, or in the top layer named `into`.
+/// wall's layer, or in the top layer named `into`. A kit wall (*Procedural* off) is lowered as `kit` has it (by its key): its game pieces as
+/// they are, its stretches generated; one `kit` does not have is left out (noted).
 ///
 /// # Errors
 ///
 /// A base's files or rows don't read, a piece can't be made, or the scene can't be edited.
-pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files: &dyn Files, schema: &Schema, prefix: &str, into: Option<&str>) -> Result<LoweredWalls, String> {
+pub fn lower_walls(
+    scene: &mut TedScene,
+    ground: &dyn Fn(f64, f64) -> f64,
+    files: &dyn Files,
+    schema: &Schema,
+    prefix: &str,
+    into: Option<&str>,
+    kit: &[KitWall],
+) -> Result<LoweredWalls, String> {
     let mut out = LoweredWalls::default();
-    let walls = scene::walls(scene);
+    // A wall in a layer that is not exported (one converted to buildings) goes, with nothing in its place.
+    let walls = scene::walls(scene).into_iter().filter(|&e| scene::exported(scene, e)).collect::<Vec<_>>();
+    let kit_walls =
+        scene::all_walls(scene).into_iter().filter(|&e| !scene::is_procedural(scene, e) && scene::exported(scene, e)).collect::<Vec<_>>();
+    let unexported = scene::all_walls(scene).into_iter().filter(|&e| !scene::exported(scene, e)).collect::<Vec<_>>();
+
+    // Each wall's key (its towers' capture locations are named by it), before any wall goes.
+    let wall_keys = scene::all_walls(scene)
+        .into_iter()
+        .map(|e| (e, scene::wall_key(scene, e).unwrap_or_else(|| format!("e{e}"))))
+        .collect::<HashMap<_, _>>();
     let spans = scene.find_all(crate::bridge::BRIDGE_SPAN);
-    if walls.is_empty() && spans.is_empty() {
+    if walls.is_empty() && kit_walls.is_empty() && spans.is_empty() && unexported.is_empty() {
         return Ok(out);
     }
 
@@ -111,9 +143,33 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         let (rigid, ps): (Vec<Piece>, Vec<Piece>) = pieces(&layout.plan, layout.profile).into_iter().partition(|p| p.rigid);
         let (doors, skipped) = scene::doors(scene, &layout, &ps, ground, &radius);
         let defences_skipped = crate::pieces::defence_slots(&layout.plan, layout.profile).1;
-        out.notes.extend(layout.plan.warnings.iter().chain(&skipped).chain(&defences_skipped).map(|n| format!("wall {w} ({}): {n}", scene.name(wall))));
+        out.notes.extend(
+            layout.plan.warnings.iter().chain(&skipped).chain(&defences_skipped).map(|n| format!("wall {w} ({}): {n}", scene.name(wall))),
+        );
         let keys = (0..ps.len()).map(|i| format!("{prefix}_{w}_{i:02}")).collect();
         planned.push(Planned { wall, layout, pieces: ps, rigid, doors, keys });
+    }
+
+    // The kit walls: their stretches planned as procedural walls of their base (keyed `<prefix>_k<n>s<k>_<i>`), their game pieces as they are.
+    let mut kit_placed: Vec<(usize, Vec<(String, Piece)>)> = vec![];
+    for (n, &wall) in kit_walls.iter().enumerate() {
+        let name = scene.name(wall);
+        let Some(k) = scene::wall_key(scene, wall).and_then(|key| kit.iter().find(|k| k.key == key)) else {
+            out.notes.push(format!("kit wall {n} ({name}): not laid (no wall_id, or its culture's pieces not read), left out"));
+            kit_placed.push((wall, vec![]));
+            continue;
+        };
+
+        let Some(profile) = scene::wall_profile(scene, wall) else { continue };
+        for (s, plan) in k.stretches.iter().enumerate() {
+            let layout = scene::WallLayout { plan: plan.clone(), profile, ends: [None, None] };
+            let (rigid, ps): (Vec<Piece>, Vec<Piece>) = pieces(&layout.plan, profile).into_iter().partition(|p| p.rigid);
+            out.notes.extend(layout.plan.warnings.iter().map(|m| format!("kit wall {n} ({name}), stretch {s}: {m}")));
+            let keys = (0..ps.len()).map(|i| format!("{prefix}_k{n}s{s}_{i:02}")).collect();
+            planned.push(Planned { wall, layout, pieces: ps, rigid, doors: vec![], keys });
+        }
+
+        kit_placed.push((wall, k.placed.clone()));
     }
 
     // The rows of every piece's base under its key.
@@ -122,7 +178,8 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         None if p.doors.contains(&i) => p.layout.profile.door,
         None => p.layout.profile.key,
     };
-    let mut renames = planned.iter().flat_map(|p| p.keys.iter().enumerate().map(move |(i, k)| (base_of(p, i).to_owned(), k.clone()))).collect::<Vec<_>>();
+    let mut renames =
+        planned.iter().flat_map(|p| p.keys.iter().enumerate().map(move |(i, k)| (base_of(p, i).to_owned(), k.clone()))).collect::<Vec<_>>();
 
     // The roads' bridges (`bridge::BRIDGE_SPAN`): each cut into pieces of its base, keyed `<prefix>_r<n>_<k>`.
     let mut prepared: HashMap<String, Option<crate::bridge::Prepared>> = HashMap::new();
@@ -133,7 +190,12 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
             continue;
         };
 
-        let mut prepare = |k: &str| prepared.entry(k.to_owned()).or_insert_with(|| BuildingFiles::read_files(files, k).ok().and_then(|b| crate::bridge::prepare(&b).ok())).clone();
+        let mut prepare = |k: &str| {
+            prepared
+                .entry(k.to_owned())
+                .or_insert_with(|| BuildingFiles::read_files(files, k).ok().and_then(|b| crate::bridge::prepare(&b).ok()))
+                .clone()
+        };
         let Some(base) = prepare(&key) else {
             out.notes.push(format!("bridge {n}: its base {key} is in no pack, left out"));
             continue;
@@ -144,7 +206,9 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         let end = end_key.and_then(&mut prepare);
         let parts = crate::bridge::parts(&deck, &base, end.as_ref());
         let keys = (0..parts.len()).map(|k| format!("{prefix}_r{n}_{k:02}")).collect::<Vec<_>>();
-        renames.extend(parts.iter().zip(&keys).map(|(p, k)| (if p.end { end_key.unwrap_or(&key).to_owned() } else { key.clone() }, k.clone())));
+        renames.extend(
+            parts.iter().zip(&keys).map(|(p, k)| (if p.end { end_key.unwrap_or(&key).to_owned() } else { key.clone() }, k.clone())),
+        );
         bridges.push((n, key, end_key, width, parts, keys));
     }
 
@@ -221,6 +285,16 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         lowered.push((p.wall, placed));
     }
 
+    // A kit wall's game pieces with its stretches' pieces: one wall, lowered once. The walls not exported: removed.
+    lowered.extend(kit_placed);
+    lowered.extend(unexported.into_iter().map(|e| (e, vec![])));
+    let mut by_wall: BTreeMap<usize, Vec<(String, Piece)>> = BTreeMap::new();
+    for (wall, placed) in lowered {
+        by_wall.entry(wall).or_default().extend(placed);
+    }
+
+    let mut lowered = by_wall.into_iter().collect::<Vec<_>>();
+
     // The bridges' pieces, made.
     let mut placed_bridges = vec![];
     for (n, key, end_key, width, parts, keys) in &bridges {
@@ -241,10 +315,17 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
     }
 
     // Lower the walls, the last first (an edit only moves the indices of the elements after it).
-    lowered.sort_by(|a, b| b.0.cmp(&a.0));
+    lowered.sort_by_key(|w| std::cmp::Reverse(w.0));
+    let read = |k: &str| files.read(&format!("{}{k}_tech.cs2.parsed", crate::building::folder(k))).ok();
     for (wall, placed) in lowered {
-        // A layer made at the end of the scene graph comes after every wall: removing one does not move it.
-        scene::lower(scene, wall, &placed, into)?;
+        // Its towers' capture locations with it. A layer made at the end of the scene graph comes after every wall: removing one does not
+        // move it.
+        let captures = wall_keys.get(&wall).map(|k| crate::towers::tower_captures(k, &placed, &read)).unwrap_or_default();
+        if !captures.is_empty() {
+            out.notes.push(format!("wall {}: {} tower capture location(s)", scene.name(wall), captures.len()));
+        }
+
+        scene::lower(scene, wall, &placed, into, &captures)?;
     }
 
     // Each bridge's element gives way to its pieces, in its layer, the last first (found again: the walls moved the indices).
@@ -256,7 +337,10 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         for (key, at) in &placed {
             let instance = wce_tile::new_instances::NewInstance::new("BUILDING_INSTANCE")
                 .position(wce_foundation::math::Double3::new(at[0], at[1], at[2]))
-                .attr("key", key.as_str()).attr("name", key.as_str()).attr("surface_mode", "MSM_FREEFORM").attr("lf_offset", wce_tile::ted_scene::format_number(at[1]));
+                .attr("key", key.as_str())
+                .attr("name", key.as_str())
+                .attr("surface_mode", "MSM_FREEFORM")
+                .attr("lf_offset", wce_tile::ted_scene::format_number(at[1]));
             scene.insert_element_text(layer, &wce_tile::new_instances::element_text(&instance)?)?;
         }
 
@@ -314,13 +398,21 @@ pub const KIT_LAYER: &str = "WCE procedural walls";
 /// # Errors
 ///
 /// The project or the scene doesn't read, a wall can't be made, or the pack can't be written.
-pub fn walls_for_kit(project: &TileProject, scene: Vec<u8>, files: &dyn Files, schema: &Schema, folder: &str, data: &Path) -> Result<(Vec<u8>, usize, Vec<String>), String> {
+pub fn walls_for_kit(
+    project: &TileProject,
+    scene: Vec<u8>,
+    files: &dyn Files,
+    schema: &Schema,
+    folder: &str,
+    data: &Path,
+    kit: &[KitWall],
+) -> Result<(Vec<u8>, usize, Vec<String>), String> {
     let unit = project.unit_scale;
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = TedScene::parse_any(scene)?;
-    let walls = scene::walls(&scene).len();
+    let walls = scene::all_walls(&scene).len();
     let prefix = key_prefix(folder);
-    let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, Some(KIT_LAYER))?;
+    let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, Some(KIT_LAYER), kit)?;
     let mut notes = lowered.notes;
     let pieces = lowered.bases.len();
     let pack = data.join(PROC_PACK);
@@ -338,14 +430,22 @@ pub fn walls_for_kit(project: &TileProject, scene: Vec<u8>, files: &dyn Files, s
 /// # Errors
 ///
 /// The project or the scene doesn't read, a wall can't be made, the compile fails, or a file can't be written.
-pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, project_dir: &Path, scene: Vec<u8>, out: &Path) -> Result<(PathBuf, PathBuf, Vec<String>), String> {
+pub fn save_exported_walls(
+    game: &Game,
+    files: &dyn Files,
+    schema: &Schema,
+    project_dir: &Path,
+    scene: Vec<u8>,
+    out: &Path,
+    kit: &[KitWall],
+) -> Result<(PathBuf, PathBuf, Vec<String>), String> {
     // An extracted tile goes back to its own name, as the compile does.
     let folder = tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?;
     let project = TileProject::open(project_dir).map_err(|e| e.to_string())?;
     let unit = project.unit_scale;
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = TedScene::parse_any(scene)?;
-    let lowered = lower_walls(&mut scene, &ground, files, schema, &key_prefix(&folder), None)?;
+    let lowered = lower_walls(&mut scene, &ground, files, schema, &key_prefix(&folder), None, kit)?;
     let (ted, _) = wce_tile::project_files::to_ted(scene.save())?;
     let bases = lowered.bases.iter().cloned().collect::<HashMap<_, _>>();
     let base_of = |k: &str| bases.get(k).cloned();
@@ -371,7 +471,9 @@ pub fn save_exported_walls(game: &Game, files: &dyn Files, schema: &Schema, proj
 /// A file can't be read.
 pub fn exported_pack_files(out: &Path, folder: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut files = vec![];
-    for (rel, bytes) in files_below(&out.join(folder))?.into_iter().filter(|(rel, _)| !NOT_SHIPPED.iter().any(|n| rel.eq_ignore_ascii_case(n))) {
+    for (rel, bytes) in
+        files_below(&out.join(folder))?.into_iter().filter(|(rel, _)| !NOT_SHIPPED.iter().any(|n| rel.eq_ignore_ascii_case(n)))
+    {
         files.push((format!("{folder}/{rel}"), bytes));
     }
 
@@ -392,14 +494,22 @@ pub fn exported_pack_files(out: &Path, folder: &str) -> Result<Vec<(String, Vec<
 /// # Errors
 ///
 /// The project or the scene doesn't read, a wall can't be made, the compile fails, or the pack can't be read or written.
-pub fn save_walls_to_pack(game: &Game, files: &dyn Files, schema: &Schema, project_dir: &Path, scene: Vec<u8>, pack: &Path) -> Result<(String, Vec<String>), String> {
+pub fn save_walls_to_pack(
+    game: &Game,
+    files: &dyn Files,
+    schema: &Schema,
+    project_dir: &Path,
+    scene: Vec<u8>,
+    pack: &Path,
+    kit: &[KitWall],
+) -> Result<(String, Vec<String>), String> {
     let folder = tile_folder(project_dir).ok_or_else(|| format!("{} is not under terrain/tiles/", project_dir.display()))?;
     let project = TileProject::open(project_dir).map_err(|e| e.to_string())?;
     let unit = project.unit_scale;
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
     let mut scene = TedScene::parse_any(scene)?;
     let prefix = key_prefix(&folder);
-    let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, None)?;
+    let lowered = lower_walls(&mut scene, &ground, files, schema, &prefix, None, kit)?;
     let (ted, _) = wce_tile::project_files::to_ted(scene.save())?;
     let bases = lowered.bases.iter().cloned().collect::<HashMap<_, _>>();
     let base_of = |k: &str| bases.get(k).cloned();

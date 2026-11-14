@@ -110,7 +110,6 @@ fn edit_error<T>(what: &str) -> Result<T> {
 }
 
 impl XmlDoc {
-
     /// The document read again from its saved text, keeping the origin and the edit counter.
     pub(super) fn baked(&self) -> Result<Self> {
         let mut doc = Self::parse(self.save())?;

@@ -19,14 +19,31 @@ fn main() {
 
     let m = attila::read(&name, kind, &MapFiles::from_dir(&raw.join(folder).join(&name)).expect("folder")).expect("map");
     let db = TileDatabase::load(&raw.join(format!("terrain/tiles/{base}/_tile_database"))).expect("database");
-    let rgb = |l: &wce_terrain::cells::CellLayer| -> Vec<[u8; 3]> { l.cells().iter().map(|&i| { let c = l.palette()[usize::from(i)]; [c[0], c[1], c[2]] }).collect() };
+    let rgb = |l: &wce_terrain::cells::CellLayer| -> Vec<[u8; 3]> {
+        l.cells()
+            .iter()
+            .map(|&i| {
+                let c = l.palette()[usize::from(i)];
+                [c[0], c[1], c[2]]
+            })
+            .collect()
+    };
     let tiles = m.layer(&LayerRole::TileMap).expect("tile map").get();
     let climate = m.layer(&LayerRole::Climate).map(|l| rgb(l.get()));
-    let lf = m.lf(LfRole::Land).map(|f| f.get()).map(|f| (f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<u16>>(), f.width(), f.height()));
+    let lf = m
+        .lf(LfRole::Land)
+        .map(|f| f.get())
+        .map(|f| (f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<u16>>(), f.width(), f.height()));
     let t = rgb(tiles);
     let images = MapImages {
-        width: tiles.width(), height: tiles.height(), tile_map: &t, climate_map: climate.as_deref(), explicit_tiles: None, lf: None,
-        lf_u16: lf.as_ref().map(|(v, w, h)| (v.as_slice(), *w, *h)), campaign: kind == MapKind::Campaign,
+        width: tiles.width(),
+        height: tiles.height(),
+        tile_map: &t,
+        climate_map: climate.as_deref(),
+        explicit_tiles: None,
+        lf: None,
+        lf_u16: lf.as_ref().map(|(v, w, h)| (v.as_slice(), *w, *h)),
+        campaign: kind == MapKind::Campaign,
     };
 
     let (map, _, _) = wce_tile::battle_map::build_images(&db, &images);

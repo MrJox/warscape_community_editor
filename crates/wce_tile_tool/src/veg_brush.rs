@@ -10,9 +10,9 @@ use wce_editor::editor::Editor;
 use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Double3, Float3};
 use wce_render::renderer::SurfaceGrid;
-use wce_scene::render_scene::{EntityId, Kind};
+use wce_scene::render_scene::{DocumentId, EntityId, Kind};
 use wce_tile_editor::tile_document::brush::Footprint;
-use wce_tile_editor::tile_document::{elem_of, turned, with_root_attr};
+use wce_tile_editor::tile_document::{TileDocument, elem_of, turned, with_root_attr};
 
 use crate::settings::{SETTINGS_ID, SurfaceMode, TileSettings, VegBrush};
 use crate::tool::{TileTool, document};
@@ -77,13 +77,15 @@ impl TileTool {
 
     /// Whether a tree is being placed with the brush on.
     pub(crate) fn painting_trees(&mut self, e: &Editor) -> bool {
-        self.placing == Some(crate::tool::Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg_brush(e).on
+        self.placing == Some(crate::tool::Placing::Draft)
+            && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE")
+            && self.veg_brush(e).on
     }
 
     /// A stroke begins at the mouse (`erase`: Ctrl held).
     pub(crate) fn begin_stroke(&mut self, e: &mut Editor, erase: bool) {
         let Some(d) = document(e) else { return };
-        self.stroke = Some(Stroke { erase, footprints: d.footprints(), ..Default::default() });
+        self.gesture = Some(crate::gesture::Gesture::VegStroke(Stroke { erase, footprints: d.footprints(), ..Default::default() }));
         self.dab(e);
     }
 
@@ -91,15 +93,17 @@ impl TileTool {
     pub(crate) fn dab(&mut self, e: &mut Editor) {
         let b = self.veg_brush(e);
         let at = self.cursor;
-        let Some(stroke) = self.stroke.as_ref() else { return };
+        let Some(stroke) = self.veg_stroke() else { return };
         if stroke.last.is_some_and(|l| (l.x - at.x).hypot(l.z - at.z) < b.radius * 0.25) {
             return;
         }
 
         // Entity: Above: on whatever is topmost at each point (the trees left out), seen straight down over the circle.
-        let below = if !stroke.erase && self.placement_modes(e).0 == SurfaceMode::Entity { self.surfaces_in_circle(e, at, b.radius) } else { None };
+        let below =
+            if !stroke.erase && self.placement_modes(e).0 == SurfaceMode::Entity { self.surfaces_in_circle(e, at, b.radius) } else { None };
         let set = self.set_in_use(e);
-        let Some(stroke) = self.stroke.as_mut() else { return };
+        // The field alone (the draft and the random numbers are read and drawn from with the stroke held).
+        let Some(crate::gesture::Gesture::VegStroke(stroke)) = &mut self.gesture else { return };
 
         stroke.last = Some(at);
         let r2 = b.radius * b.radius;
@@ -122,7 +126,12 @@ impl TileTool {
 
         // As many tries as trees would fit at that spacing, times the fill.
         let tries = ((std::f32::consts::PI * r2 / (spacing * spacing)) * b.fill.clamp(0.0, 1.0)).ceil().min(256.0) as usize;
-        let near = stroke.footprints.iter().filter(|f| (f.x - at.x).hypot(f.z - at.z) <= b.radius + f.radius + b.clearance.max(spacing)).copied().collect::<Vec<_>>();
+        let near = stroke
+            .footprints
+            .iter()
+            .filter(|f| (f.x - at.x).hypot(f.z - at.z) <= b.radius + f.radius + b.clearance.max(spacing))
+            .copied()
+            .collect::<Vec<_>>();
         for _ in 0..tries {
             let (a, r) = (self.random.unit() * std::f32::consts::TAU, b.radius * self.random.unit().sqrt());
             let (x, z) = (at.x + a.cos() * r, at.z + a.sin() * r);
@@ -156,28 +165,48 @@ impl TileTool {
         let text = d.draft_text(&draft)?;
         let text = with_root_attr(&text, "scale", &wce_tile::ted_scene::format_number(f64::from(p.scale)));
         // Tilted (Follow surface) to what it stands on at its own point: the mouse has moved on since.
-        let normal = p.normal.map_or_else(|| crate::placement_modes::terrain_normal(d, p.at.x, p.at.z), |n| Double3::new(f64::from(n.x), f64::from(n.y), f64::from(n.z)));
+        let normal = p.normal.map_or_else(
+            || crate::placement_modes::terrain_normal(d, p.at.x, p.at.z),
+            |n| Double3::new(f64::from(n.x), f64::from(n.y), f64::from(n.z)),
+        );
         Some(turned(&self.apply_placement_modes_on(text, Some(normal)), p.yaw))
     }
 
     /// The topmost surfaces over the brush's circle (Entity: Above), the trees left out, and which of the entities there are the terrain.
     fn surfaces_in_circle(&self, e: &mut Editor, at: Float3, radius: f32) -> Option<(SurfaceGrid, HashSet<EntityId>)> {
         let doc = crate::tool::document_id(e)?;
-        let trees = self.stroke.as_ref()?.footprints.iter().filter(|f| f.tree).map(|f| f.elem).collect::<HashSet<_>>();
+        let trees = self.veg_stroke()?.footprints.iter().filter(|f| f.tree).map(|f| f.elem).collect::<HashSet<_>>();
         let size = radius * 2.0 + 1.0;
 
         // About 10 cm a pixel.
         let res = ((size / 0.1).ceil() as u32).clamp(64, 512);
-        let skip = |en: &wce_scene::render_scene::Entity| en.source.doc == doc && elem_of(en.source.item).is_some_and(|el| trees.contains(&el));
+        let skip =
+            |en: &wce_scene::render_scene::Entity| en.source.doc == doc && elem_of(en.source.item).is_some_and(|el| trees.contains(&el));
         let grid = wce_editor::viewport::surfaces_below(e, at, size, res, &skip)?;
-        let terrain = grid.ids.iter().copied().collect::<HashSet<_>>().into_iter().filter(|&id| e.scene.find(id).is_some_and(|en| en.kind() == Kind::Terrain)).collect();
+        let terrain = grid
+            .ids
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter(|&id| e.scene.find(id).is_some_and(|en| en.kind() == Kind::Terrain))
+            .collect();
         Some((grid, terrain))
     }
 
     /// The stroke ends: its trees go into the working layer (one undo entry), or the trees it took away go.
     pub(crate) fn end_stroke_veg(&mut self, e: &mut Editor) -> String {
-        let Some(stroke) = self.stroke.take() else { return String::new() };
-        let Some(d) = document(e) else { return String::new() };
+        if self.veg_stroke().is_none() {
+            return String::new();
+        }
+
+        self.end_gesture(e, crate::gesture::End::Confirm);
+        self.status.clone()
+    }
+
+    /// Puts a finished stroke's trees into tile `id` (the stroke's, which may no longer be the one shown), or takes away those it erased.
+    pub(crate) fn commit_veg_stroke(&mut self, e: &mut Editor, id: DocumentId, stroke: Stroke) -> String {
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return String::new() };
         if stroke.erase {
             let elems = stroke.erased.into_iter().collect::<Vec<_>>();
             let n = elems.len();
@@ -185,7 +214,9 @@ impl TileTool {
                 d.remove_items(&elems);
 
                 // What was selected may be gone, and the rest moved: nothing is.
-                e.selection.clear();
+                if e.selection.items().iter().any(|s| s.doc == id) {
+                    e.selection.clear();
+                }
             }
 
             return format!("{n} tree(s) taken away");
@@ -201,11 +232,12 @@ impl TileTool {
 
     /// The preview of the stroke's trees: one group of them around the origin (the preview puts landscape ones on the terrain).
     pub(crate) fn stroke_preview(&self, e: &mut Editor) -> Option<Vec<u8>> {
-        let stroke = self.stroke.as_ref()?;
+        let stroke = self.veg_stroke()?;
         let d = document(e)?;
         let unit = d.tile().unit();
         let landscape = self.modes.unwrap_or_default().0 == SurfaceMode::Landscape;
-        let mut out = b"<UserInstanceGroup name=\"stroke\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n    <children>\n".to_vec();
+        let mut out =
+            b"<UserInstanceGroup name=\"stroke\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n    <children>\n".to_vec();
         for p in &stroke.planted {
             let Some(text) = self.planted_text(d, p) else { continue };
             // Landscape ones are put on the terrain by the preview; the others are at their height.
@@ -224,7 +256,7 @@ impl TileTool {
 
     /// The trees the erasing stroke takes, for the overlay.
     pub(crate) fn erased_points(&self, d: &wce_tile_editor::tile_document::TileDocument) -> Vec<Float3> {
-        let Some(s) = self.stroke.as_ref().filter(|s| s.erase) else { return vec![] };
+        let Some(s) = self.veg_stroke().filter(|s| s.erase) else { return vec![] };
         s.erased.iter().map(|&el| d.tile().world_position(el)).collect()
     }
 
@@ -237,12 +269,19 @@ impl TileTool {
         }
 
         ins.section("Vegetation brush (Ctrl + drag takes trees away)");
+        ins.hint("The brush circle's radius, in metres.");
         ins.edit_slider("veg_radius", "radius (m)", &mut b.radius, 1.0, 100.0);
+        ins.hint("The least distance between two trees, in metres (the tile's trees count too).");
         ins.edit_slider("veg_spacing", "spacing (m)", &mut b.spacing, 0.5, 40.0);
+        ins.hint("The least distance from the other things' footprints (buildings, rocks...), in metres.");
         ins.edit_slider("veg_clearance", "clearance (m)", &mut b.clearance, 0.0, 20.0);
+        ins.hint("How much of the room the spacing leaves is planted: 1 tries as many trees as would fit.");
         ins.edit_slider("veg_fill", "fill", &mut b.fill, 0.0, 1.0);
+        ins.hint("The smallest scale a tree gets (each is scaled at random between these; a vegetation set's own range wins).");
         ins.edit_slider("veg_scale_min", "scale from", &mut b.scale_min, 0.1, 3.0);
+        ins.hint("The largest scale a tree gets (each is scaled at random between these; a vegetation set's own range wins).");
         ins.edit_slider("veg_scale_max", "scale to", &mut b.scale_max, 0.1, 3.0);
+        ins.hint("Each tree turned at random; off: all face the same way.");
         ins.edit_bool("veg_yaw", "random turn", &mut b.random_yaw);
         if b != before {
             self.set_veg_brush(e, b);

@@ -20,7 +20,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use rpfm_lib::files::bmd::Bmd;
-use rpfm_lib::files::esf::{Coordinates3DNode, ESF, ESFSignature, F32Node, NodeType, RecordNode, RecordNodeFlags, BoolNode, U32Node};
+use rpfm_lib::files::esf::{BoolNode, Coordinates3DNode, ESF, ESFSignature, F32Node, NodeType, RecordNode, RecordNodeFlags, U32Node};
 use rpfm_lib::files::fastbin_lists::{CivilianDeploymentFile, CivilianShelterFile, GrassListFile, TreeListFile};
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, Encodeable};
@@ -67,7 +67,9 @@ fn classify(name: &str, head: &[u8]) -> Option<Part> {
         _ if head.starts_with(b"CHMF") && lower == "hf_height_map.data" => Part::Chmf(MapKind::Height),
         _ if head.starts_with(b"CHMF") && lower == "hf_water_map.data" => Part::Chmf(MapKind::Water),
         _ if lower.ends_with(".markers") => Part::Markers,
-        _ if head.starts_with(&[0xCA, 0xAB, 0, 0]) && (lower.starts_with("building_list") || lower == "far_building_list") => Part::BuildingList,
+        _ if head.starts_with(&[0xCA, 0xAB, 0, 0]) && (lower.starts_with("building_list") || lower == "far_building_list") => {
+            Part::BuildingList
+        }
         _ if head.starts_with(&[0xCA, 0xAB, 0, 0]) => Part::Esf,
         _ if fastbin && lower.ends_with(".tree_list.bin") => Part::TreeListBin,
         _ if fastbin && lower.ends_with("grass_list.bin") => Part::GrassListBin,
@@ -188,7 +190,9 @@ fn write_chmf(doc: &Document, tile: &Tile, own: bool) -> std::result::Result<(Ve
     let kind = if doc.name.eq_ignore_ascii_case("hf_water_map.data") { MapKind::Water } else { MapKind::Height };
     let root = &doc.root;
     let regions = root.children.iter().filter(|c| c.class == "region").collect::<Vec<_>>();
-    let maps = (0..regions.len()).map(|i| tile.map(kind, i as u32).ok_or_else(|| format!("{}: no raster for region {i}", doc.name))).collect::<std::result::Result<Vec<_>, _>>()?;
+    let maps = (0..regions.len())
+        .map(|i| tile.map(kind, i as u32).ok_or_else(|| format!("{}: no raster for region {i}", doc.name)))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     if own
         && let Some(ChmfTrivia { kept: Some((bytes, prints)) }) = tile.trivia::<ChmfTrivia>(&doc.name)
         && maps.iter().map(|m| m.raster.samples.fingerprint()).eq(prints.iter().copied())
@@ -210,15 +214,19 @@ fn write_chmf(doc: &Document, tile: &Tile, own: bool) -> std::result::Result<(Ve
 
     for (r, m) in regions.iter().zip(&maps) {
         let Samples::U16(samples) = &m.raster.samples else { return Err(format!("{}: the height raster is not 16 bit", doc.name)) };
-        let rect = r.get("rect").and_then(Value::as_ints).ok_or("region without rect")?;
-        let tag = r.get("tag").and_then(Value::as_ints).ok_or("region without tag")?;
+        // A model edited by hand or by a project file may hold fewer numbers than the format: an error, not an index past them.
+        let rect = r
+            .get("rect")
+            .and_then(Value::as_ints)
+            .and_then(|v| <[i64; 4]>::try_from(v.get(..4)?).ok())
+            .ok_or("a region's rect has fewer than 4 numbers")?;
+        let tag = r
+            .get("tag")
+            .and_then(Value::as_ints)
+            .and_then(|v| <[i64; 2]>::try_from(v.get(..2)?).ok())
+            .ok_or("a region's tag has fewer than 2 numbers")?;
         let (_, offsets, data) = encode_region(m.raster.width, m.raster.height, samples);
-        f.regions.push(ChmfRegion {
-            rect: [rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32],
-            tag: [tag[0] as u16, tag[1] as u16],
-            offsets,
-            data,
-        });
+        f.regions.push(ChmfRegion { rect: rect.map(|v| v as u32), tag: tag.map(|v| v as u16), offsets, data });
     }
 
     Ok((f.write(), PartWritten::Encoded))
@@ -340,7 +348,11 @@ fn write_markers(doc: &Document) -> std::result::Result<Vec<u8>, String> {
             use markers::Value as M;
             let (name, v) = match *field {
                 F::IfByte(_) => continue,
-                F::Matrix(n) => (n, rec.get(n).and_then(Value::as_floats).map(|m| M::Matrix(std::array::from_fn(|i| m[i] as f32)))),
+                F::Matrix(n) => match rec.get(n).and_then(Value::as_floats) {
+                    Some(m) if m.len() >= 16 => (n, Some(M::Matrix(std::array::from_fn(|i| m[i] as f32)))),
+                    Some(m) => return Err(format!("{}: {n} has {} numbers, a matrix 16", doc.name, m.len())),
+                    None => (n, None),
+                },
                 F::F32(n) => (n, rec.get(n).and_then(Value::as_f64).map(|x| M::F32(x as f32))),
                 F::U32(n) => (n, rec.get(n).and_then(Value::as_int).map(|x| M::U32(x as u32))),
                 F::U8(n) => (n, rec.get(n).and_then(Value::as_int).map(|x| M::U8(x as u8))),
@@ -349,7 +361,9 @@ fn write_markers(doc: &Document) -> std::result::Result<Vec<u8>, String> {
                 F::PointLists(n) => (
                     n,
                     rec.child("polylines").map(|l| {
-                        M::PointLists(l.children.iter().map(|c| c.get("points").and_then(Value::as_floats).map(pts).unwrap_or_default()).collect())
+                        M::PointLists(
+                            l.children.iter().map(|c| c.get("points").and_then(Value::as_floats).map(pts).unwrap_or_default()).collect(),
+                        )
                     }),
                 ),
 
@@ -414,8 +428,12 @@ fn read_building_list(name: &str, b: &[u8], tile: &mut Tile) -> std::result::Res
         n.set("scale", v3(b.scale));
         n.set("starting_damage", Value::Float(f64::from(b.starting_damage)));
         for (k, v) in [
-            ("on_fire", b.on_fire), ("start_disabled", b.start_disabled), ("weak_point", b.weak_point), ("ai_breachable", b.ai_breachable),
-            ("indestructible", b.indestructible), ("dockable", b.dockable),
+            ("on_fire", b.on_fire),
+            ("start_disabled", b.start_disabled),
+            ("weak_point", b.weak_point),
+            ("ai_breachable", b.ai_breachable),
+            ("indestructible", b.indestructible),
+            ("dockable", b.dockable),
         ] {
             n.set(k, Value::Bool(v));
         }
@@ -600,7 +618,15 @@ fn read_old_list(name: &str, kind: OldListKind, b: &[u8], tile: &mut Tile) -> st
         }
 
         (OldListKind::Tree, 0) => {
-            recs.set("up", Value::Floats((0..n).flat_map(|i| (0..3).map(move |k| (i, k))).map(|(i, k)| f64::from(f32::from_le_bytes(l.record(i)[12 + 4 * k..16 + 4 * k].try_into().expect("4")))).collect()));
+            recs.set(
+                "up",
+                Value::Floats(
+                    (0..n)
+                        .flat_map(|i| (0..3).map(move |k| (i, k)))
+                        .map(|(i, k)| f64::from(f32::from_le_bytes(l.record(i)[12 + 4 * k..16 + 4 * k].try_into().expect("4"))))
+                        .collect(),
+                ),
+            );
             recs.set("bytes_24", Value::Bytes((0..n).flat_map(|i| l.record(i)[24..26].to_vec()).collect()));
             recs.set("scale", Value::Bytes((0..n).map(|i| l.record(i)[26]).collect()));
             recs.set("byte_27", Value::Bytes((0..n).map(|i| l.record(i)[27]).collect()));
@@ -776,23 +802,43 @@ fn write_fastbin_list(doc: &Document) -> std::result::Result<Vec<u8>, String> {
 
 // ---- rpfm structs through serde
 
-/// rpfm_lib gives some structs an `id` that is not in the file (a new random u64 at every read: the capture locations of the BMD files,
-/// the trees of the tree lists). They are set to 0, so a re-read is the same model; the round trip checks that no `id` is file data.
-fn zero_ids(n: &mut Node) {
-    if n.get("id").is_some() {
-        n.set("id", Value::Int(0));
-    }
+/// The arrays whose items rpfm_lib gives an `id` that is not in the file (a new random u64 at every read): the capture locations of the BMD
+/// files (`CaptureLocation`). Other `id`s are file data (a deployment region's, `DeploymentRegion`) and are kept.
+const RANDOM_ID_ARRAYS: &[&str] = &["capture_locations"];
 
+/// Sets the random `id`s (`RANDOM_ID_ARRAYS`) to 0, so a re-read is the same model.
+fn zero_ids(n: &mut Node) {
+    let random = RANDOM_ID_ARRAYS.iter().any(|a| n.class == *a);
     for c in &mut n.children {
+        if random && c.get("id").is_some() {
+            c.set("id", Value::Int(0));
+        }
+
         zero_ids(c);
     }
 }
 
-fn read_serde<T: Decodeable + Serialize>(name: &str, class: &str, b: &[u8], tile: &mut Tile) -> std::result::Result<(), String> {
+/// An rpfm struct's file as a model document. The model is written back through rpfm and serde_json on save, unlike the formats that keep
+/// their original bytes: a file that does not come back byte for byte that way (a NaN, which JSON can't hold; a field rpfm reads one way and
+/// writes another) is refused here, so the caller keeps it as an opaque file, written as it was, instead of saving it changed or failing the
+/// tile's save.
+fn read_serde<T: Decodeable + Encodeable + Serialize + DeserializeOwned>(
+    name: &str,
+    class: &str,
+    b: &[u8],
+    tile: &mut Tile,
+) -> std::result::Result<(), String> {
     let v = T::decode(&mut Cursor::new(b), &None).map_err(|e| e.to_string())?;
     let mut root = serde_node::to_node(class, &v)?;
     zero_ids(&mut root);
-    tile.documents.push(Document { name: name.to_owned(), root });
+    let doc = Document { name: name.to_owned(), root };
+    match write_serde::<T>(&doc) {
+        Ok(again) if again == b => {}
+        Ok(_) => return Err("rpfm does not write it back byte for byte: kept as it is".to_owned()),
+        Err(e) => return Err(format!("does not write back ({e}): kept as it is")),
+    }
+
+    tile.documents.push(doc);
     Ok(())
 }
 
@@ -989,5 +1035,25 @@ mod tests {
 
             assert_eq!(half_bits(v), bits, "{bits:#06x}");
         }
+    }
+
+    #[test]
+    fn only_rpfms_random_ids_are_zeroed() {
+        let with_id = |class: &str, id: i64| {
+            let mut n = Node::new(class);
+            n.set("id", Value::Int(id));
+            n
+        };
+
+        let mut locations = Node::new("capture_locations");
+        locations.children.push(with_id("item", 123_456));
+        let mut regions = Node::new("deployment_regions");
+        regions.children.push(with_id("item", 7));
+        let mut root = Node::new("BMD");
+        root.children = vec![locations, regions];
+
+        zero_ids(&mut root);
+        assert_eq!(root.children[0].children[0].get("id"), Some(&Value::Int(0)), "a capture location's id is rpfm's own");
+        assert_eq!(root.children[1].children[0].get("id"), Some(&Value::Int(7)), "a deployment region's id is the file's");
     }
 }

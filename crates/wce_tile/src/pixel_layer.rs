@@ -5,6 +5,19 @@
 /// Pixels a side of an undo block.
 const BLOCK: u32 = 64;
 
+/// The pixel a map mirrored about the tile's middle takes pixel `i` of `n` from. A map of cells (the blend map, the ground type map, each
+/// pixel an area) mirrors to `n - 1 - i`. A map of samples at the corners of its pixels whose far edge lies one pixel past its last (`corners`:
+/// the bordered height map, sample `i` at `i * mpp - border`, `n * mpp` = the tile and its border) mirrors to `n - i`, and its first sample,
+/// whose mirror is past the map, keeps its own. Both are their own inverse.
+#[must_use]
+pub fn mirror_source(n: u32, i: u32, corners: bool) -> u32 {
+    match (corners, i) {
+        (true, 0) => 0,
+        (true, i) => n - i,
+        (false, i) => n - 1 - i,
+    }
+}
+
 /// The blocks an operation changed: their samples before and after.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Record<T> {
@@ -35,14 +48,30 @@ pub struct PixelLayer<T> {
 
     /// The last record's serial.
     serial: u64,
+
+    /// How many changes were made (any pixel, edit, undo or redo): equal while the samples are.
+    changes: u64,
 }
 
 impl<T: Copy + PartialEq> PixelLayer<T> {
-
     /// `v` holds `channels` samples per pixel, row by row.
     pub fn new(w: u32, h: u32, channels: usize, v: Vec<T>) -> Self {
         debug_assert_eq!(v.len(), w as usize * h as usize * channels);
-        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None, serial: 0 }
+        Self {
+            w,
+            h,
+            channels,
+            v,
+            editing: false,
+            saved: vec![],
+            touched: vec![],
+            undo: vec![],
+            redo: vec![],
+            changed: None,
+            edited: None,
+            serial: 0,
+            changes: 0,
+        }
     }
 
     pub fn width(&self) -> u32 {
@@ -75,6 +104,27 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
     /// All the samples, row by row.
     pub fn values(&self) -> &[T] {
         &self.v
+    }
+
+    /// Mirrors the map during an edit: its columns (`across_x`) or its rows, each pixel taking [`mirror_source`]'s (`corners`). Returns the
+    /// pixels changed.
+    ///
+    /// # Panics
+    ///
+    /// No edit is open.
+    pub fn mirror(&mut self, across_x: bool, corners: bool) -> usize {
+        let before = self.v.clone();
+        let (w, h, c) = (self.w, self.h, self.channels);
+        let mut changed = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let (sx, sy) = if across_x { (mirror_source(w, x, corners), y) } else { (x, mirror_source(h, y, corners)) };
+                let i = (sy as usize * w as usize + sx as usize) * c;
+                changed += usize::from(self.set_pixel(x, y, &before[i..i + c]));
+            }
+        }
+
+        changed
     }
 
     /// Replaces a pixel's samples during an edit; false when they were the same.
@@ -193,7 +243,13 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         self.undo.last().map_or(0, |r| r.serial)
     }
 
+    /// How many changes were made: equal while the samples are (what was made from them can be kept).
+    pub fn changes(&self) -> u64 {
+        self.changes
+    }
+
     fn mark(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
+        self.changes += 1;
         self.edited = Some(match self.edited {
             None => (x0, y0, x1, y1),
             Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
@@ -246,11 +302,14 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
 
         let mut touched = std::mem::take(&mut self.touched);
         touched.sort_unstable();
-        let blocks = touched.into_iter().map(|b| {
-            let before = self.saved[b as usize].take().expect("a saved block").into_vec();
-            let after = self.block_samples(b);
-            (b, before, after)
-        }).collect::<Vec<_>>();
+        let blocks = touched
+            .into_iter()
+            .map(|b| {
+                let before = self.saved[b as usize].take().expect("a saved block").into_vec();
+                let after = self.block_samples(b);
+                (b, before, after)
+            })
+            .collect::<Vec<_>>();
 
         self.serial += 1;
         self.undo.push(Record { blocks, serial: self.serial });

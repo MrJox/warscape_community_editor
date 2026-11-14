@@ -67,7 +67,11 @@ pub fn reshape_for_steps(text: &str, steps: &[(f32, f32)], stair_z: (f32, f32)) 
         let pts = lines[a..b].iter().map(|l| point(l.trim_start())).collect::<Option<Vec<_>>>()?;
         let (x0, x1) = pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
         let (z0, z1) = pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[2]), hi.max(p[2])));
-        (pts.len() == 4 && pts.iter().all(|p| ((p[0] - x0).abs() < 1e-3 || (p[0] - x1).abs() < 1e-3) && ((p[2] - z0).abs() < 1e-3 || (p[2] - z1).abs() < 1e-3))).then_some((x0, x1, z0, z1))
+        (pts.len() == 4
+            && pts
+                .iter()
+                .all(|p| ((p[0] - x0).abs() < 1e-3 || (p[0] - x1).abs() < 1e-3) && ((p[2] - z0).abs() < 1e-3 || (p[2] - z1).abs() < 1e-3)))
+        .then_some((x0, x1, z0, z1))
     };
 
     let rects = regions.iter().map(|&r| rect(r)).collect::<Vec<_>>();
@@ -147,9 +151,16 @@ mod tests {
                     </region>\n        <region name=\"region_zone02\">\n            <point x=\"11.5\" y=\"0.0\" z=\"9.3\"/>\n            <point x=\"-11.5\" y=\"0.0\" z=\"9.3\"/>\n            \
                     <point x=\"-11.5\" y=\"0.0\" z=\"6.2\"/>\n            <point x=\"11.5\" y=\"0.0\" z=\"6.2\"/>\n        </region>\n    </zone_regions>\n    <go_regions/>\n</regions>\n";
         let out = reshape_for_steps(text, &[(2.0, 5.0)], (0.5, 9.2));
-        let regions = out.split("<region ").skip(1).map(|r| r.lines().filter_map(|l| point(l.trim_start())).map(|p| [p[0], p[2]]).collect::<Vec<_>>()).collect::<Vec<_>>();
+        let regions = out
+            .split("<region ")
+            .skip(1)
+            .map(|r| r.lines().filter_map(|l| point(l.trim_start())).map(|p| [p[0], p[2]]).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
         assert_eq!(regions[0], vec![[11.5, 6.0], [6.0, 6.0], [5.0, 0.3], [2.0, 0.3], [1.0, 6.0], [-11.5, 6.0], [-11.5, 0.0], [11.5, 0.0]]);
-        assert_eq!(regions[1], vec![[11.5, 9.3], [-11.5, 9.3], [-11.5, 6.2], [1.0, 6.2], [2.0, 0.45], [5.0, 0.45], [6.0, 6.2], [11.5, 6.2]]);
+        assert_eq!(
+            regions[1],
+            vec![[11.5, 9.3], [-11.5, 9.3], [-11.5, 6.2], [1.0, 6.2], [2.0, 0.45], [5.0, 0.45], [6.0, 6.2], [11.5, 6.2]]
+        );
         assert!(out.contains("<go_regions/>"));
         assert_eq!(reshape_for_steps(text, &[], (0.5, 9.2)), text);
     }

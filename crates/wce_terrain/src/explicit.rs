@@ -21,7 +21,12 @@ impl ExplicitTile {
             return None;
         }
 
-        Some(Self { x: x.trim().parse().ok()?, y: y.trim().parse().ok()?, path: path.trim().to_owned(), rotation: rotation.trim().parse().ok()? })
+        Some(Self {
+            x: x.trim().parse().ok()?,
+            y: y.trim().parse().ok()?,
+            path: path.trim().to_owned(),
+            rotation: rotation.trim().parse().ok()?,
+        })
     }
 
     fn text(&self) -> Vec<u8> {
@@ -128,7 +133,10 @@ mod tests {
         assert_eq!(f.bad_lines(), vec![3]);
         assert_eq!(ExplicitTiles::parse(b"1,1,a,0\r\n").bad_lines(), vec![2]);
         assert!(f.set(1, ExplicitTile { x: 1, y: 2, path: "p".to_owned(), rotation: 0 }));
-        assert_eq!(f.write(), b"616,289,terrain\\tiles\\battle\\dense_forest_rugged\\8x8\\aa,270\r\n1,2,p,0\r\nnot a tile\r\n239,193,a,180".to_vec());
+        assert_eq!(
+            f.write(),
+            b"616,289,terrain\\tiles\\battle\\dense_forest_rugged\\8x8\\aa,270\r\n1,2,p,0\r\nnot a tile\r\n239,193,a,180".to_vec()
+        );
         f.push(ExplicitTile { x: 3, y: 4, path: "q".to_owned(), rotation: 90 });
         assert!(f.write().ends_with(b"239,193,a,180\r\n3,4,q,90"), "no line ending after the last, as the file had none");
         assert!(f.remove(3));

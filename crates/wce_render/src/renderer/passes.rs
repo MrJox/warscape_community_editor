@@ -13,13 +13,13 @@ use crate::model_cache::{GpuMesh, MeshKind, TEX_SLOTS};
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 /// Battle rows of the split table (dll+0x1c88aa0), indexed by gfx_shadow_quality.
-const SHADOW_ROWS: [[f32; 4]; 4] = [[60.0, 180.0, 180.0, 180.0], [30.0, 90.0, 210.0, 210.0], [30.0, 90.0, 210.0, 450.0], [30.0, 90.0, 210.0, 450.0]];
+const SHADOW_ROWS: [[f32; 4]; 4] =
+    [[60.0, 180.0, 180.0, 180.0], [30.0, 90.0, 210.0, 210.0], [30.0, 90.0, 210.0, 450.0], [30.0, 90.0, 210.0, 450.0]];
 
 /// The atlas quadrants of the four cascades.
 pub(crate) const SHADOW_BOUNDS: [[f32; 4]; 4] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5], [0.0, 0.5, 0.5, 1.0], [0.5, 0.5, 1.0, 1.0]];
 
 impl Renderer {
-
     pub(crate) fn pass_gbuffer(&mut self) {
         // Channel 4 (z / w) starts at the far plane: the game's is its depth buffer, cleared to 1 (RenderDoc, coast.rdc). Cleared to 0, a
         // pixel with nothing behind the sea read as the near plane, and the fog (which reads it) left those pixels clear: dark slivers of
@@ -56,6 +56,7 @@ impl Renderer {
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
         let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
+        let rope_layout = self.optional_shader(ROPE_VS).and_then(|rvs| self.layout(&rvs, "rope", &rope_layout()));
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -111,11 +112,19 @@ impl Renderer {
         let ms = self.gbuffer.ms.is_some();
         let shaders = GBUFFER_PASSES.map(|(kind, alpha, fire, vs, ps, _)| {
             let ms_ps = ms.then(|| gbuffer_ms_ps(kind, alpha, ps)).flatten().and_then(|name| self.shader(&name));
+            // The ropes' shaders are not in every game's packs (Rome 2's): without them there are no ropes, quietly.
+            if kind == MeshKind::Rope {
+                return self.optional_shader(vs).zip(ms_ps.or_else(|| self.optional_shader(ps)));
+            }
+
             (!fire || game.has_fire_shaders(kind)).then(|| self.shader(vs).zip(ms_ps.or_else(|| self.shader(ps)))).flatten()
         });
         let pass_in = |m: &GpuMesh, fire: bool| {
             let opaque = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && !p.1 && p.2 == fire)?;
-            let alpha = GBUFFER_PASSES.iter().position(|p| p.0 == m.kind && p.1 && p.2 == fire).filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());
+            let alpha = GBUFFER_PASSES
+                .iter()
+                .position(|p| p.0 == m.kind && p.1 && p.2 == fire)
+                .filter(|&k| m.alpha_mode == 1 && shaders[k].is_some());
             alpha.or(Some(opaque).filter(|&k| shaders[k].is_some()))
         };
 
@@ -162,68 +171,75 @@ impl Renderer {
                 let pass_layout = match GBUFFER_PASSES[pass].0 {
                     MeshKind::TreeBranch | MeshKind::TreeLeaf => tree_layout.as_ref(),
                     MeshKind::TreeBillboard => billboard_layout.as_ref(),
+                    MeshKind::Rope => rope_layout.as_ref(),
                     _ => Some(&layout),
                 };
 
                 let Some(pass_layout) = pass_layout else { continue };
                 self.ctx.set_input_layout(Some(pass_layout));
 
-                // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE).
-                let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf);
+                // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE); a rope's strip, turned to
+                // the camera, faces it either way round.
+                let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::Rope);
                 self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
 
                 let slots = self.slots_of(&ps);
                 let mut bound = false;
                 let fire = GBUFFER_PASSES[pass].2;
                 // Faded instances are the blended forward pass's (`pass_faded`).
-                let (instances, triangles) = self.draw_batches_flags([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning, faded| {
-                    if faded || pass_of(m, burning) != Some(pass) || tessellated(m, pass) != tess {
-                        return false;
-                    }
-
-                    // With snow regions a tree batch snows by its model's mark (MODEL_SNOW_SUFFIX), the rest at the regions' intensity.
-                    if let Some(region) = r.snow_region {
-                        r.set_snowing(if m.kind.is_tree() && !m.snow { r.snow_weather } else { region });
-                    }
-
-                    if !bound {
-                        r.bind(&vs);
-                        for &slot in vs.textures.values() {
-                            r.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&r.res.instance_ids_srv));
+                let (instances, triangles) =
+                    self.draw_batches_flags([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m, burning, faded| {
+                        if faded || pass_of(m, burning) != Some(pass) || tessellated(m, pass) != tess {
+                            return false;
                         }
 
-                        r.bind(&ps);
-                        // Linear, as the game's s_fire_map samplers (docs/re/samplers.tsv): its channels are masks, not a colour.
-                        let fire_map = if fire { r.textures.get(FIRE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())) } else { None };
-                        bind_srv(&r.ctx, &ps, "s_fire_map", fire_map.or_else(|| r.res.black_srv.clone()).as_ref());
-                        let snow = r.snow_normals_srv();
-                        bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
-
-                        // Trees: no burn, nothing dissolved (the dissolve amount is in the instance).
-                        bind_srv(&r.ctx, &ps, "s_diffuse_burn_map", r.res.black_srv.as_ref());
-                        bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
-                        if let (true, Some((_, hs, ds))) = (tess, &tess_stages) {
-                            r.cbs.set_f("rigid_config_PS", "g_tesselation_factor", &[TESS_FACTOR]);
-                            r.cbs.set_f("rigid_config_PS", "g_tesselation_displacement_scale", &[TESS_DISPLACEMENT_SCALE]);
-                            r.bind(hs);
-                            r.bind(ds);
-                            bind_sampler(&r.ctx, ds, "s_displacement_map", r.states.s_wrap_linear.as_ref());
-                            r.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+                        // With snow regions a tree batch snows by its model's mark (MODEL_SNOW_SUFFIX), the rest at the regions' intensity.
+                        if let Some(region) = r.snow_region {
+                            r.set_snowing(if m.kind.is_tree() && !m.snow { r.snow_weather } else { region });
                         }
 
-                        r.upload();
-                        ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
-                        bound = true;
-                    }
+                        if !bound {
+                            r.bind(&vs);
+                            for &slot in vs.textures.values() {
+                                r.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&r.res.instance_ids_srv));
+                            }
 
-                    if let (true, Some((_, _, ds)), Some(map)) = (tess, &tess_stages, &m.displacement) {
-                        let srv = map.read().ok().and_then(|t| t.srv.clone());
-                        bind_srv(&r.ctx, ds, "t_tesselation_displacement_map", srv.as_ref());
-                    }
+                            r.bind(&ps);
+                            // Linear, as the game's s_fire_map samplers (docs/re/samplers.tsv): its channels are masks, not a colour.
+                            let fire_map = if fire {
+                                r.textures.get(FIRE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+                            } else {
+                                None
+                            };
+                            bind_srv(&r.ctx, &ps, "s_fire_map", fire_map.or_else(|| r.res.black_srv.clone()).as_ref());
+                            let snow = r.snow_normals_srv();
+                            bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
 
-                    r.bind_mesh_material(&ps, &slots, m);
-                    true
-                });
+                            // Trees: no burn, nothing dissolved (the dissolve amount is in the instance).
+                            bind_srv(&r.ctx, &ps, "s_diffuse_burn_map", r.res.black_srv.as_ref());
+                            bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
+                            if let (true, Some((_, hs, ds))) = (tess, &tess_stages) {
+                                r.cbs.set_f("rigid_config_PS", "g_tesselation_factor", &[TESS_FACTOR]);
+                                r.cbs.set_f("rigid_config_PS", "g_tesselation_displacement_scale", &[TESS_DISPLACEMENT_SCALE]);
+                                r.bind(hs);
+                                r.bind(ds);
+                                bind_sampler(&r.ctx, ds, "s_displacement_map", r.states.s_wrap_linear.as_ref());
+                                r.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+                            }
+
+                            r.upload();
+                            ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
+                            bound = true;
+                        }
+
+                        if let (true, Some((_, _, ds)), Some(map)) = (tess, &tess_stages, &m.displacement) {
+                            let srv = map.read().ok().and_then(|t| t.srv.clone());
+                            bind_srv(&r.ctx, ds, "t_tesselation_displacement_map", srv.as_ref());
+                        }
+
+                        r.bind_mesh_material(&ps, &slots, m);
+                        true
+                    });
 
                 self.draw_stats.triangles += triangles;
                 if !self.env.active {
@@ -235,6 +251,7 @@ impl Renderer {
 
         if !self.env.active {
             self.draw_skinned_gbuffer();
+            self.draw_ropes_gbuffer();
         }
 
         // The tessellated round leaves its stages bound.
@@ -248,7 +265,12 @@ impl Renderer {
         // the resolve only touch those), so that the terrain textures are projected onto the meshes.
         if blend_in_terrain {
             let d = blend_mesh::BlendDraw {
-                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.scene_rtvs(), dsv: self.gbuffer.scene_dsv(), depth_stencil: self.states.ds_gbuffer.clone(), stencil_ref: TERRAIN_STENCIL,
+                vs: blend_mesh::BLEND_VS,
+                ps: blend_mesh::BLEND_GBUFFER_PS,
+                targets: self.gbuffer.scene_rtvs(),
+                dsv: self.gbuffer.scene_dsv(),
+                depth_stencil: self.states.ds_gbuffer.clone(),
+                stencil_ref: TERRAIN_STENCIL,
                 blend: self.states.bs_opaque.clone(),
             };
 
@@ -409,7 +431,12 @@ impl Renderer {
 
         self.bind_gbuffer_ms(&ps);
         bind_srv(&self.ctx, &ps, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
-        bind_srv(&self.ctx, &ps, "s_environment", if self.env.active || !self.env.valid { self.sky.cube.srv.as_ref() } else { self.env.cube.srv.as_ref() });
+        bind_srv(
+            &self.ctx,
+            &ps,
+            "s_environment",
+            if self.env.active || !self.env.valid { self.sky.cube.srv.as_ref() } else { self.env.cube.srv.as_ref() },
+        );
         bind_srv(&self.ctx, &ps, "s_overlay", self.res.overlay_none_srv.as_ref());
         bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
         bind_srv(&self.ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
@@ -423,7 +450,11 @@ impl Renderer {
         // the clouds' shade over the sun; off: zero, the shade never applies.
         let shade = self.settings.cloud_shadows && !self.env.active && ps.textures.contains_key("cloud_shade_sampler");
         let [ox, oy] = self.cloud_shade;
-        self.cbs.set_f("directional_light_PS", "g_cloud_shade_params", &if shade { [ox, oy, CLOUD_SHADE_BATTLE_SCALE, 1.0] } else { [0.0; 4] });
+        self.cbs.set_f(
+            "directional_light_PS",
+            "g_cloud_shade_params",
+            &if shade { [ox, oy, CLOUD_SHADE_BATTLE_SCALE, 1.0] } else { [0.0; 4] },
+        );
         if shade {
             let srv = self.sky_texture(CLOUD_SHADE_TEXTURE, false);
             bind_srv(&self.ctx, &ps, "cloud_shade_sampler", srv.as_ref());
@@ -457,9 +488,12 @@ impl Renderer {
 
         let (rw, rh) = (w.div_ceil(div), h.div_ceil(div));
         let (Some(es), Some(bx), Some(by)) = (
-            self.scene_shader(if half { ENV_SPECULAR_HALF_PS } else { ENV_SPECULAR_PS }), self.scene_shader(REFLECTION_BLUR_X_PS),
+            self.scene_shader(if half { ENV_SPECULAR_HALF_PS } else { ENV_SPECULAR_PS }),
+            self.scene_shader(REFLECTION_BLUR_X_PS),
             self.scene_shader(if half { REFLECTION_BLUR_Y_HALF_PS } else { REFLECTION_BLUR_Y_PS }),
-        ) else { return };
+        ) else {
+            return;
+        };
         wce_prof!("render.environment_specular");
 
         // The camera's screen constants stay the full screen's: the reflection and the x blur divide their pixel's position by
@@ -479,9 +513,17 @@ impl Renderer {
 
         // 1. The reflection and its blur parameters.
         let p: [(usize, Vec<u8>); 11] = [
-            (0, i(0).to_vec()), (4, f(1.0).to_vec()), (8, f(20.0).to_vec()), (16, [f(0.4), f(1.0)].concat()), (24, [f(0.9), f(1.0)].concat()),
-            (32, f(0.1).to_vec()), (36, [f(0.996), f(0.99)].concat()), (48, [f(2.0), f(5.0)].concat()), (56, f(0.06).to_vec()),
-            (64, [f(0.5), f(0.5), f(28672.0), f(-28672.0)].concat()), (80, f(scale).to_vec()),
+            (0, i(0).to_vec()),
+            (4, f(1.0).to_vec()),
+            (8, f(20.0).to_vec()),
+            (16, [f(0.4), f(1.0)].concat()),
+            (24, [f(0.9), f(1.0)].concat()),
+            (32, f(0.1).to_vec()),
+            (36, [f(0.996), f(0.99)].concat()),
+            (48, [f(2.0), f(5.0)].concat()),
+            (56, f(0.06).to_vec()),
+            (64, [f(0.5), f(0.5), f(28672.0), f(-28672.0)].concat()),
+            (80, f(scale).to_vec()),
         ];
         for (at, bytes) in &p {
             self.cbs.set_at("parameters", *at, bytes);
@@ -587,7 +629,11 @@ impl Renderer {
     /// analysis, the water's refraction, the particles' soft edges, fog, `hdr_to_screen`, the overlays).
     pub(crate) fn resolve_scene_depth(&mut self) {
         let Some(ms) = &self.gbuffer.ms else { return };
-        let index = match ms.samples { 2 => 0, 4 => 1, _ => 2 };
+        let index = match ms.samples {
+            2 => 0,
+            4 => 1,
+            _ => 2,
+        };
         let ms_depth = ms.depth.depth_srv.clone();
         let Some(ps) = self.shader(RESOLVE_DEPTH_PS[index]) else { return };
         self.ctx.set_render_targets(&[], self.gbuffer.dsv.as_ref());
@@ -784,7 +830,12 @@ impl Renderer {
             for c in 0..count {
                 self.ctx.set_input_layout(Some(&layout));
                 let half = self.shadow_map.size as f32 / 2.0;
-                self.ctx.set_viewports(&[viewport(SHADOW_BOUNDS[c][0] * self.shadow_map.size as f32, SHADOW_BOUNDS[c][1] * self.shadow_map.size as f32, half, half)]);
+                self.ctx.set_viewports(&[viewport(
+                    SHADOW_BOUNDS[c][0] * self.shadow_map.size as f32,
+                    SHADOW_BOUNDS[c][1] * self.shadow_map.size as f32,
+                    half,
+                    half,
+                )]);
                 self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(&light_rel[c], self.camera.units).data());
                 self.upload();
                 self.bind(&vs);
@@ -820,10 +871,19 @@ impl Renderer {
                     self.draw_stats.instances += v.instances() as u64;
                 }
 
-                self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+                self.ctx.set_vertex_buffers(
+                    1,
+                    std::slice::from_ref(&self.draw_lists.ring.buffer),
+                    &[(size_of::<RigidInstance>() as u32)],
+                    &[0],
+                );
                 self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
-                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
+                // A model's static ropes (`#ropes`) cast none here: their vertices aren't the rigid layout. The moving ropes cast theirs below.
+                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| {
+                    !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope)
+                });
                 self.draw_skinned_shadow();
+                self.draw_ropes_shadow();
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
@@ -831,7 +891,12 @@ impl Renderer {
                     self.ctx.set_rasterizer_state(rs_shadow_terrain.as_ref());
                     self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c], &light_rel[c]);
                     self.ctx.set_rasterizer_state(rs_shadow.as_ref());
-                    self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
+                    self.ctx.set_vertex_buffers(
+                        1,
+                        std::slice::from_ref(&self.draw_lists.ring.buffer),
+                        &[(size_of::<RigidInstance>() as u32)],
+                        &[0],
+                    );
                 }
 
                 // The trees, with their own vertex format and shaders, alpha-tested on their diffuse map.
@@ -934,5 +999,4 @@ impl Renderer {
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         null_ps_srvs(&self.ctx, 8);
     }
-
 }

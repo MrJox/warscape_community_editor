@@ -40,7 +40,9 @@ impl TileTool {
             "Building technology: off".to_owned()
         };
 
-        tip.push_str("\nClick: choose what of the buildings' logic files to draw (collision, platforms, pipes, formation lines, emitters ...)");
+        tip.push_str(
+            "\nClick: choose what of the buildings' logic files to draw (collision, platforms, pipes, formation lines, emitters ...)",
+        );
         gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - self.tech_chip_width - 12.0, origin.y + top));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         if gui::begin_pill("##techchip") {
@@ -73,10 +75,18 @@ impl TileTool {
             s.set_all(true);
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Ticks every overlay below (not the checks).");
+        }
+
         gui::same_line();
         if gui::small_button("None##tech") {
             s.set_all(false);
             s.detect = false;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Unticks every overlay and the overlapping buildings check.");
         }
 
         if game_view {
@@ -96,6 +106,9 @@ impl TileTool {
             gui::same_line();
             gui::set_next_item_width(140.0);
             gui::slider_float("##techrange", &mut s.distance, 30.0, 1000.0, "%.0f m");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How far from the camera the buildings are drawn (metres).");
+            }
         }
 
         if gui::radio_button("Selected##tech", s.scope == TechScope::Selected) {
@@ -132,6 +145,9 @@ impl TileTool {
             gui::separator();
             gui::set_next_item_width(140.0);
             gui::slider_float("platform fill##tech", &mut s.fill, 0.0, 1.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The opacity of the platforms' fill; 0: no fill.");
+            }
         }
 
         gui::separator_text("Checks");

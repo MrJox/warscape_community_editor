@@ -76,10 +76,7 @@ pub fn parse_curves(text: &str) -> BTreeMap<String, VfxCurve> {
         let parts = getline_split(curve, ';');
         let Some(head) = parts.first() else { continue };
         let name = head.split(',').next().unwrap_or_default().to_owned();
-        let mut keys = parts[1..].iter()
-            .filter_map(|key| key.split_once(','))
-            .map(|(t, value)| (atof(t), atof(value)))
-            .collect::<Vec<_>>();
+        let mut keys = parts[1..].iter().filter_map(|key| key.split_once(',')).map(|(t, value)| (atof(t), atof(value))).collect::<Vec<_>>();
 
         keys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         out.insert(name, VfxCurve { keys });
@@ -124,7 +121,6 @@ pub struct VfxProps {
 }
 
 impl VfxProps {
-
     pub fn find(&self, name: &str) -> Option<&VfxProp> {
         self.props.get(name)
     }
@@ -290,7 +286,6 @@ pub struct VfxFile {
 }
 
 impl VfxFile {
-
     pub fn camera_following(&self) -> bool {
         self.vfx_attrs.get("camera_following").is_some_and(|value| truthy(value))
     }
@@ -425,19 +420,30 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
                 }
 
                 if let Some(list) = child(doc, r, "behaviour_chains") {
-                    f.chains.extend(els[list].children.iter().filter(|&&c| els[c].name == "behaviour_chain").map(|&c| VfxChain {
-                        id: text(c, "id"),
-                        modifiers: els[c].children.iter().filter(|&&m| els[m].name == "modifier").map(|&m| VfxModifier {
-                            fragment: text(m, "fragment"),
-                            props: read_props(doc, m),
-                        }).collect(),
+                    f.chains.extend(els[list].children.iter().filter(|&&c| els[c].name == "behaviour_chain").map(|&c| {
+                        VfxChain {
+                            id: text(c, "id"),
+                            modifiers: els[c]
+                                .children
+                                .iter()
+                                .filter(|&&m| els[m].name == "modifier")
+                                .map(|&m| VfxModifier { fragment: text(m, "fragment"), props: read_props(doc, m) })
+                                .collect(),
+                        }
                     }));
                 }
 
                 if let Some(list) = child(doc, r, "effect_render_stacks") {
                     for &s in els[list].children.iter().filter(|&&s| els[s].name == "effect_render_stack") {
-                        let ids = |name: &str| child(doc, s, name).map(|list| els[list].children.iter().map(|&e| text(e, "id")).collect()).unwrap_or_default();
-                        let mut stack = VfxStack { id: text(s, "id"), emitters: ids("emitters_selected"), chains: ids("behaviour_chains_selected"), ..Default::default() };
+                        let ids = |name: &str| {
+                            child(doc, s, name).map(|list| els[list].children.iter().map(|&e| text(e, "id")).collect()).unwrap_or_default()
+                        };
+                        let mut stack = VfxStack {
+                            id: text(s, "id"),
+                            emitters: ids("emitters_selected"),
+                            chains: ids("behaviour_chains_selected"),
+                            ..Default::default()
+                        };
                         if let Some(rp) = child(doc, s, "render_params") {
                             stack.scene_view_type = num(doc.get(rp, "scene_view_type"), 0.0) as i32;
                             stack.cast_shadows = truthy(&doc.get(rp, "cast_shadows").unwrap_or_else(|| "false".to_owned()));
@@ -460,17 +466,32 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
                         pos: [n("pos_x", 0.0), n("pos_y", 0.0), n("pos_z", 0.0)],
                         start_time: n("start_time", 0.0),
                         infinite_life: truthy(&doc.get(v, "infinite_life").unwrap_or_else(|| "true".to_owned())),
-                        emitters: els[v].children.iter().filter(|&&e| els[e].name == "emitter").map(|&e| {
-                            let n = |name: &str, default: f32| num(doc.get(e, name), default);
-                            VfxRefEmitter {
-                                name: text(e, "name"),
-                                enable: truthy(&doc.get(e, "enable").unwrap_or_else(|| "true".to_owned())),
-                                tint_min: std::array::from_fn(|k| n(&format!("tint_min_{}", ['r', 'g', 'b', 'a'][k]), n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0))),
-                                tint_max: std::array::from_fn(|k| n(&format!("tint_max_{}", ['r', 'g', 'b', 'a'][k]), n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0))),
-                                particle_lifetime_bias: [n("particle_lifetime_bias_min", 0.0), n("particle_lifetime_bias_max", 0.0)],
-                                emitter_lifetime_bias: [n("emitter_lifetime_bias_min", 0.0), n("emitter_lifetime_bias_max", 0.0)],
-                            }
-                        }).collect(),
+                        emitters: els[v]
+                            .children
+                            .iter()
+                            .filter(|&&e| els[e].name == "emitter")
+                            .map(|&e| {
+                                let n = |name: &str, default: f32| num(doc.get(e, name), default);
+                                VfxRefEmitter {
+                                    name: text(e, "name"),
+                                    enable: truthy(&doc.get(e, "enable").unwrap_or_else(|| "true".to_owned())),
+                                    tint_min: std::array::from_fn(|k| {
+                                        n(
+                                            &format!("tint_min_{}", ['r', 'g', 'b', 'a'][k]),
+                                            n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0),
+                                        )
+                                    }),
+                                    tint_max: std::array::from_fn(|k| {
+                                        n(
+                                            &format!("tint_max_{}", ['r', 'g', 'b', 'a'][k]),
+                                            n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0),
+                                        )
+                                    }),
+                                    particle_lifetime_bias: [n("particle_lifetime_bias_min", 0.0), n("particle_lifetime_bias_max", 0.0)],
+                                    emitter_lifetime_bias: [n("emitter_lifetime_bias_min", 0.0), n("emitter_lifetime_bias_max", 0.0)],
+                                }
+                            })
+                            .collect(),
                     });
                 }
             }
@@ -480,4 +501,255 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
     }
 
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vfx(text: &str) -> VfxFile {
+        parse_vfx(&XmlDoc::parse(text.as_bytes().to_vec()).unwrap())
+    }
+
+    /// The properties of the one modifier of a chain written around `body`.
+    fn modifier(body: &str) -> VfxProps {
+        let f = vfx(&format!(
+            "<vfx><behaviour_chains><behaviour_chain id=\"c\"><modifier fragment=\"m\">{body}</modifier></behaviour_chain></behaviour_chains></vfx>"
+        ));
+        f.chains[0].modifiers[0].props.clone()
+    }
+
+    #[test]
+    fn numbers_read_as_c_does() {
+        assert_eq!((atof("12.5abc"), atof("  -3e2x"), atof("abc"), atof(""), atof(".5")), (12.5, -300.0, 0.0, 0.0, 0.5));
+        assert_eq!((atoi("12.9"), atoi("-7z"), atoi("x"), atoi(" +4")), (12, -7, 0, 4));
+        // A present value that is not a number is 0, not the default.
+        assert_eq!((num(None, 4.0), num(Some("2".into()), 4.0), num(Some("junk".into()), 4.0)), (4.0, 2.0, 0.0));
+        assert!(truthy("true") && truthy("1"));
+        assert!(!truthy("True") && !truthy("yes") && !truthy("0") && !truthy("") && !truthy(" 1"));
+    }
+
+    #[test]
+    fn getline_split_drops_only_a_trailing_empty_piece() {
+        assert!(getline_split("", '|').is_empty());
+        assert_eq!(getline_split("a", '|'), ["a"]);
+        assert_eq!(getline_split("a|b|", '|'), ["a", "b"]);
+        assert_eq!(getline_split("a||", '|'), ["a", ""]);
+        assert_eq!(getline_split("|", '|'), [""]);
+        assert_eq!(getline_split("|a", '|'), ["", "a"]);
+    }
+
+    #[test]
+    fn curves_interpolate_and_clamp() {
+        assert_eq!(VfxCurve::default().eval(0.5), 0.0);
+        let one = VfxCurve { keys: vec![(0.5, 3.0)] };
+        assert_eq!((one.eval(0.0), one.eval(0.5), one.eval(1.0)), (3.0, 3.0, 3.0));
+
+        // Two keys at the same time: a step.
+        let step = VfxCurve { keys: vec![(0.0, 0.0), (0.5, 1.0), (0.5, 5.0), (1.0, 5.0)] };
+        assert_eq!((step.eval(0.25), step.eval(0.5), step.eval(0.75)), (0.5, 1.0, 5.0));
+    }
+
+    #[test]
+    fn curve_text_with_odd_pieces() {
+        assert!(parse_curves("").is_empty());
+
+        // Keys are sorted; pieces without a comma are skipped; a name without keys is a curve without keys.
+        let c = parse_curves("a,7;1.0,1.0;x;0.0,0.0;;0.5,2|empty|b,1;0.5,3|");
+        assert_eq!(c.len(), 3);
+        assert_eq!(c["a"].keys, [(0.0, 0.0), (0.5, 2.0), (1.0, 1.0)]);
+        assert!(c["empty"].keys.is_empty());
+        assert_eq!(c["b"].eval(0.0), 3.0);
+
+        // Numbers as atof reads them, and the last curve of a name wins.
+        let c = parse_curves("a;0.5abc,2x;junk,1|a;0,9");
+        assert_eq!(c["a"].keys, [(0.0, 9.0)]);
+        let c = parse_curves("a;0.5abc,2x;junk,1");
+        assert_eq!(c["a"].keys, [(0.0, 1.0), (0.5, 2.0)]);
+    }
+
+    #[test]
+    fn float4_text() {
+        let mut v = [9.0; 4];
+        parse_float4("float4(1.0,0.9,0.8,1.0)", &mut v);
+        assert_eq!(v, [1.0, 0.9, 0.8, 1.0]);
+
+        let mut v = [9.0; 4];
+        parse_float4("float2(3,4)", &mut v);
+        assert_eq!(v, [3.0, 4.0, 9.0, 9.0]);
+
+        let mut v = [9.0; 4];
+        parse_float4("5,6,", &mut v);
+        assert_eq!(v, [5.0, 6.0, 9.0, 9.0]);
+
+        let mut v = [9.0; 4];
+        parse_float4("float4(", &mut v);
+        assert_eq!(v, [9.0; 4]);
+
+        let mut v = [9.0; 4];
+        parse_float4("float4(1,2,3,4,5) trailing", &mut v);
+        assert_eq!(v, [1.0, 2.0, 3.0, 4.0]);
+
+        let mut v = [9.0; 4];
+        parse_float4("float4(a,b)", &mut v);
+        assert_eq!(v, [0.0, 0.0, 9.0, 9.0]);
+    }
+
+    #[test]
+    fn property_values_and_their_defaults() {
+        let p = modifier(
+            r#"<property name="on" value="true"/><property name="off" value="0"/><property name="empty" value=""/>
+               <property name="n" value="2.5x"/><property name="t" value="true"/><property name="f" value="false"/>
+               <property name="int" value="-12.7"/><texture_property name="tex" path="A\b.dds"/>
+               <property name="both" value="v" path="p"/><ignored name="skipped" value="1"/><property value="no name"/>"#,
+        );
+        assert_eq!(p.props.len(), 9);
+        assert!(p.b("on", false) && !p.b("off", true) && p.b("empty", true) && p.b("missing", true));
+        assert_eq!((p.f("n", 1.0), p.f("empty", 7.0), p.f("missing", 7.0), p.f("on", 7.0)), (2.5, 7.0, 7.0, 0.0));
+        assert_eq!((p.i("t", 5), p.i("f", 5), p.i("int", 5), p.i("empty", 5), p.i("n", 5)), (1, 0, -12, 5, 2));
+        assert_eq!((p.text("tex"), p.text("both"), p.text("missing")), ("A\\b.dds".to_owned(), "p".to_owned(), String::new()));
+        assert!(p.find("skipped").is_none());
+    }
+
+    #[test]
+    fn vectors_ranges_and_colours() {
+        let p = modifier(
+            r#"<property name="xy" x="1" y="2"/><property name="y_only" y="5"/><property name="xyzw" x="1" y="2" z="3" w="4"/>
+               <ranged_property name="r" min="-1.5" max="2abc"/><ranged_property name="lo" min="3"/>
+               <ranged_property name="c" min="float4(0.1,0.2,0.3,0.4)" max="float3(1,1,1)"/><property name="c_plain" value="float4(1,2,3,4)"/>
+               <property name="f2" value="float2(7,8)"/>"#,
+        );
+
+        // Components keep what the output had past the ones present, and past its own length.
+        let mut out = [9.0; 3];
+        p.vec("xy", &mut out);
+        assert_eq!(out, [1.0, 2.0, 9.0]);
+        let mut out = [9.0; 3];
+        p.vec("y_only", &mut out);
+        assert_eq!(out, [0.0, 5.0, 9.0]);
+        let mut out = [9.0; 2];
+        p.vec("xyzw", &mut out);
+        assert_eq!(out, [1.0, 2.0]);
+        let mut out = [9.0; 2];
+        p.vec("missing", &mut out);
+        assert_eq!(out, [9.0; 2]);
+
+        // A range with one end has 0 for the other; a plain property is not a range.
+        assert_eq!((p.range("r", 7.0, 8.0), p.range("lo", 7.0, 8.0), p.range("xy", 7.0, 8.0)), ((-1.5, 2.0), (3.0, 0.0), (7.0, 8.0)));
+        assert_eq!(p.find("r").unwrap().min_text, "-1.5");
+
+        let (mut lo, mut hi) = ([9.0; 4], [9.0; 4]);
+        p.colour("c", &mut lo, &mut hi);
+        assert_eq!((lo, hi), ([0.1, 0.2, 0.3, 0.4], [1.0, 1.0, 1.0, 9.0]));
+        let (mut lo, mut hi) = ([9.0; 4], [9.0; 4]);
+        p.colour("c_plain", &mut lo, &mut hi);
+        assert_eq!((lo, hi), ([9.0; 4], [9.0; 4]));
+
+        let mut out = [9.0; 3];
+        p.float_n("f2", &mut out);
+        assert_eq!(out, [7.0, 8.0, 9.0]);
+        let mut out = [9.0; 2];
+        p.float_n("c_plain", &mut out);
+        assert_eq!(out, [1.0, 2.0]);
+        let mut out = [9.0; 2];
+        p.float_n("missing", &mut out);
+        assert_eq!(out, [9.0; 2]);
+    }
+
+    #[test]
+    fn curve_properties_read_their_inner_text() {
+        let p = modifier(
+            "<property name=\"alpha\">a,1;0,0;1,1|b&amp;&lt;&gt;,2;0,0.5</property><property name=\"self\"/>\
+             <property name=\"blank\"></property><property name=\"kids\"><x/>a;0,1</property>",
+        );
+        assert_eq!(p.curve("alpha", "a").unwrap().keys, [(0.0, 0.0), (1.0, 1.0)]);
+        assert_eq!(p.curve("alpha", "b&<>").unwrap().eval(1.0), 0.5);
+        assert!(p.curve("alpha", "c").is_none() && p.curve("missing", "a").is_none());
+
+        // Only the predefined entities are decoded (wce_formats' rule), so a character reference stays in the text.
+        let raw = modifier("<property name=\"alpha\">a,1;0,0;1,&#49;</property>");
+        assert_eq!(raw.curve("alpha", "a").unwrap().keys, [(0.0, 0.0), (1.0, 0.0)]);
+        assert!(p.find("self").unwrap().curves.is_empty());
+        assert!(p.find("blank").unwrap().curves.is_empty());
+        assert!(p.find("kids").unwrap().curves.is_empty());
+    }
+
+    #[test]
+    fn a_vfx_file_with_its_references() {
+        let f = vfx(r#"<?xml version="1.0"?>
+<vfx camera_following="1" affected_by_wind="a&amp;b">
+  <emitters>
+    <emitter id="e1" type="continuous_mesh"><property name="P" value="1"/></emitter>
+    <not_an_emitter id="x"/>
+    <emitter/>
+    <emitter id="e1" type="duplicate"/>
+  </emitters>
+  <effect_render_stacks>
+    <effect_render_stack id="s1"><emitters_selected><e id="e1"/><e/></emitters_selected></effect_render_stack>
+    <effect_render_stack id="s2"><render_params scene_view_type="2.9" cast_shadows="1"/></effect_render_stack>
+  </effect_render_stacks>
+</vfx>
+<unknown_root/>
+<vfx_references>
+  <vfx inst_name="a" vfx_ref="lib" scale="3" pos_x="1" pos_z="-2" start_time="0.5" infinite_life="false">
+    <emitter name="e1" tint_r="0.5" tint_min_g="0.25" tint_max_b="2" enable="0" emitter_lifetime_bias_min="-1"/>
+    <emitter/>
+  </vfx>
+  <vfx inst_name="b" scale_min="2"/>
+  <other/>
+</vfx_references>"#);
+        assert!(f.camera_following());
+        assert_eq!(f.vfx_attrs["affected_by_wind"], "a&b");
+        assert_eq!(f.emitters.len(), 3);
+        assert_eq!((f.emitter("e1").unwrap().kind.as_str(), f.emitters[1].id.as_str()), ("continuous_mesh", ""));
+        assert!(f.emitter("x").is_none() && f.chain("c").is_none() && f.chains.is_empty());
+        assert_eq!((f.stacks[0].emitters.clone(), f.stacks[0].chains.len()), (vec!["e1".to_owned(), String::new()], 0));
+        assert_eq!((f.stacks[0].scene_view_type, f.stacks[0].cast_shadows), (0, false));
+        assert_eq!((f.stacks[1].scene_view_type, f.stacks[1].cast_shadows), (2, true));
+
+        assert_eq!(f.refs.len(), 2);
+        let a = &f.refs[0];
+        assert_eq!((a.inst_name.as_str(), a.library.as_str(), a.scale_min, a.scale_max), ("a", "lib", 3.0, 3.0));
+        assert_eq!((a.pos, a.start_time, a.infinite_life), ([1.0, 0.0, -2.0], 0.5, false));
+        let e = a.find("e1").unwrap();
+        assert!(!e.enable);
+        assert_eq!((e.tint_min, e.tint_max), ([0.5, 0.25, 1.0, 1.0], [0.5, 1.0, 2.0, 1.0]));
+        assert_eq!((e.particle_lifetime_bias, e.emitter_lifetime_bias), ([0.0, 0.0], [-1.0, 0.0]));
+        let blank = a.find("").unwrap();
+        assert!(blank.enable && blank.tint_min == [1.0; 4]);
+        assert!(a.find("e2").is_none());
+
+        let b = &f.refs[1];
+        assert_eq!((b.library.as_str(), b.scale_min, b.scale_max, b.infinite_life), ("", 2.0, 1.0, true));
+        assert!(b.emitters.is_empty());
+    }
+
+    #[test]
+    fn documents_without_definitions_give_an_empty_file() {
+        assert_eq!(vfx("<vfx/>"), VfxFile::default());
+        assert_eq!(vfx("<other><vfx camera_following=\"true\"/></other>"), VfxFile::default());
+        let f = vfx("<vfx><emitters/><behaviour_chains/><effect_render_stacks/></vfx>");
+        assert!(!f.camera_following() && f.emitters.is_empty() && f.chains.is_empty() && f.stacks.is_empty());
+    }
+
+    #[test]
+    fn the_chosen_quality_variant_wins_over_the_base() {
+        // The only test that changes the quality, and the only one with quality attributes: the variant is process-wide.
+        let text = r#"<vfx><emitters><emitter id="e">
+            <property name="A" quality="1" value="low1"/><property name="A" value="base"/><property name="A" quality="2" value="low2"/>
+            <property name="B" quality="2" value="only2"/><property name="C" value="c"/><property name="C" quality="7x" value="other"/>
+        </emitter></emitters></vfx>"#;
+        let read = |effects_quality: i32| {
+            set_quality(effects_quality);
+            let e = vfx(text).emitters.remove(0);
+            (e.text("A"), e.text("B"), e.text("C"))
+        };
+        let s = |a: &str, b: &str, c: &str| (a.to_owned(), b.to_owned(), c.to_owned());
+        assert_eq!(read(3), s("base", "only2", "c"));
+        assert_eq!(read(9), s("base", "only2", "c"));
+        assert_eq!(read(2), s("low1", "only2", "c"));
+        assert_eq!(read(1), s("low2", "only2", "c"));
+        assert_eq!(read(-5), s("low2", "only2", "c"));
+        set_quality(3);
+    }
 }

@@ -6,7 +6,10 @@
 
 use std::collections::BTreeMap;
 
-use wce_d3d11::{ContextExt, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_USAGE_DEFAULT, DeviceExt, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext};
+use wce_d3d11::{
+    ContextExt, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_USAGE_DEFAULT, DeviceExt, ID3D11Buffer, ID3D11Device,
+    ID3D11DeviceContext,
+};
 
 /// A variable of a buffer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,7 +35,6 @@ pub struct ConstantBuffers {
 }
 
 impl ConstantBuffers {
-
     /// Declares (or widens) a buffer from a shader's reflection. Variables already declared keep their first layout.
     pub fn declare(&mut self, name: &str, size: u32, vars: &BTreeMap<String, Var>) {
         let b = self.buffers.entry(name.to_owned()).or_insert_with(|| Buffer { name: name.to_owned(), dirty: true, ..Default::default() });
@@ -56,9 +58,10 @@ impl ConstantBuffers {
     /// so a pass can set everything it knows about.
     pub fn set(&mut self, cb: &str, var: &str, data: &[u8]) {
         let Some((b, v)) = self.buffers.get_mut(cb).and_then(|b| b.vars.get(var).copied().map(|v| (b, v))) else {
-            let key = format!("{cb}.{var}");
-            if !self.missing.contains(&key) {
-                self.missing.push(key);
+            // Compared in place: a pass sets the names it knows on every frame, and a name a shader lacks made a string each time.
+            let known = self.missing.iter().any(|k| k.len() == cb.len() + 1 + var.len() && k.starts_with(cb) && k.ends_with(var));
+            if !known {
+                self.missing.push(format!("{cb}.{var}"));
             }
 
             return;
@@ -84,7 +87,8 @@ impl ConstantBuffers {
     }
 
     pub fn set_f(&mut self, cb: &str, var: &str, v: &[f32]) {
-        self.set(cb, var, &v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>());
+        // The floats' own bytes (little endian on every platform the editor runs on), without a copy each call.
+        self.set(cb, var, bytemuck::cast_slice(v));
     }
 
     pub fn set_i(&mut self, cb: &str, var: &str, v: i32) {

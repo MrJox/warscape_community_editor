@@ -8,7 +8,17 @@ fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let t = TileList::parse(&std::fs::read(&a[0]).expect("file")).expect("tile list");
     let n: usize = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(20);
-    println!("version {} size {:?} centre {:?} offset {:?} bounds {:?} campaign {} rects {:?} tail {} bytes", t.version, t.battle_size, t.battle_centre, t.origin_offset, t.bounds, t.is_campaign, t.rects, t.tail.len());
+    println!(
+        "version {} size {:?} centre {:?} offset {:?} bounds {:?} campaign {} rects {:?} tail {} bytes",
+        t.version,
+        t.battle_size,
+        t.battle_centre,
+        t.origin_offset,
+        t.bounds,
+        t.is_campaign,
+        t.rects,
+        t.tail.len()
+    );
     for (i, name) in t.names.iter().enumerate() {
         println!("  name {i}: {name}");
     }

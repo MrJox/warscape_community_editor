@@ -5,8 +5,8 @@
 
 use std::io::Cursor;
 
-use rpfm_lib::files::esf::{ESF, NodeType};
 use rpfm_lib::files::Decodeable;
+use rpfm_lib::files::esf::{ESF, NodeType};
 
 fn walk(n: &NodeType, path: &str, filter: &str, out: &str, k: &mut usize) {
     let NodeType::Record(r) = n else { return };

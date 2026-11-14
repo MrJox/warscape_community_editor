@@ -96,8 +96,21 @@ pub struct TileIndex {
 
 /// One cache row: rel, size, mtime, location, tile_set, width, height, red, green, blue, links, targets, variations (`|` separated).
 fn row_of(e: &TileIndexEntry, rel: &str) -> String {
-    format!("{rel}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{}\t{}\t{}", e.size, e.mtime, e.location, e.tile_set, e.width, e.height,
-        f64::from(e.red), f64::from(e.green), f64::from(e.blue), e.links, e.targets, e.variations.join("|"))
+    format!(
+        "{rel}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{}\t{}\t{}",
+        e.size,
+        e.mtime,
+        e.location,
+        e.tile_set,
+        e.width,
+        e.height,
+        f64::from(e.red),
+        f64::from(e.green),
+        f64::from(e.blue),
+        e.links,
+        e.targets,
+        e.variations.join("|")
+    )
 }
 
 /// Fills a row from the cache; `None` if the row is not one.
@@ -150,7 +163,9 @@ fn find_candidates(raw_root: &Path) -> Vec<Candidate> {
             }
 
             let rel = xml.strip_prefix(raw_root).unwrap_or(&xml).to_string_lossy().replace('\\', "/");
-            let mtime = meta.modified().ok()
+            let mtime = meta
+                .modified()
+                .ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map_or(0, |since| i64::try_from(since.as_nanos()).unwrap_or(i64::MAX));
             found.push(Candidate { xml, rel, size: meta.len(), mtime });
@@ -169,7 +184,8 @@ fn read_cache(cache: &Path) -> HashMap<String, Vec<String>> {
         return HashMap::new();
     }
 
-    lines.map(|line| line.split('\t').map(str::to_owned).collect::<Vec<_>>())
+    lines
+        .map(|line| line.split('\t').map(str::to_owned).collect::<Vec<_>>())
         .filter_map(|fields| Some((fields.first()?.clone(), fields)))
         .collect()
 }
@@ -189,7 +205,6 @@ fn fnv1a(text: &str) -> u64 {
 }
 
 impl TileIndex {
-
     /// The entries of one raw_data folder (`<raw_root>/terrain/tiles/<kind>/_tile_database/TILES/*.xml` for every kind). `cache` is
     /// a file the rows are kept in between runs. Unreadable entries are skipped and listed in `problems`.
     pub fn build(raw_root: &Path, cache: Option<&Path>) -> Self {
@@ -197,23 +212,26 @@ impl TileIndex {
         let cached = cache.map(read_cache).unwrap_or_default();
 
         // Rows from the cache when the file is the one it describes, else read.
-        let rows = found.par_iter().map(|c| {
-            let mut row = TileIndexEntry {
-                xml: c.xml.clone(),
-                name: c.xml.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default(),
-                ..Default::default()
-            };
+        let rows = found
+            .par_iter()
+            .map(|c| {
+                let mut row = TileIndexEntry {
+                    xml: c.xml.clone(),
+                    name: c.xml.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default(),
+                    ..Default::default()
+                };
 
-            let from_cache = cached.get(&c.rel).is_some_and(|fields| {
-                let fields = fields.iter().map(String::as_str).collect::<Vec<_>>();
-                fill_from_row(&mut row, &fields).is_some() && row.size == c.size && row.mtime == c.mtime
-            });
+                let from_cache = cached.get(&c.rel).is_some_and(|fields| {
+                    let fields = fields.iter().map(String::as_str).collect::<Vec<_>>();
+                    fill_from_row(&mut row, &fields).is_some() && row.size == c.size && row.mtime == c.mtime
+                });
 
-            let error = if from_cache { None } else { fill_from_entry(&mut row, c).err() };
-            row.key = normalize_location(&row.location);
-            row.kind = kind_of(&row.key).unwrap_or_default().to_owned();
-            (row, from_cache, error)
-        }).collect::<Vec<_>>();
+                let error = if from_cache { None } else { fill_from_entry(&mut row, c).err() };
+                row.key = normalize_location(&row.location);
+                row.kind = kind_of(&row.key).unwrap_or_default().to_owned();
+                (row, from_cache, error)
+            })
+            .collect::<Vec<_>>();
 
         let mut index = Self { raw_root: raw_root.to_path_buf(), ..Default::default() };
         let mut kept = vec![];

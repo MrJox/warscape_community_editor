@@ -11,6 +11,8 @@
 //!
 //! A bone without a track keeps its skeleton's pose (`on_skeleton`), not the identity: a unit's clip moves 6 of its 50 bones and turns 32.
 
+use crate::bytes::{ByteReader, format_reader};
+
 /// A bone's local transform: translation, rotation quaternion (x y z w, normalised).
 pub type BoneLocal = ([f32; 3], [f32; 4]);
 
@@ -32,42 +34,17 @@ pub struct Animation {
     pub frames: Vec<Vec<BoneLocal>>,
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
-}
+format_reader!(Reader);
 
 impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Option<&[u8]> {
-        let s = self.b.get(self.p..self.p.checked_add(n)?)?;
-        self.p += n;
-        Some(s)
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-    }
-
-    fn i32(&mut self) -> Option<i32> {
-        self.u32().map(|v| v as i32)
-    }
-
-    fn f32(&mut self) -> Option<f32> {
-        self.u32().map(f32::from_bits)
-    }
-
-    fn i16(&mut self) -> Option<i16> {
-        self.take(2).map(|s| i16::from_le_bytes([s[0], s[1]]))
-    }
-
     /// A string with a u16 length, in characters: UTF-16 when `wide`, else one byte each.
     fn string(&mut self, wide: bool) -> Option<String> {
-        let n = self.take(2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize)?;
+        let n = usize::from(self.u16().ok()?);
         if wide {
-            let b = self.take(n * 2)?;
-            Some(String::from_utf16_lossy(&b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()))
+            let b = self.take(n * 2).ok()?;
+            Some(String::from_utf16_lossy(&b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()))
         } else {
-            self.take(n).map(|b| String::from_utf8_lossy(b).into_owned())
+            self.take(n).ok().map(|b| String::from_utf8_lossy(b).into_owned())
         }
     }
 }
@@ -80,59 +57,75 @@ fn normalised(q: [f32; 4]) -> [f32; 4] {
 impl Animation {
     /// Decodes a `.anim`; `None` when it isn't one this reads. `max_frames` limits how many frames are read (1: the first frame only).
     pub fn decode(bytes: &[u8], max_frames: usize) -> Option<Self> {
-        let mut r = Reader { b: bytes, p: 0 };
-        let version = r.u32()?;
+        let mut r = Reader(ByteReader::new(bytes));
+        let version = r.u32().ok()?;
         if version != 4 && version != 5 {
             return None;
         }
 
         let wide = version == 4;
-        r.u32()?;
-        let fps = r.f32()?;
+        r.u32().ok()?;
+        let fps = r.f32().ok()?;
         let skeleton = r.string(wide)?;
-        let end = r.f32()?;
-        let n = r.u32()? as usize;
+        let end = r.f32().ok()?;
+        let n = r.u32().ok()? as usize;
         let mut bones = Vec::with_capacity(n.min(4096));
         let mut parents = Vec::with_capacity(n.min(4096));
         for _ in 0..n {
             bones.push(r.string(wide)?);
-            parents.push(r.i32()?);
+            parents.push(r.i32().ok()?);
         }
 
         if version == 4 {
             for _ in 0..2 {
-                r.u32()?;
-                r.take(n.div_ceil(32) * 4)?;
+                r.u32().ok()?;
+                r.take(n.div_ceil(32) * 4).ok()?;
             }
 
-            let count = r.u32()? as usize;
-            if count == 0 || r.b.len().saturating_sub(r.p) < count.checked_mul(n)?.checked_mul(28)? {
+            let count = r.u32().ok()? as usize;
+            if count == 0 || r.left() < count.checked_mul(n)?.checked_mul(28)? {
                 return None;
             }
 
-            let frames = (0..count.min(max_frames)).map(|_| (0..n).map(|_| {
-                let t = [r.f32()?, r.f32()?, r.f32()?];
-                Some((t, normalised([r.f32()?, r.f32()?, r.f32()?, r.f32()?])))
-            }).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>()?;
+            // Frames without data (no bones) are all one pose: one is kept, as their count is not bounded by the file's bytes.
+            let keep = if n == 0 { 1 } else { count.min(max_frames) };
+            let frames = (0..keep.min(max_frames))
+                .map(|_| {
+                    (0..n)
+                        .map(|_| {
+                            let t = [r.f32().ok()?, r.f32().ok()?, r.f32().ok()?];
+                            Some((t, normalised([r.f32().ok()?, r.f32().ok()?, r.f32().ok()?, r.f32().ok()?])))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .collect::<Option<Vec<_>>>()?;
             return Some(Self { fps, end, skeleton, bones, parents, tracked: vec![(true, true); n], frames });
         }
 
-        let tmap = (0..n).map(|_| r.i32()).collect::<Option<Vec<_>>>()?;
-        let rmap = (0..n).map(|_| r.i32()).collect::<Option<Vec<_>>>()?;
-        let (nt, nr, count) = (r.u32()? as usize, r.u32()? as usize, r.u32()? as usize);
-        if count == 0 || r.b.len().saturating_sub(r.p) < count.checked_mul(nt.checked_mul(12)?.checked_add(nr.checked_mul(8)?)?)? {
+        let tmap = (0..n).map(|_| r.i32().ok()).collect::<Option<Vec<_>>>()?;
+        let rmap = (0..n).map(|_| r.i32().ok()).collect::<Option<Vec<_>>>()?;
+        let (nt, nr, count) = (r.u32().ok()? as usize, r.u32().ok()? as usize, r.u32().ok()? as usize);
+        if count == 0 || r.left() < count.checked_mul(nt.checked_mul(12)?.checked_add(nr.checked_mul(8)?)?)? {
             return None;
         }
 
-        let mut frames = Vec::with_capacity(count.min(max_frames).min(4096));
-        for _ in 0..count.min(max_frames) {
-            let ts = (0..nt).map(|_| Some([r.f32()?, r.f32()?, r.f32()?])).collect::<Option<Vec<_>>>()?;
-            let qs = (0..nr).map(|_| Some(normalised([r.i16()?, r.i16()?, r.i16()?, r.i16()?].map(|v| f32::from(v) / 32767.0)))).collect::<Option<Vec<_>>>()?;
-            frames.push((0..n).map(|i| {
-                let t = usize::try_from(tmap[i]).ok().and_then(|k| ts.get(k)).copied().unwrap_or([0.0; 3]);
-                let q = usize::try_from(rmap[i]).ok().and_then(|k| qs.get(k)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
-                (t, q)
-            }).collect());
+        // Frames without data (no tracks) are all one pose: one is kept, as their count is not bounded by the file's bytes.
+        let keep = if nt == 0 && nr == 0 { 1.min(max_frames) } else { count.min(max_frames) };
+        let mut frames = Vec::with_capacity(keep.min(4096));
+        for _ in 0..keep {
+            let ts = (0..nt).map(|_| Some([r.f32().ok()?, r.f32().ok()?, r.f32().ok()?])).collect::<Option<Vec<_>>>()?;
+            let qs = (0..nr)
+                .map(|_| Some(normalised([r.i16().ok()?, r.i16().ok()?, r.i16().ok()?, r.i16().ok()?].map(|v| f32::from(v) / 32767.0))))
+                .collect::<Option<Vec<_>>>()?;
+            frames.push(
+                (0..n)
+                    .map(|i| {
+                        let t = usize::try_from(tmap[i]).ok().and_then(|k| ts.get(k)).copied().unwrap_or([0.0; 3]);
+                        let q = usize::try_from(rmap[i]).ok().and_then(|k| qs.get(k)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                        (t, q)
+                    })
+                    .collect(),
+            );
         }
 
         let tracked = tmap.iter().zip(&rmap).map(|(t, q)| (*t >= 0, *q >= 0)).collect();
@@ -143,7 +136,8 @@ impl Animation {
     /// by name.
     pub fn on_skeleton(&mut self, skeleton: &Animation) {
         let Some(rest) = skeleton.frames.first() else { return };
-        let of: Vec<Option<BoneLocal>> = self.bones.iter().map(|b| skeleton.bones.iter().position(|n| n == b).and_then(|i| rest.get(i)).copied()).collect();
+        let of: Vec<Option<BoneLocal>> =
+            self.bones.iter().map(|b| skeleton.bones.iter().position(|n| n == b).and_then(|i| rest.get(i)).copied()).collect();
         for frame in &mut self.frames {
             for (i, (t, q)) in frame.iter_mut().enumerate() {
                 let Some((rt, rq)) = of[i] else { continue };
@@ -160,11 +154,7 @@ impl Animation {
 
     /// How long it plays, in seconds: its end time, else its frames at its rate.
     pub fn duration(&self) -> f32 {
-        if self.end > 0.0 {
-            self.end
-        } else {
-            self.frames.len().saturating_sub(1) as f32 / self.fps.max(1e-3)
-        }
+        if self.end > 0.0 { self.end } else { self.frames.len().saturating_sub(1) as f32 / self.fps.max(1e-3) }
     }
 
     /// The bones' local transforms at time `t` (seconds), between the two nearest frames (translations lerped, rotations nlerped along the
@@ -174,11 +164,14 @@ impl Animation {
         let f = (t.max(0.0) * self.fps).min(last as f32);
         let (i, w) = (f.floor() as usize, f.fract());
         let (a, b) = (&self.frames[i], &self.frames[(i + 1).min(last)]);
-        a.iter().zip(b).map(|((ta, qa), (tb, qb))| {
-            let t = std::array::from_fn(|c| ta[c] + (tb[c] - ta[c]) * w);
-            let sign = if qa.iter().zip(qb).map(|(x, y)| x * y).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
-            (t, normalised(std::array::from_fn(|c| qa[c] + (sign * qb[c] - qa[c]) * w)))
-        }).collect()
+        a.iter()
+            .zip(b)
+            .map(|((ta, qa), (tb, qb))| {
+                let t = std::array::from_fn(|c| ta[c] + (tb[c] - ta[c]) * w);
+                let sign = if qa.iter().zip(qb).map(|(x, y)| x * y).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+                (t, normalised(std::array::from_fn(|c| qa[c] + (sign * qb[c] - qa[c]) * w)))
+            })
+            .collect()
     }
 }
 

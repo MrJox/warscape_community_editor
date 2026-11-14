@@ -26,11 +26,11 @@ use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
 use crate::create_panel::{FolderRows, PROJECT_PREFAB_ICON, PROJECT_PREFAB_TIP, folder_order, folder_tree};
+use crate::settings::{SETTINGS_ID, TileSettings};
 use crate::tool::{Profile, TILE_TOOL_ID, TileTool};
 
 /// The tool's id: the owner of its stages.
 pub const PREFAB_TOOL_ID: &str = "prefab";
-
 
 /// What the stage's ground's size was found for: the stage, its history's and terrain's versions, the flag and the feather's bits.
 type SizeKey = (DocumentId, u64, bool, u32);
@@ -81,7 +81,22 @@ impl Default for PrefabTool {
     fn default() -> Self {
         let mut tile = TileTool::default();
         tile.profile = Profile::Prefab;
-        Self { tile, stage: StageSettings::default(), stage_draft: StageSettings::default(), outline: true, look: None, asking: None, open: None, hidden: vec![], ground_size: ((0, 0, false, 0), None), filter: String::new(), list: None, new_name: String::new(), new_folder: String::new(), status: String::new() }
+        Self {
+            tile,
+            stage: StageSettings::default(),
+            stage_draft: StageSettings::default(),
+            outline: true,
+            look: None,
+            asking: None,
+            open: None,
+            hidden: vec![],
+            ground_size: ((0, 0, false, 0), None),
+            filter: String::new(),
+            list: None,
+            new_name: String::new(),
+            new_folder: String::new(),
+            status: String::new(),
+        }
     }
 }
 
@@ -97,7 +112,9 @@ enum Ask {
 /// A group with nothing in it, as a new prefab's.
 fn empty_group(name: &str) -> String {
     let name = String::from_utf8_lossy(&wce_formats::xml_doc::encode_entities(name.as_bytes(), b'"')).into_owned();
-    format!("<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE\" position=\"vector(0,0,0)\" name=\"{name}\" orientation=\"euler(0,0,0)\">\n    <children>\n    </children>\n</UserInstanceGroup>\n")
+    format!(
+        "<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE\" position=\"vector(0,0,0)\" name=\"{name}\" orientation=\"euler(0,0,0)\">\n    <children>\n    </children>\n</UserInstanceGroup>\n"
+    )
 }
 
 impl PrefabTool {
@@ -135,7 +152,9 @@ impl PrefabTool {
     /// The one there has unsaved changes (a script gave no answer), no such prefab, or the stage can't be made.
     pub fn open_prefab(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
         let again = key.to_owned();
-        let retry = Box::new(move |e: &mut Editor| e.with_tool::<Self, _>(|p, e| p.open_prefab(e, &again)).unwrap_or_else(|| Err("the Prefab tool is busy".to_owned())));
+        let retry = Box::new(move |e: &mut Editor| {
+            e.with_tool::<Self, _>(|p, e| p.open_prefab(e, &again)).unwrap_or_else(|| Err("the Prefab tool is busy".to_owned()))
+        });
         if !e.clear_to_replace(PREFAB_TOOL_ID, retry)? {
             return Ok(format!("asking about the stage's unsaved changes before opening {key}"));
         }
@@ -152,7 +171,12 @@ impl PrefabTool {
         self.close_stage(e, true)?;
 
         let mut project = wce_tile::prefab_stage::make(&Self::stage_root(e), &self.stage, &prefab.group_text)?;
-        let group = project.scene.find_all("UserInstanceGroup").into_iter().find(|&g| project.scene.doc().get(g, STAGE_ATTR).is_some()).ok_or("the stage lost its group")?;
+        let group = project
+            .scene
+            .find_all("UserInstanceGroup")
+            .into_iter()
+            .find(|&g| project.scene.doc().get(g, STAGE_ATTR).is_some())
+            .ok_or("the stage lost its group")?;
         let (normalize, feather) = terrain.as_ref().map_or((false, DEFAULT_FEATHER), |t| (t.normalize, t.feather));
         project.scene.set_attr(group, NORMALIZE_ATTR, if normalize { "true" } else { "false" });
         project.scene.set_attr(group, FEATHER_ATTR, &wce_tile::ted_scene::format_number(feather));
@@ -165,16 +189,19 @@ impl PrefabTool {
         let saved = Arc::new(AtomicBool::new(false));
         let projects = Self::projects_prefabs(e);
         let (save_key, flag) = (entry.key.clone(), saved.clone());
-        doc.set_stage(&format!("Prefab {}", entry.key), Box::new(move |d: &mut TileDocument| {
-            let group = d.stage_group().ok_or("the stage has no prefab group")?;
-            let doc = d.tile().tscene().doc();
-            let normalize = doc.get(group, NORMALIZE_ATTR).is_some_and(|v| v == "true");
-            let feather = doc.get(group, FEATHER_ATTR).and_then(|v| v.parse::<f64>().ok()).unwrap_or(DEFAULT_FEATHER).max(0.0);
-            let terrain = d.stage_terrain(normalize, feather);
-            let path = lib.save_with_terrain(&save_key, &projects, &d.stage_children_text(group), terrain.as_ref())?;
-            flag.store(true, Ordering::Relaxed);
-            Ok(format!("prefab saved to {}{}", path.display(), if terrain.is_some() { " with its ground" } else { "" }))
-        }));
+        doc.set_stage(
+            &format!("Prefab {}", entry.key),
+            Box::new(move |d: &mut TileDocument| {
+                let group = d.stage_group().ok_or("the stage has no prefab group")?;
+                let doc = d.tile().tscene().doc();
+                let normalize = doc.get(group, NORMALIZE_ATTR).is_some_and(|v| v == "true");
+                let feather = doc.get(group, FEATHER_ATTR).and_then(|v| v.parse::<f64>().ok()).unwrap_or(DEFAULT_FEATHER).max(0.0);
+                let terrain = d.stage_terrain(normalize, feather);
+                let path = lib.save_with_terrain(&save_key, &projects, &d.stage_children_text(group), terrain.as_ref())?;
+                flag.store(true, Ordering::Relaxed);
+                Ok(format!("prefab saved to {}{}", path.display(), if terrain.is_some() { " with its ground" } else { "" }))
+            }),
+        );
 
         let id = e.replace_document(PREFAB_TOOL_ID, Box::new(doc))?;
 
@@ -192,7 +219,11 @@ impl PrefabTool {
         self.open = Some(Open { doc: id, key: entry.key.clone(), saved, old: prefab.children_text });
         self.show_stage(e);
         e.pending_focus = Some("Scene".to_owned());
-        Ok(format!("{} on the stage{}", entry.key, if entry.wce { "" } else { " (from the Assembly Kit: a save makes the projects' copy)" }))
+        Ok(format!(
+            "{} on the stage{}",
+            entry.key,
+            if entry.wce { "" } else { " (from the Assembly Kit: a save makes the projects' copy)" }
+        ))
     }
 
     /// The stage's prefab saved as a new prefab of the projects (`folder` below `art/prefabs`) with what the stage holds now, and opened
@@ -280,7 +311,8 @@ impl PrefabTool {
     ///
     /// Out of limits, or the stage has unsaved changes.
     pub fn set_stage(&mut self, e: &mut Editor, settings: StageSettings) -> Result<String, String> {
-        if !(1..=8).contains(&settings.cells) || !wce_tile::new_tile::DENSITIES.contains(&settings.density) || !settings.height.is_finite() {
+        if !(1..=8).contains(&settings.cells) || !wce_tile::new_tile::DENSITIES.contains(&settings.density) || !settings.height.is_finite()
+        {
             return Err("a stage of 1 to 8 cells, density 32, 64 or 128".to_owned());
         }
 
@@ -419,7 +451,8 @@ impl PrefabTool {
         let normalize = doc.get(group, NORMALIZE_ATTR).is_some_and(|v| v == "true");
         let feather = doc.get(group, FEATHER_ATTR).and_then(|v| v.parse::<f64>().ok()).unwrap_or(DEFAULT_FEATHER).max(0.0);
         let version = d.project().height.as_ref().map_or(0, |f| f.version().1);
-        let key = show.then(|| d.history().version().rotate_left(17) ^ version ^ u64::from(normalize) << 63 ^ feather.to_bits().rotate_left(29) | 1);
+        let key = show
+            .then(|| d.history().version().rotate_left(17) ^ version ^ u64::from(normalize) << 63 ^ feather.to_bits().rotate_left(29) | 1);
         d.show_stage_outline(&mut e.scene, normalize, feather, key);
     }
 
@@ -441,9 +474,17 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the stage's prefab, with its ground.");
+            }
+
             gui::same_line();
             if gui::button("Save as...") {
                 ask_now = Some((Ask::SaveAs, key.clone()));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the stage as a new prefab of the projects and opens it; the old one stays as its file has it.");
             }
 
             gui::same_line();
@@ -452,10 +493,18 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Drops the unsaved changes: the prefab as its file has it again.");
+            }
+
             gui::same_line();
             if gui::button("Save for Assembly Kit") {
                 let r = self.save_for_kit(e);
                 self.report(e, r);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Writes the prefab as TEd reads it (no ground) into an Assembly Kit; save it first.");
             }
 
             gui::text_wrapped("Settings in the Inspector: select the prefab (its ground) or the root (the stage)");
@@ -465,9 +514,17 @@ impl PrefabTool {
         // New.
         gui::set_next_item_width(140.0);
         gui::input_text("##new_name", Some("new prefab"), &mut self.new_name, 128, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new prefab's name (its key and file name).");
+        }
+
         gui::same_line();
         gui::set_next_item_width(100.0);
         gui::input_text("##new_folder", Some("folder"), &mut self.new_folder, 256, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new prefab's folder below art/prefabs, e.g. global/rocks (optional).");
+        }
+
         gui::same_line();
         if gui::button(&format!("{}##new", icons::PACKAGE_PLUS)) {
             let (name, folder) = (self.new_name.clone(), self.new_folder.clone());
@@ -487,17 +544,45 @@ impl PrefabTool {
             gui::text_wrapped(&self.status);
         }
 
+        // The view: a list, or a grid of pictures (the Create panel's thumbnails), kept in the settings.
+        let grid = e.tool_settings::<TileSettings>(SETTINGS_ID).prefab_grid;
+        for (on, icon, tip) in [
+            (false, icons::LIST_TREE, "A list"),
+            (
+                true,
+                icons::LAYOUT_GRID,
+                "Pictures: each prefab with its thumbnail, made as it comes into view while a prefab is on the stage",
+            ),
+        ] {
+            if gui::selectable_sized(&format!("{icon}##prefabview{on}"), grid == on, 0, gui::v2(gui::frame_height(), 0.0)) && grid != on {
+                e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.prefab_grid = on);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
+
+            gui::same_line();
+        }
+
         gui::set_next_item_width(-1.0);
         gui::input_text("##prefab_filter", Some(&format!("{}  search", icons::SEARCH)), &mut self.filter, 256, 0);
+        if grid && crate::tool::document(e).is_none() {
+            gui::text_disabled("New thumbnails are made while a prefab is on the stage; the ones made before show.");
+        }
 
         // By folder, folders first, as the Create panel lists them; made again for another library or filter.
         let stamp = (Arc::as_ptr(&lib) as usize, self.filter.clone());
         if self.list.as_ref().is_none_or(|(s, _, _)| *s != stamp) {
             let words = self.filter.to_lowercase().split_whitespace().map(str::to_owned).collect::<Vec<_>>();
-            let mut list = lib.entries().filter(|p| {
-                let path = format!("{}/{}", p.folder, p.key).to_lowercase();
-                words.iter().all(|w| path.contains(w))
-            }).cloned().collect::<Vec<_>>();
+            let mut list = lib
+                .entries()
+                .filter(|p| {
+                    let path = format!("{}/{}", p.folder, p.key).to_lowercase();
+                    words.iter().all(|w| path.contains(w))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             list.sort_by_cached_key(|p| (folder_order(&p.folder), p.key.to_lowercase()));
             let folders = FolderRows::of(list.iter().enumerate().map(|(i, p)| (i, p.folder.as_str())));
             self.list = Some((stamp, list, folders));
@@ -506,6 +591,7 @@ impl PrefabTool {
         let (_, list, folders) = self.list.as_ref().expect("made above");
         let filtering = !self.filter.trim().is_empty();
         let on = self.open_key().map(str::to_owned);
+        let tile = &mut self.tile;
         let mut open = None;
         if gui::begin_child("prefab_list", gui::v2(0.0, 0.0), 0, 0) {
             if list.is_empty() {
@@ -513,6 +599,30 @@ impl PrefabTool {
             }
 
             folder_tree("prefab_lib", folders, filtering, |rows| {
+                if grid {
+                    let spacing = gui::item_spacing().x;
+                    let across = (((gui::content_region_avail().x + spacing) / (GRID_SIDE + spacing)) as usize).max(1);
+                    let lines = rows.len().div_ceil(across);
+                    gui::clipped(lines, |l| {
+                        for (k, &i) in rows[l * across..((l + 1) * across).min(rows.len())].iter().enumerate() {
+                            if k > 0 {
+                                gui::same_line();
+                            }
+
+                            let p = &list[i];
+                            let ours = p.wce && p.path.starts_with(&projects);
+                            let img = tile.prefab_thumbnail(e, &p.key);
+                            if prefab_cell(p, ours, on.as_deref() == Some(p.key.as_str()), img) {
+                                open = Some(p.key.clone());
+                            }
+
+                            prefab_menu(p, ours, &mut open, &mut ask_now);
+                        }
+                    });
+
+                    return;
+                }
+
                 gui::clipped(rows.len(), |r| {
                     let p = &list[rows[r]];
                     let ours = p.wce && p.path.starts_with(&projects);
@@ -522,7 +632,9 @@ impl PrefabTool {
                     }
 
                     let label = format!("{}  {}##{}/{}", if ours { PROJECT_PREFAB_ICON } else { icons::COMPONENT }, p.key, p.folder, p.key);
-                    if gui::selectable(&label, on.as_deref() == Some(p.key.as_str()), gui::SELECTABLE_ALLOW_DOUBLE_CLICK) && gui::is_mouse_double_clicked(0) {
+                    if gui::selectable(&label, on.as_deref() == Some(p.key.as_str()), gui::SELECTABLE_ALLOW_DOUBLE_CLICK)
+                        && gui::is_mouse_double_clicked(0)
+                    {
                         open = Some(p.key.clone());
                     }
 
@@ -531,29 +643,12 @@ impl PrefabTool {
                     }
 
                     if gui::is_item_hovered() {
-                        let from = if ours { PROJECT_PREFAB_TIP } else { "A prefab of an Assembly Kit (TEd's): a save makes the projects' copy." };
+                        let from =
+                            if ours { PROJECT_PREFAB_TIP } else { "A prefab of an Assembly Kit (TEd's): a save makes the projects' copy." };
                         gui::set_tooltip(&format!("{}\n{from}\nDouble-click: open it on the stage; right click: more", p.path.display()));
                     }
 
-                    if gui::begin_popup_context_item(&format!("##ctx{}/{}", p.folder, p.key)) {
-                        if gui::menu_item("Open", None, false, true) {
-                            open = Some(p.key.clone());
-                        }
-
-                        if gui::menu_item("Duplicate...", None, false, true) {
-                            ask_now = Some((Ask::Duplicate, p.key.clone()));
-                        }
-
-                        if gui::menu_item("Rename...", None, false, ours) {
-                            ask_now = Some((Ask::Rename, p.key.clone()));
-                        }
-
-                        if gui::menu_item("Delete...", None, false, ours) {
-                            ask_now = Some((Ask::Delete, p.key.clone()));
-                        }
-
-                        gui::end_popup();
-                    }
+                    prefab_menu(p, ours, &mut open, &mut ask_now);
                 });
             });
         }
@@ -595,7 +690,9 @@ impl PrefabTool {
         let (what, key) = (*what, key.clone());
         let mut go = false;
         match what {
-            Ask::Delete => gui::text(&format!("Delete the projects' prefab {key}? Its file goes; tiles' references to it find the Assembly Kit's of that name, if any.")),
+            Ask::Delete => gui::text(&format!(
+                "Delete the projects' prefab {key}? Its file goes; tiles' references to it find the Assembly Kit's of that name, if any."
+            )),
             _ => {
                 gui::text(match what {
                     Ask::SaveAs => "Save the stage as a new prefab:",
@@ -608,6 +705,9 @@ impl PrefabTool {
                 if what != Ask::Rename {
                     gui::set_next_item_width(220.0);
                     gui::input_text("folder##ask", Some("below art/prefabs"), folder, 256, 0);
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("The new prefab's folder below art/prefabs (optional).");
+                    }
                 }
             }
         }
@@ -652,10 +752,18 @@ impl PrefabTool {
             self.stage_draft.cells = cells.clamp(1, 8) as u32;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The stage's size, in cells of 128 m a side. Takes effect on Apply.");
+        }
+
         let mut height = self.stage_draft.height as f32;
         gui::set_next_item_width(120.0);
         if gui::drag_float("ground height", &mut height, 0.5, -500.0, 2000.0, "%.1f") {
             self.stage_draft.height = f64::from(height);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The height of the stage's flat ground (m). Takes effect on Apply.");
         }
 
         let densities = wce_tile::new_tile::DENSITIES;
@@ -680,10 +788,12 @@ impl PrefabTool {
 
         gui::checkbox("Outlines of the ground", &mut self.outline);
         if gui::is_item_hovered() {
-            gui::set_tooltip("Orange: where the prefab's ground covers (sculpted or painted with the Ground brush). Yellow: how far the feather blends it into a tile, normalized.");
+            gui::set_tooltip(
+                "Orange: where the prefab's ground covers (sculpted or painted with the Ground brush). Yellow: how far the feather blends it into a tile, normalized.",
+            );
         }
 
-        gui::text_disabled("The climate and season: the ground chip at the viewport's top right.");
+        gui::text_disabled("The climate and season: the climate and season chips at the viewport's top left.");
     }
 
     /// The prefab's own settings, saved in it (with its ground): its height layer's. In the Inspector, under the prefab's group.
@@ -702,9 +812,11 @@ impl PrefabTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Saved in the prefab, with its ground. On: placed in a tile, the ground under the prefab's footprint is taken as this stage's \
+            gui::set_tooltip(
+                "Saved in the prefab, with its ground. On: placed in a tile, the ground under the prefab's footprint is taken as this stage's \
                 plain (at the height under its origin) and its ground goes over it, so it looks as it does here. Off: its ground adds to whatever \
-                ground it is put on.");
+                ground it is put on.",
+            );
         }
 
         if normalize {
@@ -721,7 +833,8 @@ impl PrefabTool {
         // Found again after an edit only.
         let key = (d.id(), d.history().version() ^ d.tile().terrain_version().rotate_left(32), normalize, feather.to_bits());
         if self.ground_size.0 != key {
-            let size = d.stage_terrain(normalize, f64::from(feather)).map(|t| (f64::from(t.width) * t.spacing, f64::from(t.height) * t.spacing));
+            let size =
+                d.stage_terrain(normalize, f64::from(feather)).map(|t| (f64::from(t.width) * t.spacing, f64::from(t.height) * t.spacing));
             self.ground_size = (key, size);
         }
 
@@ -756,6 +869,16 @@ fn with_prefab(e: &mut Editor, f: impl FnOnce(&mut PrefabTool, &mut Editor) -> R
 }
 
 fn register(c: &mut CommandRegistry<Editor>) {
+    c.add("prefab_tool_grid", "prefab_tool_grid on|off", "the Prefabs panel as a grid of pictures (on) or a list (off)", |e, a| {
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return CommandResult::fail("usage: prefab_tool_grid on|off"),
+        };
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.prefab_grid = on);
+        CommandResult::success("")
+    });
+
     c.add("prefab_tool_open", "prefab_tool_open <key>", "open a prefab on the Prefab tool's stage", |e, a| {
         let Some(key) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_open <key>") };
         with_prefab(e, |p, e| p.open_prefab(e, &key))
@@ -767,36 +890,73 @@ fn register(c: &mut CommandRegistry<Editor>) {
         with_prefab(e, |p, e| p.new_prefab(e, &name, &folder))
     });
 
-    c.add("prefab_tool_save", "prefab_tool_save", "save the stage's prefab (its contents and its ground) into the projects", |e, _| with_prefab(e, PrefabTool::save));
-    c.add("prefab_tool_revert", "prefab_tool_revert", "open the stage's prefab again as its file has it", |e, _| with_prefab(e, PrefabTool::revert));
-    c.add("prefab_tool_save_kit", "prefab_tool_save_kit", "save the stage's prefab for the Assembly Kit (TEd's prefabs have no ground)", |e, _| with_prefab(e, PrefabTool::save_for_kit));
-    c.add("prefab_tool_save_as", "prefab_tool_save_as <name> [folder]", "save the stage as a new prefab of the projects and open it", |e, a| {
-        let Some(name) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_save_as <name> [folder]") };
-        let folder = a.get(1).cloned().unwrap_or_default();
-        with_prefab(e, |p, e| p.save_as(e, &name, &folder))
+    c.add("prefab_tool_save", "prefab_tool_save", "save the stage's prefab (its contents and its ground) into the projects", |e, _| {
+        with_prefab(e, PrefabTool::save)
     });
+    c.add("prefab_tool_revert", "prefab_tool_revert", "open the stage's prefab again as its file has it", |e, _| {
+        with_prefab(e, PrefabTool::revert)
+    });
+    c.add(
+        "prefab_tool_save_kit",
+        "prefab_tool_save_kit",
+        "save the stage's prefab for the Assembly Kit (TEd's prefabs have no ground)",
+        |e, _| with_prefab(e, PrefabTool::save_for_kit),
+    );
+    c.add(
+        "prefab_tool_save_as",
+        "prefab_tool_save_as <name> [folder]",
+        "save the stage as a new prefab of the projects and open it",
+        |e, a| {
+            let Some(name) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_save_as <name> [folder]") };
+            let folder = a.get(1).cloned().unwrap_or_default();
+            with_prefab(e, |p, e| p.save_as(e, &name, &folder))
+        },
+    );
 
-    c.add("prefab_tool_duplicate", "prefab_tool_duplicate <key> <name> [folder]", "a copy of a prefab as a new one of the projects", |e, a| {
-        let (Some(key), Some(name)) = (a.first().cloned(), a.get(1).cloned()) else { return CommandResult::fail("usage: prefab_tool_duplicate <key> <name> [folder]") };
-        let folder = a.get(2).cloned().unwrap_or_default();
-        with_prefab(e, |p, e| p.duplicate(e, &key, &name, &folder))
-    });
+    c.add(
+        "prefab_tool_duplicate",
+        "prefab_tool_duplicate <key> <name> [folder]",
+        "a copy of a prefab as a new one of the projects",
+        |e, a| {
+            let (Some(key), Some(name)) = (a.first().cloned(), a.get(1).cloned()) else {
+                return CommandResult::fail("usage: prefab_tool_duplicate <key> <name> [folder]");
+            };
+            let folder = a.get(2).cloned().unwrap_or_default();
+            with_prefab(e, |p, e| p.duplicate(e, &key, &name, &folder))
+        },
+    );
 
-    c.add("prefab_tool_rename", "prefab_tool_rename <key> <name>", "rename a prefab of the projects (tiles' references keep the old name)", |e, a| {
-        let (Some(key), Some(name)) = (a.first().cloned(), a.get(1).cloned()) else { return CommandResult::fail("usage: prefab_tool_rename <key> <name>") };
-        with_prefab(e, |p, e| p.rename(e, &key, &name))
-    });
+    c.add(
+        "prefab_tool_rename",
+        "prefab_tool_rename <key> <name>",
+        "rename a prefab of the projects (tiles' references keep the old name)",
+        |e, a| {
+            let (Some(key), Some(name)) = (a.first().cloned(), a.get(1).cloned()) else {
+                return CommandResult::fail("usage: prefab_tool_rename <key> <name>");
+            };
+            with_prefab(e, |p, e| p.rename(e, &key, &name))
+        },
+    );
 
     c.add("prefab_tool_delete", "prefab_tool_delete <key>", "delete a prefab of the projects", |e, a| {
         let Some(key) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_delete <key>") };
         with_prefab(e, |p, e| p.delete(e, &key))
     });
 
-    c.add("prefab_tool_stage", "prefab_tool_stage <cells> <ground height> <density 32|64|128>", "the stage's settings (the prefab opened again on a new stage)", |e, a| {
-        let parsed = (|| Some(StageSettings { cells: a.first()?.parse().ok()?, height: a.get(1)?.parse().ok()?, density: a.get(2)?.parse().ok()? }))();
-        let Some(settings) = parsed else { return CommandResult::fail("usage: prefab_tool_stage <cells> <ground height> <density 32|64|128>") };
-        with_prefab(e, |p, e| p.set_stage(e, settings))
-    });
+    c.add(
+        "prefab_tool_stage",
+        "prefab_tool_stage <cells> <ground height> <density 32|64|128>",
+        "the stage's settings (the prefab opened again on a new stage)",
+        |e, a| {
+            let parsed = (|| {
+                Some(StageSettings { cells: a.first()?.parse().ok()?, height: a.get(1)?.parse().ok()?, density: a.get(2)?.parse().ok()? })
+            })();
+            let Some(settings) = parsed else {
+                return CommandResult::fail("usage: prefab_tool_stage <cells> <ground height> <density 32|64|128>");
+            };
+            with_prefab(e, |p, e| p.set_stage(e, settings))
+        },
+    );
 
     c.add("prefab_tool_outline", "prefab_tool_outline on|off", "the stage's outlines of the prefab's ground", |e, a| {
         let on = a.first().is_none_or(|v| v != "off");
@@ -806,20 +966,25 @@ fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("prefab_tool_normalize", "prefab_tool_normalize on|off [feather]", "the stage's prefab normalizes the ground it stands on, with this feather", |e, a| {
-        let on = a.first().is_none_or(|v| v != "off");
-        let feather = a.get(1).and_then(|f| f.parse::<f64>().ok());
-        with_prefab(e, |p, e| {
-            let d = p.stage(e).ok_or("no prefab on the stage")?;
-            let g = d.stage_group().ok_or("the stage has no prefab group")?;
-            d.set_attribute(g, NORMALIZE_ATTR, if on { "true" } else { "false" });
-            if let Some(f) = feather {
-                d.set_attribute(g, FEATHER_ATTR, &wce_tile::ted_scene::format_number(f.max(0.0)));
-            }
+    c.add(
+        "prefab_tool_normalize",
+        "prefab_tool_normalize on|off [feather]",
+        "the stage's prefab normalizes the ground it stands on, with this feather",
+        |e, a| {
+            let on = a.first().is_none_or(|v| v != "off");
+            let feather = a.get(1).and_then(|f| f.parse::<f64>().ok());
+            with_prefab(e, |p, e| {
+                let d = p.stage(e).ok_or("no prefab on the stage")?;
+                let g = d.stage_group().ok_or("the stage has no prefab group")?;
+                d.set_attribute(g, NORMALIZE_ATTR, if on { "true" } else { "false" });
+                if let Some(f) = feather {
+                    d.set_attribute(g, FEATHER_ATTR, &wce_tile::ted_scene::format_number(f.max(0.0)));
+                }
 
-            Ok(format!("normalize {}", if on { "on" } else { "off" }))
-        })
-    });
+                Ok(format!("normalize {}", if on { "on" } else { "off" }))
+            })
+        },
+    );
 
     c.add("prefab_tool_close", "prefab_tool_close [discard]", "close the stage", |e, a| {
         let discard = a.first().is_some_and(|v| v == "discard");
@@ -853,7 +1018,6 @@ impl Tool for PrefabTool {
         gui::dock_builder_dock_window("Create", left);
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Inspector", right);
-        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
@@ -864,32 +1028,25 @@ impl Tool for PrefabTool {
         self.tile.draw_panels(e);
     }
 
-    fn draw_menus(&mut self, e: &mut Editor) {
-        if gui::begin_menu("Prefab") {
-            let open = self.open.is_some();
-            let mut r = None;
-            if gui::menu_item("Save", None, false, open) {
-                r = Some(self.save(e));
-            }
-
-            if gui::menu_item("Revert", None, false, open) {
-                r = Some(self.revert(e));
-            }
-
-            gui::separator();
-            if gui::menu_item("Close the stage", None, false, open) {
-                r = Some(self.close_stage(e, false).map(|()| "stage closed".to_owned()));
-            }
-
-            gui::end_menu();
-            if let Some(r) = r {
-                self.report(e, r);
-            }
-        }
+    /// File > Revert > To saved: the prefab as its file has it, read again (File > Save saves the stage, File > Close document closes it).
+    fn revert(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        self.open.is_some().then(|| self.revert(e))
     }
 
-    fn toolbar(&mut self, e: &mut Editor) {
-        self.tile.toolbar(e);
+    fn viewport_modes(&mut self, e: &mut Editor) -> bool {
+        self.tile.viewport_modes(e)
+    }
+
+    fn leave_mode(&mut self, e: &mut Editor) {
+        self.tile.leave_mode(e);
+    }
+
+    fn can_centre_drag(&self, e: &Editor) -> bool {
+        self.tile.can_centre_drag(e)
+    }
+
+    fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
+        self.tile.begin_centre_drag(e)
     }
 
     fn edit_menu(&mut self, e: &mut Editor) {
@@ -903,7 +1060,9 @@ impl Tool for PrefabTool {
         }
 
         if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Writes the stage's prefab as TEd reads it (its .xml: references baked, props as models, no ground) into an Assembly Kit.");
+            gui::set_tooltip(
+                "Writes the stage's prefab as TEd reads it (its .xml: references baked, props as models, no ground) into an Assembly Kit.",
+            );
         }
 
         true
@@ -936,11 +1095,7 @@ impl Tool for PrefabTool {
         let one = (sel.len() == 1 && sel[0].doc == id).then(|| wce_tile_editor::tile_document::elem_of(sel[0].item)).flatten();
         let what = one.and_then(|el| {
             let d = e.docs.find_as::<TileDocument>(id)?;
-            if Some(el) == d.stage_group() {
-                Some(true)
-            } else {
-                (d.tile().tscene().type_of(el) == "SCENE_GRAPH").then_some(false)
-            }
+            if Some(el) == d.stage_group() { Some(true) } else { (d.tile().tscene().type_of(el) == "SCENE_GRAPH").then_some(false) }
         });
 
         match what {
@@ -972,6 +1127,10 @@ impl Tool for PrefabTool {
         self.tile.claims_left_button(e)
     }
 
+    fn open_gesture(&self) -> Option<&'static str> {
+        self.tile.open_gesture()
+    }
+
     fn tool_gizmo(&self, e: &Editor, dragging: bool) -> Option<wce_foundation::math::Float4x4> {
         self.tile.tool_gizmo(e, dragging)
     }
@@ -992,7 +1151,13 @@ impl Tool for PrefabTool {
         self.tile.snap_gizmo_move(e, item, from, to)
     }
 
-    fn snap_gizmo_rotate(&self, e: &Editor, item: SourceRef, frame: &wce_foundation::math::Float4x4, moved: wce_foundation::math::Float4x4) -> wce_foundation::math::Float4x4 {
+    fn snap_gizmo_rotate(
+        &self,
+        e: &Editor,
+        item: SourceRef,
+        frame: &wce_foundation::math::Float4x4,
+        moved: wce_foundation::math::Float4x4,
+    ) -> wce_foundation::math::Float4x4 {
         self.tile.snap_gizmo_rotate(e, item, frame, moved)
     }
 
@@ -1048,4 +1213,92 @@ impl TileTool {
             }
         }
     }
+}
+
+/// A prefab's right-click menu (the list's rows and the grid's cells): Open, Duplicate..., and for the projects' prefabs Rename... and
+/// Delete...; what was picked goes into `open` / `ask_now`.
+fn prefab_menu(p: &prefabs::PrefabEntry, ours: bool, open: &mut Option<String>, ask_now: &mut Option<(Ask, String)>) {
+    if gui::begin_popup_context_item(&format!("##ctx{}/{}", p.folder, p.key)) {
+        if gui::menu_item("Open", None, false, true) {
+            *open = Some(p.key.clone());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the prefab on the stage.");
+        }
+
+        if gui::menu_item("Duplicate...", None, false, true) {
+            *ask_now = Some((Ask::Duplicate, p.key.clone()));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Copies the prefab as a new one of the projects, under a name you give.");
+        }
+
+        if gui::menu_item("Rename...", None, false, ours) {
+            *ask_now = Some((Ask::Rename, p.key.clone()));
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(
+                "Renames the projects' prefab; tiles' references to the old name are not changed. Only the projects' prefabs.",
+            );
+        }
+
+        if gui::menu_item("Delete...", None, false, ours) {
+            *ask_now = Some((Ask::Delete, p.key.clone()));
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Deletes the projects' prefab file, after asking. Only the projects' prefabs.");
+        }
+
+        gui::end_popup();
+    }
+}
+
+/// The side of a picture in the Prefabs panel's grid (points), as the Create panel's.
+const GRID_SIDE: f32 = 96.0;
+
+/// A prefab's cell in the grid: its thumbnail (its icon until there is one) over its name (green for the projects'), lit while it is on
+/// the stage. True on a double click (open it).
+fn prefab_cell(p: &prefabs::PrefabEntry, ours: bool, on: bool, img: Option<wce_editor::images::ImageRef>) -> bool {
+    let line = gui::text_line_height_with_spacing();
+    let at = gui::cursor_screen_pos();
+    let id = format!("##cell{}/{}", p.folder, p.key);
+    let picked = gui::selectable_sized(&id, on, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, gui::v2(GRID_SIDE, GRID_SIDE + line))
+        && gui::is_mouse_double_clicked(0);
+    let hovered = gui::is_item_hovered();
+    let dl = gui::window_draw_list();
+    let (lo, hi) = (gui::v2(at.x + 2.0, at.y + 2.0), gui::v2(at.x + GRID_SIDE - 2.0, at.y + GRID_SIDE - 2.0));
+    match img {
+        Some(img) => dl.image(img.id, lo, hi, gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), 0xFFFF_FFFF),
+        None => {
+            dl.rect_filled(lo, hi, crate::create_panel::style_u32(gui::COL_FRAME_BG), 4.0);
+            let icon = if ours { PROJECT_PREFAB_ICON } else { icons::COMPONENT };
+            let size = gui::calc_text_size(icon);
+            dl.text(
+                gui::v2(at.x + (GRID_SIDE - size.x) * 0.5, at.y + (GRID_SIDE - size.y) * 0.5),
+                crate::create_panel::style_u32(gui::COL_TEXT_DISABLED),
+                icon,
+            );
+        }
+    }
+
+    // The name, cut to the cell.
+    let mut name = p.key.clone();
+    while name.chars().count() > 3 && gui::calc_text_size(&name).x > GRID_SIDE - 4.0 {
+        name.pop();
+        name.pop();
+        name.push('\u{2026}');
+    }
+
+    let colour = if ours { theme::palette().success } else { theme::text() };
+    dl.text(gui::v2(at.x + 2.0, at.y + GRID_SIDE), theme::u32(colour), &name);
+    if hovered {
+        let from = if ours { PROJECT_PREFAB_TIP } else { "A prefab of an Assembly Kit (TEd's): a save makes the projects' copy." };
+        gui::set_tooltip(&format!("{}\n{}\n{from}\nDouble-click: open it on the stage; right click: more", p.key, p.path.display()));
+    }
+
+    picked
 }

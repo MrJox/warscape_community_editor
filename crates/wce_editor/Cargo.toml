@@ -19,3 +19,6 @@ wce_render = { path = "../wce_render" }
 wce_scene = { path = "../wce_scene" }
 wce_updater = { path = "../wce_updater" }
 wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

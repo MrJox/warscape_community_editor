@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use rpfm_lib::files::esf::{ESF, NodeType};
 use rpfm_lib::files::Decodeable;
+use rpfm_lib::files::esf::{ESF, NodeType};
 
 #[derive(Default)]
 struct Seen {
@@ -46,7 +46,9 @@ fn walk(n: &NodeType, path: &str, out: &mut BTreeMap<String, Seen>, keep: usize)
 
         if BYTES.load(std::sync::atomic::Ordering::Relaxed) {
             for c in group {
-                if let NodeType::U8Array(v) = c && v.len() > 64 {
+                if let NodeType::U8Array(v) = c
+                    && v.len() > 64
+                {
                     let mut h = [0usize; 256];
                     for &b in v {
                         h[usize::from(b)] += 1;
@@ -54,7 +56,11 @@ fn walk(n: &NodeType, path: &str, out: &mut BTreeMap<String, Seen>, keep: usize)
 
                     let mut top: Vec<(usize, usize)> = h.iter().copied().enumerate().filter(|x| x.1 > 0).collect();
                     top.sort_by(|a, b| b.1.cmp(&a.1));
-                    e.values.push(format!("U8Array of {}: {:?}", v.len(), top.iter().take(24).map(|(b, n)| format!("{b:#x} x{n}")).collect::<Vec<_>>()));
+                    e.values.push(format!(
+                        "U8Array of {}: {:?}",
+                        v.len(),
+                        top.iter().take(24).map(|(b, n)| format!("{b:#x} x{n}")).collect::<Vec<_>>()
+                    ));
                 }
             }
         }

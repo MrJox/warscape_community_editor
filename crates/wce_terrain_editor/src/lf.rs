@@ -28,7 +28,12 @@ pub struct LfMirror {
 impl LfMirror {
     /// A mirror of `field` in `samples` when they are the same lattice (the map's own frame), none otherwise.
     pub fn of(field: &PagedU16, samples: Arc<LfSamples>, nx: i32, nz: i32) -> Option<Self> {
-        (u32::try_from(nx).ok() == Some(field.width()) && u32::try_from(nz).ok() == Some(field.height())).then(|| Self { samples, w: field.width(), h: field.height(), touched: std::sync::Mutex::default() })
+        (u32::try_from(nx).ok() == Some(field.width()) && u32::try_from(nz).ok() == Some(field.height())).then(|| Self {
+            samples,
+            w: field.width(),
+            h: field.height(),
+            touched: std::sync::Mutex::default(),
+        })
     }
 
     /// The field's samples in `rect` (x0, y0, x1, y1; end exclusive) into the view's.
@@ -71,7 +76,11 @@ impl LfStrokeCommand {
     fn put(&self, model: &mut Option<MapModel>, undo: bool) {
         let Some(item) = model.as_mut().and_then(|m| m.lf_mut(self.role)) else { return };
         let field = item.edit();
-        if undo { self.record.revert(field) } else { self.record.apply(field) }
+        if undo {
+            self.record.revert(field)
+        } else {
+            self.record.apply(field)
+        }
         if let Some(m) = &self.mirror {
             m.copy(field, self.record.rect);
         }

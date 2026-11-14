@@ -75,11 +75,14 @@ pub fn write_docking_lines(lines: &[DockingLine]) -> Vec<u8> {
 
 /// Firing lines warped: moved, their direction turned.
 pub fn warp_ef_lines(lines: &[EfLine], warp: &dyn Warp) -> Vec<EfLine> {
-    lines.iter().map(|l| {
-        let mid = [(l.start[0] + l.end[0]) / 2.0, (l.start[1] + l.end[1]) / 2.0, (l.start[2] + l.end[2]) / 2.0];
-        let t = turn([l.direction[0], l.direction[2]], warp.yaw(mid));
-        EfLine { start: warp.point(l.start), end: warp.point(l.end), direction: [t[0], l.direction[1], t[1]], ..l.clone() }
-    }).collect()
+    lines
+        .iter()
+        .map(|l| {
+            let mid = [(l.start[0] + l.end[0]) / 2.0, (l.start[1] + l.end[1]) / 2.0, (l.start[2] + l.end[2]) / 2.0];
+            let t = turn([l.direction[0], l.direction[2]], warp.yaw(mid));
+            EfLine { start: warp.point(l.start), end: warp.point(l.end), direction: [t[0], l.direction[1], t[1]], ..l.clone() }
+        })
+        .collect()
 }
 
 /// Docking lines warped: each cut into pieces of at most `step` metres, each a straight line between its warped ends facing out from
@@ -149,10 +152,21 @@ fn logic_ef_lines(logic: &[u8]) -> Result<Vec<(String, String, [f32; 3], [f32; 3
     let parsed = Cs2Parsed::decode(&mut std::io::Cursor::new(logic), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let p3 = |v: &serde_json::Value| ["x", "y", "z"].map(|k| v[k].as_f64().unwrap_or(0.0) as f32);
-    Ok(v["pieces"].as_array().into_iter().flatten()
+    Ok(v["pieces"]
+        .as_array()
+        .into_iter()
+        .flatten()
         .flat_map(|p| p["destructs"].as_array().into_iter().flatten())
         .flat_map(|d| d["ef_lines"].as_array().into_iter().flatten())
-        .map(|l| (l["name"].as_str().unwrap_or_default().to_owned(), l["action"].as_str().unwrap_or_default().to_owned(), p3(&l["start"]), p3(&l["end"]), p3(&l["direction"])))
+        .map(|l| {
+            (
+                l["name"].as_str().unwrap_or_default().to_owned(),
+                l["action"].as_str().unwrap_or_default().to_owned(),
+                p3(&l["start"]),
+                p3(&l["end"]),
+                p3(&l["direction"]),
+            )
+        })
         .collect())
 }
 
@@ -229,7 +243,12 @@ mod tests {
 
     #[test]
     fn docking_lines_round_trip_and_bend_into_short_lines() {
-        let line = DockingLine { name: "DockingLine_piece01_destruct01_line01".into(), start: [19.931, -2.5], end: [0.068, -2.499], direction: [0.0, -1.0] };
+        let line = DockingLine {
+            name: "DockingLine_piece01_destruct01_line01".into(),
+            start: [19.931, -2.5],
+            end: [0.068, -2.499],
+            direction: [0.0, -1.0],
+        };
         let bytes = write_docking_lines(std::slice::from_ref(&line));
         assert_eq!(bytes.len(), 104);
         assert_eq!(read_docking_lines(&bytes).unwrap(), vec![line.clone()]);

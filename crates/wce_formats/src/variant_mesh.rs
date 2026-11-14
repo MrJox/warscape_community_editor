@@ -44,7 +44,10 @@ pub enum Alternative {
     Mesh(VariantMesh),
 
     /// A `VARIANT_MESH_REFERENCE`: its element and the file it names.
-    Reference { element: usize, definition: String },
+    Reference {
+        element: usize,
+        definition: String,
+    },
 }
 
 /// A `SLOT`.
@@ -85,14 +88,22 @@ fn mesh(doc: &XmlDoc, element: usize) -> VariantMesh {
     let attr = |name: &str| doc.get(element, name);
     let mask = |name: &str| attr(name).and_then(|v| v.trim().parse().ok());
     let mut out = VariantMesh {
-        element, model: attr("model"), decal_diffuse: attr("decal_diffuse"), decal_normal: attr("decal_normal"), imposter_model: attr("imposter_model"),
-        masks: [mask("mask0"), mask("mask1"), mask("mask2")], ..VariantMesh::default()
+        element,
+        model: attr("model"),
+        decal_diffuse: attr("decal_diffuse"),
+        decal_normal: attr("decal_normal"),
+        imposter_model: attr("imposter_model"),
+        masks: [mask("mask0"), mask("mask1"), mask("mask2")],
+        ..VariantMesh::default()
     };
 
     for &child in &doc.elements()[element].children {
         match doc.elements()[child].name.as_str() {
             "TINT" => out.tints.push(Tint {
-                red: number(doc, child, "red"), green: number(doc, child, "green"), blue: number(doc, child, "blue"), random_range: number(doc, child, "random_range"),
+                red: number(doc, child, "red"),
+                green: number(doc, child, "green"),
+                blue: number(doc, child, "blue"),
+                random_range: number(doc, child, "random_range"),
             }),
             "META_DATA" => out.meta_data.push(text(doc, child)),
             "SLOT" => out.slots.push(slot(doc, child)),
@@ -104,14 +115,23 @@ fn mesh(doc: &XmlDoc, element: usize) -> VariantMesh {
 }
 
 fn slot(doc: &XmlDoc, element: usize) -> Slot {
-    let alternatives = doc.elements()[element].children.iter().filter_map(|&child| match doc.elements()[child].name.as_str() {
-        "VARIANT_MESH" => Some(Alternative::Mesh(mesh(doc, child))),
-        "VARIANT_MESH_REFERENCE" => Some(Alternative::Reference { element: child, definition: doc.get(child, "definition").unwrap_or_default() }),
-        _ => None,
-    }).collect();
+    let alternatives = doc.elements()[element]
+        .children
+        .iter()
+        .filter_map(|&child| match doc.elements()[child].name.as_str() {
+            "VARIANT_MESH" => Some(Alternative::Mesh(mesh(doc, child))),
+            "VARIANT_MESH_REFERENCE" => {
+                Some(Alternative::Reference { element: child, definition: doc.get(child, "definition").unwrap_or_default() })
+            }
+            _ => None,
+        })
+        .collect();
     Slot {
-        element, name: doc.get(element, "name").unwrap_or_default(), attach_point: doc.get(element, "attach_point"),
-        probability: doc.get(element, "probability").and_then(|v| v.trim().parse().ok()), alternatives,
+        element,
+        name: doc.get(element, "name").unwrap_or_default(),
+        attach_point: doc.get(element, "attach_point"),
+        probability: doc.get(element, "probability").and_then(|v| v.trim().parse().ok()),
+        alternatives,
     }
 }
 
@@ -200,7 +220,9 @@ fn repair(file: &[u8]) -> Vec<u8> {
                         // `a=""` is empty, unless the value follows: `a=""b"`.
                         if file.get(p) == Some(&b'"') {
                             p += 1;
-                            if file.get(p) == Some(&b'"') && file.get(p + 1).is_some_and(|&c| !c.is_ascii_whitespace() && !matches!(c, b'/' | b'>')) {
+                            if file.get(p) == Some(&b'"')
+                                && file.get(p + 1).is_some_and(|&c| !c.is_ascii_whitespace() && !matches!(c, b'/' | b'>'))
+                            {
                                 p += 1;
                             }
 
@@ -251,7 +273,12 @@ impl VariantMeshFile {
             Err(_) => (XmlDoc::parse(repair(&bytes))?, true),
         };
 
-        let root = doc.roots().iter().copied().find(|&r| doc.elements()[r].name == "VARIANT_MESH").ok_or_else(|| XmlError::Edit("not a variant mesh definition".to_owned()))?;
+        let root = doc
+            .roots()
+            .iter()
+            .copied()
+            .find(|&r| doc.elements()[r].name == "VARIANT_MESH")
+            .ok_or_else(|| XmlError::Edit("not a variant mesh definition".to_owned()))?;
         let root = mesh(&doc, root);
         Ok(Self { doc, root, repaired })
     }
@@ -275,7 +302,9 @@ mod tests {
 
     #[test]
     fn a_tag_closed_with_a_space_is_closed() {
-        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"><SLOT name=\"t\"><VARIANT_MESH model=\"b\"/ ></SLOT></VARIANT_MESH><VARIANT_MESH model=\"c\"/></SLOT></VARIANT_MESH>");
+        let m = repaired(
+            "<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"><SLOT name=\"t\"><VARIANT_MESH model=\"b\"/ ></SLOT></VARIANT_MESH><VARIANT_MESH model=\"c\"/></SLOT></VARIANT_MESH>",
+        );
         assert_eq!(models(&m), ["a", "c"]);
         let Alternative::Mesh(a) = &m.slots[0].alternatives[0] else { panic!("a mesh") };
         assert_eq!(models(a), ["b"]);
@@ -283,7 +312,9 @@ mod tests {
 
     #[test]
     fn doubled_quotes_go_and_empty_values_stay() {
-        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\" imposter_model=\"\"i\" /><VARIANT_MESH model=\"b\"\" mask0=\"2\"/><VARIANT_MESH model=\"\" mask0=\"1\"/ ></SLOT></VARIANT_MESH>");
+        let m = repaired(
+            "<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\" imposter_model=\"\"i\" /><VARIANT_MESH model=\"b\"\" mask0=\"2\"/><VARIANT_MESH model=\"\" mask0=\"1\"/ ></SLOT></VARIANT_MESH>",
+        );
         assert_eq!(models(&m), ["a", "b", ""]);
         let Alternative::Mesh(a) = &m.slots[0].alternatives[0] else { panic!("a mesh") };
         assert_eq!(a.imposter_model.as_deref(), Some("i"));
@@ -294,14 +325,18 @@ mod tests {
     #[test]
     fn a_tint_left_open_ends_nothing() {
         // vik_tunics_poor: the mesh is closed, the tint open, and its end tag ends neither.
-        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"/><TINT red=\"1\" green=\"1\" blue=\"1\" random_range=\"0\" ></VARIANT_MESH><VARIANT_MESH model=\"b\"/></SLOT></VARIANT_MESH>");
+        let m = repaired(
+            "<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"/><TINT red=\"1\" green=\"1\" blue=\"1\" random_range=\"0\" ></VARIANT_MESH><VARIANT_MESH model=\"b\"/></SLOT></VARIANT_MESH>",
+        );
         assert_eq!(models(&m), ["a", "b"]);
     }
 
     #[test]
     fn an_end_tag_left_over_is_left_out_and_an_open_file_closes() {
         // orc_skin_cut4_brown, and blacklock_t3_hammers's last line.
-        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"></VARIANT_MESH></VARIANT_MESH><VARIANT_MESH model=\"b\"/></SLOT><VARIANT_MESH>");
+        let m = repaired(
+            "<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"></VARIANT_MESH></VARIANT_MESH><VARIANT_MESH model=\"b\"/></SLOT><VARIANT_MESH>",
+        );
         assert_eq!(models(&m), ["a", "b"]);
     }
 
@@ -322,7 +357,10 @@ mod tests {
         assert_eq!(m.masks, [Some(2), None, Some(1)]);
         assert_eq!((m.tints[0].green, m.tints[0].random_range), (0.5, 0.1));
         assert_eq!(m.meta_data, ["female"]);
-        assert_eq!((m.slots[0].attach_point.as_deref(), m.slots[0].probability, skin.probability), (Some("crest_centre"), Some(0.25), None));
+        assert_eq!(
+            (m.slots[0].attach_point.as_deref(), m.slots[0].probability, skin.probability),
+            (Some("crest_centre"), Some(0.25), None)
+        );
         assert!(matches!(&skin.alternatives[1], Alternative::Reference { definition, .. } if definition == "c/d.VariantMeshDefinition"));
     }
 

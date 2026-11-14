@@ -17,17 +17,11 @@ fn document(version: u32, unknown: bool) -> MapDocument {
         version,
         battle_size: [64, 64],
         names: vec!["tile".to_owned()],
-        placements: (0..3)
-            .map(|x| TileListPlacement {
-                x,
-                ..Default::default()
-            })
-            .collect(),
+        placements: (0..3).map(|x| TileListPlacement { x, ..Default::default() }).collect(),
         tail,
         ..Default::default()
     };
-    let files =
-        wce_terrain_io::MapFiles::from_bytes([("terrain.tile_list".to_owned(), list.write())]);
+    let files = wce_terrain_io::MapFiles::from_bytes([("terrain.tile_list".to_owned(), list.write())]);
     let model = wce_terrain_io::built::read("campaigns/test", &files).unwrap();
     let mut d = MapDocument::new(
         "campaigns/test".to_owned(),
@@ -51,17 +45,10 @@ fn zero_rows_allow_count_commands_save_and_exact_undo_with_multiple_names() {
             list.tail.extend([1, 0, b'x']);
         }
         list.tail.extend(0u32.to_le_bytes());
-        let files =
-            wce_terrain_io::MapFiles::from_bytes([("terrain.tile_list".into(), list.write())]);
+        let files = wce_terrain_io::MapFiles::from_bytes([("terrain.tile_list".into(), list.write())]);
         let model = wce_terrain_io::built::read("zero rows", &files).unwrap();
-        let mut d = MapDocument::new(
-            "zero rows".into(),
-            MapSource::Packs("test".into()),
-            Some(model),
-            Arc::default(),
-            None,
-            Arc::default(),
-        );
+        let mut d =
+            MapDocument::new("zero rows".into(), MapSource::Packs("test".into()), Some(model), Arc::default(), None, Arc::default());
         d.history_mut().mark_saved();
         let before = state(&d);
         PlacementsPanel::edit_document(&mut d, "remove placement", true, |l, _| {
@@ -84,49 +71,16 @@ fn zero_rows_allow_count_commands_save_and_exact_undo_with_multiple_names() {
 
 #[test]
 fn missing_built_placements_keep_the_informative_error_before_guard_checks() {
-    let mut d = MapDocument::new(
-        "no native model".into(),
-        MapSource::Packs("test".into()),
-        None,
-        Arc::default(),
-        None,
-        Arc::default(),
-    );
-    let before = (
-        d.history().size(),
-        d.history().position(),
-        d.history().version(),
-        d.history().modified(),
-    );
-    let err =
-        PlacementsPanel::edit_document(&mut d, "move", false, |_, _| panic!("must not mutate"))
-            .unwrap_err();
-    assert_eq!(
-        err,
-        "a built map with a terrain.tile_list (Rome 2's pack maps) has placements to edit"
-    );
-    assert_eq!(
-        (
-            d.history().size(),
-            d.history().position(),
-            d.history().version(),
-            d.history().modified()
-        ),
-        before
-    );
+    let mut d = MapDocument::new("no native model".into(), MapSource::Packs("test".into()), None, Arc::default(), None, Arc::default());
+    let before = (d.history().size(), d.history().position(), d.history().version(), d.history().modified());
+    let err = PlacementsPanel::edit_document(&mut d, "move", false, |_, _| panic!("must not mutate")).unwrap_err();
+    assert_eq!(err, "a built map with a terrain.tile_list (Rome 2's pack maps) has placements to edit");
+    assert_eq!((d.history().size(), d.history().position(), d.history().version(), d.history().modified()), before);
 }
 
 fn state(d: &MapDocument) -> (Vec<u8>, usize, usize, bool, u64, bool, bool) {
     let h = d.history();
-    (
-        PlacementsPanel::list(d).unwrap().write(),
-        h.size(),
-        h.position(),
-        h.modified(),
-        h.version(),
-        h.can_undo(),
-        h.can_redo(),
-    )
+    (PlacementsPanel::list(d).unwrap().write(), h.size(), h.position(), h.modified(), h.version(), h.can_undo(), h.can_redo())
 }
 
 #[test]
@@ -154,10 +108,7 @@ fn rejected_count_actions_never_invoke_mutation_or_touch_document_history() {
             assert!(r.unwrap_err().contains("remove a placement"));
             assert!(!called);
             assert_eq!(state(&d), before);
-            assert_eq!(
-                d.model().unwrap().tile_list.as_ref().unwrap().edited(),
-                edited
-            );
+            assert_eq!(d.model().unwrap().tile_list.as_ref().unwrap().edited(), edited);
             assert!(d.cells.take().is_empty());
 
             let r = PlacementsPanel::edit_document(&mut d, "place a tile", true, |l, _| {
@@ -195,12 +146,7 @@ fn supported_same_count_command_and_undo_redo_still_work() {
 fn unknown_layout_is_refused_and_unannounced_count_change_cannot_record_a_command() {
     let mut d = document(9, true);
     let before = state(&d);
-    assert!(
-        PlacementsPanel::edit_document(&mut d, "move a placement", false, |_, _| {
-            panic!("unknown layout")
-        })
-        .is_err()
-    );
+    assert!(PlacementsPanel::edit_document(&mut d, "move a placement", false, |_, _| { panic!("unknown layout") }).is_err());
     assert_eq!(state(&d), before);
     let mut d = document(9, false);
     let before = state(&d);
@@ -230,11 +176,9 @@ fn v7_v8_actions_and_v11_panel_exclusion_are_unchanged() {
     let mut d = document(11, false);
     let before = state(&d);
     assert!(
-        PlacementsPanel::edit_document(&mut d, "remove a placement", true, |_, _| {
-            panic!("v11 is not edited by this panel")
-        })
-        .unwrap_err()
-        .contains("versions 7 to 9")
+        PlacementsPanel::edit_document(&mut d, "remove a placement", true, |_, _| { panic!("v11 is not edited by this panel") })
+            .unwrap_err()
+            .contains("versions 7 to 9")
     );
     assert_eq!(state(&d), before);
 }
@@ -245,18 +189,10 @@ fn document_save_refuses_an_independently_recorded_inconsistent_list_without_wri
     let before = PlacementsPanel::list(&d).unwrap().clone();
     let mut after = before.clone();
     after.placements.remove(1);
-    d.push_tile_list(TileListCommand {
-        name: "bypassed removal".to_owned(),
-        before,
-        after,
-        watch: d.cells.clone(),
-    });
+    d.push_tile_list(TileListCommand { name: "bypassed removal".to_owned(), before, after, watch: d.cells.clone() });
     let state_before_save = state(&d);
     assert!(d.history().modified());
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let path = std::env::temp_dir().join(format!("wce-v9-save-{}-{stamp}", std::process::id()));
     std::fs::create_dir(&path).unwrap();
     let r = d.save(&wce_editor_core::document::SaveTarget { path: path.clone() });
@@ -271,8 +207,7 @@ fn review_document_nan_no_op_saves_exactly_and_rejected_edit_keeps_saved_history
     let mut list = PlacementsPanel::list(&document(9, true)).unwrap().clone();
     list.unknown = [f32::from_bits(0x7fc01234), -0.0];
     let bytes = list.write();
-    let files =
-        wce_terrain_io::MapFiles::from_bytes([("terrain.tile_list".to_owned(), bytes.clone())]);
+    let files = wce_terrain_io::MapFiles::from_bytes([("terrain.tile_list".to_owned(), bytes.clone())]);
     let model = wce_terrain_io::built::read("test", &files).unwrap();
     let mut d = MapDocument::new(
         "test".to_owned(),
@@ -283,32 +218,25 @@ fn review_document_nan_no_op_saves_exactly_and_rejected_edit_keeps_saved_history
         Arc::new(TileDatabase::default()),
     );
     d.history_mut().mark_saved();
-    d.push_tile_list(TileListCommand {
-        name: "unchanged NaN".to_owned(),
-        before: list.clone(),
-        after: list,
-        watch: d.cells.clone(),
-    });
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    d.push_tile_list(TileListCommand { name: "unchanged NaN".to_owned(), before: list.clone(), after: list, watch: d.cells.clone() });
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let path = std::env::temp_dir().join(format!("wce-nan-save-{}-{stamp}", std::process::id()));
     std::fs::create_dir(&path).unwrap();
-    d.save(&wce_editor_core::document::SaveTarget { path: path.clone() })
-        .unwrap();
-    assert_eq!(
-        std::fs::read(path.join("terrain.tile_list")).unwrap(),
-        bytes
-    );
+    let before_copy = state(&d);
+    d.save(&wce_editor_core::document::SaveTarget { path: path.clone() }).unwrap();
+    assert_eq!(std::fs::read(path.join("terrain.tile_list")).unwrap(), bytes);
+    // Current upstream treats an explicit copy elsewhere as unsaved; a rejected edit must retain that dirty history too.
+    assert_eq!(state(&d), before_copy);
+    assert!(d.history().modified());
+    assert!(PlacementsPanel::edit_document(&mut d, "move a placement", false, |_, _| { panic!("unknown metadata") }).is_err());
+    assert_eq!(state(&d), before_copy);
+    // Use the normal owned-destination Save route before checking the saved-history case.
+    d.save_dir = Some(path.clone());
+    d.save(&wce_editor_core::document::SaveTarget::default()).unwrap();
+    assert_eq!(std::fs::read(path.join("terrain.tile_list")).unwrap(), bytes);
     assert!(!d.history().modified());
     let before = state(&d);
-    assert!(
-        PlacementsPanel::edit_document(&mut d, "move a placement", false, |_, _| {
-            panic!("unknown metadata")
-        })
-        .is_err()
-    );
+    assert!(PlacementsPanel::edit_document(&mut d, "move a placement", false, |_, _| { panic!("unknown metadata") }).is_err());
     assert_eq!(state(&d), before);
     std::fs::remove_file(path.join("terrain.tile_list")).unwrap();
     std::fs::remove_dir(&path).unwrap();
@@ -317,17 +245,12 @@ fn review_document_nan_no_op_saves_exactly_and_rejected_edit_keeps_saved_history
 #[test]
 fn review_missing_original_v9_save_failure_preserves_document_and_history() {
     let list = PlacementsPanel::list(&document(9, false)).unwrap().clone();
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let path = std::env::temp_dir().join(format!("wce-missing-v9-{}-{stamp}", std::process::id()));
     std::fs::create_dir(&path).unwrap();
     let source = path.join("terrain.tile_list");
     std::fs::write(&source, list.write()).unwrap();
-    let model =
-        wce_terrain_io::built::read("test", &wce_terrain_io::MapFiles::from_dir(&path).unwrap())
-            .unwrap();
+    let model = wce_terrain_io::built::read("test", &wce_terrain_io::MapFiles::from_dir(&path).unwrap()).unwrap();
     let mut d = MapDocument::new(
         "test".to_owned(),
         MapSource::Packs("test".to_owned()),
@@ -340,32 +263,14 @@ fn review_missing_original_v9_save_failure_preserves_document_and_history() {
     let mut after = list.clone();
     after.version = 8;
     after.placements.pop();
-    d.push_tile_list(TileListCommand {
-        name: "bypassed downgrade".to_owned(),
-        before: list,
-        after,
-        watch: d.cells.clone(),
-    });
+    d.push_tile_list(TileListCommand { name: "bypassed downgrade".to_owned(), before: list, after, watch: d.cells.clone() });
     std::fs::remove_file(&source).unwrap();
     let before = state(&d);
     let output = path.join("output");
-    assert!(
-        d.save(&wce_editor_core::document::SaveTarget {
-            path: output.clone()
-        })
-        .is_err()
-    );
+    assert!(d.save(&wce_editor_core::document::SaveTarget { path: output.clone() }).is_err());
     assert_eq!(state(&d), before);
     assert!(d.history().modified());
-    assert_eq!(
-        d.model()
-            .unwrap()
-            .tile_list
-            .as_ref()
-            .unwrap()
-            .original_version(),
-        Some(9)
-    );
+    assert_eq!(d.model().unwrap().tile_list.as_ref().unwrap().original_version(), Some(9));
     assert!(!output.exists());
     std::fs::remove_dir(&path).unwrap();
 }

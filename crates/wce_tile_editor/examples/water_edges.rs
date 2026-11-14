@@ -38,6 +38,13 @@ fn main() {
 
         edges.sort_by(|a, b| a.partial_cmp(b).unwrap());
         edges.dedup();
-        println!("river: x {:.0}..{:.0}, z {:.0}..{:.0}; near the edges: {:?}", lo[0], hi[0], lo[1], hi[1], edges.iter().step_by((edges.len() / 12).max(1)).collect::<Vec<_>>());
+        println!(
+            "river: x {:.0}..{:.0}, z {:.0}..{:.0}; near the edges: {:?}",
+            lo[0],
+            hi[0],
+            lo[1],
+            hi[1],
+            edges.iter().step_by((edges.len() / 12).max(1)).collect::<Vec<_>>()
+        );
     }
 }

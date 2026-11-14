@@ -1,4 +1,4 @@
-//! Tile > New tile...: TEd's New Tile dialog (name, size, terrain height, density; `wce_tile::new_tile`), written as a project in the
+//! File > New tile...: TEd's New Tile dialog (name, size, terrain height, density; `wce_tile::new_tile`), written as a project in the
 //! projects folder and opened.
 
 use wce_editor::editor::Editor;
@@ -23,7 +23,14 @@ pub(crate) struct NewTileDialog {
 impl Default for NewTileDialog {
     fn default() -> Self {
         let cells = new_tile::DEFAULT_CELLS as i32;
-        Self { name: String::new(), cells: [cells; 2], height: new_tile::DEFAULT_HEIGHT as f32, density: density_index(new_tile::DEFAULT_DENSITY), density_chosen: false, error: String::new() }
+        Self {
+            name: String::new(),
+            cells: [cells; 2],
+            height: new_tile::DEFAULT_HEIGHT as f32,
+            density: density_index(new_tile::DEFAULT_DENSITY),
+            density_chosen: false,
+            error: String::new(),
+        }
     }
 }
 
@@ -67,13 +74,18 @@ impl TileTool {
             return;
         };
 
-        gui::text_wrapped("A battle tile in the projects folder (tile set assembly_kit, variation battlefield), flat at the terrain height.");
+        gui::text_wrapped(
+            "A battle tile in the projects folder (tile set assembly_kit, variation battlefield), flat at the terrain height.",
+        );
         gui::set_next_item_width(320.0);
         if gui::is_window_appearing() {
             gui::set_keyboard_focus_here(0);
         }
 
         let mut create = gui::input_text("Name", Some("no spaces"), &mut d.name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The tile's name, also its folder and entry name (lower case). Enter creates the tile.");
+        }
         let sizes = (new_tile::MIN_CELLS..=new_tile::MAX_CELLS).map(|n| n.to_string()).collect::<Vec<_>>();
         let sizes = sizes.iter().map(String::as_str).collect::<Vec<_>>();
         let mut size_changed = false;
@@ -84,15 +96,26 @@ impl TileTool {
                 d.cells[axis] = i + new_tile::MIN_CELLS as i32;
                 size_changed = true;
             }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The tile's size along this side, in cells of 128 m.");
+            }
         }
 
         gui::set_next_item_width(120.0);
         gui::drag_float("Terrain height", &mut d.height, 0.5, -10_000.0, 10_000.0, "%.2f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The height of the flat new terrain, in metres.");
+        }
         let names = new_tile::DENSITIES.map(|n| n.to_string());
         let names = names.iter().map(String::as_str).collect::<Vec<_>>();
         gui::set_next_item_width(120.0);
         if gui::combo("Terrain density", &mut d.density, &names) {
             d.density_chosen = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Height map pixels per cell. As in TEd, a tile over 16 cells on a side gets 32 unless one was chosen here.");
         }
 
         // As TEd's: a large tile gets the low density, unless one was chosen.
@@ -103,13 +126,21 @@ impl TileTool {
 
         let t = d.tile();
         let (w, h) = t.map_size();
-        gui::text_disabled(&format!("{} x {} m, maps of {w} x {h} pixels, blend_map.tif {}", t.cells_x * 128, t.cells_y * 128, size_text(t.blend_map_bytes())));
+        gui::text_disabled(&format!(
+            "{} x {} m, maps of {w} x {h} pixels, blend_map.tif {}",
+            t.cells_x * 128,
+            t.cells_y * 128,
+            size_text(t.blend_map_bytes())
+        ));
         if !d.error.is_empty() {
             gui::text_colored(theme::warning(), &d.error);
         }
 
         gui::separator();
         create |= gui::button("Create");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the tile and its entry to the projects folder and opens it.");
+        }
         gui::same_line();
         let cancel = gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true);
         if create {
@@ -141,8 +172,8 @@ impl TileTool {
     /// The values are out of the dialog's limits, the tile exists, or it can't be written or opened.
     pub fn create_tile(&mut self, e: &mut Editor, t: &NewTile) -> Result<String, String> {
         let projects = Self::workspace_dir(e).join("raw_data");
-        let kit = self.battle_database_root(e);
-        let dir = new_tile::create(t, &projects, kit.as_deref())?;
+        let kits = self.battle_database_roots(e);
+        let dir = new_tile::create(t, &projects, &kits)?;
         self.open_tile(e, &dir.display().to_string(), "")?;
         Ok(format!("new tile {} ({} x {} cells, {} m, density {}) in {}", t.name, t.cells_x, t.cells_y, t.height, t.density, dir.display()))
     }

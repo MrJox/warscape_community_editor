@@ -8,30 +8,30 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use wce_d3d11::{ID3D11Device, ID3D11DeviceContext};
-use wce_editor_core::command_registry::{CommandHost, CommandRegistry, ScriptRunner};
 use wce_editor_core::camera_controller::{CameraMode, CameraOptions};
+use wce_editor_core::command_registry::{CommandHost, CommandRegistry, ScriptRunner};
 use wce_editor_core::document::Document;
 use wce_editor_core::document_manager::DocumentManager;
 use wce_editor_core::selection::Selection;
+use wce_formats::xml_doc::XmlDoc;
 use wce_foundation::clock::Clock;
-use wce_foundation::settings::Settings;
 pub use wce_foundation::settings::DEFAULT_FRAME_CAP;
+use wce_foundation::settings::Settings;
 use wce_foundation::{log, wce_prof};
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::files::Files;
 use wce_render::renderer::Renderer;
-use wce_formats::xml_doc::XmlDoc;
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, read_environment};
 use wce_scene::render_scene::{DocumentId, EnvironmentSlot, RenderScene};
 use wce_vfs::{Config, GameProfile, Vfs, normalize};
 
-use crate::{gui, icons};
 use crate::panels::PanelState as PanelData;
 use crate::perf::PerfStats;
 use crate::steam_detect::{detect_game_folder, file_dialog, pick_folder};
-use crate::tool::Tool;
+use crate::tool::{FileMenu, Tool};
 use crate::viewport::{GizmoMode, Viewport};
+use crate::{gui, icons};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
@@ -122,6 +122,9 @@ pub struct Editor {
 
     /// A window to bring to the front on the next frame (`window_focus`, for scripts).
     pub pending_focus: Option<String>,
+
+    /// What the Inspector showed last frame (the active tool's index and its key, see `raise_inspector`).
+    inspector_shown: Option<(usize, u64)>,
     pub clock: Clock,
     tools: Vec<Option<Box<dyn Tool>>>,
     tool_info: Vec<ToolInfo>,
@@ -163,7 +166,7 @@ pub struct Editor {
 
     /// A script line is running (`ScriptRunner::step`): what would ask fails instead.
     pub(crate) in_script: bool,
-    mouse_queue: VecDeque<MouseState>,
+    pub(crate) mouse_queue: VecDeque<MouseState>,
     pub(crate) mouse_cur: MouseState,
     mouse_active: bool,
 
@@ -204,6 +207,9 @@ pub struct Editor {
     pub(crate) settings_window: crate::settings_window::SettingsWindow,
     pub(crate) updates: crate::updates::Updates,
 
+    /// Quit was asked while something was being written (`writes_in_progress`): it goes on once that is done.
+    quit_waiting: bool,
+
     /// An interactive session: the active tool is kept in the settings (`restore_last_tool`).
     remember_tool: bool,
 
@@ -236,14 +242,79 @@ impl CommandHost for Editor {
 impl Editor {
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext) -> Self {
         let mut e = Self {
-            dev: dev.clone(), ctx: ctx.clone(), settings: Settings::load_default(), vfs: None, renderer: None, scene: RenderScene::default(),
-            docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
-            viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
-            layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
-            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None, prompt_open: None, replace_answer: None, replace_granted: None, in_script: false,
-            mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
-            first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], fixes: Default::default(), game_before: None, mod_checks_for: String::new(), mods_popup: false, project_prompts: Default::default(), perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
-            panel_data: PanelData::default(), settings_window: Default::default(), updates: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
+            dev: dev.clone(),
+            ctx: ctx.clone(),
+            settings: Settings::load_default(),
+            vfs: None,
+            renderer: None,
+            scene: RenderScene::default(),
+            docs: DocumentManager::default(),
+            selection: Selection::default(),
+            commands: CommandRegistry::default(),
+            script: ScriptRunner::default(),
+            script_lines: vec![],
+            viewport: Viewport::default(),
+            pending_focus: None,
+            inspector_shown: None,
+            clock: Clock::live(),
+            tools: vec![],
+            tool_info: vec![],
+            active_tool: 0,
+            pending_tool: None,
+            layout_pending_default: false,
+            layout_loaded: false,
+            dockspace: 0,
+            quit: false,
+            exit_code: 0,
+            frame: 0,
+            status: String::new(),
+            status_error: false,
+            first_run: false,
+            weather_preview: None,
+            cam_mark: None,
+            output_gamma: 2.2,
+            output_brightness: 1.0,
+            prompt: PromptKind::None,
+            prompt_docs: vec![],
+            prompt_work: vec![],
+            outline_cache: None,
+            tint_cache: None,
+            prompt_close: vec![],
+            prompt_error: String::new(),
+            prompt_game: None,
+            prompt_open: None,
+            replace_answer: None,
+            replace_granted: None,
+            in_script: false,
+            mouse_queue: VecDeque::new(),
+            mouse_cur: MouseState::default(),
+            mouse_active: false,
+            test_keys: vec![],
+            first_run_game: String::new(),
+            first_run_message: String::new(),
+            mod_checks: vec![],
+            mod_filter: String::new(),
+            mod_removed: vec![],
+            fixes: Default::default(),
+            game_before: None,
+            mod_checks_for: String::new(),
+            mods_popup: false,
+            project_prompts: Default::default(),
+            perf: PerfStats::default(),
+            wait_loaded_start: None,
+            vsync: true,
+            frame_cap: DEFAULT_FRAME_CAP,
+            panels: Panels::default(),
+            panel_data: PanelData::default(),
+            settings_window: Default::default(),
+            updates: Default::default(),
+            quit_waiting: false,
+            remember_tool: false,
+            display_scale: 1.0,
+            applied_appearance: None,
+            images: Default::default(),
+            input_origin: None,
+            pending_shot: None,
         };
 
         crate::shortcuts::register(crate::shortcuts::EDITOR);
@@ -313,7 +384,13 @@ impl Editor {
 
         let (items, colour) = d.tint();
         let wanted = items.into_iter().collect::<std::collections::HashSet<_>>();
-        let ents = self.scene.entities().iter().filter(|e| e.source.doc == doc && wanted.contains(&e.source.item)).map(|e| e.id).collect::<Vec<_>>();
+        let ents = self
+            .scene
+            .entities()
+            .iter()
+            .filter(|e| e.source.doc == doc && wanted.contains(&e.source.item))
+            .map(|e| e.id)
+            .collect::<Vec<_>>();
         self.tint_cache = Some((doc, key, rev, ents.clone(), colour));
         (ents, colour)
     }
@@ -341,7 +418,10 @@ impl Editor {
     pub fn apply_camera_settings(&mut self) {
         let c = &self.settings.camera;
         self.viewport.camera_options = CameraOptions {
-            smoothing: c.smoothing.clamp(0.0, 1.0), game_limits: false, respect_ground: c.respect_ground, ground_clearance: c.ground_clearance.max(0.0),
+            smoothing: c.smoothing.clamp(0.0, 1.0),
+            game_limits: false,
+            respect_ground: c.respect_ground,
+            ground_clearance: c.ground_clearance.max(0.0),
             respect_collisions: c.respect_collisions,
         };
 
@@ -361,7 +441,8 @@ impl Editor {
     pub fn sync_camera_settings(&mut self) {
         let (o, c) = (self.viewport.camera_options, &mut self.settings.camera);
         c.mode = self.viewport.mode().key().to_owned();
-        (c.smoothing, c.respect_ground, c.ground_clearance, c.respect_collisions) = (o.smoothing, o.respect_ground, o.ground_clearance, o.respect_collisions);
+        (c.smoothing, c.respect_ground, c.ground_clearance, c.respect_collisions) =
+            (o.smoothing, o.respect_ground, o.ground_clearance, o.respect_collisions);
         c.edge_scroll = self.viewport.edge_scroll;
     }
 
@@ -395,17 +476,28 @@ impl Editor {
         self.settings.set_game_fields(tool.id(), tool.game_settings_fields());
         crate::shortcuts::register(tool.shortcuts());
         crate::shortcuts::set_overrides(&self.settings.shortcuts);
-        self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens(), folder: tool.project_folder() });
+        self.tool_info.push(ToolInfo {
+            id: tool.id().to_owned(),
+            title: tool.title().to_owned(),
+            icon: tool.icon().to_owned(),
+            opens: tool.opens(),
+            folder: tool.project_folder(),
+        });
         self.fixes.list.extend(tool.fixes());
         self.tools.push(Some(tool));
     }
 
-    /// Runs `f` on tool `i`, lent out of the editor meanwhile; `None` when it is already lent (a tool calling into itself).
+    /// Runs `f` on tool `i`, lent out of the editor meanwhile; `None` when it is already lent (a tool calling into itself). The tool comes
+    /// back when `f` panics too (the panic goes on, to the command registry's catch): else the tool would be gone for the session, its
+    /// commands and panels with it, and its unsaved work no longer asked about at quit.
     pub fn with_tool_at<R>(&mut self, i: usize, f: impl FnOnce(&mut dyn Tool, &mut Editor) -> R) -> Option<R> {
         let mut tool = self.tools.get_mut(i)?.take()?;
-        let r = f(tool.as_mut(), self);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tool.as_mut(), &mut *self)));
         self.tools[i] = Some(tool);
-        Some(r)
+        match r {
+            Ok(r) => Some(r),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     /// Runs `f` on the tool of type `T` (a tool's commands reach their tool this way).
@@ -428,12 +520,29 @@ impl Editor {
         }
     }
 
+    /// Whether the status line's text is an error.
+    pub fn status_is_error(&self) -> bool {
+        self.status_error
+    }
+
     pub fn status_text(&self) -> &str {
         &self.status
     }
 
     pub fn device(&self) -> &ID3D11Device {
         &self.dev
+    }
+
+    /// The viewport's last image as RGBA8 rows (width, height, pixels; top row first), as shown. Waits for the GPU: for occasional reads (a
+    /// histogram twice a second), not every frame.
+    pub fn read_viewport_rgba8(&self) -> Option<(u32, u32, Vec<u8>)> {
+        let t = self.viewport.target();
+        Some((t.width(), t.height(), t.read_rgba8(&self.dev, &self.ctx)?))
+    }
+
+    /// Starts copying the viewport's last image back without waiting for the GPU (`Readback::take` reads it a frame or more later).
+    pub fn start_viewport_readback(&self, rb: &mut wce_render::image_io::Readback) -> bool {
+        self.viewport.target().texture().is_some_and(|t| rb.start(&self.dev, &self.ctx, t))
     }
 
     pub fn context(&self) -> &ID3D11DeviceContext {
@@ -622,6 +731,15 @@ impl Editor {
         self.with_tool_at(self.active_tool, f)
     }
 
+    /// The edit under way that undo and redo wait for: a drag of the gizmo, or the active tool's gesture ([`Tool::open_gesture`]).
+    pub fn open_gesture(&self) -> Option<&'static str> {
+        if self.viewport.gizmo_was_using {
+            return Some("the gizmo drag");
+        }
+
+        self.tools.get(self.active_tool)?.as_ref()?.open_gesture()
+    }
+
     pub fn active_tool_id(&self) -> &str {
         self.tool_info.get(self.active_tool).map_or("", |t| t.id.as_str())
     }
@@ -667,7 +785,7 @@ impl Editor {
         self.game().available_mod_packs(&dir)
     }
 
-    /// The check list of mod packs (first run and File > Mod packs).
+    /// The check list of mod packs (first run and the toolbar's game list > Mod packs...).
     fn mod_pack_checks(&mut self, game: &str) {
         let (profile, chosen) = (self.game(), self.selected_mod_packs());
         self.mod_pack_checks_at(game, profile, &chosen, gui::cursor_pos_x());
@@ -752,7 +870,9 @@ impl Editor {
         }
 
         if gui::begin_popup_modal("Mod packs", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
-            gui::text_wrapped("The editor reads the game's own (release) packs and, on top of them, only the mod packs ticked here. Your own loose skin folder is always read before all of them.");
+            gui::text_wrapped(
+                "The editor reads the game's own (release) packs and, on top of them, only the mod packs ticked here. Your own loose skin folder is always read before all of them.",
+            );
             let game = self.settings.game_dir().map(|d| d.display().to_string()).unwrap_or_default();
             self.mod_pack_checks(&game);
             if gui::button("Apply") {
@@ -792,9 +912,29 @@ impl Editor {
     pub fn remount_vfs(&mut self) -> Result<(), String> {
         let dir = self.settings.game_dir().ok_or("the game folder is not set")?;
         self.make_project_folders();
-        let vfs = Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?;
-        self.vfs = Some(Arc::new(vfs));
+        let vfs = Arc::new(Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?);
+        self.vfs = Some(vfs.clone());
         self.images.clear();
+
+        // The renderer reads models, textures, shaders and effects from the files it was made with: it is made again on these (with its
+        // settings), else what a mod added or the projects folder changed would show only from the next start, and what they took away
+        // would still be drawn.
+        if let Some(old) = self.renderer.take() {
+            match Renderer::new(&self.dev, &self.ctx, vfs) {
+                Ok(mut r) => {
+                    r.settings = old.settings.clone();
+                    self.renderer = Some(r);
+                }
+
+                Err(e) => {
+                    log::error(format!("the renderer could not be made again on the new files (it reads the old ones): {}", e.0));
+                    self.renderer = Some(old);
+                }
+            }
+
+            self.apply_graphics_settings();
+        }
+
         Ok(())
     }
 
@@ -987,7 +1127,10 @@ impl Editor {
     pub fn revert_to_game(&mut self, id: DocumentId) -> Result<String, String> {
         let d = self.docs.find(id).ok_or("no such document")?;
         let key = d.source_key();
-        let copy = (!key.is_empty()).then(|| self.loose_copy(&key)).flatten().ok_or_else(|| format!("{} is not a project's copy of a game file", d.title()))?;
+        let copy = (!key.is_empty())
+            .then(|| self.loose_copy(&key))
+            .flatten()
+            .ok_or_else(|| format!("{} is not a project's copy of a game file", d.title()))?;
         let tool = self.docs.tool_of(id);
         std::fs::remove_file(&copy).map_err(|e| format!("{}: {e}", copy.display()))?;
 
@@ -1302,7 +1445,9 @@ impl Editor {
             }
 
             Some(Answer::Cancel) => Err("cancelled".to_owned()),
-            None if self.in_script => Err(format!("{title} has unsaved changes: open <path> save|discard, or close it first (close <document> save|discard)")),
+            None if self.in_script => {
+                Err(format!("{title} has unsaved changes: open <path> save|discard, or close it first (close <document> save|discard)"))
+            }
             None if self.prompt != PromptKind::None => Err("another unsaved-changes prompt is open".to_owned()),
             None => {
                 self.prompt = PromptKind::Replace;
@@ -1355,7 +1500,11 @@ impl Editor {
     /// The open document of the previewed weather file, if there is one: the preview follows its edits.
     pub fn weather_preview_document(&self) -> Option<DocumentId> {
         let path = self.weather_preview()?;
-        self.docs.order().iter().copied().find(|&id| self.docs.find(id).is_some_and(|d| d.environment().is_some() && d.source_key() == path))
+        self.docs
+            .order()
+            .iter()
+            .copied()
+            .find(|&id| self.docs.find(id).is_some_and(|d| d.environment().is_some() && d.source_key() == path))
     }
 
     /// The scene's lighting outside the weather tool: the previewed weather (its open document if there is one), else the default environment.
@@ -1424,8 +1573,46 @@ impl Editor {
         self.tools.iter().flatten().flat_map(|t| t.unsaved_work()).collect()
     }
 
+    /// What has unsaved changes, one line each: the documents (by title) and the tools' work. For a question asked outside the UI (the graphics
+    /// device lost: no frame to draw a prompt in).
+    pub fn unsaved_summary(&self) -> Vec<String> {
+        let docs = self.docs.unsaved().into_iter().filter_map(|id| self.docs.find(id).map(|d| d.title()));
+        docs.chain(self.tools_unsaved_work()).collect()
+    }
+
+    /// Saves every modified document, as Save All does; needs no frame (the documents' data is in memory, not on the GPU). True when all
+    /// were saved; the messages say what was and what failed.
+    pub fn save_all_documents(&mut self) -> (bool, Vec<String>) {
+        let mut messages = vec![];
+        let all = self.docs.save_all(&mut messages);
+        self.follow_saves();
+        (all, messages)
+    }
+
+    /// What is being written on another thread (an update installing, a fix writing packs, a tool's export): quitting waits for it, as the
+    /// process ending would cut the files short (an update half installed does not start again).
+    pub fn writes_in_progress(&self) -> Vec<String> {
+        let mut w = vec![];
+        w.extend(self.updates.writing().map(str::to_owned));
+        w.extend(self.fix_writing());
+        w.extend(self.tools.iter().flatten().filter_map(|t| t.writing()));
+        w
+    }
+
     /// The `quit` command leaves at once, as scripts expect; this one asks about unsaved changes (and the tools' unsaved work).
     pub fn ask_quit(&mut self) {
+        let writing = self.writes_in_progress();
+        if !writing.is_empty() {
+            self.quit_waiting = true;
+            let verb = if writing.len() == 1 { "is" } else { "are" };
+            self.status(
+                &format!("Quitting once {} {verb} done (quitting now would leave the files half written)", writing.join(", ")),
+                false,
+            );
+            return;
+        }
+
+        self.quit_waiting = false;
         self.prompt_docs = self.docs.unsaved();
         self.prompt_work = self.tools_unsaved_work();
         if self.prompt_docs.is_empty() && self.prompt_work.is_empty() {
@@ -1440,6 +1627,11 @@ impl Editor {
 
     /// The window's close button: true when the prompt took over (there are unsaved changes), false to let the window close.
     pub fn window_close_requested(&mut self) -> bool {
+        if !self.writes_in_progress().is_empty() {
+            self.ask_quit();
+            return true;
+        }
+
         if self.docs.unsaved().is_empty() && self.tools_unsaved_work().is_empty() {
             return false;
         }
@@ -1585,14 +1777,28 @@ impl Editor {
 
         gui::spacing();
         if docs {
-            if gui::button(if quit { "Save all and quit" } else if replace { "Save and open" } else { "Save and close" }) {
+            if gui::button(if quit {
+                "Save all and quit"
+            } else if replace {
+                "Save and open"
+            } else {
+                "Save and close"
+            }) {
                 let _ = self.answer_prompt(Answer::Save);
             }
 
             gui::same_line();
         }
 
-        if gui::button(if !docs { "Quit anyway" } else if quit { "Quit without saving" } else if replace { "Discard changes and open" } else { "Discard changes" }) {
+        if gui::button(if !docs {
+            "Quit anyway"
+        } else if quit {
+            "Quit without saving"
+        } else if replace {
+            "Discard changes and open"
+        } else {
+            "Discard changes"
+        }) {
             let _ = self.answer_prompt(Answer::Discard);
         }
 
@@ -1661,6 +1867,8 @@ impl Editor {
             self.update_lighting();
         }
 
+        // The status bar first: it takes its row off the work area the host window fills.
+        self.draw_status_bar();
         let vp = gui::main_viewport();
         gui::set_next_window_pos(vp.WorkPos, 0, gui::v2(0.0, 0.0));
         gui::set_next_window_size(vp.WorkSize, 0);
@@ -1668,9 +1876,17 @@ impl Editor {
         gui::push_style_var_f(gui::VAR_WINDOW_BORDER_SIZE, 0.0);
         gui::push_style_var_v(gui::VAR_WINDOW_PADDING, gui::v2(0.0, 0.0));
         gui::begin(
-            "##host", None,
-            gui::WINDOW_MENU_BAR | gui::WINDOW_NO_TITLE_BAR | gui::WINDOW_NO_COLLAPSE | gui::WINDOW_NO_RESIZE | gui::WINDOW_NO_MOVE | gui::WINDOW_NO_BRING_TO_FRONT
-                | gui::WINDOW_NO_NAV_FOCUS | gui::WINDOW_NO_DOCKING | gui::WINDOW_NO_SAVED_SETTINGS,
+            "##host",
+            None,
+            gui::WINDOW_MENU_BAR
+                | gui::WINDOW_NO_TITLE_BAR
+                | gui::WINDOW_NO_COLLAPSE
+                | gui::WINDOW_NO_RESIZE
+                | gui::WINDOW_NO_MOVE
+                | gui::WINDOW_NO_BRING_TO_FRONT
+                | gui::WINDOW_NO_NAV_FOCUS
+                | gui::WINDOW_NO_DOCKING
+                | gui::WINDOW_NO_SAVED_SETTINGS,
         );
         gui::pop_style_var(3);
         self.draw_menu_bar();
@@ -1692,6 +1908,10 @@ impl Editor {
         self.draw_fix_window();
         self.draw_settings_window();
         self.draw_updates();
+        if self.quit_waiting && self.writes_in_progress().is_empty() {
+            self.ask_quit();
+        }
+
         if self.first_run {
             self.draw_first_run();
             return;
@@ -1716,12 +1936,17 @@ impl Editor {
                 }
             }
 
-            if pressed("undo", true) {
-                let _ = CommandRegistry::run(self, "undo");
-            }
+            for what in ["undo", "redo"] {
+                if !pressed(what, true) {
+                    continue;
+                }
 
-            if pressed("redo", true) {
-                let _ = CommandRegistry::run(self, "redo");
+                match self.open_gesture() {
+                    Some(gesture) => self.status(&format!("No {what} during {gesture}: finish or cancel it first"), true),
+                    None => {
+                        let _ = CommandRegistry::run(self, what);
+                    }
+                }
             }
 
             // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
@@ -1752,6 +1977,23 @@ impl Editor {
         self.draw_prompt();
     }
 
+    /// When what the Inspector shows changes (the selection, the active tool's part of it: a mode, what it places, a brush's settings) to
+    /// something, its tab is selected in its dock, so that the change is seen; the keyboard stays where it was. Only on a change: a tab the
+    /// user picked over it stays picked while they work in it. A tool's switch only takes the new tool's as the start.
+    fn raise_inspector(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let tool = self.with_active_tool(|t, e| t.inspector_subject(e)).flatten();
+        let mut h = std::hash::DefaultHasher::new();
+        self.selection.items().hash(&mut h);
+        tool.hash(&mut h);
+        let now = (self.active_tool, h.finish());
+        let before = self.inspector_shown.replace(now);
+        let shows = !self.selection.is_empty() || tool.is_some();
+        if self.panels.inspector && shows && before.is_some_and(|(t, k)| t == now.0 && k != now.1) {
+            gui::select_dock_tab("Inspector");
+        }
+    }
+
     pub fn focus_selection(&mut self) {
         crate::viewport::focus_selection(self);
     }
@@ -1760,6 +2002,8 @@ impl Editor {
         if let Some(name) = self.pending_focus.take() {
             gui::set_window_focus_named(&name);
         }
+
+        self.raise_inspector();
 
         let shows_viewport = self.with_tool_at(self.active_tool, |t, _| t.shows_viewport()).unwrap_or(true);
         if self.panels.viewport && shows_viewport {
@@ -1795,33 +2039,11 @@ impl Editor {
         self.with_tool_at(self.active_tool, |t, e| t.draw_panels(e));
     }
 
+    /// The toolbar: the tools' tabs, then the game list (the game, its mod packs, remount, fixes) at the right. What the left mouse does in the
+    /// viewport is the viewport's mode strip (`chips::draw_mode_strip`); messages are the status bar's (`draw_status_bar`).
     fn draw_toolbar(&mut self) {
         gui::set_cursor_pos_x(gui::cursor_pos_x() + 6.0);
         gui::align_text_to_frame_padding();
-
-        // The game, switched from here (the documents close, asking about unsaved ones).
-        let current = self.game();
-        gui::set_next_item_width(gui::calc_text_size(current.display_name).x + 60.0);
-        if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
-            for game in GameProfile::ALL {
-                if gui::selectable(game.display_name, game.key == current.key, 0)
-                    && game.key != current.key
-                    && let Err(m) = self.switch_game(game.key)
-                {
-                    self.status(&m, true);
-                }
-            }
-
-            gui::end_combo();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The game the editor works on (switching closes the open documents)");
-        }
-
-        gui::same_line();
-        gui::text_disabled("|");
-        gui::same_line();
         for (k, i) in self.shown_tools().into_iter().enumerate() {
             let active = i == self.active_tool;
             if active {
@@ -1846,55 +2068,128 @@ impl Editor {
             gui::same_line();
         }
 
-        gui::text_disabled("|");
-        gui::same_line();
-        for (g, (icon, name)) in [(icons::MOUSE_POINTER_2, "Select"), (icons::MOVE, "Move"), (icons::ROTATE_3D, "Rotate"), (icons::SCALE_3D, "Scale")].iter().enumerate() {
-            let mode = crate::viewport::GizmoMode::from_index(g);
-            let on = self.viewport.gizmo == mode;
-            if on {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+        // The game, switched from here (the documents close, asking about unsaved ones).
+        let current = self.game();
+        let width = gui::calc_text_size(current.display_name).x + 60.0;
+        gui::same_line_at(gui::window_width() - width - 8.0);
+        gui::set_next_item_width(width);
+        if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
+            for game in GameProfile::ALL {
+                if gui::selectable(game.display_name, game.key == current.key, 0)
+                    && game.key != current.key
+                    && let Err(m) = self.switch_game(game.key)
+                {
+                    self.status(&m, true);
+                }
             }
 
-            if gui::small_button(&format!("{icon}  {name}")) {
-                self.viewport.gizmo = mode;
+            gui::separator();
+            if gui::selectable(&format!("{}  Mod packs...", icons::LAYERS), false, 0) {
+                self.mods_popup = true;
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{name} ({})", g + 1));
+                gui::set_tooltip("The mod packs read on top of the game's own packs (also in Settings > Game data).");
             }
 
-            if on {
-                gui::pop_style_color(1);
+            if gui::selectable(&format!("{}  Remount packs", icons::REFRESH_CW), false, 0) {
+                let _ = CommandRegistry::run(self, "remount");
             }
 
-            gui::same_line();
-        }
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Reads the game's and the mod packs again (after one changed outside the editor) and rebuilds the renderer.",
+                );
+            }
 
-        // The coordinate system of the gizmo and the Inspector.
-        let local = self.viewport.local_coordinates;
-        let label = if local { format!("{}  Local##coords", icons::BOX) } else { format!("{}  Global##coords", icons::GLOBE) };
-        if gui::small_button(&label) {
-            self.viewport.local_coordinates = !local;
+            self.draw_fixes_items();
+            gui::end_combo();
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip(if local {
-                "Local coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the parent's (the group, \
-                 prefab or layer the item is in), as the file holds them. Click: global"
-            } else {
-                "Global coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the world's. Click: local \
-                 (relative to the group, prefab or layer the item is in)"
-            });
+            gui::set_tooltip("The game the editor works on (switching closes the open documents), its mod packs and fixes");
         }
 
-        gui::same_line();
-        self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
-        gui::text_disabled("|");
-        gui::same_line();
-        gui::push_style_color(gui::COL_TEXT, if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) });
-        gui::text(&self.status.clone());
-        gui::pop_style_color(1);
         gui::separator();
+    }
+
+    /// The status bar at the window's bottom: the last message (red for an error; a click opens the Log), the active document (amber while
+    /// it has unsaved changes) and the frame rate at the right.
+    fn draw_status_bar(&mut self) {
+        gui::push_style_var_v(gui::VAR_WINDOW_PADDING, gui::v2(0.0, 2.0));
+        let open = gui::begin_bottom_bar("##statusbar", gui::frame_height() + 4.0);
+        gui::pop_style_var(1);
+        if !open {
+            gui::end();
+            return;
+        }
+
+        // The frame rate (not in scripted runs: their shots must not depend on the machine's speed); the active document left of it.
+        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
+            let ms = self.perf.mean_frame_ms(60);
+            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
+        } else {
+            String::new()
+        };
+
+        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
+        let label = self.document_label();
+        let label_w = if label.is_empty() { 0.0 } else { gui::calc_text_width(&label) + 16.0 };
+
+        // The message in what the two leave of the bar, its first line, cut short with "..." (the whole of it in the tooltip and the Log): a
+        // long one was drawn under them.
+        const GAP: f32 = 24.0;
+        let left = 8.0;
+        gui::set_cursor_pos_x(gui::cursor_pos_x() + left);
+        gui::align_text_to_frame_padding();
+        let colour = if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) };
+        gui::push_style_color(gui::COL_TEXT, colour);
+        let status = if self.status.is_empty() { " ".to_owned() } else { self.status.clone() };
+        let room = gui::window_width() - left - label_w - fps_w - GAP;
+        gui::text(&fit_text(status.lines().next().unwrap_or(" "), room));
+        gui::pop_style_color(1);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("{status}\nClick: the Log, with every message"));
+        }
+
+        if gui::is_item_clicked() {
+            self.panels.log = true;
+            self.pending_focus = Some("Log".to_owned());
+        }
+
+        if !label.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
+
+            if self.docs.active().is_some_and(|d| d.modified()) {
+                gui::text_colored(crate::theme::modified(), &label);
+            } else {
+                gui::text(&label);
+            }
+        }
+
+        if !fps.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
+            gui::text_disabled(&fps);
+        }
+
+        gui::end();
+    }
+
+    /// File > Revert > To saved: the active tool's own revert, else its document's (`Document::revert`); the outcome in the status line.
+    pub fn revert_active(&mut self) {
+        let id = self.docs.active_id();
+        let by_tool = self.with_tool_at(self.active_tool, |t, e| t.revert(e)).flatten();
+        let result = match by_tool {
+            Some(r) => r,
+            None => self.docs.find_mut(id).map_or_else(|| Err("no document".to_owned()), |d| d.revert()),
+        };
+
+        match result {
+            Ok(m) => self.status(&m, false),
+            Err(m) => self.status(&m, true),
+        }
     }
 
     /// "Files this editor opens" and "All files" for the file dialogs.
@@ -1917,12 +2212,9 @@ impl Editor {
         }
 
         let active = self.docs.active_id();
-        let (can_save, modified, has_doc) = self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified() || d.save_wanted(), true));
+        let (can_save, modified, has_doc) =
+            self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified() || d.save_wanted(), true));
         if gui::begin_menu("File") {
-            if gui::menu_item(&format!("{}  Open from the game packs...", icons::PACKAGE), None, false, true) {
-                self.panels.assets = true;
-            }
-
             if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
                 && let Some(p) = file_dialog(false, &self.tool_folder(self.active_tool_id()), &self.open_filters())
             {
@@ -1932,43 +2224,72 @@ impl Editor {
                 }
             }
 
-            if gui::menu_item(&format!("{}  Mod packs...", icons::LAYERS), None, false, true) {
-                self.mods_popup = true;
-            }
-
+            self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Open));
+            gui::separator();
             if gui::menu_item(&format!("{}  Save", icons::SAVE), crate::shortcuts::label("save").as_deref(), false, can_save && modified) {
                 let _ = CommandRegistry::run(self, "save");
             }
 
-            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save) {
+            // The document marks itself saved when the file picked is its own; a copy elsewhere leaves it unsaved.
+            let blocked = self.docs.active().and_then(|d| d.save_as_blocked());
+            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save && blocked.is_none()) {
                 let start = self.save_as_start(active);
                 if let Some(p) = file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
                     && let Some(d) = self.docs.find_mut(active)
                 {
-                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p });
-                    if result.is_ok() {
-                        d.history_mut().mark_saved();
-                    }
-
-                    let msg = result.map_or_else(|e| e, |()| "saved".to_owned());
+                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p.clone() });
+                    let msg = match result {
+                        Ok(()) if d.modified() => {
+                            format!("a copy saved to {}; the document's own file does not have the edits yet (Save)", p.display())
+                        }
+                        Ok(()) => "saved".to_owned(),
+                        Err(e) => e,
+                    };
                     self.status(&msg, false);
                 }
             }
 
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(blocked.as_deref().unwrap_or(
+                    "Writes the document to a file you pick. A file on disk goes on as the new file; a game file's copy elsewhere is only a copy (Save still writes the project's).",
+                ));
+            }
+
+            self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Save));
             let unsaved = self.docs.unsaved().len();
-            let label = if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
+            let label =
+                if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
             if gui::menu_item(&label, crate::shortcuts::label("save_all").as_deref(), false, unsaved > 0) {
                 let _ = CommandRegistry::run(self, "save_all");
             }
 
-            let loose = has_doc && self.is_loose_copy(active);
-            if gui::menu_item("Revert to game's version...", None, false, loose) {
-                self.ask_revert(active);
+            if gui::begin_menu_enabled(&format!("{}  Revert", icons::UNDO_2), has_doc) {
+                if gui::menu_item("To saved", None, false, modified) {
+                    self.revert_active();
+                }
+
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "The document as its file has it: the edits since the last save go (the status line says whether Undo or Redo brings them back).",
+                    );
+                }
+
+                let loose = self.is_loose_copy(active);
+                if gui::menu_item("To the game's version...", None, false, loose) {
+                    self.ask_revert(active);
+                }
+
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.",
+                    );
+                }
+
+                self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Revert));
+                gui::end_menu();
             }
 
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip("Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.");
-            }
+            gui::separator();
 
             if gui::begin_menu(&format!("{}  Export", icons::PACKAGE)) {
                 let drew = self.with_tool_at(self.active_tool, |t, e| t.export_menu(e)).unwrap_or(false);
@@ -1979,25 +2300,14 @@ impl Editor {
                 gui::end_menu();
             }
 
+            let _ = self.with_tool_at(self.active_tool, |t, e| t.share_menu(e));
+            gui::separator();
             if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
                 self.ask_close(active);
             }
 
             if gui::menu_item("Close all documents", None, false, !self.docs.order().is_empty()) {
                 self.ask_close_all();
-            }
-
-            if gui::menu_item(&format!("{}  Remount packs", icons::REFRESH_CW), None, false, true) {
-                let _ = CommandRegistry::run(self, "remount");
-            }
-
-            gui::separator();
-            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
-                self.save_layout();
-            }
-
-            if gui::menu_item("Reset layout", None, false, true) {
-                self.reset_layout();
             }
 
             gui::separator();
@@ -2014,7 +2324,11 @@ impl Editor {
         }
 
         if gui::begin_menu("Edit") {
-            let h = self.docs.active().map(|d| (d.history().can_undo(), d.history().can_redo(), d.history().position()));
+            let h = self
+                .docs
+                .active()
+                .map(|d| (d.history().can_undo(), d.history().can_redo(), d.history().position()))
+                .filter(|_| self.open_gesture().is_none());
             let name = |i: usize| self.docs.active().map(|d| d.history().name(i)).unwrap_or_default();
             let undo = match h {
                 Some((true, _, p)) => format!("{}  Undo {}", icons::UNDO_2, name(p - 1)),
@@ -2055,8 +2369,14 @@ impl Editor {
             gui::menu_item_toggle("Assets", &mut self.panels.assets);
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
+            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::separator();
-            if gui::menu_item(&format!("{}  Focus selection", icons::FOCUS), crate::shortcuts::label("focus").as_deref(), false, !self.selection.is_empty()) {
+            if gui::menu_item(
+                &format!("{}  Focus selection", icons::FOCUS),
+                crate::shortcuts::label("focus").as_deref(),
+                false,
+                !self.selection.is_empty(),
+            ) {
                 self.focus_selection();
             }
 
@@ -2068,7 +2388,9 @@ impl Editor {
             }
 
             if gui::begin_menu("Gizmo size") {
-                for (size, label) in [(45.0, "Small"), (wce_foundation::settings::DEFAULT_GIZMO_SIZE, "Medium"), (90.0, "Large"), (120.0, "Extra large")] {
+                for (size, label) in
+                    [(45.0, "Small"), (wce_foundation::settings::DEFAULT_GIZMO_SIZE, "Medium"), (90.0, "Large"), (120.0, "Extra large")]
+                {
                     if gui::menu_item(label, None, self.settings.appearance.gizmo_size == size, true) {
                         self.set_gizmo_size(size);
                     }
@@ -2078,58 +2400,41 @@ impl Editor {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("How long the move / rotate / scale gizmo's handles are on screen: always the same, however far the camera is or however big the object.");
+                gui::set_tooltip(
+                    "How long the move / rotate / scale gizmo's handles are on screen: always the same, however far the camera is or however big the object.",
+                );
             }
 
+            self.with_tool_at(self.active_tool, |t, e| t.view_menu(e));
             gui::separator();
-            if gui::begin_menu(&format!("{}  Frame rate cap", icons::GAUGE)) {
-                for (fps, label) in [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")] {
-                    if gui::menu_item(label, None, self.frame_cap == fps, true) {
-                        self.set_frame_cap(fps);
-                    }
-                }
+            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
+                self.save_layout();
+            }
 
-                gui::end_menu();
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Keeps where the panels are, for the next start.");
+            }
+
+            if gui::menu_item("Reset layout", None, false, true) {
+                self.reset_layout();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The panels back where they start out.");
             }
 
             gui::end_menu();
         }
 
         self.with_tool_at(self.active_tool, |t, e| t.draw_menus(e));
-        self.draw_fixes_menu();
         if gui::begin_menu("Help") {
-            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
+            gui::menu_item(&format!("Warscape Community Editor {}", env!("CARGO_PKG_VERSION")), None, false, false);
             gui::separator();
             if gui::menu_item(&self.updates_menu_label(), None, false, true) {
                 self.updates_menu_clicked();
             }
 
             gui::end_menu();
-        }
-
-        // Frame rate readout, right aligned (not in scripted runs: their shots must not depend on the machine's speed); the active tool's
-        // document left of it (amber while it has unsaved changes).
-        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
-            let ms = self.perf.mean_frame_ms(60);
-            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
-        } else {
-            String::new()
-        };
-
-        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
-        let label = self.document_label();
-        if !label.is_empty() {
-            gui::same_line_at(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
-            if self.docs.active().is_some_and(|d| d.modified()) {
-                gui::text_colored(crate::theme::modified(), &label);
-            } else {
-                gui::text(&label);
-            }
-        }
-
-        if !fps.is_empty() {
-            gui::same_line_at(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
-            gui::text_disabled(&fps);
         }
 
         gui::end_menu_bar();
@@ -2190,7 +2495,10 @@ impl Editor {
         }
 
         let game = self.game();
-        gui::text_wrapped(&format!("Warscape Community Editor needs {}. Nothing from the game is copied: files are read from your installation.", game.display_name));
+        gui::text_wrapped(&format!(
+            "Warscape Community Editor needs {}. Nothing from the game is copied: files are read from your installation.",
+            game.display_name
+        ));
         self.game_combo();
         gui::spacing();
         gui::set_next_item_width(470.0);
@@ -2209,7 +2517,11 @@ impl Editor {
         }
 
         gui::same_line();
-        let problem = if self.first_run_game.is_empty() { Some("no game folder".to_owned()) } else { self.game().folder_problem(Path::new(&self.first_run_game)) };
+        let problem = if self.first_run_game.is_empty() {
+            Some("no game folder".to_owned())
+        } else {
+            self.game().folder_problem(Path::new(&self.first_run_game))
+        };
         let game_ok = problem.is_none();
         if let Some(problem) = problem {
             gui::text_colored(crate::theme::error(), &problem);
@@ -2223,7 +2535,9 @@ impl Editor {
 
         if game_ok {
             gui::spacing();
-            gui::text_wrapped("Mod packs to read besides the game's own (optional; you can change this later in File > Mod packs):");
+            gui::text_wrapped(
+                "Mod packs to read besides the game's own (optional; you can change this later in the game list at the toolbar's left, Mod packs...):",
+            );
             let game = self.first_run_game.clone();
             self.mod_pack_checks(&game);
         }
@@ -2305,3 +2619,21 @@ impl Editor {
     }
 }
 
+/// `text` as it fits in `width` pixels of the current font: whole, else its longest start that fits with "..." after it (nothing when not
+/// even that does).
+fn fit_text(text: &str, width: f32) -> String {
+    if gui::calc_text_width(text) <= width {
+        return text.to_owned();
+    }
+
+    let ends = text.char_indices().map(|(i, _)| i).skip(1).collect::<Vec<_>>();
+    let fits = |n: usize| gui::calc_text_width(&format!("{}...", &text[..ends[n]])) <= width;
+    // The number of characters kept: the most that fit (`fits` is monotonic in it).
+    let (mut lo, mut hi) = (0usize, ends.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if mid > 0 && fits(mid - 1) { lo = mid } else { hi = mid - 1 }
+    }
+
+    if lo == 0 { String::new() } else { format!("{}...", &text[..ends[lo - 1]]) }
+}

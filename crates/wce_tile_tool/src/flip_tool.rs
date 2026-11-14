@@ -5,7 +5,7 @@ use wce_editor::editor::Editor;
 use wce_editor::gui::{self, label_column, row};
 use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::{Overlay, overlay_colour};
-use wce_tile_editor::tile_document::{FlipPlane, Tile, TileDocument};
+use wce_tile_editor::tile_document::{FlipPlane, Tile, TileDocument, TileFlipAxis};
 
 use crate::selection_tools::set_selection;
 use crate::tool::{TileTool, document, document_id, selected};
@@ -14,6 +14,12 @@ use crate::tool::{TileTool, document, document_id, selected};
 const PLANE_REACH: f32 = 1024.0;
 const PLANE_HEIGHT: f32 = 60.0;
 const PLANE_STEP: f32 = 32.0;
+
+/// What the Whole tile buttons do (their tooltips).
+const WHOLE_TILE_TIP_X: &str = "Flips the whole tile about its middle: west and east change places. Every item of every layer (hidden and locked ones \
+     too), the height map, the textures, the ground types, the terrain layers and the tile's links go across, as one undo step; the plane above plays no part.";
+const WHOLE_TILE_TIP_Z: &str = "Flips the whole tile about its middle: north and south change places. Every item of every layer (hidden and locked ones \
+     too), the height map, the textures, the ground types, the terrain layers and the tile's links go across, as one undo step; the plane above plays no part.";
 
 /// The most lines drawn from the selection to where it would go.
 const MAX_LINES: usize = 128;
@@ -49,20 +55,60 @@ pub(crate) struct FlipMode {
 }
 
 impl TileTool {
-    /// Enters Flip mode with the plane through the selection's centre.
+    /// Enters Flip mode with the plane through the selection's centre, or the tile's without a selection (its Whole tile buttons need none).
     pub fn begin_flip(&mut self, e: &mut Editor) -> Result<String, String> {
         let sel = selected(e);
         let d = document(e).ok_or("no tile is open")?;
-        if sel.is_empty() {
-            return Err("select what to flip first".to_owned());
-        }
-
         let t = d.tile();
         let n = sel.len() as f32;
-        let (x, z) = sel.iter().map(|&s| t.world_position(s)).fold((0.0, 0.0), |(x, z), p| (x + p.x / n, z + p.z / n));
+        let (x, z) = if sel.is_empty() {
+            ((d.project().extent_x() * 0.5) as f32, (d.project().extent_z() * 0.5) as f32)
+        } else {
+            sel.iter().map(|&s| t.world_position(s)).fold((0.0, 0.0), |(x, z), p| (x + p.x / n, z + p.z / n))
+        };
+
         self.stop_making();
         self.flip = Some(FlipMode { plane: FlipPlane { x, z, angle: 0.0 }, copy: false, dragging: false, gizmo_height: 0.0 });
         Ok("flip: its gizmo moves and turns the plane, a press on the ground puts it there; the Inspector flips".to_owned())
+    }
+
+    /// Flips the whole tile, its terrain and links too (`TileDocument::flip_tile`).
+    pub fn do_flip_tile(&mut self, e: &mut Editor, axis: TileFlipAxis) -> Result<String, String> {
+        let id = document_id(e).ok_or("no tile is open")?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
+        d.flip_tile(axis)
+    }
+
+    /// A whole-tile flip asked for: a modal says it is under way for two frames (so that it is on screen), then the flip runs.
+    pub(crate) fn draw_flip_tile_busy(&mut self, e: &mut Editor) {
+        const TITLE: &str = "Flipping the tile";
+        /// The flip is done: the message stays one frame more, over the tile being published again (the next frame's start).
+        const DONE: u8 = u8::MAX;
+        let Some((axis, frames)) = self.flip_tile_pending else { return };
+        gui::open_popup(TITLE);
+        if gui::begin_popup_modal(TITLE, None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            gui::text(&format!("Flipping the whole tile along {}...", if axis == TileFlipAxis::X { "x" } else { "z" }));
+            gui::text_disabled("Every item, the terrain and the links: this takes a while on a big tile.");
+            if frames == DONE {
+                gui::close_current_popup();
+            }
+
+            gui::end_popup();
+        }
+
+        match frames {
+            DONE => self.flip_tile_pending = None,
+            0 => {
+                let start = std::time::Instant::now();
+                self.status = match self.do_flip_tile(e, axis) {
+                    Ok(msg) => format!("{msg} ({:.1} s)", start.elapsed().as_secs_f32()),
+                    Err(why) => why,
+                };
+                self.flip_tile_pending = Some((axis, DONE));
+            }
+
+            n => self.flip_tile_pending = Some((axis, n - 1)),
+        }
     }
 
     /// Mirrors the selection across the plane.
@@ -70,7 +116,8 @@ impl TileTool {
         let flip = self.flip.ok_or("not in Flip mode")?;
         let sel = selected(e);
         let id = document_id(e).ok_or("no tile is open")?;
-        let into = if flip.copy { Some(document(e).and_then(|d| self.new_items_layer(d)).ok_or("this tile has no scene graph")?) } else { None };
+        let into =
+            if flip.copy { Some(document(e).and_then(|d| self.new_items_layer(d)).ok_or("this tile has no scene graph")?) } else { None };
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let went = d.flip(&sel, flip.plane, into)?;
         if flip.copy {
@@ -143,22 +190,43 @@ impl TileTool {
             [flip.plane.x, flip.plane.z] = at;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A point the plane goes through: x and z, in metres.");
+        }
+
         row("Angle");
         gui::set_next_item_width(-1.0);
         gui::drag_float("##flipangle", &mut flip.plane.angle, 0.5, -360.0, 360.0, "%.1f deg");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The plane's heading in degrees: 0 flips along x, 90 along z.");
+        }
         row("Align to");
-        if choice("X axis##flip", flip.plane.angle == 0.0, two, "The plane across the x axis: the selection goes to the other side along x.") {
+        if choice(
+            "X axis##flip",
+            flip.plane.angle == 0.0,
+            two,
+            "The plane across the x axis: the selection goes to the other side along x.",
+        ) {
             flip.plane.angle = 0.0;
         }
 
         gui::same_line();
-        if choice("Z axis##flip", flip.plane.angle == 90.0, two, "The plane across the z axis: the selection goes to the other side along z.") {
+        if choice(
+            "Z axis##flip",
+            flip.plane.angle == 90.0,
+            two,
+            "The plane across the z axis: the selection goes to the other side along z.",
+        ) {
             flip.plane.angle = 90.0;
         }
 
         gui::set_cursor_pos_x(label_column());
         if gui::button_sized("Move plane into view##flip", gui::v2(-1.0, 0.0)) {
             (flip.plane.x, flip.plane.z) = (camera.x, camera.z);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts the plane through the point the camera looks at; its angle stays.");
         }
 
         self.flip = Some(flip);
@@ -173,6 +241,10 @@ impl TileTool {
             self.status = self.do_flip(e).unwrap_or_else(|why| why);
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Mirrors the selection across the plane (moved or as a copy, as chosen above).");
+        }
+
         gui::pop_style_color(1);
         gui::end_disabled();
         gui::same_line();
@@ -180,10 +252,42 @@ impl TileTool {
             self.flip = None;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Leaves Flip mode (Esc too).");
+        }
+
         gui::spacing();
         gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
         gui::text_wrapped("Its gizmo moves and turns the plane; a press on the ground puts it there. Models are not mirrored: they turn.");
         gui::pop_style_color(1);
+
+        // The whole tile: everything in it, its terrain and its links, about its middle. The plane above plays no part.
+        gui::spacing();
+        gui::separator_text("Whole tile");
+        row("Flip along");
+        let mut axis = None;
+        if gui::button_sized("X##fliptile", gui::v2(two, 0.0)) {
+            axis = Some(TileFlipAxis::X);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(WHOLE_TILE_TIP_X);
+        }
+
+        gui::same_line();
+        if gui::button_sized("Z##fliptile", gui::v2(two, 0.0)) {
+            axis = Some(TileFlipAxis::Z);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(WHOLE_TILE_TIP_Z);
+        }
+
+        // The flip of a big tile takes seconds: a message is shown first (`draw_flip_tile_busy`), then it runs.
+        if let Some(axis) = axis {
+            self.flip_tile_pending = Some((axis, 2));
+        }
+
         true
     }
 

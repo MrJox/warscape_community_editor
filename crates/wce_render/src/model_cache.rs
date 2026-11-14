@@ -21,7 +21,9 @@ use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::model_top::ModelTop;
-use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
+use wce_scene::render_scene::{
+    EntityId, MODEL_BONE_SUFFIX, MODEL_ROPES_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin,
+};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -40,7 +42,6 @@ pub type SharedTexture = Arc<RwLock<Texture>>;
 pub struct SharedDevice(pub ID3D11Device);
 
 impl SharedDevice {
-
     /// The device. Closures must reach it through this method: a closure that names the field captures the bare device, not this wrapper.
     pub fn device(&self) -> &ID3D11Device {
         &self.0
@@ -70,8 +71,18 @@ pub const TEX_SKIN_MASK: usize = 8;
 pub const TEX_DECAL_MASK: usize = 9;
 pub const TEX_SLOTS: usize = 10;
 
-const TEX_NAMES: [&str; TEX_SLOTS] =
-    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map", "s_skin_mask_map", "s_decal_mask"];
+const TEX_NAMES: [&str; TEX_SLOTS] = [
+    "s_diffuse_map",
+    "s_specular_colour_map",
+    "s_gloss_map",
+    "s_colour_mask_map",
+    "s_normal_map",
+    "s_detail_map",
+    "s_alpha_mask",
+    "s_ambient_map",
+    "s_skin_mask_map",
+    "s_decal_mask",
+];
 
 impl MeshKind {
     pub fn is_tree(self) -> bool {
@@ -96,6 +107,11 @@ pub const CINEMATIC_STRIDE: u32 = 32;
 
 /// The Uk8 vertex format of water meshes: position (f16 x 4) and uv (f16 x 2).
 pub const WATER_STRIDE: u32 = 12;
+
+/// A rope's vertex (`rope.hlsl` vs30_main_rigid, f32; docs/re/cloth.md, "Rope drawing"): POSITION0 its node (model space), NORMAL0 the rope's
+/// way there, TEXCOORD0 the uv (x across the rope: 0, 1; y the node's own texture coordinate), TEXCOORD1 (how far to the side, signed: the
+/// shader turns it to the camera; 1), TEXCOORD2 (the game's parity values; no technique reads them).
+pub const ROPE_STRIDE: u32 = 48;
 
 /// Which of the game's rigid shaders draw a mesh (its material type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -143,6 +159,13 @@ pub enum MeshKind {
     /// TreeBillboardMaterial (vertex format Billboard, [`BILLBOARD_STRIDE`] bytes): a tree's farthest LOD, a quad turned to the camera
     /// showing one of four views (rigidtreebillboard); its diffuse in the diffuse slot, the normal and displacement map in the normal slot.
     TreeBillboard,
+
+    /// A Rope material's chain of nodes ([`ROPE_STRIDE`] bytes), loaded with MODEL_ROPES_SUFFIX: `rope.hlsl`'s rigid technique.
+    Rope,
+
+    /// WeightedCloth (a ship's sails, loaded with MODEL_SKINNED_SUFFIX, drawn by renderer/skinned.rs): `weightedcloth.hlsl`. Its bones are
+    /// the cloth simulation's; at rest (an identity palette) the vertices are where the file has them.
+    WeightedCloth,
 }
 
 /// The shader name of a texture slot (`s_diffuse_map`...); empty for other slots.
@@ -207,6 +230,10 @@ pub struct GpuMesh {
 
     /// Loaded as `<file>#snow` (MODEL_SNOW_SUFFIX): drawn with the snow regions' intensity.
     pub snow: bool,
+
+    /// A WeightedCloth mesh's first bone in its model's palette: its vertices index its own material's cloth bones, and a model's sails share
+    /// one palette, theirs one after another in the order of the LOD's meshes.
+    pub palette_base: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -269,7 +296,9 @@ fn decal_box(corners: &[[f32; 3]]) -> Option<Float4x4> {
     let len = axes.map(|v| dot(v, v).sqrt());
     let square = (0..3).all(|i| (i + 1..3).all(|j| dot(axes[i], axes[j]).abs() <= 1e-2 * len[i] * len[j]));
     if !square || axes[1][1] <= 0.0 || len.contains(&0.0) {
-        let (lo, hi) = corners.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), c| (std::array::from_fn(|k| lo[k].min(c[k])), std::array::from_fn(|k| hi[k].max(c[k]))));
+        let (lo, hi) = corners.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), c| {
+            (std::array::from_fn(|k| lo[k].min(c[k])), std::array::from_fn(|k| hi[k].max(c[k])))
+        });
         axes = [[hi[0] - lo[0], 0.0, 0.0], [0.0, hi[1] - lo[1], 0.0], [0.0, 0.0, hi[2] - lo[2]]];
     }
 
@@ -309,7 +338,14 @@ pub struct RigidInstance {
 
 /// An immutable buffer of some bytes.
 fn immutable_buffer(dev: &ID3D11Device, bytes: &[u8], bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: bytes.len() as u32, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: bind as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: bytes.len() as u32,
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: bind as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, Some(bytes)).ok()
 }
 
@@ -319,6 +355,9 @@ struct TextureInner {
     dev: SharedDevice,
     read: SharedReader,
     cache: Mutex<HashMap<String, Arc<OnceLock<Option<SharedTexture>>>>>,
+
+    /// When each was last asked for: one fetched every frame and not kept (a sky's, the ground's) is in use though only the cache holds it.
+    touched: Mutex<HashMap<String, std::time::Instant>>,
     errors: Mutex<Vec<String>>,
 
     /// What went to the log already: each problem is logged once.
@@ -363,7 +402,6 @@ pub struct TextureCache {
 }
 
 impl TextureCache {
-
     pub fn new(dev: &ID3D11Device, read: SharedReader) -> Self {
         let solid = |rgba| Arc::new(RwLock::new(make_solid_texture(dev, rgba)));
         Self {
@@ -371,6 +409,7 @@ impl TextureCache {
                 dev: SharedDevice(dev.clone()),
                 read,
                 cache: Mutex::new(HashMap::new()),
+                touched: Mutex::new(HashMap::new()),
                 errors: Mutex::new(vec![]),
                 logged: Mutex::new(HashSet::new()),
                 loaded: AtomicUsize::new(0),
@@ -411,6 +450,7 @@ impl TextureCache {
 
     fn get_or_load(&self, path: &str, srgb: bool, quiet: bool) -> Option<SharedTexture> {
         let key = format!("{}|{}", wce_vfs::normalize(path), if srgb { "s" } else { "l" });
+        lock(&self.inner.touched).insert(key.clone(), std::time::Instant::now());
         let slot = lock(&self.inner.cache).entry(key).or_default().clone();
         slot.get_or_init(|| self.load(path, srgb, quiet)).clone()
     }
@@ -438,7 +478,9 @@ impl TextureCache {
 
         let first = (inner.streaming.load(Ordering::Relaxed) && plan.ok)
             .then(|| load_dds_tail(inner.dev.device(), header, &bytes[plan.tail_offset..], &plan, srgb))
-            .and_then(|tail| tail.map_err(|error| inner.error(LogLevel::Warning, format!("{path}: streamed mips: {error} (loaded whole)"))).ok());
+            .and_then(|tail| {
+                tail.map_err(|error| inner.error(LogLevel::Warning, format!("{path}: streamed mips: {error} (loaded whole)"))).ok()
+            });
         if let Some(first) = first {
             let first = Arc::new(RwLock::new(first));
             inner.loaded.fetch_add(1, Ordering::Relaxed);
@@ -446,15 +488,23 @@ impl TextureCache {
             let (job_inner, target, path) = (inner.clone(), first.clone(), path.to_owned());
 
             // After every model load that is queued.
-            let handle = io_pool().post(move || {
-                wce_prof!("texture.upgrade");
-                match load_dds(job_inner.dev.device(), &bytes, srgb) {
-                    Ok(full) => lock(&job_inner.upgrades).push((target, full)),
-                    Err(error) => job_inner.error(LogLevel::Error, format!("{path}: {error} (stays at its small mips)")),
-                }
+            let handle = io_pool().post(
+                move || {
+                    wce_prof!("texture.upgrade");
+                    // Counted down whatever happens: `upgrades_pending` is waited on.
+                    let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        load_dds(job_inner.dev.device(), &bytes, srgb).map_err(|e| e.to_string())
+                    }))
+                    .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_text(panic.as_ref()))));
+                    match loaded {
+                        Ok(full) => lock(&job_inner.upgrades).push((target, full)),
+                        Err(error) => job_inner.error(LogLevel::Error, format!("{path}: {error} (stays at its small mips)")),
+                    }
 
-                job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
-            }, JobPool::current_priority() + 1.0e6);
+                    job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
+                },
+                JobPool::current_priority() + 1.0e6,
+            );
 
             lock(&inner.upgrade_jobs).push(handle);
             return Some(first);
@@ -488,6 +538,21 @@ impl TextureCache {
             target.height = full.height;
             target.mips = full.mips;
         }
+    }
+
+    /// Drops the textures only the cache holds (no model's material, no terrain, no upgrade in flight) that were not asked for in `idle`:
+    /// their GPU memory goes back. One asked for again loads again; ones that failed or are loading stay. Returns how many went.
+    pub fn evict_unreferenced(&self, idle: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut touched = lock(&self.inner.touched);
+        let mut cache = lock(&self.inner.cache);
+        let before = cache.len();
+        cache.retain(|key, slot| {
+            let held = Arc::strong_count(slot) > 1 || slot.get().is_none_or(|t| t.as_ref().is_none_or(|t| Arc::strong_count(t) > 1));
+            held || touched.get(key).is_some_and(|t| now.duration_since(*t) <= idle)
+        });
+        touched.retain(|key, _| cache.contains_key(key));
+        before - cache.len()
     }
 
     pub fn upgrades_pending(&self) -> usize {
@@ -556,6 +621,9 @@ struct Entry {
     state: State,
     model: Option<Arc<GpuModel>>,
     handle: Handle,
+
+    /// When it was last asked for (`try_get`, `peek`, `model`): one ready but not in a draw list yet is not idle.
+    touched: Option<std::time::Instant>,
 }
 
 struct ModelInner {
@@ -567,6 +635,9 @@ struct ModelInner {
     pending: AtomicUsize,
     revision: AtomicU64,
     errors: Mutex<Vec<String>>,
+    /// The caches using these models (`ModelCache::new` and every `sharing`); the queued loads are cancelled with the last one. The loads
+    /// themselves hold the `Arc` too, so its count does not tell.
+    owners: AtomicUsize,
 }
 
 // SAFETY: the texture cache only holds free-threaded GPU objects behind locks.
@@ -578,6 +649,10 @@ unsafe impl Sync for TextureCache {}
 pub struct ModelCache {
     inner: Arc<ModelInner>,
     terrain: BTreeMap<EntityId, TerrainGpu>,
+
+    /// Which entity's patches are made from a heights buffer, layout, version and skin (`terrain`'s placements of one tile share them):
+    /// found at once instead of by a walk over every slot for each entity (quadratic as a map context's tiles come in).
+    terrain_by_source: HashMap<(usize, u64, u64, u64), EntityId>,
 }
 
 /// The texture a material gives a slot, or a fallback.
@@ -606,12 +681,27 @@ fn engine_default(path: &str, srgb: bool) -> Option<String> {
 }
 
 /// A material texture's path, the engine's stand-in for a placeholder (when it loads) taking its place.
-fn material_path(textures: &TextureCache, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool) -> Option<String> {
-    let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/"))?;
+fn material_path(
+    textures: &TextureCache,
+    material: &rpfm_lib::files::rigidmodel::materials::Material,
+    kind: TextureType,
+    srgb: bool,
+) -> Option<String> {
+    // Some files root their paths (`/variantmeshes/...`: the naval weapons'); the game finds them all the same.
+    let path = material
+        .textures()
+        .iter()
+        .find(|t| *t.tex_type() == kind)
+        .map(|t| t.path().replace('\\', "/").trim_start_matches('/').to_owned())?;
     Some(engine_default(&path, srgb).filter(|d| textures.get_quiet(d, srgb).is_some()).unwrap_or(path))
 }
 
-fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType) -> Option<String> {
+fn material_texture_path(
+    textures: &TextureCache,
+    model: &str,
+    material: &rpfm_lib::files::rigidmodel::materials::Material,
+    kind: TextureType,
+) -> Option<String> {
     let path = material_path(textures, material, kind, true)?;
     if textures.get_quiet(&path, true).is_some() {
         return Some(path);
@@ -636,9 +726,17 @@ fn tree_tint(material: &rpfm_lib::files::rigidmodel::materials::Material) -> [f3
 
 /// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
 /// models name the rome_atlantic folder's textures, which are only in their own folder).
-fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
+fn material_texture(
+    textures: &TextureCache,
+    model: &str,
+    material: &rpfm_lib::files::rigidmodel::materials::Material,
+    kind: TextureType,
+    srgb: bool,
+    fallback: SharedTexture,
+) -> SharedTexture {
     let Some(path) = material_path(textures, material, kind, srgb) else { return fallback };
-    textures.get_quiet(&path, srgb)
+    textures
+        .get_quiet(&path, srgb)
         .or_else(|| {
             let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
             textures.get_quiet(&format!("{dir}/{name}"), srgb)
@@ -660,6 +758,8 @@ fn weighted_material(material: MaterialType) -> Option<(MeshKind, bool, bool)> {
         MaterialType::WeightedSkinDirtmap => (MeshKind::WeightedSkin, true, false),
         MaterialType::WeightedSkinDecal => (MeshKind::WeightedSkin, false, true),
         MaterialType::WeightedSkinDecalDirtmap => (MeshKind::WeightedSkin, true, true),
+        // `weightedcloth` samples a dirt map and mask (`s_decal_dirt_map`, `s_decal_dirt_mask`): the material's, black without.
+        MaterialType::WeightedCloth => (MeshKind::WeightedCloth, true, false),
         MaterialType::Decal => (MeshKind::RigidDecal, false, true),
         MaterialType::DecalDirtmap => (MeshKind::RigidDecal, true, true),
         _ => return None,
@@ -727,6 +827,73 @@ fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
     }
 }
 
+/// The cloth meshes' bone counts (their `palette_base` as made) turned into their first bones, one after another.
+fn palette_bases(meshes: &mut [GpuMesh]) {
+    let mut next = 0;
+    for m in meshes.iter_mut().filter(|m| m.kind == MeshKind::WeightedCloth) {
+        let count = m.palette_base;
+        m.palette_base = next;
+        next += count;
+    }
+}
+
+/// A rope's strip as the game builds it (`FUN_1189a3e0`, docs/re/cloth.md, "Rope drawing"): per node two vertices, the first at u 0 and
+/// `+radius`, the second at u 1 and `-radius`, v the node's texture coordinate (its file `uk_1`; `vs`, one per node), the way the mean of the
+/// segments' directions on each side. Then the triangles (the game's strip as a list) and the bounds (the nodes, widened by the radius).
+/// `None` for fewer than two nodes or a `vs` of another length.
+pub(crate) fn rope_geometry(nodes: &[[f32; 3]], vs: &[f32], radius: f32) -> Option<(Vec<u8>, Vec<u16>, [f32; 3], [f32; 3])> {
+    if nodes.len() < 2 || nodes.len() * 2 > usize::from(u16::MAX) || vs.len() != nodes.len() {
+        return None;
+    }
+
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+    // Each segment's direction; (1, 0, 0) for one too short.
+    let dirs: Vec<[f32; 3]> = nodes
+        .windows(2)
+        .map(|w| {
+            let d = sub(w[1], w[0]);
+            let l2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if l2 <= 0.001 {
+                [1.0, 0.0, 0.0]
+            } else {
+                let l = l2.sqrt();
+                [d[0] / l, d[1] / l, d[2] / l]
+            }
+        })
+        .collect();
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    let mut vertices = Vec::with_capacity(nodes.len() * 2 * ROPE_STRIDE as usize);
+    for (k, p) in nodes.iter().enumerate() {
+        // The ends take their segment's way, the others the mean of their two (not normalised).
+        let way = match k {
+            0 => dirs[0],
+            k if k == nodes.len() - 1 => dirs[k - 1],
+            k => std::array::from_fn(|a| (dirs[k - 1][a] + dirs[k][a]) * 0.5),
+        };
+
+        let parity = if k % 2 == 0 { 1.0 } else { 0.0 };
+        for (u, side, t2) in [(0.0f32, radius, [1.0, parity]), (1.0, -radius, [0.0, parity])] {
+            for f in [p[0], p[1], p[2], way[0], way[1], way[2], u, vs[k], side, 1.0, t2[0], t2[1]] {
+                vertices.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+
+        for a in 0..3 {
+            lo[a] = lo[a].min(p[a] - radius);
+            hi[a] = hi[a].max(p[a] + radius);
+        }
+    }
+
+    let mut indices = Vec::with_capacity((nodes.len() - 1) * 6);
+    for k in 0..nodes.len() as u16 - 1 {
+        let (a, b, c, d) = (2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 3);
+        indices.extend_from_slice(&[a, c, b, b, c, d]);
+    }
+
+    Some((vertices, indices, lo, hi))
+}
+
 /// LOD 0's solid meshes from above (the material types drawn as static meshes), with their pivots.
 fn model_top(model: &RigidModel) -> Option<ModelTop> {
     wce_prof!("model.top");
@@ -736,7 +903,11 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
         let (mesh, material) = (block.mesh(), block.material());
         let solid = matches!(
             mesh.material_type(),
-            MaterialType::DefaultMaterial | MaterialType::TiledDirtmap | MaterialType::TerrainBlend | MaterialType::Dirtmap | MaterialType::ShipAmbientmap
+            MaterialType::DefaultMaterial
+                | MaterialType::TiledDirtmap
+                | MaterialType::TerrainBlend
+                | MaterialType::Dirtmap
+                | MaterialType::ShipAmbientmap
                 | MaterialType::Weighted
         );
         if !solid {
@@ -744,8 +915,13 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
         }
 
         let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
-        let at = |i: usize| mesh.vertices().get(i).map(|v| { let p = v.position(); Float3::new(p.x, p.y, p.z) + pivot });
-        for t in mesh.indices().chunks_exact(3) {
+        let at = |i: usize| {
+            mesh.vertices().get(i).map(|v| {
+                let p = v.position();
+                Float3::new(p.x, p.y, p.z) + pivot
+            })
+        };
+        for t in mesh.indices().as_chunks::<3>().0 {
             if let (Some(a), Some(b), Some(c)) = (at(t[0] as usize), at(t[1] as usize), at(t[2] as usize)) {
                 tris.push([a, b, c]);
             }
@@ -756,13 +932,18 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
 }
 
 impl ModelInner {
-
     /// Builds a model on any thread; `None` when it has no drawable standard meshes at LOD 0.
     fn build(&self, path: &str) -> Result<Option<GpuModel>, String> {
         wce_prof!("model.build");
 
         // `<file>#skinned`: the same model, its weighted vertices as stored (MODEL_SKINNED_SUFFIX).
         let (path, skinned) = match path.strip_suffix(MODEL_SKINNED_SUFFIX) {
+            Some(p) => (p, true),
+            None => (path, false),
+        };
+
+        // `<file>#ropes`: its ropes only (MODEL_ROPES_SUFFIX).
+        let (path, ropes) = match path.strip_suffix(MODEL_ROPES_SUFFIX) {
             Some(p) => (p, true),
             None => (path, false),
         };
@@ -809,170 +990,7 @@ impl ModelInner {
             return Err("no LODs".to_owned());
         }
 
-        let textures = &self.textures;
-        let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
-            let (mesh, material) = (block.mesh(), block.material());
-            let weighted = weighted_material(*mesh.material_type());
-            let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
-            let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
-                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => (weighted?.0, *f),
-                (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => (if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard }, VertexFormat::Static),
-                _ if skinned => return None,
-                (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
-                (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
-                (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
-                (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
-                (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
-
-                // Posed on the CPU (pose_first_frame): drawn as a static mesh.
-                (MaterialType::Weighted, VertexFormat::Weighted) => (MeshKind::Standard, VertexFormat::Static),
-                (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
-                (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
-                (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
-                (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
-                (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
-                // A campaign's tree clumps (`rigidcampaignvegetation.hlsl`): drawn as static meshes, see below.
-                (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::Standard, VertexFormat::Static),
-                _ => return None,
-            };
-
-            if mesh.vertices().is_empty() || mesh.indices().is_empty() {
-                return None;
-            }
-
-            let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
-
-            // The static material types share the default layout; trees have theirs. Written back as rpfm_lib reads them: the file's bytes.
-            let stride = match format {
-                VertexFormat::Tree => TREE_STRIDE,
-                VertexFormat::Billboard => BILLBOARD_STRIDE,
-                VertexFormat::Grass => GRASS_STRIDE,
-                VertexFormat::Uk8 => WATER_STRIDE,
-                VertexFormat::Weighted => WEIGHTED_STRIDE,
-                VertexFormat::Cinematic => CINEMATIC_STRIDE,
-                _ => 32,
-            };
-
-            // A campaign tree clump's vertex (version 6 `Uk12`) is (position, u) and (normal, v), f16; its vertex shader draws the
-            // position times 0.4 (`rigidcampaignvegetation.hlsl` vs30_main), turned by the instance's angle and leaning towards the camera
-            // (not done here), and its pixel shader cuts the diffuse's alpha at 0.5 (the material's alpha mode 1).
-            let clump = *mesh.material_type() == MaterialType::CampaignVegetation;
-            let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
-            for vertex in mesh.vertices() {
-                let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
-                if clump {
-                    let mut v = vertex.clone();
-                    let (p, n) = (*vertex.position(), *vertex.normal());
-                    (v.texture_coordinate_mut().x, v.texture_coordinate_mut().y) = (p.w, n.w);
-                    let q = v.position_mut();
-                    (q.x, q.y, q.z, q.w) = (p.x * 0.4, p.y * 0.4, p.z * 0.4, 1.0);
-                    v.normal_mut().w = 0.0;
-                    v.write(&mut vertices, 6, format, mtype).ok()?;
-                    continue;
-                }
-
-                vertex.write(&mut vertices, 6, format, mtype).ok()?;
-            }
-
-            if vertices.len() != mesh.vertices().len() * stride as usize {
-                return None;
-            }
-
-            let indices = mesh.indices().iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
-            let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
-            let ib = immutable_buffer(self.dev.device(), &indices, D3D11_BIND_INDEX_BUFFER)?;
-
-            // The bounds come from the vertices: the file's are not trusted (a culling sphere that is too small drops visible geometry).
-            // A tree vertex is drawn somewhere between its two positions (f16 at bytes 0 and 8): both count.
-            let (mut lo, mut hi) = ([1e30f32; 3], [-1e30f32; 3]);
-            let half = |v: &[u8], at: usize| half_to_float(u16::from_le_bytes([v[at], v[at + 1]]));
-            let mut grow = |p: [f32; 3]| {
-                for (a, v) in p.into_iter().enumerate() {
-                    lo[a] = lo[a].min(v);
-                    hi[a] = hi[a].max(v);
-                }
-            };
-
-            if format == VertexFormat::Tree {
-                for v in vertices.chunks_exact(stride as usize) {
-                    grow([half(v, 0), half(v, 2), half(v, 4)]);
-                    grow([half(v, 8), half(v, 10), half(v, 12)]);
-                }
-            } else if format == VertexFormat::Billboard {
-                // The quad turns around the vertical axis: as far in z as in x.
-                for v in vertices.chunks_exact(stride as usize) {
-                    let (x, y) = (half(v, 0), half(v, 2));
-                    grow([x, y, x]);
-                    grow([-x, y, -x]);
-                }
-            } else {
-                for vertex in mesh.vertices() {
-                    let p = vertex.position();
-                    grow([p.x, p.y, p.z]);
-                }
-            }
-
-            // A billboard's normal and displacement map is named after its diffuse.
-            let normal = if kind == MeshKind::TreeBillboard {
-                material.textures().iter().find(|t| *t.tex_type() == TextureType::Diffuse)
-                    .and_then(|t| t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds")))
-                    .and_then(|normal| textures.get_quiet(&normal, false).or_else(|| {
-                        textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
-                        None
-                    }))
-                    .unwrap_or_else(|| textures.flat_normal())
-            } else {
-                material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
-            };
-
-            Some(GpuMesh {
-                vb: Some(vb),
-                ib: Some(ib),
-                index_count: mesh.indices().len() as u32,
-                alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
-                stride,
-                kind,
-                dirt,
-                decal,
-                bone: *material.i_matrix_index(),
-                decal_rect: material.params_vector4df32().iter().find(|(id, _)| *id == 0).map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
-                uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
-                tint: tree_tint(material),
-                offset: pivot,
-                has_offset: pivot != Float3::default(),
-                tex: [
-                    material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
-                    material_texture(textures, path, material, TextureType::Specular, true, textures.black()),
-                    // sRGB, as the game samples it: its G-buffer holds the gloss map's x (channel 1 .w) and y (channel 2 .w) linearised
-                    // (RenderDoc captures of Rome against the editor's, docs/re/renderer.md); read linear they were 5 to 10 x too high.
-                    material_texture(textures, path, material, TextureType::GlossMap, true, textures.black()),
-                    material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
-                    normal,
-                    // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and
-                    // the dirt amount) and dirt mask.
-                    if kind == MeshKind::Dirtmap || dirt {
-                        material_texture(textures, path, material, TextureType::DecalDirtmap, false, textures.black())
-                    } else {
-                        material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white())
-                    },
-                    if kind == MeshKind::Dirtmap || dirt {
-                        material_texture(textures, path, material, TextureType::DecalDirtmask, false, textures.black())
-                    } else {
-                        material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
-                    },
-                    material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
-                    if kind == MeshKind::WeightedSkin { material_texture(textures, path, material, TextureType::SkinMask, false, textures.black()) } else { textures.black() },
-                    if decal { material_texture(textures, path, material, TextureType::DecalMask, false, textures.black()) } else { textures.black() },
-                ],
-                diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
-                normal_path: material.textures().iter().find(|t| *t.tex_type() == TextureType::Normal).map(|t| t.path().replace('\\', "/")).unwrap_or_default(),
-                displacement: material.textures().iter().any(|t| *t.tex_type() == TextureType::Displacement)
-                    .then(|| material_texture(textures, path, material, TextureType::Displacement, false, textures.black())),
-                bmin: Float3::new(lo[0], lo[1], lo[2]),
-                bmax: Float3::new(hi[0], hi[1], hi[2]),
-                snow,
-            })
-        };
+        let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| self.mesh_of(path, block, ropes, skinned, snow);
 
         let mut gm = GpuModel {
             path: path.to_owned(),
@@ -987,13 +1005,24 @@ impl ModelInner {
             for block in lod.mesh_blocks() {
                 let decal = matches!(
                     block.mesh().material_type(),
-                    MaterialType::ProjectedDecal | MaterialType::ProjectedDecalV2 | MaterialType::ProjectedDecalV3 | MaterialType::ProjectedDecalV4
+                    MaterialType::ProjectedDecal
+                        | MaterialType::ProjectedDecalV2
+                        | MaterialType::ProjectedDecalV3
+                        | MaterialType::ProjectedDecalV4
                 );
                 if !decal {
                     continue;
                 }
 
-                let corners: Vec<[f32; 3]> = block.mesh().vertices().iter().map(|v| { let p = v.position(); [p.x, p.y, p.z] }).collect();
+                let corners: Vec<[f32; 3]> = block
+                    .mesh()
+                    .vertices()
+                    .iter()
+                    .map(|v| {
+                        let p = v.position();
+                        [p.x, p.y, p.z]
+                    })
+                    .collect();
                 if let Some(matrix) = decal_box(&corners) {
                     gm.decals.push(ModelDecal { texture: block.material().name().to_owned(), matrix });
                 }
@@ -1001,7 +1030,8 @@ impl ModelInner {
         }
 
         for (l, lod) in model.lods().iter().enumerate() {
-            let meshes = lod.mesh_blocks().iter().filter_map(make_mesh).collect::<Vec<_>>();
+            let mut meshes = lod.mesh_blocks().iter().filter_map(make_mesh).collect::<Vec<_>>();
+            palette_bases(&mut meshes);
             if meshes.is_empty() {
                 // A model of decals only (its boxes give the bounds).
                 if l == 0 && !gm.decals.is_empty() {
@@ -1043,6 +1073,281 @@ impl ModelInner {
         Ok(Some(gm))
     }
 
+    /// A mesh block of the model at `path` on the GPU: its vertices and indices, bounds, material and textures. `ropes`: the ropes
+    /// only; `skinned`: the weighted vertices as stored; `snow`: marked for the snow. `None` for a block not drawn that way.
+    fn mesh_of(
+        &self,
+        path: &str,
+        block: &rpfm_lib::files::rigidmodel::MeshBlock,
+        ropes: bool,
+        skinned: bool,
+        snow: bool,
+    ) -> Option<GpuMesh> {
+        let textures = &self.textures;
+        let (mesh, material) = (block.mesh(), block.material());
+        if ropes || *mesh.material_type() == MaterialType::Rope {
+            return if ropes && *mesh.material_type() == MaterialType::Rope { self.rope_mesh(path, material) } else { None };
+        }
+
+        let weighted = weighted_material(*mesh.material_type());
+        let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
+        let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
+            (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => {
+                (weighted?.0, *f)
+            }
+            (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => {
+                (if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard }, VertexFormat::Static)
+            }
+            _ if skinned => return None,
+            (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
+            (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
+            (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
+            (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
+            (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
+
+            // Posed on the CPU (pose_first_frame): drawn as a static mesh.
+            (MaterialType::Weighted, VertexFormat::Weighted) => (MeshKind::Standard, VertexFormat::Static),
+            (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
+            (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
+            (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
+            (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
+            (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
+            // A campaign's tree clumps (`rigidcampaignvegetation.hlsl`): drawn as static meshes, see below.
+            (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::Standard, VertexFormat::Static),
+            _ => return None,
+        };
+
+        if mesh.vertices().is_empty() || mesh.indices().is_empty() {
+            return None;
+        }
+
+        let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
+
+        // The static material types share the default layout; trees have theirs. Written back as rpfm_lib reads them: the file's bytes.
+        let stride = match format {
+            VertexFormat::Tree => TREE_STRIDE,
+            VertexFormat::Billboard => BILLBOARD_STRIDE,
+            VertexFormat::Grass => GRASS_STRIDE,
+            VertexFormat::Uk8 => WATER_STRIDE,
+            VertexFormat::Weighted => WEIGHTED_STRIDE,
+            VertexFormat::Cinematic => CINEMATIC_STRIDE,
+            _ => 32,
+        };
+
+        // A campaign tree clump's vertex (version 6 `Uk12`) is (position, u) and (normal, v), f16; its vertex shader draws the
+        // position times 0.4 (`rigidcampaignvegetation.hlsl` vs30_main), turned by the instance's angle and leaning towards the camera
+        // (not done here), and its pixel shader cuts the diffuse's alpha at 0.5 (the material's alpha mode 1).
+        let clump = *mesh.material_type() == MaterialType::CampaignVegetation;
+        let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
+        for vertex in mesh.vertices() {
+            let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
+            if clump {
+                let mut v = vertex.clone();
+                let (p, n) = (*vertex.position(), *vertex.normal());
+                (v.texture_coordinate_mut().x, v.texture_coordinate_mut().y) = (p.w, n.w);
+                let q = v.position_mut();
+                (q.x, q.y, q.z, q.w) = (p.x * 0.4, p.y * 0.4, p.z * 0.4, 1.0);
+                v.normal_mut().w = 0.0;
+                v.write(&mut vertices, 6, format, mtype).ok()?;
+                continue;
+            }
+
+            vertex.write(&mut vertices, 6, format, mtype).ok()?;
+        }
+
+        if vertices.len() != mesh.vertices().len() * stride as usize {
+            return None;
+        }
+
+        let indices = mesh.indices().iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
+        let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
+        let ib = immutable_buffer(self.dev.device(), &indices, D3D11_BIND_INDEX_BUFFER)?;
+
+        // The bounds come from the vertices: the file's are not trusted (a culling sphere that is too small drops visible geometry).
+        // A tree vertex is drawn somewhere between its two positions (f16 at bytes 0 and 8): both count.
+        let (mut lo, mut hi) = ([1e30f32; 3], [-1e30f32; 3]);
+        let half = |v: &[u8], at: usize| half_to_float(u16::from_le_bytes([v[at], v[at + 1]]));
+        let mut grow = |p: [f32; 3]| {
+            for (a, v) in p.into_iter().enumerate() {
+                lo[a] = lo[a].min(v);
+                hi[a] = hi[a].max(v);
+            }
+        };
+
+        if format == VertexFormat::Tree {
+            for v in vertices.chunks_exact(stride as usize) {
+                grow([half(v, 0), half(v, 2), half(v, 4)]);
+                grow([half(v, 8), half(v, 10), half(v, 12)]);
+            }
+        } else if format == VertexFormat::Billboard {
+            // The quad turns around the vertical axis: as far in z as in x.
+            for v in vertices.chunks_exact(stride as usize) {
+                let (x, y) = (half(v, 0), half(v, 2));
+                grow([x, y, x]);
+                grow([-x, y, -x]);
+            }
+        } else {
+            for vertex in mesh.vertices() {
+                let p = vertex.position();
+                grow([p.x, p.y, p.z]);
+            }
+        }
+
+        // A billboard's normal and displacement map is named after its diffuse.
+        let normal = if kind == MeshKind::TreeBillboard {
+            material
+                .textures()
+                .iter()
+                .find(|t| *t.tex_type() == TextureType::Diffuse)
+                .and_then(|t| {
+                    t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds"))
+                })
+                .and_then(|normal| {
+                    textures.get_quiet(&normal, false).or_else(|| {
+                        textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
+                        None
+                    })
+                })
+                .unwrap_or_else(|| textures.flat_normal())
+        } else {
+            material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
+        };
+
+        Some(GpuMesh {
+            vb: Some(vb),
+            ib: Some(ib),
+            index_count: mesh.indices().len() as u32,
+            alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
+            stride,
+            kind,
+            dirt,
+            decal,
+            bone: *material.i_matrix_index(),
+            decal_rect: material
+                .params_vector4df32()
+                .iter()
+                .find(|(id, _)| *id == 0)
+                .map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
+            uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
+                [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v))
+            } else {
+                [0.0; 2]
+            },
+            tint: tree_tint(material),
+            offset: pivot,
+            has_offset: pivot != Float3::default(),
+            tex: [
+                material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
+                material_texture(textures, path, material, TextureType::Specular, true, textures.black()),
+                // sRGB, as the game samples it: its G-buffer holds the gloss map's x (channel 1 .w) and y (channel 2 .w) linearised
+                // (RenderDoc captures of Rome against the editor's, docs/re/renderer.md); read linear they were 5 to 10 x too high.
+                material_texture(textures, path, material, TextureType::GlossMap, true, textures.black()),
+                material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
+                normal,
+                // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and
+                // the dirt amount) and dirt mask.
+                if kind == MeshKind::Dirtmap || dirt {
+                    material_texture(textures, path, material, TextureType::DecalDirtmap, false, textures.black())
+                } else {
+                    material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white())
+                },
+                if kind == MeshKind::Dirtmap || dirt {
+                    material_texture(textures, path, material, TextureType::DecalDirtmask, false, textures.black())
+                } else {
+                    material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
+                },
+                material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
+                if kind == MeshKind::WeightedSkin {
+                    material_texture(textures, path, material, TextureType::SkinMask, false, textures.black())
+                } else {
+                    textures.black()
+                },
+                if decal {
+                    material_texture(textures, path, material, TextureType::DecalMask, false, textures.black())
+                } else {
+                    textures.black()
+                },
+            ],
+            diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
+            normal_path: material
+                .textures()
+                .iter()
+                .find(|t| *t.tex_type() == TextureType::Normal)
+                .map(|t| t.path().replace('\\', "/"))
+                .unwrap_or_default(),
+            displacement: material
+                .textures()
+                .iter()
+                .any(|t| *t.tex_type() == TextureType::Displacement)
+                .then(|| material_texture(textures, path, material, TextureType::Displacement, false, textures.black())),
+            bmin: Float3::new(lo[0], lo[1], lo[2]),
+            bmax: Float3::new(hi[0], hi[1], hi[2]),
+            snow,
+
+            // Its bone count for now: [`palette_bases`] makes it the first bone.
+            palette_base: if kind == MeshKind::WeightedCloth { material.cloth_bones().len() as u32 } else { 0 },
+        })
+    }
+
+    /// A Rope material's strip: two vertices per node, across the rope; the material's `uk_1` (about 0.03) its half width, the nodes' `uk_1`
+    /// their texture coordinate along it (docs/re/cloth.md, "Rope drawing").
+    fn rope_mesh(&self, path: &str, material: &rpfm_lib::files::rigidmodel::materials::Material) -> Option<GpuMesh> {
+        let rope = material.rope();
+        let nodes: Vec<[f32; 3]> = rope
+            .nodes()
+            .iter()
+            .map(|n| {
+                let p = n.position();
+                [p.x, p.y, p.z]
+            })
+            .collect();
+        let vs: Vec<f32> = rope.nodes().iter().map(|n| *n.uk_1()).collect();
+        let (vertices, indices, lo, hi) = rope_geometry(&nodes, &vs, *rope.uk_1())?;
+        let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
+        let ib = immutable_buffer(
+            self.dev.device(),
+            &indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(),
+            D3D11_BIND_INDEX_BUFFER,
+        )?;
+        let textures = &self.textures;
+        let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
+        Some(GpuMesh {
+            vb: Some(vb),
+            ib: Some(ib),
+            index_count: indices.len() as u32,
+            alpha_mode: 1,
+            stride: ROPE_STRIDE,
+            kind: MeshKind::Rope,
+            dirt: false,
+            decal: false,
+            bone: -1,
+            decal_rect: [0.0, 0.0, 1.0, 1.0],
+            uv2_tile: [0.0; 2],
+            tint: [1.0; 12],
+            offset: pivot,
+            has_offset: pivot != Float3::default(),
+            tex: [
+                material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
+                textures.black(),
+                textures.black(),
+                textures.black(),
+                material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal()),
+                textures.white(),
+                textures.white(),
+                textures.white(),
+                textures.black(),
+                textures.black(),
+            ],
+            diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
+            normal_path: String::new(),
+            displacement: None,
+            bmin: Float3::new(lo[0], lo[1], lo[2]),
+            bmax: Float3::new(hi[0], hi[1], hi[2]),
+            snow: false,
+            palette_base: 0,
+        })
+    }
+
     fn finish(&self, path: &str, model: Option<GpuModel>) {
         let mut models = lock(&self.models);
         let entry = models.entry(path.to_owned()).or_default();
@@ -1053,8 +1358,12 @@ impl ModelInner {
         self.done.notify_all();
     }
 
+    /// Builds the model and settles its entry, whatever happens: a panic in a decoder (a broken or modded file) fails the model instead of
+    /// leaving it Loading, which `model` and `wait_all` would wait on for ever.
     fn build_and_finish(&self, path: &str) {
-        let model = match self.build(path) {
+        let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.build(path)))
+            .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_text(panic.as_ref()))));
+        let model = match built {
             Ok(model) => model,
             Err(error) => {
                 log::error(format!("model {path}: {error}"));
@@ -1085,6 +1394,11 @@ impl ModelInner {
 }
 
 impl ModelCache {
+    /// A cache for another renderer that shares this one's models (and their textures): only the scene's terrain GPU data is its own.
+    pub fn sharing(&self) -> Self {
+        self.inner.owners.fetch_add(1, Ordering::AcqRel);
+        Self { inner: self.inner.clone(), terrain: BTreeMap::new(), terrain_by_source: HashMap::new() }
+    }
 
     pub fn new(dev: &ID3D11Device, read: SharedReader, textures: Arc<TextureCache>) -> Self {
         Self {
@@ -1097,8 +1411,10 @@ impl ModelCache {
                 pending: AtomicUsize::new(0),
                 revision: AtomicU64::new(1),
                 errors: Mutex::new(vec![]),
+                owners: AtomicUsize::new(1),
             }),
             terrain: BTreeMap::new(),
+            terrain_by_source: HashMap::new(),
         }
     }
 
@@ -1113,6 +1429,7 @@ impl ModelCache {
         let mut models = lock(&inner.models);
         loop {
             let entry = models.entry(path.to_owned()).or_default();
+            entry.touched = Some(std::time::Instant::now());
             match entry.state {
                 State::Ready => return entry.model.clone(),
                 State::Failed => return None,
@@ -1140,6 +1457,7 @@ impl ModelCache {
     pub fn try_get(&self, path: &str, priority: f32) -> Option<Arc<GpuModel>> {
         let mut models = lock(&self.inner.models);
         let entry = models.entry(path.to_owned()).or_default();
+        entry.touched = Some(std::time::Instant::now());
         match entry.state {
             State::Ready => entry.model.clone(),
             State::Absent => {
@@ -1165,7 +1483,24 @@ impl ModelCache {
 
     /// The model if it is ready, without queueing anything, and its state (Absent counts as still to come).
     pub fn peek(&self, path: &str) -> (Option<Arc<GpuModel>>, State) {
-        lock(&self.inner.models).get(path).map_or((None, State::Absent), |entry| (entry.model.clone().filter(|_| entry.state == State::Ready), entry.state))
+        lock(&self.inner.models).get_mut(path).map_or((None, State::Absent), |entry| {
+            entry.touched = Some(std::time::Instant::now());
+            (entry.model.clone().filter(|_| entry.state == State::Ready), entry.state)
+        })
+    }
+
+    /// Drops the ready models nothing else holds (no draw list, no preview) that were not asked for in `idle`: their GPU memory (and their
+    /// textures', with `TextureCache::evict_unreferenced`) goes back. One asked for again loads again. Failed and loading ones stay.
+    /// Returns how many went.
+    pub fn evict_idle(&self, idle: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut models = lock(&self.inner.models);
+        let before = models.len();
+        models.retain(|_, e| {
+            let unused = e.model.as_ref().is_some_and(|m| Arc::strong_count(m) == 1);
+            !(e.state == State::Ready && unused && e.touched.is_none_or(|t| now.duration_since(t) > idle))
+        });
+        before - models.len()
     }
 
     /// Re-ranks a queued load.
@@ -1216,7 +1551,16 @@ impl ModelCache {
         }
 
         // Another entity with the same heights buffer (the placements of one tile in a map context): its patches.
-        if let Some(same) = self.terrain.values().find(|slot| Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id).cloned() {
+        let source = (Arc::as_ptr(&t.heights) as usize, layout, t.version, skin_id);
+        if let Some(same) = self
+            .terrain_by_source
+            .get(&source)
+            .and_then(|other| self.terrain.get(other))
+            .filter(|slot| {
+                Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id
+            })
+            .cloned()
+        {
             self.terrain.insert(id, same);
             return self.terrain.get(&id);
         }
@@ -1225,7 +1569,16 @@ impl ModelCache {
         let same_layout = self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.patches_x == px && slot.patches_z == pz);
         if !same_layout {
             let count = (px * pz) as usize;
-            self.terrain.insert(id, TerrainGpu { patches_x: px, patches_z: pz, patches: (0..count).map(|_| Arc::new(GpuModel::default())).collect(), skins: vec![None; count], ..Default::default() });
+            self.terrain.insert(
+                id,
+                TerrainGpu {
+                    patches_x: px,
+                    patches_z: pz,
+                    patches: (0..count).map(|_| Arc::new(GpuModel::default())).collect(),
+                    skins: vec![None; count],
+                    ..Default::default()
+                },
+            );
         }
 
         let diffuse = self.inner.textures.get(&t.diffuse, true);
@@ -1239,26 +1592,38 @@ impl ModelCache {
         // The patches that changed: all on a new layout, otherwise the ones whose heights (plus the margin the normals read) differ. The
         // same buffer is the same heights (a paint stroke): the slot holds it, so it cannot have been written or freed since.
         let same_heights = same_layout && Arc::ptr_eq(&tg.heights, &t.heights);
-        let dirty = (0..tg.patches.len()).into_par_iter().map(|p| {
-            if same_heights {
-                return false;
-            }
+        let dirty = (0..tg.patches.len())
+            .into_par_iter()
+            .map(|p| {
+                if same_heights {
+                    return false;
+                }
 
-            if !same_layout || t.heights.is_empty() || tg.heights.len() != t.heights.len() {
-                return true;
-            }
+                if !same_layout || t.heights.is_empty() || tg.heights.len() != t.heights.len() {
+                    return true;
+                }
 
-            let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
-            let (i0, i1) = ((pi * CELLS - 1).max(0) as usize, ((pi + 1) * CELLS + 1).min(t.nx - 1) as usize);
-            let (j0, j1) = ((pj * CELLS - 1).max(0) as usize, ((pj + 1) * CELLS + 1).min(t.nz - 1) as usize);
-            let nx = t.nx as usize;
-            (j0..=j1).any(|j| t.heights[j * nx + i0..=j * nx + i1].iter().zip(&tg.heights[j * nx + i0..=j * nx + i1]).any(|(a, b)| a.to_bits() != b.to_bits()))
-        }).collect::<Vec<_>>();
+                let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
+                let (i0, i1) = ((pi * CELLS - 1).max(0) as usize, ((pi + 1) * CELLS + 1).min(t.nx - 1) as usize);
+                let (j0, j1) = ((pj * CELLS - 1).max(0) as usize, ((pj + 1) * CELLS + 1).min(t.nz - 1) as usize);
+                let nx = t.nx as usize;
+                (j0..=j1).any(|j| {
+                    t.heights[j * nx + i0..=j * nx + i1]
+                        .iter()
+                        .zip(&tg.heights[j * nx + i0..=j * nx + i1])
+                        .any(|(a, b)| a.to_bits() != b.to_bits())
+                })
+            })
+            .collect::<Vec<_>>();
 
-        let built = (0..tg.patches.len()).into_par_iter().filter(|&p| dirty[p]).map(|p| {
-            let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
-            (p, build_patch(dev.device(), t, diffuse.clone(), &textures, pi, pj))
-        }).collect::<Vec<_>>();
+        let built = (0..tg.patches.len())
+            .into_par_iter()
+            .filter(|&p| dirty[p])
+            .map(|p| {
+                let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
+                (p, build_patch(dev.device(), t, diffuse.clone(), &textures, pi, pj))
+            })
+            .collect::<Vec<_>>();
 
         // Only the skin's pixels changed (its place and size are the layout): the patches whose piece of it a dab touched get their piece
         // again on the geometry they have (a ground types stroke rebuilt every patch of the tile each dab). Without the dab's rectangle
@@ -1266,22 +1631,26 @@ impl ModelCache {
         let reskinned = match &t.skin {
             Some(s) if same_layout && tg.skin_id != s.id && s.w > 1 && s.h > 1 => {
                 let rect = s.dirty.filter(|(from, _)| *from == tg.skin_id).map(|(_, r)| r);
-                (0..tg.patches.len()).into_par_iter().filter(|&p| !dirty[p]).filter_map(|p| {
-                    let window = skin_window(t, s, (p % px as usize) as i32, (p / px as usize) as i32);
-                    if rect.is_some_and(|r| !skin_window_reads(s, window, r)) {
-                        return None;
-                    }
+                (0..tg.patches.len())
+                    .into_par_iter()
+                    .filter(|&p| !dirty[p])
+                    .filter_map(|p| {
+                        let window = skin_window(t, s, (p % px as usize) as i32, (p / px as usize) as i32);
+                        if rect.is_some_and(|r| !skin_window_reads(s, window, r)) {
+                            return None;
+                        }
 
-                    let texture = make_rgba_texture(dev.device(), window.2 as u32, window.3 as u32, &skin_piece(s, window), true);
-                    let skin = texture.srv.is_some().then(|| Arc::new(RwLock::new(texture)));
-                    let mut model = (*tg.patches[p]).clone();
-                    let diffuse = skin.clone().or_else(|| diffuse.clone()).unwrap_or_else(|| textures.white());
-                    for mesh in model.meshes.iter_mut().chain(model.lods.iter_mut().flat_map(|l| l.meshes.iter_mut())) {
-                        mesh.tex[TEX_DIFFUSE] = diffuse.clone();
-                    }
+                        let texture = make_rgba_texture(dev.device(), window.2 as u32, window.3 as u32, &skin_piece(s, window), true);
+                        let skin = texture.srv.is_some().then(|| Arc::new(RwLock::new(texture)));
+                        let mut model = (*tg.patches[p]).clone();
+                        let diffuse = skin.clone().or_else(|| diffuse.clone()).unwrap_or_else(|| textures.white());
+                        for mesh in model.meshes.iter_mut().chain(model.lods.iter_mut().flat_map(|l| l.meshes.iter_mut())) {
+                            mesh.tex[TEX_DIFFUSE] = diffuse.clone();
+                        }
 
-                    Some((p, model, skin))
-                }).collect::<Vec<_>>()
+                        Some((p, model, skin))
+                    })
+                    .collect::<Vec<_>>()
             }
 
             _ => vec![],
@@ -1308,6 +1677,7 @@ impl ModelCache {
         tg.layout = layout;
         tg.version = t.version;
         tg.skin_id = skin_id;
+        self.terrain_by_source.insert(source, id);
         if failed {
             log::error("terrain: a patch could not be created");
             lock(&self.inner.errors).push("terrain: a patch could not be created".to_owned());
@@ -1319,11 +1689,24 @@ impl ModelCache {
     /// Drops the terrain meshes of entities that no longer exist.
     pub fn prune_terrain(&mut self, scene: &RenderScene) {
         self.terrain.retain(|id, _| scene.find(*id).is_some_and(|e| matches!(e.payload, Payload::Terrain(_))));
+        let terrain = &self.terrain;
+        self.terrain_by_source.retain(|_, id| terrain.contains_key(id));
     }
 }
 
+/// What a caught panic said.
+fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
+    panic.downcast_ref::<&str>().map(|s| (*s).to_owned()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_default()
+}
+
 impl Drop for ModelCache {
+    /// The last cache of these models cancels their queued loads; while another shares them (a preview's renderer dropped, the main one
+    /// kept), the loads it waits for go on.
     fn drop(&mut self) {
+        if self.inner.owners.fetch_sub(1, Ordering::AcqRel) != 1 {
+            return;
+        }
+
         let mut models = lock(&self.inner.models);
         for entry in models.values_mut().filter(|entry| entry.state == State::Queued) {
             if io_pool().cancel(entry.handle) {
@@ -1416,7 +1799,7 @@ fn skin_piece(s: &TerrainSkin, (i0, j0, w, h): (i32, i32, i32, i32)) -> Vec<u8> 
     for (j, row) in out.chunks_exact_mut(w as usize * 4).enumerate() {
         let sj = (j0 + j as i32).clamp(0, s.h as i32 - 1) as usize;
         let src = &s.rgba[sj * stride..(sj + 1) * stride];
-        for (i, px) in row.chunks_exact_mut(4).enumerate() {
+        for (i, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let si = (i0 + i as i32).clamp(0, s.w as i32 - 1) as usize * 4;
             px.copy_from_slice(&src[si..si + 4]);
         }
@@ -1483,7 +1866,14 @@ fn axis_positions(cells: i32, stride: i32) -> Vec<i32> {
 }
 
 /// One patch: a vertex buffer of (cells + 1)^2 vertices plus a skirt around it, and an index buffer per LOD (stride 1, 2, 4...).
-fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, tex: &TextureCache, pi: i32, pj: i32) -> Option<(GpuModel, Option<SharedTexture>)> {
+fn build_patch(
+    dev: &ID3D11Device,
+    t: &Terrain,
+    diffuse: Option<SharedTexture>,
+    tex: &TextureCache,
+    pi: i32,
+    pj: i32,
+) -> Option<(GpuModel, Option<SharedTexture>)> {
     let tile = if t.tile_metres > 0.0 { t.tile_metres } else { 8.0 };
     let height = |i: i32, j: i32| t.height_at(i.clamp(0, t.nx - 1), j.clamp(0, t.nz - 1));
     let (ci0, cj0) = (pi * CELLS, pj * CELLS);
@@ -1571,18 +1961,21 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         lowered(j * wu + wu - 1, east as usize + j);
     }
 
-    let bytes = v.iter().flat_map(|vx| {
-        let mut out = [0u8; 32];
-        for (k, p) in vx.pos.iter().chain(&vx.uv).enumerate() {
-            out[k * 2..k * 2 + 2].copy_from_slice(&p.to_le_bytes());
-        }
+    let bytes = v
+        .iter()
+        .flat_map(|vx| {
+            let mut out = [0u8; 32];
+            for (k, p) in vx.pos.iter().chain(&vx.uv).enumerate() {
+                out[k * 2..k * 2 + 2].copy_from_slice(&p.to_le_bytes());
+            }
 
-        out[16..20].copy_from_slice(&vx.normal);
-        out[20..24].copy_from_slice(&vx.tangent);
-        out[24..28].copy_from_slice(&vx.bitangent);
-        out[28..32].copy_from_slice(&vx.colour);
-        out
-    }).collect::<Vec<_>>();
+            out[16..20].copy_from_slice(&vx.normal);
+            out[20..24].copy_from_slice(&vx.tangent);
+            out[24..28].copy_from_slice(&vx.bitangent);
+            out[28..32].copy_from_slice(&vx.colour);
+            out
+        })
+        .collect::<Vec<_>>();
 
     let vb = immutable_buffer(dev, &bytes, D3D11_BIND_VERTEX_BUFFER)?;
     let diffuse = skin_out.clone().or(diffuse).unwrap_or_else(|| tex.white());
@@ -1601,13 +1994,25 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         tint: [1.0; 12],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
-        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white(), tex.black(), tex.black()],
+        tex: [
+            diffuse,
+            tex.black(),
+            tex.black(),
+            tex.black(),
+            tex.flat_normal(),
+            tex.white(),
+            tex.white(),
+            tex.white(),
+            tex.black(),
+            tex.black(),
+        ],
         diffuse_path: String::new(),
         normal_path: String::new(),
         displacement: None,
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
         snow: false,
+        palette_base: 0,
     };
 
     let cells = (ci1 - ci0).max(cj1 - cj0);
@@ -1664,4 +2069,34 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
     out.bmin = Float3::new(x0, miny, z0);
     out.bmax = Float3::new(x0 + (w - 1) as f32 * t.step, maxy, z0 + (h - 1) as f32 * t.step);
     Some((out, skin_out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ROPE_STRIDE, rope_geometry};
+
+    fn floats(v: &[u8], vertex: usize) -> Vec<f32> {
+        v[vertex * ROPE_STRIDE as usize..(vertex + 1) * ROPE_STRIDE as usize]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    }
+
+    #[test]
+    fn a_rope_is_a_strip_across_its_nodes() {
+        let nodes = [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 1.0]];
+        let (v, i, lo, hi) = rope_geometry(&nodes, &[2.0, 0.5, -1.0], 0.05).expect("a strip");
+        assert_eq!((v.len(), i.len()), (6 * ROPE_STRIDE as usize, 12));
+        assert_eq!(&i[..6], &[0, 2, 1, 1, 2, 3]);
+
+        // Each node twice: u 0 at +r, u 1 at -r, v the node's own; the way the mean of the two segments' directions.
+        let (a, b, last) = (floats(&v, 2), floats(&v, 3), floats(&v, 5));
+        assert_eq!((&a[..3], &a[6..10], &b[6..10]), (&[0.0, 0.0, 1.0][..], &[0.0, 0.5, 0.05, 1.0][..], &[1.0, 0.5, -0.05, 1.0][..]));
+        assert_eq!(&a[3..6], &[0.0, 0.5, 0.5], "the mean, not normalised");
+        assert_eq!((&floats(&v, 0)[3..6], &last[3..6]), (&[0.0, 0.0, 1.0][..], &[0.0, 1.0, 0.0][..]), "the ends: their segment's way");
+        assert_eq!((last[7], &floats(&v, 0)[10..12], &a[10..12]), (-1.0, &[1.0, 1.0][..], &[1.0, 0.0][..]));
+        assert_eq!((lo, hi), ([-0.05, -0.05, -0.05], [0.05, 1.05, 1.05]));
+        assert!(rope_geometry(&[[0.0; 3]], &[0.0], 0.05).is_none());
+        assert!(rope_geometry(&nodes, &[0.0], 0.05).is_none(), "a v per node");
+    }
 }

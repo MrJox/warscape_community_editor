@@ -19,7 +19,12 @@ fn main() {
     let text = text.to_lowercase();
     let input = Path::new(input);
     let mut packs = if input.is_dir() {
-        std::fs::read_dir(input).expect("folder").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>()
+        std::fs::read_dir(input)
+            .expect("folder")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "pack"))
+            .collect::<Vec<_>>()
     } else {
         vec![input.to_path_buf()]
     };

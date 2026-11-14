@@ -7,7 +7,10 @@ use rpfm_lib::files::asset_variation_db::AssetVariationDb;
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else { std::process::exit(2) };
-    let db = match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&b)).map_err(|e| e.to_string())) {
+    let db = match std::fs::read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|b| AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&b)).map_err(|e| e.to_string()))
+    {
         Ok(db) => db,
         Err(e) => {
             eprintln!("error: {e}");
@@ -32,7 +35,12 @@ fn main() {
 
     let q = BTreeMap::from(
         [
-            ("map", "main_attila_map"), ("climate", "ROME_Desert"), ("season", "su"), ("precipitation", "dry"), ("time_of_day", "day"), ("battle_types", "land"),
+            ("map", "main_attila_map"),
+            ("climate", "ROME_Desert"),
+            ("season", "su"),
+            ("precipitation", "dry"),
+            ("time_of_day", "day"),
+            ("battle_types", "land"),
             ("snow_attrition", "snow_attrition_off"),
         ]
         .map(|(k, v)| (k.to_owned(), v.to_owned())),

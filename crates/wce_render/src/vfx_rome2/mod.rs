@@ -14,8 +14,8 @@ use std::rc::Rc;
 
 use wce_assets::vfx_def::{VfxFile, parse_vfx};
 use wce_d3d11::*;
-use wce_foundation::math::Float3;
 use wce_formats::xml_doc::XmlDoc;
+use wce_foundation::math::Float3;
 
 use crate::cbuffers::ConstantBuffers;
 use crate::particles::{Frame, WorldEffect, blend_state, rotation_of};
@@ -49,7 +49,9 @@ impl Lib {
         let mut diffuse: Vec<String> = Vec::new();
         let mut normal: Vec<String> = Vec::new();
         // An empty texture is an entry too (no texture): an emitter without a normal map has the first empty one's slot.
-        let texture = |chain: &str, which: &str| file.chain(chain).and_then(|c| c.find("ps_texture")).and_then(|m| m.find(which)).map(|p| p.value.clone());
+        let texture = |chain: &str, which: &str| {
+            file.chain(chain).and_then(|c| c.find("ps_texture")).and_then(|m| m.find(which)).map(|p| p.value.clone())
+        };
 
         for stack in &file.stacks {
             for chain in &stack.chains {
@@ -74,7 +76,9 @@ impl Lib {
             let stack = file.stacks.iter().find(|s| s.emitters.contains(&def.id));
             let packed = stack.map_or(u32::MAX, |s| {
                 let chain = s.chains.first().map(String::as_str).unwrap_or_default();
-                let slot = |list: &[String], which: &str| texture(chain, which).and_then(|t| list.iter().position(|x| *x == t)).map_or(-1, |k| k as i32);
+                let slot = |list: &[String], which: &str| {
+                    texture(chain, which).and_then(|t| list.iter().position(|x| *x == t)).map_or(-1, |k| k as i32)
+                };
                 slot(&diffuse, "diffuse").wrapping_add(slot(&normal, "normal").wrapping_mul(10)) as u32
             });
 
@@ -144,7 +148,12 @@ pub struct Rome2Vfx {
 impl Rome2Vfx {
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, read: Box<FileReader<'static>>) -> Self {
         let corners: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-        let desc = D3D11_BUFFER_DESC { ByteWidth: size_of_val(&corners) as u32, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_VERTEX_BUFFER as u32, ..Default::default() };
+        let desc = D3D11_BUFFER_DESC {
+            ByteWidth: size_of_val(&corners) as u32,
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_VERTEX_BUFFER as u32,
+            ..Default::default()
+        };
         let corners = dev.create_buffer(&desc, Some(bytemuck::cast_slice(&corners))).ok();
 
         // VFX_SHADER_BASE (fn 0x114bc6f0): premultiplied colour and alpha, depth tested but not written, both faces.
@@ -159,13 +168,30 @@ impl Rome2Vfx {
             RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
         };
 
-        let mut dd = D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() };
+        let mut dd = D3D11_DEPTH_STENCIL_DESC {
+            DepthEnable: true.into(),
+            DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO,
+            DepthFunc: D3D11_COMPARISON_LESS_EQUAL,
+            ..Default::default()
+        };
         let ds_test = dev.create_depth_stencil_state(&dd).ok();
         dd.DepthEnable = false.into();
         let ds_off = dev.create_depth_stencil_state(&dd).ok();
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_NONE,
+            DepthClipEnable: true.into(),
+            ..Default::default()
+        };
         let sampler = |filter: D3D11_FILTER, address: D3D11_TEXTURE_ADDRESS_MODE| {
-            let sd = D3D11_SAMPLER_DESC { Filter: filter, AddressU: address, AddressV: address, AddressW: address, MaxLOD: D3D11_FLOAT32_MAX, ..Default::default() };
+            let sd = D3D11_SAMPLER_DESC {
+                Filter: filter,
+                AddressU: address,
+                AddressV: address,
+                AddressW: address,
+                MaxLOD: D3D11_FLOAT32_MAX,
+                ..Default::default()
+            };
             dev.create_sampler_state(&sd).ok()
         };
 
@@ -240,25 +266,30 @@ impl Rome2Vfx {
         let (_, quat) = rotation_of(&fx.world);
         let pos = [fx.world.m[0][3], fx.world.m[1][3], fx.world.m[2][3]];
         let mut out = Vec::new();
-        let mut make = |this: &mut Self, name: &str, scale: f32, offset: [f32; 3], reference: Option<(&wce_assets::vfx_def::VfxRef, f32)>| {
-            let Some((lib_id, lib)) = this.lib(name) else { return };
-            let emitters = lib.emitters.iter().filter_map(|(id, desc, index, packed, view)| {
-                let r = reference.and_then(|(r, _)| r.find(id));
-                if r.is_some_and(|r| !r.enable) {
-                    return None;
-                }
+        let mut make =
+            |this: &mut Self, name: &str, scale: f32, offset: [f32; 3], reference: Option<(&wce_assets::vfx_def::VfxRef, f32)>| {
+                let Some((lib_id, lib)) = this.lib(name) else { return };
+                let emitters = lib
+                    .emitters
+                    .iter()
+                    .filter_map(|(id, desc, index, packed, view)| {
+                        let r = reference.and_then(|(r, _)| r.find(id));
+                        if r.is_some_and(|r| !r.enable) {
+                            return None;
+                        }
 
-                // The reference's tint, as the bytes it is kept in (fn 0x11507640).
-                let tint = r.map_or([1.0; 4], |r| r.tint_min.map(|v| f32::from((v * 255.0) as i32 as u8) / 255.0));
-                let mut e = Emitter::new(desc.clone(), *index, *packed, tint);
-                e.view = *view;
-                Some(e)
-            }).collect();
+                        // The reference's tint, as the bytes it is kept in (fn 0x11507640).
+                        let tint = r.map_or([1.0; 4], |r| r.tint_min.map(|v| f32::from((v * 255.0) as i32 as u8) / 255.0));
+                        let mut e = Emitter::new(desc.clone(), *index, *packed, tint);
+                        e.view = *view;
+                        Some(e)
+                    })
+                    .collect();
 
-            let owner = Owner { scale, colour: [1.0; 4], reference: reference.map(|(r, _)| (r.start_time, r.infinite_life)) };
-            let inst = Instance::new(owner, pos, quat, emitters, lib.camera_following);
-            out.push(Part { lib_id, offset, inst });
-        };
+                let owner = Owner { scale, colour: [1.0; 4], reference: reference.map(|(r, _)| (r.start_time, r.infinite_life)) };
+                let inst = Instance::new(owner, pos, quat, emitters, lib.camera_following);
+                out.push(Part { lib_id, offset, inst });
+            };
 
         if file.refs.is_empty() {
             make(self, &fx.effect, fx.scale, [0.0; 3], None);
@@ -357,7 +388,8 @@ impl Rome2Vfx {
 
     fn texture(&mut self, path: &str) -> Option<ID3D11ShaderResourceView> {
         if !self.textures.contains_key(path) {
-            let t = (self.read)(path).map_err(|e| e.to_string()).and_then(|bytes| load_dds(&self.dev, &bytes, true).map_err(|e| e.to_string()));
+            let t =
+                (self.read)(path).map_err(|e| e.to_string()).and_then(|bytes| load_dds(&self.dev, &bytes, true).map_err(|e| e.to_string()));
             let t = match t {
                 Ok(t) => Some(t),
                 Err(error) => {
@@ -412,10 +444,14 @@ impl Rome2Vfx {
             return;
         }
 
-        let mut keys: Vec<sort::Item> = items.iter().enumerate().map(|(k, (r, _))| {
-            let (dx, dy, dz) = (camera[0] - r[12], camera[1] - r[13], camera[2] - r[14]);
-            (dy * dy + dx * dx + dz * dz, k as u32)
-        }).collect();
+        let mut keys: Vec<sort::Item> = items
+            .iter()
+            .enumerate()
+            .map(|(k, (r, _))| {
+                let (dx, dy, dz) = (camera[0] - r[12], camera[1] - r[13], camera[2] - r[14]);
+                (dy * dy + dx * dx + dz * dz, k as u32)
+            })
+            .collect();
 
         sort::sort(&mut keys);
         let mut data: Vec<f32> = Vec::with_capacity(keys.len() * RECORD);
@@ -446,8 +482,12 @@ impl Rome2Vfx {
         if self.records.is_none() || self.records_capacity < bytes {
             let capacity = bytes.next_power_of_two().max(64 * 1024);
             let desc = D3D11_BUFFER_DESC {
-                ByteWidth: capacity as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_VERTEX_BUFFER as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
-                MiscFlags: 0, StructureByteStride: 0,
+                ByteWidth: capacity as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_VERTEX_BUFFER as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+                MiscFlags: 0,
+                StructureByteStride: 0,
             };
 
             self.records = self.dev.create_buffer(&desc, None).ok();
@@ -461,7 +501,14 @@ impl Rome2Vfx {
         }
     }
 
-    fn draw(&mut self, f: &Frame, runs: &[(usize, u32, u32)], shader_lib: &mut ShaderLibrary, read: &FileReader, cbs: &mut ConstantBuffers) {
+    fn draw(
+        &mut self,
+        f: &Frame,
+        runs: &[(usize, u32, u32)],
+        shader_lib: &mut ShaderLibrary,
+        read: &FileReader,
+        cbs: &mut ConstantBuffers,
+    ) {
         let Some(rtv) = f.target.clone() else { return };
 
         // cb_vfx: the camera's axes (billboards face it) and the whole viewport.
@@ -474,7 +521,14 @@ impl Rome2Vfx {
         let _ = cbs.upload(&self.dev, &self.ctx);
 
         self.ctx.set_render_targets(&[Some(rtv)], f.depth.as_ref());
-        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: f.width as f32, Height: f.height as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.set_viewports(&[D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: f.width as f32,
+            Height: f.height as f32,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }]);
         self.ctx.set_blend_state(self.bs.as_ref());
         self.ctx.set_depth_stencil_state(if f.depth.is_some() { self.ds_test.as_ref() } else { self.ds_off.as_ref() }, 0);
         self.ctx.set_rasterizer_state(self.rs.as_ref());
@@ -486,7 +540,8 @@ impl Rome2Vfx {
                 continue;
             }
 
-            let textures: Vec<_> = lib.diffuse.iter().take(DIFFUSE_SLOTS).map(|path| if path.is_empty() { None } else { self.texture(path) }).collect();
+            let textures: Vec<_> =
+                lib.diffuse.iter().take(DIFFUSE_SLOTS).map(|path| if path.is_empty() { None } else { self.texture(path) }).collect();
             let Some(Some(sh)) = self.shaders.get(&id) else { continue };
             self.ctx.set_input_layout(Some(&sh.layout));
             bind_shader(&self.ctx, &sh.vs, cbs);
@@ -527,4 +582,3 @@ fn rotation_matrix(q: [f32; 4]) -> [[f32; 3]; 3] {
         [x2 * q[2] - w2 * q[1], y2 * q[2] + w2 * q[0], 1.0 - x2 * q[0] - y2 * q[1]],
     ]
 }
-

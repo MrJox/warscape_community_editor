@@ -65,7 +65,11 @@ pub enum Dependency {
     Gone,
 
     /// The scene layer, its name and how it exports (`TileProject::layer_export`).
-    On { elem: usize, name: String, export: String },
+    On {
+        elem: usize,
+        name: String,
+        export: String,
+    },
 }
 
 /// Runs a body on the stack of a type and its field.
@@ -95,7 +99,19 @@ macro_rules! with_stack {
 
 fn rows<K: wce_tile::terrain_layers::Kind>(s: &Stack<K>) -> (Vec<LayerRow>, Option<u64>) {
     // What a procedural feature owns is not listed: it is made from the feature, and goes with it.
-    let list = s.layers.iter().filter(|l| l.owner.is_empty()).map(|l| LayerRow { id: l.id, name: l.name.clone(), visible: l.visible, opacity: l.opacity, bytes: l.bytes(), depends: l.depends.clone() }).collect();
+    let list = s
+        .layers
+        .iter()
+        .filter(|l| l.owner.is_empty())
+        .map(|l| LayerRow {
+            id: l.id,
+            name: l.name.clone(),
+            visible: l.visible,
+            opacity: l.opacity,
+            bytes: l.bytes(),
+            depends: l.depends.clone(),
+        })
+        .collect();
     (list, s.working)
 }
 
@@ -253,7 +269,8 @@ impl TileDocument {
             LayerType::Height => l.height.as_ref().map(rows),
             LayerType::Blend => l.blend.as_ref().map(rows),
             LayerType::Ground => l.ground.as_ref().map(rows),
-        }.unwrap_or_default()
+        }
+        .unwrap_or_default()
     }
 
     /// Whether the stacks changed since they were last saved.
@@ -388,8 +405,15 @@ impl TileDocument {
             Some(elem) => match self.tile().tscene().doc().get(elem, "wce_layer_id").filter(|k| !k.is_empty()) {
                 Some(k) => k,
                 None => {
-                    let next = self.tile().tscene().find_all("LayerInstance").into_iter()
-                        .filter_map(|e| self.tile().tscene().doc().get(e, "wce_layer_id")?.parse::<u64>().ok()).max().unwrap_or(0) + 1;
+                    let next = self
+                        .tile()
+                        .tscene()
+                        .find_all("LayerInstance")
+                        .into_iter()
+                        .filter_map(|e| self.tile().tscene().doc().get(e, "wce_layer_id")?.parse::<u64>().ok())
+                        .max()
+                        .unwrap_or(0)
+                        + 1;
                     if !self.set_attribute(elem, "wce_layer_id", &next.to_string()) {
                         return;
                     }
@@ -418,7 +442,11 @@ impl TileDocument {
         let p = self.project();
         match p.layer_by_key(depends) {
             None => Dependency::Gone,
-            Some(elem) => Dependency::On { elem, name: self.tile().tscene().doc().get(elem, "name").unwrap_or_default(), export: p.layer_export(elem) },
+            Some(elem) => Dependency::On {
+                elem,
+                name: self.tile().tscene().doc().get(elem, "name").unwrap_or_default(),
+                export: p.layer_export(elem),
+            },
         }
     }
 

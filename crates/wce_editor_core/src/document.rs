@@ -20,6 +20,15 @@ pub struct SaveTarget {
     pub path: PathBuf,
 }
 
+/// Whether two paths name the same file, as the file dialogs and the joins spell them (separators and, on Windows, case aside).
+pub fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let norm = |p: &std::path::Path| {
+        let s = p.display().to_string().replace('\\', "/");
+        if cfg!(windows) { s.to_lowercase() } else { s }
+    };
+    norm(a) == norm(b)
+}
+
 static NEXT_DOCUMENT: AtomicU32 = AtomicU32::new(1);
 
 /// What every document has: its id (unique in the process, from 1).
@@ -77,7 +86,30 @@ pub trait Document: Any {
         false
     }
 
-    /// Writes the document as minimal edits of its source bytes.
+    /// File > Revert > To saved: the document as its file has it, without asking (the caller asks). By default the history goes back to
+    /// the saved point, so Redo brings the edits back; a document whose state is not all in its history says how it reverts, or why it
+    /// cannot. The message says what happened.
+    ///
+    /// # Errors
+    ///
+    /// Why it can't be reverted.
+    fn revert(&mut self) -> Result<String, String> {
+        let to = self
+            .history()
+            .saved_position()
+            .ok_or("the saved state is no longer in the history: close it without saving and open it again")?;
+        self.history_mut().jump_to(to);
+        Ok(format!("{} as saved (Redo brings the edits back)", self.title()))
+    }
+
+    /// Why File > Save as does not apply to the document (it is off, with this as its tooltip); `None`: it does. Save as writes a copy
+    /// wherever the user picks, which is no use when the document is more than its files (a tile is its tile database entry too).
+    fn save_as_blocked(&self) -> Option<String> {
+        None
+    }
+
+    /// Writes the document as minimal edits of its source bytes. A save to where the document saves (`target` empty, or its own file)
+    /// marks it saved; a copy elsewhere (Save as) does not, as its own file still lacks the edits.
     ///
     /// # Errors
     ///
@@ -170,6 +202,12 @@ pub trait Document: Any {
     fn item_parent_transform(&self, item: SourceRef) -> Option<Float4x4> {
         let _ = item;
         None
+    }
+
+    /// An item the mouse must not move (TEd's draggable flag off): the gizmo is not shown for it, and a move of a selection leaves it.
+    fn item_locked(&self, item: SourceRef) -> bool {
+        let _ = item;
+        false
     }
 
     /// Moves items by a world-space delta. `gesture` is constant during one drag so that the commands merge into one undo entry.

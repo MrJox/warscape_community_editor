@@ -14,3 +14,6 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints]
+workspace = true

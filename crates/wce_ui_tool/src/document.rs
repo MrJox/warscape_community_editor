@@ -81,12 +81,21 @@ pub fn item_of(index: usize) -> u64 {
 
 /// The entry index of a selection item.
 pub fn index_of(item: u64) -> Option<usize> {
-    (item >= 1 && item < 0xffff_0000).then(|| item as usize - 1)
+    (1..0xffff_0000).contains(&item).then(|| item as usize - 1)
 }
 
 impl UiDocument {
     pub fn new(source: Source, model: UiModel, out_dir: PathBuf) -> Self {
-        Self { core: DocumentCore::new(), saved: model.clone(), history: CommandStack::new(model), source, out_dir, entries: RefCell::new(None), draw: RefCell::new(None), xml: RefCell::new(None) }
+        Self {
+            core: DocumentCore::new(),
+            saved: model.clone(),
+            history: CommandStack::new(model),
+            source,
+            out_dir,
+            entries: RefCell::new(None),
+            draw: RefCell::new(None),
+            xml: RefCell::new(None),
+        }
     }
 
     pub fn model(&self) -> &UiModel {
@@ -246,6 +255,12 @@ impl Document for UiDocument {
         true
     }
 
+    /// The layout as saved, as one undoable edit (Undo brings the changes back).
+    fn revert(&mut self) -> Result<String, String> {
+        self.reset_all()?;
+        Ok(format!("{} as saved (Undo brings the changes back)", self.title()))
+    }
+
     /// An empty target saves where the file came from: a file on disk in place, a layout from the packs as a loose file under the output
     /// folder (never into the game's packs).
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
@@ -256,7 +271,13 @@ impl Document for UiDocument {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        std::fs::write(&to, data).map_err(|e| format!("cannot write {}: {e}", to.display()))?;
+        wce_foundation::files::write_replacing(&to, data).map_err(|e| format!("cannot write {}: {e}", to.display()))?;
+
+        // A game file's copy elsewhere (Save as): the project's file still lacks the edits, so the document stays unsaved.
+        if !self.source.vfs_path.is_empty() && !wce_editor_core::document::same_path(&to, &self.default_save_path()) {
+            return Ok(());
+        }
+
         self.history.mark_saved();
         self.saved = self.history.model().clone();
         if self.source.vfs_path.is_empty() {

@@ -30,7 +30,9 @@ pub struct Candidate {
 /// puts them).
 pub fn pair_ground(db: &TileDatabase, tiles: [&Tile; 2]) -> f64 {
     let sea = |set: Option<usize>| link_name(db, set).is_some_and(|name| name.starts_with("sea"));
-    let reaches = |t: &Tile| sea(t.set) || t.links.iter().any(|l| l.test == LinkTest::Equals && sea(l.set)) || t.link_targets.iter().any(|g| sea(g.set));
+    let reaches = |t: &Tile| {
+        sea(t.set) || t.links.iter().any(|l| l.test == LinkTest::Equals && sea(l.set)) || t.link_targets.iter().any(|g| sea(g.set))
+    };
     if tiles.into_iter().any(reaches) { 0.0 } else { 100.0 }
 }
 
@@ -137,10 +139,18 @@ pub fn candidates(db: &TileDatabase, open: &Tile) -> Vec<Candidate> {
                 }
 
                 // The open tile's joins it carries on: one of its "must be" rules lands on the target's cell, with the target's link set.
-                let joins = open.link_targets.iter().enumerate().filter(|(_, tg)| {
-                    let Some(set) = link_name(db, tg.set) else { return false };
-                    t.links.iter().any(|l| l.test == LinkTest::Equals && b.at(l.x, l.y) == (tg.x, tg.y) && link_name(db, l.set) == Some(set))
-                }).map(|(i, _)| i).collect::<Vec<_>>();
+                let joins = open
+                    .link_targets
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tg)| {
+                        let Some(set) = link_name(db, tg.set) else { return false };
+                        t.links
+                            .iter()
+                            .any(|l| l.test == LinkTest::Equals && b.at(l.x, l.y) == (tg.x, tg.y) && link_name(db, l.set) == Some(set))
+                    })
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>();
 
                 if !joins.is_empty() {
                     out.push(Candidate { tile: ti, rotation, x, y, joins });
@@ -158,14 +168,31 @@ mod tests {
     use crate::battle_map::tile_db::{Link, LinkTarget, TileSet};
 
     fn set(name: &str) -> TileSet {
-        TileSet { name: name.to_owned(), colour: [0.0; 3], link_as_set: String::new(), linking_tile: String::new(), shared_geometry: String::new(), also_place_tile_set: String::new(), id: 0 }
+        TileSet {
+            name: name.to_owned(),
+            colour: [0.0; 3],
+            link_as_set: String::new(),
+            linking_tile: String::new(),
+            shared_geometry: String::new(),
+            also_place_tile_set: String::new(),
+            id: 0,
+        }
     }
 
     fn tile(location: &str, w: i32, h: i32, set: usize, targets: Vec<(usize, i32, i32)>, links: Vec<(usize, i32, i32, LinkTest)>) -> Tile {
         Tile {
-            location: location.to_owned(), set: Some(set), width: w, height: h, colour: [0.0; 3], mask: vec![], random_rotatable: true, encampable: false, variations: vec![],
+            location: location.to_owned(),
+            set: Some(set),
+            width: w,
+            height: h,
+            colour: [0.0; 3],
+            mask: vec![],
+            random_rotatable: true,
+            encampable: false,
+            variations: vec![],
             links: links.into_iter().map(|(s, x, y, test)| Link { set: Some(s), x, y, test, is_entry: false }).collect(),
-            link_targets: targets.into_iter().map(|(s, x, y)| LinkTarget { set: Some(s), x, y }).collect(), id: 0,
+            link_targets: targets.into_iter().map(|(s, x, y)| LinkTarget { set: Some(s), x, y }).collect(),
+            id: 0,
         }
     }
 

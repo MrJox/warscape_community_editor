@@ -30,7 +30,8 @@ fn main() {
     let mut files = vec![];
     teds(Path::new(&args[0]), &mut files);
     files.sort();
-    let (mut parsed, mut parse_fail, mut save_diff, mut noop_diff, mut revert_diff, mut instances, mut fmt_ok, mut fmt_total) = (0, 0, 0, 0, 0, 0, 0, 0);
+    let (mut parsed, mut parse_fail, mut save_diff, mut noop_diff, mut revert_diff, mut instances, mut fmt_ok, mut fmt_total) =
+        (0, 0, 0, 0, 0, 0, 0, 0);
     let mut types = BTreeMap::<String, usize>::new();
     let mut notes = vec![];
     for path in files {
@@ -95,7 +96,10 @@ fn main() {
     println!("tile.ted files {parsed} (parse failures {parse_fail}, parse/save differs {save_diff})");
     println!("instances with a position: {instances}");
     println!("no-op set_position changed bytes: {noop_diff} files; revert_all did not restore: {revert_diff} files");
-    println!("number formatting reproduced: {fmt_ok} of {fmt_total} ({:.3}%)", if fmt_total != 0 { 100.0 * fmt_ok as f64 / fmt_total as f64 } else { 0.0 });
+    println!(
+        "number formatting reproduced: {fmt_ok} of {fmt_total} ({:.3}%)",
+        if fmt_total != 0 { 100.0 * fmt_ok as f64 / fmt_total as f64 } else { 0.0 }
+    );
     for (t, k) in &types {
         println!("  {k:9} {t}");
     }

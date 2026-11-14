@@ -102,7 +102,6 @@ pub fn number_text(v: f64) -> String {
 }
 
 impl TerryProject {
-
     /// # Errors
     ///
     /// The text is not XML.
@@ -117,7 +116,10 @@ impl TerryProject {
         self.entities.clear();
         self.by_id.clear();
         let elems = self.doc.elements();
-        let Some(scene) = self.doc.roots().iter().flat_map(|&r| elems[r].children.iter().copied()).find(|&e| elems[e].name == "scene") else { return };
+        let Some(scene) = self.doc.roots().iter().flat_map(|&r| elems[r].children.iter().copied()).find(|&e| elems[e].name == "scene")
+        else {
+            return;
+        };
         for &e in &elems[scene].children {
             if elems[e].name != "entity" {
                 continue;
@@ -129,7 +131,11 @@ impl TerryProject {
                 match elems[c].name.as_str() {
                     "components" => ent.components = elems[c].children.iter().map(|&k| (elems[k].name.clone(), k)).collect(),
                     "children" => {
-                        ent.children = elems[c].children.iter().filter_map(|&k| self.doc.get(k, "id").and_then(|v| u64::from_str_radix(&v, 16).ok())).collect();
+                        ent.children = elems[c]
+                            .children
+                            .iter()
+                            .filter_map(|&k| self.doc.get(k, "id").and_then(|v| u64::from_str_radix(&v, 16).ok()))
+                            .collect();
                     }
 
                     _ => {}
@@ -203,7 +209,9 @@ impl TerryProject {
             EntityKind::DeploymentZone
         } else if has("ECDeploymentZoneRegion") {
             EntityKind::DeploymentRegion
-        } else if has("ECRectangle") && self.parent_of(e.id).and_then(|p| self.entity(p)).is_some_and(|p| self.component(p, "ECBattleCatchmentArea").is_some()) {
+        } else if has("ECRectangle")
+            && self.parent_of(e.id).and_then(|p| self.entity(p)).is_some_and(|p| self.component(p, "ECBattleCatchmentArea").is_some())
+        {
             EntityKind::CatchmentRegion
         } else {
             EntityKind::Other
@@ -246,7 +254,10 @@ impl TerryProject {
         let elems = self.doc.elements();
         let line = elems[c].children.iter().copied().find(|&k| elems[k].name == "polyline")?;
         let closed = self.doc.get(line, "closed").is_some_and(|v| v == "true");
-        let pts = elems[line].children.iter().filter(|&&k| elems[k].name == "point")
+        let pts = elems[line]
+            .children
+            .iter()
+            .filter(|&&k| elems[k].name == "point")
             .filter_map(|&k| Some([self.doc.get(k, "x")?.parse().ok()?, self.doc.get(k, "y")?.parse().ok()?]))
             .collect();
         Some((pts, closed))
@@ -269,7 +280,12 @@ impl TerryProject {
         let step = if indent.len() >= 8 { indent[..indent.len() / 2].to_owned() } else { "    ".to_owned() };
         let e = self.entity(parent).ok_or_else(|| XmlError::Edit("no such entity".to_owned()))?;
         let elems = self.doc.elements();
-        let c = elems[e.elem].children.iter().copied().find(|&k| elems[k].name == "children").ok_or_else(|| XmlError::Edit("no <children>".to_owned()))?;
+        let c = elems[e.elem]
+            .children
+            .iter()
+            .copied()
+            .find(|&k| elems[k].name == "children")
+            .ok_or_else(|| XmlError::Edit("no <children>".to_owned()))?;
         let el = &elems[c];
         let line = format!("{indent}{step}{step}<child id=\"{child:x}\"/>{eol}");
         if el.self_closing {
@@ -296,11 +312,14 @@ impl TerryProject {
     fn style(&self) -> (&'static str, String) {
         let t = self.doc.original_text();
         let eol = if t.windows(2).any(|w| w == b"\r\n") { "\r\n" } else { "\n" };
-        let indent = self.entities.first().map_or_else(|| "        ".to_owned(), |e| {
-            let off = self.doc.elements()[e.elem].start_off;
-            let ls = t[..off].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
-            String::from_utf8_lossy(&t[ls..off]).into_owned()
-        });
+        let indent = self.entities.first().map_or_else(
+            || "        ".to_owned(),
+            |e| {
+                let off = self.doc.elements()[e.elem].start_off;
+                let ls = t[..off].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
+                String::from_utf8_lossy(&t[ls..off]).into_owned()
+            },
+        );
 
         (eol, indent)
     }
@@ -331,7 +350,12 @@ impl TerryProject {
         let step = if indent.len() >= 8 { &indent[..indent.len() / 2] } else { "    " };
         let body: String = xml.lines().map(|l| format!("{indent}{}{eol}", l.replace("{i}", step))).collect();
         let elems = self.doc.elements();
-        let scene = self.doc.roots().iter().flat_map(|&r| elems[r].children.iter().copied()).find(|&e| elems[e].name == "scene")
+        let scene = self
+            .doc
+            .roots()
+            .iter()
+            .flat_map(|&r| elems[r].children.iter().copied())
+            .find(|&e| elems[e].name == "scene")
             .ok_or_else(|| XmlError::Edit("no scene".to_owned()))?;
         let el = &elems[scene];
         if el.self_closing {
@@ -414,7 +438,10 @@ impl TerryProject {
         // The entities' elements and the references to them, last first (the earlier elements' indices stay).
         let elems = self.doc.elements();
         let mut doomed: Vec<usize> = gone.iter().filter_map(|&id| self.entity(id).map(|e| e.elem)).collect();
-        let is_ref = |k: usize| elems[k].name == "child" && self.doc.get(k, "id").and_then(|v| u64::from_str_radix(&v, 16).ok()).is_some_and(|i| gone.contains(&i));
+        let is_ref = |k: usize| {
+            elems[k].name == "child"
+                && self.doc.get(k, "id").and_then(|v| u64::from_str_radix(&v, 16).ok()).is_some_and(|i| gone.contains(&i))
+        };
         doomed.extend((0..elems.len()).filter(|&k| is_ref(k)));
         doomed.sort_unstable();
         doomed.dedup();
@@ -557,7 +584,9 @@ mod edit_tests {
     const EMPTY: &str = "<project version=\"3\">\r\n    <scene version=\"10\"/>\r\n</project>\r\n";
 
     fn bca(id: u64) -> String {
-        format!("<entity id=\"{id:x}\" name=\"new\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"2048\" height=\"2048\" active=\"true\"/>\n{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"256 0 -512\"/>\n{{i}}{{i}}<ECBattleCatchmentArea catchment_type=\"land_normal\" active=\"true\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>")
+        format!(
+            "<entity id=\"{id:x}\" name=\"new\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"2048\" height=\"2048\" active=\"true\"/>\n{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"256 0 -512\"/>\n{{i}}{{i}}<ECBattleCatchmentArea catchment_type=\"land_normal\" active=\"true\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>"
+        )
     }
 
     #[test]
@@ -586,9 +615,14 @@ mod edit_tests {
         let mut p = TerryProject::parse(old.as_bytes().to_vec()).expect("xml");
         let s = p.insert_entities(&bca(0x10)).expect("inserted");
         let text = String::from_utf8(p.save()).expect("utf8");
-        assert!(text.starts_with("<project version=\"3\">
+        assert!(
+            text.starts_with(
+                "<project version=\"3\">
     <scene version=\"10\">
-        <entity id=\"10\""), "{text}");
+        <entity id=\"10\""
+            ),
+            "{text}"
+        );
         p.undo(&s);
         assert_eq!(p.save(), old.as_bytes());
     }

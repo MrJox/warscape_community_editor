@@ -52,7 +52,6 @@ fn u32_at(b: &[u8], p: usize) -> u32 {
 }
 
 impl TileMap {
-
     /// # Errors
     ///
     /// Fails on a version before 6 or a truncated file.
@@ -77,11 +76,24 @@ impl TileMap {
         let cell = |o: usize| {
             let (index, flags, origin) = (u32_at(tiles, o) as i32, u16_at(tiles, o + 4), [u16_at(tiles, o + 6), u16_at(tiles, o + 8)]);
             if version < 8 {
-                TileMapCell { index, flags, origin, climate: tiles[o + 12], flipped: tiles[o + 13], lf: [0.0; 2], old: [tiles[o + 10], tiles[o + 11], tiles[o + 14], tiles[o + 15]] }
+                TileMapCell {
+                    index,
+                    flags,
+                    origin,
+                    climate: tiles[o + 12],
+                    flipped: tiles[o + 13],
+                    lf: [0.0; 2],
+                    old: [tiles[o + 10], tiles[o + 11], tiles[o + 14], tiles[o + 15]],
+                }
             } else {
                 TileMapCell {
-                    index, flags, origin, climate: tiles[o + 10], flipped: tiles[o + 11],
-                    lf: [f32::from_bits(u32_at(tiles, o + 12)), f32::from_bits(u32_at(tiles, o + 16))], old: [0; 4],
+                    index,
+                    flags,
+                    origin,
+                    climate: tiles[o + 10],
+                    flipped: tiles[o + 11],
+                    lf: [f32::from_bits(u32_at(tiles, o + 12)), f32::from_bits(u32_at(tiles, o + 16))],
+                    old: [0; 4],
                 }
             }
         };
@@ -140,16 +152,24 @@ impl TileMap {
 }
 
 impl TileMap {
-
     /// A version 6 or 7 tile map's placements as a battle field (Rome 2's form: version 8, a placement's byte 12 its variation): the
     /// origin cells of the tile layer, row by row; name `index - 1`, the placement's origin and flags, the cell's flip byte (0 .. 2: the
     /// river's flow) in `old[0]`. [`Self::with_placements`] makes the cells again from it.
     pub fn placements(&self) -> super::tile_list::TileList {
         use super::tile_list::{TileList, TileListPlacement};
-        let placements = self.layers[0].iter().filter(|c| c.index > 0).map(|c| TileListPlacement {
-            name: (c.index - 1) as usize, x: c.origin[0] as i16, y: c.origin[1] as i16, flags: c.flags, climate: c.climate, lf: [0.0; 2],
-            old: [c.flipped, 0, 0],
-        }).collect();
+        let placements = self.layers[0]
+            .iter()
+            .filter(|c| c.index > 0)
+            .map(|c| TileListPlacement {
+                name: (c.index - 1) as usize,
+                x: c.origin[0] as i16,
+                y: c.origin[1] as i16,
+                flags: c.flags,
+                climate: c.climate,
+                lf: [0.0; 2],
+                old: [c.flipped, 0, 0],
+            })
+            .collect();
 
         TileList { version: 8, battle_size: [self.width, self.height], names: self.names.clone(), placements, ..Default::default() }
     }
@@ -191,11 +211,27 @@ impl TileMap {
                             first = Some(c);
                             let chunk = (cx as u32 / 64 + cy as u32 / 64 * cols) as u16;
                             let [lo, hi] = chunk.to_le_bytes();
-                            layer[c] = TileMapCell { index: p.name as i32 + 1, flags, origin, climate: p.climate, flipped, lf: [0.0; 2], old: [lo, hi, 0, 0] };
+                            layer[c] = TileMapCell {
+                                index: p.name as i32 + 1,
+                                flags,
+                                origin,
+                                climate: p.climate,
+                                flipped,
+                                lf: [0.0; 2],
+                                old: [lo, hi, 0, 0],
+                            };
                         }
 
                         Some(f) => {
-                            layer[c] = TileMapCell { index: -(f as i32 + 1), flags: (flags & !0xf0) | 0x10, origin, climate: p.climate, flipped, lf: [0.0; 2], old: [255, 255, 0, 0] };
+                            layer[c] = TileMapCell {
+                                index: -(f as i32 + 1),
+                                flags: (flags & !0xf0) | 0x10,
+                                origin,
+                                climate: p.climate,
+                                flipped,
+                                lf: [0.0; 2],
+                                old: [255, 255, 0, 0],
+                            };
                         }
                     }
                 }
@@ -216,6 +252,13 @@ impl TileMap {
             }
         }
 
-        Self { version: self.version, width: self.width, height: self.height, layers: [layer, self.layers[1].clone()], names: list.names.clone(), chunks: self.chunks.clone() }
+        Self {
+            version: self.version,
+            width: self.width,
+            height: self.height,
+            layers: [layer, self.layers[1].clone()],
+            names: list.names.clone(),
+            chunks: self.chunks.clone(),
+        }
     }
 }

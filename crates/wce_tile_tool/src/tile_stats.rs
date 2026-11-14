@@ -33,7 +33,11 @@ impl TileTool {
         let mut counts = t.type_counts().iter().map(|(k, &v)| (k.clone(), v)).collect::<Vec<_>>();
         counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         let total = counts.iter().map(|c| i64::from(c.1)).sum::<i64>();
-        gui::text(&format!("{total} instance(s); {} building key(s), {} without a model", t.models().len(), t.models().values().filter(|m| !m.ok).count()));
+        gui::text(&format!(
+            "{total} instance(s); {} building key(s), {} without a model",
+            t.models().len(),
+            t.models().values().filter(|m| !m.ok).count()
+        ));
         if gui::begin_table("stats_types", 2, gui::TABLE_SIZING_STRETCH_PROP | gui::TABLE_ROW_BG, gui::v2(0.0, 0.0)) {
             for (k, v) in &counts {
                 gui::table_next_row();
@@ -52,7 +56,13 @@ impl TileTool {
 
         // The files on disk.
         let dir = &d.project().dir;
-        let mut files = std::fs::read_dir(dir).map(|r| r.flatten().filter_map(|f| Some((f.file_name().to_string_lossy().into_owned(), f.metadata().ok()?.len()))).collect::<Vec<_>>()).unwrap_or_default();
+        let mut files = std::fs::read_dir(dir)
+            .map(|r| {
+                r.flatten()
+                    .filter_map(|f| Some((f.file_name().to_string_lossy().into_owned(), f.metadata().ok()?.len())))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         files.retain(|f| !f.0.ends_with(".bak"));
         files.sort_by_key(|f| std::cmp::Reverse(f.1));
         let disk = files.iter().map(|f| f.1).sum::<u64>();
@@ -66,8 +76,8 @@ impl TileTool {
 
         if let Some(s) = frame {
             gui::text_disabled(&format!(
-                "last frame: {} instances, {} triangles seen by the camera; {} draw calls, {} triangles with the shadows", s.camera_instances, s.camera_triangles,
-                s.draw_calls, s.triangles
+                "last frame: {} instances, {} triangles seen by the camera; {} draw calls, {} triangles with the shadows",
+                s.camera_instances, s.camera_triangles, s.draw_calls, s.triangles
             ));
         }
 

@@ -118,7 +118,8 @@ impl PrefabTerrain {
         }
 
         let (w, h) = (x1 - x0 + 1, z1 - z0 + 1);
-        let mut out = Self::empty([self.origin[0] + f64::from(x0) * self.spacing, self.origin[1] + f64::from(z0) * self.spacing], self.spacing, w, h);
+        let mut out =
+            Self::empty([self.origin[0] + f64::from(x0) * self.spacing, self.origin[1] + f64::from(z0) * self.spacing], self.spacing, w, h);
         (out.normalize, out.feather) = (self.normalize, self.feather);
         for z in 0..h {
             let from = self.index(x0, z0 + z);
@@ -133,9 +134,20 @@ impl PrefabTerrain {
     /// A hash of everything in it (the same in every run: what a tile made from it is known again by it).
     #[must_use]
     pub fn signature(&self) -> u64 {
-        let words = [self.origin[0].to_bits(), self.origin[1].to_bits(), self.spacing.to_bits(), u64::from(self.width) << 32 | u64::from(self.height), u64::from(self.normalize), self.feather.to_bits()];
+        let words = [
+            self.origin[0].to_bits(),
+            self.origin[1].to_bits(),
+            self.spacing.to_bits(),
+            u64::from(self.width) << 32 | u64::from(self.height),
+            u64::from(self.normalize),
+            self.feather.to_bits(),
+        ];
         let samples = self.heights.iter().chain(&self.coverage).map(|v| u64::from(v.to_bits()));
-        words.into_iter().chain(samples).flat_map(u64::to_le_bytes).fold(0xCBF2_9CE4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
+        words
+            .into_iter()
+            .chain(samples)
+            .flat_map(u64::to_le_bytes)
+            .fold(0xCBF2_9CE4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
     }
 
     /// The element's text (one line, no indentation).
@@ -152,8 +164,14 @@ impl PrefabTerrain {
         let packed = deflate_bytes(&raw).map_err(|e| e.to_string())?;
         Ok(format!(
             "<{ELEMENT} origin=\"{},{}\" spacing=\"{}\" size=\"{},{}\" normalize=\"{}\" feather=\"{}\" samples=\"{}\"/>",
-            format_number(self.origin[0]), format_number(self.origin[1]), format_number(self.spacing), self.width, self.height, self.normalize,
-            format_number(self.feather), base64_encode(&packed),
+            format_number(self.origin[0]),
+            format_number(self.origin[1]),
+            format_number(self.spacing),
+            self.width,
+            self.height,
+            self.normalize,
+            format_number(self.feather),
+            base64_encode(&packed),
         ))
     }
 
@@ -170,7 +188,8 @@ impl PrefabTerrain {
             Ok((a.trim().to_owned(), b.trim().to_owned()))
         };
 
-        let number = |v: &str, name: &str| v.parse::<f64>().ok().filter(|v| v.is_finite()).ok_or_else(|| format!("{ELEMENT}: bad {name} '{v}'"));
+        let number =
+            |v: &str, name: &str| v.parse::<f64>().ok().filter(|v| v.is_finite()).ok_or_else(|| format!("{ELEMENT}: bad {name} '{v}'"));
         let (ox, oz) = pair("origin")?;
         let origin = [number(&ox, "origin")?, number(&oz, "origin")?];
         let spacing = number(&attr("spacing")?, "spacing")?;
@@ -189,7 +208,16 @@ impl PrefabTerrain {
         inflate_bytes(&packed, &mut raw).map_err(|e| format!("{ELEMENT}: {e}"))?;
         let floats = raw.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect::<Vec<_>>();
         let (heights, coverage) = floats.split_at(n);
-        Ok(Self { origin, spacing, width, height, heights: heights.to_vec(), coverage: coverage.iter().map(|c| c.clamp(0.0, 1.0)).collect(), normalize, feather })
+        Ok(Self {
+            origin,
+            spacing,
+            width,
+            height,
+            heights: heights.to_vec(),
+            coverage: coverage.iter().map(|c| c.clamp(0.0, 1.0)).collect(),
+            normalize,
+            feather,
+        })
     }
 }
 
@@ -386,7 +414,8 @@ impl PrefabTerrain {
         let margin = if self.normalize { (feather.unwrap_or(self.feather).max(0.0) / self.spacing).ceil() } else { 0.0 };
         let m = (margin + 1.0) * self.spacing;
         let (lx0, lz0) = (self.origin[0] - m, self.origin[1] - m);
-        let (lx1, lz1) = (self.origin[0] + f64::from(self.width) * self.spacing + m, self.origin[1] + f64::from(self.height) * self.spacing + m);
+        let (lx1, lz1) =
+            (self.origin[0] + f64::from(self.width) * self.spacing + m, self.origin[1] + f64::from(self.height) * self.spacing + m);
         let corners = [(lx0, lz0), (lx1, lz0), (lx0, lz1), (lx1, lz1)].map(|(x, z)| {
             let (sx, sz) = at.to_scene(x, z);
             grid.pixel(sx, sz)
@@ -401,7 +430,14 @@ impl PrefabTerrain {
 
     /// What the layer adds to each pixel of a tile's height map it reaches, placed `at`, added into `out` (by pixel). `ground` is the map
     /// below it, without `out`: what is in `out` already (a nested prefab's) counts as ground. `feather`: the reference's, else the layer's.
-    pub fn rasterize(&self, at: &Placement, grid: &Grid, feather: Option<f64>, ground: &dyn Fn(u32, u32) -> f64, out: &mut BTreeMap<(u32, u32), f32>) {
+    pub fn rasterize(
+        &self,
+        at: &Placement,
+        grid: &Grid,
+        feather: Option<f64>,
+        ground: &dyn Fn(u32, u32) -> f64,
+        out: &mut BTreeMap<(u32, u32), f32>,
+    ) {
         if grid.width == 0 || grid.height == 0 {
             return;
         }
@@ -611,8 +647,14 @@ mod tests {
 
         let text = with_terrain(FILE.as_bytes().to_vec(), Some(&t)).unwrap();
         let s = String::from_utf8(text.clone()).unwrap();
-        assert!(s.starts_with(&FILE[..FILE.len() - "</INSTANCE_SELECTION>\n".len()]) && s.ends_with("\"/>\n</INSTANCE_SELECTION>\n"), "{s}");
-        assert!(s.contains("\n    <WceTerrain origin=\"-3,-2\" spacing=\"0.5\" size=\"11,7\" normalize=\"true\" feather=\"2.5\" samples=\""), "{s}");
+        assert!(
+            s.starts_with(&FILE[..FILE.len() - "</INSTANCE_SELECTION>\n".len()]) && s.ends_with("\"/>\n</INSTANCE_SELECTION>\n"),
+            "{s}"
+        );
+        assert!(
+            s.contains("\n    <WceTerrain origin=\"-3,-2\" spacing=\"0.5\" size=\"11,7\" normalize=\"true\" feather=\"2.5\" samples=\""),
+            "{s}"
+        );
         assert_eq!(read(&text).unwrap().unwrap(), c);
 
         // Saved again: one element, the same text.
@@ -728,9 +770,13 @@ mod tests {
 
     #[test]
     fn a_damaged_layer_says_so() {
-        let bad = FILE.replace("</INSTANCE_SELECTION>", "    <WceTerrain origin=\"0,0\" spacing=\"1\" size=\"2,2\" samples=\"AAAA\"/>\n</INSTANCE_SELECTION>");
+        let bad = FILE.replace(
+            "</INSTANCE_SELECTION>",
+            "    <WceTerrain origin=\"0,0\" spacing=\"1\" size=\"2,2\" samples=\"AAAA\"/>\n</INSTANCE_SELECTION>",
+        );
         assert!(read(bad.as_bytes()).is_err());
-        let no_size = FILE.replace("</INSTANCE_SELECTION>", "    <WceTerrain origin=\"0,0\" spacing=\"1\" samples=\"\"/>\n</INSTANCE_SELECTION>");
+        let no_size =
+            FILE.replace("</INSTANCE_SELECTION>", "    <WceTerrain origin=\"0,0\" spacing=\"1\" samples=\"\"/>\n</INSTANCE_SELECTION>");
         assert!(read(no_size.as_bytes()).unwrap_err().contains("size"));
     }
 }

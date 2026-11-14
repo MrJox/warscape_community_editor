@@ -38,24 +38,57 @@ fn main() {
         std::fs::write(dir.join("tile_map.tiles"), tiles).unwrap_or_else(|e| fail(e.to_string()));
     }
 
-    println!("size got {} x {}, want {} x {}; names got {}, want {}; {} messages", got.width, got.height, want.width, want.height, got.names.len(), want.names.len(), messages.len());
+    println!(
+        "size got {} x {}, want {} x {}; names got {}, want {}; {} messages",
+        got.width,
+        got.height,
+        want.width,
+        want.height,
+        got.names.len(),
+        want.names.len(),
+        messages.len()
+    );
     if (got.width, got.height) != (want.width, want.height) {
         return;
     }
 
-    let name = |m: &TileMap, c: &TileMapCell| if c.index > 0 { m.names.get(c.index as usize - 1).cloned().unwrap_or_default() } else { String::new() };
+    let name = |m: &TileMap, c: &TileMapCell| {
+        if c.index > 0 { m.names.get(c.index as usize - 1).cloned().unwrap_or_default() } else { String::new() }
+    };
     let w = got.width as usize;
     let mut bad = 0usize;
     for layer in 0..2 {
         let (mut same, mut first, mut kinds) = (0usize, None, BTreeMap::<&str, usize>::new());
         for (i, (a, b)) in got.layers[layer].iter().zip(&want.layers[layer]).enumerate() {
             let kind = if a.index > 0 || b.index > 0 {
-                if name(&got, a) != name(&want, b) { "origin: tile" } else if a.flags != b.flags { "origin: flags" } else if a.climate != b.climate { "origin: climate" }
-                else if a.lf != b.lf { "origin: lf" } else if a.origin != b.origin || a.flipped != b.flipped { "origin: other" } else { "" }
-            } else if a.index != b.index { "cover: origin" } else if a.flags != b.flags { "cover: flags" } else if a.climate != b.climate { "cover: climate" }
-            else if a.origin != b.origin || a.flipped != b.flipped { "cover: other" }
+                if name(&got, a) != name(&want, b) {
+                    "origin: tile"
+                } else if a.flags != b.flags {
+                    "origin: flags"
+                } else if a.climate != b.climate {
+                    "origin: climate"
+                } else if a.lf != b.lf {
+                    "origin: lf"
+                } else if a.origin != b.origin || a.flipped != b.flipped {
+                    "origin: other"
+                } else {
+                    ""
+                }
+            } else if a.index != b.index {
+                "cover: origin"
+            } else if a.flags != b.flags {
+                "cover: flags"
+            } else if a.climate != b.climate {
+                "cover: climate"
+            } else if a.origin != b.origin || a.flipped != b.flipped {
+                "cover: other"
+            }
             // BOB leaves a covered cell's LF min / max as the memory had them (on a small map: 1e-45, 19146097000), the fill writes 0.
-            else if a.lf != b.lf { "cover: lf (BOB's left-over memory)" } else { "" };
+            else if a.lf != b.lf {
+                "cover: lf (BOB's left-over memory)"
+            } else {
+                ""
+            };
 
             if kind.is_empty() {
                 same += 1;
@@ -71,7 +104,9 @@ fn main() {
 
         println!("layer {layer}: {same} / {} cells agree; {kinds:?}", got.layers[layer].len());
         if let Some(i) = first {
-            let show = |m: &TileMap, c: &TileMapCell| format!("{} {} {:#06x} {:?} c{} f{} lf {:?}", c.index, name(m, c), c.flags, c.origin, c.climate, c.flipped, c.lf);
+            let show = |m: &TileMap, c: &TileMapCell| {
+                format!("{} {} {:#06x} {:?} c{} f{} lf {:?}", c.index, name(m, c), c.flags, c.origin, c.climate, c.flipped, c.lf)
+            };
             println!("  first at ({}, {}):", i % w, i / w);
             for j in i..(i + 4).min(got.layers[layer].len()) {
                 println!("   ({}, {}) got  {}", j % w, j / w, show(&got, &got.layers[layer][j]));
@@ -89,4 +124,3 @@ fn main() {
         std::process::exit(1);
     }
 }
-

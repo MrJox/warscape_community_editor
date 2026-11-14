@@ -13,11 +13,10 @@
 //! ASSUMPTION: the game's instance rows scale y by half of x and z (see `CUSTOM_TERRAIN_Y`).
 //! Not drawn: their shadows (the game's custom geometry has no shadow entry of its own; not traced).
 
-
 use wce_scene::render_scene::{CUSTOM_TERRAIN_Y, CustomTerrainMesh, Entity, Payload};
 
-use super::*;
 use super::terrain::box_in_frustum;
+use super::*;
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 pub(crate) const CUSTOM_GEOM_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_custom_geom";
@@ -83,13 +82,14 @@ fn lod_buffers(dev: &ID3D11Device, l: &wce_scene::render_scene::CustomTerrainLod
 
     let ib: Vec<u8> = l.indices.iter().flat_map(|i| i.to_le_bytes()).collect();
     CustomLodGpu {
-        vb: immutable_buffer(dev, &bytes, D3D11_BIND_VERTEX_BUFFER), ib: immutable_buffer(dev, &ib, D3D11_BIND_INDEX_BUFFER), count: l.indices.len() as u32,
+        vb: immutable_buffer(dev, &bytes, D3D11_BIND_VERTEX_BUFFER),
+        ib: immutable_buffer(dev, &ib, D3D11_BIND_INDEX_BUFFER),
+        count: l.indices.len() as u32,
         distance: l.distance,
     }
 }
 
 impl Renderer {
-
     /// A mesh's buffers, made the first time it is seen.
     pub(crate) fn build_custom(&mut self, m: &CustomTerrainMesh, epoch: u64) {
         let dev = self.dev.clone();
@@ -98,7 +98,10 @@ impl Renderer {
         }
 
         let g = self.terrain.custom.entry(m.id).or_insert_with(|| CustomGpu {
-            lods: m.lods.iter().map(|l| lod_buffers(&dev, l)).collect(), albedo: m.albedo.clone(), bounds: m.bounds, used: 0,
+            lods: m.lods.iter().map(|l| lod_buffers(&dev, l)).collect(),
+            albedo: m.albedo.clone(),
+            bounds: m.bounds,
+            used: 0,
         });
 
         g.used = epoch;
@@ -150,14 +153,23 @@ impl Renderer {
             }
 
             // The level by the eye's distance to the box (scene units), as the rigid models' (the last beyond its distance).
-            let d = (0..3).map(|r| { let e = [eye.x, eye.y, eye.z][r]; let q = e.clamp(bmin[r], bmax[r]) - e; q * q }).sum::<f32>().sqrt();
+            let d = (0..3)
+                .map(|r| {
+                    let e = [eye.x, eye.y, eye.z][r];
+                    let q = e.clamp(bmin[r], bmax[r]) - e;
+                    q * q
+                })
+                .sum::<f32>()
+                .sqrt();
             let lod = g.lods.iter().position(|l| d <= l.distance).unwrap_or(g.lods.len().saturating_sub(1));
 
             // The rows take the shader's (x, 2 y, -z) to the world of the scene's (x, Y y, depth + z): y's column halved and times Y, z's
             // turned over and moved by the depth; game units, in the group's frame.
             let mut row = [0.0f32; 12];
             for r in 0..3 {
-                row[r * 4..r * 4 + 4].copy_from_slice(&[w[r][0], w[r][1] * CUSTOM_TERRAIN_Y * 0.5, -w[r][2], w[r][3] + w[r][2] * m.depth].map(|v| v * units));
+                row[r * 4..r * 4 + 4].copy_from_slice(
+                    &[w[r][0], w[r][1] * CUSTOM_TERRAIN_Y * 0.5, -w[r][2], w[r][3] + w[r][2] * m.depth].map(|v| v * units),
+                );
             }
 
             (row[3], row[7], row[11]) = (row[3] - shift[0] * units, row[7] - origin.y * units, row[11] - shift[1] * units);

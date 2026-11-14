@@ -58,7 +58,11 @@ fn g6(v: f32) -> String {
 fn mine(cbs: &ConstantBuffers, cb: &str, var: &str) -> Option<Vec<f32>> {
     let b = cbs.find(cb)?;
     let v = b.vars.get(var)?;
-    Some((0..v.size as usize / 4).map(|i| f32::from_le_bytes(b.cpu[v.offset as usize + 4 * i..][..4].try_into().expect("4 bytes"))).collect())
+    Some(
+        (0..v.size as usize / 4)
+            .map(|i| f32::from_le_bytes(b.cpu[v.offset as usize + 4 * i..][..4].try_into().expect("4 bytes")))
+            .collect(),
+    )
 }
 
 /// (match, differ); prints every compared variable when verbose.
@@ -95,11 +99,21 @@ fn run(args: &[String]) -> Result<i32, String> {
     let dev = unsafe {
         init_platform();
         let mut dev = None;
-        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), 0, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&mut dev), None, None)
-            .ok()
-            .ok()
-            .and(dev)
-            .ok_or("no D3D11 device")?
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            0,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            None,
+        )
+        .ok()
+        .ok()
+        .and(dev)
+        .ok_or("no D3D11 device")?
     };
 
     let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
@@ -114,9 +128,12 @@ fn run(args: &[String]) -> Result<i32, String> {
     let mut cbs = ConstantBuffers::default();
     let mut lib = ShaderLibrary::new(&dev);
     for s in [
-        "dx11_sm_3_0_skydome.hlsl_ps_ps30_skygen", "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef",
-        "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main", "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high",
-        "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_determine_black_and_white_points", "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats",
+        "dx11_sm_3_0_skydome.hlsl_ps_ps30_skygen",
+        "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef",
+        "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main",
+        "dx11_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high",
+        "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_determine_black_and_white_points",
+        "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats",
     ] {
         let _ = lib.get(&read, &mut cbs, s);
     }

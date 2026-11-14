@@ -50,8 +50,14 @@ impl TileTool {
         let look = self.polygon_look(e).clone();
         let shown = e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.tile().display().show_polygons);
         let changed = !shown || look != PolygonLook::default();
-        let tip = format!("Areas: outlines {:.2}, fills {:.2}\nClick: how the polygons' outlines and fills are drawn, for all of them and per type", look.outline, look.fill);
-        gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 16.0, origin.y + top));
+        let tip = format!(
+            "Areas: outlines {:.2}, fills {:.2}\nClick: how the polygons' outlines and fills are drawn, for all of them and per type",
+            look.outline, look.fill
+        );
+        gui::set_cursor_screen_pos(gui::v2(
+            origin.x + size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 16.0,
+            origin.y + top,
+        ));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         if gui::begin_pill("##areaschip") {
             if chip(changed, icons::LAND_PLOT, "areaviews", &tip) {
@@ -109,6 +115,10 @@ impl TileTool {
             t.display_changed();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the tile's polygons (areas) in the viewport.");
+        }
+
         let v = t.display_mut();
         if gui::checkbox("Over buildings##areas", &mut v.polygon_over_buildings) {
             t.polygons_changed();
@@ -122,6 +132,10 @@ impl TileTool {
         if gui::small_button("Reset##areas") {
             look = PolygonLook::default();
             ended = true;
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the outlines and fills above back to their defaults.");
         }
 
         gui::end_disabled();

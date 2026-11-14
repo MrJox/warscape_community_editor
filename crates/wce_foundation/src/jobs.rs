@@ -54,14 +54,15 @@ pub struct JobPool {
 }
 
 impl JobPool {
-
     /// A pool of `threads` threads; with none, `post` runs the job right away.
     pub fn new(threads: usize) -> Self {
         let shared = Arc::new(Shared { queue: Mutex::new(Queue { next_id: 1, ..Default::default() }), ..Default::default() });
-        let workers = (0..threads).map(|_| {
-            let shared = shared.clone();
-            std::thread::spawn(move || worker(&shared))
-        }).collect();
+        let workers = (0..threads)
+            .map(|_| {
+                let shared = shared.clone();
+                std::thread::spawn(move || worker(&shared))
+            })
+            .collect();
 
         Self { shared, workers }
     }
@@ -150,8 +151,8 @@ fn worker(shared: &Shared) {
             }
 
             // The first of the smallest priorities: the oldest among equals.
-            let best = queue.tasks.iter().enumerate()
-                .fold(0, |best, (i, task)| if task.priority < queue.tasks[best].priority { i } else { best });
+            let best =
+                queue.tasks.iter().enumerate().fold(0, |best, (i, task)| if task.priority < queue.tasks[best].priority { i } else { best });
             shared.running.fetch_add(1, Ordering::AcqRel);
             queue.tasks.remove(best)
         };

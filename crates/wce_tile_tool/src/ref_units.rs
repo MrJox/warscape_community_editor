@@ -3,6 +3,9 @@
 //! tile.wce as the rest, and not exported (`project_files::to_ted`). What is the tool's: the game's soldiers standing on them, which only exist in the
 //! scene. The tables and the models load on a thread of their own. A click finds them by a sphere per soldier (`Tile::set_ref_spots`), not by the
 //! picture: the renderer's id pass doesn't draw skinned meshes.
+//!
+//! `ref_ship`: a naval unit's ship (`wce_render::ship_model`) afloat on the tile's water (`Tile::water_level`), its men aboard. The ship's parts are
+//! rigid meshes in the scene, picked by the picture like any model.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -13,11 +16,16 @@ use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 use wce_foundation::settings::rpfm_schema_path;
+use wce_render::cloth_sim::{ClothSim, ship_wind};
+use wce_render::ship_model::ShipModel;
 use wce_render::unit_animation::{UnitInstance, UnitModel};
 use wce_render::unit_catalog::{UnitCatalog, formation, men_at_size};
 use wce_scene::environment::read_game_graphics_values;
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, SourceRef};
-use wce_tile_editor::tile_document::{REF_HUMAN, REF_UNIT, TileDocument};
+use wce_scene::render_scene::{
+    DocumentId, EntityId, LayerId, MODEL_ROPES_SUFFIX, MeshInstance, Payload, RopeLine, Ropes, SKINNED_NO_OFFSET, SkinnedInstance,
+    SkinnedPart, SourceRef,
+};
+use wce_tile_editor::tile_document::{REF_HUMAN, REF_SHIP, REF_UNIT, TileDocument, item_of};
 
 use crate::tool::selected;
 
@@ -29,8 +37,45 @@ const UNIT_VARIATIONS: u64 = 16;
 fn default_unit(game: &str) -> (&'static str, &'static str) {
     match game {
         "attila" => ("att_rom_legio_comitatenses", "att_fact_western_roman_empire"),
+        "rome_2" => ("Rom_Hastati", "rom_rome"),
         _ => ("", ""),
     }
+}
+
+/// Each game's default naval unit (a `main_units` key) and its faction. A game without one takes the first naval unit of its tables.
+fn default_naval(game: &str) -> (&'static str, &'static str) {
+    match game {
+        "attila" => ("att_shp_rom_heavy_marines_lib_heavy", "att_fact_western_roman_empire"),
+        "rome_2" => ("Rom_Hastati_Two", "rom_rome"),
+        _ => ("", ""),
+    }
+}
+
+/// The three references.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Kind {
+    Human,
+    Unit,
+    Ship,
+}
+
+impl Kind {
+    fn of(tag: &str) -> Option<Self> {
+        match tag {
+            REF_HUMAN => Some(Self::Human),
+            REF_UNIT => Some(Self::Unit),
+            REF_SHIP => Some(Self::Ship),
+            _ => None,
+        }
+    }
+}
+
+/// The ship a `ref_ship` needs: naval unit (`main_units`), faction, seed.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ShipWanted {
+    unit: String,
+    faction: String,
+    seed: u64,
 }
 
 /// The soldiers a reference needs: unit, faction, first seed, slot, how many different ones.
@@ -46,17 +91,33 @@ struct Wanted {
 /// A reference, as the tile has it.
 struct Reference {
     elem: usize,
-    is_unit: bool,
+    kind: Kind,
+
+    /// Its soldiers (a ship's: the men aboard).
     wanted: Wanted,
+    ship: Option<ShipWanted>,
     colours: Option<[[f32; 3]; 3]>,
 
     /// On the ground under each soldier, or at its own height (freeform: a wall's top).
     on_ground: bool,
+
+    /// A ship's oars row.
+    rowing: bool,
 }
 
 /// The turn about y of a matrix: how far it takes +z, where a soldier faces. A reference stands upright whatever else its matrix holds.
 fn yaw_of(m: &Float4x4) -> f32 {
     m.m[0][2].atan2(m.m[2][2])
+}
+
+/// A uniform scale.
+fn scaling(k: f32) -> Float4x4 {
+    let mut m = Float4x4::IDENTITY;
+    for i in 0..3 {
+        m.m[i][i] = k;
+    }
+
+    m
 }
 
 /// `colours`: nine numbers.
@@ -75,6 +136,31 @@ fn size_name(size: u32) -> &'static str {
 }
 
 type Loaded = (Wanted, Result<Vec<UnitModel>, String>);
+
+/// A ship this frame: its matrix (on the waves), its model, the reference's colours, whether its oars row.
+type ShipPlace = (Float4x4, Arc<ShipModel>, Option<[[f32; 3]; 3]>, bool);
+
+/// One entity of a ship: its model (with its suffix), its element, its matrix, and for a sail its masks and colours.
+#[derive(Clone, Debug, PartialEq)]
+struct ShipShown {
+    model: String,
+    elem: usize,
+    world: Float4x4,
+    sail: Option<([u8; 3], [[f32; 3]; 4])>,
+
+    /// A sail's palette this frame (its cloth's bones); not what tells one entity from another.
+    palette: Option<Arc<Vec<[f32; 12]>>>,
+
+    /// A sail model's simulated ropes this frame (instead of its `#ropes` strips).
+    ropes: Option<Ropes>,
+}
+
+/// The bones of a ship's sails' palette at rest: more than all the sails of any of Attila's sail models have, one after another.
+const SAIL_BONES: usize = 4096;
+type ShipLoaded = (ShipWanted, Result<ShipModel, String>);
+
+/// How long a ship's water level is trusted: the tile's rivers and lakes may be edited under it.
+const WATER_SECONDS: f64 = 2.0;
 
 #[derive(Default)]
 pub struct RefUnits {
@@ -101,15 +187,90 @@ pub struct RefUnits {
     unit_filter: String,
     faction_filter: String,
     slot_filter: String,
+
+    ships: HashMap<ShipWanted, Arc<ShipModel>>,
+    ship_loading: Option<Receiver<ShipLoaded>>,
+    ship_failed: HashSet<ShipWanted>,
+
+    /// The ships' parts in the scene, and what each shows.
+    ship_entities: Vec<EntityId>,
+    ship_shown: Vec<ShipShown>,
+
+    /// The sails' palette: identity matrices (the cloth at rest), shared by every sail.
+    rest: Option<Arc<Vec<[f32; 12]>>>,
+
+    /// Per ship element, the water under it: where it was asked, when, the level.
+    water: HashMap<usize, ([u32; 2], f64, Option<f32>)>,
+
+    /// Per ship element and part, its sails' cloth (the game's simulation), and the time it was last run.
+    sails: HashMap<(usize, usize), ClothSim>,
+    sails_time: Option<f32>,
+
+    /// Per ship element, its heading (degrees) this frame, for the scripts.
+    headings: BTreeMap<usize, f32>,
+
+    /// Per ship element on the waves, its heave (m), pitch and roll (degrees) this frame, for the scripts.
+    afloat: BTreeMap<usize, [f32; 3]>,
 }
 
 impl RefUnits {
     /// What is loaded and drawn, for the scripts.
     pub fn summary(&self) -> String {
-        let units = self.models.keys().filter(|w| w.variations > 1).filter_map(|w| Some((w, self.catalog.as_ref()?.land_units.get(&w.unit)?))).map(|(w, l)| {
-            format!("{}: {} men, {} ranks, spacing {:?}", w.unit, men_at_size(l, self.size.unwrap_or(3)), l.rank_depth, l.spacing)
-        }).collect::<Vec<_>>().join("; ");
-        format!("tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]: {}", self.catalog.is_some(), self.models.len(), self.loading.is_some(), self.failed.len(), self.entities.len(), self.size, self.update_ms, self.status)
+        let units = self
+            .models
+            .keys()
+            .filter(|w| w.variations > 1)
+            .filter_map(|w| Some((w, self.catalog.as_ref()?.land_units.get(&w.unit)?)))
+            .map(|(w, l)| {
+                format!("{}: {} men, {} ranks, spacing {:?}", w.unit, men_at_size(l, self.size.unwrap_or(3)), l.rank_depth, l.spacing)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let ships = self
+            .ships
+            .values()
+            .map(|s| {
+                format!(
+                    "{}: {} ({} parts{})",
+                    s.unit,
+                    s.variant,
+                    s.parts.len(),
+                    if s.missing.is_empty() { String::new() } else { format!(", missing {:?}", s.missing) }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut water: Vec<String> = self.water.iter().map(|(elem, (_, _, level))| format!("#{elem} {level:?}")).collect();
+        water.sort_unstable();
+        let afloat = self
+            .afloat
+            .iter()
+            .map(|(elem, [h, p, r])| format!("#{elem} heave {h:.2} pitch {p:.2} roll {r:.2}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let headings = self.headings.iter().map(|(elem, h)| format!("#{elem} {h:.1}")).collect::<Vec<_>>().join(", ");
+        let ships = format!("{ships}; water under them: {}; afloat: {afloat}; headings: {headings}", water.join(", "));
+        let catalog = self.catalog.as_ref().map_or_else(String::new, |c| {
+            format!(
+                "catalog: {} variant rows, {} land units, {} naval units ({} with a ship), {} unit_variants_ships rows, {} ship logics, {} naval weapons; ",
+                c.entries.len(), c.land_units.len(), c.naval_units.len(), c.naval().len(), c.ships.len(), c.ship_logic.len(), c.naval_weapons.len()
+            )
+        });
+        format!(
+            "{catalog}tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]; ships {} loaded, loading {}, {} failed, {} entities [{ships}]: {}",
+            self.catalog.is_some(),
+            self.models.len(),
+            self.loading.is_some(),
+            self.failed.len(),
+            self.entities.len(),
+            self.size,
+            self.update_ms,
+            self.ships.len(),
+            self.ship_loading.is_some(),
+            self.ship_failed.len(),
+            self.ship_entities.len(),
+            self.status
+        )
     }
 
     /// The game changed: its tables and models go.
@@ -121,6 +282,10 @@ impl RefUnits {
         self.loading = None;
         self.failed.clear();
         self.size = None;
+        self.ships.clear();
+        self.ship_loading = None;
+        self.ship_failed.clear();
+        self.water.clear();
         self.clear(e);
     }
 
@@ -128,6 +293,13 @@ impl RefUnits {
         // Not one by one: each would go over the scene, and a removal of that kind has the renderer build all its draws again.
         e.scene.remove_ids(&self.entities);
         self.entities.clear();
+        self.clear_ships(e);
+    }
+
+    fn clear_ships(&mut self, e: &mut Editor) {
+        e.scene.remove_ids(&self.ship_entities);
+        self.ship_entities.clear();
+        self.ship_shown.clear();
     }
 
     fn load_catalog(&mut self, e: &Editor) {
@@ -144,7 +316,8 @@ impl RefUnits {
         self.catalog_rx = Some(rx);
         "reading the unit tables...".clone_into(&mut self.status);
         std::thread::spawn(move || {
-            let result = rpfm_schema_path(vfs.profile()).ok_or_else(|| "no rpfm schema of the game (Help > Update Manager downloads it)".to_owned())
+            let result = rpfm_schema_path(vfs.profile())
+                .ok_or_else(|| "no rpfm schema of the game (Help > Update Manager downloads it)".to_owned())
                 .and_then(|path| Schema::load(&path, None).map_err(|e| e.to_string()))
                 .and_then(|schema| UnitCatalog::load(&vfs, &schema));
             let _ = tx.send(result);
@@ -190,6 +363,37 @@ impl RefUnits {
                 Err(TryRecvError::Empty) => {}
             }
         }
+
+        if let Some(rx) = &self.ship_loading {
+            match rx.try_recv() {
+                Ok((wanted, Ok(ship))) => {
+                    self.status.clear();
+                    self.ships.insert(wanted, Arc::new(ship));
+                    self.ship_loading = None;
+                }
+
+                Ok((wanted, Err(error))) => {
+                    self.status = error;
+                    self.ship_failed.insert(wanted);
+                    self.ship_loading = None;
+                }
+
+                Err(TryRecvError::Disconnected) => self.ship_loading = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+    }
+
+    fn load_ship(&mut self, e: &Editor, wanted: ShipWanted) {
+        let (Some(vfs), Some(catalog)) = (e.vfs().cloned(), self.catalog.clone()) else { return };
+        let (tx, rx) = channel();
+        self.ship_loading = Some(rx);
+        format!("loading the ship of {}...", wanted.unit).clone_into(&mut self.status);
+        std::thread::spawn(move || {
+            let read = |p: &str| vfs.read(p).ok();
+            let ship = ShipModel::load(&read, &catalog, &wanted.unit, &wanted.faction, wanted.seed);
+            let _ = tx.send((wanted, ship));
+        });
     }
 
     fn load_models(&mut self, e: &Editor, wanted: Wanted) {
@@ -199,45 +403,91 @@ impl RefUnits {
         format!("loading {}...", wanted.unit).clone_into(&mut self.status);
         std::thread::spawn(move || {
             let read = |p: &str| vfs.read(p).ok();
-            let models = (0..wanted.variations).map(|k| {
-                let mut model = UnitModel::load(&read, &catalog, &wanted.unit, &wanted.faction, wanted.seed.wrapping_add(k))?;
-                if !wanted.slot.is_empty() {
-                    model.play(&read, &wanted.slot);
-                }
+            let models = (0..wanted.variations)
+                .map(|k| {
+                    let mut model = UnitModel::load(&read, &catalog, &wanted.unit, &wanted.faction, wanted.seed.wrapping_add(k))?;
+                    if !wanted.slot.is_empty() {
+                        model.play(&read, &wanted.slot);
+                    }
 
-                Ok(model)
-            }).collect();
+                    Ok(model)
+                })
+                .collect();
             let _ = tx.send((wanted, models));
         });
     }
 
-    /// The tile's references: its elements of the two types that are shown, with the defaults filled in. Nothing to do on a tile without any.
+    /// The tile's references: its elements of the three types that are shown, with the defaults filled in. Nothing to do on a tile without any.
     fn references(&self, e: &Editor, id: DocumentId) -> Vec<Reference> {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return vec![] };
         let t = d.tile();
         let mut out = vec![];
-        for kind in [REF_HUMAN, REF_UNIT] {
-            if !t.type_counts().contains_key(kind) {
+        for tag in [REF_HUMAN, REF_UNIT, REF_SHIP] {
+            if !t.type_counts().contains_key(tag) {
                 continue;
             }
 
-            for elem in t.tscene().find_all(kind).into_iter().filter(|&elem| t.shown(elem)) {
+            let Some(kind) = Kind::of(tag) else { continue };
+            for elem in t.tscene().find_all(tag).into_iter().filter(|&elem| t.shown(elem)) {
                 let attr = |name: &str| t.tscene().doc().get(elem, name).unwrap_or_default();
-                let Some(wanted) = self.wanted(e, &attr("unit"), &attr("faction"), attr("seed").trim().parse().unwrap_or(0), &attr("slot"), kind == REF_UNIT) else { continue };
-                out.push(Reference { elem, is_unit: kind == REF_UNIT, wanted, colours: parse_colours(&attr("colours")), on_ground: attr("surface_mode") != "MSM_FREEFORM" });
+                let Some((wanted, ship)) =
+                    self.wanted(e, &attr("unit"), &attr("faction"), attr("seed").trim().parse().unwrap_or(0), &attr("slot"), kind)
+                else {
+                    continue;
+                };
+                let (colours, on_ground, rowing) =
+                    (parse_colours(&attr("colours")), attr("surface_mode") != "MSM_FREEFORM", attr("rowing") == "1");
+                out.push(Reference { elem, kind, wanted, ship, colours, on_ground, rowing });
             }
         }
 
         out
     }
 
-    /// The unit and faction to show: the element's, else the game's default, else the first unit.
-    fn wanted(&self, e: &Editor, unit: &str, faction: &str, seed: u64, slot: &str, is_unit: bool) -> Option<Wanted> {
+    /// The unit and faction to show: the element's, else the game's default, else the first unit. A ship's: its naval unit, and the men aboard.
+    fn wanted(&self, e: &Editor, unit: &str, faction: &str, seed: u64, slot: &str, kind: Kind) -> Option<(Wanted, Option<ShipWanted>)> {
         let catalog = self.catalog.as_ref()?;
+        let faction_or = |default: &str| if unit.is_empty() { default.to_owned() } else { faction.to_owned() };
+        if kind == Kind::Ship {
+            let (default, default_faction) = default_naval(e.game().key);
+            let chosen = [unit, default]
+                .into_iter()
+                .find(|u| !u.is_empty() && catalog.naval_units.contains_key(*u))
+                .or_else(|| catalog.naval().first().copied())?;
+            let faction = faction_or(default_faction);
+            let men = Wanted {
+                unit: catalog.naval_units[chosen].land_unit.clone(),
+                faction: faction.clone(),
+                seed,
+                slot: slot.to_owned(),
+                variations: UNIT_VARIATIONS,
+            };
+            return Some((men, Some(ShipWanted { unit: chosen.to_owned(), faction, seed })));
+        }
+
         let (default, default_faction) = default_unit(e.game().key);
-        let chosen = [unit, default].into_iter().find(|u| !u.is_empty() && catalog.entry(u, "").is_some()).or_else(|| catalog.units().first().copied())?;
-        let faction = if unit.is_empty() { default_faction } else { faction };
-        Some(Wanted { unit: chosen.to_owned(), faction: faction.to_owned(), seed, slot: slot.to_owned(), variations: if is_unit { UNIT_VARIATIONS } else { 1 } })
+        let chosen = [unit, default]
+            .into_iter()
+            .find(|u| !u.is_empty() && catalog.entry(u, "").is_some())
+            .or_else(|| catalog.units().first().copied())?;
+        let variations = if kind == Kind::Unit { UNIT_VARIATIONS } else { 1 };
+        Some((Wanted { unit: chosen.to_owned(), faction: faction_or(default_faction), seed, slot: slot.to_owned(), variations }, None))
+    }
+
+    /// The water under a ship, asked of the tile again when it moves or now and then.
+    fn water_under(&mut self, e: &Editor, id: DocumentId, elem: usize, x: f32, z: f32) -> Option<f32> {
+        let now = gui::time();
+        let at = [x.to_bits(), z.to_bits()];
+        if let Some((was, when, level)) = self.water.get(&elem)
+            && *was == at
+            && now - when < WATER_SECONDS
+        {
+            return *level;
+        }
+
+        let level = e.docs.find_as::<TileDocument>(id)?.tile().water_level(x, z);
+        self.water.insert(elem, (at, now, level));
+        level
     }
 
     /// The game's unit size, read again now and then. Without a preferences file, the tables' size: the largest.
@@ -259,7 +509,10 @@ impl RefUnits {
     }
 
     fn update_scene(&mut self, e: &mut Editor, id: DocumentId) {
-        let any = e.docs.find_as::<TileDocument>(id).is_some_and(|d| [REF_HUMAN, REF_UNIT].iter().any(|k| d.tile().type_counts().contains_key(*k)));
+        let any = e
+            .docs
+            .find_as::<TileDocument>(id)
+            .is_some_and(|d| [REF_HUMAN, REF_UNIT, REF_SHIP].iter().any(|k| d.tile().type_counts().contains_key(*k)));
         if !any || e.viewport.game_view {
             self.clear(e);
             if let Some(d) = e.docs.find_as::<TileDocument>(id) {
@@ -273,12 +526,17 @@ impl RefUnits {
         self.poll();
         let references = self.references(e, id);
         let size = self.unit_size(e);
-        let used: HashSet<&Wanted> = references.iter().map(|r| &r.wanted).collect();
-        self.models.retain(|w, _| used.contains(w));
-        if self.loading.is_none()
-            && let Some(wanted) = references.iter().map(|r| &r.wanted).find(|w| !self.models.contains_key(*w) && !self.failed.contains(*w)).cloned()
+        let used_ships: HashSet<&ShipWanted> = references.iter().filter_map(|r| r.ship.as_ref()).collect();
+        self.ships.retain(|w, _| used_ships.contains(w));
+        self.water.retain(|elem, _| references.iter().any(|r| r.elem == *elem && r.kind == Kind::Ship));
+        if self.ship_loading.is_none()
+            && let Some(wanted) = references
+                .iter()
+                .filter_map(|r| r.ship.as_ref())
+                .find(|w| !self.ships.contains_key(*w) && !self.ship_failed.contains(*w))
+                .cloned()
         {
-            self.load_models(e, wanted);
+            self.load_ship(e, wanted);
         }
 
         // The tile's scene layer; a new tile has a new one.
@@ -292,37 +550,127 @@ impl RefUnits {
             }
         };
 
+        // Each reference's men (where they stand: about its origin, or on a ship's deck) and, for a ship, its matrix.
+        let catalog = self.catalog.clone();
+        let mut ship_places: HashMap<usize, ShipPlace> = HashMap::new();
+
+        // The sails' clock: the editor's, its step since the last frame (none the first time).
+        let sails_t = e.clock.time() as f32;
+        let sails_dt = self.sails_time.map_or(0.0, |was| (sails_t - was).max(0.0));
+        self.sails_time = Some(sails_t);
+        self.sails.retain(|(elem, _), _| references.iter().any(|r| r.elem == *elem && r.kind == Kind::Ship));
+        // Each man: where he stands (x, y, z) and a turn of his own about y (aboard: his slot's facing).
+        let mut men_of: HashMap<usize, Vec<[f32; 4]>> = HashMap::new();
+        let units = e.scene.game_units.max(1e-3);
+        for r in &references {
+            let stands: Vec<[f32; 4]> = match r.kind {
+                Kind::Human => vec![[0.0; 4]],
+                Kind::Unit => catalog.as_ref().and_then(|c| c.land_units.get(&r.wanted.unit)).map_or_else(
+                    || vec![[0.0; 4]],
+                    |land| {
+                        formation(men_at_size(land, size), land.rank_depth, land.spacing)
+                            .into_iter()
+                            .map(|[x, z]| [x, 0.0, z, 0.0])
+                            .collect()
+                    },
+                ),
+                Kind::Ship => {
+                    let Some(ship) = r.ship.as_ref().and_then(|w| self.ships.get(w)).cloned() else { continue };
+                    let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+                    let (at, m) = (d.tile().world_position(r.elem), d.tile().world_matrix(r.elem));
+                    let ground = d.tile().terrain_height(at.x, at.z);
+                    let water = if r.on_ground { self.water_under(e, id, r.elem, at.x, at.z) } else { None };
+                    let y = if r.on_ground { water.map_or(ground, |w| w.max(ground)) } else { at.y };
+                    let level = translation(Float3::new(at.x, y, at.z)) * rotation_y(yaw_of(&m)) * scaling(1.0 / units);
+
+                    // On the sea (its water at 0 m), with the waves of the moment under its buoyancy spheres.
+                    let on_sea = water.is_some_and(|w| w.abs() < 1e-4 && w >= ground);
+                    let renderer = if on_sea { e.renderer().map(|r| &*r) } else { None };
+                    let wave = |x: f32, z: f32| {
+                        let p = level.transform_point(Float3::new(x, 0.0, z));
+                        renderer.and_then(|r| r.sea_wave_height(p.x, p.z)).unwrap_or(0.0) * units
+                    };
+                    let place = if renderer.is_some() {
+                        let a = ship.afloat(&wave);
+                        self.afloat.insert(r.elem, [a.m[1][3], a.m[1][2].asin().to_degrees(), (-a.m[1][0]).asin().to_degrees()]);
+                        level * a
+                    } else {
+                        self.afloat.remove(&r.elem);
+                        level
+                    };
+                    let land = catalog.as_ref().and_then(|c| c.land_units.get(&ship.unit));
+                    let spots = land.map_or_else(Vec::new, |land| ship.crew(men_at_size(land, size)));
+                    // The sails: the wind of the ship's heading on the waves (model to world, without the scale).
+                    self.headings.insert(r.elem, yaw_of(&m).to_degrees());
+                    let turn = rotation_y(yaw_of(&m)) * if renderer.is_some() { ship.afloat(&wave) } else { Float4x4::IDENTITY };
+                    let rows = [0, 1, 2].map(|r| [turn.m[r][0], turn.m[r][1], turn.m[r][2]]);
+                    let wind = ship_wind(rows);
+                    for (k, part) in ship.parts.iter().enumerate() {
+                        if let Some(rig) = &part.cloth {
+                            let sim =
+                                self.sails.entry((r.elem, k)).or_insert_with(|| ClothSim::new(rig, r.wanted.seed.wrapping_add(k as u64)));
+                            sim.update(sails_dt, sails_t, wind);
+                        }
+                    }
+
+                    ship_places.insert(r.elem, (place, ship, r.colours, r.rowing));
+                    spots
+                }
+            };
+
+            men_of.insert(r.elem, stands);
+        }
+
+        let time = e.clock.time() as f32;
+        self.place_ships(e, id, &ship_places, time);
+        let used: HashSet<&Wanted> =
+            references.iter().filter(|r| men_of.get(&r.elem).is_some_and(|m| !m.is_empty())).map(|r| &r.wanted).collect();
+        self.models.retain(|w, _| used.contains(w));
+        if self.loading.is_none()
+            && let Some(wanted) = references
+                .iter()
+                .map(|r| &r.wanted)
+                .find(|w| used.contains(w) && !self.models.contains_key(*w) && !self.failed.contains(*w))
+                .cloned()
+        {
+            self.load_models(e, wanted);
+        }
+
         // A soldier's poses are worked out once a frame, however many men show them.
         let time = e.clock.time() as f32;
         let mut poses: HashMap<(&Wanted, usize), Vec<UnitInstance>> = HashMap::new();
         let mut placed: Vec<(Float4x4, UnitInstance, Option<[[f32; 3]; 3]>)> = vec![];
         let mut spots = vec![];
-        let units = e.scene.game_units.max(1e-3);
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         let t = d.tile();
         for r in &references {
             let Some(models) = self.models.get(&r.wanted) else { continue };
+            let Some(stands) = men_of.get(&r.elem) else { continue };
             let at = t.world_position(r.elem);
             let m = t.world_matrix(r.elem);
             let turn = rotation_y(yaw_of(&m));
-            let stands: Vec<[f32; 2]> = if r.is_unit {
-                self.catalog.as_ref().and_then(|c| c.land_units.get(&r.wanted.unit)).map_or_else(|| vec![[0.0; 2]], |land| formation(men_at_size(land, size), land.rank_depth, land.spacing))
-            } else {
-                vec![[0.0; 2]]
-            };
-
             let mounted = models[0].mount.is_some();
             let (chest, radius) = if mounted { (1.3, 1.3) } else { (0.9, 0.8) };
             for (k, stand) in stands.iter().enumerate() {
-                let local = turn.transform_point(Float3::new(stand[0] / units, 0.0, stand[1] / units));
-                let (x, z) = (at.x + local.x, at.z + local.z);
-                let y = if r.on_ground { t.terrain_height(x, z) } else { at.y };
+                // On a ship, its deck; else the ground under each man, or level at the element's height.
+                let (x, y, z) = match ship_places.get(&r.elem) {
+                    Some((place, ..)) => {
+                        let p = place.transform_point(Float3::new(stand[0], stand[1], stand[2]));
+                        (p.x, p.y, p.z)
+                    }
+
+                    None => {
+                        let local = turn.transform_point(Float3::new(stand[0] / units, 0.0, stand[2] / units));
+                        let (x, z) = (at.x + local.x, at.z + local.z);
+                        (x, if r.on_ground { t.terrain_height(x, z) } else { at.y }, z)
+                    }
+                };
 
                 // The same soldier isn't next to himself, in file or in rank.
                 let variation = (k * 7) % models.len();
                 let model = &models[variation];
                 let figures = poses.entry((&r.wanted, variation)).or_insert_with(|| model.instances(time, true));
-                let place = translation(Float3::new(x, y, z)) * turn;
+                let place = translation(Float3::new(x, y, z)) * turn * rotation_y(stand[3]);
                 for figure in figures.iter() {
                     // Models are in game units; the tile's scene isn't.
                     let mut world = place;
@@ -343,7 +691,10 @@ impl RefUnits {
         t.set_ref_spots(spots);
         if self.entities.len() != placed.len() || self.entities.iter().any(|&id| e.scene.find(id).is_none()) {
             self.clear(e);
-            self.entities = placed.iter().map(|_| e.scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), SourceRef { doc: id, item: 0 })).collect();
+            self.entities = placed
+                .iter()
+                .map(|_| e.scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), SourceRef { doc: id, item: 0 }))
+                .collect();
         }
 
         for (&entity, (world, mut figure, colours)) in self.entities.iter().zip(placed) {
@@ -355,10 +706,124 @@ impl RefUnits {
         }
     }
 
+    /// The ships' parts in the scene, each ship at its matrix: added again when what is shown changes, moved when only where does.
+    fn place_ships(&mut self, e: &mut Editor, id: DocumentId, ships: &HashMap<usize, ShipPlace>, time: f32) {
+        let mut elems: Vec<&usize> = ships.keys().collect();
+        elems.sort_unstable();
+        let mut want: Vec<ShipShown> = vec![];
+        for &elem in elems {
+            let (place, ship, colours, rowing) = &ships[&elem];
+            let mut faction = ship.faction_colours;
+            if let Some(c) = colours {
+                faction[..3].copy_from_slice(c);
+            }
+
+            for (k, p) in ship.parts.iter().enumerate() {
+                let world = *place * ShipModel::part_at(p, time, *rowing);
+                if p.what.solid {
+                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: None, palette: None, ropes: None });
+                }
+
+                // A sail model's ropes move with its cloth; elsewhere they stand as the file has them.
+                let sim = self.sails.get(&(elem, k));
+                if let (Some(sim), Some(rig)) = (sim, &p.cloth) {
+                    let lines = sim.ropes().into_iter().map(|(nodes, v, radius)| RopeLine { nodes, v, radius }).collect();
+                    let [diffuse, normal] = rig.rope_textures.clone();
+                    let ropes = Some(Ropes { lines, diffuse, normal });
+                    want.push(ShipShown { model: format!("{}#moving_ropes", p.model), elem, world, sail: None, palette: None, ropes });
+                } else if p.what.ropes {
+                    want.push(ShipShown {
+                        model: format!("{}{MODEL_ROPES_SUFFIX}", p.model),
+                        elem,
+                        world,
+                        sail: None,
+                        palette: None,
+                        ropes: None,
+                    });
+                }
+
+                if p.what.cloth {
+                    let palette = sim.map(|s| Arc::new(s.palette()));
+                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: Some((p.masks, faction)), palette, ropes: None });
+                }
+            }
+        }
+
+        let Some(layer) = self.layer.filter(|(doc, _)| *doc == id).map(|(_, l)| l) else { return };
+        let same = self.ship_shown.len() == want.len()
+            && self.ship_shown.iter().zip(&want).all(|(a, b)| a.model == b.model && a.elem == b.elem && a.sail == b.sail);
+        if !same || self.ship_entities.iter().any(|&en| e.scene.find(en).is_none()) {
+            self.clear_ships(e);
+            let rest = self.rest.get_or_insert_with(|| Arc::new(vec![SKINNED_NO_OFFSET; SAIL_BONES])).clone();
+            self.ship_entities = want
+                .iter()
+                .map(|w| {
+                    let payload = match w.sail {
+                        _ if w.ropes.is_some() => Payload::Ropes(w.ropes.clone().unwrap_or_default()),
+
+                        // Its cloth's bones, or at rest: every cloth bone where the file has it.
+                        Some((masks, faction_colours)) => {
+                            let part = SkinnedPart {
+                                model: w.model.clone(),
+                                tint: [0.0; 4],
+                                decal_diffuse: None,
+                                decal_normal: None,
+                                masks,
+                                bone: None,
+                                offset: SKINNED_NO_OFFSET,
+                            };
+                            let palette = w.palette.clone().unwrap_or_else(|| rest.clone());
+                            Payload::SkinnedInstance(SkinnedInstance {
+                                parts: vec![part],
+                                palette,
+                                bones: rest.clone(),
+                                casts_shadow: true,
+                                faction_colours,
+                                faction_scale: 0.0,
+                            })
+                        }
+
+                        // The ropes read POSITION4.w as their burn.
+                        None if w.model.ends_with(MODEL_ROPES_SUFFIX) => Payload::MeshInstance(MeshInstance {
+                            model: w.model.clone(),
+                            lod: false,
+                            p4: [0.0; 4],
+                            ..MeshInstance::default()
+                        }),
+                        None => Payload::MeshInstance(MeshInstance { model: w.model.clone(), lod: true, ..MeshInstance::default() }),
+                    };
+
+                    e.scene.add(layer, w.world, payload, SourceRef { doc: id, item: item_of(w.elem) })
+                })
+                .collect();
+        } else {
+            // Every frame on the waves: moves the scene follows without going over itself again; a sail takes its cloth's bones.
+            for (&entity, (shown, wanted)) in self.ship_entities.iter().zip(self.ship_shown.iter().zip(&want)) {
+                if let Some(ropes) = &wanted.ropes {
+                    e.scene.update_ropes(entity, wanted.world, ropes.clone());
+                } else if let (Some(palette), Some(Payload::SkinnedInstance(s))) =
+                    (&wanted.palette, e.scene.find(entity).map(|en| &en.payload))
+                {
+                    let instance = SkinnedInstance { palette: palette.clone(), ..s.clone() };
+                    e.scene.update_pose(entity, wanted.world, instance);
+                } else if shown.world != wanted.world {
+                    e.scene.update_world_quiet(entity, wanted.world);
+                }
+            }
+        }
+
+        self.ship_shown = want;
+    }
+
     /// A list with a filter, for a combo: the item picked.
-    fn combo(label: &str, filter: &mut String, value: &str, items: &[&str]) -> Option<String> {
+    fn combo(label: &str, tip: &str, filter: &mut String, value: &str, items: &[&str]) -> Option<String> {
         let mut picked = None;
-        if gui::begin_combo(label, value) {
+        let open = gui::begin_combo(label, value);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(tip);
+        }
+
+        if open {
             gui::input_text(&format!("##{label}_filter"), Some("filter"), filter, 64, 0);
             let words = filter.to_lowercase();
             let shown: Vec<&&str> = items.iter().filter(|i| i.contains(&words)).collect();
@@ -377,7 +842,7 @@ impl RefUnits {
     /// The Inspector's rows of the selected references, below their properties: an edit goes to all of them.
     pub fn draw(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
-        let is_reference = |&elem: &usize| matches!(d.tile().tscene().type_of(elem), REF_HUMAN | REF_UNIT);
+        let is_reference = |&elem: &usize| Kind::of(d.tile().tscene().type_of(elem)).is_some();
         let elems: Vec<usize> = selected(e).into_iter().filter(is_reference).collect();
         let Some(&first) = elems.first() else { return };
         gui::separator_text("Reference");
@@ -386,29 +851,37 @@ impl RefUnits {
         }
 
         let Some(catalog) = self.catalog.clone() else { return };
-        let is_unit = d.tile().tscene().type_of(first) == REF_UNIT;
+        let Some(kind) = Kind::of(d.tile().tscene().type_of(first)) else { return };
         let attr = |name: &str| d.tile().tscene().doc().get(first, name).unwrap_or_default();
         let seed: u64 = attr("seed").trim().parse().unwrap_or(0);
-        let Some(wanted) = self.wanted(e, &attr("unit"), &attr("faction"), seed, &attr("slot"), is_unit) else { return };
+        let Some((wanted, ship)) = self.wanted(e, &attr("unit"), &attr("faction"), seed, &attr("slot"), kind) else { return };
         let stored = parse_colours(&attr("colours"));
         let mut edits: BTreeMap<&str, String> = BTreeMap::new();
 
-        let units = catalog.units();
+        // A ship's unit is its naval unit; its men's land unit is shown below.
+        let (units, unit) = match &ship {
+            Some(s) => (catalog.naval(), s.unit.clone()),
+            None => (catalog.units(), wanted.unit.clone()),
+        };
+
         let mut factions: Vec<&str> = catalog.colours.keys().map(String::as_str).collect();
         factions.sort_unstable();
-        if let Some(unit) = Self::combo("Unit##reference", &mut self.unit_filter, &wanted.unit, &units) {
+        let unit_tip = if ship.is_some() { "The naval unit whose ship it shows." } else { "The game's unit its soldiers are from." };
+        if let Some(unit) = Self::combo("Unit##reference", unit_tip, &mut self.unit_filter, &unit, &units) {
             edits.insert("unit", unit);
             edits.insert("faction", wanted.faction.clone());
         }
 
-        if let Some(faction) = Self::combo("Faction##reference", &mut self.faction_filter, &wanted.faction, &factions) {
-            edits.insert("unit", wanted.unit.clone());
+        let faction_tip = "The faction it belongs to: its colours. Picking one drops the colours set by hand.";
+        if let Some(faction) = Self::combo("Faction##reference", faction_tip, &mut self.faction_filter, &wanted.faction, &factions) {
+            edits.insert("unit", unit.clone());
             edits.insert("faction", faction);
             edits.insert("colours", String::new());
         }
 
         let slots = self.models.get(&wanted).map(|m| m[0].slots()).unwrap_or_default();
-        if let Some(slot) = Self::combo("Plays##reference", &mut self.slot_filter, &wanted.slot, &slots) {
+        let plays_tip = "The animation slot the soldiers play.";
+        if let Some(slot) = Self::combo("Plays##reference", plays_tip, &mut self.slot_filter, &wanted.slot, &slots) {
             edits.insert("slot", slot);
         }
 
@@ -418,9 +891,17 @@ impl RefUnits {
             edits.insert("seed", seed_box.unsigned_abs().to_string());
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Which of the unit's soldiers it shows (their looks and kit differ); any number.");
+        }
+
         gui::same_line();
         if gui::small_button("Next##reference") {
             edits.insert("seed", seed.wrapping_add(1).to_string());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows the next soldier of the unit.");
         }
 
         // The faction's colours, or the user's.
@@ -430,21 +911,58 @@ impl RefUnits {
         let mut changed = false;
         for (k, name) in ["Primary", "Secondary", "Uniform"].iter().enumerate() {
             changed |= gui::color_edit3(&format!("{name}##reference"), &mut colours[k], 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("The {} colour, the faction's until you change it.", name.to_lowercase()));
+            }
         }
 
         if changed {
             edits.insert("colours", format_colours(&colours));
         }
 
-        if stored.is_some() && gui::small_button("Faction's colours##reference") {
-            edits.insert("colours", String::new());
+        if stored.is_some() {
+            if gui::small_button("Faction's colours##reference") {
+                edits.insert("colours", String::new());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Back to the faction's own colours.");
+            }
         }
 
         if let Some(model) = self.models.get(&wanted).and_then(|m| m.first()) {
-            gui::text_disabled(&format!("{}, scale {:.3}{}", model.man.rig.skeleton.skeleton, model.scale, model.mount.as_ref().map_or(String::new(), |m| format!(", on {}", m.rig.skeleton.skeleton))));
+            gui::text_disabled(&format!(
+                "{}, scale {:.3}{}",
+                model.man.rig.skeleton.skeleton,
+                model.scale,
+                model.mount.as_ref().map_or(String::new(), |m| format!(", on {}", m.rig.skeleton.skeleton))
+            ));
         }
 
-        if is_unit && let Some(land) = catalog.land_units.get(&wanted.unit) {
+        if let Some(s) = &ship {
+            let naval = catalog.naval_units.get(&s.unit);
+            let size = self.size.unwrap_or(3);
+            let men = catalog.land_units.get(&s.unit).map_or(0, |land| men_at_size(land, size));
+            let model = self.ships.get(s).map_or_else(|| "loading".to_owned(), |m| format!("{}, {} parts", m.variant, m.parts.len()));
+            gui::text_disabled(&format!(
+                "{} ({}), {model}",
+                naval.map_or("", |n| n.ship.as_str()),
+                naval.map_or("", |n| n.category.as_str())
+            ));
+            gui::text_disabled(&format!("{men} men of {} aboard (the game's unit size: {})", wanted.unit, size_name(size)));
+            let mut rowing = attr("rowing") == "1";
+            if gui::checkbox("Rowing##reference", &mut rowing) {
+                edits.insert("rowing", if rowing { "1" } else { "0" }.to_owned());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The oars row; off: they are held still.");
+            }
+        }
+
+        if kind == Kind::Unit
+            && let Some(land) = catalog.land_units.get(&wanted.unit)
+        {
             let size = self.size.unwrap_or(3);
             let men = men_at_size(land, size);
             let ranks = land.rank_depth.clamp(1, men.max(1));

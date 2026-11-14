@@ -88,10 +88,18 @@ The trees of one tree list (`Context::tree_list`; default `outfield_tents.tree_l
 move them. Only its static trees: the generated objects stand at the centres of the generator's cells (128 / density metres, the
 database row's density; `on_generator_grid`) and are left out, as the outfield_tents list's yurts (2,687 on
 tdd_settlement_middle_men_ports/middle_men_port_a/minor, which otherwise stood all over the field) or a climate's generated trees; the
-static trees are the same in every list (4,285 there). A tree whose list flag is 0 gets `surface_mode` MSM_LANDSCAPE (BOB's flag is MSM_FREEFORM). The layer also holds a
-`VegetationExclusionPolygonInstance` over the whole tile (a metre past each edge): BOB keeps only the static trees inside an exclusion
-polygon and generates nothing there, so an edited project exports exactly its instances. The tree list's `id`s are rpfm's (random), not
+static trees are the same in every list (4,285 there). A tree whose list flag is 0 gets `surface_mode` MSM_LANDSCAPE (BOB's flag is MSM_FREEFORM). The tree list's `id`s are rpfm's (random), not
 data.
+
+BOB keeps a static tree only inside a `VegetationExclusionPolygonInstance`, and generates nothing inside one; the binary has neither the
+polygons nor the seeds. The layer gets polygons around the static trees (`wce_tile::vegetation::static_cover`): the squares of a 2 m grid
+within 6 m of a static tree, without those where any of the tile's tree lists has a generated object (BOB generated it, so no polygon was
+there) but always with each static tree's own, holes of up to 32 squares filled, each patch outlined as one polygon (split at a larger
+hole: an outline has none), a metre past the tile's edges. The rest of the tile is generated again, by the editor's preview and by BOB
+from the project's seeds (not the shipped ones: the generated trees differ from the packs'). 7 polygons on farm_western/1x1 (the kit's
+tile.ted has 16), 125 on middle_men_port_a/minor; regenerating the source list from the decompiled project brings back every static tree
+within 1 mm (2,400 and 4,285). Until 2026-11-12 the layer had one polygon over the whole tile (no generated trees at all); the editor
+converts such a project when it opens it (docs/editor.md, "Procedural trees").
 
 Every vegetation file (tree, grass and procedural BMD files, the older lists, the per-climate emitter markers) is carried in
 `decompiled_vegetation/`, and BOB's terrain files in `decompiled_terrain/`, with the fingerprints of what they come from: the compile

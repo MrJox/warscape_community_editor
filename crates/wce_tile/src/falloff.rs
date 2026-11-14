@@ -47,7 +47,11 @@ impl Default for FalloffCurve {
 impl FalloffCurve {
     /// The points tidied: clamped to 0..1, sorted, the ends at distance 0 and 1 (added when missing), no two at the same distance.
     pub fn from_points(points: &[[f32; 2]]) -> Self {
-        let mut p = points.iter().map(|&[x, y]| [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)]).filter(|p| p[0].is_finite() && p[1].is_finite()).collect::<Vec<_>>();
+        let mut p = points
+            .iter()
+            .map(|&[x, y]| [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+            .filter(|p| p[0].is_finite() && p[1].is_finite())
+            .collect::<Vec<_>>();
         p.sort_by(|a, b| a[0].total_cmp(&b[0]));
         p.dedup_by(|b, a| (b[0] - a[0]).abs() < 1e-4);
         if p.first().is_none_or(|f| f[0] > 0.0) {

@@ -3,8 +3,8 @@
 //! tool's grid and points). A tool's chips go left of them (`Viewport::chips_width`, `Viewport::chips_top`).
 
 use crate::editor::Editor;
-use wce_editor_core::camera_controller::CameraMode;
 use crate::{gui, icons, theme};
+use wce_editor_core::camera_controller::CameraMode;
 
 const GIZMO_STEP_TIP: &str = "The gizmo's own steps (ImGuizmo's snap): a move, a turn or a scale goes by whole steps from where the drag began. \
 For every tool; a tool's snapping (below) then applies on top of it.";
@@ -39,6 +39,11 @@ pub fn chip_separator() {
     gui::same_line_touching();
 }
 
+thread_local! {
+    /// The chip clicked last (its popup is the one open, if any): a click on it while blocked closes the popup rather than opening it again.
+    static LAST_CHIP: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 /// A chip: an icon that is all of its pill (`gui::begin_pill`), lit while `on`; true when clicked.
 pub fn chip(on: bool, icon: &str, id: &str, tip: &str) -> bool {
     if on {
@@ -48,7 +53,18 @@ pub fn chip(on: bool, icon: &str, id: &str, tip: &str) -> bool {
 
     gui::push_style_var_v(gui::VAR_FRAME_PADDING, CHIP_PADDING);
     gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
-    let clicked = gui::button(&format!("{icon}##{id}"));
+    let pressed = gui::button(&format!("{icon}##{id}"));
+
+    // With another chip's popup open, the click that closes it opens this one too (no second click needed); a click on the chip whose popup
+    // is open only closes it, as before.
+    let through = gui::is_mouse_clicked(0) && !gui::is_item_hovered() && gui::is_item_hovered_through_popup();
+    let own = LAST_CHIP.with(|l| *l.borrow() == id);
+    let clicked = pressed || (through && !own);
+    if clicked {
+        LAST_CHIP.with(|l| id.clone_into(&mut l.borrow_mut()));
+    } else if through && own {
+        LAST_CHIP.with(|l| l.borrow_mut().clear());
+    }
     gui::pop_style_color(1);
     gui::pop_style_var(1);
     if on {
@@ -82,6 +98,55 @@ pub(crate) fn draw(e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
     gui::end_child();
     let (lo, hi) = gui::item_rect();
     e.viewport.chips_width = hi.x - lo.x;
+    gui::pop_style_color(1);
+}
+
+/// The viewport's mode strip, a vertical pill at the image's left edge (`origin`, `size`), under the tool's chips there: what the left
+/// mouse does (Select / Move / Rotate / Scale, 1 to 4), the gizmo's coordinates (Global / Local, L), then the tool's own modes
+/// (`Tool::viewport_modes`).
+pub(crate) fn draw_mode_strip(e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+    const TOP: f32 = 100.0;
+    if size.y < TOP + 160.0 {
+        return;
+    }
+
+    gui::set_cursor_screen_pos(gui::v2(origin.x + 8.0, origin.y + TOP));
+    gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+    if gui::begin_pill("##modestrip") {
+        // Whether one of the tool's modes is on is the last frame's (its chips are drawn after these).
+        let tool_mode = e.viewport.tool_mode_on;
+        for (g, (icon, name)) in
+            [(icons::MOUSE_POINTER_2, "Select"), (icons::MOVE, "Move"), (icons::ROTATE_3D, "Rotate"), (icons::SCALE_3D, "Scale")]
+                .iter()
+                .enumerate()
+        {
+            let mode = crate::viewport::GizmoMode::from_index(g);
+            let on = !tool_mode && e.viewport.gizmo == mode;
+            let tip = format!("{name} ({}){}", g + 1, if tool_mode { "\nLeaves the brush" } else { "" });
+            if chip(on, icon, &format!("gizmo{g}"), &tip) {
+                e.viewport.gizmo = mode;
+                e.with_active_tool(|t, e| t.leave_mode(e));
+            }
+        }
+
+        let local = e.viewport.local_coordinates;
+        let tip = if local {
+            "Local coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the parent's (the group, \
+             prefab or layer the item is in), as the file holds them. Click: global"
+        } else {
+            "Global coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the world's. Click: local \
+             (relative to the group, prefab or layer the item is in)"
+        };
+        gui::separator();
+        if chip(local, if local { icons::BOX } else { icons::GLOBE }, "coords", tip) {
+            e.viewport.local_coordinates = !local;
+        }
+
+        let on = e.with_active_tool(|t, e| t.viewport_modes(e)).unwrap_or(false);
+        e.viewport.tool_mode_on = on;
+    }
+
+    gui::end_child();
     gui::pop_style_color(1);
 }
 
@@ -130,7 +195,9 @@ fn draw_camera_chip(e: &mut Editor) {
     }
 
     if gui::is_item_hovered() {
-        gui::set_tooltip("How much of the weather's fog the editor view draws (1: as the game does). Thinner fog shows a map from high up; the game view always has the game's fog.");
+        gui::set_tooltip(
+            "How much of the weather's fog the editor view draws (1: as the game does). Thinner fog shows a map from high up; the game view always has the game's fog.",
+        );
     }
 
     gui::separator_text("Camera");

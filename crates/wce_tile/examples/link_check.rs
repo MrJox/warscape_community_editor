@@ -14,7 +14,8 @@ fn main() {
     let raw = Path::new(&raw);
     let settings = std::fs::read(raw.join("terrain/tiles/battle/_tile_database/_settings.xml")).expect("_settings.xml");
     let doc = XmlDoc::parse(settings).expect("xml");
-    let sets = doc.elements().iter().enumerate().filter(|(_, e)| e.name == "TILE_SET").filter_map(|(i, _)| doc.get(i, "name")).collect::<Vec<_>>();
+    let sets =
+        doc.elements().iter().enumerate().filter(|(_, e)| e.name == "TILE_SET").filter_map(|(i, _)| doc.get(i, "name")).collect::<Vec<_>>();
     let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
     let (mut n, mut with) = (0, 0);
     for f in std::fs::read_dir(raw.join("terrain/tiles/battle/_tile_database/TILES")).expect("TILES").flatten() {

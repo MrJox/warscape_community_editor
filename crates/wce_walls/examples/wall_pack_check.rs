@@ -32,14 +32,18 @@ fn run() -> Result<(), String> {
     };
     let schema = Schema::load(std::path::Path::new(schema), None).map_err(|e| e.to_string())?;
     let games = SupportedGames::default();
-    let mut pack = Pack::read_and_merge(&[pack_path.into()], games.game(game).ok_or_else(|| format!("rpfm knows no {game}"))?, true, false, false).map_err(|e| e.to_string())?;
+    let mut pack =
+        Pack::read_and_merge(&[pack_path.into()], games.game(game).ok_or_else(|| format!("rpfm knows no {game}"))?, true, false, false)
+            .map_err(|e| e.to_string())?;
     let names = pack.files().keys().cloned().collect::<Vec<_>>();
     let mut read = |n: &str| pack.files_mut().get_mut(n).and_then(|f| f.encode(&None, false, false, true).ok().flatten());
 
     // The generated buildings' folders.
     let mut folders: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for n in &names {
-        if let Some(rest) = n.strip_prefix("rigidmodels/buildings/") && let Some((key, file)) = rest.split_once('/') {
+        if let Some(rest) = n.strip_prefix("rigidmodels/buildings/")
+            && let Some((key, file)) = rest.split_once('/')
+        {
             folders.entry(key.to_owned()).or_default().push(file.to_owned());
         }
     }
@@ -96,8 +100,10 @@ fn run() -> Result<(), String> {
         let n = placed.get(key).copied().unwrap_or(0);
         let ok = meshes > 0 && logic && zones && bb && own && ef > 0 && n == 1;
         bad += usize::from(!ok);
-        println!("  {key}: {meshes} meshes, logic {logic}, zones {zones}, battlefield_buildings {bb}, models_building logic_file own {own}, {ef} firing lines, {docking} docking lines, placed {n}{}",
-            if ok { "" } else { "  <- PROBLEM" });
+        println!(
+            "  {key}: {meshes} meshes, logic {logic}, zones {zones}, battlefield_buildings {bb}, models_building logic_file own {own}, {ef} firing lines, {docking} docking lines, placed {n}{}",
+            if ok { "" } else { "  <- PROBLEM" }
+        );
     }
 
     if generated.is_empty() || bad > 0 {

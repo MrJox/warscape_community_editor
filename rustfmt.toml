@@ -1,0 +1,5 @@
+# Conservative formatting: stable options only, wide lines, and rustfmt's
+# width heuristics relaxed so short calls, chains and literals stay on one line.
+edition = "2024"
+max_width = 140
+use_small_heuristics = "Max"

@@ -147,7 +147,13 @@ fn attr(d: &XmlDoc, e: usize, name: &str, default: f32) -> f32 {
     let Some(value) = d.get(e, name) else { return default };
     let x = parse_value(&value);
     match x.kind {
-        ValueKind::Bool => if x.b { 1.0 } else { 0.0 },
+        ValueKind::Bool => {
+            if x.b {
+                1.0
+            } else {
+                0.0
+            }
+        }
         ValueKind::Float | ValueKind::Int if !x.f.is_empty() => x.f[0],
         _ => default,
     }
@@ -231,14 +237,19 @@ pub fn read_cloud_planes(doc: &XmlDoc) -> Vec<CloudPlane> {
             p.clouds.push(CloudTemplate {
                 this_cloud_only: attr(doc, c, "this_cloud_only", 0.0) != 0.0,
                 probability: attr(doc, c, "probability", 0.0),
-                elements: els[c].children.iter().filter(|&&e| els[e].name == "CLOUD_ELEMENT").map(|&e| CloudElement {
-                    enabled: attr(doc, e, "enabled", 0.0) != 0.0,
-                    scale: attr(doc, e, "scale", 0.0),
-                    offset: [attr(doc, e, "offset_x", 0.0), attr(doc, e, "offset_y", 0.0), attr(doc, e, "offset_z", 0.0)],
-                    texture_index: attr(doc, e, "texture_index", 0.0) as i32,
-                    texture_row: attr(doc, e, "texture_row", 0.0) as i32,
-                    texture_column: attr(doc, e, "texture_column", 0.0) as i32,
-                }).collect(),
+                elements: els[c]
+                    .children
+                    .iter()
+                    .filter(|&&e| els[e].name == "CLOUD_ELEMENT")
+                    .map(|&e| CloudElement {
+                        enabled: attr(doc, e, "enabled", 0.0) != 0.0,
+                        scale: attr(doc, e, "scale", 0.0),
+                        offset: [attr(doc, e, "offset_x", 0.0), attr(doc, e, "offset_y", 0.0), attr(doc, e, "offset_z", 0.0)],
+                        texture_index: attr(doc, e, "texture_index", 0.0) as i32,
+                        texture_row: attr(doc, e, "texture_row", 0.0) as i32,
+                        texture_column: attr(doc, e, "texture_column", 0.0) as i32,
+                    })
+                    .collect(),
             });
         }
 
@@ -277,7 +288,6 @@ impl Default for CloudField {
 }
 
 impl CloudField {
-
     pub fn instances(&self) -> &[CloudInstance] {
         &self.inst
     }
@@ -370,7 +380,8 @@ impl CloudField {
             let du = 1.0 / k.u_tiles as f32;
             let (mut u, mut v) = (0.0, 0.0);
             if k.u_tiles > 1 {
-                let pick = |chosen: i32, r: f32| if chosen > 0 { (chosen - 1) as f32 } else { round_index((k.u_tiles - 1) as f32, r) as f32 };
+                let pick =
+                    |chosen: i32, r: f32| if chosen > 0 { (chosen - 1) as f32 } else { round_index((k.u_tiles - 1) as f32, r) as f32 };
                 u = pick(e.texture_column, r7) * du;
                 v = pick(e.texture_row, r4) * du;
             }

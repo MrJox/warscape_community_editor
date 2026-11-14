@@ -16,7 +16,9 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mods = args.iter().position(|a| a == "--mods").and_then(|i| args.get(i + 1)).cloned();
     let show = args.iter().position(|a| a == "--show").and_then(|i| args.get(i + 1)).and_then(|n| n.parse::<usize>().ok()).unwrap_or(5);
-    let Some(game) = args.first().filter(|a| !a.starts_with("--")) else { return Err("usage: tech_check <game folder> [--mods a.pack;b.pack] [--show N]".to_owned()) };
+    let Some(game) = args.first().filter(|a| !a.starts_with("--")) else {
+        return Err("usage: tech_check <game folder> [--mods a.pack;b.pack] [--show N]".to_owned());
+    };
 
     let mut config = Config::new(PathBuf::from(game), GameProfile::from_env().clone());
     config.mod_packs = mods.map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect());

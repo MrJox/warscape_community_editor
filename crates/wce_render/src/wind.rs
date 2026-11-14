@@ -85,7 +85,6 @@ impl Default for WindSim {
 }
 
 impl WindSim {
-
     // Engine variables read from the dumps (the same in all three).
 
     /// dll var +0x2a787c8.
@@ -184,7 +183,8 @@ impl WindSim {
         self.offset.y += w.y * dt;
 
         // VFX (fn 0x18f8b10, fn 0x18e51e0).
-        self.vfx_velocity = if def.is_some() { Float3::new(wind.x, 0.0, wind.y) } else { Float3::new(0.1, 0.0, 0.0) } * Self::VFX_WIND_SCALE;
+        self.vfx_velocity =
+            if def.is_some() { Float3::new(wind.x, 0.0, wind.y) } else { Float3::new(0.1, 0.0, 0.0) } * Self::VFX_WIND_SCALE;
         let r = rand01(&mut self.variance_rng);
         self.variance_angle = (self.variance_angle + (r + r - 1.0) * dt * Self::VARIANCE_RATE) % TAU;
         let m = approx_sqrt(dot(self.vfx_velocity, self.vfx_velocity));

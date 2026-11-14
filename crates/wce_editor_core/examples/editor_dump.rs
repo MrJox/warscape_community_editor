@@ -3,7 +3,9 @@
 //! cameras' (Total War, top-down, walk, fly: `o`, `t`, `w`, `f`), which now switch between controllers the C++ editor does not have, between
 //! runs of this dump.
 
-use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraOptions, FlyCamera, NoWorld, TopDownCamera, TotalWarCamera, WalkCamera};
+use wce_editor_core::camera_controller::{
+    CameraController, CameraInput, CameraOptions, FlyCamera, NoWorld, TopDownCamera, TotalWarCamera, WalkCamera,
+};
 use wce_editor_core::command_registry::{CommandHost, CommandRegistry};
 use wce_foundation::math::Float3;
 use wce_scene::camera::Camera;
@@ -28,14 +30,37 @@ impl Rng {
         let wheel = if f & 1 != 0 { ((self.next() % 7) as i32 - 3) as f32 } else { 0.0 };
         let bit = |b: u32| f & b != 0;
         CameraInput {
-            dx, dy, wheel, rotate: bit(2), pan: bit(4), forward: bit(8), back: bit(16), left: bit(32), right: bit(64), turn_right: bit(128), turn_left: bit(256),
-            fast: bit(512), cursor: Some([0.25, -0.5]), aspect: 16.0 / 9.0, view_h: 720.0, dt: self.f(0.0, 0.1), ..Default::default()
+            dx,
+            dy,
+            wheel,
+            rotate: bit(2),
+            pan: bit(4),
+            forward: bit(8),
+            back: bit(16),
+            left: bit(32),
+            right: bit(64),
+            turn_right: bit(128),
+            turn_left: bit(256),
+            fast: bit(512),
+            cursor: Some([0.25, -0.5]),
+            aspect: 16.0 / 9.0,
+            view_h: 720.0,
+            dt: self.f(0.0, 0.1),
+            ..Default::default()
         }
     }
 }
 
 fn cam(tag: &str, c: &Camera) {
-    println!("{tag} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}", c.eye.x.to_bits(), c.eye.y.to_bits(), c.eye.z.to_bits(), c.target.x.to_bits(), c.target.y.to_bits(), c.target.z.to_bits());
+    println!(
+        "{tag} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+        c.eye.x.to_bits(),
+        c.eye.y.to_bits(),
+        c.eye.z.to_bits(),
+        c.target.x.to_bits(),
+        c.target.y.to_bits(),
+        c.target.z.to_bits()
+    );
 }
 
 struct NoCommands(CommandRegistry<NoCommands>);
@@ -49,10 +74,12 @@ impl CommandHost for NoCommands {
 fn main() {
     let mut r = Rng(88172645463325252);
     for _ in 0..200 {
-        let (mut o, mut t, mut w, mut f) = (TotalWarCamera::default(), TopDownCamera::default(), WalkCamera::default(), FlyCamera::default());
+        let (mut o, mut t, mut w, mut f) =
+            (TotalWarCamera::default(), TopDownCamera::default(), WalkCamera::default(), FlyCamera::default());
         let exact = CameraOptions { smoothing: 0.0, respect_ground: false, ..Default::default() };
         let opts = CameraOptions { smoothing: 0.3, respect_ground: false, ..Default::default() };
-        let (y, p, d, tx, ty, tz) = (r.f(-3.0, 3.0), r.f(-1.0, 1.4), r.f(5.0, 900.0), r.f(-500.0, 500.0), r.f(-10.0, 60.0), r.f(-500.0, 500.0));
+        let (y, p, d, tx, ty, tz) =
+            (r.f(-3.0, 3.0), r.f(-1.0, 1.4), r.f(5.0, 900.0), r.f(-500.0, 500.0), r.f(-10.0, 60.0), r.f(-500.0, 500.0));
         o.set_orbit(y, p, d, Float3::new(tx, ty, tz));
         for s in 0..300 {
             let input = r.input();
@@ -82,7 +109,15 @@ fn main() {
                 cam("t", &t.camera());
                 cam("w", &w.camera());
                 cam("f", &f.camera());
-                println!("p {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}", o.yaw.to_bits(), o.pitch.to_bits(), o.focus_dist.to_bits(), t.heading.to_bits(), t.height.to_bits(), w.speed.to_bits());
+                println!(
+                    "p {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                    o.yaw.to_bits(),
+                    o.pitch.to_bits(),
+                    o.focus_dist.to_bits(),
+                    t.heading.to_bits(),
+                    t.height.to_bits(),
+                    w.speed.to_bits()
+                );
             }
         }
     }

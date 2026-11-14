@@ -1,22 +1,22 @@
-//! The tile's procedural vegetation: the trees BOB generated from the tile's seeds (`<list>.tree_list.bin` of the packed tile, one list per
-//! climate key plus `default`), drawn with the static VEGETATION_INSTANCEs. The lists hold the static trees too, those of the layers hidden in
-//! TEd included (the game draws them), so a list tree standing where a shown static instance stands is skipped.
+//! The tile's procedural trees: generated as BOB would (`wce_tile::vegetation`) for the terrain look's climate, from the tile's seeds,
+//! height map, saved blend map, exclusion polygons and static trees and the Assembly Kit's vegetation parameters, and drawn with the static
+//! VEGETATION_INSTANCEs. The packed tile's lists (`<list>.tree_list.bin`, BOB's from before) are not drawn: their generated trees came from
+//! seeds a decompiled tile does not have. A generated list holds the static trees too (those inside an exclusion polygon, hidden ones
+//! included), so a list tree standing where a static instance stands is skipped.
 //!
 //! How the game places a list tree (empire.retail.dll FUN_10429b80, docs/re/vegetation.md): at the stored x and z, with the stored height
 //! when the tree is freeform and on the terrain otherwise, scaled by the scale byte / 127, turned by a random yaw. The yaw comes from the
 //! MSVC rand LCG seeded with 0x49710ae3 at the start of every list (of every worker's share of it, so the game's yaws depend on its thread
 //! count; this is the one-worker sequence). Every tree is tilted to the terrain: its up axis goes along the terrain normal measured 0.5 m around it.
-//! The static VEGETATION_INSTANCEs are list trees in the game, so they are drawn tilted too, and with the model the shown list's climate
+//! The static VEGETATION_INSTANCEs are list trees in the game, so they are drawn tilted too, and with the model the list's climate
 //! converts their key to (`per_climate_tree_conversions.xml`, as BOB writes them into the list).
 //!
-//! A tile without the FASTBIN lists (Rome 2's) has the older ones (`<list>.tree_list`, `wce_formats::old_lists`): the same trees, placed
-//! the same way (none freeform). Without the kit's vegetation parameters, a decompiled project shows the lists carried from the packs.
-//!
-//! A list the tile has no packed file for (a raw tile BOB hasn't processed, or `gen:<list>` asked for) is generated as BOB would
-//! (`wce_tile::vegetation`), from the tile's seeds, height map, saved blend map, exclusion polygons and static trees and the Assembly
-//! Kit's vegetation parameters.
+//! When the trees can't be generated (no kit vegetation parameters, as Rome 2's; a tile outside a kit's raw_data; no seeds), the packed list
+//! of the climate is drawn instead, as shipped. The trees are generated again when what they are made from changes
+//! (`follow_vegetation_inputs`). The packed lists are also read to convert a decompiled project's whole-tile exclusion polygon
+//! (`static_cover`).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -27,11 +27,19 @@ use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderScene};
 
+use wce_foundation::math::Double3;
+use wce_tile::ted_scene::TedScene;
+use wce_tile::tile_project::TileProject;
 use wce_tile::vegetation::{self, GenerationParams};
+use wce_tile::world_transform::world_transform;
 
-use super::{TERRAIN, Tile};
+use super::{TERRAIN, Tile, TileDocument};
 
-/// The list drawn unless the display says otherwise: BOB's list for no particular climate.
+/// The root attribute saying the packed lists (the carried ones of a decompiled project) are mirrored: the tile was flipped whole since
+/// (`TileDocument::flip_tile`; "x", "z" or "xz"). Read by `convert_whole_tile_exclusion`.
+pub const LIST_FLIP_ATTR: &str = "wce_list_flip";
+
+/// The category generated for a climate the kit has none for: BOB's list for no particular climate.
 pub const DEFAULT_TREE_LIST: &str = "default";
 
 const SEED: u32 = 0x4971_0ae3;
@@ -39,12 +47,8 @@ const SEED: u32 = 0x4971_0ae3;
 /// The older tree lists' extension (Rome 2's tiles have no `.tree_list.bin`).
 const OLD_TREE_LIST_EXTENSION: &str = ".tree_list";
 
-/// The folder of a decompiled project its tile's vegetation files are carried in (`wce_tile_io::attila::stage_c::CARRIED_DIR`): the lists
-/// shown when the kit can't generate them (Rome 2's has no vegetation parameters).
+/// The folder of a decompiled project its tile's vegetation files are carried in (`wce_tile_io::attila::stage_c::CARRIED_DIR`).
 pub(crate) const CARRIED_DIR: &str = "decompiled_vegetation";
-
-/// The prefix of a list generated from the seeds even when the tile has it packed.
-pub const GENERATED_PREFIX: &str = "gen:";
 
 /// FUN_10429b80's yaw step (2 pi / 65536, as the game rounds it).
 const YAW_STEP: f32 = f32::from_bits(0x38c9_10a4);
@@ -64,25 +68,61 @@ pub(crate) struct ListTree {
     pub yaw: f32,
 }
 
+/// A generation running on a thread of its own: what it is for, and where its result lands (shared, so that the state stays `Clone`).
+#[derive(Clone, Debug)]
+pub(crate) struct Job<T> {
+    pub name: String,
+    pub done: Arc<std::sync::Mutex<Option<Result<T, String>>>>,
+}
+
+impl<T: Send + 'static> Job<T> {
+    /// Runs `work` on a thread below normal priority (the editor's frames go first).
+    pub(crate) fn start(name: String, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Self {
+        let done = Arc::new(std::sync::Mutex::new(None));
+        let slot = done.clone();
+        let _ = std::thread::Builder::new().name("vegetation".to_owned()).spawn(move || {
+            wce_foundation::jobs::lower_thread_priority();
+            let result = work();
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(result);
+        });
+        Self { name, done }
+    }
+
+    /// Its result, once (None while it runs).
+    pub(crate) fn take(&self) -> Option<Result<T, String>> {
+        self.done.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+}
+
 /// A decoded list, kept while the display shows it, and the entities drawing it.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TreeList {
     pub name: String,
     pub trees: Arc<Vec<ListTree>>,
 
+    /// The tile's packed lists, looked up once (`packed_tree_lists`).
+    pub packed_names: std::cell::OnceCell<Vec<String>>,
+
+    /// What the trees and the grass were made from, and the climate the grass was drawn in (`follow_vegetation_inputs`).
+    pub made_from: Option<(u64, u64, String)>,
+
+    /// The history, heights, painting and climate when they were last looked at; a change seen and since when (it is acted on once things
+    /// have been still for a moment).
+    pub gate: Option<u64>,
+    pub pending: Option<((u64, u64, String), std::time::Instant)>,
+
     /// What the entities show (the list's name, empty for none, and whether vegetation is hidden), and their ids.
     pub shown: Option<(String, bool)>,
     pub entities: std::ops::Range<EntityId>,
 
-    /// The tile's lists, looked up once.
-    pub names: std::cell::OnceCell<Vec<String>>,
-
     /// The Assembly Kit's vegetation parameters, read once (None without a kit or when they don't read).
     pub params: std::cell::OnceCell<Option<Arc<GenerationParams>>>,
+
+    /// The list being generated (`tree_list`), its trees drawn once it is done; the ones drawn before stay until then.
+    pub job: Option<Job<Vec<ListTree>>>,
 }
 
 impl Tile {
-
     /// The matrix an instance's model is drawn with: [`Tile::world_matrix`], tilted to the terrain for a tree.
     pub fn drawn_matrix(&self, elem: usize) -> Float4x4 {
         let w = self.world_matrix(elem);
@@ -110,54 +150,152 @@ impl Tile {
         tilt(h(x - 0.5, z) - h(x + 0.5, z), h(x, z - 0.5) - h(x, z + 0.5))
     }
 
-    /// The packed tile's folder in the game files (`terrain/tiles/battle/<set>/.../<variation>/`), for a tile under a kit's raw_data.
+    /// The packed tile's folder in the game files (`terrain/tiles/battle/<set>/.../<variation>/`), for a tile under a raw_data.
     pub(crate) fn packed_folder(&self) -> Option<String> {
         let dir = self.project.dir.to_string_lossy().replace('\\', "/").to_lowercase();
         let at = dir.find("/terrain/tiles/")?;
         Some(format!("{}/", dir[at + 1..].trim_end_matches('/')))
     }
 
-    /// The tree lists there are for the tile (their names: `default`, `rome_med`, ...), in the game files or in the tile's folder, then
-    /// the generated ones (`gen:<list>`) when the kit's parameters are there.
-    pub fn tree_lists(&self) -> &[String] {
-        self.trees.names.get_or_init(|| self.find_tree_lists())
+    /// Whether the tile's packed lists (BOB's, made before) are mirrored along x and along z: the tile was flipped whole since (the root's
+    /// `LIST_FLIP_ATTR`).
+    pub(crate) fn list_flip(&self) -> (bool, bool) {
+        let doc = self.tscene().doc();
+        let v = doc.get(doc.roots()[0], LIST_FLIP_ATTR).unwrap_or_default();
+        (v.contains('x'), v.contains('z'))
     }
 
-    fn find_tree_lists(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if let (Some(files), Some(folder)) = (self.files.as_deref(), self.packed_folder()) {
-            for extension in [TREE_LIST_EXTENSION, OLD_TREE_LIST_EXTENSION] {
-                for path in files.list(&folder, extension) {
-                    let file = &path[folder.len()..];
-                    if !file.contains('/') {
-                        names.push(file.trim_end_matches(extension).to_owned());
+    /// The packed tree lists of the tile (their names: `default`, `rome_med`, ...): in its folder, the game files, or carried by a
+    /// decompiled project. Drawn only when the trees can't be generated ([`Tile::trees_unavailable`]).
+    fn packed_tree_lists(&self) -> &[String] {
+        self.trees.packed_names.get_or_init(|| {
+            let mut names = Vec::new();
+            if let (Some(files), Some(folder)) = (self.files.as_deref(), self.packed_folder()) {
+                for extension in [TREE_LIST_EXTENSION, OLD_TREE_LIST_EXTENSION] {
+                    for path in files.list(&folder, extension) {
+                        let file = &path[folder.len()..];
+                        if !file.contains('/') {
+                            names.push(file.trim_end_matches(extension).to_lowercase());
+                        }
                     }
                 }
             }
-        }
 
-        let carried = self.generation_params().is_none().then(|| self.project.dir.join(CARRIED_DIR));
-        for dir in std::iter::once(self.project.dir.clone()).chain(carried).filter_map(|d| std::fs::read_dir(d).ok()) {
-            for entry in dir.flatten() {
-                let file = entry.file_name().to_string_lossy().to_lowercase();
-                if let Some(name) = file.strip_suffix(TREE_LIST_EXTENSION).or_else(|| file.strip_suffix(OLD_TREE_LIST_EXTENSION)) {
-                    names.push(name.to_owned());
+            for dir in [self.project.dir.clone(), self.project.dir.join(CARRIED_DIR)].into_iter().filter_map(|d| std::fs::read_dir(d).ok())
+            {
+                for entry in dir.flatten() {
+                    let file = entry.file_name().to_string_lossy().to_lowercase();
+                    if let Some(name) = file.strip_suffix(TREE_LIST_EXTENSION).or_else(|| file.strip_suffix(OLD_TREE_LIST_EXTENSION)) {
+                        names.push(name.to_owned());
+                    }
                 }
+            }
+
+            names.sort();
+            names.dedup();
+            names
+        })
+    }
+
+    /// A packed list's file: the FASTBIN one, else the older one (whether it is); in the tile's folder, the game files, then the carried
+    /// folder.
+    fn read_tree_list(&self, name: &str) -> Option<(Vec<u8>, bool)> {
+        [(TREE_LIST_EXTENSION, false), (OLD_TREE_LIST_EXTENSION, true)].into_iter().find_map(|(extension, old)| {
+            let file = format!("{name}{extension}");
+            let bytes = std::fs::read(self.project.dir.join(&file))
+                .ok()
+                .or_else(|| self.files.as_deref()?.read(&format!("{}{file}", self.packed_folder()?)).ok())
+                .or_else(|| std::fs::read(self.project.dir.join(CARRIED_DIR).join(&file)).ok())?;
+            Some((bytes, old))
+        })
+    }
+
+    /// A packed list's trees, mirrored as the tile was flipped since ([`Tile::list_flip`]); empty when it is missing or doesn't read.
+    fn packed_tree_list(&self, name: &str) -> Vec<ListTree> {
+        let Some((bytes, old)) = self.read_tree_list(name) else { return vec![] };
+        let decoded = if old {
+            OldList::parse(OldListKind::Tree, &bytes)
+                .map(|list| old_list_trees(&list))
+                .map_err(|error| format!("{name}{OLD_TREE_LIST_EXTENSION}: {error}"))
+        } else {
+            TreeListFile::decode(&mut Cursor::new(bytes), &None)
+                .map(|file| list_trees(&file))
+                .map_err(|error| format!("{name}{TREE_LIST_EXTENSION}: {error}"))
+        };
+
+        let mut trees = decoded.unwrap_or_else(|error| {
+            log::warn(error);
+            vec![]
+        });
+        let (fx, fz) = self.list_flip();
+        let (ex, ez) = (self.project.extent_x() as f32, self.project.extent_z() as f32);
+        for t in &mut trees {
+            if fx {
+                t.x = ex - t.x;
+            }
+
+            if fz {
+                t.z = ez - t.z;
             }
         }
 
-        names.sort();
-        names.dedup();
-        if let Some(params) = self.generation_params() {
-            names.extend(params.categories.iter().map(|c| format!("{GENERATED_PREFIX}{}", c.to_lowercase())));
-        }
-
-        names
+        trees
     }
 
-    /// The climate whose conversions the static trees are drawn with: the shown list's (none for `default` or no list).
+    /// The list drawn: generated for [`Tile::tree_category`], or when the trees can't be generated, the packed list of the terrain look's
+    /// climate as the game picks it (its own when the tile has one, else `default`). Empty for none.
+    fn tree_list_wanted(&self) -> String {
+        if self.trees_unavailable().is_none() {
+            return self.tree_category().unwrap_or_default();
+        }
+
+        let packed = self.packed_tree_lists();
+        let own = self.look.climate.to_lowercase();
+        [own, DEFAULT_TREE_LIST.to_owned()].into_iter().find(|n| packed.contains(n)).unwrap_or_default()
+    }
+
+    /// The tree categories the kit's generator has (`default`, the climate keys), empty without its parameters.
+    pub fn tree_categories(&self) -> Vec<String> {
+        self.generation_params().map(|p| p.categories.iter().map(|c| c.to_lowercase()).collect()).unwrap_or_default()
+    }
+
+    /// The category the trees are generated for: the display's choice, else the terrain look's climate as the game picks it (its own list
+    /// when the kit has one, else `default`). None without the kit's parameters.
+    pub fn tree_category(&self) -> Option<String> {
+        let params = self.generation_params()?;
+        let want = if self.display.tree_category.is_empty() {
+            self.look.climate.to_lowercase()
+        } else {
+            self.display.tree_category.to_lowercase()
+        };
+        Some(if params.category(&want).is_some() { want } else { DEFAULT_TREE_LIST.to_owned() })
+    }
+
+    /// Why the trees can't be generated; None when they can.
+    pub fn trees_unavailable(&self) -> Option<&'static str> {
+        if self.generation_params().is_none() {
+            Some("no Assembly Kit vegetation parameters (Rome 2's kit has none)")
+        } else if self.project.raw_root.is_none() {
+            Some("the tile is not under an Assembly Kit's raw_data")
+        } else if vegetation::seeds(self.tscene()).is_none() {
+            Some("tile.ted has no <Vegetation> seeds")
+        } else {
+            None
+        }
+    }
+
+    /// The climate whose conversions the static trees are drawn with: the trees' category (none for `default`), whether they are drawn or not.
     pub(crate) fn vegetation_climate(&self) -> String {
-        self.display.tree_list.trim_start_matches(GENERATED_PREFIX).to_lowercase()
+        self.tree_category().unwrap_or_default()
+    }
+
+    /// What the trees drawn are, for the ground chip: the reason they are not generated and the packed list drawn instead (if any).
+    pub fn trees_note(&self) -> Option<String> {
+        let why = self.trees_unavailable()?;
+        Some(match self.display.tree_list.as_str() {
+            "" => format!("not generated: {why}; the tile has no packed list either"),
+            list => format!("not generated: {why}; the packed {list} list is drawn (BOB's, as shipped)"),
+        })
     }
 
     /// A vegetation key as the shown list's climate converts it (BOB's static trees in that list), or the key itself.
@@ -190,62 +328,49 @@ impl Tile {
 
     /// Drops the decoded or generated list, so the next update reads or generates it again (after editing the seeds, the exclusions...).
     pub fn reload_tree_list(&mut self) {
+        // A generation of the tile as it was is not wanted any more.
+        self.trees.job = None;
         self.trees.name.clear();
         self.trees.shown = None;
     }
 
-    /// BOB's trees for a list (a category) from the tile as it is now.
-    fn generate_tree_list(&self, name: &str) -> Result<Vec<ListTree>, String> {
+    /// BOB's trees for a list (a category) from the tile as it is now, on a thread of its own: what it reads of the tile is taken here
+    /// (the heights, the painting, the seeds, the static trees), the generator runs there.
+    fn start_tree_job(&self, name: &str) -> Result<Job<Vec<ListTree>>, String> {
         let params = self.generation_params().ok_or("no Assembly Kit vegetation parameters")?;
         let category = params.category(name).ok_or_else(|| format!("no vegetation category {name}"))?;
         let seeds = vegetation::seeds(self.tscene()).ok_or("tile.ted has no <Vegetation> seeds")?;
         let inputs = vegetation::tile_inputs(&self.project)?;
-        let files = self.files.clone();
-        let exists = |p: &str| files.as_deref().is_none_or(|f| f.exists(&p.replace('\\', "/").to_lowercase()));
-        let start = std::time::Instant::now();
         let statics = vegetation::static_trees(self.tscene(), &inputs);
-        let generated = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
-        log::info(format!("{name}: {} trees generated in {:.2} s", generated.len(), start.elapsed().as_secs_f32()));
-
-        // Grouped by path as the list stores them (paths differing only in case are separate lists), in the list's order: the yaws restart
-        // per path.
-        let mut models: Vec<(&str, Vec<&vegetation::ListTree>)> = vec![];
-        for t in &generated {
-            match models.iter_mut().find(|(p, _)| *p == t.path) {
-                Some((_, v)) => v.push(t),
-                None => models.push((&t.path, vec![t])),
-            }
-        }
-
-        let mut trees = vec![];
-        for (path, items) in models {
-            let model = path.replace('\\', "/").to_lowercase();
-            let mut rand = SEED;
-            for t in items {
-                rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
-                let scale = f32::from(t.scale_byte) / 127.0;
-                trees.push(ListTree { model: model.clone(), x: t.x, y: t.y, z: t.z, scale, freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
-            }
-        }
-
-        Ok(trees)
+        let files = self.files.clone();
+        let label = name.to_owned();
+        Ok(Job::start(name.to_owned(), move || {
+            let exists = |p: &str| files.as_deref().is_none_or(|f| f.exists(&p.replace('\\', "/").to_lowercase()));
+            let start = std::time::Instant::now();
+            let generated = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
+            log::info(format!("{label}: {} trees generated in {:.2} s", generated.len(), start.elapsed().as_secs_f32()));
+            Ok(list_of_generated(&generated))
+        }))
     }
 
-    /// A list's file: the FASTBIN one, else the older one (whether it is); in the project, the packs, then (when the kit can't generate it)
-    /// the carried folder.
-    fn read_tree_list(&self, name: &str) -> Option<(Vec<u8>, bool)> {
-        let carried = self.generation_params().is_none().then(|| self.project.dir.join(CARRIED_DIR));
-        [(TREE_LIST_EXTENSION, false), (OLD_TREE_LIST_EXTENSION, true)].into_iter().find_map(|(extension, old)| {
-            let file = format!("{name}{extension}");
-            let bytes = std::fs::read(self.project.dir.join(&file))
-                .ok()
-                .or_else(|| self.files.as_deref()?.read(&format!("{}{file}", self.packed_folder()?)).ok())
-                .or_else(|| std::fs::read(carried.as_ref()?.join(&file)).ok())?;
-            Some((bytes, old))
-        })
+    /// A finished tree generation: its trees are the list's, drawn again at the next update. True when one finished.
+    fn poll_tree_job(&mut self) -> bool {
+        let Some(job) = &self.trees.job else { return false };
+        let Some(result) = job.take() else { return false };
+        let name = job.name.clone();
+        self.trees.job = None;
+        let trees = result.unwrap_or_else(|error| {
+            log::warn(format!("generating the {name} trees: {error}"));
+            vec![]
+        });
+        self.trees.name = name;
+        self.trees.trees = Arc::new(trees);
+        self.trees.shown = None;
+        true
     }
 
-    /// The list the display asks for, decoded once; empty when it is off or missing.
+    /// The trees of the display's list, once per list: generated for its category (on a thread: empty until it is done), or the packed
+    /// list when the trees can't be generated; empty when it is off.
     pub(crate) fn tree_list(&mut self) -> Arc<Vec<ListTree>> {
         let name = self.display.tree_list.clone();
         if name.is_empty() {
@@ -256,54 +381,115 @@ impl Tile {
             return self.trees.trees.clone();
         }
 
-        self.trees.name.clone_from(&name);
+        // The packed list (it can't be generated): read now.
+        if self.trees_unavailable().is_some() {
+            self.trees.name.clone_from(&name);
+            let trees = self.packed_tree_list(&name);
+            self.trees.trees = Arc::new(trees);
+            return self.trees.trees.clone();
+        }
 
-        let packed = if name.starts_with(GENERATED_PREFIX) { None } else { self.read_tree_list(&name) };
-        let decoded = packed.map(|(bytes, old)| {
-            if old {
-                OldList::parse(OldListKind::Tree, &bytes).map(|list| old_list_trees(&list)).map_err(|error| format!("{name}{OLD_TREE_LIST_EXTENSION}: {error}"))
-            } else {
-                TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|file| list_trees(&file)).map_err(|error| format!("{name}{TREE_LIST_EXTENSION}: {error}"))
-            }
-        });
-        let trees = match decoded {
-            Some(Ok(trees)) => trees,
-            Some(Err(error)) => {
-                log::warn(error);
-                vec![]
-            }
-            None => {
-                let category = name.trim_start_matches(GENERATED_PREFIX);
-                // Without a packed list, only a raw tile (with the kit around it) can generate one; quietly nothing otherwise.
-                if self.project.raw_root.is_none() {
-                    vec![]
-                } else {
-                    self.generate_tree_list(category).unwrap_or_else(|error| {
-                        log::warn(format!("generating the {category} trees: {error}"));
-                        vec![]
-                    })
+        // Generated on a thread: nothing new until it is done (`poll_tree_job`).
+        if self.trees.job.as_ref().is_none_or(|j| j.name != name) {
+            match self.start_tree_job(&name) {
+                Ok(job) => self.trees.job = Some(job),
+                Err(error) => {
+                    log::warn(format!("generating the {name} trees: {error}"));
+                    self.trees.name.clone_from(&name);
+                    self.trees.trees = Arc::default();
                 }
             }
-        };
+        }
 
-        self.trees.trees = Arc::new(trees);
-        self.trees.trees.clone()
+        Arc::default()
+    }
+
+    /// The trees and the grass made again when what they are made from changed: the heights, the painting, the seeds, the exclusion
+    /// polygons and the static trees (the trees), the climate (the grass's models). Looked at when the history, the heights, the painting or
+    /// the climate moved, and acted on once nothing has moved for `SETTLE` (a drag or a stroke makes them once, at its end).
+    pub(crate) fn follow_vegetation_inputs(&mut self) {
+        use std::hash::{Hash, Hasher};
+        const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
+        if self.stroke_open {
+            return;
+        }
+
+        let heights = self.project.height.as_ref().map(|h| h.version());
+        let blend = self.project.blend.as_ref().map(|b| b.changes());
+        let climate = self.look.climate.to_lowercase();
+        let mut g = std::hash::DefaultHasher::new();
+        (self.history_version, heights, blend, &climate).hash(&mut g);
+        let gate = g.finish();
+        if self.trees.gate != Some(gate) {
+            self.trees.gate = Some(gate);
+            let sc = self.tscene();
+            let mut grass = std::hash::DefaultHasher::new();
+            (heights, blend, vegetation::grass_seed(sc)).hash(&mut grass);
+
+            let mut trees = std::hash::DefaultHasher::new();
+            (heights, blend, vegetation::seeds(sc).map(|s| (s.trees, s.decals, s.vfx))).hash(&mut trees);
+            for outline in vegetation::exclusions(sc) {
+                outline.iter().for_each(|(x, z)| (x.to_bits(), z.to_bits()).hash(&mut trees));
+            }
+
+            let doc = sc.doc();
+            for &e in &self.instances {
+                if sc.type_of(e) == "VEGETATION_INSTANCE" {
+                    let p = self.world_position(e);
+                    (p.x.to_bits(), p.y.to_bits(), p.z.to_bits(), doc.get(e, "key"), doc.get(e, "scale"), doc.get(e, "surface_mode"))
+                        .hash(&mut trees);
+                }
+            }
+
+            let now = (trees.finish(), grass.finish(), climate);
+            match &self.trees.made_from {
+                // The first look: what was made (or is about to be) is made from this.
+                None => self.trees.made_from = Some(now),
+                Some(made) if *made == now => self.trees.pending = None,
+                Some(_) => self.trees.pending = Some((now, std::time::Instant::now())),
+            }
+        }
+
+        let Some((now, since)) = self.trees.pending.clone() else { return };
+        if since.elapsed() < SETTLE {
+            return;
+        }
+
+        self.trees.pending = None;
+        let Some(made) = self.trees.made_from.replace(now.clone()) else { return };
+        if made.0 != now.0 {
+            self.reload_tree_list();
+        }
+
+        if made.1 != now.1 {
+            self.reload_grass();
+        } else if made.2 != now.2 {
+            // The same patches, the climate's models.
+            self.grass.shown = None;
+        }
     }
 
     /// The entities of the list trees follow the display (after a publish, which dropped them, or a change of list or of the vegetation's
     /// visibility).
     pub(crate) fn update_list_trees(&mut self, scene: &mut RenderScene, layer: LayerId, published: bool) {
-        if self.display.tree_list_auto {
-            let own = self.look.climate.to_lowercase();
-            let list = if self.tree_lists().contains(&own) { own } else { DEFAULT_TREE_LIST.to_owned() };
-            if self.display.tree_list != list {
-                self.display.tree_list = list;
-            }
+        // The trees of the terrain look's climate (or the one chosen), while they are on.
+        let list = if self.display.show_trees { self.tree_list_wanted() } else { String::new() };
+        if self.display.tree_list != list {
+            self.display.tree_list = list;
         }
 
+        self.poll_tree_job();
         let want = (self.display.tree_list.clone(), self.display.hidden_types.contains("VEGETATION_INSTANCE"));
         if !published && self.trees.shown.as_ref() == Some(&want) {
             return;
+        }
+
+        // A list being generated: the trees drawn stay until it is done (no gap while it works).
+        if !published && !want.0.is_empty() && self.trees.name != want.0 && !want.1 {
+            let _ = self.tree_list();
+            if self.trees.job.as_ref().is_some_and(|j| j.name == want.0) {
+                return;
+            }
         }
 
         if !published {
@@ -320,7 +506,10 @@ impl Tile {
     /// The static instances' model entities with the model of their key as the shown list's climate converts it.
     fn update_static_tree_models(&mut self, scene: &mut RenderScene) {
         for &e in &self.instances.clone() {
-            if self.first_entity.get(e).is_none_or(|&f| f == 0) || self.entity_count[e] != 1 || self.tscene().type_of(e) != "VEGETATION_INSTANCE" {
+            if self.first_entity.get(e).is_none_or(|&f| f == 0)
+                || self.entity_count[e] != 1
+                || self.tscene().type_of(e) != "VEGETATION_INSTANCE"
+            {
                 continue;
             }
 
@@ -333,7 +522,8 @@ impl Tile {
         }
     }
 
-    /// Adds the list's trees that are not static instances to the layer; they can't be selected (they belong to the seeds, not to tile.ted).
+    /// Adds the list's trees that are not static instances (shown or hidden) to the layer; they can't be selected (they belong to the seeds,
+    /// not to tile.ted).
     fn add_list_trees(&mut self, scene: &mut RenderScene, layer: LayerId) -> usize {
         let trees = self.tree_list();
         if trees.is_empty() {
@@ -343,7 +533,8 @@ impl Tile {
         let cell = |x: f32, z: f32| ((x / SAME_TREE).round() as i32, (z / SAME_TREE).round() as i32);
         let mut statics = HashSet::new();
         for &e in &self.instances {
-            if self.tscene().type_of(e) == "VEGETATION_INSTANCE" && self.shown(e) {
+            // Hidden ones too: their list trees are the same trees, hidden with them.
+            if self.tscene().type_of(e) == "VEGETATION_INSTANCE" {
                 let p = self.world_position(e);
                 statics.insert(cell(p.x, p.z));
             }
@@ -369,7 +560,11 @@ impl Tile {
                 continue;
             }
 
-            let y = if t.freeform || !self.project.has_height() { t.y / unit } else { (self.project.height_at(f64::from(t.x), f64::from(z)) / self.unit()) as f32 };
+            let y = if t.freeform || !self.project.has_height() {
+                t.y / unit
+            } else {
+                (self.project.height_at(f64::from(t.x), f64::from(z)) / self.unit()) as f32
+            };
             let at = translation(Float3::new(t.x, y, z));
             let turn = rotation_y(-t.yaw) * scaling(t.scale / unit);
             let w = at * self.terrain_tilt(t.x, z) * turn;
@@ -386,6 +581,139 @@ impl Tile {
 
         added
     }
+}
+
+/// A decompiled project's exclusion polygon over the whole tile (the decompiler's until 2026-11-12: BOB kept the static trees and generated
+/// nothing) replaced by polygons around its static trees (`wce_tile::vegetation::static_cover`, without the squares where the carried lists
+/// have generated trees), so that the trees are generated around them. Done on the project as it opens, before the document is made from
+/// it (the document's tables and the drawing then start from the new scene; the document says it is modified,
+/// `TileDocument::set_converted_on_open`). How many polygons it made; None when the tile is not a decompiled one or has no such polygon.
+///
+/// # Errors
+///
+/// The scene's edit failed or does not read again.
+pub fn convert_whole_tile_exclusion(project: &mut TileProject) -> Result<Option<usize>, String> {
+    let dir = project.dir.join(CARRIED_DIR);
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+
+    let unit = project.unit_scale;
+    let (ex, ez) = (project.extent_x(), project.extent_z());
+    let scene = &project.scene;
+
+    // The decompiler's rectangle (4 points), not an outline of the trees that happens to reach every edge.
+    let whole = vegetation::exclusion_outlines(scene).into_iter().filter(|(_, pts)| pts.len() == 4).find(|(_, pts)| {
+        let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+        for &(x, z) in pts {
+            let (x, z) = (f64::from(x) / unit, f64::from(z) / unit);
+            lo = (lo.0.min(x), lo.1.min(z));
+            hi = (hi.0.max(x), hi.1.max(z));
+        }
+
+        lo.0 <= 0.0 && lo.1 <= 0.0 && hi.0 >= ex && hi.1 >= ez
+    });
+    let Some((elem, _)) = whole else { return Ok(None) };
+    let doc = scene.doc();
+    let layer = std::iter::successors(Some(elem), |&e| doc.elements()[e].parent)
+        .find(|&e| scene.is_layer(e))
+        .or_else(|| scene.scene_graph())
+        .ok_or("the tile's exclusion polygon is in no layer")?;
+
+    // The static trees (metres), and the carried lists' trees that are none of them: their generated ones.
+    let statics = (0..doc.elements().len())
+        .filter(|&e| doc.elements()[e].name == "VEGETATION_INSTANCE")
+        .map(|e| {
+            let p = world_transform(scene, e).position;
+            (p.x / unit, p.z / unit)
+        })
+        .collect::<Vec<_>>();
+    let key = |x: f64, z: f64| ((x * 20.0).round() as i64, (z * 20.0).round() as i64);
+    let at = statics.iter().map(|&(x, z)| key(x, z)).collect::<HashSet<_>>();
+    let is_static = |x: f64, z: f64| {
+        let (kx, kz) = key(x, z);
+        (-1..=1).any(|dx| (-1..=1).any(|dz| at.contains(&(kx + dx, kz + dz))))
+    };
+
+    let flip = doc.get(doc.roots()[0], LIST_FLIP_ATTR).unwrap_or_default();
+    let (fx, fz) = (flip.contains('x'), flip.contains('z'));
+    let mut generated = vec![];
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+        let trees = if name.ends_with(TREE_LIST_EXTENSION) {
+            TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|f| list_trees(&f)).ok()
+        } else if name.ends_with(OLD_TREE_LIST_EXTENSION) {
+            OldList::parse(OldListKind::Tree, &bytes).map(|l| old_list_trees(&l)).ok()
+        } else {
+            None
+        };
+
+        for tree in trees.unwrap_or_default() {
+            // The list's z runs from the far edge; mirrored as the tile was since (`list_flip`).
+            let x = if fx { ex - f64::from(tree.x) } else { f64::from(tree.x) };
+            let z = if fz { f64::from(tree.z) } else { ez - f64::from(tree.z) };
+            if !is_static(x, z) {
+                generated.push((x, z));
+            }
+        }
+    }
+
+    let cover = vegetation::static_cover::static_cover(&statics, &generated, (ex, ez));
+    let w = world_transform(scene, layer);
+    let to_layer = |x: f64, z: f64| w.rotation.transpose() * (Double3::new(x * unit, 0.0, z * unit) - w.position);
+    let local = cover.iter().map(|outline| outline.iter().map(|&(x, z)| to_layer(x, z)).collect::<Vec<_>>()).collect::<Vec<_>>();
+
+    // On a copy (the project is left as it was when this fails). The polygon goes first (its layer, before it, keeps its index), then the
+    // new ones at the layer's end; the scene read again, as the tile opens (`TileProject::make_references`).
+    let mut edited = TedScene::parse(project.scene.save())?;
+    edited.remove(elem)?;
+    for pts in &local {
+        edited.add_polygon(Some(layer), "VegetationExclusionPolygonInstance", "Static trees", pts, &BTreeMap::new())?;
+    }
+
+    project.scene = TedScene::parse(edited.save())?;
+    Ok(Some(cover.len()))
+}
+
+impl TileDocument {
+    /// The project was converted as it opened (`convert_whole_tile_exclusion`): the document says it is modified until it is saved.
+    pub fn set_converted_on_open(&mut self) {
+        self.tile_mut().converted_on_open = true;
+    }
+}
+
+/// The generator's trees as the list draws them: grouped by path as the list stores them (paths differing only in case are separate lists),
+/// in the list's order, with the game's yaws (they restart per path).
+fn list_of_generated(generated: &[vegetation::ListTree]) -> Vec<ListTree> {
+    let mut models: Vec<(&str, Vec<&vegetation::ListTree>)> = vec![];
+    for t in generated {
+        match models.iter_mut().find(|(p, _)| *p == t.path) {
+            Some((_, v)) => v.push(t),
+            None => models.push((&t.path, vec![t])),
+        }
+    }
+
+    let mut trees = vec![];
+    for (path, items) in models {
+        let model = path.replace('\\', "/").to_lowercase();
+        let mut rand = SEED;
+        for t in items {
+            rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+            let scale = f32::from(t.scale_byte) / 127.0;
+            trees.push(ListTree {
+                model: model.clone(),
+                x: t.x,
+                y: t.y,
+                z: t.z,
+                scale,
+                freeform: false,
+                yaw: (rand >> 16) as f32 * YAW_STEP,
+            });
+        }
+    }
+
+    trees
 }
 
 /// A tree's untilted matrix as its instance's POSITION5..7 (the rows): the tree shaders blend it with the tilted world matrix per vertex
@@ -443,7 +771,15 @@ fn old_list_trees(list: &OldList) -> Vec<ListTree> {
         for i in *first as usize..end.min(list.len()) {
             rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
             let [x, y, z] = list.position(i);
-            trees.push(ListTree { model: model.clone(), x, y, z, scale: list.scale(i).unwrap_or(1.0), freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
+            trees.push(ListTree {
+                model: model.clone(),
+                x,
+                y,
+                z,
+                scale: list.scale(i).unwrap_or(1.0),
+                freeform: false,
+                yaw: (rand >> 16) as f32 * YAW_STEP,
+            });
         }
     }
 

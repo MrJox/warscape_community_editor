@@ -57,6 +57,9 @@ pub enum Kind {
 
     /// A point light, drawn by the renderer's light pass.
     PointLight,
+
+    /// Moving ropes, drawn by the renderer's rope pass.
+    Ropes,
 }
 
 /// One grass model's patches (rigidgrass, drawn instanced near the camera). Each instance is the rows of its 3x4 world matrix; the entity's
@@ -121,6 +124,30 @@ pub const MODEL_SNOW_SUFFIX: &str = "#snow";
 
 /// Suffix of a model path that keeps a weighted mesh's vertices as stored, for the skinned path ([`SkinnedInstance`]).
 pub const MODEL_SKINNED_SUFFIX: &str = "#skinned";
+
+/// Suffix of a model path that is only its ropes (`Rope` materials, a chain of nodes each), drawn by `rope.hlsl`'s rigid technique: a strip
+/// turned to the camera along each rope. The rope shader reads the instance's POSITION4.w as its burn: such an instance has it 0, not the
+/// rigid materials' opacity (1000). The plain model leaves its ropes out.
+pub const MODEL_ROPES_SUFFIX: &str = "#ropes";
+
+/// Ropes in the entity's space (a simulated sail's, `cloth_sim`): a strip turned to the camera along each line of nodes, through `rope.hlsl`'s
+/// world technique. Their nodes move every frame ([`RenderScene::update_ropes`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Ropes {
+    pub lines: Vec<RopeLine>,
+
+    /// The ropes' diffuse and normal maps (VFS paths).
+    pub diffuse: String,
+    pub normal: String,
+}
+
+/// One rope: its nodes in order, their texture coordinates along it (one per node), and its half width (game units).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RopeLine {
+    pub nodes: Vec<[f32; 3]>,
+    pub v: Vec<f32>,
+    pub radius: f32,
+}
 
 /// One part of a skinned instance.
 #[derive(Clone, Debug, PartialEq)]
@@ -539,7 +566,9 @@ impl LfSamples {
     pub fn read(&self) -> LfRead<'_> {
         match &self.store {
             LfStore::Own(v) => LfRead::Own(v.read().unwrap_or_else(std::sync::PoisonError::into_inner)),
-            LfStore::Shared { grid, flip } => LfRead::Shared { v: grid.read(), w: grid.width() as usize, h: grid.height() as usize, flip: *flip },
+            LfStore::Shared { grid, flip } => {
+                LfRead::Shared { v: grid.read(), w: grid.width() as usize, h: grid.height() as usize, flip: *flip }
+            }
         }
     }
 
@@ -688,10 +717,16 @@ impl LfMap {
 }
 
 impl Terrain {
-
     /// A flat square of two triangles.
     pub fn flat(half_size: f32, diffuse: &str, tile_metres: f32) -> Self {
-        Self { origin_x: -half_size, origin_z: -half_size, step: half_size * 2.0, diffuse: diffuse.to_owned(), tile_metres, ..Default::default() }
+        Self {
+            origin_x: -half_size,
+            origin_z: -half_size,
+            step: half_size * 2.0,
+            diffuse: diffuse.to_owned(),
+            tile_metres,
+            ..Default::default()
+        }
     }
 
     pub fn height_at(&self, i: i32, j: i32) -> f32 {
@@ -748,7 +783,7 @@ pub struct OverlayVertex {
 }
 
 /// The entries of a scene's overlay colour table (`RenderScene::overlay_slots`).
-pub const OVERLAY_SLOTS: usize = 48;
+pub const OVERLAY_SLOTS: usize = 96;
 
 /// A vertex colour that stands for an entry of the scene's overlay colour table, read when it is drawn: what uses one changes colour by
 /// the table alone, without touching its geometry. Alpha 0 and these green and blue bytes (the overlay shader's `SLOT_`) say so: such a
@@ -760,7 +795,15 @@ pub fn overlay_slot(slot: usize) -> u32 {
 
 /// An overlay colour from 0..1 channels.
 pub fn overlay_colour(r: f32, g: f32, b: f32, a: f32) -> u32 {
-    let q = |v: f32| if v <= 0.0 { 0 } else if v >= 1.0 { 255 } else { (v * 255.0 + 0.5) as u32 };
+    let q = |v: f32| {
+        if v <= 0.0 {
+            0
+        } else if v >= 1.0 {
+            255
+        } else {
+            (v * 255.0 + 0.5) as u32
+        }
+    };
     q(r) | (q(g) << 8) | (q(b) << 16) | (q(a) << 24)
 }
 
@@ -792,7 +835,6 @@ impl Default for Overlay {
 }
 
 impl Overlay {
-
     pub fn line(&mut self, a: Float3, b: Float3, rgba: u32) {
         self.lines.push(OverlayVertex { p: a, rgba });
         self.lines.push(OverlayVertex { p: b, rgba });
@@ -802,9 +844,16 @@ impl Overlay {
         self.triangles.extend([a, b, c].map(|p| OverlayVertex { p, rgba }));
     }
 
+    /// A triangle with a colour per corner (blended across it; table entries too, `overlay_slot`).
+    pub fn triangle_colours(&mut self, p: [Float3; 3], rgba: [u32; 3]) {
+        self.triangles.extend((0..3).map(|i| OverlayVertex { p: p[i], rgba: rgba[i] }));
+    }
+
     /// A box's six faces as triangles.
     pub fn box_solid(&mut self, lo: Float3, hi: Float3, rgba: u32) {
-        let c = |i: usize| Float3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });
+        let c = |i: usize| {
+            Float3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z })
+        };
         for [a, b, d, e] in [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]] {
             self.triangle(c(a), c(b), c(d), rgba);
             self.triangle(c(a), c(d), c(e), rgba);
@@ -818,9 +867,16 @@ impl Overlay {
     /// An oriented box: its corners go through `m`.
     pub fn box_wire_transformed(&mut self, m: &Float4x4, lo: Float3, hi: Float3, rgba: u32) {
         let c = [
-            Float3::new(lo.x, lo.y, lo.z), Float3::new(hi.x, lo.y, lo.z), Float3::new(hi.x, lo.y, hi.z), Float3::new(lo.x, lo.y, hi.z),
-            Float3::new(lo.x, hi.y, lo.z), Float3::new(hi.x, hi.y, lo.z), Float3::new(hi.x, hi.y, hi.z), Float3::new(lo.x, hi.y, hi.z),
-        ].map(|p| m.transform_point(p));
+            Float3::new(lo.x, lo.y, lo.z),
+            Float3::new(hi.x, lo.y, lo.z),
+            Float3::new(hi.x, lo.y, hi.z),
+            Float3::new(lo.x, lo.y, hi.z),
+            Float3::new(lo.x, hi.y, lo.z),
+            Float3::new(hi.x, hi.y, lo.z),
+            Float3::new(hi.x, hi.y, hi.z),
+            Float3::new(lo.x, hi.y, hi.z),
+        ]
+        .map(|p| m.transform_point(p));
 
         for i in 0..4 {
             self.line(c[i], c[(i + 1) % 4], rgba);
@@ -895,6 +951,7 @@ impl Default for Water {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Payload {
     MeshInstance(MeshInstance),
+    Ropes(Ropes),
     SkinnedInstance(SkinnedInstance),
     Terrain(Terrain),
     VfxEmitter(VfxEmitter),
@@ -919,6 +976,7 @@ impl Payload {
             Self::Decal(_) => Kind::Decal,
             Self::Grass(_) => Kind::Grass,
             Self::PointLight(_) => Kind::PointLight,
+            Self::Ropes(_) => Kind::Ropes,
         }
     }
 }
@@ -976,7 +1034,6 @@ pub struct EnvironmentSlot {
 }
 
 impl EnvironmentSlot {
-
     /// The active environment (or the defaults), cross-faded with the blend partner when blend_t > 0.
     pub fn resolved(&self) -> EnvironmentParams {
         let a = self.active.clone().unwrap_or_default();
@@ -1007,9 +1064,29 @@ pub enum StructureChange {
     Other,
 }
 
+/// A scene's identity for the caches made from it (the renderer's draw lists, terrain, decals ...): unique in the process, a clone gets
+/// its own. Its address is not one: a scene made where another was dropped (a thumbnail job's) had the same, and with the same revisions
+/// it was taken for the old one.
+#[derive(Debug)]
+struct SceneUid(u64);
+
+impl SceneUid {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+impl Clone for SceneUid {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
 /// The scene.
 #[derive(Clone, Debug)]
 pub struct RenderScene {
+    uid: SceneUid,
     layers: Vec<Layer>,
     entities: Vec<Entity>,
 
@@ -1129,7 +1206,12 @@ pub struct GroundOverlay {
 impl GroundOverlay {
     /// The same picture where it was, as strong (the texels are not compared: the id says).
     fn same(&self, o: &Self) -> bool {
-        self.id == o.id && self.w == o.w && self.h == o.h && self.to_texel == o.to_texel && self.opacity == o.opacity && self.layer == o.layer
+        self.id == o.id
+            && self.w == o.w
+            && self.h == o.h
+            && self.to_texel == o.to_texel
+            && self.opacity == o.opacity
+            && self.layer == o.layer
     }
 }
 
@@ -1157,6 +1239,7 @@ impl SnowRegions {
 impl Default for RenderScene {
     fn default() -> Self {
         Self {
+            uid: SceneUid::new(),
             layers: vec![],
             entities: vec![],
             index: vec![],
@@ -1191,7 +1274,6 @@ impl Default for RenderScene {
 }
 
 impl RenderScene {
-
     pub fn add_layer(&mut self, doc: DocumentId, name: &str) -> LayerId {
         let id = self.next_layer;
         self.next_layer += 1;
@@ -1283,6 +1365,20 @@ impl RenderScene {
         self.moved_log.push(id);
     }
 
+    /// Moves an entity every frame (a ship on the waves, an oar rowing): logged for [`Self::moved_since`] as [`Self::update_world`], but without
+    /// a new revision, which what follows it (the sea bed, the terrain list, the baked shadows, the placed effects) would go over the scene
+    /// for. Not for what those depend on: terrains, effects.
+    pub fn update_world_quiet(&mut self, id: EntityId, world: Float4x4) {
+        let Some(e) = self.find_mut(id) else { return };
+        e.world = world;
+        if self.moved_log.len() > MOVED_LOG_LIMIT {
+            self.moved_base += self.moved_log.len() as u64;
+            self.moved_log.clear();
+        }
+
+        self.moved_log.push(id);
+    }
+
     /// A mesh instance's burn (its POSITION6): logged for [`Self::burn_since`], no change of anything else, so the renderer keeps its draws
     /// (a fire's char moves many times a second).
     pub fn update_burn(&mut self, id: EntityId, p6: [f32; 4]) {
@@ -1320,6 +1416,17 @@ impl RenderScene {
             e.payload = Payload::SkinnedInstance(instance);
         } else {
             self.update_payload(id, Payload::SkinnedInstance(instance));
+        }
+    }
+
+    /// Moving ropes' nodes, every frame: as [`Self::update_pose`], without anything moving on (the renderer reads them every frame).
+    pub fn update_ropes(&mut self, id: EntityId, world: Float4x4, ropes: Ropes) {
+        let Some(e) = self.find_mut(id) else { return };
+        e.world = world;
+        if matches!(e.payload, Payload::Ropes(_)) {
+            e.payload = Payload::Ropes(ropes);
+        } else {
+            self.update_payload(id, Payload::Ropes(ropes));
         }
     }
 
@@ -1524,6 +1631,11 @@ impl RenderScene {
     /// An entity of a visible layer that picking may hit.
     pub fn pickable(&self, e: &Entity) -> bool {
         e.visible && !e.locked && self.layer(e.layer).is_some_and(|l| l.visible && !l.locked)
+    }
+
+    /// The scene's identity for caches made from it (with its revisions): unique in the process, never reused, a clone's its own.
+    pub fn uid(&self) -> usize {
+        self.uid.0 as usize
     }
 
     /// Changes with everything.

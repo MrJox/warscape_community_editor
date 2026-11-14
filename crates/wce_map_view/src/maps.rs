@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use wce_tile::battle_map::context::PlacedMap;
 use wce_tile::battle_map::locations::BattleLocations;
 use wce_tile::battle_map::tile_db::TileDatabase;
-use wce_tile::battle_map::context::PlacedMap;
 use wce_tile::battle_map::{load_game_map, load_kit_map};
 use wce_vfs::files::Files;
 
@@ -40,7 +40,12 @@ pub fn minimap_pixels(lf: &wce_tile::battle_map::context::LfField, side: u32) ->
                 [40.0 - 20.0 * t, 90.0 - 40.0 * t, 150.0 - 40.0 * t]
             } else {
                 // Green to brown to grey to white, by height.
-                let stops = [(0.0, [96.0, 130.0, 70.0]), (300.0, [150.0, 135.0, 90.0]), (1000.0, [130.0, 125.0, 120.0]), (2500.0, [240.0, 240.0, 240.0])];
+                let stops = [
+                    (0.0, [96.0, 130.0, 70.0]),
+                    (300.0, [150.0, 135.0, 90.0]),
+                    (1000.0, [130.0, 125.0, 120.0]),
+                    (2500.0, [240.0, 240.0, 240.0]),
+                ];
                 let i = stops.iter().rposition(|s| v >= s.0).unwrap_or(0).min(stops.len() - 2);
                 let t = ((v - stops[i].0) / (stops[i + 1].0 - stops[i].0)).clamp(0.0, 1.0);
                 std::array::from_fn(|c| (stops[i].1[c] * (1.0 - t) + stops[i + 1].1[c] * t) * (1.0 + 0.35 * shade))
@@ -59,37 +64,45 @@ pub const GAME_FILES: &str = " (game files)";
 
 /// The packs' tiles in the kit's layout (`workflow::neighbour_root`: every tile database entry of the mounted packs, mods included; the
 /// tiles' folders decompiled on demand), made the first time something needs it (reading the game's tile data takes a while). Its folder
-/// is keyed by the mounted packs, so another set of mods gets its own tree.
+/// is keyed by the mounted packs and the kits, so another set of mods or kits gets its own tree.
 pub struct PacksTree {
     vfs: Arc<wce_vfs::Vfs>,
-    kit: Option<PathBuf>,
+    kits: Vec<PathBuf>,
     root: PathBuf,
     built: std::sync::OnceLock<Result<(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String>>,
 }
 
 impl PacksTree {
-    /// `cache` is the folder the trees go in (`<cache>/neighbours`), `key` the game's.
-    pub fn new(vfs: Arc<wce_vfs::Vfs>, kit: Option<PathBuf>, cache: &Path, key: &str) -> Self {
+    /// `kits` are the Assembly Kits' `raw_data` folders in the settings' order (`wce_tile::sources::assembly_kit_roots`: the tile
+    /// databases' settings and the vegetation parameters come from the first that has them), `cache` the folder the trees go in
+    /// (`<cache>/neighbours`), `key` the game's.
+    pub fn new(vfs: Arc<wce_vfs::Vfs>, kits: Vec<PathBuf>, cache: &Path, key: &str) -> Self {
         let packs = vfs.packs().iter().fold(0xCBF2_9CE4_8422_2325u64, |h, p| {
             let len = std::fs::metadata(&p.path).map_or(0, |m| m.len());
             p.name.to_lowercase().bytes().chain(len.to_le_bytes()).fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
         });
 
         // `_2`: the decompiler's tiles changed (a campaign tile's rivers in its own unit); the older trees are not these.
-        Self { vfs, kit, root: cache.join(format!("{key}_{packs:016x}_2")), built: std::sync::OnceLock::new() }
+        let sources = kits.iter().fold(packs, |h, k| {
+            k.to_string_lossy().to_lowercase().bytes().fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
+        });
+        Self { vfs, kits, root: cache.join(format!("{key}_{sources:016x}_2")), built: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Result<&(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String> {
-        self.built.get_or_init(|| {
-            let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.vfs.clone(), self.kit.as_deref())?);
-            let raw = wce_tile_io::attila::workflow::neighbour_root(&game, &self.root)?;
-            Ok((game, raw))
-        }).as_ref().map_err(Clone::clone)
+        self.built
+            .get_or_init(|| {
+                let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.vfs.clone(), &self.kits)?);
+                let raw = wce_tile_io::attila::workflow::neighbour_root(&game, &self.root)?;
+                Ok((game, raw))
+            })
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
-    /// Whether it is the tree of these mounted packs.
-    pub fn same_vfs(&self, vfs: &Arc<wce_vfs::Vfs>) -> bool {
-        Arc::ptr_eq(&self.vfs, vfs)
+    /// Whether it is the tree of these mounted packs and kits.
+    pub fn same_sources(&self, vfs: &Arc<wce_vfs::Vfs>, kits: &[PathBuf]) -> bool {
+        Arc::ptr_eq(&self.vfs, vfs) && self.kits == kits
     }
 
     /// Its `raw_data` folder (the packs' tile database in the kit's format).
@@ -132,8 +145,12 @@ pub const GAME_CAMPAIGN: &str = "campaigns/";
 /// The campaign maps in the packs with a `terrain.tile_list` (their built form: a game without kit maps, Rome 2's
 /// `terrain/campaigns/main_rome_map`), as the list names them (`campaigns/<folder> (game files)`).
 pub fn game_campaign_maps(files: &dyn Files) -> Vec<String> {
-    let mut v: Vec<String> = files.list("terrain/campaigns/", "/terrain.tile_list").into_iter()
-        .filter_map(|p| p.strip_suffix("/terrain.tile_list").and_then(|f| f.rsplit('/').next()).map(|f| format!("{GAME_CAMPAIGN}{f}{GAME_FILES}")))
+    let mut v: Vec<String> = files
+        .list("terrain/campaigns/", "/terrain.tile_list")
+        .into_iter()
+        .filter_map(|p| {
+            p.strip_suffix("/terrain.tile_list").and_then(|f| f.rsplit('/').next()).map(|f| format!("{GAME_CAMPAIGN}{f}{GAME_FILES}"))
+        })
         .collect();
     v.sort();
     v.dedup();
@@ -144,24 +161,43 @@ pub fn game_campaign_maps(files: &dyn Files) -> Vec<String> {
 /// `terrain.tile_list`, a game without kit maps: Rome 2's 104), as the list names them (`game_dir`, the game's own campaign, first as
 /// `GAME_MAP`).
 pub fn game_maps(files: &dyn Files, game_dir: &str, lists: bool) -> Vec<String> {
-    let mut folders: Vec<String> = files.list("terrain/battles/", "/tile_map.tiles").into_iter()
+    let mut folders: Vec<String> = files
+        .list("terrain/battles/", "/tile_map.tiles")
+        .into_iter()
         .filter_map(|p| p.strip_suffix("/tile_map.tiles").map(str::to_owned))
         .collect();
     if lists {
-        folders.extend(files.list("terrain/battles/", "/terrain.tile_list").into_iter().filter_map(|p| p.strip_suffix("/terrain.tile_list").map(str::to_owned)));
+        folders.extend(
+            files
+                .list("terrain/battles/", "/terrain.tile_list")
+                .into_iter()
+                .filter_map(|p| p.strip_suffix("/terrain.tile_list").map(str::to_owned)),
+        );
     }
 
     folders.sort();
     folders.dedup();
     let own = folders.iter().any(|f| f.eq_ignore_ascii_case(game_dir));
-    own.then(|| GAME_MAP.to_owned()).into_iter()
-        .chain(folders.into_iter().filter(|f| !f.eq_ignore_ascii_case(game_dir)).map(|f| format!("{}{GAME_FILES}", f.rsplit('/').next().unwrap_or_default())))
+    own.then(|| GAME_MAP.to_owned())
+        .into_iter()
+        .chain(
+            folders
+                .into_iter()
+                .filter(|f| !f.eq_ignore_ascii_case(game_dir))
+                .map(|f| format!("{}{GAME_FILES}", f.rsplit('/').next().unwrap_or_default())),
+        )
         .collect()
 }
 
 /// Reads a map (slow for the kit's campaign map: BOB's fill of 2032 x 1437 cells takes about a minute). `game_dir` is the folder of the
 /// game's campaign battle map in the packs; a map of the packs (`game_map_folder`) is read from them.
-pub fn load_map(name: &str, game_dir: &str, raw: &Path, db: &TileDatabase, files: Option<&dyn Files>) -> Result<(Arc<PlacedMap>, Option<BattleLocations>), String> {
+pub fn load_map(
+    name: &str,
+    game_dir: &str,
+    raw: &Path,
+    db: &TileDatabase,
+    files: Option<&dyn Files>,
+) -> Result<(Arc<PlacedMap>, Option<BattleLocations>), String> {
     if let Some(folder) = game_map_folder(name, game_dir) {
         let files = files.ok_or("no game files")?;
         let read = |n: &str| files.read(&format!("{folder}/{n}"));
@@ -185,7 +221,8 @@ pub fn load_map(name: &str, game_dir: &str, raw: &Path, db: &TileDatabase, files
 /// The battle locations that start at a placement's origin (a settlement's or a port's).
 pub fn location_names(loc: Option<&BattleLocations>, x: i32, y: i32) -> String {
     let Some(loc) = loc else { return String::new() };
-    let mut names: Vec<&str> = loc.types.iter().filter(|(_, l)| l.iter().any(|l| l.rect[0] == x && l.rect[1] == y)).map(|(t, _)| t.as_str()).collect();
+    let mut names: Vec<&str> =
+        loc.types.iter().filter(|(_, l)| l.iter().any(|l| l.rect[0] == x && l.rect[1] == y)).map(|(t, _)| t.as_str()).collect();
     names.dedup();
     names.join(", ")
 }

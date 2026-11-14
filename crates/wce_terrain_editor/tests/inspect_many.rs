@@ -132,7 +132,8 @@ fn an_attribute_set_on_both_and_undone_at_once() {
     assert!(rows.fields.iter().any(|f| f.starts_with("many.ECTransform.position=")), "positions are shown");
 
     let before = d.history().version();
-    let mut rows = Rows { set: Some(("many.ECBattleCatchmentArea.catchment_type".to_owned(), "coastal_battle".to_owned())), ..Default::default() };
+    let mut rows =
+        Rows { set: Some(("many.ECBattleCatchmentArea.catchment_type".to_owned(), "coastal_battle".to_owned())), ..Default::default() };
     d.inspect_many(&items, &mut rows);
     assert_eq!(types(&d), ["coastal_battle", "coastal_battle"]);
     assert_eq!(d.history().size(), 1, "one step");

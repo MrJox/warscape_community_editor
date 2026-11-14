@@ -44,7 +44,12 @@ fn piece_tail(file: &str) -> &str {
 /// between two levels (`_destructNN_anim`, `_destruction_weighted_anim`) nor a gate's swing.
 pub fn working_anim(file: &str) -> bool {
     let tail = piece_tail(file);
-    tail.ends_with("_anim") && tail != "_anim" && !tail.starts_with("_destruction") && !tail.contains("gate") && !tail.contains("opening") && !tail.contains("closing")
+    tail.ends_with("_anim")
+        && tail != "_anim"
+        && !tail.starts_with("_destruction")
+        && !tail.contains("gate")
+        && !tail.contains("opening")
+        && !tail.contains("closing")
 }
 
 /// The piece of a piece file (`piece02`).

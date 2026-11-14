@@ -12,7 +12,10 @@ pub enum Node {
     Elem(Element),
     Text(String),
     /// `inline`: written on the line of the node before it.
-    Comment { text: String, inline: bool },
+    Comment {
+        text: String,
+        inline: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +124,9 @@ impl Element {
             match n {
                 Node::Comment { text, inline: true } => {
                     let t = text.trim();
-                    let note = t.starts_with("ID (") || t.ends_with("degrees") || (t.len() == 11 && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
+                    let note = t.starts_with("ID (")
+                        || t.ends_with("degrees")
+                        || (t.len() == 11 && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
                     if !note {
                         label = Some(t);
                     }
@@ -136,10 +141,6 @@ impl Element {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dom {
     pub root: Element,
-}
-
-fn dom_escape(s: &str) -> String {
-    xml_escape(s).replace('\u{e01f}', "&#xE01F;")
 }
 
 fn tag_end(src: &str, start: usize) -> (usize, bool, bool) {
@@ -254,18 +255,18 @@ fn open_tag(e: &Element, out: &mut String) {
     out.push('<');
     out.push_str(&e.name);
     for (k, v) in &e.attrs {
-        out.push_str(&format!(" {}=\"{}\"", k, dom_escape(v)));
+        out.push_str(&format!(" {}=\"{}\"", k, xml_escape(v)));
     }
 }
 
 fn write_elem(e: &Element, depth: usize, out: &mut String) {
     indent(depth, out);
     open_tag(e, out);
-    if let Form::SelfClosing { space } = e.form {
-        if e.children.is_empty() {
-            out.push_str(if space { " />" } else { "/>" });
-            return;
-        }
+    if let Form::SelfClosing { space } = e.form
+        && e.children.is_empty()
+    {
+        out.push_str(if space { " />" } else { "/>" });
+        return;
     }
     out.push('>');
     if e.form == Form::EmptyBlock && e.children.is_empty() {
@@ -274,7 +275,7 @@ fn write_elem(e: &Element, depth: usize, out: &mut String) {
     } else if e.is_leaf() {
         for n in &e.children {
             if let Node::Text(t) = n {
-                out.push_str(&dom_escape(t));
+                out.push_str(&xml_escape(t));
             }
         }
     } else {

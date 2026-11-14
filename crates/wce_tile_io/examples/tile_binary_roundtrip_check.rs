@@ -98,7 +98,10 @@ fn check(name: &str, files: &TileFiles, t: &Mutex<Totals>) {
                 }
 
                 let c = local.per_kind.entry(kind_of(part)).or_default();
-                let (a, b) = (files.folder.get(part).map(|b| b.bytes().unwrap_or_default()), written.folder.get(part).map(|b| b.bytes().unwrap_or_default()));
+                let (a, b) = (
+                    files.folder.get(part).map(|b| b.bytes().unwrap_or_default()),
+                    written.folder.get(part).map(|b| b.bytes().unwrap_or_default()),
+                );
                 if a == b {
                     if *how == PartWritten::Kept {
                         c.kept += 1;
@@ -169,7 +172,9 @@ fn check(name: &str, files: &TileFiles, t: &Mutex<Totals>) {
 
 fn packs(arg: &Path, out: &mut Vec<PathBuf>) {
     if arg.is_dir() {
-        let mut found = std::fs::read_dir(arg).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>()).unwrap_or_default();
+        let mut found = std::fs::read_dir(arg)
+            .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>())
+            .unwrap_or_default();
         found.sort();
         out.extend(found);
     } else {

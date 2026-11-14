@@ -6,36 +6,57 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, icons, settings_window, theme};
 use wce_editor::steam_detect::file_dialog;
 use wce_editor::tool::{Tool, ViewportEvent, ViewportEventKind};
+use wce_editor::{gui, icons, settings_window, theme};
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::Document;
 use wce_formats::tile_entry::TileEntry;
 use wce_formats::tile_index::TileIndex;
 use wce_foundation::log;
-use wce_foundation::settings::{Settings, env_value};
 use wce_foundation::math::{Float3, Float4x4, dot, length, translation};
+use wce_foundation::settings::{Settings, env_value};
 use wce_render::model_cache::State as ModelState;
 use wce_scene::render_scene::{DocumentId, Overlay, SourceRef, overlay_colour};
 use wce_tile::tile_project::{TileProject, kit_raw_root};
 use wce_tile_editor::terrain_bake::{TerrainLook, TerrainView};
 use wce_tile_editor::tile_document::siege::AUTOGEN_LAYER;
-use wce_tile_editor::tile_document::{GROUND_ERASE, WALL_SPLINE, WallLayout, BrushKind, BrushSettings, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, elem_of, piece_of};
+use wce_tile_editor::tile_document::{
+    BrushKind, BrushSettings, GROUND_ERASE, OffTerrain, PieceState, PieceStatus, TERRAIN, TileDocument, WALL_SPLINE, WallLayout, elem_of,
+    piece_of,
+};
 
+use crate::gesture::{End, Gesture, Grab};
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
 /// The polygon types `add_polygon` makes (the `add_polygon` command; the Create panel makes them with `create_with`); the last is not
 /// TEd's: a procedural wall (docs/plans/procedural_walls.md).
 pub const POLYGON_TYPES: [&str; 6] = [
-    "AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE",
+    "AI_HINT_POLYGON_INSTANCE",
+    "NOGO_REGION_POLYGON_INSTANCE",
+    "GO_REGION_POLYGON_INSTANCE",
+    "VegetationExclusionPolygonInstance",
+    "SIEGE_AI_POLYGON_INSTANCE",
     WALL_SPLINE,
 ];
 
 pub const HINTS: [&str; 16] = [
-    "AIH_FORT_APPROACH", "AIH_DEFENSIVE_HILL", "AIH_FORT_PERIMETER", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_MELEE_LINE", "AIH_AMBUSH_MISSILE_LINE",
-    "AIH_AMBUSH_ASSAULT_AREA", "AIH_AMBUSH_DEFENDER_INITIAL_PATH", "AIH_AMBUSH_FOREST", "AIH_AMBUSH_FIREBALL_LINE", "AIH_BEACH_LANDING",
-    "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_RIVER_EDGE", "AIH_BRIDGE_CROSSING", "AIH_COVER_LINE", "AIH_BEACH_LANDING_FORT_APPROACH",
+    "AIH_FORT_APPROACH",
+    "AIH_DEFENSIVE_HILL",
+    "AIH_FORT_PERIMETER",
+    "AIH_AMBUSH_CAVALRY_LINE",
+    "AIH_AMBUSH_MELEE_LINE",
+    "AIH_AMBUSH_MISSILE_LINE",
+    "AIH_AMBUSH_ASSAULT_AREA",
+    "AIH_AMBUSH_DEFENDER_INITIAL_PATH",
+    "AIH_AMBUSH_FOREST",
+    "AIH_AMBUSH_FIREBALL_LINE",
+    "AIH_BEACH_LANDING",
+    "AIH_DEFAULT_DEPLOYMENT_LINE",
+    "AIH_RIVER_EDGE",
+    "AIH_BRIDGE_CROSSING",
+    "AIH_COVER_LINE",
+    "AIH_BEACH_LANDING_FORT_APPROACH",
 ];
 
 /// What the Scene tree's override marks were found for: the tile, its history's version (every edit moves it, a merged one too) and the
@@ -98,22 +119,35 @@ pub(crate) const PAINT_WATER_TIP: &str = "Paints the water ground types from the
     The defaults come from the kit's river tiles (painted shallow water 0.2 .. 1.25 m deep, deep water 4.4 .. 5.7 m, quartiles). One undo step.";
 
 /// What Snap river ends to link targets does (its tooltip).
-static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!(
-    "Moves every river end at the tile's edge whose cell the tile offers as a river link: level with the cell's centre along the edge, and \
+static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "Moves every river end at the tile's edge whose cell the tile offers as a river link: level with the cell's centre along the edge, and \
      {} m past the edge unless it is past it already (as the kit's rivers end, so that the neighbour's river meets it). The ends' handles move \
      with them; their height stays. An end already within a few metres of its cell's centre is centred too. Ends at cells without a river \
      link are left alone. One undo step.",
-    wce_tile_editor::tile_document::river_links::RIVER_END_OVERSHOOT_M
-));
+        wce_tile_editor::tile_document::river_links::RIVER_END_OVERSHOOT_M
+    )
+});
 
 /// What the Tint freeform view filter does (its tooltip).
 const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freeform instance (MSM_FREEFORM, in effect through its groups: it keeps its own height \
      instead of following the terrain), to tell them from the landscape ones. Only the viewport shows it; the tile and the game do not change.";
 
+/// A row of a list of items (the Problems, the off-terrain report): what its click does.
+const SELECT_AND_FRAME_TIP: &str = "Click: selects it and frames it in the viewport.";
+
 pub const MODE_NAMES: [&str; 10] = ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "stamp", "paint", "ground"];
 const MODES: [TileMode; 10] = [
-    TileMode::Select, TileMode::Raise, TileMode::Lower, TileMode::Smooth, TileMode::Flatten, TileMode::Level, TileMode::Noise, TileMode::Stamp,
-    TileMode::Paint, TileMode::Ground,
+    TileMode::Select,
+    TileMode::Raise,
+    TileMode::Lower,
+    TileMode::Smooth,
+    TileMode::Flatten,
+    TileMode::Level,
+    TileMode::Noise,
+    TileMode::Stamp,
+    TileMode::Paint,
+    TileMode::Ground,
 ];
 
 impl TileMode {
@@ -142,7 +176,6 @@ impl TileMode {
     }
 }
 
-
 /// A row of the Scene panel's flattened tree.
 #[derive(Clone, Debug)]
 pub(crate) struct TreeRow {
@@ -150,6 +183,10 @@ pub(crate) struct TreeRow {
     pub depth: usize,
     pub key: String,
     pub layer: bool,
+
+    /// It opens to show what it holds: a layer or a group, or a holder (`wce_tile::parents`: a deployment zone's regions, a siege AI node's
+    /// or edge's shapes, a capture location's boundary).
+    pub branch: bool,
     pub open: bool,
     pub kids: usize,
 }
@@ -168,9 +205,9 @@ pub(crate) struct Exported {
 
 /// An export's inputs (`TileTool::export_inputs`): everything the compile reads, owned, so that it can run on another thread.
 pub(crate) struct ExportInputs {
-    /// The game's packs as the editor mounted them, and the kit with the tiles (`tiles_kit`).
+    /// The game's packs as the editor mounted them, and the Assembly Kits (`kit_raws`).
     files: Arc<wce_vfs::Vfs>,
-    kit: Option<PathBuf>,
+    kits: Vec<PathBuf>,
 
     /// The game's tile data if it was read before (else read by `run`), or being read (`TileTool::game_preload`).
     pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
@@ -182,6 +219,9 @@ pub(crate) struct ExportInputs {
 
     /// A tile with procedural walls: the game files and rpfm's schema (its path).
     walls: Option<(Arc<dyn wce_vfs::files::Files>, PathBuf)>,
+
+    /// Its kit walls as the editor laid them (`TileDocument::kit_walls_for_export`).
+    kit_walls: Vec<wce_walls::export::KitWall>,
 }
 
 impl ExportInputs {
@@ -206,7 +246,7 @@ impl ExportInputs {
             return Ok(g);
         }
 
-        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.files.clone(), self.kit.as_deref())?);
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.files.clone(), &self.kits)?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
         }
@@ -226,7 +266,8 @@ impl ExportInputs {
         // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
         if let Some((files, schema)) = &self.walls {
             let schema = rpfm_lib::schema::Schema::load(schema, None).map_err(|err| format!("{}: {err}", schema.display()))?;
-            let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &self.project_dir, self.text, out)?;
+            let (pack, saved, notes) =
+                wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &self.project_dir, self.text, out, &self.kit_walls)?;
             for n in &notes {
                 log::info(format!("{}: {n}", saved.display()));
             }
@@ -253,6 +294,21 @@ pub enum Profile {
 }
 
 pub struct TileTool {
+    /// The Tiles panel (the tile browser): its kit, filter, rows and marks, the packs' and the extracted tiles, the tile asked for.
+    pub(crate) browse: Browse,
+
+    /// Launch in game: the launched game, the prompt, the job preparing it and its progress window.
+    pub(crate) launch: Launch,
+
+    /// The Scene panel's tree: its rows, what is open, the filter, the renaming and the scroll.
+    pub(crate) tree: SceneTree,
+
+    /// The Problems panel's lists (worked out once the tile is still) and the off-terrain report.
+    pub(crate) checks: Checks,
+
+    /// The vegetation sets: the list, the one painted with, the new set being named.
+    pub(crate) veg_sets: VegSets,
+
     pub status: String,
     pub(crate) profile: Profile,
     pub(crate) layers: crate::layers_panel::LayersUi,
@@ -286,36 +342,15 @@ pub struct TileTool {
     /// While placing with Alt held: what is placed stays where it was when Alt went down and turns with the mouse (`AltTurn`).
     pub(crate) alt_turn: Option<crate::create_panel::AltTurn>,
 
-    /// Alt + a left drag in Select mode: the selection turning around its centre (`AltRotate`).
-    pub(crate) alt_rotate: Option<crate::create_panel::AltRotate>,
+    /// What the left button (or G) is doing in the viewport: a grab, a stroke, a handle's drag, a turn (`gesture::Gesture`); one at a
+    /// time, ended in one place (`end_gesture_in`).
+    pub(crate) gesture: Option<crate::gesture::Gesture>,
 
     /// Flip mode (the plane, in the viewport and the Inspector).
     pub(crate) flip: Option<crate::flip_tool::FlipMode>,
 
     /// The menu's Flip..., for the next update.
     pub(crate) flip_asked: bool,
-
-    // The off-terrain report of the Tile panel.
-    off_tol: f32,
-    off_list: Vec<OffTerrain>,
-    off_doc_version: Option<u64>,
-    off_doc: DocumentId,
-
-    // Scene panel: the flattened tree (open layers by name path), rename, delete confirmation, anchor of a shift-click range.
-    pub(crate) rename_buf: String,
-    pub(crate) tree_rows: Vec<TreeRow>,
-    pub(crate) tree_open: HashSet<String>,
-    pub(crate) tree_doc: DocumentId,
-    pub(crate) tree_version: Option<u64>,
-    pub(crate) tree_open_version: u64,
-    pub(crate) tree_open_version_seen: Option<u64>,
-
-    /// The Scene panel's filter (name or type, case-insensitive) and the one the rows were built for.
-    pub(crate) tree_filter: String,
-    pub(crate) tree_filter_seen: String,
-
-    /// The hidden types the tree was built with (the type toggles).
-    pub(crate) tree_hidden_seen: Option<Vec<String>>,
 
     /// TEd's working layer: the tile (document) and the layer's name path (`scene_panel::layer_key`). New items go into it (placed buildings,
     /// drawn polygons, groups, ungrouped items); without one they go to the scene graph.
@@ -329,16 +364,11 @@ pub struct TileTool {
     /// The library's prefab contents, read once each and shared with the open tiles' projects (`TileProject::prefab_base`: a save keeps
     /// what the references differ by as their overrides), and the index of their contents (`prefab_refs::ContentIndex`).
     pub(crate) prefab_base: crate::prefab_panel::SharedBase,
-    pub(crate) tree_prefab_seen: u64,
-
 
     /// The copy opened for its items (`prefab_panel::opened_copy`): the tile and its name path; the selection the frame before (a click on an
     /// item of a copy selected then opens it).
     pub(crate) prefab_open: Option<(DocumentId, String)>,
     pub(crate) prefab_sel_before: Vec<usize>,
-
-    /// The selection came from a click on a Scene tree row this frame: an item of a copy picked there opens the copy.
-    pub(crate) tree_picked: bool,
 
     /// The Scene tree's override marks: each reference's overridden items (`TileDocument::overridden_items`), found when a row of it is
     /// drawn, for the (tile, history, library) they were found for.
@@ -347,21 +377,15 @@ pub struct TileTool {
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
 
-    /// The first selected element the tree last followed (a new one picked elsewhere is opened up to and scrolled into view), and the row
-    /// to scroll to.
-    pub(crate) tree_synced: Option<usize>,
-    pub(crate) tree_scroll_to: Option<usize>,
-    pub(crate) rename_elem: Option<usize>,
     pub(crate) anchor: Option<usize>,
-    pub(crate) rename_wait: i32,
-    pub(crate) rename_focus: bool,
-    pub(crate) rename_active_seen: bool,
-    pub(crate) begin_rename_next: bool,
     pub(crate) delete_confirm: bool,
     pub(crate) delete_weight: usize,
 
     // The cursor on the terrain (from the last hover / press).
     pub(crate) terrain_hit: bool,
+
+    /// While drawing a closed shape: the mouse is on its first point, where a click closes and finishes it (`closes_drawing`).
+    pub(crate) close_hover: bool,
     pub(crate) cursor: Float3,
 
     /// The blend channel the paint brush lays (4 * group + variation), and whether the stroke going on erases (Ctrl: paints channel 0).
@@ -419,21 +443,15 @@ pub struct TileTool {
     /// The tiles that can follow (Tile links): for which tile and history version, the open tile as the database reads it, the candidates,
     /// the database.
     #[allow(clippy::type_complexity)]
-    pub(crate) link_candidates: Option<((DocumentId, u64), wce_tile::battle_map::tile_db::Tile, Vec<wce_tile::battle_map::link_candidates::Candidate>, std::sync::Arc<wce_tile::battle_map::tile_db::TileDatabase>)>,
+    pub(crate) link_candidates: Option<(
+        (DocumentId, u64),
+        wce_tile::battle_map::tile_db::Tile,
+        Vec<wce_tile::battle_map::link_candidates::Candidate>,
+        std::sync::Arc<wce_tile::battle_map::tile_db::TileDatabase>,
+    )>,
 
     /// What Copy / Cut took (any tile of the session can paste it).
     pub(crate) clipboard: Vec<wce_tile_editor::tile_document::CopiedItem>,
-
-    /// The point light whose radius handle is being dragged, and the drag's undo gesture.
-    light_drag: Option<usize>,
-    light_gesture: u64,
-
-    /// The radius minus where the mouse grabbed the handle (the handle does not jump to the mouse).
-    light_grab: f32,
-
-    /// The civilian shelter whose target handle is being dragged, and the drag's undo gesture.
-    target_drag: Option<usize>,
-    target_gesture: u64,
 
     /// The water depth view (`water_view.rs`): the tile and version its depth was worked out for, and the version last seen with when it
     /// started being (the settling after an edit).
@@ -458,23 +476,11 @@ pub struct TileTool {
     pub(crate) flange_threshold: f32,
     pub(crate) grouped_variation: f32,
 
-    // Gestures.
-    stroke_active: bool,
-    pub(crate) grabbing: bool,
-    pub(crate) grab_elem: Option<usize>,
-    pub(crate) grab_y_offset: f64,
-    grab_history: usize,
-    pub(crate) grab_gesture: u64,
     pub(crate) poly_point: Option<usize>,
-
-    /// A spline's handle of `poly_point` is dragged, not the point: its controlOut (true) or controlIn.
-    spline_handle: Option<bool>,
 
     /// The spline values panel edits every point, not only the selected one; the gesture of the value being dragged.
     spline_all: bool,
     value_gesture: u64,
-    point_drag: bool,
-    point_gesture: u64,
     pub(crate) drawing: bool,
     pub(crate) draw_pts: Vec<Float3>,
 
@@ -484,6 +490,7 @@ pub struct TileTool {
 
     /// The reference unit.
     pub(crate) ref_units: crate::ref_units::RefUnits,
+    pub(crate) bspline_ui: crate::building_spline_ui::BuildingSplineUi,
     pub(crate) draft: Option<wce_tile_editor::tile_document::Draft>,
     pub(crate) making: Option<String>,
     pub(crate) create: crate::create_panel::CreateUi,
@@ -514,19 +521,9 @@ pub struct TileTool {
     /// The building technology chip's width (tech_chip.rs), last frame.
     pub(crate) tech_chip_width: f32,
 
-    /// The vegetation brush's settings (read from the settings on first use), its stroke, and its random numbers.
+    /// The vegetation brush's settings (read from the settings on first use) and its random numbers (its stroke: `gesture`).
     pub(crate) veg: Option<crate::settings::VegBrush>,
-    pub(crate) stroke: Option<crate::veg_brush::Stroke>,
     pub(crate) random: crate::veg_brush::Random,
-
-    /// The vegetation sets (read on first use, again after a change, counted by the version) and the one being placed or painted.
-    pub(crate) veg_sets: Option<std::sync::Arc<Vec<wce_tile::vegetation_sets::VegetationSet>>>,
-    pub(crate) veg_sets_version: u64,
-    pub(crate) veg_set: Option<SetInUse>,
-
-    /// The "New vegetation set" dialog's name (and whether it opens on the next frame).
-    pub(crate) new_set_name: Option<String>,
-    pub(crate) new_set_open: bool,
 
     /// The "New tile" dialog (and whether it opens on the next frame).
     pub(crate) new_tile: Option<crate::new_tile_dialog::NewTileDialog>,
@@ -544,32 +541,25 @@ pub struct TileTool {
     pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
     pub(crate) kit_prompt_open: bool,
 
-    /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
-    /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
-    pub(crate) launched: Option<crate::launch::Running>,
-    pub(crate) launch_swept: bool,
-    pub(crate) launch_prompt: Option<Vec<String>>,
-    pub(crate) launch_prompt_open: bool,
+    /// An import of a shared project that replaces files, asked about (`share_prompt.rs`).
+    pub(crate) import_prompt: Option<crate::share_prompt::ImportPrompt>,
+    pub(crate) import_prompt_open: bool,
 
-    /// The launch being prepared on a thread, and whether its window opens on the next frame.
-    pub(crate) launch_job: Option<crate::launch_prompt::LaunchJob>,
-    pub(crate) launch_worker: Option<std::thread::JoinHandle<()>>,
-    pub(crate) launch_progress_open: bool,
-
-    /// The Tiles panel's extracted tiles (keys of the projects' rows), found when the rows are.
-    browse_extracted: std::collections::HashSet<String>,
+    /// What a share or an import has to tell (its failure, or the prefabs it left out or lacks), in a dialog; whether it has to open.
+    pub(crate) share_notice: Option<crate::share_prompt::ShareNotice>,
+    pub(crate) share_notice_open: bool,
 
     /// The new vegetation set (not saved; Ctrl + click on trees in the Create panel) and the name it will be saved with.
     pub(crate) scratch_set: Option<wce_tile::vegetation_sets::VegetationSet>,
     pub(crate) scratch_name: String,
 
-    /// The Problems section's trees, and the (tile, history, structure) they were found for.
-    problems: Option<((DocumentId, u64, u64), Vec<usize>)>,
+    /// The snapping's outlines (`Tile::snap_outlines`) and what they were made for: the tile (its history's version, its structure's) and
+    /// the item left out. Made again only when one of those changes, not on every frame the mouse moves.
+    snap_outlines: std::cell::RefCell<Option<((DocumentId, u64, u64, Option<usize>), Arc<Vec<(Vec<Float3>, bool)>>)>>,
 
-    /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
-    river_problems: Option<((DocumentId, u64, u64), Vec<(Option<usize>, String)>)>,
-    link_problems: Option<((DocumentId, u64, u64), Vec<wce_tile::link_checks::LinkProblem>)>,
-    integrity: Option<((DocumentId, u64, u64), Vec<(usize, String)>)>,
+    /// The last bridge check (`Tile::check_bridges`), for the tile and the edit it was made at; whether the viewport shows its edges.
+    pub(crate) bridge_check: Option<((DocumentId, u64, u64), wce_tile_editor::tile_document::BridgeReport)>,
+    pub(crate) bridge_overlay: bool,
 
     /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
     pub(crate) open_kit_copy: bool,
@@ -580,7 +570,7 @@ pub struct TileTool {
     /// The right click ended a grab: its release opens no menu.
     right_used: bool,
 
-    /// The dock node of the Tile panel (where the Weather panel goes the first time).
+    /// The dock node of the Tile panel.
     pub(crate) right_dock: Option<gui::ImGuiID>,
 
     /// The keys of each type, per tile.
@@ -593,46 +583,20 @@ pub struct TileTool {
     pub(crate) preview_forced: bool,
     camera_set_for: DocumentId,
 
+    /// The tile the gestures (grab, strokes, handle drags) were last seen on: when another is shown, what is still open is closed on it.
+    gesture_tile: DocumentId,
+
     /// mark_height values for the tests.
     pub(crate) marks: HashMap<String, f32>,
 
-    // The tile browser (Tiles panel), and the entry a pending open comes from (consumed by `open`).
-    browse_filter: String,
-
-    /// Frames left in which the Tiles panel takes the focus (the first time the tool is shown).
-    browse_focus_frames: u8,
-
     /// Frames left to bring the Scene tree to the front (a tile opened).
     pub(crate) scene_focus_frames: u8,
-    browse_kit: usize,
-    browse_kind: i32,
 
-    /// The entry's key (normalised location) selected in the list.
-    browse_selected: String,
-    pending_entry: Option<PathBuf>,
-    pending_variation: Option<usize>,
+    /// Frames the Create panel is brought to the front for (`create_view`).
+    pub(crate) create_focus_frames: u8,
 
-    /// kit_roots, looked up at most every two seconds (the panel draws every frame).
-    browse_roots: Vec<PathBuf>,
-    browse_roots_time: f64,
-
-    /// The filtered, listed rows: indices of the index's entries (rebuilt when the kit, kind, filter or index changed).
-    browse_rows: Vec<usize>,
-    browse_rows_key: String,
-    browse_index: Option<Arc<TileIndex>>,
-
-    /// The kit index's rows, shared as the packs' are (copied when the index changes).
-    browse_kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
-
-    /// The favourite and the recent tiles (the settings' lists: read on first use, written through), and a count of their changes.
-    browse_marks: Option<(Vec<TileRef>, Vec<TileRef>)>,
-    browse_marks_version: u64,
-
-    /// The listed favourites and recent tiles of the source, filtered as the list: rows of the source (and, for a recent one, the variation
-    /// opened), and the keys of the source's favourites (the stars of every row).
-    browse_fav_rows: Vec<usize>,
-    browse_recent_rows: Vec<(usize, String)>,
-    browse_fav_keys: HashSet<String>,
+    /// A whole-tile flip waiting for its busy message to show (`flip_tool.rs`): the axis and the frames left.
+    pub(crate) flip_tile_pending: Option<(wce_tile_editor::tile_document::TileFlipAxis, u8)>,
 
     /// The raw_data folders of the workspaces exported tiles were opened into this session (besides the settings' one): their tiles are the
     /// packs' in the recent tiles.
@@ -653,27 +617,321 @@ pub struct TileTool {
     /// The game's tile data being read on a thread once a tile is open, so that an export or a launch finds it read.
     pub(crate) game_preload: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
     pub(crate) game_preload_tried: bool,
+}
+
+/// The Tiles panel (the tile browser): its kit, filter, rows and marks, the packs' and the extracted tiles, the tile asked for.
+pub(crate) struct Browse {
+    /// The Tiles panel's extracted tiles (keys of the projects' rows), and the list and kit they were looked for in: looked for again
+    /// only when those change (it reads each tile's folder), not at each key typed in the filter.
+    extracted: std::collections::HashSet<String>,
+    extracted_for: (usize, usize),
+    // The tile browser (Tiles panel), and the entry a pending open comes from (consumed by `open`).
+    filter: String,
+
+    /// Frames left in which the Tiles panel takes the focus (the first time the tool is shown).
+    focus_frames: u8,
+    kit: usize,
+    kind: i32,
+
+    /// The entry's key (normalised location) selected in the list.
+    selected: String,
+    pending_entry: Option<PathBuf>,
+    pending_variation: Option<usize>,
+
+    /// kit_roots, looked up at most every two seconds (the panel draws every frame).
+    roots: Vec<PathBuf>,
+    roots_time: f64,
+
+    /// The filtered, listed rows: indices of the index's entries (rebuilt when the kit, kind, filter or index changed).
+    rows: Vec<usize>,
+    rows_key: String,
+    index: Option<Arc<TileIndex>>,
+
+    /// The kit index's rows, shared as the packs' are (copied when the index changes).
+    kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
+
+    /// The favourite and the recent tiles (the settings' lists: read on first use, written through), and a count of their changes.
+    marks: Option<(Vec<TileRef>, Vec<TileRef>)>,
+    marks_version: u64,
+
+    /// The listed favourites and recent tiles of the source, filtered as the list: rows of the source (and, for a recent one, the variation
+    /// opened), and the keys of the source's favourites (the stars of every row).
+    fav_rows: Vec<usize>,
+    recent_rows: Vec<(usize, String)>,
+    fav_keys: HashSet<String>,
 
     /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
-    browse_packs: Option<Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>>,
+    /// The packs' tiles for the Tiles panel and the mount they were read from (`Files::mount_id`): read again for another (a failure
+    /// before the packs were mounted, a list of the mods before).
+    packs: Option<(u64, Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>)>,
+}
+
+impl Default for Browse {
+    fn default() -> Self {
+        Self {
+            extracted: Default::default(),
+            extracted_for: (0, usize::MAX),
+            filter: String::new(),
+            focus_frames: 3,
+            kit: 0,
+            kind: 0,
+            selected: String::new(),
+            pending_entry: None,
+            pending_variation: None,
+            roots: vec![],
+            roots_time: -1e9,
+            rows: vec![],
+            rows_key: String::new(),
+            index: None,
+            kit_rows: Arc::default(),
+            marks: None,
+            marks_version: 0,
+            fav_rows: vec![],
+            recent_rows: vec![],
+            fav_keys: HashSet::new(),
+            packs: None,
+        }
+    }
+}
+
+/// Launch in game: the launched game, the prompt, the job preparing it and its progress window.
+#[derive(Default)]
+pub(crate) struct Launch {
+    /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
+    /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
+    pub(crate) launched: Option<crate::launch::Running>,
+    pub(crate) swept: bool,
+    pub(crate) prompt: Option<Vec<String>>,
+    pub(crate) prompt_open: bool,
+
+    /// The launch being prepared on a thread, and whether its window opens on the next frame.
+    pub(crate) job: Option<crate::launch_prompt::LaunchJob>,
+    pub(crate) worker: Option<std::thread::JoinHandle<()>>,
+    pub(crate) progress_open: bool,
+}
+
+/// The Scene panel's tree: its rows, what is open, the filter, the renaming and the scroll.
+#[derive(Default)]
+pub(crate) struct SceneTree {
+    pub(crate) rows: Vec<TreeRow>,
+    pub(crate) open: HashSet<String>,
+    pub(crate) doc: DocumentId,
+    pub(crate) version: Option<u64>,
+    pub(crate) open_version: u64,
+    pub(crate) open_version_seen: Option<u64>,
+
+    /// The Scene panel's filter (name or type, case-insensitive) and the one the rows were built for.
+    pub(crate) filter: String,
+    pub(crate) filter_seen: String,
+
+    /// The hidden types the tree was built with (the type toggles).
+    pub(crate) hidden_seen: Option<Vec<String>>,
+    pub(crate) prefab_seen: u64,
+
+    /// The selection came from a click on a Scene tree row this frame: an item of a copy picked there opens the copy.
+    pub(crate) picked: bool,
+
+    /// The first selected element the tree last followed (a new one picked elsewhere is opened up to and scrolled into view), and the row
+    /// to scroll to.
+    pub(crate) synced: Option<usize>,
+    pub(crate) scroll_to: Option<usize>,
+    // Scene panel: the flattened tree (open layers by name path), rename, delete confirmation, anchor of a shift-click range.
+    pub(crate) rename_buf: String,
+    pub(crate) rename_elem: Option<usize>,
+    pub(crate) rename_wait: i32,
+    pub(crate) rename_focus: bool,
+    pub(crate) rename_active_seen: bool,
+    pub(crate) begin_rename_next: bool,
+}
+
+/// The Problems panel's lists (worked out once the tile is still) and the off-terrain report.
+pub(crate) struct Checks {
+    /// The Problems section's trees, and the (tile, history, structure) they were found for.
+    problems: Option<((DocumentId, u64, u64), Arc<Vec<usize>>)>,
+
+    /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
+    rivers: Option<((DocumentId, u64, u64), Arc<Vec<(Option<usize>, String)>>)>,
+    links: Option<((DocumentId, u64, u64), Arc<Vec<wce_tile::link_checks::LinkProblem>>)>,
+    integrity: Option<((DocumentId, u64, u64), Arc<Vec<(usize, String)>>)>,
+
+    /// The tile's state the Problems are behind, and since when (`gui::time`): they are made again once it has stayed so a moment.
+    wait: Option<((DocumentId, u64, u64), f64)>,
+    // The off-terrain report of the Tile panel.
+    off_tol: f32,
+    off_list: Vec<OffTerrain>,
+    off_doc_version: Option<u64>,
+    off_doc: DocumentId,
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Self {
+            problems: None,
+            rivers: None,
+            links: None,
+            integrity: None,
+            wait: None,
+            off_tol: 0.5,
+            off_list: vec![],
+            off_doc_version: None,
+            off_doc: 0,
+        }
+    }
+}
+
+/// The vegetation sets: the list, the one painted with, the new set being named.
+#[derive(Default)]
+pub(crate) struct VegSets {
+    /// The vegetation sets (read on first use, again after a change, counted by the version) and the one being placed or painted.
+    pub(crate) list: Option<std::sync::Arc<Vec<wce_tile::vegetation_sets::VegetationSet>>>,
+    pub(crate) version: u64,
+    pub(crate) current: Option<SetInUse>,
+
+    /// The "New vegetation set" dialog's name (and whether it opens on the next frame).
+    pub(crate) new_name: Option<String>,
+    pub(crate) new_open: bool,
 }
 
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), profile: Profile::Tile, layers: Default::default(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snap_edges: false, snap_heights: false, angle_tolerance: 0.0, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
-            off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
-            rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
-            tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
-            prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, ground_thumbs_failed: HashSet::new(), link_follow: true, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
-            filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
-            grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
-            browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
-            browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
-            browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
-            weather: Default::default(), minimap: Default::default(), context: Default::default(), exported_game: None, game_preload: None, game_preload_tried: false, browse_packs: None,
+            browse: Browse::default(),
+            launch: Launch::default(),
+            tree: SceneTree::default(),
+            checks: Checks::default(),
+            veg_sets: VegSets::default(),
+            status: String::new(),
+            profile: Profile::Tile,
+            layers: Default::default(),
+            mode: TileMode::Select,
+            brush: BrushSettings::default(),
+            snap_grid: false,
+            grid_m: 6.0,
+            snap_tolerance: 0.0,
+            snap_vertices: false,
+            snap_edges: false,
+            snap_heights: false,
+            angle_tolerance: 0.0,
+            snapped_cursor: Float3::default(),
+            grab_normal_offset: 0.0,
+            angle_step: 15.0,
+            alt_turn: None,
+            gesture: None,
+            working_layer: None,
+            prefabs: None,
+            prefab_version: 0,
+            prefab_base: Default::default(),
+            prefab_open: None,
+            prefab_sel_before: vec![],
+            override_rows: Default::default(),
+            prefab_save: None,
+            anchor: None,
+            delete_confirm: false,
+            delete_weight: 0,
+            terrain_hit: false,
+            cursor: Float3::default(),
+            paint_channel: 0,
+            paint_erase: false,
+            ground_type: 1,
+            view_before_ground: None,
+            curve: None,
+            falloff_open: false,
+            falloff_drag: None,
+            falloff_unsaved: false,
+            image_brush: None,
+            thumbs: Default::default(),
+            view_name: String::new(),
+            box_select: Default::default(),
+            saved_selections: vec![],
+            selection_name: String::new(),
+            link_pick: None,
+            link_sets: None,
+            link_typing: false,
+            prop_typing: false,
+            cells_ground: 0.75,
+            ground_thumbs_failed: HashSet::new(),
+            link_follow: true,
+            save_as: None,
+            resize: None,
+            tile_db: None,
+            link_candidates: None,
+            clipboard: vec![],
+            water_for: None,
+            water_seen: None,
+            water_since: 0.0,
+            nogo_for: None,
+            water_shallow_m: 0.3,
+            water_deep_m: 2.5,
+            filter_height_on: false,
+            filter_height: [-1000.0, 1000.0],
+            filter_slope_on: false,
+            filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0],
+            flange_threshold: 0.0,
+            grouped_variation: 1.5,
+            poly_point: None,
+            spline_all: false,
+            value_gesture: 0,
+            ref_units: Default::default(),
+            bspline_ui: Default::default(),
+            drawing: false,
+            flip: None,
+            flip_asked: false,
+            ground_chip_width: 0.0,
+            areas_chip_width: 0.0,
+            pack_categories: None,
+            areas: None,
+            tech_chip_width: 0.0,
+            draw_pts: vec![],
+            close_hover: false,
+            placing: None,
+            draft: None,
+            making: None,
+            create: Default::default(),
+            left_dock: None,
+            right_dock: None,
+            context_menu: false,
+            modes: None,
+            surface_hit: None,
+            surface_px: None,
+            place_chips_width: 0.0,
+            veg: None,
+            random: crate::veg_brush::Random::new(),
+            new_tile: None,
+            new_tile_open: false,
+            height_import: None,
+            height_import_open: false,
+            extract_prompt: None,
+            extract_prompt_open: false,
+            kit_prompt: None,
+            kit_prompt_open: false,
+            import_prompt: None,
+            import_prompt_open: false,
+            share_notice: None,
+            share_notice_open: false,
+            scratch_set: None,
+            scratch_name: String::new(),
+            snap_outlines: Default::default(),
+            bridge_check: None,
+            bridge_overlay: true,
+            open_kit_copy: false,
+            chips_width: 0.0,
+            right_used: false,
+            catalogues: HashMap::new(),
+            placing_prefab_text: None,
+            preview_forced: false,
+            camera_set_for: 0,
+            gesture_tile: 0,
+            marks: HashMap::new(),
+            scene_focus_frames: 0,
+            create_focus_frames: 0,
+            flip_tile_pending: None,
+            workspaces: HashSet::new(),
+            weather: Default::default(),
+            minimap: Default::default(),
+            context: Default::default(),
+            exported_game: None,
+            game_preload: None,
+            game_preload_tried: false,
         }
     }
 }
@@ -706,14 +964,22 @@ pub fn selected(e: &Editor) -> Vec<usize> {
 
     // A piece of a building stands for its building (the viewport shows the building's box); an element that is gone (removed, undone) is
     // not selected.
-    e.selection.items().iter().filter(|r| r.doc == id && r.item != TERRAIN).filter_map(|r| elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e))).filter(|&el| el < count).collect()
+    e.selection
+        .items()
+        .iter()
+        .filter(|r| r.doc == id && r.item != TERRAIN)
+        .filter_map(|r| elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e)))
+        .filter(|&el| el < count)
+        .collect()
 }
 
 /// Takes what is gone (removed, undone: its index is past the tile's elements) out of the editor's selection.
 pub(crate) fn drop_gone_from_selection(e: &mut Editor) {
     let Some(id) = document_id(e) else { return };
     let count = e.docs.find_as::<TileDocument>(id).map_or(0, |d| d.tile().tscene().doc().elements().len());
-    let gone = |r: &SourceRef| r.doc == id && r.item != TERRAIN && elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e)).is_some_and(|el| el >= count);
+    let gone = |r: &SourceRef| {
+        r.doc == id && r.item != TERRAIN && elem_of(r.item).or_else(|| piece_of(r.item).map(|(e, _)| e)).is_some_and(|el| el >= count)
+    };
     if e.selection.items().iter().any(gone) {
         let keep = e.selection.items().iter().filter(|r| !gone(r)).copied().collect::<Vec<_>>();
         e.selection.clear();
@@ -770,7 +1036,9 @@ fn project_entries(raw: &Path, location: &str) -> Vec<(PathBuf, Vec<u8>)> {
 pub(crate) fn with_tile(e: &mut Editor, f: impl FnOnce(&mut TileTool, &mut Editor) -> CommandResult) -> CommandResult {
     // The Prefab tool's own Tile tool while it is the active one: its stage, its brushes, its selection.
     if e.active_tool_id() == crate::prefab_tool::PREFAB_TOOL_ID {
-        return e.with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| f(&mut p.tile, e)).unwrap_or_else(|| CommandResult::fail("the prefab tool is not available"));
+        return e
+            .with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| f(&mut p.tile, e))
+            .unwrap_or_else(|| CommandResult::fail("the prefab tool is not available"));
     }
 
     e.with_tool::<TileTool, _>(f).unwrap_or_else(|| CommandResult::fail("the tile tool is not available"))
@@ -784,7 +1052,8 @@ impl TileTool {
     /// The Blendmap Filters into the brush.
     pub(crate) fn sync_paint_filter(&mut self) {
         let f = wce_tile::blend_field::PaintFilter {
-            height: self.filter_height_on.then_some(self.filter_height), slope: self.filter_slope_on.then_some(self.filter_slope),
+            height: self.filter_height_on.then_some(self.filter_height),
+            slope: self.filter_slope_on.then_some(self.filter_slope),
         };
 
         self.brush.filter = f.is_active().then_some(f);
@@ -833,7 +1102,11 @@ impl TileTool {
     /// The working layer of the tile `id`, if one is set and still there. On a prefab's stage, the prefab's group when none is: the root is
     /// never the working layer there (what is outside the group is not the prefab's).
     pub(crate) fn working_layer_of(&self, d: &TileDocument) -> Option<usize> {
-        let set = self.working_layer.as_ref().filter(|(doc, _)| *doc == d.id()).and_then(|(_, key)| crate::scene_panel::layer_by_key(d.tile().tscene(), key));
+        let set = self
+            .working_layer
+            .as_ref()
+            .filter(|(doc, _)| *doc == d.id())
+            .and_then(|(_, key)| crate::scene_panel::layer_by_key(d.tile().tscene(), key));
         set.or_else(|| self.stage_group(d))
     }
 
@@ -877,11 +1150,21 @@ impl TileTool {
     pub fn set_working_layer(&mut self, d: &TileDocument, layer: Option<usize>) -> Result<String, String> {
         let Some(layer) = layer.filter(|&l| Some(l) != self.stage_group(d)) else {
             self.working_layer = None;
-            return Ok(if self.stage_group(d).is_some() { "working layer: the prefab" } else { "no working layer: new items go to the root" }.to_owned());
+            return Ok(if self.stage_group(d).is_some() {
+                "working layer: the prefab"
+            } else {
+                "no working layer: new items go to the root"
+            }
+            .to_owned());
         };
 
         if !Self::can_work_in(self.stage_group(d), d.tile().tscene(), layer) {
-            return Err(if self.stage_group(d).is_some() { "only the prefab or a layer in it can be the working layer" } else { "only a layer can be the working layer" }.to_owned());
+            return Err(if self.stage_group(d).is_some() {
+                "only the prefab or a layer in it can be the working layer"
+            } else {
+                "only a layer can be the working layer"
+            }
+            .to_owned());
         }
 
         let sc = d.tile().tscene();
@@ -909,7 +1192,7 @@ impl TileTool {
 
     /// The Tiles panel's source as a [`TileRef`] source: the kit's raw_data folder, or the packs.
     pub(crate) fn browse_source(&self) -> String {
-        match self.browse_roots.get(self.browse_kit) {
+        match self.browse.roots.get(self.browse.kit) {
             Some(root) => source_of(root),
             None => PACKS_SOURCE.to_owned(),
         }
@@ -917,17 +1200,17 @@ impl TileTool {
 
     /// The favourite and the recent tiles, read from the settings on first use.
     pub(crate) fn marks(&mut self, e: &Editor) -> &(Vec<TileRef>, Vec<TileRef>) {
-        if self.browse_marks.is_none() {
+        if self.browse.marks.is_none() {
             let s = e.tool_settings::<TileSettings>(SETTINGS_ID);
-            self.browse_marks = Some((s.favourites, s.recent));
+            self.browse.marks = Some((s.favourites, s.recent));
         }
 
-        self.browse_marks.as_ref().expect("read above")
+        self.browse.marks.as_ref().expect("read above")
     }
 
     fn save_marks(&mut self, e: &mut Editor) {
-        let Some((favourites, recent)) = self.browse_marks.clone() else { return };
-        self.browse_marks_version += 1;
+        let Some((favourites, recent)) = self.browse.marks.clone() else { return };
+        self.browse.marks_version += 1;
         e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
             s.favourites = favourites;
             s.recent = recent;
@@ -937,7 +1220,7 @@ impl TileTool {
     /// Stars a tile of a source in the Tiles panel, or takes its star away; true when it is a favourite now.
     pub fn toggle_favourite(&mut self, e: &mut Editor, source: &str, key: &str) -> bool {
         self.marks(e);
-        let (favourites, _) = self.browse_marks.as_mut().expect("read above");
+        let (favourites, _) = self.browse.marks.as_mut().expect("read above");
         let now = match favourites.iter().position(|r| r.source == source && r.key == key) {
             Some(i) => {
                 favourites.remove(i);
@@ -967,7 +1250,7 @@ impl TileTool {
         let exported = self.workspaces.contains(&raw_root) && raw_root != source_of(&Self::workspace_dir(e).join("raw_data"));
         let source = if exported { PACKS_SOURCE.to_owned() } else { raw_root };
         self.marks(e);
-        let (_, recent) = self.browse_marks.as_mut().expect("read above");
+        let (_, recent) = self.browse.marks.as_mut().expect("read above");
         recent.retain(|r| r.source != source || r.key != key);
         recent.insert(0, TileRef { source, key, variation });
         recent.truncate(RECENT_KEEP);
@@ -1085,17 +1368,20 @@ impl TileTool {
         let same = e.docs.of_tool(TILE_TOOL_ID).and_then(|id| e.docs.find(id)).is_some_and(|d| d.opened_from(&ted_path));
         if !same {
             let (again, again_variation) = (target.to_owned(), variation.to_owned());
-            let retry = Box::new(move |e: &mut Editor| e.with_tool::<Self, _>(|t, e| t.open_tile(e, &again, &again_variation)).unwrap_or_else(|| Err("the Tile tool is busy".to_owned())));
+            let retry = Box::new(move |e: &mut Editor| {
+                e.with_tool::<Self, _>(|t, e| t.open_tile(e, &again, &again_variation))
+                    .unwrap_or_else(|| Err("the Tile tool is busy".to_owned()))
+            });
             if !e.clear_to_replace(TILE_TOOL_ID, retry)? {
                 return Ok(format!("asking about the tile's unsaved changes before opening {target}"));
             }
         }
 
-        self.pending_entry = Some(entry_xml.clone());
-        self.pending_variation = Some(v);
+        self.browse.pending_entry = Some(entry_xml.clone());
+        self.browse.pending_variation = Some(v);
         let opened = e.open_path_from(self, &ted.display().to_string(), false, true);
-        self.pending_entry = None;
-        self.pending_variation = None;
+        self.browse.pending_entry = None;
+        self.browse.pending_variation = None;
         let mut msg = opened?;
         if vars.len() > 1 {
             msg += &format!("  (entry {file_name}, variation {} of: {names})", vars[v].location);
@@ -1108,19 +1394,21 @@ impl TileTool {
     /// read on first use; again when the packs are mounted again.
     pub(crate) fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
         let vfs = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
-        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs)) {
+        let kits = kit_raws(e);
+        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs) && g.made_for(&kits)) {
             return Ok(g.clone());
         }
 
         // Being read on a thread already: waited for.
         if let Some(Ok(Ok(g))) = self.game_preload.take().map(|rx| rx.recv())
             && Arc::ptr_eq(&g.files, &vfs)
+            && g.made_for(&kits)
         {
             self.exported_game = Some(g.clone());
             return Ok(g);
         }
 
-        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs, tiles_kit(e).as_deref())?);
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs, &kits)?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
         }
@@ -1129,13 +1417,66 @@ impl TileTool {
         Ok(game)
     }
 
-    /// The tiles of the game's packs (the tile databases in effect, battle and campaign) as index rows, read on first use.
+    /// [`Self::exported_game`] without waiting: the data when it is read (the one kept, else the background read's once it has finished);
+    /// `None` while it is being read, the read started if none is running. For what draws every frame: the caller says it is being read and
+    /// asks again (reading the game's tile data takes seconds, which froze the UI).
+    pub(crate) fn exported_game_ready(&mut self, e: &mut Editor) -> Option<Result<Arc<wce_tile_io::attila::workflow::Game>, String>> {
+        let Some(vfs) = e.vfs().cloned() else { return Some(Err("the game's packs are not mounted (setup <game folder>)".to_owned())) };
+        let kits = kit_raws(e);
+        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs) && g.made_for(&kits)) {
+            return Some(Ok(g.clone()));
+        }
+
+        let rx = self.game_preload.get_or_insert_with(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (files, kits) = (vfs.clone(), kits.clone());
+            std::thread::spawn(move || {
+                let r = wce_tile_io::attila::workflow::Game::from_vfs(files, &kits).map(|g| {
+                    for w in &g.warnings {
+                        log::warn(format!("exported tiles: {w}"));
+                    }
+
+                    Arc::new(g)
+                });
+                let _ = tx.send(r);
+            });
+            rx
+        });
+        match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.game_preload = None;
+                Some(Err("reading the game's tile data stopped".to_owned()))
+            }
+
+            Ok(r) => {
+                self.game_preload = None;
+                match r {
+                    // Read for packs or kits mounted before: read again.
+                    Ok(g) if !(Arc::ptr_eq(&g.files, &vfs) && g.made_for(&kits)) => None,
+                    Ok(g) => {
+                        self.exported_game = Some(g.clone());
+                        Some(Ok(g))
+                    }
+
+                    Err(err) => Some(Err(err)),
+                }
+            }
+        }
+    }
+
+    /// The tiles of the game's packs (the tile databases in effect, battle and campaign) as index rows, read on first use (in the
+    /// background: `Err` saying so meanwhile, not kept).
     fn pack_entries(&mut self, e: &mut Editor) -> Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String> {
-        if let Some(r) = &self.browse_packs {
+        let mount = e.vfs().map_or(0, |v| wce_vfs::files::Files::mount_id(v.as_ref()));
+        if let Some((m, r)) = &self.browse.packs
+            && *m == mount
+        {
             return r.clone();
         }
 
-        let r = self.exported_game(e).map(|game| {
+        let Some(game) = self.exported_game_ready(e) else { return Err("reading the game's tiles...".to_owned()) };
+        let r = game.map(|game| {
             let mut rows = vec![];
             for kind in ["battle", "campaign"] {
                 let Some(db) = game.data.database(kind) else { continue };
@@ -1165,7 +1506,7 @@ impl TileTool {
             rows.sort_by(|a, b| a.key.cmp(&b.key));
             Arc::new(rows)
         });
-        self.browse_packs = Some(r.clone());
+        self.browse.packs = Some((mount, r.clone()));
         r
     }
 
@@ -1176,13 +1517,22 @@ impl TileTool {
     /// No such kit.
     pub fn browse(&mut self, e: &mut Editor, source: &str, filter: &str) -> Result<String, String> {
         let roots = self.kit_roots(e);
-        self.browse_kit = match source {
+        self.browse.kit = match source {
             "packs" => roots.len(),
-            n => n.parse::<usize>().ok().filter(|&n| n < roots.len()).ok_or_else(|| format!("no kit {n}: {} kits, or 'packs'", roots.len()))?,
+            n => n
+                .parse::<usize>()
+                .ok()
+                .filter(|&n| n < roots.len())
+                .ok_or_else(|| format!("no kit {n}: {} kits, or 'packs'", roots.len()))?,
         };
-        self.browse_filter = filter.to_owned();
+        self.browse.filter = filter.to_owned();
         gui::set_window_focus("Tiles");
-        let rows = if source == "packs" { self.pack_entries(e)?.len() } else { TileIndex::shared(&roots[self.browse_kit]).entries().len() };
+        // Asked for (a script, a command): read now, not in the background as the panel does.
+        if source == "packs" {
+            self.exported_game(e)?;
+        }
+
+        let rows = if source == "packs" { self.pack_entries(e)?.len() } else { TileIndex::shared(&roots[self.browse.kit]).entries().len() };
         Ok(format!("{rows} tiles in the source"))
     }
 
@@ -1234,7 +1584,8 @@ impl TileTool {
             }
 
             // Replaced: the document of it goes first (not with unsaved changes), then the folder.
-            let open = e.docs.order().iter().copied().find(|&id| e.docs.find(id).is_some_and(|d| d.opened_from(&dir.display().to_string())));
+            let open =
+                e.docs.order().iter().copied().find(|&id| e.docs.find(id).is_some_and(|d| d.opened_from(&dir.display().to_string())));
             if let Some(id) = open {
                 if e.docs.find(id).is_some_and(|d| d.modified()) {
                     return Err(format!("{folder} is open with unsaved changes: save or undo them before extracting the tile over it"));
@@ -1248,7 +1599,11 @@ impl TileTool {
 
         let game = self.exported_game(e)?;
         let p = Path::new(target);
-        let files = if p.is_dir() { wce_tile_io::TileFiles::from_dir(p).map_err(|err| err.to_string())? } else { game.exported_from_packs(&folder)? };
+        let files = if p.is_dir() {
+            wce_tile_io::TileFiles::from_dir(p).map_err(|err| err.to_string())?
+        } else {
+            game.exported_from_packs(&folder)?
+        };
 
         // The decompile writes the whole entry: a project's entry keeps the other variations' numbers.
         let tile_location = folder.rsplit_once('/').map_or(folder.as_str(), |(t, _)| t).to_owned();
@@ -1265,7 +1620,7 @@ impl TileTool {
             {
                 let v = &new.variations()[n];
                 old.set_height_range(o, v.min_height, v.scale);
-                std::fs::write(&file, old.save()).map_err(|err| format!("{}: {err}", file.display()))?;
+                wce_foundation::files::write_replacing(&file, old.save()).map_err(|err| format!("{}: {err}", file.display()))?;
             }
         }
 
@@ -1275,7 +1630,8 @@ impl TileTool {
         let ted = dir.join(TED_FILE);
         if ted.is_file() {
             let text = std::fs::read(&ted).map_err(|err| format!("{}: {err}", ted.display()))?;
-            std::fs::write(dir.join(WCE_FILE), mark_extracted_text(to_wce(text)?)).map_err(|err| err.to_string())?;
+            wce_foundation::files::write_replacing(dir.join(WCE_FILE), mark_extracted_text(to_wce(text)?))
+                .map_err(|err| err.to_string())?;
             std::fs::remove_file(&ted).map_err(|err| err.to_string())?;
         }
 
@@ -1291,7 +1647,8 @@ impl TileTool {
     /// The projects can't be read.
     pub fn migrate_extracted(&mut self, e: &mut Editor) -> Result<String, String> {
         let raw = Self::workspace_dir(e).join("raw_data");
-        let busy = e.docs.order().iter().filter_map(|&id| e.docs.find_as::<TileDocument>(id).map(|d| d.project().dir.clone())).collect::<Vec<_>>();
+        let busy =
+            e.docs.order().iter().filter_map(|&id| e.docs.find_as::<TileDocument>(id).map(|d| d.project().dir.clone())).collect::<Vec<_>>();
         let m = wce_tile::project_files::migrate_extracted(&raw, &busy)?;
         for line in &m.moved {
             log::info(format!("migrated: {line}"));
@@ -1301,7 +1658,7 @@ impl TileTool {
             log::warn(format!("not migrated: {line}"));
         }
 
-        self.browse_rows_key.clear();
+        self.browse.rows_key.clear();
         Ok(format!("{} old extracted project(s) moved, {} left as they are (see the log)", m.moved.len(), m.skipped.len()))
     }
 
@@ -1330,7 +1687,12 @@ impl TileTool {
     pub fn save_exported(&mut self, e: &mut Editor, out: &Path) -> Result<String, String> {
         let x = self.export_to(e, out)?;
         Ok(match &x.pack {
-            Some(pack) => format!("saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)", x.dir.display(), pack.display(), x.notes),
+            Some(pack) => format!(
+                "saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)",
+                x.dir.display(),
+                pack.display(),
+                x.notes
+            ),
             None => format!("saved as an exported tile in {} ({} notes in the log)", x.dir.display(), x.notes),
         })
     }
@@ -1355,8 +1717,8 @@ impl TileTool {
     /// No tile or game folder, the project can't be saved, or a tile with procedural walls has no game files or schema.
     pub(crate) fn export_inputs(&mut self, e: &mut Editor) -> Result<ExportInputs, String> {
         let files = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
-        let kit = tiles_kit(e);
-        let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files));
+        let kits = kit_raws(e);
+        let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files) && g.made_for(&kits));
         let id = document_id(e).ok_or("no tile is open")?;
         // The roads being made finished first: what they change is in the maps the save writes and the compile reads.
         e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
@@ -1370,9 +1732,10 @@ impl TileTool {
         let project_dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
         let generated = d.tile().has_generated_buildings();
+        let kit_walls = d.tile_mut().kit_walls_for_export();
         let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
-        Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
+        Ok(ExportInputs { files, kits, game, pending, project_dir, text, walls, kit_walls })
     }
 
     /// Saves the open tile, then writes it as an exported tile (stages A, B and C) with the tile database's files into a mod pack
@@ -1392,12 +1755,13 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
+        let kit_walls = d.tile_mut().kit_walls_for_export();
 
         // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
         let (folder, notes) = if d.tile().has_generated_buildings() {
             let files = e.files().ok_or("no game files are mounted")?;
             let schema = walls_schema(e)?;
-            wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack)?
+            wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack, &kit_walls)?
         } else {
             let (scene, _) = wce_tile::project_files::to_ted(text)?;
             let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
@@ -1428,13 +1792,20 @@ impl TileTool {
 
         if e.game().features.kit_tiles {
             // Another set of packs (mods enabled or not) is another tree.
-            let stale = self.context.packs_tree.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_vfs(v)));
+            let kits = kit_raws(e);
+            let stale = self.context.packs_tree.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_sources(v, &kits)));
             if (self.context.packs_fallback.is_none() || stale)
                 && let Some(vfs) = e.vfs().cloned()
             {
-                let tree = Arc::new(crate::context_panel::PacksTree::new(vfs, tiles_kit(e), &e.settings_ref().paths().cache_dir().join("neighbours"), e.game().key));
+                let tree = Arc::new(crate::context_panel::PacksTree::new(
+                    vfs,
+                    kits,
+                    &e.settings_ref().paths().cache_dir().join("neighbours"),
+                    e.game().key,
+                ));
                 let t = tree.clone();
-                let provide: wce_tile_editor::tile_document::context::TileProvider = Arc::new(move |location: &str, variation: &str| t.tile(location, variation));
+                let provide: wce_tile_editor::tile_document::context::TileProvider =
+                    Arc::new(move |location: &str, variation: &str| t.tile(location, variation));
                 self.context.packs_fallback = Some(provide);
                 self.context.packs_tree = Some(tree);
             }
@@ -1442,14 +1813,24 @@ impl TileTool {
             return;
         }
 
-        if self.context.neighbours.is_some() {
+        // Made again for another mount (mods added or taken away) or other kits: the old one reads the old packs.
+        let made_for = (e.vfs().map_or(0, |v| wce_vfs::files::Files::mount_id(v.as_ref())), kit_raws(e));
+        if self.context.neighbours.is_some() && self.context.neighbours_for == made_for {
             return;
         }
 
-        let game = match self.exported_game(e) {
-            Ok(g) => g,
-            Err(m) => {
+        self.context.neighbours = None;
+        self.context.neighbours_for = made_for;
+        let game = match self.exported_game_ready(e) {
+            Some(Ok(g)) => g,
+            Some(Err(m)) => {
                 self.context.status = m;
+                return;
+            }
+
+            // Being read: the next frame asks again.
+            None => {
+                self.context.status = "reading the game's tiles...".to_owned();
                 return;
             }
         };
@@ -1458,8 +1839,9 @@ impl TileTool {
         match wce_tile_io::attila::workflow::neighbour_root(&game, &root) {
             Ok(raw) => {
                 let tree = raw.clone();
-                let provide: wce_tile_editor::tile_document::context::TileProvider =
-                    Arc::new(move |location: &str, variation: &str| wce_tile_io::attila::workflow::neighbour_tile(&game, &tree, location, variation));
+                let provide: wce_tile_editor::tile_document::context::TileProvider = Arc::new(move |location: &str, variation: &str| {
+                    wce_tile_io::attila::workflow::neighbour_tile(&game, &tree, location, variation)
+                });
                 self.context.neighbours = Some((raw, provide));
             }
 
@@ -1471,14 +1853,18 @@ impl TileTool {
     fn default_mod_pack(e: &Editor) -> PathBuf {
         let game = e.game();
         let last = e.tool_settings::<TileSettings>(SETTINGS_ID).mod_packs.get(game.key).cloned();
-        last.map(PathBuf::from).unwrap_or_else(|| e.settings_ref().game_dir().unwrap_or_default().join(game.data_dir).join("wce_tiles.pack"))
+        last.map(PathBuf::from)
+            .unwrap_or_else(|| e.settings_ref().game_dir().unwrap_or_default().join(game.data_dir).join("wce_tiles.pack"))
     }
 
     /// The kits a tile of `kind` (`battle`, `campaign`) can be saved for: those of the kits the Tiles panel lists (not the projects) that
     /// have that kind's tile database, in the settings' order.
     pub(crate) fn kits_for(&self, e: &mut Editor, kind: &str) -> Vec<PathBuf> {
         let projects = Self::workspace_dir(e).join("raw_data");
-        self.kit_roots(e).into_iter().filter(|r| *r != projects && r.join("terrain/tiles").join(kind).join("_tile_database").is_dir()).collect()
+        self.kit_roots(e)
+            .into_iter()
+            .filter(|r| *r != projects && r.join("terrain/tiles").join(kind).join("_tile_database").is_dir())
+            .collect()
     }
 
     /// The first of [`Self::kits_for`].
@@ -1486,11 +1872,12 @@ impl TileTool {
         self.kits_for(e, kind).into_iter().next()
     }
 
-    /// The kit (its folder, with `raw_data`) whose battle tile database a new or renamed tile joins (its settings, the names and colours
-    /// taken): the first kit with one; for a game whose kit has no tiles (Rome 2), the packs' database in the kit's format.
-    pub(crate) fn battle_database_root(&mut self, e: &mut Editor) -> Option<PathBuf> {
-        let raw = if e.game().features.kit_tiles { self.kit_for(e, "battle") } else { self.packs_database(e) };
-        raw.and_then(|raw| raw.parent().map(Path::to_path_buf))
+    /// The kits (their folders, with `raw_data`) with a battle tile database, in the settings' order: the first is the one a new or
+    /// renamed tile's colour is TEd's of; the names and colours taken are every one's. For a game whose kit has no tiles (Rome 2), the
+    /// packs' database in the kit's format.
+    pub(crate) fn battle_database_roots(&mut self, e: &mut Editor) -> Vec<PathBuf> {
+        let raws = if e.game().features.kit_tiles { self.kits_for(e, "battle") } else { self.packs_database(e).into_iter().collect() };
+        raws.into_iter().filter_map(|raw| raw.parent().map(Path::to_path_buf)).collect()
     }
 
     /// The kind (`battle`, `campaign`) of the open tile, from its folder under terrain/tiles.
@@ -1550,12 +1937,15 @@ impl TileTool {
         let sources = match (&files, schema, &data) {
             (Some(f), Some(Ok(schema)), Some(data)) => Some((f.clone(), schema, data.clone())),
             (_, Some(Err(err)), _) if has_walls => return Err(err),
-            _ if has_walls => return Err("the procedural walls need the game's files and its folder (set them in the game's settings)".to_owned()),
+            _ if has_walls => {
+                return Err("the procedural walls need the game's files and its folder (set them in the game's settings)".to_owned());
+            }
             _ => None,
         };
 
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        let walls = sources.as_ref().map(|(f, schema, data)| wce_tile_editor::tile_document::kit::WallSources { files: f.as_ref(), schema, data });
+        let walls =
+            sources.as_ref().map(|(f, schema, data)| wce_tile_editor::tile_document::kit::WallSources { files: f.as_ref(), schema, data });
         d.save_for_kit(&kit, walls)
     }
 
@@ -1572,7 +1962,8 @@ impl TileTool {
             return Err("the project has unsaved changes: save or undo them first".to_owned());
         }
 
-        let kit_folder = wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
+        let kit_folder =
+            wce_tile_editor::tile_document::kit::tile_folder(&d.project().dir).ok_or("the tile is not under terrain/tiles/")?;
         if wce_tile::project_files::is_extracted_dir(&d.project().dir) {
             return self.open_exported(e, &kit_folder, None, true);
         }
@@ -1584,7 +1975,11 @@ impl TileTool {
         }
 
         // The first kit that has the tile.
-        let dir = kits.iter().map(|k| k.join(&kit_folder)).find(|d| wce_tile::tile_project::has_tile(d)).ok_or_else(|| format!("no Assembly Kit has {kit_folder}"))?;
+        let dir = kits
+            .iter()
+            .map(|k| k.join(&kit_folder))
+            .find(|d| wce_tile::tile_project::has_tile(d))
+            .ok_or_else(|| format!("no Assembly Kit has {kit_folder}"))?;
 
         // TEd has the walls' pieces, the project the walls: the pieces go and the walls come back (edits of the pieces in TEd are lost).
         let walls = e.docs.find_as::<TileDocument>(id).map(TileDocument::wall_texts).unwrap_or_default();
@@ -1595,8 +1990,12 @@ impl TileTool {
             match d.restore_walls(&walls) {
                 Ok(0) => {}
                 Ok(n) => {
-                    log::info(format!("Import from Assembly Kit: the layer '{}' replaced by the project's {n} procedural wall(s); edits of their pieces in TEd are not kept", wce_walls::export::KIT_LAYER));
-                    msg += &format!("; {n} procedural wall(s) put back in place of their pieces");
+                    log::info(format!(
+                        "Import from Assembly Kit: the layers '{}' and '{}' replaced by the project's {n} procedural wall(s) and building spline(s); edits of their pieces in TEd are not kept",
+                        wce_walls::export::KIT_LAYER,
+                        wce_tile_editor::tile_document::building_splines::KIT_LAYER
+                    ));
+                    msg += &format!("; {n} procedural wall(s) and building spline(s) put back in place of their pieces");
                 }
                 Err(err) => log::warn(format!("Import from Assembly Kit: the procedural walls could not be put back: {err}")),
             }
@@ -1614,15 +2013,32 @@ impl TileTool {
         use wce_tile::project_files::{TED_FILE, WCE_FILE};
 
         let tile = Path::new(dir);
-        let path = if tile.is_dir() { tile.join(if tile.join(WCE_FILE).exists() { WCE_FILE } else { TED_FILE }) } else { tile.to_path_buf() };
+        let path =
+            if tile.is_dir() { tile.join(if tile.join(WCE_FILE).exists() { WCE_FILE } else { TED_FILE }) } else { tile.to_path_buf() };
         let msg = e.open_path_from(self, &path.display().to_string(), false, true)?;
 
         // A kit's tile with a project opened as the project (`open`): say so.
         let opened = document(e).map(|d| d.project().dir.clone());
         Ok(match opened {
-            Some(d) if !path.starts_with(&d) && !msg.starts_with("already open") => format!("opened the project {} (tile.wce) of {}", d.display(), path.display()),
+            Some(d) if !path.starts_with(&d) && !msg.starts_with("already open") => {
+                format!("opened the project {} (tile.wce) of {}", d.display(), path.display())
+            }
             _ => msg,
         })
+    }
+
+    /// Whether a click at the mouse closes the closed shape being drawn: it has 3 points or more and the mouse is within 12 pixels of the
+    /// first on screen.
+    pub(crate) fn closes_drawing(&self, e: &Editor, ev: &ViewportEvent) -> bool {
+        const REACH_PX: f32 = 12.0;
+        let Some(&first) = self.draw_pts.first().filter(|_| self.drawing && self.draw_pts.len() >= 3) else { return false };
+        let Some(d) = document_id(e).and_then(|id| e.docs.find_as::<TileDocument>(id)) else { return false };
+        if !self.drawing_look(e, d).1 {
+            return false;
+        }
+
+        let reach = REACH_PX * gui::io().DisplayFramebufferScale.x.max(1.0);
+        e.viewport.project(first).is_some_and(|(x, y)| (x - ev.x as f32).hypot(y - ev.y as f32) <= reach)
     }
 
     fn handle_size(e: &Editor) -> f32 {
@@ -1634,8 +2050,12 @@ impl TileTool {
         let mut o = Overlay { depth_test: false, pickable: false, ..Default::default() };
         let t = d.tile();
         self.flip_overlay(t, &selected(e), &mut o);
+        self.bridge_overlay(d, &mut o);
+        self.angle_overlay(e, t, &mut o);
         let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
-        let veg = self.placing == Some(Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg.is_some_and(|b| b.on);
+        let veg = self.placing == Some(Placing::Draft)
+            && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE")
+            && self.veg.is_some_and(|b| b.on);
         let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else { self.brush.radius_m };
         if (self.mode != TileMode::Select || veg) && self.terrain_hit && e.viewport.hovered {
             let n = 64;
@@ -1662,14 +2082,52 @@ impl TileTool {
         if self.drawing {
             let r = Self::handle_size(e);
             let hot = overlay_colour(1.0, 0.9, 0.1, 1.0);
-            for (i, p) in self.draw_pts.iter().enumerate() {
+            for p in &self.draw_pts {
                 o.line(Float3::new(p.x - r, p.y + 0.4, p.z), Float3::new(p.x + r, p.y + 0.4, p.z), hot);
                 o.line(Float3::new(p.x, p.y + 0.4, p.z - r), Float3::new(p.x, p.y + 0.4, p.z + r), hot);
                 o.line(*p, Float3::new(p.x, p.y + r * 1.5, p.z), hot);
-                if i != 0 {
-                    let q = self.draw_pts[i - 1];
-                    o.line(Float3::new(q.x, q.y + 0.4, q.z), Float3::new(p.x, p.y + 0.4, p.z), hot);
+            }
+
+            // The edges in the colour the shape will have, on the ground, a little thinner than its finished edges; the way back to the
+            // first point (a closed shape) and on to the mouse fainter.
+            let ([cr, cg, cb], closed) = self.drawing_look(e, d);
+            // As the finished edges are drawn (`edge_strip`: soft, nothing drawn twice), half as wide; a closed shape's points as discs.
+            use wce_tile_editor::tile_document::{EdgeColours, edge_strip};
+            let height = |x: f32, z: f32| t.terrain_height(x, z) + 0.4;
+            let solid = EdgeColours::new(overlay_colour(cr, cg, cb, 0.85), overlay_colour(cr, cg, cb, 1.0), [cr, cg, cb]);
+            let faint = EdgeColours::new(overlay_colour(cr, cg, cb, 0.4), overlay_colour(cr, cg, cb, 0.5), [cr, cg, cb]);
+            edge_strip(&self.draw_pts, false, closed, DRAWING_HALF, 2.0, &height, solid, &mut o);
+
+            // On the first point (a click there closes the shape): the line goes to it, and it is ringed.
+            let first = self.draw_pts.first().copied().filter(|_| self.close_hover);
+            let mouse = first.or((self.terrain_hit && e.viewport.hovered).then_some(self.snapped_cursor));
+            if let Some(p) = first {
+                let ring = r * 1.6;
+                let mut prev = None;
+                for i in 0..=24 {
+                    let a = i as f32 * std::f32::consts::TAU / 24.0;
+                    let q = Float3::new(
+                        p.x + a.cos() * ring,
+                        t.terrain_height(p.x + a.cos() * ring, p.z + a.sin() * ring) + 0.4,
+                        p.z + a.sin() * ring,
+                    );
+                    if let Some(prev) = prev {
+                        o.line(prev, q, hot);
+                    }
+
+                    prev = Some(q);
                 }
+            }
+
+            if let (Some(last), Some(m)) = (self.draw_pts.last(), mouse) {
+                edge_strip(&[*last, m], false, false, DRAWING_HALF, 2.0, &height, faint, &mut o);
+            }
+
+            if closed
+                && self.draw_pts.len() >= 2
+                && let (Some(first), Some(end)) = (self.draw_pts.first(), mouse.or(self.draw_pts.last().copied()))
+            {
+                edge_strip(&[end, *first], false, false, DRAWING_HALF, 2.0, &height, faint, &mut o);
             }
         }
 
@@ -1704,50 +2162,72 @@ impl TileTool {
 
     fn on_hover(&mut self, e: &mut Editor, ev: &ViewportEvent) {
         self.hover_surface(e, ev);
+        self.close_hover = self.closes_drawing(e, ev);
         self.terrain_hit = false;
         let Some((o, dir)) = e.viewport.ray(ev.x, ev.y) else { return };
         let Some(d) = document(e) else { return };
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
-            let snapped = self.snap_point(d.tile(), hit, self.grab_elem);
+            let snapped = self.snap_point(d, hit, self.grab().map(|g| g.elem));
             self.snapped_cursor = Float3::new(snapped.x, d.tile().terrain_height(snapped.x, snapped.z), snapped.z);
         }
 
-        if let (true, true, Some(g)) = (self.grabbing, self.terrain_hit, self.grab_elem) {
+        let grab = self.grab().map(|g| (g.elem, g.y_offset, g.gesture, g.last, g.others.clone()));
+        if let (true, Some((g, y_offset, gesture, last, others))) = (self.terrain_hit, grab) {
             let (gx, gz) = (self.snapped_cursor.x, self.snapped_cursor.z);
 
             // Entity: Above: on what is under the mouse; else at the height it had above the terrain. A freeform one moved along the
             // normal (PageUp / PageDown) is offset along the terrain's normal there.
             let gy = match (self.modes.unwrap_or_default().0, self.surface_hit) {
                 (crate::settings::SurfaceMode::Entity, Some(h)) => h.point.y,
-                _ => d.tile().terrain_height(gx, gz) + self.grab_y_offset as f32,
+                _ => d.tile().terrain_height(gx, gz) + y_offset as f32,
             };
 
             let n = d.tile().terrain_normal(gx, gz);
-            let k = if d.tile().placement(g) == wce_tile_editor::tile_document::Placement::Freeform { self.grab_normal_offset } else { 0.0 };
+            let k =
+                if d.tile().placement(g) == wce_tile_editor::tile_document::Placement::Freeform { self.grab_normal_offset } else { 0.0 };
             let at = Float3::new(gx + n.x as f32 * k, gy + n.y as f32 * k, gz + n.z as f32 * k);
 
             // Snap to points: a fort piece joins the nearest end of another (it takes that one's rotation), within the tolerance (4 m at 0).
-            let piece = if self.snap_vertices { d.tile().snap_piece(g, Float3::new(self.cursor.x, gy, self.cursor.z), self.piece_reach()) } else { None };
+            let piece = if self.snap_vertices {
+                d.tile().snap_piece(g, Float3::new(self.cursor.x, gy, self.cursor.z), self.piece_reach())
+            } else {
+                None
+            };
             match piece {
                 Some(w) => {
-                    d.set_world_transform(g, &w, self.grab_gesture);
+                    d.set_world_transform(g, &w, gesture);
                 }
 
                 None => {
-                    d.set_world_metres(g, at, self.grab_gesture);
+                    d.set_world_metres(g, at, gesture);
                 }
+            }
+
+            // The rest of the selection by the grabbed one's step.
+            let now = d.tile().world_position(g);
+            let (dx, dz) = (now.x - last.x, now.z - last.z);
+            if !others.is_empty() && (dx != 0.0 || dz != 0.0) {
+                let mut step = Float4x4::IDENTITY;
+                (step.m[0][3], step.m[2][3]) = (dx, dz);
+                d.transform_items(&others, &step, gesture ^ 0x6f74_6865_7273);
+            }
+
+            if let Some(Gesture::Grab(grab)) = &mut self.gesture {
+                grab.last = now;
             }
 
             // An item that follows its surface is tilted to the one it is moved onto.
             if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
                 let n = match (self.modes.unwrap_or_default().0, self.surface_hit) {
-                    (crate::settings::SurfaceMode::Entity, Some(h)) => wce_foundation::math::Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z)),
+                    (crate::settings::SurfaceMode::Entity, Some(h)) => {
+                        wce_foundation::math::Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z))
+                    }
                     _ => d.tile().terrain_normal(gx, gz),
                 };
 
-                d.tilt_to_surface(g, n, self.grab_gesture);
+                d.tilt_to_surface(g, n, gesture);
             }
         }
     }
@@ -1757,14 +2237,23 @@ impl TileTool {
     pub fn begin_grab(&mut self, e: &mut Editor) -> bool {
         let el = primary(e);
         let Some(d) = document(e) else { return false };
-        let Some(el) = el.filter(|_| !self.grabbing) else { return false };
+        let Some(el) = el.filter(|_| self.gesture.is_none()) else { return false };
+        if !d.tile().draggable(el) {
+            self.status = "not draggable: its draggable flag (Inspector) is off, so the mouse does not move it".to_owned();
+            return false;
+        }
+
         let p = d.tile().world_position(el);
-        self.grab_elem = Some(el);
-        self.grab_y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));
+        let y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));
+        let (history, gesture, doc) = (d.history().position(), d.next_gesture(), d.id());
         self.grab_normal_offset = 0.0;
-        self.grab_history = d.history().position();
-        self.grab_gesture = d.next_gesture();
-        self.grabbing = true;
+        let others = selected(e)
+            .into_iter()
+            .filter(|&o| o != el)
+            .filter(|&o| document(e).is_some_and(|d| d.tile().draggable(o)))
+            .map(|o| SourceRef { doc, item: wce_tile_editor::tile_document::item_of(o) })
+            .collect();
+        self.gesture = Some(Gesture::Grab(Grab { elem: el, history, gesture, y_offset, others, last: p, drag: false }));
         self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel; PageUp / PageDown: along the ground's normal (freeform)".to_owned();
         true
     }
@@ -1798,8 +2287,30 @@ impl TileTool {
         };
 
         let offset = if at_mouse && self.terrain_hit { self.snapped_cursor - first } else { Float3::default() };
+
+        // What goes only inside a holder (a deployment zone's region, a siege AI shape) goes into the selected one (or the one the selected
+        // item is in: the one it was copied from).
+        let needs = self
+            .clipboard
+            .iter()
+            .map(|c| wce_tile_editor::tile_document::text_kind(&c.text))
+            .find(|k| !wce_tile::parents::holders(k).is_empty())
+            .map(str::to_owned);
+        let holder = match needs.as_deref() {
+            Some(kind) => match Self::selected_holder(e, kind) {
+                Some(h) => Some(h),
+                None => {
+                    self.status =
+                        format!("select {} to paste the {} into", wce_tile::parents::holders_label(kind), wce_tile::parents::label(kind));
+                    return false;
+                }
+            },
+
+            None => None,
+        };
+
         let Some(d) = document(e) else { return false };
-        let Some(into) = self.new_items_layer(d) else { return false };
+        let Some(into) = holder.or_else(|| self.new_items_layer(d)) else { return false };
         let items = self.clipboard.clone();
         match d.paste(&items, into, offset) {
             Ok(new) => {
@@ -1827,14 +2338,31 @@ impl TileTool {
     /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point or building corner (snap to points; not
     /// `skip`'s own), else onto the nearest edge (snap to edges: polygon and line edges, building footprint sides), else to the grid (each
     /// axis, within the tolerance when there is one).
-    pub(crate) fn snap_point(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>) -> Float3 {
-        self.snap_axes(t, p, skip, true, true)
+    pub(crate) fn snap_point(&self, d: &TileDocument, p: Float3, skip: Option<usize>) -> Float3 {
+        self.snap_axes(d, p, skip, true, true)
+    }
+
+    /// The tile's outlines for the snapping, from the cache while the tile and `skip` are the same.
+    fn outlines_for(&self, d: &TileDocument, skip: Option<usize>) -> Arc<Vec<(Vec<Float3>, bool)>> {
+        let key = (d.id(), d.history().version(), d.tile().structure_version(), skip);
+        let mut cache = self.snap_outlines.borrow_mut();
+        if let Some((k, o)) = cache.as_ref()
+            && *k == key
+        {
+            return o.clone();
+        }
+
+        let o = Arc::new(d.tile().snap_outlines(skip));
+        *cache = Some((key, o.clone()));
+        o
     }
 
     /// `snap_point` for a move along some axes only (a gizmo handle): the grid snaps the axes asked for, the points need both.
-    pub(crate) fn snap_axes(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>, snap_x: bool, snap_z: bool) -> Float3 {
+    pub(crate) fn snap_axes(&self, d: &TileDocument, p: Float3, skip: Option<usize>, snap_x: bool, snap_z: bool) -> Float3 {
         let reach = if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 1.5 };
-        let outlines = if (self.snap_vertices || self.snap_edges) && snap_x && snap_z { t.snap_outlines(skip) } else { vec![] };
+        let t = d.tile();
+        let outlines =
+            if (self.snap_vertices || self.snap_edges) && snap_x && snap_z { self.outlines_for(d, skip) } else { Arc::default() };
         if self.snap_vertices && snap_x && snap_z {
             let mut best = (reach * reach, None);
             let mut try_point = |q: Float3| {
@@ -1859,7 +2387,9 @@ impl TileTool {
             }
         }
 
-        if self.snap_edges && snap_x && snap_z
+        if self.snap_edges
+            && snap_x
+            && snap_z
             && let Some(q) = nearest_on_edges(&outlines, p, reach)
         {
             return Float3::new(q.x, p.y, q.z);
@@ -1889,20 +2419,22 @@ impl TileTool {
     }
 
     pub fn end_grab(&mut self, e: &mut Editor, commit: bool) {
-        if !self.grabbing {
+        if self.grabbing() {
+            self.end_gesture(e, if commit { End::Confirm } else { End::Cancel });
+        }
+    }
+
+    /// Another tile is shown (another tab, a tile opened by a script or a menu): what is still open on the one before is closed there, as
+    /// its release would close it (a G grab as Esc does: it was not confirmed), so that none of it goes on in the new tile with the old one's
+    /// items, points and history.
+    fn follow_tile(&mut self, e: &mut Editor) {
+        let now = document_id(e).unwrap_or(0);
+        let old = std::mem::replace(&mut self.gesture_tile, now);
+        if old == now {
             return;
         }
 
-        self.grabbing = false;
-        let Some(d) = document(e) else { return };
-        let h = d.history_mut();
-        h.break_merge();
-        if !commit {
-            h.jump_to(self.grab_history);
-            h.drop_redo();
-        }
-
-        self.grab_elem = None;
+        self.end_gesture_in(e, old, End::Cancel);
     }
 
     /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
@@ -1948,17 +2480,7 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
         let pts = d.tile().polygon_display_points(sel);
-        let mut best = None;
-        let mut best_t = 1e30f32;
-        for (i, &c) in pts.iter().enumerate() {
-            let t = dot(c - o, dir);
-            if t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015) && t < best_t {
-                best_t = t;
-                best = Some(i);
-            }
-        }
-
-        if let Some(i) = best {
+        if let Some(i) = nearest_handle(pts.iter().copied(), o, dir) {
             self.status = match d.polygon_point(sel, "remove", i, self.cursor, 0) {
                 Ok(()) => {
                     self.poly_point = None;
@@ -2019,7 +2541,7 @@ impl TileTool {
             } else if self.box_select.armed {
                 self.box_select = Default::default();
                 self.status = "box select cancelled".to_owned();
-            } else if self.grabbing {
+            } else if self.grabbing() {
                 self.end_grab(e, false);
             } else if self.drawing || self.placing.is_some() {
                 self.stop_making();
@@ -2029,8 +2551,9 @@ impl TileTool {
         }
 
         // While grabbing: move a freeform item along the ground's normal (a quarter metre; the "more" keys: a metre).
-        if self.grabbing {
-            let steps = [("tile.grab_raise", 0.25), ("tile.grab_lower", -0.25), ("tile.grab_raise_more", 1.0), ("tile.grab_lower_more", -1.0)];
+        if self.grabbing() {
+            let steps =
+                [("tile.grab_raise", 0.25), ("tile.grab_lower", -0.25), ("tile.grab_raise_more", 1.0), ("tile.grab_lower_more", -1.0)];
             let dk: f32 = steps.iter().filter(|(id, _)| pressed(id, true)).map(|(_, d)| d).sum();
             if dk != 0.0 {
                 self.grab_normal_offset += dk;
@@ -2038,7 +2561,7 @@ impl TileTool {
             }
         }
 
-        if self.grabbing && gui::is_mouse_clicked(1) {
+        if self.grabbing() && gui::is_mouse_clicked(1) {
             self.right_used = true;
             self.end_grab(e, false);
         }
@@ -2060,7 +2583,7 @@ impl TileTool {
             self.request_quick_add();
         }
 
-        let grabbing = self.grabbing;
+        let grabbing = self.grabbing();
         if let (Some(s), false) = (sel, grabbing) {
             if pressed("tile.duplicate", false) {
                 let d = document(e).expect("a tile");
@@ -2116,12 +2639,13 @@ impl TileTool {
         }
 
         // Box select (the next drag draws the rectangle).
-        if pressed("tile.box_select", false) && !self.grabbing && self.mode == TileMode::Select && !self.drawing && self.placing.is_none() {
+        if pressed("tile.box_select", false) && !self.grabbing() && self.mode == TileMode::Select && !self.drawing && self.placing.is_none()
+        {
             self.box_select = crate::selection_tools::BoxSelect { armed: true, ..Default::default() };
             self.status = "box select: drag a rectangle (Shift adds, Ctrl takes away; Esc cancels)".to_owned();
         }
 
-        if pressed("tile.delete", false) && !self.grabbing {
+        if pressed("tile.delete", false) && !self.grabbing() {
             let is_polygon = sel.is_some_and(|s| document(e).is_some_and(|d| d.tile().is_polygon(s)));
             if let (Some(s), Some(pt), true) = (sel, self.poly_point, is_polygon) {
                 let d = document(e).expect("a tile");
@@ -2136,7 +2660,8 @@ impl TileTool {
             }
         }
 
-        if self.drawing && pressed("tile.finish_drawing", false) {
+        // A mouse button finishes over the viewport only (a middle click: a middle drag pans).
+        if self.drawing && wce_editor::shortcuts::pressed_here("tile.finish_drawing", false, e.viewport.hovered) {
             self.finish_drawing(e);
         }
     }
@@ -2153,7 +2678,7 @@ impl TileTool {
         self.right_dock = Some(gui::window_dock_id());
 
         let Some(id) = document_id(e) else {
-            gui::text_wrapped("No tile open. File > Open file... (a tile.ted), Tile > Open tile..., or --tile <folder>.");
+            gui::text_wrapped("No tile open. File > Open file... (a tile.ted), File > Open tile..., or --tile <folder>.");
             gui::end();
             return;
         };
@@ -2184,7 +2709,10 @@ impl TileTool {
                 }
 
                 if gui::is_item_hovered() {
-                    gui::set_tooltip(&format!("Saves it as tile.wce in {}", d.project_folder().map(|f| f.display().to_string()).unwrap_or_default()));
+                    gui::set_tooltip(&format!(
+                        "Saves it as tile.wce in {}",
+                        d.project_folder().map(|f| f.display().to_string()).unwrap_or_default()
+                    ));
                 }
             }
         }
@@ -2240,6 +2768,10 @@ impl TileTool {
             d.tile_mut().display_changed();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the cells the links name on the ground in the viewport.");
+        }
+
         gui::same_line();
         gui::checkbox("Follow", &mut self.link_follow);
         if gui::is_item_hovered() {
@@ -2264,26 +2796,45 @@ impl TileTool {
     /// out), counted again after each edit; a click selects one and frames it.
     fn draw_problems_section(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        // Made again once the tile has stayed as it is for a moment: a drag or a brush stroke changes it every frame, and the analyses (every
+        // tree against every polygon, the links, TEd's integrity checks) ran each frame of it, the header closed or not. Meanwhile the count
+        // is the one from before. The first time, at once.
         let stamp = (id, d.history().version(), d.tile().structure_version());
-        if self.problems.as_ref().is_none_or(|(s, _)| *s != stamp) {
-            self.problems = Some((stamp, d.trees_outside_exclusions()));
-            self.river_problems = Some((stamp, d.river_link_problems()));
-            self.link_problems = Some((stamp, d.link_problems()));
-            self.integrity = Some((stamp, d.tile().integrity_errors()));
+        let now = gui::time();
+        if self.checks.wait.is_none_or(|(s, _)| s != stamp) {
+            self.checks.wait = Some((stamp, now));
         }
 
-        let trees = self.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
-        let rivers = self.river_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
-        let links = self.link_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
-        let integrity = self.integrity.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
-        let n = trees.len() + rivers.len() + links.len() + integrity.len();
-        let title = if n == 0 { "Problems (none)###problems".to_owned() } else { format!("{}  Problems ({n})###problems", icons::TRIANGLE_ALERT) };
+        let settled = self.checks.wait.is_some_and(|(_, since)| now - since >= 0.3);
+        let first = self.checks.problems.as_ref().is_none_or(|(s, _)| s.0 != id);
+        if self.checks.problems.as_ref().is_none_or(|(s, _)| *s != stamp) && (settled || first) {
+            self.checks.problems = Some((stamp, Arc::new(d.trees_outside_exclusions())));
+            self.checks.rivers = Some((stamp, Arc::new(d.river_link_problems())));
+            self.checks.links = Some((stamp, Arc::new(d.link_problems())));
+            self.checks.integrity = Some((stamp, Arc::new(d.tile().integrity_errors())));
+        }
+
+        // Shared, not copied each frame.
+        let trees = self.checks.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
+        let rivers = self.checks.rivers.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let links = self.checks.links.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let integrity = self.checks.integrity.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let bridges = self.bridge_check.as_ref().filter(|(s, _)| s.0 == id).map_or(0, |(_, r)| r.problems.len());
+        let n = trees.len() + rivers.len() + links.len() + integrity.len() + bridges;
+        let title =
+            if n == 0 { "Problems (none)###problems".to_owned() } else { format!("{}  Problems ({n})###problems", icons::TRIANGLE_ALERT) };
         if !gui::collapsing_header(&title, 0) {
             return;
         }
 
+        if self.draw_bridge_check(e, id, stamp) {
+            return;
+        }
+
         if n == 0 {
-            gui::text_disabled("Nothing the game would leave out, the rivers meet their link targets, and the links are as the kit makes them.");
+            gui::text_disabled(
+                "Nothing the game would leave out, the rivers meet their link targets, and the links are as the kit makes them.",
+            );
             return;
         }
 
@@ -2298,6 +2849,10 @@ impl TileTool {
                 if gui::selectable(&format!("{}  {msg}   [{ty} '{name}']##integ{i}", icons::TRIANGLE_ALERT), false, 0) {
                     pick_one = Some(*el);
                 }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(SELECT_AND_FRAME_TIP);
+                }
             }
 
             gui::separator();
@@ -2310,11 +2865,18 @@ impl TileTool {
 
         // The links: a click picks the link in the Tile links section.
         if !links.is_empty() {
-            gui::text_wrapped(&format!("{} link problem(s): the tile's links (Tile links) as the game would not use them, or as the kit never makes them.", links.len()));
+            gui::text_wrapped(&format!(
+                "{} link problem(s): the tile's links (Tile links) as the game would not use them, or as the kit never makes them.",
+                links.len()
+            ));
             for (i, p) in links.iter().enumerate() {
                 if gui::selectable(&format!("{}  {}##link{i}", icons::ROUTE, p.message), false, 0) {
                     self.link_pick = Some((p.target, p.index));
                     self.status = "picked in the Tile panel's Tile links".to_owned();
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Click: picks this link in the Tile links section.");
                 }
             }
 
@@ -2323,10 +2885,17 @@ impl TileTool {
 
         let mut pick = None;
         if !rivers.is_empty() {
-            gui::text_wrapped(&format!("{} river link problem(s): the rivers must end just past the edge, level with the centre of the cells the tile offers as river links, for the neighbours' rivers to meet them.", rivers.len()));
+            gui::text_wrapped(&format!(
+                "{} river link problem(s): the rivers must end just past the edge, level with the centre of the cells the tile offers as river links, for the neighbours' rivers to meet them.",
+                rivers.len()
+            ));
             for (i, (el, msg)) in rivers.iter().enumerate() {
                 if gui::selectable(&format!("{}  {msg}##river{i}", icons::WAVES), false, 0) {
                     pick = *el;
+                }
+
+                if el.is_some() && gui::is_item_hovered() {
+                    gui::set_tooltip(SELECT_AND_FRAME_TIP);
                 }
             }
 
@@ -2359,12 +2928,23 @@ impl TileTool {
 
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
 
-        gui::text_wrapped(&format!("{} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out. Put them inside one (or draw one around them).", trees.len()));
+        gui::text_wrapped(&format!(
+            "{} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out. Put them inside one (or draw one around them).",
+            trees.len()
+        ));
         let sc = d.tile().tscene();
         for &el in trees.iter().take(200) {
             let p = d.tile().world_position(el);
-            if gui::selectable(&format!("{}  {}  ({:.0}, {:.0})##problem{el}", icons::TREE_PINE, sc.doc().get(el, "key").unwrap_or_default(), p.x, p.z), false, 0) {
+            if gui::selectable(
+                &format!("{}  {}  ({:.0}, {:.0})##problem{el}", icons::TREE_PINE, sc.doc().get(el, "key").unwrap_or_default(), p.x, p.z),
+                false,
+                0,
+            ) {
                 pick = Some(el);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(SELECT_AND_FRAME_TIP);
             }
         }
 
@@ -2385,7 +2965,10 @@ impl TileTool {
         let p = d.project();
         if self.terrain_hit {
             gui::text(&format!(
-                "cursor: {:.1}, {:.1}  height {:.2} m", self.cursor.x, self.cursor.z, t.terrain_height(self.cursor.x, self.cursor.z),
+                "cursor: {:.1}, {:.1}  height {:.2} m",
+                self.cursor.x,
+                self.cursor.z,
+                t.terrain_height(self.cursor.x, self.cursor.z),
             ));
         } else {
             gui::text_disabled("cursor: -");
@@ -2393,8 +2976,14 @@ impl TileTool {
 
         match &p.height {
             Some(h) => gui::text(&format!(
-                "height map {}x{}, {:.2}..{:.2} m (min {:.3} scale {:.3}){}", h.width(), h.height(), h.min_height(), h.min_height() + h.scale(), p.info.min_height,
-                p.info.scale, if p.info.found { "" } else { "  [no tile database entry: heights stretched over the tile]" },
+                "height map {}x{}, {:.2}..{:.2} m (min {:.3} scale {:.3}){}",
+                h.width(),
+                h.height(),
+                h.min_height(),
+                h.min_height() + h.scale(),
+                p.info.min_height,
+                p.info.scale,
+                if p.info.found { "" } else { "  [no tile database entry: heights stretched over the tile]" },
             )),
             None => gui::text_disabled("no height_map_0.png"),
         }
@@ -2404,7 +2993,10 @@ impl TileTool {
         }
 
         gui::text(&format!(
-            "tile.ted v{}, {} instances{}", t.tscene().project_version(), t.instances().len(), if d.modified() { "  (modified)" } else { "" },
+            "tile.ted v{}, {} instances{}",
+            t.tscene().project_version(),
+            t.instances().len(),
+            if d.modified() { "  (modified)" } else { "" },
         ));
         let h = d.history();
         gui::text(&format!("undo {} / redo {}", h.position(), h.size() - h.position()));
@@ -2417,37 +3009,58 @@ impl TileTool {
         let c = d.tile().placement_counts();
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
         gui::set_next_item_width(90.0);
-        gui::drag_float("tolerance (m)", &mut self.off_tol, 0.05, 0.001, 50.0, "%.3f");
-        gui::same_line();
-        if gui::button("Report off-terrain") {
-            self.off_list = d.tile().off_terrain(self.off_tol, None);
-            self.off_doc = id;
-            self.off_doc_version = Some(d.history().version());
+        gui::drag_float("tolerance (m)", &mut self.checks.off_tol, 0.05, 0.001, 50.0, "%.3f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("How far from the terrain, in metres, a landscape instance may be before the report lists it.");
         }
 
-        let Some(version) = self.off_doc_version.filter(|_| self.off_doc == id) else { return };
+        gui::same_line();
+        if gui::button("Report off-terrain") {
+            self.checks.off_list = d.tile().off_terrain(self.checks.off_tol, None);
+            self.checks.off_doc = id;
+            self.checks.off_doc_version = Some(d.history().version());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Lists the landscape instances further from the terrain than the tolerance, worst first.");
+        }
+
+        let Some(version) = self.checks.off_doc_version.filter(|_| self.checks.off_doc == id) else { return };
+        // The report names elements by number: after an edit they may be others (a delete, a paste), or none. Neither the rows nor the
+        // buttons act on them then.
         if version != d.history().version() {
             gui::text_disabled("(the tile changed since: press Report again)");
+            return;
         }
 
         gui::text(&format!(
-            "{} landscape instance(s) more than {} m off the terrain", self.off_list.len(), wce_formats::c_num::printf_g_prec(f64::from(self.off_tol), 3),
+            "{} landscape instance(s) more than {} m off the terrain",
+            self.checks.off_list.len(),
+            wce_formats::c_num::printf_g_prec(f64::from(self.checks.off_tol), 3),
         ));
-        let elems = self.off_list.iter().map(|o| o.elem).collect::<Vec<_>>();
+        let elems = self.checks.off_list.iter().map(|o| o.elem).collect::<Vec<_>>();
         gui::begin_disabled(elems.is_empty());
         let select_them = gui::button("Select them");
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Selects every instance in the report.");
+        }
+
         gui::same_line();
         if gui::button("Snap them") {
             let n = d.snap_to_terrain(&elems, false);
             self.status = format!("{n} snapped to the terrain");
-            self.off_list.clear();
-            self.off_doc_version = Some(d.history().version());
+            self.checks.off_list.clear();
+            self.checks.off_doc_version = Some(d.history().version());
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts every instance in the report back on the terrain.");
         }
 
         gui::end_disabled();
-        let shown = self.off_list.len().min(12);
+        let shown = self.checks.off_list.len().min(12);
         let mut pick = None;
-        for o in &self.off_list[..shown] {
+        for o in &self.checks.off_list[..shown] {
             let sc = d.tile().tscene();
             let mut n = sc.name(o.elem);
             if n.is_empty() {
@@ -2457,10 +3070,14 @@ impl TileTool {
             if gui::selectable(&format!("{:+.2} m  {n}##off{}", o.dy, o.elem), false, 0) {
                 pick = Some(o.elem);
             }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How far it is above (+) or below (-) the terrain. Click: selects it.");
+            }
         }
 
-        if self.off_list.len() > shown {
-            gui::text_disabled(&format!("... {} more", self.off_list.len() - shown));
+        if self.checks.off_list.len() > shown {
+            gui::text_disabled(&format!("... {} more", self.checks.off_list.len() - shown));
         }
 
         if select_them {
@@ -2475,27 +3092,6 @@ impl TileTool {
         }
     }
 
-    /// The Weather panel: which environment the game picks for the tile (every filter and file); the usual filters are chips over the viewport.
-    fn draw_weather_panel(&mut self, e: &mut Editor) {
-        gui::set_next_window_size(gui::v2(420.0, 420.0), gui::COND_FIRST_USE_EVER);
-        if let Some(dock) = self.right_dock.filter(|&d| d != 0) {
-            gui::set_next_window_dock_id(dock, gui::COND_FIRST_USE_EVER);
-        }
-
-        if !gui::begin("Weather", None, 0) {
-            gui::end();
-            return;
-        }
-
-        if document(e).is_some() {
-            self.weather.draw(e);
-        } else {
-            gui::text_disabled("Open a tile first.");
-        }
-
-        gui::end();
-    }
-
     /// The tile browser: the entries of the kit's tile database (an index, not a scan), a swatch of the tile's colour, its size and
     /// variations. A double-click opens the first variation, the buttons under the list open one.
     fn draw_browser_panel(&mut self, e: &mut Editor) {
@@ -2503,10 +3099,10 @@ impl TileTool {
 
         // The first time the tool is shown, the Tiles list is the panel in front (a tile is opened from it), its filter ready for typing.
         // A few frames: the dock layout is applied on the first ones and would take the focus back.
-        let focus = self.browse_focus_frames > 0;
+        let focus = self.browse.focus_frames > 0;
         if focus {
             gui::set_next_window_focus();
-            self.browse_focus_frames -= 1;
+            self.browse.focus_frames -= 1;
         }
 
         if !gui::begin("Tiles", None, 0) {
@@ -2516,14 +3112,16 @@ impl TileTool {
 
         self.left_dock = Some(gui::window_dock_id());
 
-        if gui::time() - self.browse_roots_time > 2.0 {
-            self.browse_roots = self.kit_roots(e);
-            self.browse_roots_time = gui::time();
+        if gui::time() - self.browse.roots_time > 2.0 {
+            self.browse.roots = self.kit_roots(e);
+            self.browse.roots_time = gui::time();
         }
 
         // Without a kit (or projects) the list is the game's packs: a game whose kit has no tiles (Rome 2) has only those.
-        if self.browse_roots.is_empty() && e.game().features.kit_tiles {
-            gui::text_disabled("No assembly kit found (set the game folder or add Assembly Kits in Settings > Game): the game's packs only.");
+        if self.browse.roots.is_empty() && e.game().features.kit_tiles {
+            gui::text_disabled(
+                "No assembly kit found (set the game folder or add Assembly Kits in Settings > Game): the game's packs only.",
+            );
         }
 
         // The kits' raw tiles, then the game's packs (exported tiles, decompiled into the workspace when opened).
@@ -2531,43 +3129,55 @@ impl TileTool {
         // The projects are named so; a kit by its folder, or by its whole path when several kits have a folder of that name.
         let projects_raw = Self::workspace_dir(e).join("raw_data");
         let folder_name = |r: &Path| r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        let kit_labels = self.browse_roots.iter().map(|r| {
-            if *r == projects_raw {
-                return "projects (tile.wce)".to_owned();
-            }
+        let kit_labels = self
+            .browse
+            .roots
+            .iter()
+            .map(|r| {
+                if *r == projects_raw {
+                    return "projects (tile.wce)".to_owned();
+                }
 
-            let name = folder_name(r);
-            let twins = self.browse_roots.iter().filter(|o| **o != projects_raw && folder_name(o) == name).count();
-            if twins > 1 { r.parent().unwrap_or(r).display().to_string() } else { name }
-        }).collect::<Vec<_>>();
-        self.browse_kit = self.browse_kit.min(self.browse_roots.len());
-        let packs = self.browse_kit == self.browse_roots.len();
+                let name = folder_name(r);
+                let twins = self.browse.roots.iter().filter(|o| **o != projects_raw && folder_name(o) == name).count();
+                if twins > 1 { r.parent().unwrap_or(r).display().to_string() } else { name }
+            })
+            .collect::<Vec<_>>();
+        self.browse.kit = self.browse.kit.min(self.browse.roots.len());
+        let packs = self.browse.kit == self.browse.roots.len();
         gui::set_next_item_width(220.0);
-        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_labels[self.browse_kit].clone() }) {
+        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_labels[self.browse.kit].clone() }) {
             for (i, label) in kit_labels.iter().enumerate() {
-                if gui::selectable(label, i == self.browse_kit, 0) {
-                    self.browse_kit = i;
+                if gui::selectable(label, i == self.browse.kit, 0) {
+                    self.browse.kit = i;
                 }
             }
 
             if gui::selectable(PACKS_LABEL, packs, 0) {
-                self.browse_kit = self.browse_roots.len();
+                self.browse.kit = self.browse.roots.len();
             }
 
             gui::end_combo();
         }
 
-        let packs = self.browse_kit == self.browse_roots.len();
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Where the tiles listed come from: the projects, an Assembly Kit, or the game's packs (exported tiles).");
+        }
+
+        let packs = self.browse.kit == self.browse.roots.len();
 
         gui::same_line();
         gui::set_next_item_width(110.0);
-        gui::combo("##kind", &mut self.browse_kind, &["all kinds", "battle", "campaign"]);
+        gui::combo("##kind", &mut self.browse.kind, &["all kinds", "battle", "campaign"]);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Lists only the battle tiles, only the campaign tiles, or both.");
+        }
         gui::set_next_item_width(-1.0);
-        if focus && self.browse_focus_frames == 0 {
+        if focus && self.browse.focus_frames == 0 {
             gui::set_keyboard_focus_here(0);
         }
 
-        gui::input_text("##tilefilter", Some("filter: set, tile, variation (words are and-ed)"), &mut self.browse_filter, 96, 0);
+        gui::input_text("##tilefilter", Some("filter: set, tile, variation (words are and-ed)"), &mut self.browse.filter, 96, 0);
         // The rows' source: the kit's index, or the packs' databases (read on first use: the game's packs, a few seconds).
         let source: Arc<Vec<wce_formats::tile_index::TileIndexEntry>> = if packs {
             match self.pack_entries(e) {
@@ -2579,23 +3189,45 @@ impl TileTool {
                 }
             }
         } else {
-            let index = TileIndex::shared(&self.browse_roots[self.browse_kit]);
-            if self.browse_index.as_ref().is_none_or(|i| !Arc::ptr_eq(i, &index)) {
-                self.browse_kit_rows = Arc::new(index.entries().to_vec());
-                self.browse_index = Some(index);
+            let index = TileIndex::shared(&self.browse.roots[self.browse.kit]);
+            if self.browse.index.as_ref().is_none_or(|i| !Arc::ptr_eq(i, &index)) {
+                self.browse.kit_rows = Arc::new(index.entries().to_vec());
+                self.browse.index = Some(index);
             }
 
-            self.browse_kit_rows.clone()
+            self.browse.kit_rows.clone()
         };
 
         // The rows, the favourites and the recent tiles of the source, filtered alike (rebuilt when the source, a filter or the marks changed).
         let src = self.browse_source();
         self.marks(e);
-        let key = format!("{}|{}|{}|{:p}|{}", self.browse_kit, self.browse_kind, self.browse_filter, Arc::as_ptr(&source), self.browse_marks_version);
-        if key != self.browse_rows_key {
-            self.browse_rows_key = key;
-            let words = self.browse_filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
-            let kind = self.browse_kind;
+        let key = format!(
+            "{}|{}|{}|{:p}|{}",
+            self.browse.kit,
+            self.browse.kind,
+            self.browse.filter,
+            Arc::as_ptr(&source),
+            self.browse.marks_version
+        );
+        // The projects' extracted tiles (a variation's tile.wce marked), shown so.
+        let extracted_for = (Arc::as_ptr(&source) as usize, self.browse.kit);
+        if extracted_for != self.browse.extracted_for {
+            self.browse.extracted_for = extracted_for;
+            self.browse.extracted.clear();
+            if !packs && self.browse.roots[self.browse.kit] == projects_raw {
+                let raw = &self.browse.roots[self.browse.kit];
+                self.browse.extracted = source
+                    .iter()
+                    .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
+                    .map(|en| en.key.clone())
+                    .collect();
+            }
+        }
+
+        if key != self.browse.rows_key {
+            self.browse.rows_key = key;
+            let words = self.browse.filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
+            let kind = self.browse.kind;
             let pass = |en: &wce_formats::tile_index::TileIndexEntry| {
                 let kind_ok = match kind {
                     1 => en.kind == "battle",
@@ -2606,34 +3238,25 @@ impl TileTool {
                 kind_ok && matches_words(en, &words)
             };
 
-            self.browse_rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
+            self.browse.rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
 
-            // The projects' extracted tiles (a variation's tile.wce marked), shown so.
-            self.browse_extracted.clear();
-            if !packs && self.browse_roots[self.browse_kit] == projects_raw {
-                let raw = &self.browse_roots[self.browse_kit];
-                self.browse_extracted = source.iter()
-                    .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
-                    .map(|en| en.key.clone())
-                    .collect();
-            }
             let by_key: HashMap<&str, usize> = source.iter().enumerate().map(|(i, en)| (en.key.as_str(), i)).collect();
-            let (fav, recent) = self.browse_marks.as_ref().expect("read above");
+            let (fav, recent) = self.browse.marks.as_ref().expect("read above");
             let row = |r: &TileRef| (r.source == src).then(|| by_key.get(r.key.as_str()).copied()).flatten().filter(|&i| pass(&source[i]));
-            self.browse_fav_keys = fav.iter().filter(|r| r.source == src).map(|r| r.key.clone()).collect();
-            self.browse_fav_rows = fav.iter().filter_map(row).collect();
-            self.browse_recent_rows = recent.iter().filter_map(|r| row(r).map(|i| (i, r.variation.clone()))).collect();
+            self.browse.fav_keys = fav.iter().filter(|r| r.source == src).map(|r| r.key.clone()).collect();
+            self.browse.fav_rows = fav.iter().filter_map(row).collect();
+            self.browse.recent_rows = recent.iter().filter_map(|r| row(r).map(|i| (i, r.variation.clone()))).collect();
         }
 
         let footer = gui::frame_height_with_spacing() * 4.5;
         let mut open = None;
         let mut star = None;
         let entries = &source[..];
-        let filtered = !self.browse_filter.trim().is_empty();
+        let filtered = !self.browse.filter.trim().is_empty();
         if gui::begin_child("tilelist", gui::v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
-            let selected_key = &mut self.browse_selected;
-            let favs = &self.browse_fav_keys;
-            let extracted = &self.browse_extracted;
+            let selected_key = &mut self.browse.selected;
+            let favs = &self.browse.fav_keys;
+            let extracted = &self.browse.extracted;
 
             // Favourites and recent tiles first: a double-click opens a favourite's first variation, a recent tile's variation opened.
             let open_row = |en: &wce_formats::tile_index::TileIndexEntry, variation: &str| {
@@ -2642,12 +3265,12 @@ impl TileTool {
             };
 
             let header = |id: &str, title: String| gui::tree_node_ex_id(id, gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &title);
-            if header("favourites", format!("{}  Favourites ({})", icons::STAR, self.browse_fav_rows.len())) {
-                if self.browse_fav_rows.is_empty() {
+            if header("favourites", format!("{}  Favourites ({})", icons::STAR, self.browse.fav_rows.len())) {
+                if self.browse.fav_rows.is_empty() {
                     gui::text_disabled(if filtered { "No favourite matches the filter." } else { "Click a tile's star to add it here." });
                 }
 
-                for (i, &r) in self.browse_fav_rows.iter().enumerate() {
+                for (i, &r) in self.browse.fav_rows.iter().enumerate() {
                     let en = &entries[r];
                     gui::push_id_int(i as i32);
                     let (clicked, double, starred) = tile_row(en, *selected_key == en.key, true, "", extracted.contains(&en.key));
@@ -2669,16 +3292,21 @@ impl TileTool {
                 gui::tree_pop();
             }
 
-            if header("recent", format!("{}  Recently opened ({})", icons::HISTORY, self.browse_recent_rows.len())) {
-                if self.browse_recent_rows.is_empty() {
-                    gui::text_disabled(if filtered { "No recent tile matches the filter." } else { "The last tiles you opened show here." });
+            if header("recent", format!("{}  Recently opened ({})", icons::HISTORY, self.browse.recent_rows.len())) {
+                if self.browse.recent_rows.is_empty() {
+                    gui::text_disabled(if filtered {
+                        "No recent tile matches the filter."
+                    } else {
+                        "The last tiles you opened show here."
+                    });
                 }
 
-                for (i, (r, variation)) in self.browse_recent_rows.iter().enumerate() {
+                for (i, (r, variation)) in self.browse.recent_rows.iter().enumerate() {
                     let en = &entries[*r];
                     gui::push_id_int(i as i32);
                     let note = if variation.is_empty() { String::new() } else { format!("  ({variation})") };
-                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), &note, extracted.contains(&en.key));
+                    let (clicked, double, starred) =
+                        tile_row(en, *selected_key == en.key, favs.contains(&en.key), &note, extracted.contains(&en.key));
                     if clicked {
                         selected_key.clone_from(&en.key);
                     }
@@ -2697,13 +3325,14 @@ impl TileTool {
                 gui::tree_pop();
             }
 
-            let rows = &self.browse_rows;
+            let rows = &self.browse.rows;
             gui::separator_text(&format!("All tiles ({} of {})", rows.len(), source.len()));
             gui::push_id("all");
             gui::clipped(rows.len(), |i| {
                 let en = &entries[rows[i]];
                 gui::push_id_int(i as i32);
-                let (clicked, double, starred) = tile_row(en, *selected_key == en.key, favs.contains(&en.key), "", extracted.contains(&en.key));
+                let (clicked, double, starred) =
+                    tile_row(en, *selected_key == en.key, favs.contains(&en.key), "", extracted.contains(&en.key));
                 if clicked {
                     selected_key.clone_from(&en.key);
                 }
@@ -2726,12 +3355,18 @@ impl TileTool {
             self.toggle_favourite(e, &src, &key);
         }
 
-        match self.browse_rows.iter().map(|&i| &entries[i]).find(|en| en.key == self.browse_selected) {
+        match self.browse.rows.iter().map(|&i| &entries[i]).find(|en| en.key == self.browse.selected) {
             Some(sel) => {
                 gui::text(&sel.name);
                 gui::same_line();
                 gui::text_disabled(&format!(
-                    "{}, {} x {} cells ({} x {} m), {} links, {} link targets", sel.tile_set, sel.width, sel.height, sel.width * 128, sel.height * 128, sel.links,
+                    "{}, {} x {} cells ({} x {} m), {} links, {} link targets",
+                    sel.tile_set,
+                    sel.width,
+                    sel.height,
+                    sel.width * 128,
+                    sel.height * 128,
+                    sel.links,
                     sel.targets,
                 ));
                 for (v, name) in sel.variations.iter().enumerate() {
@@ -2741,6 +3376,10 @@ impl TileTool {
 
                     if gui::button(&format!("{name}##v{v}")) {
                         open = Some((sel.xml.display().to_string(), v.to_string(), sel.key.clone(), name.clone()));
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("Opens this variation of the tile.");
                     }
                 }
             }
@@ -2802,7 +3441,10 @@ impl TileTool {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let p = d.project();
         let Some(en) = &p.entry else {
-            gui::text_colored(theme::warning(), "This tile has no database entry (it is not inside an assembly kit's raw_data/terrain/tiles/<kind>).");
+            gui::text_colored(
+                theme::warning(),
+                "This tile has no database entry (it is not inside an assembly kit's raw_data/terrain/tiles/<kind>).",
+            );
             return;
         };
 
@@ -2818,7 +3460,13 @@ impl TileTool {
         let info = &p.info;
         let footprint = if en.mask().is_empty() { "" } else { ", footprint mask" };
         gui::text_wrapped(&format!(
-            "{} x {} cells, {} x {} m{footprint}, heights {:.2} to {:.2} m", en.width(), en.height(), en.width() * 128, en.height() * 128, info.min_height, info.min_height + info.scale,
+            "{} x {} cells, {} x {} m{footprint}, heights {:.2} to {:.2} m",
+            en.width(),
+            en.height(),
+            en.width() * 128,
+            en.height() * 128,
+            info.min_height,
+            info.min_height + info.scale,
         ));
         if gui::is_item_hovered() {
             gui::set_tooltip("The heights are fitted to the terrain's at every save.");
@@ -2879,10 +3527,26 @@ impl TileTool {
         // The variations; a click opens one, in its own document.
         gui::spacing();
         let mut reopen = None;
-        let common_of = |v: &wce_formats::tile_entry::TileVariation| [v.blend_common.as_str(), v.index_common.as_str(), v.normal_common.as_str()].iter().filter(|m| !m.is_empty()).copied().collect::<Vec<_>>().join(" ");
+        let common_of = |v: &wce_formats::tile_entry::TileVariation| {
+            [v.blend_common.as_str(), v.index_common.as_str(), v.normal_common.as_str()]
+                .iter()
+                .filter(|m| !m.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
         let has_common = vars.iter().any(|v| !common_of(v).is_empty());
-        let columns: &[&str] = if has_common { &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density", "Common maps"] } else { &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density"] };
-        if gui::begin_table("variations", columns.len() as i32, gui::TABLE_SIZING_STRETCH_PROP | gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V, gui::v2(0.0, 0.0)) {
+        let columns: &[&str] = if has_common {
+            &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density", "Common maps"]
+        } else {
+            &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density"]
+        };
+        if gui::begin_table(
+            "variations",
+            columns.len() as i32,
+            gui::TABLE_SIZING_STRETCH_PROP | gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V,
+            gui::v2(0.0, 0.0),
+        ) {
             for c in columns {
                 gui::table_setup_column(c, 0, 0.0);
             }
@@ -2963,7 +3627,9 @@ impl TileTool {
             let sc = d.tile().tscene();
             gui::text(&format!("selected: {} points, area {:.1}", sc.polygon_points(s).len(), sc.polygon_area(s)));
             match self.poly_point {
-                Some(pt) if d.has_handles(s) => gui::text(&format!("point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one")),
+                Some(pt) if d.has_handles(s) => gui::text(&format!(
+                    "point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one"
+                )),
                 Some(pt) => gui::text(&format!("point {pt}: drag to move; Alt+click (or Delete) removes, Alt+click an edge inserts")),
                 None => gui::text_disabled("click a point to edit it; Alt+click a point removes it, Alt+click near an edge inserts one"),
             }
@@ -2978,6 +3644,10 @@ impl TileTool {
                 let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
                 if gui::checkbox("sharp corner (a corner piece instead of a bend)", &mut sharp) {
                     d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The selected point's sharp mark. A turn of 90 degrees or more is a corner whatever the mark.");
                 }
             }
         }
@@ -3002,6 +3672,10 @@ impl TileTool {
         let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
         if gui::checkbox("sharp corner (a mitre instead of a curve)", &mut sharp) {
             d.set_point_attribute(wall, pt, "sharp", wce_tile::properties::format_bool(sharp));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The selected point's sharp mark: the wall turns there in a mitre instead of a curve.");
         }
     }
 
@@ -3034,11 +3708,19 @@ impl TileTool {
         }
 
         match self.poly_point.filter(|&p| p < points.len()) {
-            Some(pt) => gui::text(&format!("point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one (shift+click beyond an end: grows)")),
-            None => gui::text_disabled("click a point to edit it; drag the blue handles to bend; Alt+click a point removes it, Alt+click an edge inserts one"),
+            Some(pt) => gui::text(&format!(
+                "point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one (shift+click beyond an end: grows)"
+            )),
+            None => gui::text_disabled(
+                "click a point to edit it; drag the blue handles to bend; Alt+click a point removes it, Alt+click an edge inserts one",
+            ),
         }
 
         gui::checkbox("all points", &mut self.spline_all);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The values below go to every point of the spline (they show the first point's); off: the selected point's.");
+        }
+
         let Some(shown) = (if self.spline_all { Some(0) } else { self.poly_point.filter(|&p| p < points.len()) }) else { return };
         let targets = if self.spline_all { (0..points.len()).collect::<Vec<_>>() } else { vec![shown] };
         let kind = sc.type_of(s).to_owned();
@@ -3052,6 +3734,12 @@ impl TileTool {
                 self.value_gesture = d.next_gesture();
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!(
+                    "The point's {attr} attribute, as TEd stores it; with all points ticked, every point's. Drag or Ctrl+click to type."
+                ));
+            }
+
             if changed {
                 d.set_spline_value(s, &targets, attr, &wce_tile::ted_scene::format_general(f64::from(v)), self.value_gesture);
             }
@@ -3061,13 +3749,18 @@ impl TileTool {
             }
         }
     }
-
 }
 
 /// A browser row matches when every word is in its location, file name, set or variation names, in any case.
 /// A row of the Tiles panel: the tile's colour, its location, size and variations (and `note`), a package when it is an extracted tile, and
 /// its star on the right. Returns whether the row was clicked, double-clicked, and whether the star was.
-fn tile_row(en: &wce_formats::tile_index::TileIndexEntry, selected: bool, favourite: bool, note: &str, extracted: bool) -> (bool, bool, bool) {
+fn tile_row(
+    en: &wce_formats::tile_index::TileIndexEntry,
+    selected: bool,
+    favourite: bool,
+    note: &str,
+    extracted: bool,
+) -> (bool, bool, bool) {
     gui::color_swatch("##c", [en.red / 255.0, en.green / 255.0, en.blue / 255.0, 1.0], gui::v2(12.0, 12.0));
     gui::same_line();
     let prefix = format!("terrain/tiles/{}/", en.kind);
@@ -3075,7 +3768,12 @@ fn tile_row(en: &wce_formats::tile_index::TileIndexEntry, selected: bool, favour
     let vars = if en.variations.len() > 1 { format!("  +{}v", en.variations.len()) } else { String::new() };
     let width = (gui::content_region_avail().x - gui::frame_height_with_spacing()).max(10.0);
     let mark = if extracted { format!("  {}", icons::PACKAGE) } else { String::new() };
-    let clicked = gui::selectable_sized(&format!("{shown}  {}x{}{vars}{note}{mark}", en.width, en.height), selected, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, gui::v2(width, 0.0));
+    let clicked = gui::selectable_sized(
+        &format!("{shown}  {}x{}{vars}{note}{mark}", en.width, en.height),
+        selected,
+        gui::SELECTABLE_ALLOW_DOUBLE_CLICK,
+        gui::v2(width, 0.0),
+    );
     if extracted && gui::is_item_hovered() {
         gui::set_tooltip("Extracted from the game's packs (wce_extracted_tile)");
     }
@@ -3083,7 +3781,10 @@ fn tile_row(en: &wce_formats::tile_index::TileIndexEntry, selected: bool, favour
     let double = clicked && gui::is_mouse_double_clicked(0);
     gui::same_line();
     gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
-    gui::push_style_color(gui::COL_TEXT, theme::v4(if favourite { theme::palette().highlight } else { theme::mix(theme::dim(), theme::palette_background(), 0.4) }));
+    gui::push_style_color(
+        gui::COL_TEXT,
+        theme::v4(if favourite { theme::palette().highlight } else { theme::mix(theme::dim(), theme::palette_background(), 0.4) }),
+    );
     let starred = gui::small_button(&format!("{}##star", icons::STAR));
     gui::pop_style_color(2);
     if gui::is_item_hovered() {
@@ -3159,7 +3860,12 @@ const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
         a("tile.quick_add", "Tile", "Add here... (the quick-add popup)", &["Space"]),
         a("tile.turn_placing", "Tile: placing and drawing", "Turn what is placed", &["R"]),
         a("tile.turn_placing_back", "Tile: placing and drawing", "Turn what is placed back", &["Shift+R"]),
-        a("tile.finish_drawing", "Tile: placing and drawing", "Finish drawing", &["Enter", "KeypadEnter"]),
+        a(
+            "tile.finish_drawing",
+            "Tile: placing and drawing",
+            "Finish drawing (an open line; a closed shape: also a click on its first point)",
+            &["Enter", "MouseMiddle"],
+        ),
         a("tile.grab_raise", "Tile: grabbing", "Raise along the ground's normal (0.25 m)", &["PageUp"]),
         a("tile.grab_lower", "Tile: grabbing", "Lower along the ground's normal (0.25 m)", &["PageDown"]),
         a("tile.grab_raise_more", "Tile: grabbing", "Raise along the ground's normal (1 m)", &["Shift+PageUp"]),
@@ -3189,6 +3895,294 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
     clicked
 }
 
+impl TileTool {
+    /// A press in the viewport (no flip under way): ends a grab, starts a gesture (a stroke, a handle's drag, Alt rotation), places or draws.
+    fn on_press(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        self.on_hover(e, ev);
+        if self.grabbing() {
+            self.end_grab(e, true);
+            return true;
+        }
+
+        if self.drawing {
+            // A closed shape closes on its first point: that click finishes it.
+            if self.closes_drawing(e, ev) {
+                self.finish_drawing(e);
+            } else if self.terrain_hit {
+                self.draw_pts.push(self.cursor);
+
+                // An angle finder is done at its third point.
+                if self.draw_pts.len() == 3 && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER) {
+                    self.finish_drawing(e);
+                }
+            }
+
+            return true;
+        }
+
+        // The vegetation brush paints (Ctrl: takes away) instead of placing one.
+        if self.painting_trees(e) {
+            if self.terrain_hit {
+                self.begin_stroke(e, ev.ctrl);
+            }
+
+            return true;
+        }
+
+        if let Some(placing) = self.placing.clone() {
+            if self.terrain_hit {
+                let _ = placing;
+                self.status = self.place_at(e, self.cursor).unwrap_or_else(|err| err);
+            }
+
+            return true;
+        }
+
+        // Alt + a click on the selected polygon or spline: on a point removes it, near an edge inserts one.
+        if ev.alt && self.mode == TileMode::Select && self.alt_point_edit(e, ray) {
+            return true;
+        }
+
+        // Alt + a left drag on a selection turns it in place (around its centre).
+        if ev.alt && self.mode == TileMode::Select && self.alt_rotate_begin(e, ev.x) {
+            return true;
+        }
+
+        if self.mode.brush().is_some() {
+            self.paint_erase = ev.ctrl;
+            let kind = self.brush_kind().expect("a brush mode");
+            self.turn_image_brush();
+            let dt = e.clock.dt();
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            if self.terrain_hit && d.project().has_height() {
+                self.gesture = Some(Gesture::TerrainStroke);
+                d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+
+                // A stamp is one click.
+                if self.mode == TileMode::Stamp {
+                    d.end_stroke();
+                    self.gesture = None;
+                }
+            }
+
+            return true;
+        }
+
+        // Select mode: a point light's radius handle starts a drag of the radius.
+        let sel = primary(e);
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        if let (Some((o, dir)), Some(sel)) = (ray, sel)
+            && let Some((k, r)) = d.tile().light_radius_handle(sel)
+            && handle_under_ray(k, o, dir).is_some()
+        {
+            let c = d.tile().world_position(sel);
+            let grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
+            self.gesture = Some(Gesture::LightRadius { light: sel, grab, gesture: d.next_gesture() });
+            return true;
+        }
+
+        // A civilian shelter's target handle starts a drag of the target over the ground.
+        if let (Some((o, dir)), Some(sel)) = (ray, sel)
+            && let Some(k) = d.tile().shelter_target(sel)
+            && handle_under_ray(Float3::new(k.x, k.y + 0.3, k.z), o, dir).is_some()
+        {
+            self.gesture = Some(Gesture::ShelterTarget { shelter: sel, gesture: d.next_gesture() });
+            return true;
+        }
+
+        // A polygon point handle starts a drag, shift + click near an edge inserts a point.
+        let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
+        let pts = d.tile().polygon_display_points(sel);
+        let spline = d.is_spline(sel);
+        let near = |c: Float3| handle_under_ray(c, o, dir);
+
+        // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
+        if d.has_handles(sel) {
+            let mut best = None;
+            let mut best_t = 1e30f32;
+            for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {
+                for (h, out) in [(hin, false), (hout, true)] {
+                    let Some(y) = pts.get(i).map(|p| p.y) else { continue };
+                    if let Some(t) = h.and_then(|h| near(Float3::new(h.x, y + 0.4, h.z))).filter(|&t| t < best_t) {
+                        best_t = t;
+                        best = Some((i, out));
+                    }
+                }
+            }
+
+            if let Some((i, out)) = best {
+                self.poly_point = Some(i);
+                self.gesture = Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture() });
+                return true;
+            }
+        }
+
+        let best = nearest_handle(pts.iter().copied(), o, dir);
+        if best.is_some() {
+            self.poly_point = best;
+            self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
+            return true;
+        }
+
+        if ev.shift && self.terrain_hit {
+            let closed = if spline {
+                d.tile().tscene().doc().get(sel, "closed").is_some_and(|v| v == "1")
+            } else {
+                d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0")
+            };
+
+            let mut at = 0;
+            let mut at_t = 0.5;
+            let mut bd = 1e30f32;
+            let cur = self.cursor;
+            for i in 0..pts.len() {
+                if i + 1 == pts.len() && !closed {
+                    break;
+                }
+
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                let (abx, abz) = (b.x - a.x, b.z - a.z);
+                let l2 = abx * abx + abz * abz;
+                let t = if l2 > 1e-6 { (((cur.x - a.x) * abx + (cur.z - a.z) * abz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                let (dx, dz) = (a.x + abx * t - cur.x, a.z + abz * t - cur.z);
+                let dd = dx * dx + dz * dz;
+                if dd < bd {
+                    bd = dd;
+                    at = i;
+                    at_t = t;
+                }
+            }
+
+            // Beyond an end of an open spline, it grows there.
+            let (op, index, new_point) = match (spline && !closed, at_t) {
+                (true, t) if t <= 0.0 && at == 0 => ("prepend", 0, 0),
+                (true, t) if t >= 1.0 && at + 2 == pts.len() => ("insert", at + 1, at + 2),
+                _ => ("insert", at, at + 1),
+            };
+
+            if d.polygon_point(sel, op, index, cur, 0).is_ok() {
+                self.poly_point = Some(new_point);
+                self.status = "point inserted".to_owned();
+            }
+
+            return true;
+        }
+
+        false
+    }
+
+    /// A drag in the viewport: the gesture under way goes on; none, the camera's (false).
+    fn on_drag(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        match self.gesture {
+            Some(Gesture::AltRotate(_)) => self.alt_rotate_drag(e, ev.x, ev.shift),
+            Some(Gesture::VegStroke(_)) => {
+                self.on_hover(e, ev);
+                if self.terrain_hit {
+                    self.dab(e);
+                }
+            }
+
+            Some(Gesture::TerrainStroke) => {
+                self.on_hover(e, ev);
+                let dt = e.clock.dt();
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                self.turn_image_brush();
+                if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
+                    d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+                }
+            }
+
+            Some(Gesture::ShelterTarget { shelter, gesture }) => {
+                self.on_hover(e, ev);
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if self.terrain_hit {
+                    d.set_shelter_target(shelter, self.cursor, gesture);
+                }
+            }
+
+            Some(Gesture::LightRadius { light, grab, gesture }) => {
+                // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                let c = d.tile().world_position(light);
+                if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
+                    d.set_light_radius(light, at + grab, gesture);
+                }
+            }
+
+            Some(Gesture::Point { handle, gesture }) => {
+                self.on_hover(e, ev);
+                let sel = primary(e);
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
+                    let sc = d.tile().tscene();
+                    let pts = sc.polygon_points(sel);
+                    if let Some(out) = handle {
+                        let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, gesture);
+                    } else if let Some(&point) = pts.get(pt) {
+                        let before = sc.point_position(point).unwrap_or_default();
+                        let after = d.tile().to_local(sel, self.cursor);
+                        if before != after {
+                            let _ = d.polygon_point(sel, "move", pt, self.cursor, gesture);
+                        }
+                    }
+                }
+            }
+
+            // A G grab follows the mouse in `on_hover`; no gesture: the camera's.
+            Some(Gesture::Grab(_)) | None => return false,
+        }
+
+        true
+    }
+
+    /// A click in the viewport: picks what is under the mouse (a model piece, an instance along the ray, a shape on the ground).
+    fn on_click(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
+        if self.placing.is_some() || self.drawing {
+            return true;
+        }
+
+        // Select: the model piece under the cursor (exact), else the nearest instance sphere along the ray.
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN).then(|| elem_of(ev.hit_source.item)).flatten();
+        if hit.is_none()
+            && let Some((o, dir)) = ray
+        {
+            hit = d.tile().pick_instance(o, dir, true);
+        }
+
+        // Last: a polygon or line on the ground there (its outline, else the smallest it is inside), so that a holder's shapes are
+        // picked by a click (a building or a marker there wins).
+        if hit.is_none()
+            && let Some((o, dir)) = ray
+            && let Some(at) = d.tile().pick_terrain(o, dir)
+        {
+            hit = d.tile().pick_polygon(at, Self::handle_size(e));
+        }
+
+        let Some(hit) = hit else {
+            if !ev.ctrl {
+                e.selection.clear();
+            }
+
+            self.poly_point = None;
+            return true;
+        };
+
+        let r = d.ref_of(hit);
+        if ev.ctrl {
+            e.selection.toggle(r);
+        } else if ev.shift {
+            e.selection.add(r);
+        } else {
+            e.selection.set(r);
+        }
+
+        self.poly_point = None;
+        true
+    }
+}
+
 impl Tool for TileTool {
     fn id(&self) -> &str {
         TILE_TOOL_ID
@@ -3205,9 +4199,26 @@ impl Tool for TileTool {
         self.ref_units.game_changed(e);
         let old = std::mem::take(self);
         *self = Self {
-            mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, snap_tolerance: old.snap_tolerance, snap_vertices: old.snap_vertices, snap_edges: old.snap_edges, snap_heights: old.snap_heights, angle_tolerance: old.angle_tolerance, angle_step: old.angle_step, left_dock: old.left_dock,
-            right_dock: old.right_dock, launched: old.launched, launch_job: old.launch_job, launch_worker: old.launch_worker,
-            launch_progress_open: old.launch_progress_open, ..Self::default()
+            mode: old.mode,
+            brush: old.brush,
+            snap_grid: old.snap_grid,
+            grid_m: old.grid_m,
+            snap_tolerance: old.snap_tolerance,
+            snap_vertices: old.snap_vertices,
+            snap_edges: old.snap_edges,
+            snap_heights: old.snap_heights,
+            angle_tolerance: old.angle_tolerance,
+            angle_step: old.angle_step,
+            left_dock: old.left_dock,
+            right_dock: old.right_dock,
+            launch: Launch {
+                launched: old.launch.launched,
+                job: old.launch.job,
+                worker: old.launch.worker,
+                progress_open: old.launch.progress_open,
+                ..Launch::default()
+            },
+            ..Self::default()
         };
     }
 
@@ -3233,8 +4244,8 @@ impl Tool for TileTool {
 
     fn settings_applied(&mut self, _: &mut Editor) {
         // The favourites and recent tiles are read again (the window writes the whole table).
-        self.browse_marks = None;
-        self.browse_marks_version += 1;
+        self.browse.marks = None;
+        self.browse.marks_version += 1;
 
         // The Assembly Kit or the projects folder may have changed.
         self.prefabs = None;
@@ -3261,7 +4272,9 @@ impl Tool for TileTool {
         settings_window::label("Tile projects");
         gui::text_disabled(&draft.kit_projects_dir().display().to_string());
         if draft.game_profile().features.kit_tiles {
-            settings_window::help("Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); extracted tiles go there too. Prefabs are read from both raw_data/art/prefabs, new ones go to the projects'. Save for Assembly Kit writes a tile TEd reads into the kit.");
+            settings_window::help(
+                "Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); extracted tiles go there too. Prefabs are read from both raw_data/art/prefabs, new ones go to the projects'. Save for Assembly Kit writes a tile TEd reads into the kit.",
+            );
         } else {
             settings_window::help(&format!(
                 "Tiles are saved as tile.wce in the projects folder (assembly_kit/, in the kit's layout); {}'s tiles come from its packs (extracted there) and go into mod packs (Tile > Save to mod pack): its kit has no battle tiles.",
@@ -3272,8 +4285,15 @@ impl Tool for TileTool {
         gui::separator_text("New tiles");
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the sea at 0 m", &mut s.show_sea);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A tile opens with the sea drawn at height 0 (the tile's plane and the Map context's sea).");
+        }
+
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the VFX boxes", &mut s.show_vfx_boxes);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A tile opens with the VFXInstance markers drawn; the effects play either way.");
+        }
         settings_window::help("What a tile shows when it opens; the Tile panel and the Tile menu change the open tile.");
 
         gui::separator_text("Launch in game");
@@ -3282,9 +4302,19 @@ impl Tool for TileTool {
             s.launch.delivery = crate::settings::LaunchDelivery::Pack;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The tile goes into a mod pack (data\\wce_launch.pack) loaded first, with the mod packs chosen in the editor; removed when the game exits.",
+            );
+        }
+
         gui::same_line();
         if gui::radio_button("Loose files", s.launch.delivery == crate::settings::LaunchDelivery::Loose) {
             s.launch.delivery = crate::settings::LaunchDelivery::Loose;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The tile goes into a working folder as loose files, with only the mod packs it needs.");
         }
 
         settings_window::help("Loose files lose to the game's packs; a tile falls back to the pack.");
@@ -3293,15 +4323,27 @@ impl Tool for TileTool {
             s.launch.map = crate::settings::LaunchMap::Tile;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle map is the tile on its own.");
+        }
+
         gui::same_line();
         if gui::radio_button("The Map context's placement", s.launch.map == crate::settings::LaunchMap::MapContext) {
             s.launch.map = crate::settings::LaunchMap::MapContext;
         }
 
-        settings_window::help("The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle map is the tile where the Map context places it in its map, with its neighbours.");
+        }
+
+        settings_window::help(
+            "The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.",
+        );
         if !cfg!(windows) {
             settings_window::folder_field("Proton", &mut s.launch.proton, "the one Steam runs the game with");
-            settings_window::help("The game's Windows build runs through Proton, in the game's prefix (start the game once from Steam first) and the Steam Linux Runtime the Proton asks for. A native Linux build is not launched.");
+            settings_window::help(
+                "The game's Windows build runs through Proton, in the game's prefix (start the game once from Steam first) and the Steam Linux Runtime the Proton asks for. A native Linux build is not launched.",
+            );
         }
 
         // The armies are the game's (Settings > Game shows which): empty keys are its vanilla ones, shown as the hints.
@@ -3322,6 +4364,12 @@ impl Tool for TileTool {
             settings_window::label(label);
             gui::set_next_item_width(-1.0);
             gui::input_text(&format!("##launch {label}"), Some(&hint), value, 256, 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!(
+                    "The {} Launch in game uses (the game's keys); empty: the game's own, the grey hint.",
+                    label.to_lowercase()
+                ));
+            }
         }
 
         settings_window::help(&format!(
@@ -3348,7 +4396,6 @@ impl Tool for TileTool {
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Tile", right);
         gui::dock_builder_dock_window("Inspector", right);
-        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Minimap", right_bottom);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -3373,6 +4420,7 @@ impl Tool for TileTool {
     }
 
     fn update(&mut self, e: &mut Editor) {
+        self.follow_tile(e);
         self.update_launch(e);
 
         // The Inspector's "Open in Prefab tool".
@@ -3422,7 +4470,12 @@ impl Tool for TileTool {
                     e.viewport.controller().set_orbit(0.8, 0.6, STAGE_ORBIT_M, p);
                 }
 
-                None => e.viewport.controller().set_orbit(0.8, 0.6, (ex.max(ez) * 1.2) as f32, Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32)),
+                None => e.viewport.controller().set_orbit(
+                    0.8,
+                    0.6,
+                    (ex.max(ez) * 1.2) as f32,
+                    Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32),
+                ),
             }
 
             self.weather.tile_changed(e, id);
@@ -3432,13 +4485,11 @@ impl Tool for TileTool {
             self.prefabs = None;
             self.poly_point = None;
             self.drawing = false;
-            self.grabbing = false;
-            self.stroke_active = false;
             self.mode = TileMode::Select;
             self.context.tile_changed(e, id);
 
             // The Scene tree in front, not the Tiles list.
-            self.browse_focus_frames = 0;
+            self.browse.focus_frames = 0;
             self.scene_focus_frames = 3;
         }
 
@@ -3462,10 +4513,15 @@ impl Tool for TileTool {
             d.tile_mut().set_game_layers(&mut e.scene, layers);
         }
 
-        // The weather follows the tile's climate (a map context's placement gives it its own).
-        if let Some(climate) = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().climate.clone()) {
-            self.weather.follow_climate(e, &climate);
+        // The weather follows the tile's climate and season (the chips, a map context's placement, `tile_terrain`).
+        if let Some(look) = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().clone()) {
+            self.weather.follow_look(e, &look.climate, &look.season);
         }
+
+        // The weather's campaign follows the Map context's map while it shows one.
+        let campaign = self.context.loaded.as_ref().filter(|_| self.context.shown).map(|(name, _, _)| name.clone());
+        self.weather.follow_campaign(e, campaign.as_deref());
+        self.weather.update(e);
 
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
@@ -3505,7 +4561,10 @@ impl Tool for TileTool {
             let (t, p) = (d.tile(), d.project());
             let low = p.height.as_ref().map_or(0.0, |h| h.min_height());
             let y = e.viewport.map_frame.map_or(low as f32, |m| m.sea_y);
-            wce_editor::coords::BattleFrame { origin: Float3::new((t.extent_x() * 0.5) as f32, y, (t.extent_z() * 0.5) as f32), yaw: e.scene.world_yaw }
+            wce_editor::coords::BattleFrame {
+                origin: Float3::new((t.extent_x() * 0.5) as f32, y, (t.extent_z() * 0.5) as f32),
+                yaw: e.scene.world_yaw,
+            }
         });
 
         // Structural edits move element indices: the command says what is selected afterwards.
@@ -3567,9 +4626,9 @@ impl Tool for TileTool {
         d.tile_mut().update_fire(&mut e.scene, now);
         d.update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at, yaw, normal);
-        let hot = if self.light_drag.is_some() {
+        let hot = if matches!(self.gesture, Some(Gesture::LightRadius { .. })) {
             Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE)
-        } else if self.target_drag.is_some() {
+        } else if matches!(self.gesture, Some(Gesture::ShelterTarget { .. })) {
             Some(wce_tile_editor::tile_document::SHELTER_TARGET_HANDLE)
         } else {
             self.poly_point
@@ -3599,7 +4658,6 @@ impl Tool for TileTool {
 
         {
             wce_foundation::wce_prof!("tile.panel.weather");
-            self.draw_weather_panel(e);
         }
 
         if tile {
@@ -3618,6 +4676,9 @@ impl Tool for TileTool {
         self.draw_falloff_window(e);
         self.draw_extract_prompt(e);
         self.draw_kit_prompt(e);
+        self.draw_flip_tile_busy(e);
+        self.draw_import_prompt(e);
+        self.draw_share_notice();
         self.draw_launch_prompt(e);
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
@@ -3632,28 +4693,14 @@ impl Tool for TileTool {
             return;
         }
 
-        if gui::menu_item("New tile...", None, false, true) {
-            self.open_new_tile_dialog();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
-        }
-
-        if gui::menu_item("Save tile as...", None, false, document(e).is_some()) {
-            self.open_save_tile_as(e);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("TEd's Save Tile As: the tile as another battle tile (tile set, name, variation) in the projects folder, with its own database entry; the document goes on as it.");
-        }
-
         if gui::menu_item("Tile database...", None, false, true) {
             self.open_tile_database(e);
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("TEd's Tile Database Management: the battle tile sets of the kit and of the projects with their tiles, and New tile set (into the projects' tile database).");
+            gui::set_tooltip(
+                "TEd's Tile Database Management: the battle tile sets of the kit and of the projects with their tiles, and New tile set (into the projects' tile database).",
+            );
         }
 
         if gui::menu_item("Resize tile...", None, false, document(e).is_some()) {
@@ -3661,7 +4708,9 @@ impl Tool for TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("TEd's Resize Tile: a new size in cells, the old tile centred in it (or at a cell you give), the new area flat or carried out from the edges. Saved and opened again; no undo.");
+            gui::set_tooltip(
+                "TEd's Resize Tile: a new size in cells, the old tile centred in it (or at a cell you give), the new area flat or carried out from the edges. Saved and opened again; no undo.",
+            );
         }
 
         if gui::menu_item("Import height map...", None, false, document(e).is_some()) {
@@ -3669,58 +4718,27 @@ impl Tool for TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Replace the open tile's heights with a picture's (or add them): black and white at the heights you give. One undo step.");
+            gui::set_tooltip(
+                "Replace the open tile's heights with a picture's (or add them): black and white at the heights you give. One undo step.",
+            );
         }
 
-        if gui::menu_item("Open tile...", None, false, true) {
-            let filters = [
-                ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()), ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
-                ("All files".to_owned(), "*.*".to_owned()),
-            ];
-            if let Some(p) = file_dialog(false, Path::new(""), &filters) {
-                let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
-                e.status(&msg, false);
-            }
-        }
-
-        if gui::menu_item("Migrate old extracted projects", None, false, true) {
-            let msg = self.migrate_extracted(e).unwrap_or_else(|m| format!("migration failed: {m}"));
-            e.status(&msg, false);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Moves the projects of tiles extracted by older versions (<tile>_extracted folders) to their own names, marked as extracted tiles; one whose place has a project, or that is open, stays (see the log).");
-        }
-
-        if gui::menu_item("Open exported tile...", None, false, true)
-            && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
-        {
-            let msg = self.extract_or_ask(e, &dir.display().to_string());
-            e.status(&msg, false);
-        }
-
-        let label = if self.launch_job.is_some() { "Launch in game (preparing)" } else if self.launched.is_some() { "Launch in game (running)" } else { "Launch in game" };
-        if gui::menu_item(label, None, false, document(e).is_some() && self.launched.is_none() && self.launch_job.is_none()) {
+        let label = if self.launch.job.is_some() {
+            "Launch in game (preparing)"
+        } else if self.launch.launched.is_some() {
+            "Launch in game (running)"
+        } else {
+            "Launch in game"
+        };
+        if gui::menu_item(label, None, false, document(e).is_some() && self.launch.launched.is_none() && self.launch.job.is_none()) {
             let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
             e.status(&msg, false);
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Exports the tile into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into a battle on it, with the mod packs chosen in the editor; used_mods.txt is not touched. The map and the armies: Settings > Tile.");
-        }
-
-        // A game without the tiles in its kit (Rome 2) saves into mod packs only.
-        if e.game().features.kit_tiles {
-            gui::separator();
-            let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
-            if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
-                let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
-                e.status(&msg, false);
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.");
-            }
+            gui::set_tooltip(
+                "Exports the tile into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into a battle on it, with the mod packs chosen in the editor; used_mods.txt is not touched. The map and the armies: Settings > Tile.",
+            );
         }
 
         gui::separator();
@@ -3729,20 +4747,26 @@ impl Tool for TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip(&format!("The street graph, wall edges, fort perimeter, approach lines and deployment zones, into '{AUTOGEN_LAYER}'; the old layout stops being exported (docs/plans/siege_ai.md)."));
+            gui::set_tooltip(&format!(
+                "The street graph, wall edges, fort perimeter, approach lines and deployment zones, into '{AUTOGEN_LAYER}'; the old layout stops being exported (docs/plans/siege_ai.md)."
+            ));
         }
 
         gui::separator();
-        if gui::menu_item("Tile browser", None, false, true) {
-            gui::set_window_focus("Tiles");
-        }
-
         if let Some(d) = document(e) {
             let t = d.tile_mut();
             let mut changed = false;
             let v = t.display_mut();
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Markers further from the camera than the draw distances below are not drawn; off: every marker is.");
+            }
+
             gui::menu_item_toggle("Tile border", &mut v.show_border);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Draws the tile's own rectangle, inside the bordered height map.");
+            }
+
             gui::menu_item_toggle("Tint freeform instances", &mut v.tint_freeform);
             if gui::is_item_hovered() {
                 gui::set_tooltip(FREEFORM_TINT_TIP);
@@ -3753,6 +4777,10 @@ impl Tool for TileTool {
                 set_vfx_boxes(e, vfx);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Draws the VFXInstance markers (the effects play either way); kept in the settings for the next tiles.");
+            }
+
             let Some(d) = document(e) else { return gui::end_menu() };
             let t = d.tile_mut();
             let v = t.display_mut();
@@ -3760,10 +4788,21 @@ impl Tool for TileTool {
             gui::text("Draw distances (m)");
             gui::set_next_item_width(160.0);
             changed |= gui::drag_float("vegetation", &mut v.veg_distance, 5.0, 20.0, 20000.0, "%.3f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Tree markers further from the camera than this (metres) are not drawn, with distance culling on.");
+            }
+
             gui::set_next_item_width(160.0);
             changed |= gui::drag_float("decals", &mut v.decal_distance, 5.0, 20.0, 20000.0, "%.3f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Decal markers further from the camera than this (metres) are not drawn, with distance culling on.");
+            }
+
             gui::set_next_item_width(160.0);
             changed |= gui::drag_float("others", &mut v.other_distance, 5.0, 20.0, 40000.0, "%.3f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Every other marker further from the camera than this (metres) is not drawn, with distance culling on.");
+            }
             if changed {
                 t.display_changed();
             }
@@ -3772,7 +4811,81 @@ impl Tool for TileTool {
         gui::end_menu();
     }
 
+    fn file_menu(&mut self, e: &mut Editor, part: wce_editor::tool::FileMenu) {
+        use wce_editor::tool::FileMenu;
+        match part {
+            FileMenu::Open => {
+                if gui::menu_item("New tile...", None, false, true) {
+                    self.open_new_tile_dialog();
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
+                }
+
+                if gui::menu_item("Open tile...", None, false, true) {
+                    let filters = [
+                        ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()),
+                        ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
+                        ("All files".to_owned(), "*.*".to_owned()),
+                    ];
+                    if let Some(p) = file_dialog(false, Path::new(""), &filters) {
+                        let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
+                        e.status(&msg, false);
+                    }
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Opens a tile from a file: its tile database entry (.xml), a tile.wce or a tile.ted.");
+                }
+
+                if gui::menu_item("Open exported tile...", None, false, true)
+                    && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
+                {
+                    let msg = self.extract_or_ask(e, &dir.display().to_string());
+                    e.status(&msg, false);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "Extracts a tile exported by BOB (a terrain/tiles/.../<variation> folder) into a project and opens it; asks before replacing a project.",
+                    );
+                }
+            }
+
+            FileMenu::Save => {
+                if gui::menu_item("Save tile as...", None, false, document(e).is_some()) {
+                    self.open_save_tile_as(e);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "TEd's Save Tile As: the tile as another battle tile (tile set, name, variation) in the projects folder, with its own database entry; the document goes on as it.",
+                    );
+                }
+            }
+
+            FileMenu::Revert => {
+                // A game without the tiles in its kit (Rome 2) saves into mod packs only.
+                if e.game().features.kit_tiles {
+                    let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
+                    if gui::menu_item("To the Assembly Kit's version", None, false, project.is_some_and(|p| p.0)) {
+                        let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
+                        e.status(&msg, false);
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(
+                            "Opens the Assembly Kit's copy of this tile in place of the project (an extracted tile: the game's, extracted again); saving it replaces the project, closing it without saving keeps the project as it was.",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn viewport_input(&mut self, e: &mut Editor, ev: &ViewportEvent) -> bool {
+        self.follow_tile(e);
         let Some(id) = document_id(e) else { return false };
         if self.box_select_input(e, ev.kind, ev.x, ev.y) {
             return true;
@@ -3783,6 +4896,17 @@ impl Tool for TileTool {
             ViewportEventKind::Hover => {
                 self.on_hover(e, ev);
                 false
+            }
+
+            // A grab of the move gizmo's centre: the release confirms it.
+            ViewportEventKind::Release if self.grab().is_some_and(|g| g.drag) => {
+                self.end_grab(e, true);
+                true
+            }
+
+            ViewportEventKind::Drag if self.grab().is_some_and(|g| g.drag) => {
+                self.on_hover(e, ev);
+                true
             }
 
             // The menu of the selection; not while placing or drawing (only Esc stops them), nor for the click that cancelled a grab.
@@ -3805,323 +4929,20 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Click if self.flip.is_some() => true,
-            ViewportEventKind::Press => {
-                self.on_hover(e, ev);
-                if self.grabbing {
-                    self.end_grab(e, true);
-                    return true;
-                }
+            ViewportEventKind::Press => self.on_press(e, ev, id, ray),
 
-                if self.drawing {
-                    if self.terrain_hit {
-                        self.draw_pts.push(self.cursor);
-                    }
+            ViewportEventKind::Drag => self.on_drag(e, ev, id, ray),
 
-                    return true;
-                }
-
-                // The vegetation brush paints (Ctrl: takes away) instead of placing one.
-                if self.painting_trees(e) {
-                    if self.terrain_hit {
-                        self.begin_stroke(e, ev.ctrl);
-                    }
-
-                    return true;
-                }
-
-                if let Some(placing) = self.placing.clone() {
-                    if self.terrain_hit {
-                        let _ = placing;
-                        self.status = self.place_at(e, self.cursor).unwrap_or_else(|err| err);
-                    }
-
-                    return true;
-                }
-
-                // Alt + a click on the selected polygon or spline: on a point removes it, near an edge inserts one.
-                if ev.alt && self.mode == TileMode::Select && self.alt_point_edit(e, ray) {
-                    return true;
-                }
-
-                // Alt + a left drag on a selection turns it in place (around its centre).
-                if ev.alt && self.mode == TileMode::Select && self.alt_rotate_begin(e, ev.x) {
-                    return true;
-                }
-
-                if self.mode.brush().is_some() {
-                    self.paint_erase = ev.ctrl;
-                    let kind = self.brush_kind().expect("a brush mode");
-                    self.turn_image_brush();
-                    let dt = e.clock.dt();
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if self.terrain_hit && d.project().has_height() {
-                        self.stroke_active = true;
-                        d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
-
-                        // A stamp is one click.
-                        if self.mode == TileMode::Stamp {
-                            d.end_stroke();
-                            self.stroke_active = false;
-                        }
-                    }
-
-                    return true;
-                }
-
-                // Select mode: a point light's radius handle starts a drag of the radius.
-                let sel = primary(e);
-                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                if let (Some((o, dir)), Some(sel)) = (ray, sel)
-                    && let Some((k, r)) = d.tile().light_radius_handle(sel)
-                {
-                    let t = dot(k - o, dir);
-                    if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
-                        let c = d.tile().world_position(sel);
-                        self.light_grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
-                        self.light_drag = Some(sel);
-                        self.light_gesture = d.next_gesture();
-                        return true;
-                    }
-                }
-
-                // A civilian shelter's target handle starts a drag of the target over the ground.
-                if let (Some((o, dir)), Some(sel)) = (ray, sel)
-                    && let Some(k) = d.tile().shelter_target(sel)
-                {
-                    let k = Float3::new(k.x, k.y + 0.3, k.z);
-                    let t = dot(k - o, dir);
-                    if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
-                        self.target_drag = Some(sel);
-                        self.target_gesture = d.next_gesture();
-                        return true;
-                    }
-                }
-
-                // A polygon point handle starts a drag, shift + click near an edge inserts a point.
-                let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
-                let pts = d.tile().polygon_display_points(sel);
-                let spline = d.is_spline(sel);
-                let near = |c: Float3| {
-                    let t = dot(c - o, dir);
-                    (t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015)).then_some(t)
-                };
-
-                // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
-                if d.has_handles(sel) {
-                    let mut best = None;
-                    let mut best_t = 1e30f32;
-                    for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {
-                        for (h, out) in [(hin, false), (hout, true)] {
-                            if let Some(t) = h.and_then(|h| near(Float3::new(h.x, pts[i].y + 0.4, h.z))).filter(|&t| t < best_t) {
-                                best_t = t;
-                                best = Some((i, out));
-                            }
-                        }
-                    }
-
-                    if let Some((i, out)) = best {
-                        self.poly_point = Some(i);
-                        self.spline_handle = Some(out);
-                        self.point_drag = true;
-                        self.point_gesture = d.next_gesture();
-                        return true;
-                    }
-                }
-
-                self.spline_handle = None;
-                let mut best = None;
-                let mut best_t = 1e30f32;
-                for (i, &c) in pts.iter().enumerate() {
-                    let t = dot(c - o, dir);
-                    if t <= 0.0 {
-                        continue;
-                    }
-
-                    let perp = length(c - (o + dir * t));
-                    if perp < 1.2f32.max(t * 0.015) && t < best_t {
-                        best_t = t;
-                        best = Some(i);
-                    }
-                }
-
-                if best.is_some() {
-                    self.poly_point = best;
-                    self.point_drag = true;
-                    self.point_gesture = d.next_gesture();
-                    return true;
-                }
-
-                if ev.shift && self.terrain_hit {
-                    let closed = if spline {
-                        d.tile().tscene().doc().get(sel, "closed").is_some_and(|v| v == "1")
-                    } else {
-                        d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0")
-                    };
-
-                    let mut at = 0;
-                    let mut at_t = 0.5;
-                    let mut bd = 1e30f32;
-                    let cur = self.cursor;
-                    for i in 0..pts.len() {
-                        if i + 1 == pts.len() && !closed {
-                            break;
-                        }
-
-                        let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
-                        let (abx, abz) = (b.x - a.x, b.z - a.z);
-                        let l2 = abx * abx + abz * abz;
-                        let t = if l2 > 1e-6 { (((cur.x - a.x) * abx + (cur.z - a.z) * abz) / l2).clamp(0.0, 1.0) } else { 0.0 };
-                        let (dx, dz) = (a.x + abx * t - cur.x, a.z + abz * t - cur.z);
-                        let dd = dx * dx + dz * dz;
-                        if dd < bd {
-                            bd = dd;
-                            at = i;
-                            at_t = t;
-                        }
-                    }
-
-                    // Beyond an end of an open spline, it grows there.
-                    let (op, index, new_point) = match (spline && !closed, at_t) {
-                        (true, t) if t <= 0.0 && at == 0 => ("prepend", 0, 0),
-                        (true, t) if t >= 1.0 && at + 2 == pts.len() => ("insert", at + 1, at + 2),
-                        _ => ("insert", at, at + 1),
-                    };
-
-                    if d.polygon_point(sel, op, index, cur, 0).is_ok() {
-                        self.poly_point = Some(new_point);
-                        self.status = "point inserted".to_owned();
-                    }
-
-                    return true;
-                }
-
-                false
-            }
-
-            ViewportEventKind::Drag => {
-                if self.alt_rotate.is_some() {
-                    self.alt_rotate_drag(e, ev.x, ev.shift);
-                    return true;
-                }
-
-                if self.stroke.is_some() {
-                    self.on_hover(e, ev);
-                    if self.terrain_hit {
-                        self.dab(e);
-                    }
-
-                    return true;
-                }
-
-                if self.stroke_active {
-                    self.on_hover(e, ev);
-                    let dt = e.clock.dt();
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    self.turn_image_brush();
-                    if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
-                        d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
-                    }
-                } else if let Some(shelter) = self.target_drag {
-                    self.on_hover(e, ev);
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if self.terrain_hit {
-                        d.set_shelter_target(shelter, self.cursor, self.target_gesture);
-                    }
-                } else if let Some(light) = self.light_drag {
-                    // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    let c = d.tile().world_position(light);
-                    if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
-                        d.set_light_radius(light, at + self.light_grab, self.light_gesture);
-                    }
-                } else if self.point_drag {
-                    self.on_hover(e, ev);
-                    let sel = primary(e);
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
-                        let sc = d.tile().tscene();
-                        let pts = sc.polygon_points(sel);
-                        if let Some(out) = self.spline_handle {
-                            let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, self.point_gesture);
-                        } else if let Some(&point) = pts.get(pt) {
-                            let before = sc.point_position(point).unwrap_or_default();
-                            let after = d.tile().to_local(sel, self.cursor);
-                            if before != after {
-                                let _ = d.polygon_point(sel, "move", pt, self.cursor, self.point_gesture);
-                            }
-                        }
-                    }
-                }
-
-                self.stroke_active || self.point_drag || self.light_drag.is_some() || self.target_drag.is_some()
-            }
-
+            // The release ends what the press began (a G grab waits for its click).
             ViewportEventKind::Release => {
-                if self.alt_rotate.take().is_some() {
-                    if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
-                        d.history_mut().break_merge();
-                    }
-
-                    return true;
-                }
-
-                if self.stroke.is_some() {
-                    self.status = self.end_stroke_veg(e);
-                    return true;
-                }
-
-                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                if self.stroke_active {
-                    self.stroke_active = false;
-                    d.end_stroke();
-                }
-
-                if self.point_drag || self.light_drag.is_some() || self.target_drag.is_some() {
-                    self.point_drag = false;
-                    self.light_drag = None;
-                    self.target_drag = None;
-                    d.history_mut().break_merge();
+                if self.gesture.as_ref().is_some_and(|g| !matches!(g, Gesture::Grab(_))) {
+                    self.end_gesture_in(e, id, End::Confirm);
                 }
 
                 true
             }
 
-            ViewportEventKind::Click => {
-                // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
-                if self.placing.is_some() || self.drawing {
-                    return true;
-                }
-
-                // Select: the model piece under the cursor (exact), else the nearest instance sphere along the ray.
-                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-                let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN).then(|| elem_of(ev.hit_source.item)).flatten();
-                if hit.is_none()
-                    && let Some((o, dir)) = ray
-                {
-                    hit = d.tile().pick_instance(o, dir, true);
-                }
-
-                let Some(hit) = hit else {
-                    if !ev.ctrl {
-                        e.selection.clear();
-                    }
-
-                    self.poly_point = None;
-                    return true;
-                };
-
-                let r = d.ref_of(hit);
-                if ev.ctrl {
-                    e.selection.toggle(r);
-                } else if ev.shift {
-                    e.selection.add(r);
-                } else {
-                    e.selection.set(r);
-                }
-
-                self.poly_point = None;
-                true
-            }
+            ViewportEventKind::Click => self.on_click(e, ev, id, ray),
         }
     }
 
@@ -4146,15 +4967,25 @@ impl Tool for TileTool {
 
         // The ground views' chip at the top right, left of the viewport's camera and snap chips, the placement chips (while placing) left of
         // it, beside the compass too (the viewport moves the whole row under it when it does not fit).
-        let placing = self.placing.is_some() || self.grabbing;
-        e.viewport.tool_chips_width = self.ground_chip_width + self.tech_chip_width + self.areas_chip_width + 8.0 + if placing { 4.0 + self.place_chips_width } else { 0.0 };
+        let placing = self.placing.is_some() || self.grabbing();
+        e.viewport.tool_chips_width = self.ground_chip_width
+            + self.tech_chip_width
+            + self.areas_chip_width
+            + 8.0
+            + if placing { 4.0 + self.place_chips_width } else { 0.0 };
         let top = e.viewport.chips_top;
         let size = gui::v2(size.x - e.viewport.chips_width - 4.0, size.y);
         self.draw_ground_chip(e, origin, size, top);
         self.draw_tech_chip(e, origin, size, top);
         self.sync_polygon_look(e);
         self.draw_areas_chip(e, origin, size, top);
-        self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 12.0, size.y), top);
+        self.draw_placement_chips(
+            e,
+            origin,
+            gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 12.0, size.y),
+            top,
+        );
+        self.draw_measure_labels(e, origin);
         self.draw_box_select(origin);
         self.draw_context_menu(e);
         self.context.draw_minimap(e, origin, size);
@@ -4175,14 +5006,61 @@ impl Tool for TileTool {
         self.inspect_making(e, ins) || self.inspect_brush(e, ins)
     }
 
+    fn inspector_subject(&mut self, e: &Editor) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let painting_trees = self.painting_trees(e);
+        let set = self.scratch_set.as_ref().map(|s| s.entries.len());
+        let brush = (self.mode != TileMode::Select).then(|| {
+            let b = &self.brush;
+            format!("{:?} {} {} {} {} {} {:?}", self.mode, b.radius_m, b.strength, b.falloff, b.flatten_height, b.opacity, b.paint_mode)
+        });
+
+        if self.flip.is_none() && !painting_trees && set.is_none() && self.placing.is_none() && !self.drawing && brush.is_none() {
+            return None;
+        }
+
+        // What it places, not where (the draft's kind, not its points): the Inspector's sections, and the brush's numbers it shows.
+        let mut h = std::hash::DefaultHasher::new();
+        (self.flip.is_some(), painting_trees, set, format!("{:?}", self.placing), self.drawing, self.making.as_deref()).hash(&mut h);
+        (self.draft.as_ref().map(|d| d.kind.as_str()), brush).hash(&mut h);
+        Some(h.finish())
+    }
+
     fn inspect_below(&mut self, e: &mut Editor) {
+        // A holder alone selected: the buttons that draw its shapes (made only there).
+        self.inspect_holder(e);
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
+            self.inspect_measure(e, id);
+            self.inspect_angle(e, id);
+            self.inspect_building_spline(e, id);
         }
     }
 
-    fn toolbar(&mut self, e: &mut Editor) {
-        self.draw_toolbar(e);
+    fn viewport_modes(&mut self, e: &mut Editor) -> bool {
+        self.draw_mode_chips(e)
+    }
+
+    fn leave_mode(&mut self, _: &mut Editor) {
+        self.set_mode(TileMode::Select);
+    }
+
+    fn can_centre_drag(&self, e: &Editor) -> bool {
+        self.mode == TileMode::Select
+            && self.gesture.is_none()
+            && !self.drawing
+            && self.placing.is_none()
+            && self.flip.is_none()
+            && primary(e).is_some()
+    }
+
+    fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
+        let begun = self.begin_grab(e);
+        if let Some(Gesture::Grab(g)) = &mut self.gesture {
+            g.drag = true;
+        }
+
+        begun
     }
 
     fn camera_chip(&mut self, e: &mut Editor) {
@@ -4200,7 +5078,16 @@ impl Tool for TileTool {
     }
 
     fn unsaved_work(&self) -> Vec<String> {
-        self.scratch_set.iter().filter(|s| !s.entries.is_empty()).map(|s| format!("the new vegetation set ({} kind(s) of tree; Tile tool, the Inspector)", s.entries.len())).collect()
+        self.scratch_set
+            .iter()
+            .filter(|s| !s.entries.is_empty())
+            .map(|s| format!("the new vegetation set ({} kind(s) of tree; Tile tool, the Inspector)", s.entries.len()))
+            .collect()
+    }
+
+    fn share_menu(&mut self, e: &mut Editor) -> bool {
+        self.share_menu_items(e);
+        true
     }
 
     fn export_menu(&mut self, e: &mut Editor) -> bool {
@@ -4214,19 +5101,26 @@ impl Tool for TileTool {
             }
 
             if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into an Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
+                gui::set_tooltip(
+                    "Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into an Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.",
+                );
             }
         }
 
         if gui::menu_item("As exported tile...", None, false, has)
-            && let Some(out) = e.pick_export_folder(EXPORTED_TILE_KEY, "Folder for the exported tile (its terrain/tiles/... and the tile database go under it)")
+            && let Some(out) = e.pick_export_folder(
+                EXPORTED_TILE_KEY,
+                "Folder for the exported tile (its terrain/tiles/... and the tile database go under it)",
+            )
         {
             let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("export failed: {m}"));
             e.status(&msg, false);
         }
 
         if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Saves the tile, then writes it as the game reads it (the exported tile's folder and the tile database) under a folder you choose.");
+            gui::set_tooltip(
+                "Saves the tile, then writes it as the game reads it (the exported tile's folder and the tile database) under a folder you choose.",
+            );
         }
 
         if gui::menu_item("To mod pack...", None, false, has)
@@ -4237,7 +5131,9 @@ impl Tool for TileTool {
         }
 
         if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Writes the tile as the game reads it (its folder and the tile database) into a mod pack; the pack's files of the tile's folder are replaced.");
+            gui::set_tooltip(
+                "Writes the tile as the game reads it (its folder and the tile database) into a mod pack; the pack's files of the tile's folder are replaced.",
+            );
         }
 
         true
@@ -4251,7 +5147,11 @@ impl Tool for TileTool {
     }
 
     fn snap_gizmo_move(&self, e: &Editor, item: wce_scene::render_scene::SourceRef, from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
-        let (Some(d), Some(elem)) = (document_id(e).and_then(|id| e.docs.find_as::<TileDocument>(id)), wce_tile_editor::tile_document::elem_of(item.item)) else { return to };
+        let (Some(d), Some(elem)) =
+            (document_id(e).and_then(|id| e.docs.find_as::<TileDocument>(id)), wce_tile_editor::tile_document::elem_of(item.item))
+        else {
+            return to;
+        };
 
         // Only the axes the handle moved: the other stays where it is, off the grid or not.
         let (snap_x, snap_z) = ((to[0] - from[0]).abs() > 1e-3, (to[2] - from[2]).abs() > 1e-3);
@@ -4260,13 +5160,17 @@ impl Tool for TileTool {
             return to;
         }
 
-        let p = self.snap_axes(d.tile(), Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
+        let p = self.snap_axes(d, Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
         let y = if snap_y { self.snap_height(to[1]) } else { to[1] };
         [p.x, y, p.z]
     }
 
     fn snap_gizmo_rotate(&self, e: &Editor, item: wce_scene::render_scene::SourceRef, _frame: &Float4x4, moved: Float4x4) -> Float4x4 {
-        if self.angle_tolerance <= 0.0 || self.angle_step <= 0.0 || wce_tile_editor::tile_document::elem_of(item.item).is_none() || document_id(e).is_none() {
+        if self.angle_tolerance <= 0.0
+            || self.angle_step <= 0.0
+            || wce_tile_editor::tile_document::elem_of(item.item).is_none()
+            || document_id(e).is_none()
+        {
             return moved;
         }
 
@@ -4274,7 +5178,12 @@ impl Tool for TileTool {
     }
 
     fn left_drag_selects(&self, _e: &Editor) -> bool {
-        self.flip.is_none() && self.mode == TileMode::Select && !self.drawing && !self.grabbing && self.placing.is_none() && !self.box_select.armed && self.light_drag.is_none() && self.target_drag.is_none()
+        self.flip.is_none()
+            && self.mode == TileMode::Select
+            && !self.drawing
+            && !matches!(self.gesture, Some(Gesture::Grab(_) | Gesture::LightRadius { .. } | Gesture::ShelterTarget { .. }))
+            && self.placing.is_none()
+            && !self.box_select.armed
     }
 
     fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
@@ -4289,8 +5198,21 @@ impl Tool for TileTool {
         self.flip_gizmo_moved(frame);
     }
 
+    fn writing(&self) -> Option<String> {
+        self.launch.worker.as_ref().is_some_and(|w| !w.is_finished()).then(|| "the launch's pack".to_owned())
+    }
+
+    fn open_gesture(&self) -> Option<&'static str> {
+        self.gesture.as_ref().map(Gesture::name)
+    }
+
     fn claims_left_button(&self, _e: &Editor) -> bool {
-        self.flip.is_some() || self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some() || self.box_select.armed
+        self.flip.is_some()
+            || self.mode != TileMode::Select
+            || self.drawing
+            || self.grabbing()
+            || self.placing.is_some()
+            || self.box_select.armed
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {
@@ -4301,8 +5223,8 @@ impl Tool for TileTool {
         let dir = tile_dir_of(path);
 
         // Opened by its database entry: the entry file is the root, the folder is what it names.
-        let mut project = match self.pending_entry.take() {
-            Some(entry) => TileProject::open_entry(&entry, self.pending_variation.take()),
+        let mut project = match self.browse.pending_entry.take() {
+            Some(entry) => TileProject::open_entry(&entry, self.browse.pending_variation.take()),
             None => TileProject::open(&dir),
         }
         .map_err(|err| err.to_string())?;
@@ -4310,13 +5232,16 @@ impl Tool for TileTool {
         // A kit's tile with a project (saved before) opens as the project, unless the kit's copy is asked for (Import from Assembly Kit).
         let projects = Self::workspace_dir(e);
         let kit_copy = std::mem::take(&mut self.open_kit_copy);
-        if !kit_copy && !project.dir.starts_with(&projects)
+        if !kit_copy
+            && !project.dir.starts_with(&projects)
             && let Some(folder) = wce_tile_editor::tile_document::kit::tile_folder(&project.dir)
         {
             let mirror = projects.join("raw_data").join(&folder);
             if wce_tile::tile_project::has_tile(&mirror) {
                 project = TileProject::open(&mirror).map_err(|err| err.to_string())?;
-                self.status = format!("opened the project of {folder} (its tile.wce); Tile > Import from Assembly Kit takes the kit's copy again");
+                self.status = format!(
+                    "opened the project of {folder} (its tile.wce); File > Revert > To the Assembly Kit's version takes the kit's copy again"
+                );
                 log::info(self.status.clone());
             }
         }
@@ -4355,7 +5280,7 @@ impl TileTool {
         project.prefab_base = Some(self.prefab_source());
         project.prefab_ground = Some(self.prefab_ground_source());
 
-        project.game_kit = tiles_kit(e);
+        project.game_kit = wce_tile::vegetation::params_kit(&wce_tile::sources::kit_raw_roots(e.settings_ref()));
 
         // From the Assembly Kit: the groups that are exact copies of a prefab become references to it (Tile > Prefabs does it again).
         if !project.dir.starts_with(&projects) {
@@ -4367,7 +5292,28 @@ impl TileTool {
             }
         }
 
+        // A project decompiled before 2026-11-12: its whole-tile exclusion polygon (no generated trees) becomes polygons around the static
+        // trees, before the document is made from it (it opens modified: saving keeps it).
+        let converted = match wce_tile_editor::tile_document::convert_whole_tile_exclusion(&mut project) {
+            Ok(Some(n)) => {
+                log::info(format!(
+                    "{}: the exclusion polygon over the whole tile became {n} around the static trees, so the trees are generated around them (save to keep it)",
+                    project.dir.display()
+                ));
+                true
+            }
+            Ok(None) => false,
+            Err(err) => {
+                log::warn(format!("{}: the exclusion polygon over the whole tile was not converted: {err}", project.dir.display()));
+                false
+            }
+        };
+
         let mut doc = TileDocument::new(project, e.files());
+        if converted {
+            doc.set_converted_on_open();
+        }
+
         let mut tables = vec![projects.join("raw_data")];
         tables.extend(e.settings_ref().assembly_kit_raw_dirs());
         doc.set_building_tables(tables);
@@ -4376,6 +5322,8 @@ impl TileTool {
         }
 
         doc.set_projects_root(Some(projects));
+        doc.set_colour_kit(self.battle_database_roots(e));
+
         if let Some(w) = doc.exclusion_warning() {
             log::error(format!("{}: {w}", doc.title()));
         }
@@ -4392,9 +5340,8 @@ impl TileTool {
 
 /// The Assembly Kit with the tiles (its folder, with `raw_data/terrain/tiles`): the first of the settings' kits that has them (the exports'
 /// vegetation parameters come from it).
-pub(crate) fn tiles_kit(e: &Editor) -> Option<PathBuf> {
-    let raw = e.settings_ref().assembly_kit_raw_dirs().into_iter().find(|raw| raw.join("terrain/tiles").is_dir())?;
-    raw.parent().map(Path::to_path_buf)
+pub(crate) fn kit_raws(e: &Editor) -> Vec<PathBuf> {
+    wce_tile::sources::assembly_kit_roots(e.settings_ref())
 }
 
 impl TileTool {
@@ -4437,11 +5384,42 @@ pub fn wall_summary(l: &WallLayout) -> String {
     let ends = l.ends.iter().map(|a| a.as_ref().map_or("free".to_owned(), |a| format!("on {}", a.key))).collect::<Vec<_>>();
     format!(
         "{} wall on {}: {:.0} long, {} corner(s), {} run(s), {} step section(s); ends {} / {}",
-        if l.profile.walkway > 10.0 { "15 m" } else { "8 m" }, l.profile.key, l.plan.length, l.plan.corners.len(), l.plan.runs.len(), l.plan.steps.len(), ends[0], ends[1],
+        if l.profile.walkway > 10.0 { "15 m" } else { "8 m" },
+        l.profile.key,
+        l.plan.length,
+        l.plan.corners.len(),
+        l.plan.runs.len(),
+        l.plan.steps.len(),
+        ends[0],
+        ends[1],
     )
 }
 
 /// How far from a light, across, a ray meets the light's horizontal plane (`None` when it does not, ahead).
+/// Half the width of the line being drawn (`tool_overlay`): thinner than the finished edges (0.3).
+const DRAWING_HALF: f32 = 0.2;
+
+/// How far along the ray (`o`, the unit `dir`) a handle at `c` is when the ray passes over it: within 1.2 m of it, or 1.5 % of the
+/// distance farther out (handles are drawn the same size on screen). `None` behind the camera or beside the handle.
+fn handle_under_ray(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
+    let t = dot(c - o, dir);
+    (t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015)).then_some(t)
+}
+
+/// The nearest of `handles` under the ray (`handle_under_ray`): its index (the first of equally near ones).
+fn nearest_handle(handles: impl IntoIterator<Item = Float3>, o: Float3, dir: Float3) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, c) in handles.into_iter().enumerate() {
+        if let Some(t) = handle_under_ray(c, o, dir)
+            && best.is_none_or(|(_, b)| t < b)
+        {
+            best = Some((i, t));
+        }
+    }
+
+    best.map(|(i, _)| i)
+}
+
 fn light_plane_distance(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
     if dir.y.abs() < 1e-4 {
         return None;
@@ -4496,7 +5474,10 @@ mod snap_tests {
 
     #[test]
     fn edges_and_headings_snap_within_reach() {
-        let square = vec![(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(10.0, 0.0, 0.0), Float3::new(10.0, 0.0, 10.0), Float3::new(0.0, 0.0, 10.0)], true)];
+        let square = vec![(
+            vec![Float3::new(0.0, 0.0, 0.0), Float3::new(10.0, 0.0, 0.0), Float3::new(10.0, 0.0, 10.0), Float3::new(0.0, 0.0, 10.0)],
+            true,
+        )];
         let q = nearest_on_edges(&square, Float3::new(4.0, 0.0, 1.0), 1.5).expect("near the bottom edge");
         assert!((q.x - 4.0).abs() < 1e-5 && q.z.abs() < 1e-5);
         assert!(nearest_on_edges(&square, Float3::new(5.0, 0.0, 5.0), 1.5).is_none(), "the middle is out of reach");
@@ -4510,5 +5491,20 @@ mod snap_tests {
         assert!((s.m[0][3] - 3.0).abs() < 1e-5 && (s.m[2][3] - 4.0).abs() < 1e-5, "turned about its own position");
         let s = snap_heading(m, 15.0, 1.0);
         assert!((s.m[0][2].atan2(s.m[2][2]).to_degrees() - 47.0).abs() < 1e-3);
+    }
+
+    /// A handle is under the ray within 1.2 m up close and 1.5 % of the distance far out, never behind the camera; the nearest of several
+    /// wins.
+    #[test]
+    fn handles_under_the_ray() {
+        use super::{Float3, handle_under_ray, nearest_handle};
+        let (o, dir) = (Float3::new(0.0, 0.0, 0.0), Float3::new(0.0, 0.0, 1.0));
+        assert_eq!(handle_under_ray(Float3::new(1.0, 0.0, 10.0), o, dir), Some(10.0));
+        assert_eq!(handle_under_ray(Float3::new(1.3, 0.0, 10.0), o, dir), None);
+        assert_eq!(handle_under_ray(Float3::new(2.9, 0.0, 200.0), o, dir), Some(200.0));
+        assert_eq!(handle_under_ray(Float3::new(0.0, 0.0, -5.0), o, dir), None);
+        let handles = [Float3::new(5.0, 0.0, 10.0), Float3::new(0.5, 0.0, 30.0), Float3::new(0.0, 0.5, 20.0), Float3::new(0.0, 0.0, 20.0)];
+        assert_eq!(nearest_handle(handles, o, dir), Some(2));
+        assert_eq!(nearest_handle([], o, dir), None);
     }
 }

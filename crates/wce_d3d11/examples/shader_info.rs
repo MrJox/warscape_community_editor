@@ -11,9 +11,9 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use rpfm_lib::files::{Decodeable, fxc::Fxc};
-use windows_core::Interface;
 use wce_d3d11::*;
 use wce_vfs::{Config, GameProfile, Vfs};
+use windows_core::Interface;
 
 fn name(p: windows_core::PCSTR) -> String {
     // SAFETY: the reflection's names are NUL-terminated strings alive with it.
@@ -31,8 +31,16 @@ fn main() {
 
     let vfs = Vfs::mount(&Config::new(PathBuf::from(game), GameProfile::from_env().clone())).expect("the game's packs");
     let paths = match parts.first().and_then(|p| p.strip_prefix('@')) {
-        Some(file) => std::fs::read_to_string(file).expect("the list").lines().map(str::trim).filter(|l| !l.is_empty()).map(|n| format!("fxc/{n}.fxc")).collect::<Vec<_>>(),
-        None => vfs.list("fxc/", ".fxc").into_iter().filter(|p| parts.iter().all(|part| p.contains(part.as_str()))).map(str::to_owned).collect(),
+        Some(file) => std::fs::read_to_string(file)
+            .expect("the list")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|n| format!("fxc/{n}.fxc"))
+            .collect::<Vec<_>>(),
+        None => {
+            vfs.list("fxc/", ".fxc").into_iter().filter(|p| parts.iter().all(|part| p.contains(part.as_str()))).map(str::to_owned).collect()
+        }
     };
     for path in &paths {
         let path = path.as_str();
@@ -83,7 +91,13 @@ fn main() {
                     if let Some(var) = cb.GetVariableByIndex(v)
                         && var.GetDesc(&mut vd).is_ok()
                     {
-                        println!("    +{}\t{}\t{}{}", vd.StartOffset, vd.Size, name(vd.Name), if vd.uFlags & 2 != 0 { "" } else { "  (unused)" });
+                        println!(
+                            "    +{}\t{}\t{}{}",
+                            vd.StartOffset,
+                            vd.Size,
+                            name(vd.Name),
+                            if vd.uFlags & 2 != 0 { "" } else { "  (unused)" }
+                        );
                     }
                 }
             }

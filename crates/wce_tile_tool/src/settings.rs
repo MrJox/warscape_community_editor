@@ -4,13 +4,15 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+pub use wce_launch::{LaunchArmy, TileWeather};
 
 /// The table's name.
 pub const SETTINGS_ID: &str = "tile";
 
 /// The fields about the game's files, kept per game: tiles, weathers and Create entries are one game's (the same tile path can be in two
 /// games), and so are the sea states (keys of the game's wind table), the packs written and Launch in game's armies (keys of its tables).
-pub const GAME_FIELDS: &[&str] = &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
+pub const GAME_FIELDS: &[&str] =
+    &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
 
 /// The source of the game's exported tiles in a [`TileRef`] (the Tiles panel's "game packs").
 pub const PACKS_SOURCE: &str = "packs";
@@ -71,6 +73,12 @@ pub struct TileSettings {
 
     /// The Create panel shows its entries as a grid of pictures instead of a list.
     pub create_grid: bool,
+
+    /// The Prefab tool's Prefabs panel shows its prefabs as a grid of pictures instead of a list.
+    pub prefab_grid: bool,
+
+    /// How far a siege AI node's adjusted Boundary reaches from its centre (metres; 0: the generator's reach, from the room around it).
+    pub boundary_reach: f32,
 
     /// The placement chips: what new things stand on and how they are turned.
     pub place_surface: SurfaceMode,
@@ -134,39 +142,6 @@ pub struct LaunchSettings {
 
     /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
     pub step_seconds: BTreeMap<String, f32>,
-}
-
-/// Launch in game's two armies of one unit each, a game's (vanilla keys: a mod's units may need packs that are not enabled). An empty key
-/// is the game's own ([`wce_vfs::LaunchFacts`]).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct LaunchArmy {
-    /// The defender (alliance 0, the player) and the attacker: a faction and a unit each.
-    pub defender_faction: String,
-    pub defender_unit: String,
-    pub attacker_faction: String,
-    pub attacker_unit: String,
-
-    /// The battle's subculture (the settlement's look in a settlement battle).
-    pub subculture: String,
-
-    /// tile_upgrades.xml keys of a settlement battle in a map (`level1 escalation3`); empty: none.
-    pub tile_upgrades: String,
-}
-
-impl LaunchArmy {
-    /// Every key given: an empty one takes the game's.
-    pub fn resolved(&self, game: &wce_vfs::LaunchFacts) -> Self {
-        let or = |v: &str, default: &str| if v.trim().is_empty() { default.to_owned() } else { v.trim().to_owned() };
-        Self {
-            defender_faction: or(&self.defender_faction, game.defender_faction),
-            defender_unit: or(&self.defender_unit, game.defender_unit),
-            attacker_faction: or(&self.attacker_faction, game.attacker_faction),
-            attacker_unit: or(&self.attacker_unit, game.attacker_unit),
-            subculture: or(&self.subculture, game.subculture),
-            tile_upgrades: self.tile_upgrades.trim().to_owned(),
-        }
-    }
 }
 
 /// What new things stand on (`placement_modes.rs`).
@@ -243,17 +218,6 @@ pub struct ImageBrush {
     pub random_angle: bool,
 }
 
-/// The weather a tile is lit with and the filters of its list.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TileWeather {
-    /// An environment file of the packs (normalized); empty: the default light.
-    pub file: String,
-
-    /// The list's filters: environment_map.xml categories and their values (empty: any).
-    pub query: BTreeMap<String, String>,
-}
-
 /// A saved camera view of a tile: where the camera is and what it looks at (world metres).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -265,6 +229,30 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, polygon_fill: 0.3, polygon_outline: 0.85, polygon_type_fill: BTreeMap::new(), sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], create_grid: false, place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self {
+            show_sea: true,
+            show_vfx_boxes: true,
+            polygon_fill: 0.3,
+            polygon_outline: 0.85,
+            polygon_type_fill: BTreeMap::new(),
+            sea_state: String::new(),
+            weathers: BTreeMap::new(),
+            favourites: vec![],
+            recent: vec![],
+            create_favourites: vec![],
+            create_recent: vec![],
+            create_grid: false,
+            prefab_grid: false,
+            boundary_reach: 0.0,
+            place_surface: SurfaceMode::default(),
+            place_rotation: RotationMode::default(),
+            veg_brush: VegBrush::default(),
+            brush_curve: BrushCurve::default(),
+            brush_image: ImageBrush::default(),
+            camera_views: BTreeMap::new(),
+            mod_packs: BTreeMap::new(),
+            launch: LaunchSettings::default(),
+            launch_army: LaunchArmy::default(),
+        }
     }
 }

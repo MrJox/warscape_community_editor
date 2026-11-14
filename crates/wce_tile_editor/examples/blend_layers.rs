@@ -37,17 +37,28 @@ fn main() {
 
         let g = climates.group_of(climate, &groups[k / 4]).to_owned();
         // A campaign database's textures are under `terrain/textures/campaign/default` (docs/re/terry.md).
-        let path = climates.texture_path(&folder, &g, (k % 4) as i32, season, false, |p| vfs.read(p).is_ok())
-            .or_else(|| Some(format!("terrain/textures/campaign/default/{g}/{}_{season}_diffuse.dds", k % 4)).filter(|p| vfs.read(p).is_ok()));
-        let mean = path.as_ref().and_then(|p| vfs.read(p).ok()).and_then(|b| {
-            let info = wce_formats::dds_decode::dds_info(&b);
-            let mip = (0..info.mips.max(1)).find(|&m| (info.width >> m).max(1) <= 64).unwrap_or(0);
-            wce_formats::dds_decode::dds_decode_mip(&b, mip).ok()
-        }).map(|img| {
-            let px = &img.px;
-            let c = px.len() / 4;
-            [0, 1, 2].map(|i| px.as_chunks::<4>().0.iter().map(|q| u64::from(q[i])).sum::<u64>() / c.max(1) as u64)
+        let path = climates.texture_path(&folder, &g, (k % 4) as i32, season, false, |p| vfs.read(p).is_ok()).or_else(|| {
+            Some(format!("terrain/textures/campaign/default/{g}/{}_{season}_diffuse.dds", k % 4)).filter(|p| vfs.read(p).is_ok())
         });
-        println!("  channel {} ({}) variation {}: {:.1} % of the tile -> {g}: {path:?} mean {mean:?}", k / 4, groups[k / 4], k % 4, 100.0 * sums[k] / n);
+        let mean = path
+            .as_ref()
+            .and_then(|p| vfs.read(p).ok())
+            .and_then(|b| {
+                let info = wce_formats::dds_decode::dds_info(&b);
+                let mip = (0..info.mips.max(1)).find(|&m| (info.width >> m).max(1) <= 64).unwrap_or(0);
+                wce_formats::dds_decode::dds_decode_mip(&b, mip).ok()
+            })
+            .map(|img| {
+                let px = &img.px;
+                let c = px.len() / 4;
+                [0, 1, 2].map(|i| px.as_chunks::<4>().0.iter().map(|q| u64::from(q[i])).sum::<u64>() / c.max(1) as u64)
+            });
+        println!(
+            "  channel {} ({}) variation {}: {:.1} % of the tile -> {g}: {path:?} mean {mean:?}",
+            k / 4,
+            groups[k / 4],
+            k % 4,
+            100.0 * sums[k] / n
+        );
     }
 }

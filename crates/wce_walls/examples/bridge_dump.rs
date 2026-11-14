@@ -29,16 +29,34 @@ fn main() {
             println!("piece {}", piece["name"]);
             for d in piece["destructs"].as_array().cloned().unwrap_or_default() {
                 let platforms = d["platforms"].as_array().cloned().unwrap_or_default();
-                println!(" level {} {} platforms {} pipes {} docking {}", d["index"], d["name"], platforms.len(),
-                    d["pipes"].as_array().map_or(0, Vec::len), d["docking_lines"].as_array().map_or(0, Vec::len));
+                println!(
+                    " level {} {} platforms {} pipes {} docking {}",
+                    d["index"],
+                    d["name"],
+                    platforms.len(),
+                    d["pipes"].as_array().map_or(0, Vec::len),
+                    d["docking_lines"].as_array().map_or(0, Vec::len)
+                );
                 if d["index"].as_u64() != Some(0) {
                     continue;
                 }
 
                 for p in platforms {
                     let pts = p["vertices"]["outline"].as_array().cloned().unwrap_or_default();
-                    let text = pts.iter().map(|q: &Value| format!("({:.2},{:.2},{:.2})", q["x"].as_f64().unwrap_or(0.0), q["y"].as_f64().unwrap_or(0.0), q["z"].as_f64().unwrap_or(0.0))).collect::<Vec<_>>();
-                    let flags = p.as_object().map(|o| o.iter().filter(|(k, _)| *k != "vertices" && *k != "normal").map(|(k, x)| format!("{k}={x}")).collect::<Vec<_>>());
+                    let text = pts
+                        .iter()
+                        .map(|q: &Value| {
+                            format!(
+                                "({:.2},{:.2},{:.2})",
+                                q["x"].as_f64().unwrap_or(0.0),
+                                q["y"].as_f64().unwrap_or(0.0),
+                                q["z"].as_f64().unwrap_or(0.0)
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let flags = p.as_object().map(|o| {
+                        o.iter().filter(|(k, _)| *k != "vertices" && *k != "normal").map(|(k, x)| format!("{k}={x}")).collect::<Vec<_>>()
+                    });
                     println!("  {} {flags:?}", text.join(" "));
                 }
             }

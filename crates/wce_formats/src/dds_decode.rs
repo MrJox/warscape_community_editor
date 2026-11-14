@@ -136,17 +136,26 @@ pub fn dds_decode_mip(f: &[u8], mip: u32) -> Result<Rgba8Image, &'static str> {
     let mip = mip.min(info.mips - 1);
     let block = info.format.starts_with('D');
     let blk_bytes = if info.format == "DXT1" { 8 } else { 16 };
-    let size = |w: u32, h: u32| if block { w.div_ceil(4).max(1) as usize * h.div_ceil(4).max(1) as usize * blk_bytes } else { w as usize * h as usize * 4 };
-    let mut off = 128;
+    // The sizes are checked: a header's width and height can be anything, and a wrapped size would pass the length check below.
+    let size = |w: u32, h: u32| {
+        if block {
+            (w.div_ceil(4).max(1) as usize).checked_mul(h.div_ceil(4).max(1) as usize)?.checked_mul(blk_bytes)
+        } else {
+            (w as usize).checked_mul(h as usize)?.checked_mul(4)
+        }
+    };
+    const SHORT: &str = "the file is shorter than its header says";
+    let mut off = 128usize;
     let (mut w, mut h) = (info.width, info.height);
     for _ in 0..mip {
-        off += size(w, h);
+        // Past the file's end no later mip can be in it: stop there (a header can say four billion mips).
+        off = size(w, h).and_then(|s| off.checked_add(s)).filter(|&o| o <= f.len()).ok_or(SHORT)?;
         w = (w / 2).max(1);
         h = (h / 2).max(1);
     }
 
-    if off + size(w, h) > f.len() {
-        return Err("the file is shorter than its header says");
+    if size(w, h).and_then(|s| off.checked_add(s)).is_none_or(|end| end > f.len()) {
+        return Err(SHORT);
     }
 
     let mut out = Rgba8Image { w, h, px: vec![255; w as usize * h as usize * 4] };

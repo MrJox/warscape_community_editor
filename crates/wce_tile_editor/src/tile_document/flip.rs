@@ -14,8 +14,11 @@ use wce_tile::splines;
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{set_world_position, set_world_rotation, world_transform};
 
+use wce_editor_core::command::Command;
+
+use super::commands::{LinksCommand, SpliceEffect, TedSpliceCommand};
 use super::edits::parent_transform;
-use super::{Placement, TileDocument, item_of};
+use super::{Placement, Tile, TileDocument, item_of};
 
 /// A vertical plane: a point of it on the ground (metres) and its angle: at 0 its normal is +x, turning towards +z.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,8 +107,9 @@ impl TileDocument {
         all.into_iter().filter(|&e| sc.type_of(e) == "SplineRiverInstance").map(|e| t.river_height_factor(e)).collect()
     }
 
-    /// `factors`: the rivers' ([`Self::river_factors`], of the elements a copy was made from).
-    fn flip_targets(&self, roots: &[usize], plane: FlipPlane, factors: &[f64]) -> Vec<Target> {
+    /// `factors`: the rivers' ([`Self::river_factors`], of the elements a copy was made from). `terrain_too`: the ground flips with them
+    /// (the whole tile), so what follows the landscape keeps its height as it is.
+    fn flip_targets(&self, roots: &[usize], plane: FlipPlane, factors: &[f64], terrain_too: bool) -> Vec<Target> {
         let mut factors = factors.iter().copied();
         let t = self.tile();
         let sc = t.tscene();
@@ -115,51 +119,65 @@ impl TileDocument {
             with_contents(sc, e, &mut all);
         }
 
-        all.into_iter().filter(|&e| !sc.is_layer(e)).map(|e| {
-            let w = world_transform(sc, e);
-            let at = |p: Double3| w.position + w.rotation * p;
-            let mirrored = |p: Double3| plane.mirror(p, u);
+        all.into_iter()
+            .filter(|&e| !sc.is_layer(e))
+            .map(|e| {
+                let w = world_transform(sc, e);
+                let at = |p: Double3| w.position + w.rotation * p;
+                let mirrored = |p: Double3| plane.mirror(p, u);
 
-            // What follows the landscape stays as high above the ground: the other side of the plane can be higher (a river left under it).
-            let landscape = t.placement_of_attr(e) == Placement::Landscape;
-            let ground = |p: Double3| f64::from(t.terrain_height((p.x / u) as f32, (p.z / u) as f32)) * u;
-            let rise = |p: Double3| if landscape { ground(plane.mirror(p, u)) - ground(p) } else { 0.0 };
-            let river = sc.type_of(e) == "SplineRiverInstance";
-            let factor = if river { factors.next().unwrap_or(1.0) } else { 1.0 };
-            let lifted = |p: Double3, by: f64| {
-                let q = plane.mirror(p, u);
-                Double3::new(q.x, q.y / factor + by, q.z)
-            };
+                // What follows the landscape stays as high above the ground: the other side of the plane can be higher (a river left under it).
+                let landscape = t.placement_of_attr(e) == Placement::Landscape;
+                let ground = |p: Double3| f64::from(t.terrain_height((p.x / u) as f32, (p.z / u) as f32)) * u;
+                let rise = |p: Double3| if landscape && !terrain_too { ground(plane.mirror(p, u)) - ground(p) } else { 0.0 };
+                let river = sc.type_of(e) == "SplineRiverInstance";
+                let factor = if river { factors.next().unwrap_or(1.0) } else { 1.0 };
+                let lifted = |p: Double3, by: f64| {
+                    let q = plane.mirror(p, u);
+                    Double3::new(q.x, q.y / factor + by, q.z)
+                };
 
-            let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
-                splines::read(sc, e).iter().map(|p| {
-                    let by = rise(at(p.position));
-                    let handle = |h: Double3| (h != Double3::ZERO).then(|| lifted(at(h), by));
-                    [Some(lifted(at(p.position), by)), handle(p.control_in), handle(p.control_out)]
-                }).collect()
-            } else {
-                vec![]
-            };
+                let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
+                    splines::read(sc, e)
+                        .iter()
+                        .map(|p| {
+                            let by = rise(at(p.position));
+                            let handle = |h: Double3| (h != Double3::ZERO).then(|| lifted(at(h), by));
+                            [Some(lifted(at(p.position), by)), handle(p.control_in), handle(p.control_out)]
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
 
-            let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
+                let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
 
-            let points = if spline.is_empty() { sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| lifted(at(p), rise(at(p)))).collect() } else { vec![] };
+                let points = if spline.is_empty() {
+                    sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| lifted(at(p), rise(at(p)))).collect()
+                } else {
+                    vec![]
+                };
 
-            // A shelter's target is in the frame of its parent, as its position.
-            let pw = parent_transform(sc, e);
-            let target = sc.doc().get(e, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector")).map(|v| mirrored(pw.position + pw.rotation * v));
+                // A shelter's target is in the frame of its parent, as its position.
+                let pw = parent_transform(sc, e);
+                let target = sc
+                    .doc()
+                    .get(e, "target")
+                    .and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
+                    .map(|v| mirrored(pw.position + pw.rotation * v));
 
-            // Lines and what holds other items are not turned: their points and contents go where they go.
-            let holds = !sc.children(e).is_empty() || !sc.polygon_points(e).is_empty();
-            let rotation = if holds { w.rotation } else { plane.mirror_rotation(&w.rotation) };
-            let mut position = lifted(w.position, rise(w.position));
-            if !holds && landscape {
-                position.y = ground(position);
-            }
+                // Lines and what holds other items are not turned: their points and contents go where they go.
+                let holds = !sc.children(e).is_empty() || !sc.polygon_points(e).is_empty();
+                let rotation = if holds { w.rotation } else { plane.mirror_rotation(&w.rotation) };
+                let mut position = lifted(w.position, rise(w.position));
+                if !holds && landscape && !terrain_too {
+                    position.y = ground(position);
+                }
 
-            let keeps_heights = river && t.rivers_keep_heights() && sc.doc().get(e, RIVER_HEIGHT_ATTR).is_none();
-            Target { elem: e, position, rotation, points, spline, target, wall_flip, keeps_heights }
-        }).collect()
+                let keeps_heights = river && t.rivers_keep_heights() && sc.doc().get(e, RIVER_HEIGHT_ATTR).is_none();
+                Target { elem: e, position, rotation, points, spline, target, wall_flip, keeps_heights }
+            })
+            .collect()
     }
 
     fn apply_flip(&mut self, targets: &[Target]) -> Result<(), String> {
@@ -215,8 +233,9 @@ impl TileDocument {
 
         let items = copy_into.map(|_| self.copy_items(&roots));
         let factors = self.river_factors(&roots);
-        if let Some(into) = copy_into {
+        if let (Some(into), Some(items)) = (copy_into, &items) {
             self.check_structure(&[], Some(into))?;
+            self.check_fits(items.iter().map(|it| super::edits::text_kind(&it.text)), into)?;
         }
 
         let mark = self.begin()?;
@@ -226,7 +245,7 @@ impl TileDocument {
                 _ => roots,
             };
 
-            let targets = self.flip_targets(&roots, plane, &factors);
+            let targets = self.flip_targets(&roots, plane, &factors, false);
             self.apply_flip(&targets)?;
             Ok((roots, targets.iter().map(|t| t.elem).collect()))
         })();
@@ -244,11 +263,266 @@ impl TileDocument {
                 Ok(went)
             }
 
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
+    }
+}
+
+/// Which way the whole tile flips: about the line through its middle along z (its columns, x goes to the other side) or along x (its rows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileFlipAxis {
+    X,
+    Z,
+}
+
+impl TileFlipAxis {
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "x" | "X" => Some(Self::X),
+            "z" | "Z" => Some(Self::Z),
+            _ => None,
+        }
+    }
+}
+
+/// The whole tile flipped (`TileDocument::flip_tile`): the items' splice, the maps' own records (each map flipped as one edit of it; the
+/// terrain layers follow their field, `terrain_layers::Stack::sync`), and the links. The edit is made before the command is pushed.
+struct TileFlipCommand {
+    splice: TedSpliceCommand,
+    height: bool,
+    blend: bool,
+    ground: bool,
+    links: Option<LinksCommand>,
+    first: bool,
+}
+
+impl TileFlipCommand {
+    fn maps(&self, t: &mut Tile, forward: bool) {
+        t.end_stroke_edit();
+        let p = &mut t.project;
+        if self.height
+            && let Some(h) = p.height.as_mut()
+        {
+            let _ = if forward { h.redo() } else { h.undo() };
+        }
+
+        if self.blend
+            && let Some(b) = p.blend.as_mut()
+        {
+            let _ = if forward { b.redo() } else { b.undo() };
+        }
+
+        if self.ground
+            && let Some(g) = p.ground.as_mut()
+        {
+            let _ = if forward { g.redo() } else { g.undo() };
+        }
+
+        t.polygons_dirty = true;
+        t.sync_terrain_layers();
+        t.reload_grass();
+        t.reload_tree_list();
+    }
+}
+
+impl Command<Tile> for TileFlipCommand {
+    fn name(&self) -> String {
+        self.splice.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        self.splice.apply(t);
+        if std::mem::take(&mut self.first) {
+            return;
+        }
+
+        self.maps(t, true);
+        if let Some(l) = &mut self.links {
+            l.apply(t);
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        if let Some(l) = &mut self.links {
+            l.revert(t);
+        }
+
+        self.maps(t, false);
+        self.splice.revert(t);
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![]
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// A cell of the tile mirrored: `n` cells, the neighbours' at -1 and `n` changing places too.
+fn mirror_cell(n: u32, c: i32) -> i32 {
+    n as i32 - 1 - c
+}
+
+impl TileDocument {
+    /// Flips the whole tile about its middle, one undo entry: every item of every layer (hidden and locked ones too) as [`Self::flip`]
+    /// moves them, the height map, the blend map, the ground type map and their terrain layers mirrored, and the database entry's links
+    /// (targets and rules: their cells; a rule's base point is in the linking tile's space and stays). The maps mirror pixel for pixel, as
+    /// the editor places them (`pixel_layer::mirror_source`), so what stands on the ground stays on it. Models are not mirrored: they turn.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no scene graph, or a text does not read.
+    pub fn flip_tile(&mut self, axis: TileFlipAxis) -> Result<String, String> {
+        self.end_stroke();
+        let t = self.tile_mut();
+        t.sync_terrain_layers();
+
+        // The maps read lazily: a flip has to take them all. A tile without one has nothing of it to flip.
+        let _ = t.project.load_blend();
+        let _ = t.project.load_ground();
+        let p = &t.project;
+        let plane = FlipPlane {
+            x: (p.extent_x() * 0.5) as f32,
+            z: (p.extent_z() * 0.5) as f32,
+            angle: if axis == TileFlipAxis::X { 0.0 } else { 90.0 },
+        };
+        let (cells_x, cells_y) = (p.info.cells_x, p.info.cells_y);
+        let sc = self.tile().tscene();
+        let graph = sc.scene_graph().ok_or("this tile has no scene graph")?;
+        let roots = sc.children(graph);
+        let factors = self.river_factors(&roots);
+
+        // The items.
+        let mark = self.begin()?;
+        let targets = self.flip_targets(&roots, plane, &factors, true);
+        if let Err(e) = self.apply_flip(&targets) {
+            return self.rolled_back(mark, e);
+        }
+
+        // The packed tree and grass lists (BOB's, made before) are mirrored relative to the tile from now on: the root says along which axes.
+        let sc = self.tscene_mut();
+        let root = sc.doc().roots()[0];
+        let attr = super::vegetation::LIST_FLIP_ATTR;
+        let now = sc.doc().get(root, attr).unwrap_or_default();
+        let (mut fx, mut fz) = (now.contains('x'), now.contains('z'));
+        if axis == TileFlipAxis::X {
+            fx = !fx
+        } else {
+            fz = !fz
+        }
+        sc.set_attr(
+            root,
+            attr,
+            match (fx, fz) {
+                (true, true) => "xz",
+                (true, false) => "x",
+                (false, true) => "z",
+                _ => "",
+            },
+        );
+
+        let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+        let t = self.tile_mut();
+        t.idx.valid = false;
+        let name = format!("Flip the tile along {}", if axis == TileFlipAxis::X { "x" } else { "z" });
+        let splice = TedSpliceCommand { name, record, sel_before: vec![], sel_after: vec![], first: true, effect: SpliceEffect::Structure };
+
+        // The maps: each one's layers first, then the map as an edit of its own, which the layers already agree with.
+        let across_x = axis == TileFlipAxis::X;
+        let corners = t.project.bordered();
+        let p = &mut t.project;
+        if let Some(l) = p.layers.as_mut() {
+            if let Some(s) = l.height.as_mut() {
+                s.mirror(across_x, corners);
+            }
+
+            if let Some(s) = l.blend.as_mut() {
+                s.mirror(across_x, false);
+            }
+
+            if let Some(s) = l.ground.as_mut() {
+                s.mirror(across_x, false);
+            }
+
+            l.dirty = true;
+        }
+
+        let mut changed = 0;
+        let height = match p.height.as_mut() {
+            Some(h) => {
+                h.begin_edit()?;
+                let n = h.mirror(across_x, corners);
+                h.end_edit();
+                changed += n?;
+                true
+            }
+
+            None => false,
+        };
+
+        let blend = match p.blend.as_mut() {
+            Some(b) => {
+                b.begin_edit()?;
+                let n = b.mirror(across_x);
+                b.end_edit();
+                changed += n?;
+                true
+            }
+
+            None => false,
+        };
+
+        let ground = match p.ground.as_mut() {
+            Some(g) => {
+                g.begin_edit()?;
+                let n = g.mirror(across_x);
+                g.end_edit();
+                changed += n?;
+                true
+            }
+
+            None => false,
+        };
+
+        p.height_dirty |= height;
+        t.polygons_dirty = true;
+        t.sync_terrain_layers();
+        t.reload_grass();
+        t.reload_tree_list();
+
+        // The links.
+        let links = t
+            .project
+            .entry
+            .as_ref()
+            .map(|entry| {
+                let before = (entry.link_targets(), entry.links());
+                let mut after = before.clone();
+                for c in &mut after.0 {
+                    if across_x { c.x = mirror_cell(cells_x, c.x) } else { c.y = mirror_cell(cells_y, c.y) }
+                }
+
+                for l in &mut after.1 {
+                    if across_x { l.x = mirror_cell(cells_x, l.x) } else { l.y = mirror_cell(cells_y, l.y) }
+                }
+
+                LinksCommand { name: String::new(), before, after, gesture: 0 }
+            })
+            .filter(|c| c.before != c.after);
+
+        let mut links = links;
+        if let Some(l) = &mut links {
+            l.apply(self.tile_mut());
+        }
+
+        let linked = links.as_ref().map_or(0, |l| l.after.0.len() + l.after.1.len());
+        self.history.push(Box::new(TileFlipCommand { splice, height, blend, ground, links, first: true }));
+        Ok(format!(
+            "tile flipped along {}: {} items, {changed} map pixels, {linked} links",
+            if across_x { "x" } else { "z" },
+            targets.len()
+        ))
     }
 }

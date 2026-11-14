@@ -9,11 +9,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use wce_formats::png_file::PngFile;
-use wce_tile::height_field::{Brush, HeightField};
 use wce_foundation::math::Double3;
+use wce_tile::height_field::{Brush, HeightField};
 use wce_tile::ted_scene::{TedScene, format_general, format_ted_number, parse_vec3};
 use wce_tile::tile_project::TileProject;
-use wce_tile::world_transform::{euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
+use wce_tile::world_transform::{
+    euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform,
+};
 
 struct Rng(u64);
 
@@ -88,7 +90,13 @@ fn scene_op(sc: &mut TedScene, r: &mut Rng, op: u32, k: usize) -> Result<String,
     let wp = filtered(sc, |i| sc.position(i).is_some());
     let polys = sc.find_all("AI_HINT_POLYGON_INSTANCE");
     let flags = ["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"];
-    let ptypes = ["AI_HINT_POLYGON_INSTANCE", "NOGO_REGION_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "SIEGE_AI_POLYGON_INSTANCE"];
+    let ptypes = [
+        "AI_HINT_POLYGON_INSTANCE",
+        "NOGO_REGION_POLYGON_INSTANCE",
+        "GO_REGION_POLYGON_INSTANCE",
+        "VegetationExclusionPolygonInstance",
+        "SIEGE_AI_POLYGON_INSTANCE",
+    ];
     let mut res = String::new();
     let before_of = |sc: &TedScene, r: &mut Rng, l: usize| {
         let kids = sc.children(l);
@@ -236,7 +244,15 @@ fn scene_op(sc: &mut TedScene, r: &mut Rng, op: u32, k: usize) -> Result<String,
 
         16 if !wp.is_empty() => {
             let e = r.pick(&wp);
-            res = format!("{} {} {} {} {}{}", sc.layer_path(e), sc.children(e).len(), sc.type_of(e), sc.name(e), u8::from(sc.visible(e)), u8::from(sc.active(e)));
+            res = format!(
+                "{} {} {} {} {}{}",
+                sc.layer_path(e),
+                sc.children(e).len(),
+                sc.type_of(e),
+                sc.name(e),
+                u8::from(sc.visible(e)),
+                u8::from(sc.active(e))
+            );
             if let Some(s) = sc.scale(e) {
                 res += &format!(" {:016x}", s[0].to_bits());
             }
@@ -252,13 +268,32 @@ fn show(p: &mut TileProject, label: &str, fx: &Path, tmp: &Path, n: &mut usize, 
     let i = &p.info;
     println!(
         "project {label} dir {} loc {} var {} cells {} {} min {:016x} scale {:016x} ns {:016x} ob {:016x} td {} found {} entry {} variation {} raw {}",
-        rel(&p.dir, fx), i.location, i.variation, i.cells_x, i.cells_y, i.min_height.to_bits(), i.scale.to_bits(), i.normal_strength.to_bits(), i.overlap_border_size.to_bits(),
-        i.raw_data_tri_density, u8::from(i.found), u8::from(p.has_entry()), opt(p.variation), p.raw_root.as_ref().map_or("-".to_owned(), |r| rel(r, fx))
+        rel(&p.dir, fx),
+        i.location,
+        i.variation,
+        i.cells_x,
+        i.cells_y,
+        i.min_height.to_bits(),
+        i.scale.to_bits(),
+        i.normal_strength.to_bits(),
+        i.overlap_border_size.to_bits(),
+        i.raw_data_tri_density,
+        u8::from(i.found),
+        u8::from(p.has_entry()),
+        opt(p.variation),
+        p.raw_root.as_ref().map_or("-".to_owned(), |r| rel(r, fx))
     );
 
     println!(
-        "  warning [{}] height {} bordered {} border {:016x} mpp {:016x} {:016x} extent {:016x} {:016x}", if p.warning.is_empty() { "" } else { "set" }, u8::from(p.has_height()),
-        u8::from(p.bordered()), p.border_m().to_bits(), p.mpp_x().to_bits(), p.mpp_z().to_bits(), p.extent_x().to_bits(), p.extent_z().to_bits()
+        "  warning [{}] height {} bordered {} border {:016x} mpp {:016x} {:016x} extent {:016x} {:016x}",
+        if p.warning.is_empty() { "" } else { "set" },
+        u8::from(p.has_height()),
+        u8::from(p.bordered()),
+        p.border_m().to_bits(),
+        p.mpp_x().to_bits(),
+        p.mpp_z().to_bits(),
+        p.extent_x().to_bits(),
+        p.extent_z().to_bits()
     );
 
     let mut h = 14695981039346656037u64;
@@ -379,8 +414,13 @@ fn main() {
         }
 
         println!(
-            "ted {} v{} graph {} elements {} same {} modified {} fmt {fmt_ok}/{fmt_total}", path.file_name().unwrap().to_string_lossy(), sc.project_version(), opt(sc.scene_graph()),
-            sc.doc().elements().len(), u8::from(sc.save() == bytes), u8::from(sc.modified())
+            "ted {} v{} graph {} elements {} same {} modified {} fmt {fmt_ok}/{fmt_total}",
+            path.file_name().unwrap().to_string_lossy(),
+            sc.project_version(),
+            opt(sc.scene_graph()),
+            sc.doc().elements().len(),
+            u8::from(sc.save() == bytes),
+            u8::from(sc.modified())
         );
 
         for k in 0..150 {
@@ -464,8 +504,14 @@ fn main() {
 
     let kit = fx.join("kit/raw_data/terrain/tiles/battle");
     let opens = [
-        kit.join("synth_set/two/aa"), kit.join("synth_set/two/bb/tile.ted"), kit.join("synth_set/two"), kit.join("synth_set/wide/aa"), kit.join("other_set/one/medium"),
-        kit.join("synth_set/two/zz"), fx.join("loose_tile"), fx.join("nothing_here"),
+        kit.join("synth_set/two/aa"),
+        kit.join("synth_set/two/bb/tile.ted"),
+        kit.join("synth_set/two"),
+        kit.join("synth_set/wide/aa"),
+        kit.join("other_set/one/medium"),
+        kit.join("synth_set/two/zz"),
+        fx.join("loose_tile"),
+        fx.join("nothing_here"),
     ];
 
     let mut n = 0;

@@ -4,9 +4,19 @@
 
 /// Name and colour per `enum_value`.
 pub const GROUND_TYPES: [(&str, [u8; 3]); 13] = [
-    ("forest", [64, 225, 231]), ("grass", [0, 255, 0]), ("mud", [150, 75, 0]), ("sand", [244, 164, 96]), ("scrub", [172, 225, 175]),
-    ("rock", [170, 170, 170]), ("deep water", [0, 0, 255]), ("shallow water", [93, 255, 255]), ("road", [255, 96, 0]),
-    ("wooden floor", [255, 100, 100]), ("snow", [255, 255, 255]), ("sharp stones", [255, 255, 0]), ("burnt", [64, 0, 0]),
+    ("forest", [64, 225, 231]),
+    ("grass", [0, 255, 0]),
+    ("mud", [150, 75, 0]),
+    ("sand", [244, 164, 96]),
+    ("scrub", [172, 225, 175]),
+    ("rock", [170, 170, 170]),
+    ("deep water", [0, 0, 255]),
+    ("shallow water", [93, 255, 255]),
+    ("road", [255, 96, 0]),
+    ("wooden floor", [255, 100, 100]),
+    ("snow", [255, 255, 255]),
+    ("sharp stones", [255, 255, 0]),
+    ("burnt", [64, 0, 0]),
 ];
 
 /// The colours alone, by `enum_value`.

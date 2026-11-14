@@ -13,19 +13,29 @@ use wce_vfs::files::Files;
 
 /// The climates of a tile database, texture groups with their scales and light values.
 pub fn climates_of_database(db: &TileDatabase, kind: &str) -> ClimateList {
-    let climates = db.climates().iter().map(|c| Climate {
-        name: c.name().clone(),
-        texture_set: c.texture_set().clone(),
-        destruction_climate: c.destruction_climate().clone(),
-        textures: c.textures().iter().map(|t| ClimateTexture {
-            name: t.name().clone(),
-            blend_pixel_scale: f64::from(*t.blend_pixel_scale()),
-            outfield_blend_pixel_scale: f64::from(*t.outfield_blend_pixel_scale()),
-            mid_distance_strength: f64::from(*t.mid_distance_strength()),
-            lerp_smoothness: [t.lerp_smoothness0(), t.lerp_smoothness1(), t.lerp_smoothness2(), t.lerp_smoothness3()].map(|v| f64::from(*v)),
-            lerp_reflectivity: [t.lerp_reflectivity0(), t.lerp_reflectivity1(), t.lerp_reflectivity2(), t.lerp_reflectivity3()].map(|v| f64::from(*v)),
-        }).collect(),
-    }).collect();
+    let climates = db
+        .climates()
+        .iter()
+        .map(|c| Climate {
+            name: c.name().clone(),
+            texture_set: c.texture_set().clone(),
+            destruction_climate: c.destruction_climate().clone(),
+            textures: c
+                .textures()
+                .iter()
+                .map(|t| ClimateTexture {
+                    name: t.name().clone(),
+                    blend_pixel_scale: f64::from(*t.blend_pixel_scale()),
+                    outfield_blend_pixel_scale: f64::from(*t.outfield_blend_pixel_scale()),
+                    mid_distance_strength: f64::from(*t.mid_distance_strength()),
+                    lerp_smoothness: [t.lerp_smoothness0(), t.lerp_smoothness1(), t.lerp_smoothness2(), t.lerp_smoothness3()]
+                        .map(|v| f64::from(*v)),
+                    lerp_reflectivity: [t.lerp_reflectivity0(), t.lerp_reflectivity1(), t.lerp_reflectivity2(), t.lerp_reflectivity3()]
+                        .map(|v| f64::from(*v)),
+                })
+                .collect(),
+        })
+        .collect();
 
     ClimateList { climates, blend_pixel_scale: Some(f64::from(*db.render_params().blend_pixel_scale())), kind: kind.to_owned() }
 }

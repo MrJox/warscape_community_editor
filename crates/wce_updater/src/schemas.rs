@@ -10,6 +10,9 @@ use std::time::Duration;
 
 use crate::{Progress, agent};
 
+/// More than any schema file is (they are a few MB): a download past it is not one, and is not read on.
+const MAX_SCHEMA: u64 = 128 << 20;
+
 /// rpfm's schema repository on GitHub, and its branch.
 pub const REPO: &str = "Frodo45127/rpfm-schemas";
 pub const BRANCH: &str = "master";
@@ -24,7 +27,10 @@ const VERSION_FILE: &str = ".wce-schemas-version";
 /// GitHub can't be reached or doesn't answer with a commit hash.
 pub fn latest() -> Result<String, String> {
     let url = format!("https://api.github.com/repos/{REPO}/commits/{BRANCH}");
-    let text = agent(Some(Duration::from_secs(30))).get(&url).header("Accept", "application/vnd.github.sha").call()
+    let text = agent(Some(Duration::from_secs(30)))
+        .get(&url)
+        .header("Accept", "application/vnd.github.sha")
+        .call()
         .and_then(|mut r| r.body_mut().read_to_string())
         .map_err(|e| format!("cannot reach GitHub: {e}"))?;
     let sha = text.trim();
@@ -81,8 +87,18 @@ pub fn download(dir: &Path, commit: &str, files: &[&str], progress: &Progress) -
 
         let url = format!("https://raw.githubusercontent.com/{REPO}/{commit}/{name}");
         let mut bytes = vec![];
-        agent(None).get(&url).call().map_err(|e| format!("cannot download {name}: {e}"))?
-            .into_body().into_reader().read_to_end(&mut bytes).map_err(|e| format!("cannot download {name}: {e}"))?;
+        agent(None)
+            .get(&url)
+            .call()
+            .map_err(|e| format!("cannot download {name}: {e}"))?
+            .into_body()
+            .into_reader()
+            .take(MAX_SCHEMA + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("cannot download {name}: {e}"))?;
+        if bytes.len() as u64 > MAX_SCHEMA {
+            return Err(format!("{name} is larger than a schema is ({MAX_SCHEMA} bytes at most)"));
+        }
 
         let target = dir.join(name);
         let part = dir.join(format!("{name}.part"));
@@ -96,7 +112,8 @@ pub fn download(dir: &Path, commit: &str, files: &[&str], progress: &Progress) -
         progress.done.store(i as u64 + 1, Ordering::Relaxed);
     }
 
-    std::fs::write(dir.join(VERSION_FILE), format!("{commit}\n")).map_err(|e| format!("cannot write {}: {e}", dir.join(VERSION_FILE).display()))?;
+    std::fs::write(dir.join(VERSION_FILE), format!("{commit}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", dir.join(VERSION_FILE).display()))?;
     Ok(written)
 }
 

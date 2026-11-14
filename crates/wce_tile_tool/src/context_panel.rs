@@ -4,7 +4,6 @@
 //! where it is placed nowhere, a cell and a rotation. The context streams in chunks around the camera (or the tile): reading the map and its
 //! frame runs on a thread, the chunks on the streamer's workers; every frame puts what they finished on the scene.
 
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
@@ -15,9 +14,9 @@ use wce_foundation::log;
 use wce_map_view::{MapView, Rings};
 use wce_scene::render_scene::DocumentId;
 use wce_tile::battle_map::context::{CELL, PlacedMap, Spot};
+use wce_tile::battle_map::kit_maps;
 use wce_tile::battle_map::locations::BattleLocations;
 use wce_tile::battle_map::tile_db::TileDatabase;
-use wce_tile::battle_map::kit_maps;
 use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::context::{ContextRequest, Streamer, TileProvider, cache};
@@ -37,6 +36,9 @@ pub struct ContextUi {
     /// For a game whose kit has no tiles (Rome 2): the neighbours' tree (a `raw_data` with the whole database's entries) and what makes a
     /// tile's folder in it (`workflow::neighbour_tile`). See [`Self::raw_of`].
     pub neighbours: Option<(PathBuf, TileProvider)>,
+
+    /// What `neighbours` was made for: the mount of the game's files (`Files::mount_id`) and the kits (`tool::kit_raws`).
+    pub neighbours_for: (u64, Vec<PathBuf>),
 
     /// For a game whose kit has tiles: the packs' tiles, for a placement whose tile no kit has (`TileTool::prepare_neighbours`), and their
     /// tree (whose tile database reads the game's battle maps: a mod's map names the mod's tiles).
@@ -75,7 +77,6 @@ pub struct ContextUi {
     pub view_distance: f32,
     pub minimap: bool,
 
-
     /// The rings follow the camera (else they stay around the tile).
     pub follow: bool,
     pub status: String,
@@ -94,7 +95,8 @@ pub struct ContextUi {
     /// The variation of the open tile the map has, when it hasn't the open one (`find_placements`): looking for it goes over the whole map,
     /// too slow for each frame the section shows.
     placed_variation: Option<String>,
-    maps_for: PathBuf,
+    /// What the map list was made from: the `raw_data` folders (`map_roots`) and the mount of the game's files (`Files::mount_id`).
+    maps_for: (Vec<PathBuf>, u64),
 
     /// The season's snow where the map has it (its `snow_map_<season>.png`), how much.
     pub snow_on: bool,
@@ -104,8 +106,39 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, ground: 24, far: 64, bake_ground: false, trees: true, view_distance: GAME_FAR_PLANE, minimap: true,
-            follow: true, placed_variation: None, status: String::new(), busy: String::new(), rx: None, view: MapView::default(), build: 0, build_look: None, db: None, maps_for: PathBuf::new(), snow_on: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map,
+            neighbours: None,
+            packs_fallback: None,
+            packs_tree: None,
+            neighbours_for: (0, vec![]),
+            tile_roots: vec![],
+            tile_roots_time: None,
+            shown: false,
+            maps: vec![],
+            map: 0,
+            loaded: None,
+            placements: vec![],
+            choice: 0,
+            manual: [0, 0, 0],
+            near: 8,
+            mid: 24,
+            ground: 24,
+            far: 64,
+            bake_ground: false,
+            trees: true,
+            view_distance: GAME_FAR_PLANE,
+            minimap: true,
+            follow: true,
+            placed_variation: None,
+            status: String::new(),
+            busy: String::new(),
+            rx: None,
+            view: MapView::default(),
+            build: 0,
+            build_look: None,
+            db: None,
+            maps_for: (vec![], 0),
+            snow_on: true,
             snow_amount: 1.0,
         }
     }
@@ -130,20 +163,40 @@ pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabas
 }
 
 impl ContextUi {
+    /// The `raw_data` folders kit maps are looked for in: the tile's own, then the tile roots (the projects', then the kits' in the
+    /// settings' order); a map's name from the first that has it.
+    pub(crate) fn map_roots(&self, raw: &Path) -> Vec<PathBuf> {
+        let mut roots = vec![raw.to_path_buf()];
+        roots.extend(self.tile_roots.iter().filter(|r| r.as_path() != raw).cloned());
+        roots
+    }
 
-    /// The maps to choose from for a kit.
+    /// The `raw_data` folder a kit map is read from: the first of `map_roots` that has it (`raw` for a map of the packs).
+    pub(crate) fn map_raw(&self, raw: &Path, name: &str) -> PathBuf {
+        self.map_roots(raw).into_iter().find(|r| r.join("terrain/battles").join(name).is_dir()).unwrap_or_else(|| raw.to_path_buf())
+    }
+
+    /// The maps to choose from: the packs' battle maps, then every kit's (a tile of the projects is not in a kit with maps).
     pub fn refresh_maps(&mut self, raw: &Path, files: Option<&dyn Files>) {
-        if self.maps_for == raw && !self.maps.is_empty() {
+        let key = (self.map_roots(raw), files.map_or(0, Files::mount_id));
+        if self.maps_for == key && !self.maps.is_empty() {
             return;
         }
 
-        self.maps_for = raw.to_path_buf();
         self.maps.clear();
         if let Some(f) = files {
             self.maps.extend(game_maps(f, self.game_dir, false));
         }
 
-        self.maps.extend(kit_maps(raw));
+        for root in &key.0 {
+            for m in kit_maps(root) {
+                if !self.maps.contains(&m) {
+                    self.maps.push(m);
+                }
+            }
+        }
+
+        self.maps_for = key;
         self.map = self.map.clamp(0, (self.maps.len() as i32 - 1).max(0));
     }
 
@@ -159,7 +212,7 @@ impl ContextUi {
         };
 
         let (tx, rx) = channel();
-        let raw = raw.to_path_buf();
+        let raw = self.map_raw(raw, &name);
         let game_dir = self.game_dir;
         let packs = self.packs_tree.clone().filter(|_| game_map_folder(&name, game_dir).is_some());
         self.busy = format!("reading {name}...");
@@ -167,7 +220,10 @@ impl ContextUi {
         self.build_look = None;
         std::thread::spawn(move || {
             // A map of the packs names the packs' tiles (a mod's among them): read with their database.
-            let db = packs.and_then(|p| p.raw().ok()).and_then(|r| TileDatabase::load(&r.join("terrain/tiles/battle/_tile_database")).ok()).map_or(db, Arc::new);
+            let db = packs
+                .and_then(|p| p.raw().ok())
+                .and_then(|r| TileDatabase::load(&r.join("terrain/tiles/battle/_tile_database")).ok())
+                .map_or(db, Arc::new);
             let r = load_map(&name, game_dir, &raw, &db, files.as_deref());
             let _ = tx.send(Job::Map(name, r));
         });
@@ -194,7 +250,9 @@ impl ContextUi {
                 Some(Spot { x: p.x, y: p.y, rotation: p.rotation })
             }
 
-            None => Some(Spot { x: self.manual[0], y: self.manual[1], rotation: [0x10, 0x20, 0x40, 0x80][self.manual[2].clamp(0, 3) as usize] }),
+            None => {
+                Some(Spot { x: self.manual[0], y: self.manual[1], rotation: [0x10, 0x20, 0x40, 0x80][self.manual[2].clamp(0, 3) as usize] })
+            }
         }
     }
 
@@ -232,8 +290,21 @@ impl ContextUi {
         let p = d.project();
         let raw = self.raw_of(d)?;
         Some(ContextRequest {
-            map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
-            mid: self.mid, ground: self.ground, far: self.far_ring(), raw_root: raw, tile_roots: self.tile_roots.clone(), game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, bake_ground: self.bake_ground, plain: d.tile().ground_material_base(),
+            map: map.clone(),
+            spot: self.spot()?,
+            cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32),
+            unit: p.unit_scale,
+            near: self.near,
+            mid: self.mid,
+            ground: self.ground,
+            far: self.far_ring(),
+            raw_root: raw,
+            tile_roots: self.tile_roots.clone(),
+            game_kit: p.game_kit.clone(),
+            look: d.tile().terrain_look().clone(),
+            trees: self.trees,
+            bake_ground: self.bake_ground,
+            plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
             provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()).or_else(|| self.packs_fallback.clone()),
@@ -266,7 +337,16 @@ impl ContextUi {
             let other = map.find_tile(&info.location).first().map(|&i| &map.placements[i]);
             self.placed_variation = other.map(|p| p.variation.clone());
             self.manual = match other {
-                Some(p) => [p.x, p.y, match p.rotation { 0x20 => 1, 0x40 => 2, 0x80 => 3, _ => 0 }],
+                Some(p) => [
+                    p.x,
+                    p.y,
+                    match p.rotation {
+                        0x20 => 1,
+                        0x40 => 2,
+                        0x80 => 3,
+                        _ => 0,
+                    },
+                ],
                 None => [(map.width / 2) as i32, (map.height / 2) as i32, 0],
             };
         }
@@ -309,7 +389,6 @@ impl ContextUi {
         changed
     }
 
-
     /// The rings and camera settings of the panel.
     fn rings(&self) -> Rings {
         Rings { near: self.near, mid: self.mid, ground: self.ground, far: self.far, view_distance: self.view_distance, follow: self.follow }
@@ -341,7 +420,8 @@ impl ContextUi {
     /// The map's folder in the kit (its season maps).
     fn map_dir(&self, raw: &Path) -> Option<PathBuf> {
         let (name, _, _) = self.loaded.as_ref()?;
-        let folder = game_map_folder(name, self.game_dir).map_or_else(|| name.clone(), |f| f.rsplit('/').next().unwrap_or_default().to_owned());
+        let folder =
+            game_map_folder(name, self.game_dir).map_or_else(|| name.clone(), |f| f.rsplit('/').next().unwrap_or_default().to_owned());
         Some(raw.join("terrain/battles").join(folder))
     }
 
@@ -466,8 +546,17 @@ impl ContextUi {
             if self.shown { changed = true } else { self.clear(e) }
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows the tile among its neighbours in the battle map chosen below.");
+        }
+
         let names: Vec<&str> = self.maps.iter().map(String::as_str).collect();
-        if gui::combo("map", &mut self.map, &names) || (self.shown && self.loaded.is_none() && self.rx.is_none() && !names.is_empty()) {
+        let map_picked = gui::combo("map", &mut self.map, &names);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle map to read the neighbours from: the game's campaign battle map or one of the kit's.");
+        }
+
+        if map_picked || (self.shown && self.loaded.is_none() && self.rx.is_none() && !names.is_empty()) {
             self.loaded = None;
             self.start_map(&raw, files.clone());
         }
@@ -479,13 +568,28 @@ impl ContextUi {
             let label = |i: usize| {
                 let p = &map.placements[i];
                 let at = location_names(locations.as_ref(), p.x, p.y);
-                format!("cell ({}, {}), {} deg{}", p.x, p.y, match p.rotation { 0x20 => 90, 0x40 => 180, 0x80 => 270, _ => 0 }, if at.is_empty() { String::new() } else { format!(" - {at}") })
+                format!(
+                    "cell ({}, {}), {} deg{}",
+                    p.x,
+                    p.y,
+                    match p.rotation {
+                        0x20 => 90,
+                        0x40 => 180,
+                        0x80 => 270,
+                        _ => 0,
+                    },
+                    if at.is_empty() { String::new() } else { format!(" - {at}") }
+                )
             };
 
-            let preview = if self.choice < self.placements.len() { label(self.placements[self.choice]) } else { "a cell of my choice".to_owned() };
+            let preview =
+                if self.choice < self.placements.len() { label(self.placements[self.choice]) } else { "a cell of my choice".to_owned() };
             if self.placements.is_empty() {
                 gui::text_wrapped(&match &self.placed_variation {
-                    Some(v) => format!("{}\\{} is not placed in this map: shown where its variation {v} is (or put it at another cell).", info.location, info.variation),
+                    Some(v) => format!(
+                        "{}\\{} is not placed in this map: shown where its variation {v} is (or put it at another cell).",
+                        info.location, info.variation
+                    ),
                     None => format!("{}\\{} is not placed in this map: put it at a cell.", info.location, info.variation),
                 });
             }
@@ -502,18 +606,49 @@ impl ContextUi {
                 gui::end_combo();
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Where in the map the tile goes: one of its placements there, or a cell you enter.");
+            }
+
             if self.choice >= self.placements.len() {
                 changed |= gui::input_int("cell x", &mut self.manual[0]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The map column (cell x) the tile is placed at.");
+                }
+
                 changed |= gui::input_int("cell y", &mut self.manual[1]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The map row (cell y) the tile is placed at.");
+                }
+
                 changed |= gui::combo("rotation", &mut self.manual[2], &["0", "90", "180", "270"]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The tile's turn in the map, in degrees.");
+                }
             }
         }
 
         // The rings change the streamer's levels; the rest builds a new one.
         let mut rings = gui::slider_int("full detail (cells)", &mut self.near, 1, 64);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus whose tiles are drawn with everything on them.");
+        }
+
         rings |= gui::slider_int("buildings (cells)", &mut self.mid, 1, 128);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus whose tiles show their buildings.");
+        }
+
         rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 1024);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus whose tiles show their own coarse ground.");
+        }
+
         rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 1024);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus covered by the map's LF ground; at least what the camera sees.");
+        }
+
         if rings {
             let r = self.rings();
             self.view.set_rings(&r);
@@ -524,18 +659,38 @@ impl ContextUi {
         }
 
         // How far the camera sees while the context shows (the far ring follows it); the whole map at most.
-        let whole = self.loaded.as_ref().map_or(GAME_FAR_PLANE * 4.0, |(_, m, _)| (m.width.max(m.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
+        let whole =
+            self.loaded.as_ref().map_or(GAME_FAR_PLANE * 4.0, |(_, m, _)| (m.width.max(m.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
         gui::slider_float("view distance", &mut self.view_distance, GAME_FAR_PLANE, whole, "%.0f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("How far the camera sees while the context shows; the game's battle camera sees 13 000.");
+        }
+
         gui::checkbox("overview map", &mut self.minimap);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows a small map of the battle map over the viewport, the tile's placement marked.");
+        }
+
         if self.view_distance > GAME_FAR_PLANE * 2.0 {
             gui::text_disabled("far views draw many chunks: slower frames");
         }
 
         changed |= gui::checkbox("their trees", &mut self.trees);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the neighbours' trees too.");
+        }
+
         gui::checkbox("follow the camera", &mut self.follow);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The rings stream around the camera; off: they stay around the tile.");
+        }
 
         // The tiles around are drawn in the climates the map gives them; the open tile in the one its panel has.
-        let map_climate = self.loaded.as_ref().zip(self.placements.get(self.choice)).and_then(|((_, map, _), &i)| map.climate_of(&map.placements[i]).map(str::to_owned));
+        let map_climate = self
+            .loaded
+            .as_ref()
+            .zip(self.placements.get(self.choice))
+            .and_then(|((_, map, _), &i)| map.climate_of(&map.placements[i]).map(str::to_owned));
         if let (Some(climate), Some(d)) = (map_climate, e.docs.find_as_mut::<TileDocument>(id)) {
             let look = d.tile().terrain_look().clone();
             if look.climate.eq_ignore_ascii_case(&climate) {
@@ -547,13 +702,24 @@ impl ContextUi {
                     d.tile_mut().set_terrain_look(&mut e.scene, TerrainLook { climate, ..look });
                     changed = true;
                 }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Gives the tile's ground the map's climate at this placement.");
+                }
             }
         }
 
         // The season's snow where the map has it (winter on the campaign map): the ground, buildings, decals and trees of those cells.
         gui::checkbox("snow where the map says", &mut self.snow_on);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Covers the cells the map's snow map marks for the tile's season with snow.");
+        }
+
         if self.snow_on {
             gui::slider_float("snow amount", &mut self.snow_amount, 0.05, 1.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How thick the snow lies on those cells.");
+            }
             let season = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().season.clone()).unwrap_or_default();
             match self.view.snowy_cells(&season) {
                 Some(0) => gui::text_disabled("no snow on the map this season"),
@@ -577,7 +743,6 @@ impl ContextUi {
 }
 
 impl ContextUi {
-
     /// The overview map over the viewport (`MapView::draw_overview`), the open tile's placement highlighted.
     pub fn draw_minimap(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
         if !self.minimap || !self.shown {

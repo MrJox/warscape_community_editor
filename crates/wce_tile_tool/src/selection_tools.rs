@@ -2,8 +2,8 @@
 //! drag in any mode; Shift adds, Ctrl takes away), selecting by the primary's type or key, everything, the inverse, and selections saved by name for the session.
 
 use wce_editor::editor::Editor;
-use wce_editor_core::document::Document;
 use wce_editor::{gui, icons, theme};
+use wce_editor_core::document::Document;
 use wce_scene::render_scene::{DocumentId, SourceRef};
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
@@ -114,20 +114,42 @@ impl TileTool {
             self.status = "box select: drag a rectangle (Shift adds, Ctrl takes away; Esc cancels)".to_owned();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Then drag a rectangle in the viewport: what is inside is selected (Shift adds, Ctrl takes away; Esc cancels).",
+            );
+        }
+
         if gui::menu_item("All of this type", None, false, some) {
             self.select_like_primary(e, false);
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Selects every shown, selectable instance of the selected item's type.");
         }
 
         if gui::menu_item("All with this key", None, false, some) {
             self.select_like_primary(e, true);
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Selects every shown, selectable instance of the selected item's type and key.");
+        }
+
         if gui::menu_item("Everything", None, false, true) {
             self.select_everything(e);
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Selects every shown, selectable instance.");
+        }
+
         if gui::menu_item("Invert", None, false, true) {
             self.invert_selection(e);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Selects the shown, selectable instances that are not selected, and only those.");
         }
 
         gui::separator();
@@ -137,10 +159,17 @@ impl TileTool {
             if gui::menu_item(&format!("{}  {n}", icons::HISTORY), None, false, true) {
                 self.restore_selection(e, &n);
             }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Selects this saved selection again.");
+            }
         }
 
         gui::set_next_item_width(140.0);
         let enter = gui::input_text("##selname", Some("name"), &mut self.selection_name, 64, gui::INPUT_ENTER_RETURNS_TRUE);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The saved selection's name; Enter saves it.");
+        }
         gui::same_line();
         if (gui::small_button("Save the selection") || enter) && !self.selection_name.trim().is_empty() {
             let n = self.selection_name.trim().to_owned();
@@ -185,7 +214,9 @@ impl TileTool {
                 let (lo, hi) = ((from.0.min(to.0) as f32, from.1.min(to.1) as f32), (from.0.max(to.0) as f32, from.1.max(to.1) as f32));
                 let io = gui::io();
                 let inside = Self::instances_where(e, |d, el| {
-                    e.viewport.project(d.tile().world_position(el)).is_some_and(|(px, py)| px >= lo.0 && px <= hi.0 && py >= lo.1 && py <= hi.1)
+                    e.viewport
+                        .project(d.tile().world_position(el))
+                        .is_some_and(|(px, py)| px >= lo.0 && px <= hi.0 && py >= lo.1 && py <= hi.1)
                 });
 
                 let mut now = if io.KeyShift || io.KeyCtrl { selected(e) } else { vec![] };

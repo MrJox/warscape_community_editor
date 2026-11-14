@@ -2,6 +2,7 @@
 
 pub mod anim_pose;
 pub mod cbuffers;
+pub mod cloth_sim;
 pub mod draw_set;
 pub mod environment_apply;
 pub mod files;
@@ -10,15 +11,16 @@ pub mod gpu_timer;
 pub mod image_io;
 pub mod model_cache;
 pub mod particles;
-pub mod vfx_rome2;
 pub mod render_target;
-pub mod sea_surface;
 pub mod renderer;
+pub mod sea_surface;
 pub mod shader_lib;
+pub mod ship_model;
 pub mod texture;
 pub mod unit_animation;
 pub mod unit_assembly;
 pub mod unit_catalog;
+pub mod vfx_rome2;
 pub mod wind;
 
 /// An error of the renderer: what failed, in words.

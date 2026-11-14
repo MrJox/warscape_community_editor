@@ -36,7 +36,11 @@ fn main() {
             {
                 let k = key_of.get(&ri).cloned().unwrap_or_default();
                 let short = k.rsplit('\\').next().unwrap_or(&k).to_owned();
-                *tally.entry((format!("{} cross", doc.root.class), version, format!("{cross}={v:?} is_decal={:?}", rec.get("is_decal")))).or_default().entry(short).or_default() += 1;
+                *tally
+                    .entry((format!("{} cross", doc.root.class), version, format!("{cross}={v:?} is_decal={:?}", rec.get("is_decal"))))
+                    .or_default()
+                    .entry(short)
+                    .or_default() += 1;
             }
 
             for p in rec.props() {

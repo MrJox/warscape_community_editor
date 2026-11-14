@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::f32::consts::PI;
 
 use wce_assets::vfx_constants::{VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAIN_VIEW_ID, vfx_bits};
-use wce_assets::weather_vfx::{Effect, VfxReader, WeatherVfx, load_effect_with, load_weather_vfx};
 use wce_assets::vfx_def::VfxFile;
+use wce_assets::weather_vfx::{Effect, VfxReader, WeatherVfx, load_effect_with, load_weather_vfx};
 use wce_d3d11::*;
 use wce_foundation::math::{Float3, Float4x4, length, normalize, rotation_x, rotation_y, rotation_z};
 use wce_scene::render_scene::EmitMesh;
@@ -70,7 +70,14 @@ fn u4(v: &[u32; 4]) -> [u8; 16] {
 }
 
 fn make_cb(dev: &ID3D11Device, data: &[u8]) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: data.len() as u32, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: data.len() as u32,
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, Some(data)).ok()
 }
 
@@ -83,9 +90,15 @@ struct TextureArrayBuilder {
 }
 
 impl TextureArrayBuilder {
-
     /// The slice of a path, loading it on first use; `None` if missing or incompatible with slice 0.
-    fn add(&mut self, dev: &ID3D11Device, read: &VfxReader, cache: &mut BTreeMap<String, Texture>, path: &str, errors: &mut Vec<String>) -> Option<u32> {
+    fn add(
+        &mut self,
+        dev: &ID3D11Device,
+        read: &VfxReader,
+        cache: &mut BTreeMap<String, Texture>,
+        path: &str,
+        errors: &mut Vec<String>,
+    ) -> Option<u32> {
         if path.is_empty() {
             return None;
         }
@@ -138,7 +151,11 @@ impl TextureArrayBuilder {
             }
         }
 
-        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: first.format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: first.format,
+            ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY),
+            ..Default::default()
+        };
         sd.Anonymous.Texture2DArray.MipLevels = mips;
         sd.Anonymous.Texture2DArray.ArraySize = td.ArraySize;
         dev.create_shader_resource_view(&array, Some(&sd)).ok()
@@ -174,7 +191,16 @@ struct EmitterState {
 
 impl Default for EmitterState {
     fn default() -> Self {
-        Self { rate_accum: 0.0, rate_blend: -1.0, burst_timer: 0.0, burst_interval: -1.0, burst_length: 0.0, deaths: VecDeque::new(), last_pos: Float3::default(), started: false }
+        Self {
+            rate_accum: 0.0,
+            rate_blend: -1.0,
+            burst_timer: 0.0,
+            burst_interval: -1.0,
+            burst_length: 0.0,
+            deaths: VecDeque::new(),
+            last_pos: Float3::default(),
+            started: false,
+        }
     }
 }
 
@@ -427,7 +453,8 @@ fn model_lights(bytes: &[u8]) -> Vec<(String, Float3)> {
     use rpfm_lib::files::{Decodeable, DecodeableExtraData};
     let Ok(model) = RigidModel::decode(&mut std::io::Cursor::new(bytes), &Some(DecodeableExtraData::default())) else { return vec![] };
     let Some(lod) = model.lods().first() else { return vec![] };
-    lod.mesh_blocks().iter()
+    lod.mesh_blocks()
+        .iter()
         .filter(|b| *b.mesh().material_type() == MaterialType::StaticPointLight)
         .map(|b| {
             let p = b.material().v_pivot();
@@ -452,15 +479,18 @@ fn parse_light_defs(bytes: &[u8]) -> BTreeMap<String, LightDef> {
             _ => 0,
         };
 
-        out.insert(doc.get(e, "name").unwrap_or_default(), LightDef {
-            colour: [n("red", 0.0), n("green", 0.0), n("blue", 0.0)],
-            radius: n("radius", 0.0),
-            animation,
-            speed: [n("animation_x", 0.0), n("animation_y", 0.0)],
-            colour_scale: n("colour_scale", 1.0),
-            colour_min: n("colour_min", 0.0),
-            smooth: !doc.get(e, "falloff").is_some_and(|v| v.to_lowercase().contains("linear")),
-        });
+        out.insert(
+            doc.get(e, "name").unwrap_or_default(),
+            LightDef {
+                colour: [n("red", 0.0), n("green", 0.0), n("blue", 0.0)],
+                radius: n("radius", 0.0),
+                animation,
+                speed: [n("animation_x", 0.0), n("animation_y", 0.0)],
+                colour_scale: n("colour_scale", 1.0),
+                colour_min: n("colour_min", 0.0),
+                smooth: !doc.get(e, "falloff").is_some_and(|v| v.to_lowercase().contains("linear")),
+            },
+        );
     }
 
     out
@@ -650,7 +680,6 @@ pub(crate) fn blend_state(dev: &ID3D11Device, rt: D3D11_RENDER_TARGET_BLEND_DESC
 }
 
 impl ParticleSystem {
-
     /// The particle system; `read` gives the files of the packs (the editor passes one that prefers open documents).
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, read: Box<VfxReader<'static>>) -> Self {
         Self::new_for(dev, ctx, read, true)
@@ -789,8 +818,16 @@ impl ParticleSystem {
         let make_target = |fmt: DXGI_FORMAT, slices: u32| -> Target {
             let mut t = Target::default();
             let td = D3D11_TEXTURE2D_DESC {
-                Width: WIDTH, Height: WIDTH, MipLevels: 1, ArraySize: slices, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: WIDTH,
+                Height: WIDTH,
+                MipLevels: 1,
+                ArraySize: slices,
+                Format: fmt,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
             let Ok(tex) = dev.create_texture_2d(&td, None) else { return t };
@@ -829,36 +866,66 @@ impl ParticleSystem {
         // A flat normal (1 slice) and a still sea surface (2 slices; the game logic's collision is off for weather).
         let flat = 0xFFFF_8080u32.to_le_bytes();
         let td = D3D11_TEXTURE2D_DESC {
-            Width: 1, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: 1,
+            Height: 1,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
-        let mut vd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: td.Format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+        let mut vd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: td.Format,
+            ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY),
+            ..Default::default()
+        };
         vd.Anonymous.Texture2DArray.MipLevels = 1;
         vd.Anonymous.Texture2DArray.ArraySize = 1;
-        self.flat_normal_srv = dev.create_texture_2d(&td, Some(&[InitData { data: &flat, row_pitch: 4, slice_pitch: 4 }]))
+        self.flat_normal_srv = dev
+            .create_texture_2d(&td, Some(&[InitData { data: &flat, row_pitch: 4, slice_pitch: 4 }]))
             .and_then(|t| dev.create_shader_resource_view(&t, Some(&vd)))
             .ok();
 
         self.normal_srv = self.flat_normal_srv.clone();
         let zero = [0u8; 16];
         let sdsc = D3D11_TEXTURE2D_DESC {
-            Width: 1, Height: 1, MipLevels: 1, ArraySize: 2, Format: DXGI_FORMAT_R32G32B32A32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: 1,
+            Height: 1,
+            MipLevels: 1,
+            ArraySize: 2,
+            Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let ss = [InitData { data: &zero, row_pitch: 16, slice_pitch: 16 }; 2];
         self.sea_srv = dev.create_texture_2d(&sdsc, Some(&ss)).and_then(|st| dev.create_shader_resource_view(&st, None)).ok();
 
         // The 3D vector field the turbulence samples (g_tex_vector_field, the string next to it in the DLL).
-        match (self.reader)("vfx/textures/turbulence.dds").and_then(|bytes| load_dds(&dev, &bytes, false).map_err(|error| error.to_string())) {
+        match (self.reader)("vfx/textures/turbulence.dds")
+            .and_then(|bytes| load_dds(&dev, &bytes, false).map_err(|error| error.to_string()))
+        {
             Ok(texture) => self.vector_field_srv = texture.srv,
             Err(error) => {
                 self.error(format!("vfx/textures/turbulence.dds: {error}"));
                 let mid = 0xFF80_8080u32;
                 let vd = D3D11_TEXTURE3D_DESC {
-                    Width: 1, Height: 1, Depth: 1, MipLevels: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, Usage: D3D11_USAGE_IMMUTABLE,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                    Width: 1,
+                    Height: 1,
+                    Depth: 1,
+                    MipLevels: 1,
+                    Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                    Usage: D3D11_USAGE_IMMUTABLE,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                    CPUAccessFlags: 0,
+                    MiscFlags: 0,
                 };
 
                 let sd = [InitData { data: &mid.to_le_bytes(), row_pitch: 4, slice_pitch: 4 }];
@@ -867,7 +934,14 @@ impl ParticleSystem {
         }
 
         let sampler = |filter: D3D11_FILTER, address: D3D11_TEXTURE_ADDRESS_MODE| {
-            let sd = D3D11_SAMPLER_DESC { Filter: filter, AddressU: address, AddressV: address, AddressW: address, MaxLOD: D3D11_FLOAT32_MAX, ..Default::default() };
+            let sd = D3D11_SAMPLER_DESC {
+                Filter: filter,
+                AddressU: address,
+                AddressV: address,
+                AddressW: address,
+                MaxLOD: D3D11_FLOAT32_MAX,
+                ..Default::default()
+            };
             dev.create_sampler_state(&sd).ok()
         };
 
@@ -895,8 +969,18 @@ impl ParticleSystem {
         // The distortion buffer: lerp towards the particle's offset.
         self.bs_alpha = blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC { SrcBlend: D3D11_BLEND_SRC_ALPHA, ..premultiplied });
 
-        let mut dd = D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() };
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
+        let mut dd = D3D11_DEPTH_STENCIL_DESC {
+            DepthEnable: true.into(),
+            DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO,
+            DepthFunc: D3D11_COMPARISON_LESS_EQUAL,
+            ..Default::default()
+        };
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_NONE,
+            DepthClipEnable: true.into(),
+            ..Default::default()
+        };
         self.ds_test = dev.create_depth_stencil_state(&dd).ok();
         dd.DepthEnable = false.into();
         self.ds_off = dev.create_depth_stencil_state(&dd).ok();
@@ -906,8 +990,16 @@ impl ParticleSystem {
     /// The emitter instance texture (g_emitter_instances: 6 layers of 256 x `rows`; the shaders address instance i at (i % 256, i / 256)).
     fn create_emitter_texture(&mut self, rows: usize) {
         let ed = D3D11_TEXTURE2D_DESC {
-            Width: EMITTER_WIDTH as u32, Height: rows as u32, MipLevels: 1, ArraySize: EMITTER_LAYERS as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: EMITTER_WIDTH as u32,
+            Height: rows as u32,
+            MipLevels: 1,
+            ArraySize: EMITTER_LAYERS as u32,
+            Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         self.emitter_tex = self.dev.create_texture_2d(&ed, None).ok();
@@ -978,15 +1070,21 @@ impl ParticleSystem {
         }
 
         if loaded_new {
-            self.world_first_row = self.world_effects.iter().scan(0, |row, e| {
-                let first = *row;
-                *row += e.emitters.len();
-                Some(first)
-            }).collect();
+            self.world_first_row = self
+                .world_effects
+                .iter()
+                .scan(0, |row, e| {
+                    let first = *row;
+                    *row += e.emitters.len();
+                    Some(first)
+                })
+                .collect();
 
             let rows = self.effect.emitters.len() + self.world_effects.iter().map(|e| e.emitters.len()).sum::<usize>();
             if rows > MAX_EMITTERS {
-                self.error(format!("{rows} emitter definitions, more than the {MAX_EMITTERS} the shaders' constant arrays hold: the rest are not drawn"));
+                self.error(format!(
+                    "{rows} emitter definitions, more than the {MAX_EMITTERS} the shaders' constant arrays hold: the rest are not drawn"
+                ));
             }
 
             self.build_emitter_gpu();
@@ -1019,17 +1117,30 @@ impl ParticleSystem {
                         // Per reference, one set of draws shared by its emitters (fn 0x1181a930 / 0x117f1860, from the shared generator):
                         // scale lerp(scale_min, max), then one blend for the tint's four channels, the particle lifetime bias and the
                         // emitter lifetime bias. The generators are seeded from the key: every vanilla emitter has RandomSeed -1 (random).
-                        let mut shared = (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ em.instance.bytes().fold(0x2545_F491u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+                        let mut shared = (fx.key as u32).wrapping_mul(0x9E37_79B9)
+                            ^ em.instance.bytes().fold(0x2545_F491u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
                         let ref_scale = lerp(em.scale_range[0], em.scale_range[1], game_rand(&mut shared));
                         let (t_tint, t_life, t_emitter) = (game_rand(&mut shared), game_rand(&mut shared), game_rand(&mut shared));
                         let mut rng = shared ^ (k as u32).wrapping_mul(0x85EB_CA6B);
                         let area_blend = game_rand(&mut rng);
                         let tint = std::array::from_fn(|c| lerp(em.tint_min[c], em.tint_max[c], t_tint));
                         WorldInstance {
-                            key: fx.key, effect: e, emitter: k, pos: origin + rotate(&rot, reference * fx.scale), rot, quat, scale: fx.scale * ref_scale, mesh: fx.mesh.clone(), tint, rng,
-                            area_blend, lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
+                            key: fx.key,
+                            effect: e,
+                            emitter: k,
+                            pos: origin + rotate(&rot, reference * fx.scale),
+                            rot,
+                            quat,
+                            scale: fx.scale * ref_scale,
+                            mesh: fx.mesh.clone(),
+                            tint,
+                            rng,
+                            area_blend,
+                            lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
                             emitter_life_bias: lerp(em.emitter_lifetime_bias[0], em.emitter_lifetime_bias[1], t_emitter),
-                            start: clock, last_spawn: clock, st: EmitterState::default(),
+                            start: clock,
+                            last_spawn: clock,
+                            st: EmitterState::default(),
                         }
                     }
                 };
@@ -1055,10 +1166,24 @@ impl ParticleSystem {
                 let reference = Float3::new(light.pos[0], light.pos[1], light.pos[2]);
                 let scale = fx.scale * 0.5 * (light.scale_range[0] + light.scale_range[1]);
                 let (start, bursts) = old_lights.get(&(fx.key, k)).map_or_else(
-                    || (clock, RigidBursts { rng: (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ 0x6C8E_9CF5 ^ k as u32, ..Default::default() }),
+                    || {
+                        (
+                            clock,
+                            RigidBursts { rng: (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ 0x6C8E_9CF5 ^ k as u32, ..Default::default() },
+                        )
+                    },
                     |l| (l.start, l.bursts.clone()),
                 );
-                self.world_lights.push(WorldLight { key: fx.key, effect: e, light: k, pos: origin + rotate(&rot, reference * fx.scale), rot, scale, start, bursts });
+                self.world_lights.push(WorldLight {
+                    key: fx.key,
+                    effect: e,
+                    light: k,
+                    pos: origin + rotate(&rot, reference * fx.scale),
+                    rot,
+                    scale,
+                    start,
+                    bursts,
+                });
             }
         }
 
@@ -1074,8 +1199,17 @@ impl ParticleSystem {
                 let pos = origin + rotate(&rot, reference * fx.scale);
                 let seed = (fx.key as u32).wrapping_mul(0x9E37_79B9) ^ 0x2F6B_A5C1 ^ (k as u32).wrapping_mul(0x85EB_CA6B);
                 let mut r = old_rigids.remove(&(fx.key, k)).filter(|r| r.effect == e).unwrap_or_else(|| WorldRigid {
-                    key: fx.key, effect: e, rigid: k, pos, rot, scale, mesh: None, start: clock,
-                    bursts: RigidBursts { rng: seed, ..Default::default() }, live: vec![], rng: seed ^ 0x5bd1_e995,
+                    key: fx.key,
+                    effect: e,
+                    rigid: k,
+                    pos,
+                    rot,
+                    scale,
+                    mesh: None,
+                    start: clock,
+                    bursts: RigidBursts { rng: seed, ..Default::default() },
+                    live: vec![],
+                    rng: seed ^ 0x5bd1_e995,
                 });
 
                 (r.pos, r.rot, r.scale) = (pos, rot, scale);
@@ -1159,7 +1293,8 @@ impl ParticleSystem {
                 } else {
                     let mut o = [0.0f32; 3];
                     d.vec("ParticleOrientation", &mut o);
-                    let (_, q) = rotation_of(&(rotation_z(o[2] * PI / 180.0) * rotation_y(o[1] * PI / 180.0) * rotation_x(o[0] * PI / 180.0)));
+                    let (_, q) =
+                        rotation_of(&(rotation_z(o[2] * PI / 180.0) * rotation_y(o[1] * PI / 180.0) * rotation_x(o[0] * PI / 180.0)));
                     q
                 };
 
@@ -1236,13 +1371,20 @@ impl ParticleSystem {
         }
 
         if self.weather_lights.len() != self.effect.lights.len() {
-            self.weather_lights = (0..self.effect.lights.len()).map(|k| RigidBursts { rng: 0x5EED_0000 ^ k as u32, ..Default::default() }).collect();
+            self.weather_lights =
+                (0..self.effect.lights.len()).map(|k| RigidBursts { rng: 0x5EED_0000 ^ k as u32, ..Default::default() }).collect();
         }
 
         let defs = self.light_defs.take().unwrap_or_default();
         let clock = self.clock;
         let mut out = vec![];
-        let mut emit = |light: &wce_assets::weather_vfx::EffectLight, pos: Float3, rot: &Float4x4, scale: f32, bursts: &mut RigidBursts, start: f32, models: &BTreeMap<String, Vec<(String, Float3)>>| {
+        let mut emit = |light: &wce_assets::weather_vfx::EffectLight,
+                        pos: Float3,
+                        rot: &Float4x4,
+                        scale: f32,
+                        bursts: &mut RigidBursts,
+                        start: f32,
+                        models: &BTreeMap<String, Vec<(String, Float3)>>| {
             let d = &light.def;
             let mut cull = [0.0f32; 4];
             d.vec("CullDistances", &mut cull);
@@ -1340,7 +1482,8 @@ impl ParticleSystem {
 
     pub fn restart(&mut self) {
         self.state = vec![EmitterState::default(); self.effect.emitters.len()];
-        self.weather_lights = (0..self.effect.lights.len()).map(|k| RigidBursts { rng: 0x5EED_0000 ^ k as u32, ..Default::default() }).collect();
+        self.weather_lights =
+            (0..self.effect.lights.len()).map(|k| RigidBursts { rng: 0x5EED_0000 ^ k as u32, ..Default::default() }).collect();
         self.clock = 0.0;
         self.alive = 0;
         self.clear = true;
@@ -1348,7 +1491,8 @@ impl ParticleSystem {
 
     /// The emitter constant buffers, the curve texture array and the diffuse texture array of the current effect.
     fn build_emitter_gpu(&mut self) {
-        let (mut common, mut gs, mut vs, mut ps_render, mut ps_sim) = (vec![0u8; 8192], vec![0u8; 16384], vec![0u8; 57344], vec![0u8; 57344], vec![0u8; 40960]);
+        let (mut common, mut gs, mut vs, mut ps_render, mut ps_sim) =
+            (vec![0u8; 8192], vec![0u8; 16384], vec![0u8; 57344], vec![0u8; 57344], vec![0u8; 40960]);
         let mut diffuse = TextureArrayBuilder { srgb: true, slices: BTreeMap::new(), textures: vec![] };
         let mut normal = TextureArrayBuilder { srgb: false, slices: BTreeMap::new(), textures: vec![] };
         let mut tex_errors = vec![];
@@ -1420,18 +1564,36 @@ impl ParticleSystem {
             chunk.copy_from_slice(k.curves.as_flattened().as_flattened());
         }
 
-        let subs = texels.chunks(slice)
-            .map(|chunk| InitData { data: bytemuck::cast_slice(chunk), row_pitch: (VFX_CURVE_WIDTH * 16) as u32, slice_pitch: (VFX_CURVE_WIDTH * 16 * 8) as u32 })
+        let subs = texels
+            .chunks(slice)
+            .map(|chunk| InitData {
+                data: bytemuck::cast_slice(chunk),
+                row_pitch: (VFX_CURVE_WIDTH * 16) as u32,
+                slice_pitch: (VFX_CURVE_WIDTH * 16 * 8) as u32,
+            })
             .collect::<Vec<_>>();
         let td = D3D11_TEXTURE2D_DESC {
-            Width: VFX_CURVE_WIDTH as u32, Height: 8, MipLevels: 1, ArraySize: layers as u32, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: VFX_CURVE_WIDTH as u32,
+            Height: 8,
+            MipLevels: 1,
+            ArraySize: layers as u32,
+            Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
-        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: td.Format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: td.Format,
+            ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY),
+            ..Default::default()
+        };
         sd.Anonymous.Texture2DArray.MipLevels = 1;
         sd.Anonymous.Texture2DArray.ArraySize = layers as u32;
-        self.curves_srv = self.dev.create_texture_2d(&td, Some(&subs)).and_then(|t| self.dev.create_shader_resource_view(&t, Some(&sd))).ok();
+        self.curves_srv =
+            self.dev.create_texture_2d(&td, Some(&subs)).and_then(|t| self.dev.create_shader_resource_view(&t, Some(&sd))).ok();
 
         for e in tex_errors {
             self.error(e);
@@ -1447,7 +1609,13 @@ impl ParticleSystem {
                 "cb_vfx_emitter_constants_common" => &self.cb_common,
                 "cb_vfx_emitter_constants_gs" => &self.cb_gs,
                 "cb_vfx_emitter_constants_vs" => &self.cb_vs,
-                "cb_vfx_emitter_constants_ps" => if sim_layout { &self.cb_ps_sim } else { &self.cb_ps_render },
+                "cb_vfx_emitter_constants_ps" => {
+                    if sim_layout {
+                        &self.cb_ps_sim
+                    } else {
+                        &self.cb_ps_render
+                    }
+                }
                 _ => continue,
             };
 
@@ -1464,7 +1632,14 @@ impl ParticleSystem {
 
     fn fullscreen(&self, rtvs: &[Option<ID3D11RenderTargetView>], w: u32, h: u32) {
         self.ctx.set_render_targets(rtvs, None);
-        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: w as f32, Height: h as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.set_viewports(&[D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: w as f32,
+            Height: h as f32,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }]);
         self.ctx.set_input_layout(None);
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         self.ctx.draw(3, 0);
@@ -1620,7 +1795,11 @@ impl ParticleSystem {
                 let vel = emitter_rot.transform_point(vel);
                 let steps = if spawn_t < self.clock - SUB_STEP { ((self.clock - spawn_t) / SUB_STEP).floor() } else { 0.0 };
                 let seed = self.rand01();
-                out.push(SpawnVertex { id_seed_steps: [i as f32, seed, steps, 0.0], pos_time: [pos.x, pos.y, pos.z, spawn_t], vel_life: [vel.x, vel.y, vel.z, life] });
+                out.push(SpawnVertex {
+                    id_seed_steps: [i as f32, seed, steps, 0.0],
+                    pos_time: [pos.x, pos.y, pos.z, spawn_t],
+                    vel_life: [vel.x, vel.y, vel.z, life],
+                });
                 latest_death = latest_death.max(spawn_t + life);
                 batch += 1;
                 free_slots -= 1;
@@ -1701,7 +1880,12 @@ impl ParticleSystem {
             }
 
             let curve = |name: &str, sub: &str, t: f32| d.curve(name, sub).map_or(0.0, |c| c.eval(t));
-            let rate = lerp(curve("EmissionRateCurve", "emission_min", t_rate), curve("EmissionRateCurve", "emission_max", t_rate), inst.st.rate_blend).max(0.0);
+            let rate = lerp(
+                curve("EmissionRateCurve", "emission_min", t_rate),
+                curve("EmissionRateCurve", "emission_max", t_rate),
+                inst.st.rate_blend,
+            )
+            .max(0.0);
 
             // The burst gate (fn 0x1180c680 / 0x1180bf70).
             let (bi_lo, bi_hi) = d.range("BurstInterval", 0.0, 0.0);
@@ -1770,7 +1954,9 @@ impl ParticleSystem {
                 let angle = lerp(arc[0], arc[1], game_rand(&mut inst.rng)) * PI / 180.0;
                 let r = lerp(inner, outer, game_rand(&mut inst.rng));
                 let b = [game_rand(&mut self.global_rng), game_rand(&mut self.global_rng), game_rand(&mut self.global_rng)];
-                let local = Float3::new(angle.cos() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.sin() * r + size[2] * (b[0] - 0.5)) * scale;
+                let local =
+                    Float3::new(angle.cos() * r + size[0] * (b[2] - 0.5), size[1] * (b[1] - 0.5), angle.sin() * r + size[2] * (b[0] - 0.5))
+                        * scale;
                 let (offset, normal) = match &mesh {
                     Some(m) => {
                         let (at, n) = mesh_point(m, &mut inst.rng, &mut self.global_rng);
@@ -1834,18 +2020,20 @@ impl ParticleSystem {
 
     fn shaders(&mut self, lib: &mut ShaderLibrary, read: &FileReader, cbs: &mut ConstantBuffers) -> Option<Shaders> {
         let mut get = |name: &str| lib.get(read, cbs, name);
-        let shaders = (|| Ok::<_, crate::RenderError>(Shaders {
-            sim_vs: get(SIM_VS)?,
-            sim_ps: get(SIM_PS)?,
-            keys_ps: get(KEYS_PS)?,
-            sort_vs: get(SORT_VS)?,
-            sort_ps: get(SORT_PS)?,
-            spawn_vs: get(SPAWN_VS)?,
-            spawn_ps: get(SPAWN_PS)?,
-            vs: get(MAIN_VS)?,
-            gs: get(MAIN_GS)?,
-            ps: get(MAIN_PS)?,
-        }))();
+        let shaders = (|| {
+            Ok::<_, crate::RenderError>(Shaders {
+                sim_vs: get(SIM_VS)?,
+                sim_ps: get(SIM_PS)?,
+                keys_ps: get(KEYS_PS)?,
+                sort_vs: get(SORT_VS)?,
+                sort_ps: get(SORT_PS)?,
+                spawn_vs: get(SPAWN_VS)?,
+                spawn_ps: get(SPAWN_PS)?,
+                vs: get(MAIN_VS)?,
+                gs: get(MAIN_GS)?,
+                ps: get(MAIN_PS)?,
+            })
+        })();
 
         match shaders {
             Ok(shaders) => Some(shaders),
@@ -1915,7 +2103,14 @@ impl ParticleSystem {
 
         if let Some(tex) = &self.emitter_tex {
             for l in 0..EMITTER_LAYERS {
-                let _ = self.ctx.update_subresource(tex, l as u32, None, bytemuck::cast_slice(&layers[at(l, 0)..at(l + 1, 0)]), (EMITTER_WIDTH * 16) as u32, (per_layer * 16) as u32);
+                let _ = self.ctx.update_subresource(
+                    tex,
+                    l as u32,
+                    None,
+                    bytemuck::cast_slice(&layers[at(l, 0)..at(l + 1, 0)]),
+                    (EMITTER_WIDTH * 16) as u32,
+                    (per_layer * 16) as u32,
+                );
             }
         }
 
@@ -2040,8 +2235,16 @@ impl ParticleSystem {
         self.dist_rtv = None;
         self.dist_srv = None;
         let td = D3D11_TEXTURE2D_DESC {
-            Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: w,
+            Height: h,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         if let Ok(tex) = self.dev.create_texture_2d(&td, None) {
@@ -2057,15 +2260,20 @@ impl ParticleSystem {
         if verts.len() > self.spawn_capacity {
             self.spawn_capacity = verts.len() + 4096;
             let desc = D3D11_BUFFER_DESC {
-                ByteWidth: (self.spawn_capacity * size_of::<SpawnVertex>()) as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_VERTEX_BUFFER as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0, StructureByteStride: 0,
+                ByteWidth: (self.spawn_capacity * size_of::<SpawnVertex>()) as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_VERTEX_BUFFER as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+                MiscFlags: 0,
+                StructureByteStride: 0,
             };
 
             self.spawn_vb = self.dev.create_buffer(&desc, None).ok();
         }
 
         let Some(vb) = self.spawn_vb.clone() else { return };
-        let elements = [0u32, 16, 32].map(|offset| InputElement::new(c"COLOR", offset / 16, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offset, false));
+        let elements =
+            [0u32, 16, 32].map(|offset| InputElement::new(c"COLOR", offset / 16, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offset, false));
 
         let Ok(layout) = lib.layout(&sh.spawn_vs, "vfx_spawn", &elements) else { return };
         let written = match self.ctx.map(&vb, 0, D3D11_MAP_WRITE_DISCARD, 0) {
@@ -2090,18 +2298,42 @@ impl ParticleSystem {
         bind_sampler(&self.ctx, &sh.spawn_ps, "g_sam_terrain_surface", self.s_linear_clamp.as_ref());
         bind_sampler(&self.ctx, &sh.spawn_ps, "g_sam_vector_field", self.s_linear_wrap.as_ref());
         self.ctx.set_render_targets(&self.particles[self.cur].rtv, None);
-        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: WIDTH as f32, Height: WIDTH as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.set_viewports(&[D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: WIDTH as f32,
+            Height: WIDTH as f32,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }]);
         self.ctx.draw(verts.len() as u32, 0);
         self.unbind();
         self.ctx.set_vertex_buffers(0, &[None], &[0], &[0]);
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw(&self, f: &Frame, sh: &Shaders, pixel: &GameShader, rtv: &ID3D11RenderTargetView, depth: Option<&ID3D11DepthStencilView>, view_id: u32, blend: Option<ID3D11BlendState>, cbs: &mut ConstantBuffers) {
+    fn draw(
+        &self,
+        f: &Frame,
+        sh: &Shaders,
+        pixel: &GameShader,
+        rtv: &ID3D11RenderTargetView,
+        depth: Option<&ID3D11DepthStencilView>,
+        view_id: u32,
+        blend: Option<ID3D11BlendState>,
+        cbs: &mut ConstantBuffers,
+    ) {
         cbs.set_i("cb_vfx", "g_view_id", view_id as i32);
         let _ = cbs.upload(&self.dev, &self.ctx);
         self.ctx.set_render_targets(&[Some(rtv.clone())], depth);
-        self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: f.width as f32, Height: f.height as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
+        self.ctx.set_viewports(&[D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: f.width as f32,
+            Height: f.height as f32,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }]);
         self.ctx.set_blend_state(blend.as_ref());
         self.ctx.set_depth_stencil_state(if depth.is_some() { self.ds_test.as_ref() } else { self.ds_off.as_ref() }, 0);
         self.ctx.set_input_layout(None);
@@ -2148,9 +2380,11 @@ mod tests {
     #[test]
     fn lightning_flashes_in_bursts() {
         // library_vfx_weather_rain's lightning_point_light.
-        let d = emitter(r#"<ranged_property name="Bursts" min="1" max="1"/><property name="InfiniteBursts" value="true"/>
+        let d = emitter(
+            r#"<ranged_property name="Bursts" min="1" max="1"/><property name="InfiniteBursts" value="true"/>
             <ranged_property name="BurstInterval" min="30" max="60"/><ranged_property name="BurstIntervalLength" min="0.2" max="0.4"/>
-            <ranged_property name="RigidLifeTime" min="0.1" max="0.15"/><ranged_property name="RigidsPerBurst" min="1" max="3"/>"#);
+            <ranged_property name="RigidLifeTime" min="0.1" max="0.15"/><ranged_property name="RigidsPerBurst" min="1" max="3"/>"#,
+        );
         let mut b = RigidBursts { rng: 7, ..Default::default() };
         let (mut lit, mut flashes, mut was_lit) = (0, 0, false);
         let mut t = 0.0;
@@ -2171,9 +2405,11 @@ mod tests {
     #[test]
     fn fire_light_stays_on() {
         // library_vfx_fire_smoke_loop's fire_point_light.
-        let d = emitter(r#"<ranged_property name="Bursts" min="1" max="1"/><property name="InfiniteBursts" value="true"/>
+        let d = emitter(
+            r#"<ranged_property name="Bursts" min="1" max="1"/><property name="InfiniteBursts" value="true"/>
             <ranged_property name="BurstInterval" min="64" max="64"/><ranged_property name="BurstIntervalLength" min="0" max="0"/>
-            <ranged_property name="RigidLifeTime" min="64" max="64"/><ranged_property name="RigidsPerBurst" min="1" max="1"/>"#);
+            <ranged_property name="RigidLifeTime" min="64" max="64"/><ranged_property name="RigidsPerBurst" min="1" max="1"/>"#,
+        );
         let mut b = RigidBursts::default();
         let mut t = 0.0;
         while t < 300.0 {

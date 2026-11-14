@@ -52,7 +52,6 @@ fn leaf_mm(w: u32, h: u32, bx: u32, by: u32, at: &(impl Fn(u32, u32) -> u16 + Sy
 }
 
 impl HeightPyramid {
-
     /// The pyramid of a `w` x `h` field whose sample (x, y) is `at(x, y)`.
     pub fn new(w: u32, h: u32, at: impl Fn(u32, u32) -> u16 + Sync) -> Self {
         if w < 2 || h < 2 {
@@ -198,7 +197,11 @@ impl HeightPyramid {
                 return None;
             }
 
-            if tx < tz { cx += sx } else { cz += sz }
+            if tx < tz {
+                cx += sx
+            } else {
+                cz += sz
+            }
             if cx < i64::from(b.0) || cx >= i64::from(b.2) || cz < i64::from(b.1) || cz >= i64::from(b.3) {
                 return None;
             }
@@ -272,10 +275,12 @@ mod tests {
     use super::*;
 
     fn field(w: u32, h: u32) -> Vec<u16> {
-        (0..w * h).map(|i| {
-            let (x, y) = (f64::from(i % w), f64::from(i / w));
-            (20_000.0 + 9_000.0 * (x * 0.21).sin() * (y * 0.17).cos() + 300.0 * (x * 1.7 + y * 2.3).sin()) as u16
-        }).collect()
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = (f64::from(i % w), f64::from(i / w));
+                (20_000.0 + 9_000.0 * (x * 0.21).sin() * (y * 0.17).cos() + 300.0 * (x * 1.7 + y * 2.3).sin()) as u16
+            })
+            .collect()
     }
 
     /// The ray's first point under the bilinear field by a fine march (the reference).
@@ -341,5 +346,3 @@ mod tests {
         assert!((t - (9000.0 - 2000.0)).abs() < 0.01, "{t}");
     }
 }
-
-

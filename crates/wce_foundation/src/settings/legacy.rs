@@ -16,7 +16,8 @@ fn legacy_dir(paths: &Paths) -> Option<PathBuf> {
         return None;
     }
 
-    let local = env_value("LOCALAPPDATA").map(PathBuf::from)
+    let local = env_value("LOCALAPPDATA")
+        .map(PathBuf::from)
         .or_else(|| if cfg!(windows) { None } else { env_value("XDG_DATA_HOME").map(PathBuf::from) })
         .or_else(|| if cfg!(windows) { None } else { env_value("HOME").map(|home| Path::new(&home).join(".local").join("share")) })?;
     Some(local.join("awe"))

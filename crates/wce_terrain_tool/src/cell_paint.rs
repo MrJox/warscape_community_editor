@@ -52,7 +52,18 @@ pub struct CellPaint {
 
 impl Default for CellPaint {
     fn default() -> Self {
-        Self { on: false, layer: 0, mode: 0, radius: 2, round: true, colour: [0, 0, 0, 255], filter: String::new(), entries: None, painting: None, dragging: None }
+        Self {
+            on: false,
+            layer: 0,
+            mode: 0,
+            radius: 2,
+            round: true,
+            colour: [0, 0, 0, 255],
+            filter: String::new(),
+            entries: None,
+            painting: None,
+            dragging: None,
+        }
     }
 }
 
@@ -94,6 +105,11 @@ fn palette(db: &TileDatabase, role: &LayerRole, used: &[Rgba]) -> Palette {
 }
 
 impl CellPaint {
+    /// A stroke is being painted (the button not released yet).
+    pub fn stroke_open(&self) -> bool {
+        self.painting.is_some()
+    }
+
     /// The section in the Terrain panel.
     pub fn draw_section(&mut self, e: &mut Editor, doc: DocumentId) {
         if !gui::collapsing_header("Cell layers", 0) {
@@ -108,7 +124,9 @@ impl CellPaint {
         };
 
         if m.built {
-            gui::text_wrapped("A map of a game without kit maps (Rome 2) is edited in its built form: its tiles in the Placements section, its LF with the LF brush.");
+            gui::text_wrapped(
+                "A map of a game without kit maps (Rome 2) is edited in its built form: its tiles in the Placements section, its LF with the LF brush.",
+            );
             self.on = false;
             return;
         }
@@ -144,7 +162,8 @@ impl CellPaint {
         }
 
         let entries = &self.entries.as_ref().expect("made above").2;
-        let current = entries.iter().find(|(_, c)| c[..3] == self.colour[..3]).map_or_else(|| "a colour of no entry".to_owned(), |(n, _)| n.clone());
+        let current =
+            entries.iter().find(|(_, c)| c[..3] == self.colour[..3]).map_or_else(|| "a colour of no entry".to_owned(), |(n, _)| n.clone());
         let mut f = [f32::from(self.colour[0]) / 255.0, f32::from(self.colour[1]) / 255.0, f32::from(self.colour[2]) / 255.0];
         if gui::color_edit3("colour", &mut f, 0) {
             self.colour = [(f[0] * 255.0).round() as u8, (f[1] * 255.0).round() as u8, (f[2] * 255.0).round() as u8, self.colour[3]];

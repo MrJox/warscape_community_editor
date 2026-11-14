@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ master, feature/ci_release_updater ]
+    branches: [ master ]
   pull_request:
     branches: [ master ]
 
@@ -64,8 +64,19 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # AGENTS.md: every change is formatted (cargo fmt --all) before it is committed.
+      - name: Formatting
+        run: cargo fmt --all -- --check
 
       - uses: Swatinem/rust-cache@v2
+
+      # The workspace's [lints] say what is allowed and why; everything else is an error. The libraries and binaries only: the tests and
+      # the gates (examples) are not linted yet.
+      - name: Clippy
+        run: cargo clippy --workspace --all-features --locked -- -D warnings
 
       - name: Build
         run: cargo build --workspace --all-targets --all-features --locked

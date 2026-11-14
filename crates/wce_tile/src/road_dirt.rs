@@ -22,8 +22,15 @@ pub const TYPE: &str = "dirt";
 
 /// The kit's decals the pieces are made of (`rigidmodels\decals\battle\<name>.rigid_model_v2`).
 pub const DECALS: [&str; 9] = [
-    "path_1", "border_1", "border_2", "global_terrain_rocks_01", "global_terrain_rocks_04", "global_terrain_puddle_02", "global_terrain_erossion_12",
-    "global_terrain_erossion_03", "global_terrain_path_04",
+    "path_1",
+    "border_1",
+    "border_2",
+    "global_terrain_rocks_01",
+    "global_terrain_rocks_04",
+    "global_terrain_puddle_02",
+    "global_terrain_erossion_12",
+    "global_terrain_erossion_03",
+    "global_terrain_path_04",
 ];
 
 /// The kit's bank of ground along a road (`global_ground_pathborder`, a building): a ridge of grassy ground along its x, 18.6 m long and
@@ -41,7 +48,8 @@ pub const KIT_PREFABS: &str = "global_dirt_road_";
 /// Whether a prefab library's kit road prefabs hold every decal the pieces use.
 #[must_use]
 pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
-    let texts = lib.entries().filter(|e| e.key.to_lowercase().starts_with(KIT_PREFABS)).filter_map(|e| lib.contents(&e.key)).collect::<Vec<_>>();
+    let texts =
+        lib.entries().filter(|e| e.key.to_lowercase().starts_with(KIT_PREFABS)).filter_map(|e| lib.contents(&e.key)).collect::<Vec<_>>();
     DECALS.iter().all(|d| {
         let needle = format!("\\{d}.rigid_model_v2");
         texts.iter().any(|t| t.windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle.as_bytes())))
@@ -336,11 +344,16 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
 /// The dirt pieces' contents: the base's guides and the decals.
 #[must_use]
 pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
-    PIECES.iter().copied().chain(VARIANTS.iter().map(|v| v.0)).map(|p| {
-        let mut children = base_guides(p);
-        children.extend(parts(p));
-        (p, children)
-    }).collect()
+    PIECES
+        .iter()
+        .copied()
+        .chain(VARIANTS.iter().map(|v| v.0))
+        .map(|p| {
+            let mut children = base_guides(p);
+            children.extend(parts(p));
+            (p, children)
+        })
+        .collect()
 }
 
 /// Writes the dirt pieces into a prefab folder (the projects'): each where it is missing, or an older generation nobody edited
@@ -370,7 +383,10 @@ mod tests {
             assert!(p.parts.iter().filter(|q| q.solid).all(|q| q.key == BANK_KEY && q.anchor == Anchor::Edge), "{piece}");
 
             // Every decal of the kit's road set, and only those.
-            assert!(p.parts.iter().filter(|q| !q.solid).all(|q| DECALS.iter().any(|d| q.key.ends_with(&format!("\\{d}.rigid_model_v2")))), "{piece}");
+            assert!(
+                p.parts.iter().filter(|q| !q.solid).all(|q| DECALS.iter().any(|d| q.key.ends_with(&format!("\\{d}.rigid_model_v2")))),
+                "{piece}"
+            );
 
             let most = max_part_length(piece);
             for q in &p.parts {

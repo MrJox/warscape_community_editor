@@ -78,7 +78,15 @@ impl TileDocument {
             // The footprint: what it covers, at half or more.
             if let Some(gf) = p.ground.as_mut() {
                 let (gw, gh) = (gf.width(), gf.height());
-                let ground_grid = Grid { width: gw, height: gh, origin: grid.origin, spacing: [grid.spacing[0] * f64::from(grid.width) / f64::from(gw), grid.spacing[1] * f64::from(grid.height) / f64::from(gh)] };
+                let ground_grid = Grid {
+                    width: gw,
+                    height: gh,
+                    origin: grid.origin,
+                    spacing: [
+                        grid.spacing[0] * f64::from(grid.width) / f64::from(gw),
+                        grid.spacing[1] * f64::from(grid.height) / f64::from(gh),
+                    ],
+                };
                 let mut cover = terrain.clone();
                 (cover.heights, cover.normalize) = (terrain.coverage.clone(), false);
                 let mut out = BTreeMap::new();
@@ -129,7 +137,11 @@ impl TileDocument {
     pub fn stage_children_text(&self, group: usize) -> Vec<u8> {
         let t = self.tile();
         let n = t.tscene().doc().elements().len();
-        let back = t.stage_snapped.iter().filter(|(e, _, now)| *e < n && t.tscene().doc().get(*e, "position").as_deref() == Some(now.as_str())).collect::<Vec<_>>();
+        let back = t
+            .stage_snapped
+            .iter()
+            .filter(|(e, _, now)| *e < n && t.tscene().doc().get(*e, "position").as_deref() == Some(now.as_str()))
+            .collect::<Vec<_>>();
         if back.is_empty() {
             return t.tscene().children_text(group);
         }
@@ -156,8 +168,10 @@ impl TileDocument {
 
         // The stage's rectangle in the group's frame, at the stage's spacing.
         let spacing = grid.spacing[0].min(grid.spacing[1]);
-        let (x1, z1) = (grid.origin[0] + f64::from(grid.width - 1) * grid.spacing[0], grid.origin[1] + f64::from(grid.height - 1) * grid.spacing[1]);
-        let corners = [(grid.origin[0], grid.origin[1]), (x1, grid.origin[1]), (grid.origin[0], z1), (x1, z1)].map(|(x, z)| at.to_local(x, z));
+        let (x1, z1) =
+            (grid.origin[0] + f64::from(grid.width - 1) * grid.spacing[0], grid.origin[1] + f64::from(grid.height - 1) * grid.spacing[1]);
+        let corners =
+            [(grid.origin[0], grid.origin[1]), (x1, grid.origin[1]), (grid.origin[0], z1), (x1, z1)].map(|(x, z)| at.to_local(x, z));
         let (lx0, lx1) = corners.iter().fold((f64::MAX, f64::MIN), |(a, b), c| (a.min(c.0), b.max(c.0)));
         let (lz0, lz1) = corners.iter().fold((f64::MAX, f64::MIN), |(a, b), c| (a.min(c.1), b.max(c.1)));
         let (lx0, lz0) = ((lx0 / spacing).ceil() * spacing, (lz0 / spacing).ceil() * spacing);
@@ -174,7 +188,10 @@ impl TileDocument {
         let ground = p.ground.as_ref();
         let footprint_at = |sx: f64, sz: f64| {
             let Some(gf) = ground else { return false };
-            let (u, v) = ((sx - grid.origin[0]) / (grid.spacing[0] * f64::from(grid.width) / f64::from(gf.width())), (sz - grid.origin[1]) / (grid.spacing[1] * f64::from(grid.height) / f64::from(gf.height())));
+            let (u, v) = (
+                (sx - grid.origin[0]) / (grid.spacing[0] * f64::from(grid.width) / f64::from(gf.width())),
+                (sz - grid.origin[1]) / (grid.spacing[1] * f64::from(grid.height) / f64::from(gf.height())),
+            );
             let (x, y) = (u.round(), v.round());
             if x < 0.0 || y < 0.0 || x >= f64::from(gf.width()) || y >= f64::from(gf.height()) {
                 return false;
@@ -223,7 +240,13 @@ const FEATHER_RGBA: u32 = 0xFF00_E0FF;
 impl TileDocument {
     /// Shows on the stage where the prefab's ground covers and, normalized, how far its feather reaches: outlines on the terrain, found again
     /// when `key` changes (none: no outlines).
-    pub fn show_stage_outline(&mut self, scene: &mut wce_scene::render_scene::RenderScene, normalize: bool, feather: f64, key: Option<u64>) {
+    pub fn show_stage_outline(
+        &mut self,
+        scene: &mut wce_scene::render_scene::RenderScene,
+        normalize: bool,
+        feather: f64,
+        key: Option<u64>,
+    ) {
         // Not while a stroke goes on: its edit reaches the layer when it ends.
         if (key.is_some() && key == self.tile().stage_outline.1) || self.tile().stroke_open {
             return;
@@ -240,7 +263,8 @@ impl TileDocument {
         let Some(lines) = lines.filter(|l| !l.is_empty()) else { return };
         let o = wce_scene::render_scene::Overlay { lines, depth_test: false, pickable: false, ..Default::default() };
         let source = t.source(super::TERRAIN);
-        t.stage_outline.0 = scene.add(t.layer, wce_foundation::math::Float4x4::IDENTITY, wce_scene::render_scene::Payload::Overlay(o), source);
+        t.stage_outline.0 =
+            scene.add(t.layer, wce_foundation::math::Float4x4::IDENTITY, wce_scene::render_scene::Payload::Overlay(o), source);
     }
 
     /// The outlines' lines: the edges between samples in and out of each area, on the terrain.
@@ -260,7 +284,9 @@ impl TileDocument {
 
         let mut out = wce_scene::render_scene::Overlay::default();
         let mut outline = |inside: &dyn Fn(f32) -> bool, rgba: u32| {
-            let at_ij = |i: i64, j: i64| if i < 0 || j < 0 || i >= i64::from(gw) || j >= i64::from(gh) { 0.0 } else { weights[(j * i64::from(gw) + i) as usize] };
+            let at_ij = |i: i64, j: i64| {
+                if i < 0 || j < 0 || i >= i64::from(gw) || j >= i64::from(gh) { 0.0 } else { weights[(j * i64::from(gw) + i) as usize] }
+            };
             for j in -1..=i64::from(gh) {
                 for i in -1..=i64::from(gw) {
                     let here = inside(at_ij(i, j));

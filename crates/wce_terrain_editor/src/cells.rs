@@ -41,7 +41,11 @@ impl CellStrokeCommand {
     fn put(&self, model: &mut Option<MapModel>, undo: bool) {
         let Some((_, item)) = model.as_mut().and_then(|m| m.layers.get_mut(self.layer)) else { return };
         let l = item.edit();
-        if undo { self.record.revert(l) } else { self.record.apply(l) }
+        if undo {
+            self.record.revert(l)
+        } else {
+            self.record.apply(l)
+        }
         self.watch.note(self.layer, self.record.rect);
     }
 }

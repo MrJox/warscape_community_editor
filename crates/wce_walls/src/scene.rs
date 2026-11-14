@@ -40,9 +40,30 @@ pub struct WallLayout {
     pub ends: [Option<Anchor>; 2],
 }
 
-/// The walls of a scene, in document order.
+/// The procedural walls of a scene (*Procedural* on), in document order: what the generator, the exports' lowering and Generate SiegeAI
+/// read. A wall of kit pieces (*Procedural* off, docs/plans/kit_walls.md) is not one of them.
 pub fn walls(scene: &TedScene) -> Vec<usize> {
+    scene.find_all(WALL_SPLINE).into_iter().filter(|&e| is_procedural(scene, e)).collect()
+}
+
+/// Every wall of a scene, both kinds, in document order.
+pub fn all_walls(scene: &TedScene) -> Vec<usize> {
     scene.find_all(WALL_SPLINE)
+}
+
+/// What a kit wall is known by (its height layer, its export): its `wall_id`, the n-th wall of an id after the first `<id>.<n>` in the
+/// document's order (a copied wall keeps its id). `None` without an id.
+pub fn wall_key(scene: &TedScene, elem: usize) -> Option<String> {
+    let id_of =
+        |e: usize| scene.doc().get(e, wce_tile::new_instances::WALL_ID).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&i| i > 0);
+    let id = id_of(elem)?;
+    let n = all_walls(scene).into_iter().take_while(|&e| e != elem).filter(|&e| id_of(e) == Some(id)).count();
+    Some(if n == 0 { id.to_string() } else { format!("{id}.{n}") })
+}
+
+/// Whether a wall is procedural: its *Procedural* checkbox (`wall_procedural`), on when it does not say (a wall from before it).
+pub fn is_procedural(scene: &TedScene, elem: usize) -> bool {
+    wce_tile::new_instances::wall_procedural(scene.doc().get(elem, wce_tile::new_instances::WALL_PROCEDURAL).as_deref())
 }
 
 /// The ends of the fort buildings (`*_fort_*` keys, not generated ones): their frame's x extent (`extent(key)`: the logic file's box)
@@ -62,7 +83,13 @@ pub fn anchors(scene: &TedScene, extent: &dyn Fn(&str) -> Option<(f64, f64)>) ->
         let outer = w.rotation * Double3::new(0.0, 0.0, -1.0);
         for x in [lo, hi] {
             let p = w.position + w.rotation * Double3::new(x, 0.0, 0.0);
-            out.push(Anchor { elem: e, key: key.clone(), at: [p.x, w.position.y, p.z], axis: [x_axis.x, x_axis.z], outer: [outer.x, outer.z] });
+            out.push(Anchor {
+                elem: e,
+                key: key.clone(),
+                at: [p.x, w.position.y, p.z],
+                axis: [x_axis.x, x_axis.z],
+                outer: [outer.x, outer.z],
+            });
         }
     }
 
@@ -73,10 +100,14 @@ pub fn anchors(scene: &TedScene, extent: &dyn Fn(&str) -> Option<(f64, f64)>) ->
 pub fn wall_points(scene: &TedScene, elem: usize) -> (Vec<[f64; 2]>, Vec<bool>) {
     let w = world_transform(scene, elem);
     let pts = scene.polygon_points(elem);
-    let points = pts.iter().filter_map(|&p| scene.point_position(p)).map(|v| {
-        let p = w.position + w.rotation * v;
-        [p.x, p.z]
-    }).collect();
+    let points = pts
+        .iter()
+        .filter_map(|&p| scene.point_position(p))
+        .map(|v| {
+            let p = w.position + w.rotation * v;
+            [p.x, p.z]
+        })
+        .collect();
     let sharp = pts.iter().map(|&p| scene.doc().get(p, "sharp").is_some_and(|v| parse_bool(&v))).collect();
     (points, sharp)
 }
@@ -84,10 +115,17 @@ pub fn wall_points(scene: &TedScene, elem: usize) -> (Vec<[f64; 2]>, Vec<bool>) 
 /// A wall's handles where written (`controlIn`, `controlOut`; x, z in the world).
 pub fn wall_handles(scene: &TedScene, elem: usize) -> Vec<[Option<[f64; 2]>; 2]> {
     let w = world_transform(scene, elem);
-    wce_tile::splines::written(scene, elem).into_iter().map(|h| h.map(|v| v.map(|v| {
-        let p = w.position + w.rotation * v;
-        [p.x, p.z]
-    }))).collect()
+    wce_tile::splines::written(scene, elem)
+        .into_iter()
+        .map(|h| {
+            h.map(|v| {
+                v.map(|v| {
+                    let p = w.position + w.rotation * v;
+                    [p.x, p.z]
+                })
+            })
+        })
+        .collect()
 }
 
 /// A wall's base (its `wall_base`, else the default).
@@ -98,23 +136,30 @@ pub fn wall_profile(scene: &TedScene, elem: usize) -> Option<&'static Profile> {
 
 /// A wall's layout; `None` for an element that is not a wall or has fewer than 2 points.
 pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn(f64, f64) -> f64) -> Option<WallLayout> {
-    if scene.type_of(elem) != WALL_SPLINE {
+    if scene.type_of(elem) != WALL_SPLINE || !is_procedural(scene, elem) {
         return None;
     }
 
     let profile = wall_profile(scene, elem)?;
     let tolerance = scene.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
     let flip = scene.doc().get(elem, "wall_flip").is_some_and(|v| parse_bool(&v));
-    let every = |attr: &str, default: f64| scene.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
+    let every =
+        |attr: &str, default: f64| scene.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
     let (points, sharp) = wall_points(scene, elem);
     if points.len() < 2 {
         return None;
     }
 
-    let attached = |p: [f64; 2]| anchors.iter().filter(|a| (a.at[0] - p[0]).hypot(a.at[2] - p[1]) <= ATTACH).min_by(|a, b| {
-        let d = |x: &Anchor| (x.at[0] - p[0]).hypot(x.at[2] - p[1]);
-        d(a).total_cmp(&d(b))
-    }).cloned();
+    let attached = |p: [f64; 2]| {
+        anchors
+            .iter()
+            .filter(|a| (a.at[0] - p[0]).hypot(a.at[2] - p[1]) <= ATTACH)
+            .min_by(|a, b| {
+                let d = |x: &Anchor| (x.at[0] - p[0]).hypot(x.at[2] - p[1]);
+                d(a).total_cmp(&d(b))
+            })
+            .cloned()
+    };
     let ends = [attached(points[0]), attached(points[points.len() - 1])];
 
     // An attached end starts exactly on its joint, wherever its point was left within reach (the joints of TDD's gondor pieces moved
@@ -159,17 +204,33 @@ pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn
 
 /// Which pieces of a wall are door sections, and the doors skipped (`pieces::door_pieces`): a landing is free when no point of a 5 x 5
 /// grid over it is in a shown no-go polygon and no shown building stands in it (within its `radius(key)`, scene units).
-pub fn doors(scene: &TedScene, layout: &WallLayout, ps: &[Piece], ground: &dyn Fn(f64, f64) -> f64, radius: &dyn Fn(&str) -> f64) -> (Vec<usize>, Vec<String>) {
+pub fn doors(
+    scene: &TedScene,
+    layout: &WallLayout,
+    ps: &[Piece],
+    ground: &dyn Fn(f64, f64) -> f64,
+    radius: &dyn Fn(&str) -> f64,
+) -> (Vec<usize>, Vec<String>) {
     if layout.profile.door.is_empty() {
         return (vec![], vec![]);
     }
 
     let shown = |e: usize| scene.visible(e) && scene.active(e);
-    let nogo = scene.find_all("NOGO_REGION_POLYGON_INSTANCE").into_iter().filter(|&e| shown(e)).map(|e| wall_points(scene, e).0).collect::<Vec<_>>();
-    let buildings = scene.find_all("BUILDING_INSTANCE").into_iter().filter(|&e| shown(e)).map(|e| {
-        let p = world_transform(scene, e).position;
-        ([p.x, p.z], radius(&scene.doc().get(e, "key").unwrap_or_default()))
-    }).collect::<Vec<_>>();
+    let nogo = scene
+        .find_all("NOGO_REGION_POLYGON_INSTANCE")
+        .into_iter()
+        .filter(|&e| shown(e))
+        .map(|e| wall_points(scene, e).0)
+        .collect::<Vec<_>>();
+    let buildings = scene
+        .find_all("BUILDING_INSTANCE")
+        .into_iter()
+        .filter(|&e| shown(e))
+        .map(|e| {
+            let p = world_transform(scene, e).position;
+            ([p.x, p.z], radius(&scene.doc().get(e, "key").unwrap_or_default()))
+        })
+        .collect::<Vec<_>>();
 
     let landing_ok = |sq: &[[f64; 2]; 4]| {
         let inside = |p: [f64; 2], poly: &[[f64; 2]]| {
@@ -184,8 +245,10 @@ pub fn doors(scene: &TedScene, layout: &WallLayout, ps: &[Piece], ground: &dyn F
         };
 
         let lerp = |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-        let grid = (0..5).flat_map(|i| (0..5).map(move |j| (f64::from(i) / 4.0, f64::from(j) / 4.0)))
-            .map(|(s, t)| lerp(lerp(sq[0], sq[1], s), lerp(sq[3], sq[2], s), t)).collect::<Vec<_>>();
+        let grid = (0..5)
+            .flat_map(|i| (0..5).map(move |j| (f64::from(i) / 4.0, f64::from(j) / 4.0)))
+            .map(|(s, t)| lerp(lerp(sq[0], sq[1], s), lerp(sq[3], sq[2], s), t))
+            .collect::<Vec<_>>();
         let in_nogo = grid.iter().any(|&p| nogo.iter().any(|poly| inside(p, poly)));
         let centre = lerp(lerp(sq[0], sq[1], 0.5), lerp(sq[3], sq[2], 0.5), 0.5);
         let half = (sq[0][0] - sq[2][0]).hypot(sq[0][1] - sq[2][1]) / 2.0;
@@ -198,36 +261,110 @@ pub fn doors(scene: &TedScene, layout: &WallLayout, ps: &[Piece], ground: &dyn F
 
 /// What a generated piece's instance carries (TEd's attributes of a placed fort wall: breachable, dockable, intact).
 const INSTANCE_ATTRS: [(&str, &str); 15] = [
-    ("ai_breachable", "true"), ("surface_mode", "MSM_FREEFORM"), ("opacity", "1"), ("burn_amount", "1"), ("destruction_level", "0"),
-    ("bounds_colour", "argb(1.0,0.0,0.0,1.0)"), ("indestructible", "false"), ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
-    ("burn", "false"), ("toggleable", "false"), ("glow_amount", "1"), ("weak_wall", "false"), ("building_tech_level", "TL_TECH_LEVEL1"),
-    ("dirt_level", "1"), ("dockable", "true"),
+    ("ai_breachable", "true"),
+    ("surface_mode", "MSM_FREEFORM"),
+    ("opacity", "1"),
+    ("burn_amount", "1"),
+    ("destruction_level", "0"),
+    ("bounds_colour", "argb(1.0,0.0,0.0,1.0)"),
+    ("indestructible", "false"),
+    ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+    ("burn", "false"),
+    ("toggleable", "false"),
+    ("glow_amount", "1"),
+    ("weak_wall", "false"),
+    ("building_tech_level", "TL_TECH_LEVEL1"),
+    ("dirt_level", "1"),
+    ("dockable", "true"),
 ];
 
-/// Replaces a wall by the buildings of its pieces: a `BUILDING_INSTANCE` per piece (key, the piece's frame as its world transform) in
-/// the wall's layer, or in the top layer named `into` (made when there is none), the wall removed. Returns the new elements' count.
+/// Replaces a wall by the buildings of its pieces (`place_pieces`) in the wall's layer, or in the top layer named `into` (made when there
+/// is none), the wall removed. Returns the new elements' count.
 ///
 /// # Errors
 ///
 /// The wall's layer has no children element, or the text can't be spliced.
-pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)], into: Option<&str>) -> Result<usize, String> {
+pub fn lower(
+    scene: &mut TedScene,
+    wall: usize,
+    placed: &[(String, Piece)],
+    into: Option<&str>,
+    captures: &[crate::towers::TowerCapture],
+) -> Result<usize, String> {
     let layer = match into {
         Some(name) => top_layer(scene, name)?,
-        None => scene.doc().elements()[wall].parent.and_then(|c| scene.doc().elements()[c].parent).or(scene.scene_graph()).ok_or("the wall is in no layer")?,
+        None => holder(scene, wall).or(scene.scene_graph()).ok_or("the wall is in no layer")?,
     };
     let name = scene.name(wall);
-    for (key, piece) in placed {
-        let mut attrs = INSTANCE_ATTRS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
-        attrs.push(("key".to_owned(), key.clone()));
-        attrs.push(("name".to_owned(), format!("{name}: {key}")));
-        let e = scene.add_instance(Some(layer), "BUILDING_INSTANCE", &attrs)?;
-        set_world_position(scene, e, Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]));
-        set_world_rotation(scene, e, &euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)));
-    }
+    place_pieces(scene, layer, &name, placed, captures)?;
 
     // The layer comes after the wall (it is made at the end): its index stays.
     scene.remove(wall)?;
     Ok(placed.len())
+}
+
+/// The layer or group an element is in (the parent of its `children`).
+pub fn holder(scene: &TedScene, elem: usize) -> Option<usize> {
+    let els = scene.doc().elements();
+    els[elem].parent.and_then(|c| els[c].parent)
+}
+
+/// A `BUILDING_INSTANCE` per piece of a wall named `name` (key, the piece's frame as its world transform: scene units, its yaw) in `layer`
+/// (a layer or a group), as a placed fort wall is (breachable, dockable, intact, freeform), and its towers' capture locations
+/// (`towers::tower_captures`: each tower naming its own, `capture_location`). The new elements, in order (the buildings, then the
+/// captures).
+///
+/// # Errors
+///
+/// The layer has no children element, or the text can't be spliced.
+pub fn place_pieces(
+    scene: &mut TedScene,
+    layer: usize,
+    name: &str,
+    placed: &[(String, Piece)],
+    captures: &[crate::towers::TowerCapture],
+) -> Result<Vec<usize>, String> {
+    let mut out = vec![];
+    for (i, (key, piece)) in placed.iter().enumerate() {
+        let mut attrs = INSTANCE_ATTRS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
+        attrs.push(("key".to_owned(), key.clone()));
+        attrs.push(("name".to_owned(), format!("{name}: {key}")));
+        if let Some(c) = captures.iter().find(|c| c.piece == i) {
+            attrs.push(("capture_location".to_owned(), c.name.clone()));
+        }
+
+        let e = scene.add_instance(Some(layer), "BUILDING_INSTANCE", &attrs)?;
+        set_world_position(scene, e, Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]));
+        set_world_rotation(scene, e, &euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)));
+        out.push(e);
+    }
+
+    for c in captures {
+        let text = wce_tile::new_instances::element_text(&crate::towers::capture_element(c)?)?;
+        let e = scene.insert_element_text(layer, &text).map_err(|e| e.to_string())?;
+        set_world_position(scene, e, Double3::new(c.at[0], c.at[1], c.at[2]));
+        out.push(e);
+    }
+
+    Ok(out)
+}
+
+/// A layer's export type that leaves it out of the game (TEd's *Don't Export*).
+pub const EXPORT_OFF: &str = "LayerExportType_Off";
+
+/// Whether an element goes into the game: no layer it is in is *Don't Export* (a wall converted to buildings is kept in one).
+pub fn exported(scene: &TedScene, elem: usize) -> bool {
+    let els = scene.doc().elements();
+    let mut p = els[elem].parent;
+    while let Some(q) = p {
+        if scene.doc().get(q, "export_type").as_deref() == Some(EXPORT_OFF) {
+            return false;
+        }
+
+        p = els[q].parent;
+    }
+
+    true
 }
 
 /// The layer of this name right under the scene graph, made at its end when there is none.

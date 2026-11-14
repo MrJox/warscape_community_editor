@@ -34,7 +34,8 @@ use wce_tile_io::attila::workflow::{Game, open_exported, save_exported_with};
 use wce_walls::pack;
 
 /// The tiles of the test: the 8 m one, then the 15 m one.
-const TDD_TILES: [&str; 2] = ["tdd_settlement_middle_men_cities/middle_men_city_edoras/medium", "tdd_settlement_middle_men_cities/middle_men_city_dale/medium"];
+const TDD_TILES: [&str; 2] =
+    ["tdd_settlement_middle_men_cities/middle_men_city_edoras/medium", "tdd_settlement_middle_men_cities/middle_men_city_dale/medium"];
 const VANILLA_TILES: [&str; 2] = ["settlement_nordic_cities/nordic_city_b/medium", "settlement_western_cities/western_city_b/medium"];
 
 /// One wall family's test.
@@ -152,11 +153,21 @@ fn edit_tile(game: &Game, f: &Family, tile: &str, workspace: &Path) -> Result<Ve
     // The heights of the ring's walls against the terrain (for the log: scene y and the height map are both metres).
     let walls = buildings.iter().copied().filter(|&e| key_of(scene, e).contains("_fort_")).collect::<Vec<_>>();
     let ground = |p: Double3| project_height(&project_dir, unit, p);
-    let mut offsets = walls.iter().map(|&e| { let p = world_transform(scene, e).position; p.y - ground(p) }).collect::<Vec<_>>();
+    let mut offsets = walls
+        .iter()
+        .map(|&e| {
+            let p = world_transform(scene, e).position;
+            p.y - ground(p)
+        })
+        .collect::<Vec<_>>();
     offsets.sort_by(f64::total_cmp);
     let offset = offsets.get(offsets.len() / 2).copied().unwrap_or(0.0);
-    println!("the ring's walls stand {offset:.2} above the height map (median over {}; spread {:.2} .. {:.2})", offsets.len(),
-        offsets.first().unwrap_or(&0.0), offsets.last().unwrap_or(&0.0));
+    println!(
+        "the ring's walls stand {offset:.2} above the height map (median over {}; spread {:.2} .. {:.2})",
+        offsets.len(),
+        offsets.first().unwrap_or(&0.0),
+        offsets.last().unwrap_or(&0.0)
+    );
 
     // The run: on the side of the ring's box with the flattest free ground, its outer face away from the settlement.
     let ring = walls.iter().map(|&e| world_transform(scene, e).position).collect::<Vec<_>>();
@@ -179,7 +190,9 @@ fn edit_tile(game: &Game, f: &Family, tile: &str, workspace: &Path) -> Result<Ve
 
     let free_at = |s: &Double3| {
         let (cx, cz) = cell(s.x, s.z);
-        (-1..=1).all(|dx| (-1..=1).all(|dz| grid.get(&(cx + dx, cz + dz)).is_none_or(|v| v.iter().all(|o| (o.x - s.x).hypot(o.z - s.z) > CLEAR))))
+        (-1..=1).all(|dx| {
+            (-1..=1).all(|dz| grid.get(&(cx + dx, cz + dz)).is_none_or(|v| v.iter().all(|o| (o.x - s.x).hypot(o.z - s.z) > CLEAR)))
+        })
     };
 
     // Every 40 units between the ring's box grown by OUTSIDE and by REACH; the flat enough spots (FLAT) win by their distance to the ring,
@@ -199,16 +212,28 @@ fn edit_tile(game: &Game, f: &Family, tile: &str, workspace: &Path) -> Result<Ve
 
             // The yaw that turns the pieces' outer side (-z) away from the ring.
             let away = Double3::new(origin.x - centre.x, 0.0, origin.z - centre.z);
-            let yaw = [0.0, 90.0, 180.0, 270.0].into_iter().map(f64::to_radians).max_by(|&a, &b| {
-                let face = |y: f64| { let d = euler_matrix(Double3::new(y, 0.0, 0.0)) * Double3::new(0.0, 0.0, -1.0); d.x * away.x + d.z * away.z };
-                face(a).total_cmp(&face(b))
-            }).expect("four yaws");
+            let yaw = [0.0, 90.0, 180.0, 270.0]
+                .into_iter()
+                .map(f64::to_radians)
+                .max_by(|&a, &b| {
+                    let face = |y: f64| {
+                        let d = euler_matrix(Double3::new(y, 0.0, 0.0)) * Double3::new(0.0, 0.0, -1.0);
+                        d.x * away.x + d.z * away.z
+                    };
+                    face(a).total_cmp(&face(b))
+                })
+                .expect("four yaws");
 
-            let samples = plan(origin, yaw).iter().flat_map(|(_, p, r, _)| {
-                let (p, r) = (*p, *r);
-                let (z0, z1) = f.depth;
-                (0..=4).flat_map(move |i| [z0, (z0 + z1) / 2.0, z1].map(move |z| p + r * Double3::new(f.start + 5.0 * f64::from(i), 0.0, z)))
-            }).collect::<Vec<_>>();
+            let samples = plan(origin, yaw)
+                .iter()
+                .flat_map(|(_, p, r, _)| {
+                    let (p, r) = (*p, *r);
+                    let (z0, z1) = f.depth;
+                    (0..=4).flat_map(move |i| {
+                        [z0, (z0 + z1) / 2.0, z1].map(move |z| p + r * Double3::new(f.start + 5.0 * f64::from(i), 0.0, z))
+                    })
+                })
+                .collect::<Vec<_>>();
             let inside = samples.iter().all(|s| s.x > 200.0 && s.z > 200.0 && s.x < x_end && s.z < z_end);
             if !inside || !samples.iter().all(free_at) {
                 continue;
@@ -230,11 +255,15 @@ fn edit_tile(game: &Game, f: &Family, tile: &str, workspace: &Path) -> Result<Ve
 
     // All pieces at one height: 0.3 m into the lowest ground under them (higher ground buries the foot). Not the ring's offset: a ring on
     // built-up ground (Dale's walls stand -47 .. +10 m off the height map) says nothing about open ground.
-    let samples_y = run_layout(f, origin, yaw).iter().flat_map(|(_, p, r, _)| {
-        let (p, r) = (*p, *r);
-        let (z0, z1) = f.depth;
-        (0..=4).flat_map(move |i| [z0, z1].map(move |z| p + r * Double3::new(f.start + 5.0 * f64::from(i), 0.0, z)))
-    }).map(ground).fold(f64::MAX, f64::min);
+    let samples_y = run_layout(f, origin, yaw)
+        .iter()
+        .flat_map(|(_, p, r, _)| {
+            let (p, r) = (*p, *r);
+            let (z0, z1) = f.depth;
+            (0..=4).flat_map(move |i| [z0, z1].map(move |z| p + r * Double3::new(f.start + 5.0 * f64::from(i), 0.0, z)))
+        })
+        .map(ground)
+        .fold(f64::MAX, f64::min);
     let y = samples_y - 0.3;
     let template = bases[0];
     for (key, p, r, what) in run_layout(f, origin, yaw) {
@@ -251,7 +280,8 @@ fn edit_tile(game: &Game, f: &Family, tile: &str, workspace: &Path) -> Result<Ve
     std::fs::write(project_dir.join("tile.ted"), scene.save()).map_err(|e| e.to_string())?;
 
     let compiled = workspace.join("exported");
-    let base_of = |k: &str| [(f.copy, f.base), (f.bent, f.base)].iter().find(|(c, _)| c.eq_ignore_ascii_case(k)).map(|(_, b)| (*b).to_owned());
+    let base_of =
+        |k: &str| [(f.copy, f.base), (f.bent, f.base)].iter().find(|(c, _)| c.eq_ignore_ascii_case(k)).map(|(_, b)| (*b).to_owned());
     let (dir, notes) = save_exported_with(game, &project_dir, None, &compiled, &base_of)?;
     for n in &notes.notes {
         println!("compile: {n}");
@@ -276,7 +306,8 @@ fn run_layout(f: &Family, origin: Double3, yaw: f64) -> Vec<(&'static str, Doubl
     let base = euler_matrix(Double3::new(yaw, 0.0, 0.0));
     // The turn that takes +x towards +z by the bend (the bent piece curves towards its +z).
     let a = f.angle_deg.to_radians();
-    let turn = [-a, a].into_iter().find(|&t| (euler_matrix(Double3::new(t, 0.0, 0.0)) * Double3::new(1.0, 0.0, 0.0)).z > 0.0).expect("a sign");
+    let turn =
+        [-a, a].into_iter().find(|&t| (euler_matrix(Double3::new(t, 0.0, 0.0)) * Double3::new(1.0, 0.0, 0.0)).z > 0.0).expect("a sign");
     let len = 20.0;
     let first = origin;
     let bent = origin + base * Double3::new(len, 0.0, 0.0);
@@ -284,7 +315,11 @@ fn run_layout(f: &Family, origin: Double3, yaw: f64) -> Vec<(&'static str, Doubl
     let end = bent + base * Double3::new(f.end.0, 0.0, f.end.1);
     let last_rot = base * euler_matrix(Double3::new(turn, 0.0, 0.0));
     let last = end + last_rot * Double3::new(-f.start, 0.0, 0.0);
-    vec![(f.straight, first, base, "vanilla straight"), (f.bent, bent, base, "bent piece"), (f.straight, last, last_rot, "vanilla straight, turned")]
+    vec![
+        (f.straight, first, base, "vanilla straight"),
+        (f.bent, bent, base, "bent piece"),
+        (f.straight, last, last_rot, "vanilla straight, turned"),
+    ]
 }
 
 /// The trees of an exported tile's tree lists (`*.tree_list.bin`, the generated and static ones), in editor metres: the lists hold the
@@ -331,11 +366,14 @@ fn project_height(dir: &Path, unit: f64, p: Double3) -> f64 {
 fn pack_files(path: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let games = SupportedGames::default();
     let attila = games.game("attila").ok_or("rpfm knows no attila")?;
-    let mut pack = Pack::read_and_merge(&[path.to_path_buf()], attila, true, false, false).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut pack =
+        Pack::read_and_merge(&[path.to_path_buf()], attila, true, false, false).map_err(|e| format!("{}: {e}", path.display()))?;
     let names = pack.files().keys().cloned().collect::<Vec<_>>();
     let mut out = vec![];
     for n in names {
-        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { return Err(format!("{n}: no bytes")) };
+        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else {
+            return Err(format!("{n}: no bytes"));
+        };
         out.push((n, bytes));
     }
 

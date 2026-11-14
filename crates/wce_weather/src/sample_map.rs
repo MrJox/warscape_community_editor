@@ -51,7 +51,9 @@ const EMPTY_MAX: Float3 = Float3 { x: -1e30, y: -1e30, z: -1e30 };
 
 /// A piece is usable when the renderer can draw it (the version the model cache reads): standard meshes of the static vertex format in LOD 0. Its bounds are the file's mesh boxes.
 fn piece_info(files: &dyn Files, path: &str, errors: &mut Vec<String>) -> Option<PieceInfo> {
-    let model = files.read(path).and_then(|bytes| RigidModel::decode(&mut Cursor::new(&bytes), &Some(DecodeableExtraData::default())).map_err(|error| error.to_string()));
+    let model = files.read(path).and_then(|bytes| {
+        RigidModel::decode(&mut Cursor::new(&bytes), &Some(DecodeableExtraData::default())).map_err(|error| error.to_string())
+    });
     let model = match model {
         Ok(model) if *model.version() != 6 => {
             errors.push(format!("{path}: rmv2: version {} (expected 6)", model.version()));
@@ -74,7 +76,11 @@ fn piece_info(files: &dyn Files, path: &str, errors: &mut Vec<String>) -> Option
     let mut any = false;
     for block in model.lods()[0].mesh_blocks() {
         let (mesh, material) = (block.mesh(), block.material());
-        if *mesh.material_type() != MaterialType::DefaultMaterial || *material.vertex_format() != VertexFormat::Static || mesh.vertices().is_empty() || mesh.indices().is_empty() {
+        if *mesh.material_type() != MaterialType::DefaultMaterial
+            || *material.vertex_format() != VertexFormat::Static
+            || mesh.vertices().is_empty()
+            || mesh.indices().is_empty()
+        {
             continue;
         }
 
@@ -89,7 +95,15 @@ fn piece_info(files: &dyn Files, path: &str, errors: &mut Vec<String>) -> Option
 
 /// Fills `layer` (cleared first) with the ground and up to `count` houses chosen by `seed` from the building folders under `prefix`; returns
 /// what it placed.
-pub fn publish_sample_map(files: &dyn Files, scene: &mut RenderScene, layer: LayerId, doc: DocumentId, seed: u32, count: usize, prefix: &str) -> SampleMapResult {
+pub fn publish_sample_map(
+    files: &dyn Files,
+    scene: &mut RenderScene,
+    layer: LayerId,
+    doc: DocumentId,
+    seed: u32,
+    count: usize,
+    prefix: &str,
+) -> SampleMapResult {
     let mut res = SampleMapResult::default();
     scene.clear_layer(layer);
     let ground = Terrain::flat(1000.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0);
@@ -166,7 +180,11 @@ pub fn publish_sample_map(files: &dyn Files, scene: &mut RenderScene, layer: Lay
 
         res.centres.push(Float3::new(cx, 0.0, cz));
         res.bounds_min = Float3::new(res.bounds_min.x.min(cx - cell * 0.5), 0.0, res.bounds_min.z.min(cz - cell * 0.5));
-        res.bounds_max = Float3::new(res.bounds_max.x.max(cx + cell * 0.5), res.bounds_max.y.max(b.bmax.y - b.bmin.y), res.bounds_max.z.max(cz + cell * 0.5));
+        res.bounds_max = Float3::new(
+            res.bounds_max.x.max(cx + cell * 0.5),
+            res.bounds_max.y.max(b.bmax.y - b.bmin.y),
+            res.bounds_max.z.max(cz + cell * 0.5),
+        );
     }
 
     res.buildings = picked.len();

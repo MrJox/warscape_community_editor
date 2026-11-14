@@ -107,7 +107,6 @@ pub struct XmlDoc {
 pub const PARALLEL_MIN: usize = 4 << 20;
 
 impl XmlDoc {
-
     /// Reads a document, keeping the bytes as [`Self::origin_bytes`]. A big text is read in pieces side by side.
     ///
     /// # Errors
@@ -273,6 +272,23 @@ impl XmlDoc {
         let quote = element.attrs.last().map_or(b'\'', |at| at.quote);
         self.appended_values.insert((elem, element.attrs.len()), encode_entities(value.as_bytes(), quote));
         element.attrs.push(XmlAttr { name: name.to_owned(), value_off: element.attrs_end, value_len: 0, quote, appended: true });
+    }
+
+    /// Takes away an attribute an edit added (`set` of a missing one): the element's text is as before it. False when it has no such
+    /// attribute, or the attribute is the file's own (not taken away: that is no edit to undo).
+    pub fn remove_added(&mut self, elem: usize, name: &str) -> bool {
+        let Some(attr) = self.find_attr(elem, name).filter(|&a| self.elems[elem].attrs[a].appended) else { return false };
+        self.elems[elem].attrs.remove(attr);
+        self.appended_values.remove(&(elem, attr));
+        // The added ones after it move down one place.
+        let after = self.appended_values.keys().filter(|(e, a)| *e == elem && *a > attr).copied().collect::<Vec<_>>();
+        let mut moved = after.into_iter().map(|k| (k, self.appended_values.remove(&k).expect("listed"))).collect::<Vec<_>>();
+        moved.sort_by_key(|((_, a), _)| *a);
+        for ((e, a), v) in moved {
+            self.appended_values.insert((e, a - 1), v);
+        }
+
+        true
     }
 
     /// Drops every attribute edit. Structural edits stay: undoing those needs [`Self::parse`] of [`Self::origin_bytes`].

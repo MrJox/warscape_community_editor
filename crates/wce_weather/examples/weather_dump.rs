@@ -67,8 +67,17 @@ fn main() {
             let mut scene = RenderScene::default();
             let l = scene.add_layer(1, "s");
             let r = publish_sample_map(&models, &mut scene, l, 1, seed, count, BUILDINGS);
-            println!("map {seed} {count} buildings {} errors {} bounds {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}", r.buildings, r.errors.len(), r.bounds_min.x.to_bits(),
-                r.bounds_min.y.to_bits(), r.bounds_min.z.to_bits(), r.bounds_max.x.to_bits(), r.bounds_max.y.to_bits(), r.bounds_max.z.to_bits());
+            println!(
+                "map {seed} {count} buildings {} errors {} bounds {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                r.buildings,
+                r.errors.len(),
+                r.bounds_min.x.to_bits(),
+                r.bounds_min.y.to_bits(),
+                r.bounds_min.z.to_bits(),
+                r.bounds_max.x.to_bits(),
+                r.bounds_max.y.to_bits(),
+                r.bounds_max.z.to_bits()
+            );
             for c in &r.centres {
                 println!("  c {:08x} {:08x}", c.x.to_bits(), c.z.to_bits());
             }
@@ -119,7 +128,12 @@ fn main() {
                 }
 
                 let p = docs.find_as::<SampleMapDocument>(id).unwrap();
-                println!("doc {k} size {} pos {} scene {h:016x} {}", p.history().size(), p.history().position(), p.describe(SourceRef { doc: id, item }));
+                println!(
+                    "doc {k} size {} pos {} scene {h:016x} {}",
+                    p.history().size(),
+                    p.history().position(),
+                    p.describe(SourceRef { doc: id, item })
+                );
             }
         }
     }
@@ -172,8 +186,14 @@ fn main() {
 
             if k % 10 == 9 {
                 let bytes = d.xml().save();
-                println!("  {k} save {:016x} size {} pos {} modified {} env {}", fnv(&bytes), d.history().size(), d.history().position(), u8::from(d.modified()),
-                    u8::from(d.environment().is_some()));
+                println!(
+                    "  {k} save {:016x} size {} pos {} modified {} env {}",
+                    fnv(&bytes),
+                    d.history().size(),
+                    d.history().position(),
+                    u8::from(d.modified()),
+                    u8::from(d.environment().is_some())
+                );
                 if d.history().position() != 0 {
                     println!("  name {}", d.history().name(d.history().position() - 1));
                 }

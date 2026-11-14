@@ -29,7 +29,10 @@ use dear_imgui_rs::{ConfigFlags, Context};
 use sdl3_sys::events::*;
 use sdl3_sys::hints::{SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, SDL_SetHint};
 use sdl3_sys::init::{SDL_INIT_VIDEO, SDL_Init, SDL_Quit};
-use sdl3_sys::messagebox::{SDL_MESSAGEBOX_ERROR, SDL_ShowSimpleMessageBox};
+use sdl3_sys::messagebox::{
+    SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, SDL_MESSAGEBOX_ERROR, SDL_MessageBoxButtonData,
+    SDL_MessageBoxData, SDL_ShowMessageBox, SDL_ShowSimpleMessageBox,
+};
 use sdl3_sys::video::*;
 use wce_d3d11::*;
 use wce_editor::Editor;
@@ -159,8 +162,15 @@ fn parse_args(argv: &[String]) -> Options {
 
                 // The old Tile Studio flags whose names are taken by generic commands or use hyphens.
                 const ALIAS: [(&str, &str); 9] = [
-                    ("select", "tile_select"), ("move", "tile_move"), ("delete", "delete_item"), ("add", "add_building"), ("add-polygon", "add_polygon"),
-                    ("polygon-point", "polygon_point"), ("new-layer", "new_layer"), ("move-to-layer", "move_to_layer"), ("save-to", "save_to"),
+                    ("select", "tile_select"),
+                    ("move", "tile_move"),
+                    ("delete", "delete_item"),
+                    ("add", "add_building"),
+                    ("add-polygon", "add_polygon"),
+                    ("polygon-point", "polygon_point"),
+                    ("new-layer", "new_layer"),
+                    ("move-to-layer", "move_to_layer"),
+                    ("save-to", "save_to"),
                 ];
                 if let Some((_, to)) = ALIAS.iter().find(|(from, _)| *from == line) {
                     line = (*to).to_owned();
@@ -234,8 +244,13 @@ unsafe fn output_window(window: *mut SDL_Window) -> HWND {
 /// After `init_platform`; `window` is live.
 unsafe fn create_device(window: HWND) -> Option<(IDXGISwapChain, ID3D11Device, ID3D11DeviceContext)> {
     let sd = DXGI_SWAP_CHAIN_DESC {
-        BufferDesc: DXGI_MODE_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() }, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        BufferUsage: DXGI_USAGE(DXGI_USAGE_RENDER_TARGET_OUTPUT), BufferCount: 2, OutputWindow: window, Windowed: true.into(), SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
+        BufferDesc: DXGI_MODE_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() },
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        BufferUsage: DXGI_USAGE(DXGI_USAGE_RENDER_TARGET_OUTPUT),
+        BufferCount: 2,
+        OutputWindow: window,
+        Windowed: true.into(),
+        SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
         Flags: 0,
     };
 
@@ -258,8 +273,17 @@ unsafe fn create_device(window: HWND) -> Option<(IDXGISwapChain, ID3D11Device, I
     // SAFETY: valid descriptions and out pointers.
     unsafe {
         D3D11CreateDeviceAndSwapChain(
-            adapter.as_ref(), driver, HMODULE::default(), flags, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&sd), Some(&mut swap),
-            Some(&mut dev), None, Some(&mut ctx),
+            adapter.as_ref(),
+            driver,
+            HMODULE::default(),
+            flags,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&sd),
+            Some(&mut swap),
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
         )
         .ok()
         .ok()?;
@@ -288,7 +312,14 @@ struct WindowEvents {
 }
 
 /// One SDL event: Dear ImGui gets it (not the real mouse in a scripted run), and resize / close requests are noted. True to quit.
-fn handle_event(window: *mut SDL_Window, e: &SDL_Event, editor: &mut Editor, imgui: &mut Context, platform: &mut Sdl3Platform, state: &mut WindowEvents) -> bool {
+fn handle_event(
+    window: *mut SDL_Window,
+    e: &SDL_Event,
+    editor: &mut Editor,
+    imgui: &mut Context,
+    platform: &mut Sdl3Platform,
+    state: &mut WindowEvents,
+) -> bool {
     platform.process_event(imgui, e, !editor.scripted_input());
     // SAFETY: the event type selects the union member read.
     unsafe {
@@ -312,7 +343,15 @@ fn handle_event(window: *mut SDL_Window, e: &SDL_Event, editor: &mut Editor, img
 /// # Safety
 ///
 /// `window` is live; the device presents to it.
-unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapChain, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, imgui: &mut Context, dpi: f32) -> (i32, Option<std::path::PathBuf>) {
+unsafe fn run_editor(
+    opt: &Options,
+    window: *mut SDL_Window,
+    swap: &IDXGISwapChain,
+    dev: &ID3D11Device,
+    ctx: &ID3D11DeviceContext,
+    imgui: &mut Context,
+    dpi: f32,
+) -> (i32, Option<std::path::PathBuf>) {
     let mut exit_code = 0;
     // SAFETY: the window outlives the backend (the caller's contract).
     let mut platform = unsafe { Sdl3Platform::new(imgui, window) };
@@ -447,7 +486,15 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
             }
 
             let cpu_end = Instant::now();
-            let _ = swap.Present(if batch || !editor.vsync { 0 } else { 1 }, 0);
+            let presented = swap.Present(if batch || !editor.vsync { 0 } else { 1 }, 0);
+
+            // The device lost (a driver reset or crash, a GPU removed): nothing draws any more. Said, with the driver's reason, and the
+            // unsaved documents saved if the user wants (they are in memory, not on the GPU), then the editor closes.
+            let removed = dev.GetDeviceRemovedReason();
+            if removed.is_err() || DEVICE_LOST.contains(&(presented.0 as u32)) {
+                exit_code = device_lost(&mut editor, window, if removed.is_err() { removed } else { presented }, batch);
+                break;
+            }
 
             // Interactive frames wait out the rest of their share of the cap; shots, captures and frames of a running script (the startup
             // commands, perf measurements) run free.
@@ -480,6 +527,64 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
     drop(renderer);
     drop(platform);
     (exit_code, restart)
+}
+
+/// `Present`'s results that mean the device is gone (DXGI_ERROR_DEVICE_REMOVED, _HUNG, _RESET, _DRIVER_INTERNAL_ERROR); any other
+/// failure (a minimised window on some drivers) is not a reason to close.
+const DEVICE_LOST: [u32; 4] = [0x887A_0005, 0x887A_0006, 0x887A_0007, 0x887A_0020];
+
+/// The graphics device was lost: logged with its reason; an interactive session offers to save the unsaved documents (a native dialog: the
+/// editor's own UI can't draw any more). Returns the exit code.
+///
+/// # Safety
+///
+/// `window` is the live SDL window.
+unsafe fn device_lost(editor: &mut Editor, window: *mut SDL_Window, reason: HRESULT, batch: bool) -> i32 {
+    let why = format!("{reason:?} ({})", reason.message());
+    log::error(format!("the graphics device was lost: {why}; the editor closes"));
+    let unsaved = editor.unsaved_summary();
+    let mut text = format!("The graphics driver stopped (the device was lost: {why}). The editor has to close.");
+    if unsaved.is_empty() || batch || !editor.script().done() {
+        text += if unsaved.is_empty() { "\n\nNothing was left unsaved." } else { "" };
+        let msg = std::ffi::CString::new(text).unwrap_or_default();
+        if !batch {
+            // SAFETY: live window, NUL-terminated strings.
+            unsafe { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, c"Warscape Community Editor".as_ptr(), msg.as_ptr(), window) };
+        }
+
+        return 3;
+    }
+
+    text += &format!("\n\nUnsaved:\n{}\n\nSave them before closing?", unsaved.join("\n"));
+    let msg = std::ffi::CString::new(text).unwrap_or_default();
+    let buttons = [
+        SDL_MessageBoxButtonData { flags: SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, buttonID: 1, text: c"Save".as_ptr() },
+        SDL_MessageBoxButtonData { flags: SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, buttonID: 0, text: c"Close without saving".as_ptr() },
+    ];
+    let data = SDL_MessageBoxData {
+        flags: SDL_MESSAGEBOX_ERROR,
+        window,
+        title: c"Warscape Community Editor".as_ptr(),
+        message: msg.as_ptr(),
+        numbuttons: buttons.len() as i32,
+        buttons: buttons.as_ptr(),
+        colorScheme: std::ptr::null(),
+    };
+    let mut pressed = 0;
+    // SAFETY: the data and the strings it points to outlive the call.
+    if unsafe { SDL_ShowMessageBox(&data, &mut pressed) } && pressed == 1 {
+        let (all, messages) = editor.save_all_documents();
+        for m in &messages {
+            log::info(m);
+        }
+
+        let done = if all { "Saved:".to_owned() } else { "Not everything could be saved:".to_owned() };
+        let msg = std::ffi::CString::new(format!("{done}\n{}", messages.join("\n"))).unwrap_or_default();
+        // SAFETY: live window, NUL-terminated strings.
+        unsafe { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, c"Warscape Community Editor".as_ptr(), msg.as_ptr(), window) };
+    }
+
+    3
 }
 
 /// Waits until `due`: a sleep that ends a little early (it wakes up late by up to about that much), the rest yielded away.
@@ -533,9 +638,11 @@ fn main() {
         // with a framebuffer scale, and rasterizes its fonts at that density), instead of the compositor stretching a logical-size image.
         // Under X11 the content scale sizes the UI like the Windows DPI scale does.
         // Scripted runs keep one pixel per unit: their mouse positions and shots must not depend on the display's scale.
-        let scripted = opt.fixed_step > 0.0 || (!opt.live && (!opt.shot.is_empty() || !opt.capture_path.is_empty() || !opt.script_text.is_empty()));
+        let scripted =
+            opt.fixed_step > 0.0 || (!opt.live && (!opt.shot.is_empty() || !opt.capture_path.is_empty() || !opt.script_text.is_empty()));
         let density = if scripted { SDL_WindowFlags(0) } else { SDL_WINDOW_HIGH_PIXEL_DENSITY };
-        let wflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | density | if take_focus { SDL_WindowFlags(0) } else { SDL_WINDOW_NOT_FOCUSABLE };
+        let wflags =
+            SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | density | if take_focus { SDL_WindowFlags(0) } else { SDL_WINDOW_NOT_FOCUSABLE };
         let window = SDL_CreateWindow(c"Warscape Community Editor".as_ptr(), 1600, 960, wflags);
         if window.is_null() {
             eprintln!("SDL_CreateWindow failed: {}", std::ffi::CStr::from_ptr(sdl3_sys::error::SDL_GetError()).to_string_lossy());
@@ -544,7 +651,12 @@ fn main() {
         }
 
         let Some((swap, dev, ctx)) = create_device(output_window(window)) else {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, c"Warscape Community Editor".as_ptr(), c"Could not create a Direct3D 11 device (DXVK needs a Vulkan driver).".as_ptr(), window);
+            SDL_ShowSimpleMessageBox(
+                SDL_MESSAGEBOX_ERROR,
+                c"Warscape Community Editor".as_ptr(),
+                c"Could not create a Direct3D 11 device (DXVK needs a Vulkan driver).".as_ptr(),
+                window,
+            );
             SDL_DestroyWindow(window);
             SDL_Quit();
             std::process::exit(1);

@@ -54,14 +54,20 @@ fn main() {
     let release = profile.release_pack_names(&game);
     let available = profile.available_mod_packs(&game);
     t.check(!release.is_empty(), "the game has release packs");
-    t.check(available.iter().all(|m| !release.iter().any(|r| r.eq_ignore_ascii_case(m))), "release packs and chooseable mod packs do not overlap");
+    t.check(
+        available.iter().all(|m| !release.iter().any(|r| r.eq_ignore_ascii_case(m))),
+        "release packs and chooseable mod packs do not overlap",
+    );
 
     let none = mount(&game, vec![], vec![]);
     t.check(none.packs().iter().all(|p| !p.is_mod), "with no mod chosen no mod pack is mounted");
     t.check(none.packs().len() == release.len(), "with no mod chosen exactly the release packs are mounted");
 
     let ghost = mount(&game, vec!["no_such_mod_wce_check.pack".into()], vec![]);
-    t.check(ghost.missing_mods().iter().any(|m| m == "no_such_mod_wce_check.pack"), "a chosen mod that is not installed is reported missing");
+    t.check(
+        ghost.missing_mods().iter().any(|m| m == "no_such_mod_wce_check.pack"),
+        "a chosen mod that is not installed is reported missing",
+    );
     t.check(ghost.packs().iter().all(|p| !p.is_mod), "a chosen mod that is not installed is not mounted");
 
     match available.first() {
@@ -79,7 +85,12 @@ fn main() {
     // ---- loose folder over the packs
     let tmp = std::env::temp_dir().join(format!("wce_sources_check_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
-    let pic = none.files().keys().find(|p| p.starts_with("ui/skins/") && !p.starts_with("ui/skins/default/") && p.ends_with(".png")).cloned().or_else(|| none.files().keys().find(|p| p.starts_with("ui/skins/") && p.ends_with(".png")).cloned());
+    let pic = none
+        .files()
+        .keys()
+        .find(|p| p.starts_with("ui/skins/") && !p.starts_with("ui/skins/default/") && p.ends_with(".png"))
+        .cloned()
+        .or_else(|| none.files().keys().find(|p| p.starts_with("ui/skins/") && p.ends_with(".png")).cloned());
     match pic {
         Some(pic) => {
             let packed = none.read(&pic).expect("read");
@@ -89,8 +100,14 @@ fn main() {
             std::fs::write(&file, &mine).unwrap();
             let over = mount(&game, vec![], vec![tmp.clone()]);
             t.check(over.read(&pic).ok().as_deref() == Some(&mine[..]), "a loose file replaces the pack's file of the same path");
-            t.check(over.owner(&pic).and_then(|i| over.packs().get(i)).is_some_and(|p| p.loose), "the loose file is the one that is read first");
-            t.check(over.read_from(over.owners(&pic).last().copied().unwrap(), &pic).ok().as_deref() == Some(&packed[..]), "the pack's file is still there underneath");
+            t.check(
+                over.owner(&pic).and_then(|i| over.packs().get(i)).is_some_and(|p| p.loose),
+                "the loose file is the one that is read first",
+            );
+            t.check(
+                over.read_from(over.owners(&pic).last().copied().unwrap(), &pic).ok().as_deref() == Some(&packed[..]),
+                "the pack's file is still there underneath",
+            );
             let again = mount(&game, vec![], vec![]);
             t.check(again.read(&pic).ok().as_deref() == Some(&packed[..]), "without the loose folder the pack's file is read again");
 

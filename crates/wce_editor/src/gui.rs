@@ -79,6 +79,36 @@ pub fn set_window_focus_named(name: &str) {
     call!(sys::igSetWindowFocus_Str(n.as_ptr()))
 }
 
+/// Selects a docked window's tab in its dock without focusing it (the keyboard stays where it is); nothing for a floating window, or one
+/// not seen yet. Call it after the dock space (the tab bar takes it on its next update). When the focus is in another tab of that dock the
+/// window is focused instead: a dock keeps its focused window's tab in front.
+pub fn select_dock_tab(name: &str) {
+    let n = cs(name);
+    call!({
+        let w = sys::igFindWindowByName(n.as_ptr());
+        if w.is_null() || (*w).DockNode.is_null() {
+            return;
+        }
+
+        let nav = (*sys::igGetCurrentContext()).NavWindow;
+        if !nav.is_null() && !(*nav).RootWindow.is_null() && (*(*nav).RootWindow).DockNode == (*w).DockNode {
+            if (*nav).RootWindow != w {
+                sys::igSetWindowFocus_Str(n.as_ptr());
+            }
+        } else if sys::igDockNodeBeginAmendTabBar((*w).DockNode) {
+            let bar = sys::igGetCurrentTabBar();
+            if !bar.is_null() {
+                let tab = sys::igTabBarFindTabByID(bar, (*w).TabId);
+                if !tab.is_null() {
+                    sys::igTabBarQueueFocus_TabItemPtr(bar, tab);
+                }
+            }
+
+            sys::igDockNodeEndAmendTabBar();
+        }
+    })
+}
+
 /// Brings the next window to the front (a docked one: its tab is selected).
 pub fn set_next_window_focus() {
     call!(sys::igSetNextWindowFocus())
@@ -468,6 +498,14 @@ pub fn end_menu_bar() {
     call!(sys::igEndMenuBar())
 }
 
+/// A bar along the main viewport's bottom edge, `height` points tall (`igBeginViewportSideBar`): a window of its own that the docked
+/// windows do not cover, the viewport's work area (what the host window takes) shrunk by it. Pair with [`end`] whatever it returns.
+pub fn begin_bottom_bar(id: &str, height: f32) -> bool {
+    let c = cs(id);
+    let flags = sys::ImGuiWindowFlags_NoScrollbar | sys::ImGuiWindowFlags_NoSavedSettings | sys::ImGuiWindowFlags_NoTitleBar;
+    call!(sys::igBeginViewportSideBar(c.as_ptr(), sys::igGetMainViewport(), sys::ImGuiDir_Down, height, flags))
+}
+
 pub fn begin_menu(label: &str) -> bool {
     begin_menu_enabled(label, true)
 }
@@ -498,7 +536,16 @@ pub fn drag_float3(label: &str, v: &mut [f32; 3], speed: f32, format: &str) -> b
 
 pub fn drag_i64(label: &str, v: &mut i64, speed: f32) -> bool {
     let l = cs(label);
-    call!(sys::igDragScalar(l.as_ptr(), sys::ImGuiDataType_S64, (v as *mut i64).cast(), speed, std::ptr::null(), std::ptr::null(), std::ptr::null(), 0))
+    call!(sys::igDragScalar(
+        l.as_ptr(),
+        sys::ImGuiDataType_S64,
+        (v as *mut i64).cast(),
+        speed,
+        std::ptr::null(),
+        std::ptr::null(),
+        std::ptr::null(),
+        0
+    ))
 }
 
 pub fn drag_f32(label: &str, v: &mut f32, speed: f32) -> bool {
@@ -556,7 +603,9 @@ pub fn input_text(label: &str, hint: Option<&str>, value: &mut String, capacity:
     let l = cs(label);
     let h = hint.map(cs);
     let changed = match &h {
-        Some(h) => call!(sys::igInputTextWithHint(l.as_ptr(), h.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), flags, None, std::ptr::null_mut())),
+        Some(h) => {
+            call!(sys::igInputTextWithHint(l.as_ptr(), h.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), flags, None, std::ptr::null_mut()))
+        }
         None => call!(sys::igInputText(l.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), flags, None, std::ptr::null_mut())),
     };
 
@@ -715,7 +764,7 @@ impl DrawList {
     /// Lines through `pts`, back to the first one when `closed`.
     pub fn polyline(&self, pts: &[Vec2], col: u32, closed: bool, thickness: f32) {
         if pts.len() >= 2 {
-            let flags = if closed { sys::ImDrawFlags_Closed as i32 } else { 0 };
+            let flags = if closed { sys::ImDrawFlags_Closed } else { 0 };
             call!(sys::ImDrawList_AddPolyline(self.0, pts.as_ptr(), pts.len() as i32, col, thickness, flags))
         }
     }
@@ -753,7 +802,17 @@ impl DrawList {
     /// Text at an explicit size in pixels (the font's own size scaled).
     pub fn text_sized(&self, size: f32, pos: Vec2, col: u32, text: &str) {
         let r = text.as_bytes().as_ptr_range();
-        call!(sys::ImDrawList_AddText_FontPtr(self.0, std::ptr::null_mut(), size, pos, col, r.start.cast(), r.end.cast(), 0.0, std::ptr::null()))
+        call!(sys::ImDrawList_AddText_FontPtr(
+            self.0,
+            std::ptr::null_mut(),
+            size,
+            pos,
+            col,
+            r.start.cast(),
+            r.end.cast(),
+            0.0,
+            std::ptr::null()
+        ))
     }
 
     pub fn push_clip_rect(&self, min: Vec2, max: Vec2) {
@@ -773,7 +832,9 @@ pub fn begin_drag_drop_source() -> bool {
 
 pub fn set_drag_drop_payload(kind: &str, data: &[i32]) {
     let k = cs(kind);
-    call!({ sys::igSetDragDropPayload(k.as_ptr(), data.as_ptr().cast(), std::mem::size_of_val(data), 0); })
+    call!({
+        sys::igSetDragDropPayload(k.as_ptr(), data.as_ptr().cast(), std::mem::size_of_val(data), 0);
+    })
 }
 
 pub fn end_drag_drop_source() {
@@ -788,7 +849,10 @@ pub fn begin_drag_drop_target() -> bool {
 pub fn accept_drag_drop_payload(kind: &str) -> Option<(Vec<i32>, bool)> {
     let k = cs(kind);
     call!({
-        let p = sys::igAcceptDragDropPayload(k.as_ptr(), sys::ImGuiDragDropFlags_AcceptBeforeDelivery | sys::ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+        let p = sys::igAcceptDragDropPayload(
+            k.as_ptr(),
+            sys::ImGuiDragDropFlags_AcceptBeforeDelivery | sys::ImGuiDragDropFlags_AcceptNoDrawDefaultRect,
+        );
         if p.is_null() {
             None
         } else {
@@ -873,7 +937,9 @@ pub fn is_item_clicked_with(button: i32) -> bool {
 
 pub fn open_popup(id: &str) {
     let c = cs(id);
-    call!({ sys::igOpenPopup_Str(c.as_ptr(), 0); })
+    call!({
+        sys::igOpenPopup_Str(c.as_ptr(), 0);
+    })
 }
 
 pub fn begin_popup_modal(name: &str, open: Option<&mut bool>, flags: i32) -> bool {
@@ -907,6 +973,12 @@ pub fn close_current_popup() {
 // ---- item state
 
 /// Hovered, also when the item is disabled (to explain why).
+/// The last item is under the mouse even while a popup (another chip's) blocks it: a click there closes that popup, and the item can take
+/// the same click (`chips::chip`) instead of asking for a second one.
+pub fn is_item_hovered_through_popup() -> bool {
+    call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+}
+
 pub fn is_item_hovered_allow_disabled() -> bool {
     call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenDisabled))
 }
@@ -1124,27 +1196,38 @@ pub fn set_context_ids(ids: (ImGuiID, ImGuiID, ImGuiID)) {
 // ---- constants with the C++ names the panels use
 
 pub use sys::{
-    ImGuiButtonFlags_MouseButtonLeft as BUTTON_LEFT, ImGuiButtonFlags_MouseButtonMiddle as BUTTON_MIDDLE, ImGuiButtonFlags_MouseButtonRight as BUTTON_RIGHT,
-    ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON, ImGuiInputTextFlags_AutoSelectAll as INPUT_AUTO_SELECT_ALL, ImGuiTableFlags_SizingFixedFit as TABLE_SIZING_FIXED_FIT,
-    ImGuiTableFlags_BordersInnerV as TABLE_BORDERS_INNER_V, ImGuiKey_Delete as KEY_DELETE, ImGuiKey_G as KEY_G, ImGuiKey_Enter as KEY_ENTER, ImGuiKey_KeypadEnter as KEY_KEYPAD_ENTER,
-    ImGuiKey_F2 as KEY_F2, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
-    ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR, ImGuiColorEditFlags_Float as COLOR_FLOAT,
-    ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_Appearing as COND_APPEARING, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
-    ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
-    ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D, ImGuiKey_U as KEY_U, ImGuiKey_E as KEY_E, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R,
-    ImGuiKey_S as KEY_S, ImGuiKey_W as KEY_W, ImGuiKey_Y as KEY_Y, ImGuiKey_Z as KEY_Z, ImGuiSelectableFlags_AllowDoubleClick as SELECTABLE_ALLOW_DOUBLE_CLICK,
-    ImGuiStyleVar_WindowBorderSize as VAR_WINDOW_BORDER_SIZE, ImGuiStyleVar_WindowPadding as VAR_WINDOW_PADDING, ImGuiStyleVar_FramePadding as VAR_FRAME_PADDING, ImGuiStyleVar_WindowRounding as VAR_WINDOW_ROUNDING,
-    ImGuiTreeNodeFlags_DefaultOpen as TREE_DEFAULT_OPEN, ImGuiTreeNodeFlags_Leaf as TREE_LEAF, ImGuiTreeNodeFlags_NoTreePushOnOpen as TREE_NO_PUSH_ON_OPEN, ImGuiTreeNodeFlags_OpenOnArrow as TREE_OPEN_ON_ARROW, ImGuiTreeNodeFlags_Selected as TREE_SELECTED,
-    ImGuiTreeNodeFlags_SpanAvailWidth as TREE_SPAN_AVAIL_WIDTH, ImGuiWindowFlags_AlwaysAutoResize as WINDOW_ALWAYS_AUTO_RESIZE,
-    ImGuiWindowFlags_HorizontalScrollbar as WINDOW_HORIZONTAL_SCROLLBAR, ImGuiWindowFlags_MenuBar as WINDOW_MENU_BAR,
-    ImGuiWindowFlags_NoBringToFrontOnFocus as WINDOW_NO_BRING_TO_FRONT, ImGuiWindowFlags_NoCollapse as WINDOW_NO_COLLAPSE, ImGuiWindowFlags_NoDocking as WINDOW_NO_DOCKING,
-    ImGuiWindowFlags_NoMove as WINDOW_NO_MOVE, ImGuiWindowFlags_NoNavFocus as WINDOW_NO_NAV_FOCUS, ImGuiWindowFlags_NoResize as WINDOW_NO_RESIZE,
-    ImGuiWindowFlags_NoSavedSettings as WINDOW_NO_SAVED_SETTINGS, ImGuiWindowFlags_NoScrollWithMouse as WINDOW_NO_SCROLL_WITH_MOUSE,
-    ImGuiWindowFlags_NoScrollbar as WINDOW_NO_SCROLLBAR, ImGuiWindowFlags_NoTitleBar as WINDOW_NO_TITLE_BAR, ImGuiTableFlags_Resizable as TABLE_RESIZABLE, ImGuiTableFlags_RowBg as TABLE_ROW_BG,
-    ImGuiTableFlags_Borders as TABLE_BORDERS, ImGuiTableFlags_SizingStretchProp as TABLE_SIZING_STRETCH_PROP, ImGuiTableFlags_ScrollY as TABLE_SCROLL_Y,
-    ImGuiTableColumnFlags_WidthStretch as COLUMN_WIDTH_STRETCH, ImGuiTableColumnFlags_WidthFixed as COLUMN_WIDTH_FIXED, ImGuiTabItemFlags_SetSelected as TAB_SET_SELECTED,
+    ImGuiButtonFlags_MouseButtonLeft as BUTTON_LEFT, ImGuiButtonFlags_MouseButtonMiddle as BUTTON_MIDDLE,
+    ImGuiButtonFlags_MouseButtonRight as BUTTON_RIGHT, ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON,
+    ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK, ImGuiCol_FrameBg as COL_FRAME_BG,
+    ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR,
+    ImGuiColorEditFlags_Float as COLOR_FLOAT, ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS,
+    ImGuiCond_Appearing as COND_APPEARING, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
+    ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_AutoSelectAll as INPUT_AUTO_SELECT_ALL,
+    ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1, ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D,
+    ImGuiKey_Delete as KEY_DELETE, ImGuiKey_E as KEY_E, ImGuiKey_Enter as KEY_ENTER, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F,
+    ImGuiKey_F2 as KEY_F2, ImGuiKey_G as KEY_G, ImGuiKey_KeypadEnter as KEY_KEYPAD_ENTER, ImGuiKey_MouseMiddle as KEY_MOUSE_MIDDLE,
+    ImGuiKey_MouseX1 as KEY_MOUSE_X1, ImGuiKey_MouseX2 as KEY_MOUSE_X2, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R, ImGuiKey_S as KEY_S,
+    ImGuiKey_U as KEY_U, ImGuiKey_W as KEY_W, ImGuiKey_Y as KEY_Y, ImGuiKey_Z as KEY_Z,
+    ImGuiSelectableFlags_AllowDoubleClick as SELECTABLE_ALLOW_DOUBLE_CLICK, ImGuiStyleVar_FramePadding as VAR_FRAME_PADDING,
+    ImGuiStyleVar_WindowBorderSize as VAR_WINDOW_BORDER_SIZE, ImGuiStyleVar_WindowPadding as VAR_WINDOW_PADDING,
+    ImGuiStyleVar_WindowRounding as VAR_WINDOW_ROUNDING, ImGuiTabItemFlags_SetSelected as TAB_SET_SELECTED,
+    ImGuiTableColumnFlags_WidthFixed as COLUMN_WIDTH_FIXED, ImGuiTableColumnFlags_WidthStretch as COLUMN_WIDTH_STRETCH,
+    ImGuiTableFlags_Borders as TABLE_BORDERS, ImGuiTableFlags_BordersInnerV as TABLE_BORDERS_INNER_V,
+    ImGuiTableFlags_Resizable as TABLE_RESIZABLE, ImGuiTableFlags_RowBg as TABLE_ROW_BG, ImGuiTableFlags_ScrollY as TABLE_SCROLL_Y,
+    ImGuiTableFlags_SizingFixedFit as TABLE_SIZING_FIXED_FIT, ImGuiTableFlags_SizingStretchProp as TABLE_SIZING_STRETCH_PROP,
+    ImGuiTreeNodeFlags_DefaultOpen as TREE_DEFAULT_OPEN, ImGuiTreeNodeFlags_Leaf as TREE_LEAF,
+    ImGuiTreeNodeFlags_NoTreePushOnOpen as TREE_NO_PUSH_ON_OPEN, ImGuiTreeNodeFlags_OpenOnArrow as TREE_OPEN_ON_ARROW,
+    ImGuiTreeNodeFlags_Selected as TREE_SELECTED, ImGuiTreeNodeFlags_SpanAvailWidth as TREE_SPAN_AVAIL_WIDTH,
+    ImGuiWindowFlags_AlwaysAutoResize as WINDOW_ALWAYS_AUTO_RESIZE, ImGuiWindowFlags_HorizontalScrollbar as WINDOW_HORIZONTAL_SCROLLBAR,
+    ImGuiWindowFlags_MenuBar as WINDOW_MENU_BAR, ImGuiWindowFlags_NoBringToFrontOnFocus as WINDOW_NO_BRING_TO_FRONT,
+    ImGuiWindowFlags_NoCollapse as WINDOW_NO_COLLAPSE, ImGuiWindowFlags_NoDocking as WINDOW_NO_DOCKING,
+    ImGuiWindowFlags_NoMove as WINDOW_NO_MOVE, ImGuiWindowFlags_NoNavFocus as WINDOW_NO_NAV_FOCUS,
+    ImGuiWindowFlags_NoResize as WINDOW_NO_RESIZE, ImGuiWindowFlags_NoSavedSettings as WINDOW_NO_SAVED_SETTINGS,
+    ImGuiWindowFlags_NoScrollWithMouse as WINDOW_NO_SCROLL_WITH_MOUSE, ImGuiWindowFlags_NoScrollbar as WINDOW_NO_SCROLLBAR,
+    ImGuiWindowFlags_NoTitleBar as WINDOW_NO_TITLE_BAR,
 };
-pub const CHILD_AUTO_RESIZE: i32 = sys::ImGuiChildFlags_AutoResizeX | sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
+pub const CHILD_AUTO_RESIZE: i32 =
+    sys::ImGuiChildFlags_AutoResizeX | sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
 pub const CHILD_AUTO_RESIZE_Y: i32 = sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
@@ -1165,14 +1248,13 @@ pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;
 pub const MOD_ALT: i32 = sys::ImGuiMod_Alt;
 
-
 // ---- multi-line text
 
 extern "C" fn resize_callback(data: *mut sys::ImGuiInputTextCallbackData) -> i32 {
     // SAFETY: Dear ImGui passes its callback data; UserData is the `Vec<u8>` of `input_text_multiline`, which outlives the call.
     unsafe {
         let d = &mut *data;
-        if d.EventFlag == sys::ImGuiInputTextFlags_CallbackResize as i32 {
+        if d.EventFlag == sys::ImGuiInputTextFlags_CallbackResize {
             let v = &mut *d.UserData.cast::<Vec<u8>>();
             v.resize(d.BufSize.max(1) as usize, 0);
             d.Buf = v.as_mut_ptr().cast();
@@ -1188,7 +1270,12 @@ pub fn input_text_multiline(label: &str, value: &mut String, size: Vec2, flags: 
     buf.push(0);
     let l = cs(label);
     let changed = call!(sys::igInputTextMultiline(
-        l.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), size, flags | sys::ImGuiInputTextFlags_CallbackResize as i32, Some(resize_callback),
+        l.as_ptr(),
+        buf.as_mut_ptr().cast(),
+        buf.len(),
+        size,
+        flags | sys::ImGuiInputTextFlags_CallbackResize,
+        Some(resize_callback),
         (&raw mut buf).cast(),
     ));
     if changed {

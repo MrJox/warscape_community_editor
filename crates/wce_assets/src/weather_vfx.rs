@@ -151,7 +151,9 @@ pub type VfxReader<'a> = dyn Fn(&str) -> Result<Vec<u8>, String> + 'a;
 
 fn find_definition(read: &VfxReader, name: &str) -> Result<Option<WeatherDefinition>, String> {
     let doc = XmlDoc::parse(read("weather/weather_definitions.xml")?).map_err(|error| error.to_string())?;
-    let Some(i) = (0..doc.elements().len()).find(|&i| doc.elements()[i].name == "WEATHER_DEFINITION" && doc.get(i, "name").as_deref() == Some(name)) else {
+    let Some(i) =
+        (0..doc.elements().len()).find(|&i| doc.elements()[i].name == "WEATHER_DEFINITION" && doc.get(i, "name").as_deref() == Some(name))
+    else {
         return Ok(None);
     };
 
@@ -183,7 +185,8 @@ fn load_vfx(read: &VfxReader, name: &str) -> Result<VfxFile, String> {
 
 /// The chain an emitter draws with: some render stack pairs it with a chain that has a texture.
 fn render_chain<'a>(lib: &'a VfxFile, emitter: &str) -> Option<(&'a VfxStack, &'a VfxChain)> {
-    lib.stacks.iter()
+    lib.stacks
+        .iter()
         .filter(|stack| stack.emitters.iter().any(|e| e == emitter))
         .flat_map(|stack| stack.chains.iter().filter_map(|c| lib.chain(c)).map(move |chain| (stack, chain)))
         .find(|(_, chain)| chain.find("ps_texture").is_some())
@@ -214,7 +217,8 @@ pub fn load_weather_vfx(read: &VfxReader, definition_name: &str) -> Result<Weath
         let effect = load_effect_with(read, top_name, &mut libs);
         out.emitters.extend(effect.emitters);
         out.lights.extend(effect.lights);
-        out.notes.extend(effect.rigids.iter().map(|r| format!("{}/{}: rigid model '{}' not drawn in weather", r.instance, r.name, r.model)));
+        out.notes
+            .extend(effect.rigids.iter().map(|r| format!("{}/{}: rigid model '{}' not drawn in weather", r.instance, r.name, r.model)));
         out.notes.extend(effect.notes);
     }
 
@@ -240,7 +244,13 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
 
     // A file without references draws its own emitters, as one reference of itself.
     let own = VfxRef {
-        inst_name: name.to_owned(), library: name.to_owned(), scale_min: 1.0, scale_max: 1.0, pos: [0.0; 3], start_time: 0.0, infinite_life: true,
+        inst_name: name.to_owned(),
+        library: name.to_owned(),
+        scale_min: 1.0,
+        scale_max: 1.0,
+        pos: [0.0; 3],
+        start_time: 0.0,
+        infinite_life: true,
         emitters: vec![],
     };
 
@@ -276,13 +286,25 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
                 let model = em.text("RigidModelFile").replace('\\', "/").to_lowercase();
                 if model.starts_with("point_lights/") {
                     out.lights.push(EffectLight {
-                        instance: vfx_ref.inst_name.clone(), name: em.id.clone(), model: format!("rigidmodels/{model}"), def: em.clone(), tint_min, tint_max,
-                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max], pos: vfx_ref.pos,
+                        instance: vfx_ref.inst_name.clone(),
+                        name: em.id.clone(),
+                        model: format!("rigidmodels/{model}"),
+                        def: em.clone(),
+                        tint_min,
+                        tint_max,
+                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max],
+                        pos: vfx_ref.pos,
                     });
                 } else {
                     out.rigids.push(EffectLight {
-                        instance: vfx_ref.inst_name.clone(), name: em.id.clone(), model: format!("rigidmodels/{model}"), def: em.clone(), tint_min, tint_max,
-                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max], pos: vfx_ref.pos,
+                        instance: vfx_ref.inst_name.clone(),
+                        name: em.id.clone(),
+                        model: format!("rigidmodels/{model}"),
+                        def: em.clone(),
+                        tint_min,
+                        tint_max,
+                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max],
+                        pos: vfx_ref.pos,
                     });
                 }
 
@@ -338,4 +360,242 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
 /// Fails if `weather/weather_definitions.xml` can't be read.
 pub fn load_weather_vfx_from_vfs(vfs: &Vfs, definition_name: &str) -> Result<WeatherVfx, String> {
     load_weather_vfx(&|path| vfs.read(path).map_err(|error| error.to_string()), definition_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::vfx_constants::VFX_MAIN_VIEW_ID;
+
+    const DEFINITIONS: &str = r#"<root>
+  <WEATHER_DEFINITION name="none"/>
+  <WEATHER_DEFINITION name="storm" type="WT_SNOW" vfx1="top" vfx2="own" severity="-1.9" wind_size_min="0.5" wind_gust_probability="x"/>
+  <WEATHER_DEFINITION name="storm" type="WT_RAIN"/>
+  <WEATHER_DEFINITION name="bad" vfx1="broken" vfx2="missing"/>
+  <OTHER name="other"/>
+</root>"#;
+
+    const TOP: &str = r#"<vfx camera_following="true"/>
+<vfx_references>
+  <vfx inst_name="i1" vfx_ref="lib" scale_min="1" scale_max="3" pos_x="2">
+    <emitter name="drops" tint_r="0.5" particle_lifetime_bias_min="0.1"/>
+    <emitter name="off" enable="false"/>
+  </vfx>
+  <vfx inst_name="i2" vfx_ref="lib" infinite_life="0"/>
+</vfx_references>"#;
+
+    const LIB: &str = r#"<vfx>
+  <emitters>
+    <emitter id="drops" type="continuous_mesh"/>
+    <emitter id="off" type="continuous_mesh"/>
+    <emitter id="disabled" type="continuous_mesh"><property name="Enable" value="false"/></emitter>
+    <emitter id="light" type="burst_rigid"><property name="RigidModelFile" value="Point_Lights\Torch.rigid_model_v2"/></emitter>
+    <emitter id="debris" type="continuous_rigid"><property name="RigidModelFile" value="rocks/rock.rigid_model_v2"/></emitter>
+    <emitter id="sound" type="continuous_mesh"/>
+    <emitter id="lonely" type="continuous_mesh"/>
+    <emitter id="burst" type="burst_mesh"/>
+    <emitter id="haze" type="continuous_mesh"/>
+    <emitter id="overlay" type="continuous_mesh"/>
+  </emitters>
+  <behaviour_chains>
+    <behaviour_chain id="logic"><modifier fragment="vs_rotation"/></behaviour_chain>
+    <behaviour_chain id="render"><modifier fragment="ps_texture"><texture_property name="diffuse" path="drop.dds"/></modifier></behaviour_chain>
+  </behaviour_chains>
+  <effect_render_stacks>
+    <effect_render_stack id="sound_only"><emitters_selected><e id="sound"/></emitters_selected>
+      <behaviour_chains_selected><c id="logic"/><c id="missing_chain"/></behaviour_chains_selected></effect_render_stack>
+    <effect_render_stack id="main"><emitters_selected><e id="drops"/><e id="off"/><e id="burst"/></emitters_selected>
+      <behaviour_chains_selected><c id="logic"/><c id="render"/></behaviour_chains_selected></effect_render_stack>
+    <effect_render_stack id="distort"><emitters_selected><e id="haze"/></emitters_selected>
+      <behaviour_chains_selected><c id="render"/></behaviour_chains_selected><render_params scene_view_type="1"/></effect_render_stack>
+    <effect_render_stack id="ui"><emitters_selected><e id="overlay"/></emitters_selected>
+      <behaviour_chains_selected><c id="render"/></behaviour_chains_selected><render_params scene_view_type="2"/></effect_render_stack>
+  </effect_render_stacks>
+</vfx>"#;
+
+    const OWN: &str = r#"<vfx camera_following="false">
+  <emitters><emitter id="self" type="continuous_mesh"/></emitters>
+  <behaviour_chains><behaviour_chain id="r"><modifier fragment="ps_texture"/></behaviour_chain></behaviour_chains>
+  <effect_render_stacks><effect_render_stack id="s"><emitters_selected><e id="self"/></emitters_selected>
+    <behaviour_chains_selected><c id="r"/></behaviour_chains_selected></effect_render_stack></effect_render_stacks>
+</vfx>"#;
+
+    /// A reader of the given files that logs the paths it is asked for.
+    struct Files {
+        files: BTreeMap<&'static str, Vec<u8>>,
+        reads: RefCell<Vec<String>>,
+    }
+
+    impl Files {
+        fn new(files: &[(&'static str, &str)]) -> Self {
+            Self { files: files.iter().map(|(path, text)| (*path, text.as_bytes().to_vec())).collect(), reads: RefCell::default() }
+        }
+
+        fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+            self.reads.borrow_mut().push(path.to_owned());
+            self.files.get(path).cloned().ok_or_else(|| format!("missing {path}"))
+        }
+    }
+
+    fn standard() -> Files {
+        Files::new(&[
+            ("weather/weather_definitions.xml", DEFINITIONS),
+            ("vfx/top.xml", TOP),
+            ("vfx/lib.xml", LIB),
+            ("vfx/own.xml", OWN),
+            ("vfx/broken.xml", "<vfx><emitters></nope>"),
+        ])
+    }
+
+    fn utf16(text: &str) -> Vec<u8> {
+        let mut out = vec![0xff, 0xfe];
+        out.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        out
+    }
+
+    #[test]
+    fn definition_defaults_and_types() {
+        let d = WeatherDefinition::default();
+        assert_eq!((d.severity, d.wind_size_min, d.wind_size_max, d.wind_gust_curve, d.wind_gust_probability), (0, 0.0, 1.0, 4.0, 1.0));
+        for (kind, index) in [("WT_RAIN", 1), ("WT_SNOW", 2), ("WT_DUST", 3), ("WT_NONE", 0), ("", 0), ("wt_rain", 0)] {
+            assert_eq!(WeatherDefinition { kind: kind.into(), ..Default::default() }.type_index(), index, "{kind}");
+        }
+    }
+
+    #[test]
+    fn a_weather_plays_both_effects_with_their_overrides() {
+        let files = standard();
+        let w = load_weather_vfx(&|path| files.read(path), "storm").unwrap();
+
+        // The first definition of a name wins; numbers read as atof.
+        let d = &w.definition;
+        assert_eq!((d.name.as_str(), d.type_index(), d.vfx1.as_str(), d.vfx2.as_str()), ("storm", 2, "top", "own"));
+        assert_eq!((d.severity, d.wind_size_min, d.wind_size_max, d.wind_gust_probability), (-1, 0.5, 1.0, 0.0));
+
+        let names: Vec<String> = w.emitters.iter().map(|e| format!("{}/{}", e.instance, e.name)).collect();
+        assert_eq!(names, ["i1/drops", "i1/haze", "i2/drops", "i2/off", "i2/haze", "own/self"]);
+        let lights: Vec<&str> = w.lights.iter().map(|l| l.model.as_str()).collect();
+        assert_eq!(lights, ["rigidmodels/point_lights/torch.rigid_model_v2"; 2]);
+        assert_eq!(
+            w.notes,
+            [
+                "i1/debris: rigid model 'rigidmodels/rocks/rock.rigid_model_v2' not drawn in weather",
+                "i2/debris: rigid model 'rigidmodels/rocks/rock.rigid_model_v2' not drawn in weather",
+                "i1/burst: emitter type burst_mesh not supported",
+                "i1/overlay: scene_view_type 2 not supported",
+                "i2/burst: emitter type burst_mesh not supported",
+                "i2/overlay: scene_view_type 2 not supported",
+            ]
+        );
+
+        // The overrides of the reference, the reference's placement, and the library read once.
+        let drops = &w.emitters[0];
+        assert_eq!((drops.library.as_str(), drops.tint_min, drops.tint_max), ("lib", [0.5, 1.0, 1.0, 1.0], [0.5, 1.0, 1.0, 1.0]));
+        assert_eq!(
+            (drops.particle_lifetime_bias, drops.scale, drops.scale_range, drops.pos),
+            ([0.1, 0.0], 2.0, [1.0, 3.0], [2.0, 0.0, 0.0])
+        );
+        assert!(drops.camera_following && drops.infinite_life);
+        assert_eq!((drops.chain.id.as_str(), drops.k.diffuse.as_str()), ("render", "vfx/textures/drop.dds"));
+        assert_eq!((drops.k.behaviour_mask[3], w.emitters[1].k.behaviour_mask[3]), (VFX_MAIN_VIEW_ID, VFX_DISTORTION_VIEW_ID));
+        assert_eq!((w.emitters[2].tint_min, w.emitters[2].infinite_life), ([1.0; 4], false));
+        let own = &w.emitters[5];
+        assert_eq!((own.library.as_str(), own.scale, own.camera_following, own.infinite_life), ("own", 1.0, false, true));
+        assert_eq!(*files.reads.borrow(), ["weather/weather_definitions.xml", "vfx/top.xml", "vfx/lib.xml", "vfx/own.xml"]);
+    }
+
+    #[test]
+    fn missing_and_broken_files_become_notes() {
+        let files = standard();
+        let read = |path: &str| files.read(path);
+        let w = load_weather_vfx(&read, "bad").unwrap();
+        assert!(w.emitters.is_empty() && w.lights.is_empty());
+        assert_eq!(w.notes.len(), 2);
+        assert!(w.notes[0].starts_with("vfx/broken.xml: "), "{}", w.notes[0]);
+        assert_eq!(w.notes[1], "vfx/missing.xml: missing vfx/missing.xml");
+
+        // A reference to a library that is missing or broken is skipped; the next one still draws.
+        let files = Files::new(&[
+            (
+                "vfx/top.xml",
+                "<vfx_references><vfx inst_name=\"a\" vfx_ref=\"gone\"/><vfx inst_name=\"b\" vfx_ref=\"broken\"/><vfx inst_name=\"c\" vfx_ref=\"own\"/></vfx_references>",
+            ),
+            ("vfx/broken.xml", "<vfx"),
+            ("vfx/own.xml", OWN),
+        ]);
+        let e = load_effect(&|path| files.read(path), "top");
+        assert_eq!((e.name.as_str(), e.emitters.len(), e.emitters[0].instance.as_str()), ("top", 1, "c"));
+        assert_eq!(e.notes.len(), 2);
+        assert_eq!(e.notes[0], "vfx/gone.xml: missing vfx/gone.xml");
+        assert!(e.notes[1].starts_with("vfx/broken.xml: "));
+
+        let e = load_effect(&|path| files.read(path), "nothing");
+        assert_eq!((e.emitters.len(), e.notes.as_slice()), (0, ["vfx/nothing.xml: missing vfx/nothing.xml".to_owned()].as_slice()));
+    }
+
+    #[test]
+    fn unknown_and_empty_definition_names() {
+        let files = standard();
+        let read = |path: &str| files.read(path);
+        let w = load_weather_vfx(&read, "nope").unwrap();
+        assert_eq!(w.notes, ["weather definition 'nope' not in weather/weather_definitions.xml"]);
+        assert_eq!(w.definition, WeatherDefinition::default());
+
+        // An empty name is the engine's default, "none", which has no effects.
+        let w = load_weather_vfx(&read, "").unwrap();
+        assert_eq!((w.definition.name.as_str(), w.emitters.len(), w.notes.len()), ("none", 0, 0));
+
+        // Only WEATHER_DEFINITION elements are definitions.
+        assert_eq!(load_weather_vfx(&read, "other").unwrap().notes.len(), 1);
+    }
+
+    #[test]
+    fn unreadable_definitions_are_an_error() {
+        assert_eq!(load_weather_vfx(&|_: &str| Err("no packs".to_owned()), "storm").unwrap_err(), "no packs");
+        for text in ["<root><WEATHER_DEFINITION name=\"x\"/></nope>", "<root", "</root>", "<a x=\"1></a>"] {
+            let files = Files::new(&[("weather/weather_definitions.xml", text)]);
+            assert!(load_weather_vfx(&|path| files.read(path), "x").is_err(), "{text}");
+        }
+        let odd = |_: &str| Ok(vec![0xff, 0xfe, b'<']);
+        assert!(load_weather_vfx(&odd, "x").is_err());
+    }
+
+    #[test]
+    fn utf16_files_read_as_utf8_ones() {
+        let read = |path: &str| match path {
+            "vfx/own.xml" => Ok(utf16(OWN)),
+            "vfx/odd.xml" => Ok(vec![0xff, 0xfe, b'<', 0, b'v']),
+            _ => Err(format!("missing {path}")),
+        };
+        let plain = Files::new(&[("vfx/own.xml", OWN)]);
+        let from_utf16 = load_effect(&read, "own");
+        assert_eq!(from_utf16, load_effect(&|path| plain.read(path), "own"));
+        assert_eq!(from_utf16.emitters.len(), 1);
+
+        let e = load_effect(&read, "odd");
+        assert!(e.emitters.is_empty() && e.notes.len() == 1 && e.notes[0].starts_with("vfx/odd.xml: "));
+    }
+
+    #[test]
+    fn effects_keep_their_rigids_and_lights() {
+        let files = standard();
+        let e = load_effect(&|path| files.read(path), "top");
+        assert_eq!((e.lights.len(), e.rigids.len(), e.emitters.len()), (2, 2, 5));
+        let light = &e.lights[0];
+        assert_eq!(
+            (light.instance.as_str(), light.name.as_str(), light.scale_range, light.pos),
+            ("i1", "light", [1.0, 3.0], [2.0, 0.0, 0.0])
+        );
+        assert_eq!(e.rigids[1].model, "rigidmodels/rocks/rock.rigid_model_v2");
+        assert_eq!(e.notes.len(), 4);
+
+        // The library cache is shared between calls.
+        let mut libs = BTreeMap::new();
+        load_effect_with(&|path| files.read(path), "top", &mut libs);
+        load_effect_with(&|path| files.read(path), "top", &mut libs);
+        assert_eq!(files.reads.borrow().iter().filter(|p| *p == "vfx/lib.xml").count(), 2);
+        assert!(libs.contains_key("lib") && !libs.contains_key("top"));
+    }
 }

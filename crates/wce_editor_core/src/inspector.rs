@@ -41,6 +41,13 @@ pub trait Inspector {
 
     fn section(&mut self, title: &str);
 
+    /// A section that can be folded: its title (what follows `##` is only its identity), and whether its rows are drawn (false: the
+    /// caller skips them). Open by default; an inspector that cannot fold draws `section` and says true.
+    fn open_section(&mut self, title: &str) -> bool {
+        self.section(title.split("##").next().unwrap_or(title));
+        true
+    }
+
     /// Positions and rotations relative to the item's parent (its group, prefab or layer), as the file holds them; false: in the world. The
     /// editor's Inspector follows the toolbar's Global / Local; the ones that dump or test the rows keep the file's.
     fn local_coordinates(&self) -> bool {
@@ -117,6 +124,17 @@ pub trait Inspector {
     /// A tooltip on the row drawn last.
     fn tooltip(&mut self, text: &str) {
         let _ = text;
+    }
+
+    /// Pictures side by side under a label, each (texture id, width, height in points, caption under it). Read only. Nothing by default.
+    fn images(&mut self, field: &str, label: &str, images: &[(u64, f32, f32, &str)]) {
+        let _ = (field, label, images);
+    }
+
+    /// A small chart under a label, full width: each series is its colour (RGBA) and its values from 0 to 1, evenly spaced along x;
+    /// `x_end` names the right end of the x axis. Read only. Nothing by default.
+    fn plot(&mut self, field: &str, label: &str, series: &[([f32; 4], Vec<f32>)], x_end: &str) {
+        let _ = (field, label, series, x_end);
     }
     fn gesture_ended(&mut self) -> bool;
 

@@ -37,7 +37,9 @@ impl Default for PagedU16 {
 
 impl PartialEq for PagedU16 {
     fn eq(&self, o: &Self) -> bool {
-        self.width() == o.width() && self.height() == o.height() && (Arc::ptr_eq(&self.grid, &o.grid) || *self.grid.read() == *o.grid.read())
+        self.width() == o.width()
+            && self.height() == o.height()
+            && (Arc::ptr_eq(&self.grid, &o.grid) || *self.grid.read() == *o.grid.read())
     }
 }
 
@@ -50,7 +52,6 @@ impl std::fmt::Debug for PagedU16 {
 }
 
 impl PagedU16 {
-
     /// A field over shared samples.
     pub fn from_grid(grid: Arc<SampleGrid>) -> Self {
         let (pw, ph) = (grid.width().div_ceil(PAGE), grid.height().div_ceil(PAGE));

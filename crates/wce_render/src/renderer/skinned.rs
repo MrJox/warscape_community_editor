@@ -5,6 +5,12 @@
 //! must not cross a line's end: [`PALETTE_WIDTH`] is a multiple of 3 and every palette starts on one. The engine keeps a ring of such textures
 //! (`WEIGHTED_MESH_ANIMATION_TEXTURE_CACHE`); here one dynamic texture, written once a frame, the instances sharing a palette sharing it.
 //!
+//! Rome II's `weightedcommon` (its own `fxc/`) samples the palette instead (`s_animation_map`, a texture and a sampler): texel `3 * bone + row`
+//! of the line in TEXCOORD3.x, at `u = texel * g_animation_texture_width.y` (1 / width) and `v = line * g_animation_texture_height.y`
+//! (1 / height). It has no offset along the line: each palette (and each sail's part of one) starts a line of its own, the width a power of
+//! two ([`ROME2_PALETTE_WIDTH`]) so that `texel / width` is exact (2026-11-12: bound as Attila's, its bones read zero and every skinned mesh
+//! collapsed to a point: the units showed their shields and weapons only).
+//!
 //! The instances are the entities' own small list, not the draw set's items: they change every frame and there are few. Nothing is culled yet,
 //! neither by the camera nor by the shadow cascades: the clipper does it.
 //!
@@ -20,12 +26,18 @@ use wce_foundation::math::{Float3, Float4x4, length};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, EntityId, MODEL_SKINNED_SUFFIX, Payload, RenderScene};
 
-use super::{DIRT_GBUFFER_ALPHA_PS, DIRT_GBUFFER_PS, RIGID_GBUFFER_ALPHA_PS, RIGID_GBUFFER_PS, RIGID_VS, Renderer, SHADOW_PS as RIGID_SHADOW_PS, SHADOW_VS as RIGID_SHADOW_VS, SKIN_STENCIL, dynamic_buffer, element, ps_samplers, rigid_layout};
+use super::{
+    DIRT_GBUFFER_ALPHA_PS, DIRT_GBUFFER_PS, RIGID_GBUFFER_ALPHA_PS, RIGID_GBUFFER_PS, RIGID_VS, Renderer, SHADOW_PS as RIGID_SHADOW_PS,
+    SHADOW_VS as RIGID_SHADOW_VS, SKIN_STENCIL, dynamic_buffer, element, ps_samplers, rigid_layout,
+};
 use crate::model_cache::{GpuMesh, GpuModel, MeshKind, RigidInstance};
 use crate::shader_lib::{GameShader, bind_srv};
 
 /// The palette texture's width in texels: 512 bones per line, more than any skeleton has.
 pub(crate) const PALETTE_WIDTH: usize = 1536;
+
+/// Rome II's palette width: a line a palette, 682 bones at most.
+const ROME2_PALETTE_WIDTH: usize = 2048;
 
 /// The lines of a new palette texture, doubled when more are needed.
 const PALETTE_LINES: usize = 64;
@@ -97,6 +109,7 @@ pub(crate) struct SkinnedDraws {
     palette: Option<ID3D11Texture2D>,
     palette_srv: Option<ID3D11ShaderResourceView>,
     palette_lines: usize,
+    palette_width: usize,
     instances: Option<ID3D11Buffer>,
     capacity: usize,
     rigid_instances: Option<ID3D11Buffer>,
@@ -112,7 +125,7 @@ enum Placed {
 
 /// A mesh's vertices are skinned (else it is a static mesh on a bone).
 fn is_skinned(m: &GpuMesh) -> bool {
-    matches!(m.kind, MeshKind::Weighted | MeshKind::WeightedSkin)
+    matches!(m.kind, MeshKind::Weighted | MeshKind::WeightedSkin | MeshKind::WeightedCloth)
 }
 
 fn matrix_of(rows: &[f32; 12]) -> Float4x4 {
@@ -127,7 +140,8 @@ fn matrix_of(rows: &[f32; 12]) -> Float4x4 {
 /// The input layout of a vertex format (from the shaders' code and the file's layout): the bytes of the bone indices and weights are read
 /// BGRA, as normals are, so `v1.zyx` are the file's bytes 0, 1, 2.
 fn layout_of(stride: u32) -> Vec<InputElement> {
-    let (f16x4, f16x2, bytes, f32x4) = (DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT);
+    let (f16x4, f16x2, bytes, f32x4) =
+        (DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT);
     let mut el = if stride == STRIDE_2_BONES {
         vec![
             element(c"POSITION", 0, f16x4, 0, 0, false),
@@ -157,6 +171,13 @@ fn layout_of(stride: u32) -> Vec<InputElement> {
 /// what the standard lighting reads, and the engine's choice between them isn't traced). **ASSUMPTION** until compared with the game: `_noclip`
 /// for the materials that aren't alpha-tested.
 fn gbuffer_ps(m: &GpuMesh) -> String {
+    // A sail: `weightedcloth`, which has no dirt or decal variants: it always samples its dirt map and mask (the mesh's `dirt`), and its
+    // damage and fire maps (bound in `draw_skinned_gbuffer`).
+    if m.kind == MeshKind::WeightedCloth {
+        let noclip = if m.alpha_mode == 1 { "" } else { "_noclip" };
+        return format!("dx11_sm_3_0_weightedcloth.hlsl_ps_ps30_gbuffer{noclip}");
+    }
+
     let family = match (m.dirt, m.decal) {
         (false, false) => "weighted",
         (true, false) => "weightedwithdirt",
@@ -185,16 +206,20 @@ fn rigid_ps(m: &GpuMesh) -> String {
 }
 
 /// The lines `texels` take in the palette texture.
+#[cfg(test)]
 fn lines_of(texels: usize) -> usize {
-    texels.div_ceil(PALETTE_WIDTH)
+    lines_in(texels, PALETTE_WIDTH)
+}
+
+fn lines_in(texels: usize, width: usize) -> usize {
+    texels.div_ceil(width)
 }
 
 impl Renderer {
-
     /// Writes the frame's palettes and instances (before the first pass that draws them). `eye` is the view's: `self.camera` may still be the environment
     /// cube's here, every fourth frame, and the LODs picked from it put all the soldiers at their distance from the battle's centre for that frame.
     pub(crate) fn prepare_skinned(&mut self, scene: &RenderScene, eye: Float3) {
-        let scene_id = std::ptr::from_ref(scene) as usize;
+        let scene_id = scene.uid();
         if self.skinned.scene_id != scene_id || self.skinned.revision != scene.structure_revision() {
             self.skinned.scene_id = scene_id;
             self.skinned.revision = scene.structure_revision();
@@ -210,7 +235,12 @@ impl Renderer {
         let (units, o) = (self.camera.units, self.camera.origin);
         let mut texels: Vec<[f32; 4]> = vec![];
         let mut offset_of = HashMap::<usize, usize>::new();
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        // Rome II: a palette from a bone on (a sail's), a line of its own; by palette and first bone, its line.
+        let mut line_of = HashMap::<(usize, usize), usize>::new();
         let mut placed: Vec<(Run, Placed)> = vec![];
+        // Each model looked up once a frame: a crew's men share a few dozen models over thousands of parts.
+        let mut found: HashMap<String, Option<Arc<GpuModel>>> = HashMap::new();
         for id in self.skinned.ids.clone() {
             let Some(e) = scene.find(id) else { continue };
             let Payload::SkinnedInstance(s) = &e.payload else { continue };
@@ -219,11 +249,25 @@ impl Renderer {
             }
 
             // A palette an instance shares with others is written once.
-            let palette = *offset_of.entry(Arc::as_ptr(&s.palette) as usize).or_insert_with(|| {
-                let at = texels.len();
-                texels.extend(s.palette.iter().flat_map(|m| m.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]])));
-                at
-            });
+            let palette = if rome2 {
+                0
+            } else {
+                *offset_of.entry(Arc::as_ptr(&s.palette) as usize).or_insert_with(|| {
+                    let at = texels.len();
+                    texels.extend(s.palette.iter().flat_map(|m| m.as_chunks::<4>().0.iter().map(|r| [r[0], r[1], r[2], r[3]])));
+                    at
+                })
+            };
+            let mut rome2_line = |base: usize| -> f32 {
+                let at = *line_of.entry((Arc::as_ptr(&s.palette) as usize, base)).or_insert_with(|| {
+                    let line = lines_in(texels.len(), ROME2_PALETTE_WIDTH);
+                    texels.resize(line * ROME2_PALETTE_WIDTH, [0.0; 4]);
+                    let bones = s.palette.iter().skip(base).take(ROME2_PALETTE_WIDTH / 3);
+                    texels.extend(bones.flat_map(|m| m.as_chunks::<4>().0.iter().map(|r| [r[0], r[1], r[2], r[3]])));
+                    line
+                });
+                at as f32 + 0.5
+            };
 
             // Scene units to game units, around the render origin.
             let rows = |m: &Float4x4| -> [[f32; 4]; 3] {
@@ -239,11 +283,21 @@ impl Renderer {
             let pos = Float3::new(e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]);
             let distance = length(pos - eye) * units;
             for part in &s.parts {
-                let Some(model) = self.models.try_get(&format!("{}{MODEL_SKINNED_SUFFIX}", part.model), distance) else { continue };
-                let lod = (0..=model.lods.len()).find(|&l| match l {
-                    0 => model.distance == 0.0 || distance <= model.distance,
-                    l => distance <= model.lods[l - 1].distance,
-                }).unwrap_or(model.lods.len());
+                let model = match found.get(&part.model) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let m = self.models.try_get(&format!("{}{MODEL_SKINNED_SUFFIX}", part.model), distance);
+                        found.insert(part.model.clone(), m.clone());
+                        m
+                    }
+                };
+                let Some(model) = model else { continue };
+                let lod = (0..=model.lods.len())
+                    .find(|&l| match l {
+                        0 => model.distance == 0.0 || distance <= model.distance,
+                        l => distance <= model.lods[l - 1].distance,
+                    })
+                    .unwrap_or(model.lods.len());
                 let count = if lod == 0 { model.meshes.len() } else { model.lods[lod - 1].meshes.len() };
                 let f = s.faction_colours;
                 let faction = [f[usize::from(part.masks[0])], f[usize::from(part.masks[1])], f[usize::from(part.masks[2])], f[3]];
@@ -256,14 +310,23 @@ impl Renderer {
                             continue;
                         }
 
-                        Placed::Skinned(SkinnedGpuInstance { world, palette: [palette as f32, s.faction_scale, 0.0, 0.0], tint: part.tint, ..SkinnedGpuInstance::default() })
+                        // A sail's mesh: its own bones, after the model's earlier sails' (3 texels a bone). Rome II: their line.
+                        let first =
+                            if rome2 { rome2_line(m.palette_base as usize) } else { (palette + 3 * m.palette_base as usize) as f32 };
+                        Placed::Skinned(SkinnedGpuInstance {
+                            world,
+                            palette: [first, s.faction_scale, 0.0, 0.0],
+                            tint: part.tint,
+                            ..SkinnedGpuInstance::default()
+                        })
                     } else {
                         // A static mesh: on its part's bone, or its material's, at the pivot its vertices are stored around.
                         let bone = part.bone.or(u32::try_from(m.bone).ok()).and_then(|b| s.bones.get(b as usize));
                         let mut carrier = bone.map_or(e.world, |b| e.world * matrix_of(b)) * matrix_of(&part.offset);
                         if m.has_offset {
                             for r in 0..3 {
-                                carrier.m[r][3] += carrier.m[r][0] * m.offset.x + carrier.m[r][1] * m.offset.y + carrier.m[r][2] * m.offset.z;
+                                carrier.m[r][3] +=
+                                    carrier.m[r][0] * m.offset.x + carrier.m[r][1] * m.offset.y + carrier.m[r][2] * m.offset.z;
                             }
                         }
 
@@ -277,8 +340,12 @@ impl Renderer {
         }
 
         // The same mesh and colours in a row: one instanced draw.
-        let key = |r: &Run| (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, r.decal.clone());
-        placed.sort_by_key(|(r, _)| key(r));
+        // Borrowed: cloning the decals' paths per comparison took 17 ms a frame with four ships' crews (2026-11-11).
+        fn key(r: &Run) -> (usize, usize, usize, [[u32; 3]; 4], bool, &[Option<String>; 2]) {
+            (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, &r.decal)
+        }
+
+        placed.sort_by(|(a, _), (b, _)| key(a).cmp(&key(b)));
         let (mut skinned, mut rigid) = (vec![], vec![]);
         let mut runs: Vec<Run> = vec![];
         for (mut run, instance) in placed {
@@ -292,7 +359,8 @@ impl Renderer {
                     rigid.push(i);
                     rigid.len()
                 }
-            } as u32 - 1;
+            } as u32
+                - 1;
 
             match runs.last_mut().filter(|last| key(last) == key(&run)) {
                 Some(last) => last.count += 1,
@@ -309,13 +377,21 @@ impl Renderer {
     }
 
     fn write_palette(&mut self, texels: &[[f32; 4]]) -> bool {
-        let lines = lines_of(texels.len());
-        if lines > self.skinned.palette_lines {
+        let width = if self.game == super::game::RenderGame::Rome2 { ROME2_PALETTE_WIDTH } else { PALETTE_WIDTH };
+        let lines = lines_in(texels.len(), width);
+        if lines > self.skinned.palette_lines || width != self.skinned.palette_width {
             let height = lines.next_power_of_two().max(PALETTE_LINES);
             let desc = D3D11_TEXTURE2D_DESC {
-                Width: PALETTE_WIDTH as u32, Height: height as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0,
+                Width: width as u32,
+                Height: height as u32,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+                MiscFlags: 0,
             };
 
             let Ok(texture) = self.dev.create_texture_2d(&desc, None) else {
@@ -326,31 +402,51 @@ impl Renderer {
             self.skinned.palette_srv = self.dev.create_shader_resource_view(&texture, None).ok();
             self.skinned.palette = Some(texture);
             self.skinned.palette_lines = height;
-            self.cbs.set_f("variant_animation_size", "g_animation_texture_width", &[PALETTE_WIDTH as f32, height as f32]);
+            self.skinned.palette_width = width;
+            if self.game == super::game::RenderGame::Rome2 {
+                // Read as (.y, .w): 1 / height and 1 / width.
+                self.cbs.set_f("variant_animation_size", "g_animation_texture_height", &[height as f32, 1.0 / height as f32]);
+                self.cbs.set_f("variant_animation_size", "g_animation_texture_width", &[width as f32, 1.0 / width as f32]);
+            } else {
+                self.cbs.set_f("variant_animation_size", "g_animation_texture_width", &[PALETTE_WIDTH as f32, height as f32]);
+            }
         }
 
         let Some(texture) = self.skinned.palette.clone() else { return false };
         let Ok(mut mapped) = self.ctx.map(&texture, 0, D3D11_MAP_WRITE_DISCARD, 0) else { return false };
         let pitch = mapped.row_pitch();
-        texels.chunks(PALETTE_WIDTH).enumerate().all(|(y, line)| mapped.write(y * pitch, line))
+        texels.chunks(width).enumerate().all(|(y, line)| mapped.write(y * pitch, line))
     }
 
     fn write_instances(&mut self, skinned: &[SkinnedGpuInstance], rigid: &[RigidInstance]) -> bool {
         if skinned.len() > self.skinned.capacity {
             self.skinned.capacity = (skinned.len() * 2).max(256);
-            self.skinned.instances = dynamic_buffer(&self.dev, self.skinned.capacity * size_of::<SkinnedGpuInstance>(), D3D11_BIND_VERTEX_BUFFER);
+            self.skinned.instances =
+                dynamic_buffer(&self.dev, self.skinned.capacity * size_of::<SkinnedGpuInstance>(), D3D11_BIND_VERTEX_BUFFER);
         }
 
         if rigid.len() > self.skinned.rigid_capacity {
             self.skinned.rigid_capacity = (rigid.len() * 2).max(256);
-            self.skinned.rigid_instances = dynamic_buffer(&self.dev, self.skinned.rigid_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+            self.skinned.rigid_instances =
+                dynamic_buffer(&self.dev, self.skinned.rigid_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
         }
 
-        if !skinned.is_empty() && !self.skinned.instances.clone().is_some_and(|b| self.ctx.map(&b, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut m| m.write(0, skinned))) {
+        if !skinned.is_empty()
+            && !self
+                .skinned
+                .instances
+                .clone()
+                .is_some_and(|b| self.ctx.map(&b, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut m| m.write(0, skinned)))
+        {
             return false;
         }
 
-        rigid.is_empty() || self.skinned.rigid_instances.clone().is_some_and(|b| self.ctx.map(&b, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut m| m.write(0, rigid)))
+        rigid.is_empty()
+            || self
+                .skinned
+                .rigid_instances
+                .clone()
+                .is_some_and(|b| self.ctx.map(&b, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut m| m.write(0, rigid)))
     }
 
     /// Whether this frame's G-buffer has skin pixels: the skin lighting draws them.
@@ -360,7 +456,9 @@ impl Renderer {
 
     /// A mesh's decal: the part's textures, or none (its mask black, so that the decal adds nothing).
     fn bind_decal(&self, ps: &GameShader, run: &Run) {
-        let srv = |path: &Option<String>, srgb: bool| path.as_ref().and_then(|p| self.textures.get(p, srgb)).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+        let srv = |path: &Option<String>, srgb: bool| {
+            path.as_ref().and_then(|p| self.textures.get(p, srgb)).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+        };
         let (diffuse, normal) = (srv(&run.decal[0], true), srv(&run.decal[1], false));
         if diffuse.is_none() {
             bind_srv(&self.ctx, ps, "s_decal_mask", self.res.black_srv.as_ref());
@@ -373,9 +471,13 @@ impl Renderer {
     /// The vertex shader's textures: the palette, and the rigid passes' empty selection ids.
     fn bind_palette(&self, vs: &GameShader) {
         for (name, slot) in &vs.textures {
-            let srv = if name == "t_animation_map" { &self.skinned.palette_srv } else { &self.res.instance_ids_srv };
+            // Attila's `t_animation_map`; Rome II's `s_animation_map`, sampled at the texels' corners: point.
+            let srv =
+                if name == "t_animation_map" || name == "s_animation_map" { &self.skinned.palette_srv } else { &self.res.instance_ids_srv };
             self.ctx.vs_set_shader_resources(*slot, std::slice::from_ref(srv));
         }
+
+        crate::shader_lib::bind_sampler(&self.ctx, vs, "s_animation_map", self.states.s_clamp_point.as_ref());
     }
 
     fn skinned_vs(&mut self, stride: u32, shadow: bool) -> Option<(Rc<GameShader>, ID3D11InputLayout)> {
@@ -393,7 +495,11 @@ impl Renderer {
 
     /// The instance buffer of a mesh's kind.
     fn bind_instances(&self, m: &GpuMesh) {
-        let (buffer, stride) = if is_skinned(m) { (&self.skinned.instances, size_of::<SkinnedGpuInstance>()) } else { (&self.skinned.rigid_instances, size_of::<RigidInstance>()) };
+        let (buffer, stride) = if is_skinned(m) {
+            (&self.skinned.instances, size_of::<SkinnedGpuInstance>())
+        } else {
+            (&self.skinned.rigid_instances, size_of::<RigidInstance>())
+        };
         self.ctx.set_vertex_buffers(1, std::slice::from_ref(buffer), &[stride as u32], &[0]);
     }
 
@@ -443,7 +549,8 @@ impl Renderer {
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
         for run in &runs {
             let m = run.mesh();
-            self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), if m.kind == MeshKind::WeightedSkin { SKIN_STENCIL } else { 1 });
+            self.ctx
+                .set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), if m.kind == MeshKind::WeightedSkin { SKIN_STENCIL } else { 1 });
             self.cbs.set_f("rigid_faction_colours", "faction_colours", &faction_constants(&run.faction));
             if m.decal {
                 self.cbs.set_f("rigid_config_PS", "g_decal_uv_rect_coords", &m.decal_rect);
@@ -455,6 +562,22 @@ impl Renderer {
             ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
             let slots = self.slots_of(&ps);
             self.bind_mesh_material(&ps, &slots, m);
+
+            // A sail's damage and burn: none (white: nothing discarded or darkened; black: no embers). Left unbound, the slots kept an
+            // earlier draw's textures, which slid over the sails as they moved.
+            if m.kind == MeshKind::WeightedCloth {
+                bind_srv(&self.ctx, &ps, "s_diffuse_damage_map", self.res.white_srv.as_ref());
+                bind_srv(&self.ctx, &ps, "s_fire_map", self.res.black_srv.as_ref());
+                // Its wind ripples, scrolled by the time: the textures the WeightedCloth mesh's loader names (`FUN_117d2d00`), linear.
+                for (name, path) in
+                    [("normal0_sampler", "commontextures/flag_normal_1.dds"), ("normal1_sampler", "commontextures/flag_normal_2.dds")]
+                {
+                    let tex = self.textures.get(path, false).unwrap_or_else(|| self.textures.flat_normal());
+                    let srv = tex.read().ok().and_then(|t| t.srv.clone());
+                    bind_srv(&self.ctx, &ps, name, srv.as_ref());
+                }
+            }
+
             if m.decal {
                 self.bind_decal(&ps, run);
             }
@@ -473,7 +596,11 @@ impl Renderer {
             return;
         }
 
-        let (Some(ps), Some(rigid_vs), Some(rigid_ps)) = (self.shader(SHADOW_PS), self.shader(RIGID_SHADOW_VS), self.shader(RIGID_SHADOW_PS)) else { return };
+        let (Some(ps), Some(rigid_vs), Some(rigid_ps)) =
+            (self.shader(SHADOW_PS), self.shader(RIGID_SHADOW_VS), self.shader(RIGID_SHADOW_PS))
+        else {
+            return;
+        };
         let Some(rigid_layout) = self.layout(&rigid_vs, "rigid_std", &rigid_layout()) else { return };
         let runs = std::mem::take(&mut self.skinned.runs);
         self.upload();
@@ -544,12 +671,38 @@ mod tests {
         let mesh = |kind, dirt, decal, alpha_mode| {
             let (vb, ib, offset, bmin, bmax) = (None, None, Default::default(), Default::default(), Default::default());
             let tex = std::array::from_fn(|_| Default::default());
-            GpuMesh { vb, ib, index_count: 0, alpha_mode, stride: 28, kind, dirt, decal, bone: -1, decal_rect: [0.0; 4], uv2_tile: [0.0; 2], tint: [0.0; 12], offset, has_offset: false, tex, diffuse_path: String::new(), normal_path: String::new(), displacement: None, bmin, bmax, snow: false }
+            GpuMesh {
+                vb,
+                ib,
+                index_count: 0,
+                alpha_mode,
+                stride: 28,
+                kind,
+                dirt,
+                decal,
+                bone: -1,
+                decal_rect: [0.0; 4],
+                uv2_tile: [0.0; 2],
+                tint: [0.0; 12],
+                offset,
+                has_offset: false,
+                tex,
+                diffuse_path: String::new(),
+                normal_path: String::new(),
+                displacement: None,
+                bmin,
+                bmax,
+                snow: false,
+                palette_base: 0,
+            }
         };
 
         assert_eq!(gbuffer_ps(&mesh(MeshKind::Weighted, false, false, -1)), "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer_noclip");
         assert_eq!(gbuffer_ps(&mesh(MeshKind::Weighted, true, true, 1)), "dx11_sm_3_0_weightedwithdecaldirt.hlsl_ps_ps30_gbuffer");
-        assert_eq!(gbuffer_ps(&mesh(MeshKind::WeightedSkin, true, false, -1)), "dx11_sm_3_0_weightedwithdirt.hlsl_ps_ps30_gbuffer_skin_noclip");
+        assert_eq!(
+            gbuffer_ps(&mesh(MeshKind::WeightedSkin, true, false, -1)),
+            "dx11_sm_3_0_weightedwithdirt.hlsl_ps_ps30_gbuffer_skin_noclip"
+        );
         assert_eq!(gbuffer_ps(&mesh(MeshKind::WeightedSkin, false, true, 1)), "dx11_sm_3_0_weightedwithdecal.hlsl_ps_ps30_gbuffer_skin");
     }
 

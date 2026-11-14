@@ -4,6 +4,7 @@
 
 pub mod attila;
 pub mod built;
+mod campaign_props;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -48,7 +49,6 @@ fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Blob>) -> std::i
 }
 
 impl MapFiles {
-
     /// Files read already (a folder of the game's packs).
     pub fn from_bytes(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
         Self { folder: files.into_iter().map(|(p, b)| (p, Blob::Bytes(std::sync::Arc::from(b)))).collect() }
@@ -83,7 +83,7 @@ impl MapFiles {
                     std::fs::copy(src, &target)?;
                 }
 
-                Blob::Bytes(b) => std::fs::write(&target, b)?,
+                Blob::Bytes(b) => wce_foundation::files::write_replacing(&target, b)?,
             }
         }
 

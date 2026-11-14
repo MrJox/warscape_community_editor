@@ -22,11 +22,16 @@ fn main() {
     // The record -> key map from the groups.
     let mut key_of = vec![String::new(); f.records.len()];
     for g in f.groups.iter().flatten() {
-        let key = g.key.iter().map(|k| match k {
-            KeyPart::Wide(w) => String::from_utf16_lossy(w),
-            KeyPart::Narrow(n) => String::from_utf8_lossy(n).into_owned(),
-            KeyPart::U32(u) => u.to_string(),
-        }).collect::<Vec<_>>().join(" ");
+        let key = g
+            .key
+            .iter()
+            .map(|k| match k {
+                KeyPart::Wide(w) => String::from_utf16_lossy(w),
+                KeyPart::Narrow(n) => String::from_utf8_lossy(n).into_owned(),
+                KeyPart::U32(u) => u.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         for &i in &g.indices {
             if let Some(k) = key_of.get_mut(i as usize) {
                 k.clone_from(&key);
@@ -47,12 +52,18 @@ fn main() {
             continue;
         }
 
-        let rest = fields.iter().filter(|(n, _)| *n != "transform").map(|(n, v)| match v {
-            Value::F32(x) => format!("{n} {x}"),
-            Value::U8(x) => format!("{n} {x}"),
-            Value::U32(x) => format!("{n} {x}"),
-            _ => String::new(),
-        }).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", ");
+        let rest = fields
+            .iter()
+            .filter(|(n, _)| *n != "transform")
+            .map(|(n, v)| match v {
+                Value::F32(x) => format!("{n} {x}"),
+                Value::U8(x) => format!("{n} {x}"),
+                Value::U32(x) => format!("{n} {x}"),
+                _ => String::new(),
+            })
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
         println!(
             "#{i} {key}: x ({:.2} {:.2} {:.2}) y ({:.2} {:.2} {:.2}) z ({:.2} {:.2} {:.2}) at ({:.1} {:.1} {:.1}) | {rest}",
             m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14],

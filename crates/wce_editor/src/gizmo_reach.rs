@@ -226,7 +226,8 @@ fn outer_ring(g: &Gizmo, radius: f32, centre: [f32; 2]) -> f32 {
     let mut outer = OUTER_RING * g.view[1];
     let to_camera = [dot(-g.forward, g.axes[0]), dot(-g.forward, g.axes[1]), dot(-g.forward, g.axes[2])];
     for axis in 0..3 {
-        let start = to_camera[(4 - axis) % 3].atan2(to_camera[(3 - axis) % 3]) + std::f32::consts::FRAC_PI_2 * if g.orthographic { 3.0 } else { 1.0 };
+        let start = to_camera[(4 - axis) % 3].atan2(to_camera[(3 - axis) % 3])
+            + std::f32::consts::FRAC_PI_2 * if g.orthographic { 3.0 } else { 1.0 };
         let (sin, cos) = start.sin_cos();
         let on_ring = [cos, sin, 0.0];
         let at = g.axes[0] * on_ring[axis] + g.axes[1] * on_ring[(axis + 1) % 3] + g.axes[2] * on_ring[(axis + 2) % 3];
@@ -283,8 +284,14 @@ mod tests {
     fn with<R>(f: impl FnOnce(&Gizmo) -> R) -> R {
         let project = |p: Float3| Some([400.0 + p.x * 10.0, 300.0 - p.y * 10.0]);
         let g = Gizmo {
-            project: &project, view: [800.0, 600.0], centre: Float3::default(), axes: [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)],
-            right: Float3::new(1.0, 0.0, 0.0), forward: Float3::new(0.0, 0.0, 1.0), orthographic: true, size: 0.25,
+            project: &project,
+            view: [800.0, 600.0],
+            centre: Float3::default(),
+            axes: [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)],
+            right: Float3::new(1.0, 0.0, 0.0),
+            forward: Float3::new(0.0, 0.0, 1.0),
+            orthographic: true,
+            size: 0.25,
         };
 
         f(&g)
@@ -351,8 +358,14 @@ mod tests {
     fn from_above<R>(f: impl FnOnce(&Gizmo) -> R) -> R {
         let project = |p: Float3| Some([400.0 + p.x * 10.0, 300.0 - p.z * 10.0]);
         let g = Gizmo {
-            project: &project, view: [800.0, 600.0], centre: Float3::default(), axes: [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)],
-            right: Float3::new(1.0, 0.0, 0.0), forward: Float3::new(0.0, -1.0, 0.0), orthographic: true, size: 0.25,
+            project: &project,
+            view: [800.0, 600.0],
+            centre: Float3::default(),
+            axes: [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)],
+            right: Float3::new(1.0, 0.0, 0.0),
+            forward: Float3::new(0.0, -1.0, 0.0),
+            orthographic: true,
+            size: 0.25,
         };
 
         f(&g)

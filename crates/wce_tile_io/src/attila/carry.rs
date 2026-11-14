@@ -68,7 +68,9 @@ pub fn text(prints: &BTreeMap<&str, u64>) -> String {
 }
 
 pub fn parse(text: &str) -> BTreeMap<String, u64> {
-    text.lines().filter_map(|l| l.trim().split_once(' ').and_then(|(k, v)| Some((k.to_owned(), u64::from_str_radix(v.trim(), 16).ok()?)))).collect()
+    text.lines()
+        .filter_map(|l| l.trim().split_once(' ').and_then(|(k, v)| Some((k.to_owned(), u64::from_str_radix(v.trim(), 16).ok()?))))
+        .collect()
 }
 
 /// The files a project carries in a folder (names below it), and the fingerprints stored with them.

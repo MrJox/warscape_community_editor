@@ -9,12 +9,15 @@ use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::overlay_colour;
 use wce_tile::building_db::BuildingDb;
-use wce_tile::ted_scene::{TedScene, parse_vec3};
 pub(crate) use wce_tile::building_pieces::{copied_piece, destruct_number, piece_copy, piece_tag, plain_piece, static_piece, working_anim};
+use wce_tile::ted_scene::{TedScene, parse_vec3};
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
+use super::{
+    BuildingModel, INSTANCE_BIT, Index, LAYER_BIT, Markers, POLYGON_BIT, PieceProps, PieceState, PieceStatus, Placement, Tile,
+    TileTypeStyle,
+};
 use crate::climate_db::effective_climates;
-use super::{BuildingModel, INSTANCE_BIT, Index, LAYER_BIT, Markers, POLYGON_BIT, PieceProps, PieceState, PieceStatus, Placement, TileTypeStyle, Tile};
 
 pub fn style_of(t: &str) -> TileTypeStyle {
     let s = |r: f32, g: f32, b: f32, size: f32, cross: bool| TileTypeStyle { color: overlay_colour(r, g, b, 1.0), size, cross };
@@ -26,7 +29,7 @@ pub fn style_of(t: &str) -> TileTypeStyle {
         "POINT_LIGHT_INSTANCE" => s(1.0, 0.95, 0.4, 1.5, true),
         "SIMPLE_MESH_INSTANCE" => s(0.6, 0.6, 0.75, 4.0, false),
         "CaptureLocationInstance" => s(0.2, 0.6, 1.0, 3.0, false),
-        "WceRefHuman" | "WceRefUnit" => s(1.0, 0.8, 0.2, 1.5, true),
+        "WceRefHuman" | "WceRefUnit" | "WceRefShip" => s(1.0, 0.8, 0.2, 1.5, true),
         "SiegeAINodeInstance" | "SiegeAIEdgeInstance" => s(0.95, 0.2, 0.2, 2.0, false),
         _ if t.contains("POLYGON") || t.contains("Polygon") || t.contains("Zone") || t == "AISeparatorInstance" => {
             let [r, g, b] = polygon_colour(t);
@@ -39,15 +42,38 @@ pub fn style_of(t: &str) -> TileTypeStyle {
 
 /// The types of polygon drawn filled.
 pub const FILLED_TYPES: [&str; 11] = [
-    "AI_HINT_POLYGON_INSTANCE", "CaptureLocationPolygonInstance", "CivilianDeploymentZone", "DEPLOYMENT_ZONE_POLYGON_INSTANCE", "EF_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE",
-    "LiteBuildingZone", "NOGO_REGION_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "ZONE_POLYGON_INSTANCE",
+    "AI_HINT_POLYGON_INSTANCE",
+    "CaptureLocationPolygonInstance",
+    "CivilianDeploymentZone",
+    "DEPLOYMENT_ZONE_POLYGON_INSTANCE",
+    "EF_POLYGON_INSTANCE",
+    "GO_REGION_POLYGON_INSTANCE",
+    "LiteBuildingZone",
+    "NOGO_REGION_POLYGON_INSTANCE",
+    "SIEGE_AI_POLYGON_INSTANCE",
+    "VegetationExclusionPolygonInstance",
+    "ZONE_POLYGON_INSTANCE",
 ];
 
 /// The types of polygon and line with entries of their own in the overlay colour table; anything else shares the last.
-const SLOT_TYPES: [&str; 15] = [
-    "AI_HINT_POLYGON_INSTANCE", "CaptureLocationPolygonInstance", "CivilianDeploymentZone", "DEPLOYMENT_ZONE_POLYGON_INSTANCE", "EF_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE",
-    "LiteBuildingZone", "NOGO_REGION_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "ZONE_POLYGON_INSTANCE", "AISeparatorInstance",
-    "SplineRiverInstance", "SEGMENTED_SPLINE_INSTANCE", "WceWallSpline",
+const SLOT_TYPES: [&str; 17] = [
+    "AI_HINT_POLYGON_INSTANCE",
+    "CaptureLocationPolygonInstance",
+    "CivilianDeploymentZone",
+    "DEPLOYMENT_ZONE_POLYGON_INSTANCE",
+    "EF_POLYGON_INSTANCE",
+    "GO_REGION_POLYGON_INSTANCE",
+    "LiteBuildingZone",
+    "NOGO_REGION_POLYGON_INSTANCE",
+    "SIEGE_AI_POLYGON_INSTANCE",
+    "VegetationExclusionPolygonInstance",
+    "ZONE_POLYGON_INSTANCE",
+    "AISeparatorInstance",
+    "SplineRiverInstance",
+    "SEGMENTED_SPLINE_INSTANCE",
+    "WceWallSpline",
+    "WceMeasureLine",
+    "WceAngleFinder",
 ];
 
 /// The outline's opacity at which the line along an edge is opaque: the default look.
@@ -60,14 +86,61 @@ pub(crate) fn polygon_slots(ty: &str) -> (usize, usize, usize) {
     (3 * i, 3 * i + 1, 3 * i + 2)
 }
 
+/// The deployment polygon types, in the order of their colours.
+const DEPLOYMENT_TYPES: [&str; 4] =
+    ["DZPT_ADDITIVE", "DZPT_SUBSTRACTIVE", "DZPT_GUERRILLA_EXCLUSION_ADDITIVE", "DZPT_GUERRILLA_EXCLUSION_SUBTRACTIVE"];
+
+/// The deployment polygons' colours, as the minimap's (`minimap_panel::draw_zones`): per alliance (the defender's, 1, blue; the attacker's,
+/// 0, red; any other yellow), per type (standard additive, standard subtractive darker, guerrilla exclusion additive paler, guerrilla
+/// exclusion subtractive paler and darker).
+const DEPLOYMENT_COLOURS: [[[f32; 3]; 4]; 3] = [
+    [[0.27, 0.43, 1.0], [0.15, 0.25, 0.6], [0.6, 0.68, 1.0], [0.34, 0.4, 0.62]],
+    [[1.0, 0.27, 0.24], [0.6, 0.15, 0.13], [1.0, 0.62, 0.55], [0.62, 0.38, 0.34]],
+    [[0.94, 0.78, 0.16], [0.56, 0.46, 0.09], [0.97, 0.9, 0.55], [0.6, 0.55, 0.32]],
+];
+
+/// A deployment polygon's look: its zone's `alliance_id` (none: 0's) and its `deployment_polygon_type` (unknown: additive).
+pub fn deployment_variant(alliance: &str, polygon_type: &str) -> usize {
+    let a = match alliance.trim() {
+        "1" => 0,
+        "0" | "" => 1,
+        _ => 2,
+    };
+
+    a * DEPLOYMENT_TYPES.len() + DEPLOYMENT_TYPES.iter().position(|t| *t == polygon_type).unwrap_or(0)
+}
+
+/// The colour of a deployment polygon's look.
+pub fn deployment_colour(variant: usize) -> [f32; 3] {
+    let v = variant.min(DEPLOYMENT_COLOURS.len() * DEPLOYMENT_TYPES.len() - 1);
+    DEPLOYMENT_COLOURS[v / DEPLOYMENT_TYPES.len()][v % DEPLOYMENT_TYPES.len()]
+}
+
+// The types' entries and the deployment looks' fit the table.
+const _: () =
+    assert!(3 * (SLOT_TYPES.len() + 1 + DEPLOYMENT_COLOURS.len() * DEPLOYMENT_TYPES.len()) <= wce_scene::render_scene::OVERLAY_SLOTS);
+
+/// The entries of a deployment polygon look in the overlay colour table: after the types' (and the shared last one's).
+pub(crate) fn deployment_slots(variant: usize) -> (usize, usize, usize) {
+    let i = SLOT_TYPES.len() + 1 + variant;
+    (3 * i, 3 * i + 1, 3 * i + 2)
+}
+
 /// The overlay colour table of a look.
 pub(crate) fn polygon_slot_table(look: &super::PolygonLook) -> [[f32; 4]; wce_scene::render_scene::OVERLAY_SLOTS] {
     let mut table = [[0.0; 4]; wce_scene::render_scene::OVERLAY_SLOTS];
-    for ty in SLOT_TYPES.iter().copied().chain([""]) {
-        let ([r, g, b], (fill, outline, line)) = (polygon_colour(ty), polygon_slots(ty));
+    let mut put = |[r, g, b]: [f32; 3], (fill, outline, line): (usize, usize, usize), ty: &str| {
         table[fill] = [r, g, b, look.fill_of(ty)];
         table[outline] = [r, g, b, look.outline];
         table[line] = [r, g, b, (look.outline / OPAQUE_LINE).min(1.0)];
+    };
+
+    for ty in SLOT_TYPES.iter().copied().chain([""]) {
+        put(polygon_colour(ty), polygon_slots(ty), ty);
+    }
+
+    for v in 0..DEPLOYMENT_COLOURS.len() * DEPLOYMENT_TYPES.len() {
+        put(deployment_colour(v), deployment_slots(v), "DEPLOYMENT_ZONE_POLYGON_INSTANCE");
     }
 
     table
@@ -91,6 +164,9 @@ pub fn polygon_colour(t: &str) -> [f32; 3] {
         "SEGMENTED_SPLINE_INSTANCE" => [0.8, 0.62, 0.4],
         "WceWallSpline" => [0.75, 0.75, 0.75],
         "WceRoadSpline" => [0.8, 0.62, 0.4],
+        "WceBuildingSpline" => [0.85, 0.55, 0.3],
+        "WceMeasureLine" => [1.0, 0.95, 0.3],
+        "WceAngleFinder" => [0.45, 0.85, 1.0],
         _ => [0.3, 0.9, 0.9],
     }
 }
@@ -279,7 +355,10 @@ impl Tile {
     pub(crate) fn exports_as_prop(&self, elem: usize) -> bool {
         let doc = self.tscene().doc();
         self.tscene().type_of(elem) == "BUILDING_INSTANCE"
-            && wce_tile::export_as_prop::exports_as_prop(doc.get(elem, wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(), doc.get(elem, "capture_location").as_deref())
+            && wce_tile::export_as_prop::exports_as_prop(
+                doc.get(elem, wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(),
+                doc.get(elem, "capture_location").as_deref(),
+            )
     }
 
     /// The scale an element is drawn at: its own, but 1 for a building that is not exported as a prop, as the game draws it.
@@ -301,7 +380,11 @@ impl Tile {
         }
 
         let s = self.shown_scale(elem);
-        matrix_of(&world_transform(self.tscene(), elem), self.unit(), Some(model(Double3::new(f64::from(s[0]), f64::from(s[1]), f64::from(s[2])))))
+        matrix_of(
+            &world_transform(self.tscene(), elem),
+            self.unit(),
+            Some(model(Double3::new(f64::from(s[0]), f64::from(s[1]), f64::from(s[2])))),
+        )
     }
 
     /// The model a VEGETATION_INSTANCE is drawn with: its key's, converted for the shown list's climate (the instance's own model when the
@@ -309,7 +392,8 @@ impl Tile {
     pub(crate) fn vegetation_instance_model(&self, elem: usize) -> Option<String> {
         let key = self.tscene().doc().get(elem, "key")?;
         let converted = self.converted_vegetation_key(&key);
-        vegetation_model(self.files.as_deref(), &converted).or_else(|| self.model_of(elem).filter(|m| m.ok).and_then(|m| m.pieces.first().cloned()))
+        vegetation_model(self.files.as_deref(), &converted)
+            .or_else(|| self.model_of(elem).filter(|m| m.ok).and_then(|m| m.pieces.first().cloned()))
     }
 
     /// The kits' `battlefield_buildings` tables: the tile's own kit's (a kit's tile), then the projects' kit layout's and the Assembly Kits'
@@ -442,12 +526,15 @@ impl Tile {
     pub fn climates(&self) -> &ClimateList {
         self.climates.get_or_init(|| {
             let Some(entry) = &self.project.entry else { return ClimateList::default() };
-            let kit = entry.file().parent().and_then(|p| p.parent()).map(|p| p.join("_settings.xml")).map_or_else(ClimateList::default, |settings| {
-                ClimateList::load(&settings).unwrap_or_else(|e| {
-                    log::warn(format!("climates: {e}"));
-                    ClimateList::default()
-                })
-            });
+            let kit = entry.file().parent().and_then(|p| p.parent()).map(|p| p.join("_settings.xml")).map_or_else(
+                ClimateList::default,
+                |settings| {
+                    ClimateList::load(&settings).unwrap_or_else(|e| {
+                        log::warn(format!("climates: {e}"));
+                        ClimateList::default()
+                    })
+                },
+            );
 
             let kind = Some(entry.kind()).filter(|k| !k.is_empty()).unwrap_or_else(|| "battle".to_owned());
             effective_climates(kit, &kind, self.files.as_deref())
@@ -497,6 +584,13 @@ impl Tile {
         self.tscene().doc().get(elem, "flags").is_none_or(|f| f.contains(flag))
     }
 
+    /// Draggable (TEd's OIF_DRAGGABLE on the item itself): the gizmo and the grab move it. Off, it can be selected without the risk of
+    /// moving it by mouse (the Inspector's numbers still do). Not inherited: TEd saves its layers without the flag (` OIF_VISIBLE|OIF_ACTIVE`)
+    /// and their items move all the same.
+    pub fn draggable(&self, elem: usize) -> bool {
+        elem >= self.elements().len() || self.own_flag(elem, "OIF_DRAGGABLE")
+    }
+
     /// Visible itself and in every ancestor. A road piece's guide shows in the Prefab tool's stage only (the index has it too).
     pub fn shown(&self, elem: usize) -> bool {
         let indexed = self.idx.valid && elem < self.idx.state.len();
@@ -510,8 +604,10 @@ impl Tile {
     /// In the Prefab tool's stage: its prefab's group, or below it.
     fn staged(&self, elem: usize) -> bool {
         let els = self.elements();
-        std::iter::successors(Some(elem), |&e| els[e].parent)
-            .any(|e| els[e].name == "UserInstanceGroup" && self.tscene().doc().get(e, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true"))
+        std::iter::successors(Some(elem), |&e| els[e].parent).any(|e| {
+            els[e].name == "UserInstanceGroup"
+                && self.tscene().doc().get(e, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true")
+        })
     }
 
     /// Active itself and in every ancestor.
@@ -530,7 +626,8 @@ impl Tile {
                 return false;
             }
 
-            if bit == 1 && let Some(mask) = self.display.game_layers
+            if bit == 1
+                && let Some(mask) = self.display.game_layers
                 && let Some(t) = self.tscene().doc().get(q, "export_type")
                 && !in_game(&t, mask)
             {
@@ -554,17 +651,24 @@ impl Tile {
 
         // Element type names -> small ids.
         let mut ids = HashMap::<&str, u16>::new();
-        ix.type_ = els.iter().map(|el| {
-            *ids.entry(el.name.as_str()).or_insert_with(|| {
-                ix.type_names.push(el.name.clone());
-                (ix.type_names.len() - 1) as u16
+        ix.type_ = els
+            .iter()
+            .map(|el| {
+                *ids.entry(el.name.as_str()).or_insert_with(|| {
+                    ix.type_names.push(el.name.clone());
+                    (ix.type_names.len() - 1) as u16
+                })
             })
-        }).collect();
+            .collect();
 
         ix.style = ix.type_names.iter().map(|t| style_of(t)).collect();
 
         // Which type ids are layers / never instances.
-        let layer_type = ix.type_names.iter().map(|s| matches!(s.as_str(), "LayerInstance" | "UserInstanceGroup" | "INSTANCE_GROUP" | "SCENE_GRAPH")).collect::<Vec<_>>();
+        let layer_type = ix
+            .type_names
+            .iter()
+            .map(|s| matches!(s.as_str(), "LayerInstance" | "UserInstanceGroup" | "INSTANCE_GROUP" | "SCENE_GRAPH"))
+            .collect::<Vec<_>>();
         let plain_type = ix.type_names.iter().map(|s| matches!(s.as_str(), "point" | "points" | "children" | "camera")).collect::<Vec<_>>();
         // Buildings and vegetation name their model by key.
         let key_types = [
@@ -577,62 +681,68 @@ impl Tile {
 
         // Parse the local transforms in parallel (each element reads only its own attributes).
         let types = &ix.type_;
-        let local = (0..n).into_par_iter().map(|i| {
-            let mut l = Local::default();
-            let t = types[i] as usize;
-            let mut kind = if layer_type[t] { LAYER_BIT } else { 0 };
+        let local = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let mut l = Local::default();
+                let t = types[i] as usize;
+                let mut kind = if layer_type[t] { LAYER_BIT } else { 0 };
 
-            // Points, wrappers: nothing to parse (a point's position is a plain triple, not a vector).
-            if plain_type[t] && kind == 0 {
-                return l;
-            }
-
-            let raw = |name: &str| doc.find_attr(i, name).map(|k| doc.attr_raw(i, k));
-            if let Some(fv) = raw("flags") {
-                let fv = text(fv);
-                l.flagbits = 1 | if fv.contains("OIF_VISIBLE") { 2 } else { 0 } | if fv.contains("OIF_ACTIVE") { 4 } else { 0 };
-            }
-
-            if let Some(mask) = game_layers.filter(|_| kind == LAYER_BIT) {
-                l.not_in_game = raw("export_type").is_some_and(|r| !in_game(&text(r), mask));
-            }
-
-            l.pos = raw("position").and_then(|r| parse_triple(&text(r), "vector"));
-            l.eul = raw("orientation").and_then(|r| parse_triple(&text(r), "euler"));
-            if kind == 0 && l.pos.is_some() {
-                kind |= INSTANCE_BIT;
-                if let Some(m) = raw("surface_mode") {
-                    l.mode = match m {
-                        b"MSM_LANDSCAPE" => 1,
-                        b"MSM_FREEFORM" => 2,
-                        _ => 0,
-                    };
+                // Points, wrappers: nothing to parse (a point's position is a plain triple, not a vector).
+                if plain_type[t] && kind == 0 {
+                    return l;
                 }
 
-                // The game draws a building at scale 1 unless it exports as a prop: so does the viewport.
-                let value = |name: &str| raw(name).map(|r| text(r).into_owned());
-                let unscaled = doc.elements()[i].name == "BUILDING_INSTANCE"
-                    && !wce_tile::export_as_prop::exports_as_prop(value(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(), value("capture_location").as_deref());
-                if let Some(r) = raw("scale").filter(|_| !unscaled) {
-                    let r = text(r);
-                    if let Some(s3) = parse_triple(&r, "vector") {
-                        l.scale = Some([s3[0] as f32, s3[1] as f32, s3[2] as f32]);
-                    } else if let Some((d, _)) = strtod_prefix(&r) {
-                        l.scale = Some([d as f32; 3]);
+                let raw = |name: &str| doc.find_attr(i, name).map(|k| doc.attr_raw(i, k));
+                if let Some(fv) = raw("flags") {
+                    let fv = text(fv);
+                    l.flagbits = 1 | if fv.contains("OIF_VISIBLE") { 2 } else { 0 } | if fv.contains("OIF_ACTIVE") { 4 } else { 0 };
+                }
+
+                if let Some(mask) = game_layers.filter(|_| kind == LAYER_BIT) {
+                    l.not_in_game = raw("export_type").is_some_and(|r| !in_game(&text(r), mask));
+                }
+
+                l.pos = raw("position").and_then(|r| parse_triple(&text(r), "vector"));
+                l.eul = raw("orientation").and_then(|r| parse_triple(&text(r), "euler"));
+                if kind == 0 && l.pos.is_some() {
+                    kind |= INSTANCE_BIT;
+                    if let Some(m) = raw("surface_mode") {
+                        l.mode = match m {
+                            b"MSM_LANDSCAPE" => 1,
+                            b"MSM_FREEFORM" => 2,
+                            _ => 0,
+                        };
+                    }
+
+                    // The game draws a building at scale 1 unless it exports as a prop: so does the viewport.
+                    let value = |name: &str| raw(name).map(|r| text(r).into_owned());
+                    let unscaled = doc.elements()[i].name == "BUILDING_INSTANCE"
+                        && !wce_tile::export_as_prop::exports_as_prop(
+                            value(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(),
+                            value("capture_location").as_deref(),
+                        );
+                    if let Some(r) = raw("scale").filter(|_| !unscaled) {
+                        let r = text(r);
+                        if let Some(s3) = parse_triple(&r, "vector") {
+                            l.scale = Some([s3[0] as f32, s3[1] as f32, s3[2] as f32]);
+                        } else if let Some((d, _)) = strtod_prefix(&r) {
+                            l.scale = Some([d as f32; 3]);
+                        }
+                    }
+
+                    // A polygon: an instance with a <points> child holding <point>s.
+                    if let Some(&c) = els[i].children.iter().find(|&&c| els[c].name == "points")
+                        && els[c].children.iter().any(|&p| els[p].name == "point")
+                    {
+                        kind |= POLYGON_BIT;
                     }
                 }
 
-                // A polygon: an instance with a <points> child holding <point>s.
-                if let Some(&c) = els[i].children.iter().find(|&&c| els[c].name == "points")
-                    && els[c].children.iter().any(|&p| els[p].name == "point")
-                {
-                    kind |= POLYGON_BIT;
-                }
-            }
-
-            l.kind = kind;
-            l
-        }).collect::<Vec<_>>();
+                l.kind = kind;
+                l
+            })
+            .collect::<Vec<_>>();
 
         ix.kind = local.iter().map(|l| l.kind).collect();
         ix.mode = local.iter().map(|l| l.mode).collect();
@@ -656,7 +766,8 @@ impl Tile {
                 ix.state[i] &= !1;
             }
 
-            staged[i] = p.is_some_and(|p| staged[p]) || (els[i].name == "UserInstanceGroup" && doc.get(i, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true"));
+            staged[i] = p.is_some_and(|p| staged[p])
+                || (els[i].name == "UserInstanceGroup" && doc.get(i, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true"));
             if els[i].name == wce_tile::new_instances::ROAD_GUIDE && !staged[i] {
                 ix.state[i] &= !1;
             }
@@ -681,7 +792,8 @@ impl Tile {
             }
 
             ix.slot[i] = slot;
-            if key_types.contains(&Some(ix.type_[i] as usize)) && ix.kind[i] & INSTANCE_BIT != 0
+            if key_types.contains(&Some(ix.type_[i] as usize))
+                && ix.kind[i] & INSTANCE_BIT != 0
                 && let Some(k) = doc.find_attr(i, "key")
             {
                 let key = text(doc.attr_raw(i, k)).into_owned();
@@ -783,7 +895,12 @@ impl Tile {
             list += ", ...";
         }
 
-        log::warn(format!("tile {}: {} of {} building keys have no drawable model and show as boxes: {list}", self.title(), self.fallbacks.len(), self.idx.keys.len()));
+        log::warn(format!(
+            "tile {}: {} of {} building keys have no drawable model and show as boxes: {list}",
+            self.title(),
+            self.fallbacks.len(),
+            self.idx.keys.len()
+        ));
     }
 
     /// The pieces of every building key: the intact state of every piece in rigidmodels/buildings/<key>/. A key nobody has looked at yet is
@@ -852,7 +969,10 @@ impl Tile {
         // those of its animation and of the plain files of the same piece (the ram's broken body is a plain `destruct02`).
         for (folder, files) in anims {
             let pieces = folders.entry(folder).or_default();
-            let mut have = pieces.iter().filter_map(|p| piece_tag(&p[p.rfind('/').map_or(0, |s| s + 1)..]).map(str::to_owned)).collect::<BTreeSet<_>>();
+            let mut have = pieces
+                .iter()
+                .filter_map(|p| piece_tag(&p[p.rfind('/').map_or(0, |s| s + 1)..]).map(str::to_owned))
+                .collect::<BTreeSet<_>>();
             for p in files {
                 let Some(tag) = piece_tag(&p[p.rfind('/').map_or(0, |s| s + 1)..]).map(str::to_owned) else { continue };
                 if !have.insert(tag) {
@@ -893,7 +1013,8 @@ impl Tile {
             self.models.insert(key, BuildingModel { pieces, ok, resolved: !ok, levels, piece_levels, ..Default::default() });
         }
 
-        self.unresolved = (0..self.idx.keys.len()).filter(|&k| self.models.get(&self.idx.keys[k]).is_some_and(|m| m.ok && !m.resolved)).collect();
+        self.unresolved =
+            (0..self.idx.keys.len()).filter(|&k| self.models.get(&self.idx.keys[k]).is_some_and(|m| m.ok && !m.resolved)).collect();
         if self.unresolved.is_empty() && (wanted != 0 || fresh.len() == self.idx.keys.len()) {
             self.log_fallbacks();
         }
@@ -1027,13 +1148,22 @@ impl Tile {
         // Markers grouped by type (counting sort, stable: the element order inside a group).
         let unit = self.project.unit_scale;
         let mk = &mut self.markers;
-        mk.group_begin = std::iter::once(0).chain(marker_counts.iter().scan(0, |sum, &c| {
-            *sum += c;
-            Some(*sum)
-        })).collect();
+        mk.group_begin = std::iter::once(0)
+            .chain(marker_counts.iter().scan(0, |sum, &c| {
+                *sum += c;
+                Some(*sum)
+            }))
+            .collect();
 
         let total = mk.group_begin[types] as usize;
-        *mk = Markers { elem: vec![0; total], x: vec![0.0; total], y: vec![0.0; total], z: vec![0.0; total], group_begin: std::mem::take(&mut mk.group_begin), slot: vec![None; n] };
+        *mk = Markers {
+            elem: vec![0; total],
+            x: vec![0.0; total],
+            y: vec![0.0; total],
+            z: vec![0.0; total],
+            group_begin: std::mem::take(&mut mk.group_begin),
+            slot: vec![None; n],
+        };
         let mut cursor = mk.group_begin[..types].to_vec();
         for i in (0..n).filter(|&i| is_marker[i]) {
             let at = cursor[ix.type_[i] as usize];
@@ -1103,7 +1233,11 @@ mod tests {
         assert!(in_game("LayerExportType_Normal", 0) && in_game("LayerExportType_Separate", 0));
         assert!(!in_game("LayerExportType_Off", 7), "a Don't Export layer never");
         assert!(!in_game("LayerExportType_Escalation2", 0) && !in_game("LayerExportType_Escalation2", 5));
-        assert!(in_game("LayerExportType_Escalation2", 2) && in_game("LayerExportType_Escalation3", 4) && in_game("LayerExportType_Escalation1", 1));
+        assert!(
+            in_game("LayerExportType_Escalation2", 2)
+                && in_game("LayerExportType_Escalation3", 4)
+                && in_game("LayerExportType_Escalation1", 1)
+        );
     }
 
     #[test]

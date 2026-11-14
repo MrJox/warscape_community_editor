@@ -25,32 +25,33 @@ use crate::shader_lib::{FileReader, GameShader, ShaderLibrary, bind_shader};
 use crate::wind::WindSim;
 
 mod decals;
-mod lights;
-mod grass;
 mod draws;
-mod skinned;
 mod editor;
 pub mod game;
+mod grass;
+mod lights;
+mod ropes;
+mod skinned;
 pub use self::editor::{SurfaceGrid, SurfaceHit};
+mod blend_mesh;
+mod dof;
+mod nis;
+mod nis_coef;
+mod ocean;
+mod oit;
 mod passes;
 mod post;
+mod reflection;
+mod shadow_baked;
 mod shadow_fit;
 mod shared;
 mod sky;
 mod states;
 mod targets;
-mod blend_mesh;
 mod terrain;
 mod terrain_custom;
 mod terrain_rome2;
 mod water;
-mod ocean;
-mod reflection;
-mod dof;
-mod shadow_baked;
-mod nis;
-mod oit;
-mod nis_coef;
 
 pub(crate) use draws::SceneDraws;
 pub(crate) use post::{DepthRange, ToneMap};
@@ -82,6 +83,11 @@ pub(crate) const TREE_BILLBOARD_VS: &str = "dx11_sm_3_0_rigidtreebillboard.hlsl_
 pub(crate) const TREE_BILLBOARD_PS: &str = "dx11_sm_3_0_rigidtreebillboard.hlsl_ps_ps30_gbuffer";
 pub(crate) const TERRAIN_BLEND_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs_vs30_main";
 
+/// A placed model's ropes (MeshKind::Rope): `rope.hlsl`'s rigid technique, a strip along each rope turned to the camera in view space,
+/// shaded as a cylinder (uv x across it).
+pub(crate) const ROPE_VS: &str = "dx11_sm_3_0_rope.hlsl_vs_vs30_main_rigid";
+pub(crate) const ROPE_GBUFFER_PS: &str = "dx11_sm_3_0_rope.hlsl_ps_ps30_main_gbuffer_rigid";
+
 /// The TerrainBlend meshes with their own textures. The game draws them with ps30_null_gbuffer instead, from the terrain's virtual texture
 /// (the ground's colour under the building), which the editor doesn't build.
 pub(crate) const TERRAIN_BLEND_GBUFFER_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_ps_ps30_gbuffer";
@@ -103,7 +109,7 @@ pub(crate) const FIRE_MAP: &str = "commontextures/vfx_fire_diffuse.dds";
 /// timer label. rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's. A burning instance (the
 /// engine's render flag 0x200: a building on fire, or TEd's `burn`) draws with its material's fire variant, which chars the colour by
 /// POSITION6.x (the burn amount) with embers from `s_fire_map`.
-pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] = [
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 21] = [
     (MeshKind::Standard, false, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
     (MeshKind::Standard, true, false, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
     (MeshKind::TiledDirtmap, false, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
@@ -124,6 +130,7 @@ pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] 
     (MeshKind::TreeLeaf, false, false, TREE_LEAF_VS, TREE_LEAF_PS, "gbuffer tree leaves"),
     (MeshKind::TreeBillboard, false, false, TREE_BILLBOARD_VS, TREE_BILLBOARD_PS, "gbuffer tree billboards"),
     (MeshKind::TerrainBlend, false, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
+    (MeshKind::Rope, false, false, ROPE_VS, ROPE_GBUFFER_PS, "gbuffer ropes"),
 ];
 
 /// The blended forward shaders of the faded instances (opacity below 1: the engine's render flag 0x2000, docs/re/buildings.md), per
@@ -138,15 +145,18 @@ pub(crate) const FADED_PASSES: [(MeshKind, &str); 4] = [
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
 
 /// The sun on skin pixels (`SKIN_STENCIL`): G-buffer channel 2 not squared, channel 3 the skin mask.
-pub(crate) const DIR_LIGHT_SKIN_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_skinlm_highdef";
+pub(crate) const DIR_LIGHT_SKIN_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_skinlm_highdef";
 
 /// The environment specular pass (DEFERRED_ENVIRONMENT_SPECULAR_SHADER, full resolution; the game runs their MSAA variants) and its blurs.
-pub(crate) const ENV_SPECULAR_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
+pub(crate) const ENV_SPECULAR_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
 pub(crate) const REFLECTION_BLUR_X_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_x";
 pub(crate) const REFLECTION_BLUR_Y_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y_fullres";
 
 /// gfx_screen_space_reflections 1: the half resolution entries (the same code as the full resolution ones, at half the size).
-pub(crate) const ENV_SPECULAR_HALF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model";
+pub(crate) const ENV_SPECULAR_HALF_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model";
 pub(crate) const REFLECTION_BLUR_Y_HALF_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y";
 pub(crate) const TM_DOWN_LUMA: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_image_store_luma";
 pub(crate) const TM_LUMA_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats";
@@ -226,7 +236,8 @@ pub(crate) const RESOLVE_DEPTH_PS: [&str; 3] = [
 /// Order-independent transparency (gfx_alpha_blend 1): the leaves' and the grass's forward-lit OIT shaders (the shadowed variants, as the
 /// directional light's), and the resolve.
 pub(crate) const OIT_LEAF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidleaf_v3.hlsl_ps_ps30_forward_lit_oit";
-pub(crate) const OIT_GRASS_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidgrass.hlsl_ps_ps30_forward_lit_oit_grass";
+pub(crate) const OIT_GRASS_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidgrass.hlsl_ps_ps30_forward_lit_oit_grass";
 pub(crate) const OIT_RESOLVE_PS: &str = "dx11_sm_5_0_oit.hlsl_ps_ps50_sort_alpha_fragments_resolve_colour";
 /// The tweakers OIT_TREE_MIN / MAX_DISTANCE and OIT_GRASS_MIN / MAX_DISTANCE (the same defaults): the leaves and the grass whose distance
 /// is within them are the OIT's, the rest the G-buffer's (fn 0x117f3780; game units).
@@ -250,7 +261,8 @@ pub(crate) const TO_SCREEN_DISTORT_PS: &str = "dx11_enable_distortion_sm_3_0_hdr
 /// ENABLE_DEPTH_OF_FIELD variants: a 25-tap blur (sample_data_5x5) scaled by 1 - exp(-(z - min(focus, 500))^2 / focal^2), result =
 /// lerp(frame, blurred, blur_kernel_scale).
 pub(crate) const TO_SCREEN_DOF_PS: &str = "dx11_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
-pub(crate) const TO_SCREEN_DOF_DISTORT_PS: &str = "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
+pub(crate) const TO_SCREEN_DOF_DISTORT_PS: &str =
+    "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 pub(crate) const FOG_PS: &str = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 
 /// Stencil bit 7: the pixels projected decals may paint. The game's G-buffer writes 129 (bit 7 | 1) for the ground and the TerrainBlend
@@ -320,7 +332,13 @@ pub(crate) fn rome2_water(level: i32, sea: bool) -> i32 {
         ..=2 => 0,
         3 => 1,
         4 => 2,
-        _ => if sea { 2 } else { 3 },
+        _ => {
+            if sea {
+                2
+            } else {
+                3
+            }
+        }
     }
 }
 
@@ -341,7 +359,14 @@ pub(crate) fn compile(source: &str, name: &str, entry: &str, target: &str) -> Re
 }
 
 /// An input element.
-pub(crate) fn element(semantic: &'static std::ffi::CStr, index: u32, format: DXGI_FORMAT, slot: u32, offset: u32, instanced: bool) -> InputElement {
+pub(crate) fn element(
+    semantic: &'static std::ffi::CStr,
+    index: u32,
+    format: DXGI_FORMAT,
+    slot: u32,
+    offset: u32,
+    instanced: bool,
+) -> InputElement {
     InputElement::new(semantic, index, format, slot, offset, instanced)
 }
 
@@ -359,6 +384,24 @@ pub(crate) fn rigid_layout() -> Vec<InputElement> {
         element(c"NORMAL", 1, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 20, false),
         element(c"NORMAL", 2, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 24, false),
         element(c"COLOR", 0, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 28, false),
+    ];
+
+    for i in 1..=7 {
+        el.push(element(c"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true));
+    }
+
+    el
+}
+
+/// The inputs of `rope.hlsl`'s rigid vertex shader: a rope vertex ([`crate::model_cache::ROPE_STRIDE`] bytes, f32: POSITION0, NORMAL0,
+/// TEXCOORD0..2) and the rigid instance (POSITION1..7, as [`rigid_layout`]).
+pub(crate) fn rope_layout() -> Vec<InputElement> {
+    let mut el = vec![
+        element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
+        element(c"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, false),
+        element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, false),
+        element(c"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 32, false),
+        element(c"TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 0, 40, false),
     ];
 
     for i in 1..=7 {
@@ -418,8 +461,22 @@ pub(crate) fn billboard_layout() -> Vec<InputElement> {
 
 /// The view of a cube face.
 pub(crate) fn face_view(face: usize) -> Float4x4 {
-    let dirs = [Float3::new(1.0, 0.0, 0.0), Float3::new(-1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, -1.0, 0.0), Float3::new(0.0, 0.0, 1.0), Float3::new(0.0, 0.0, -1.0)];
-    let ups = [Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, -1.0), Float3::new(0.0, 0.0, 1.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 1.0, 0.0)];
+    let dirs = [
+        Float3::new(1.0, 0.0, 0.0),
+        Float3::new(-1.0, 0.0, 0.0),
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, -1.0, 0.0),
+        Float3::new(0.0, 0.0, 1.0),
+        Float3::new(0.0, 0.0, -1.0),
+    ];
+    let ups = [
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, 0.0, -1.0),
+        Float3::new(0.0, 0.0, 1.0),
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, 1.0, 0.0),
+    ];
     look_at_lh(Float3::default(), dirs[face], ups[face])
 }
 
@@ -590,7 +647,6 @@ pub struct RenderSettings {
     pub sea_state: String,
 
     // Battle state the engine feeds the weather shaders (not part of the environment files).
-
     /// wind_dir_random: the battle's random direction comes from this seed.
     pub wind_dir_seed: u32,
 
@@ -737,8 +793,16 @@ pub(crate) fn tiling(scale: f32, grid: f32) -> f32 {
 impl Default for CameraState {
     fn default() -> Self {
         Self {
-            main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0, cb_view: Float4x4::IDENTITY,
-            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(), origin: Float3::default(), shadow_splits: [0.0; 64],
+            main_view_proj: Float4x4::IDENTITY,
+            view_proj: Float4x4::IDENTITY,
+            eye: Float3::default(),
+            px_ratio: 0.001,
+            units: 1.0,
+            cb_view: Float4x4::IDENTITY,
+            cb_view_proj: Float4x4::IDENTITY,
+            cb_eye: Float3::default(),
+            origin: Float3::default(),
+            shadow_splits: [0.0; 64],
         }
     }
 }
@@ -822,11 +886,12 @@ pub(crate) struct KindIndex {
     pub water: Vec<wce_scene::render_scene::EntityId>,
     pub lights: Vec<wce_scene::render_scene::EntityId>,
     pub terrain: Vec<wce_scene::render_scene::EntityId>,
+    pub ropes: Vec<wce_scene::render_scene::EntityId>,
 }
 
 impl KindIndex {
     fn refresh(&mut self, scene: &RenderScene) {
-        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision());
+        let key = (scene.uid(), scene.structure_revision());
         if (self.scene, self.revision) == key {
             return;
         }
@@ -835,8 +900,10 @@ impl KindIndex {
         self.water.clear();
         self.lights.clear();
         self.terrain.clear();
+        self.ropes.clear();
         for e in scene.entities() {
             match &e.payload {
+                wce_scene::render_scene::Payload::Ropes(_) => self.ropes.push(e.id),
                 wce_scene::render_scene::Payload::Water(_) => self.water.push(e.id),
                 wce_scene::render_scene::Payload::PointLight(_) => self.lights.push(e.id),
                 wce_scene::render_scene::Payload::Terrain(_) => self.terrain.push(e.id),
@@ -903,6 +970,7 @@ pub struct Renderer {
     pub(crate) climate: String,
     pub(crate) draw_lists: SceneDraws,
     pub(crate) skinned: skinned::SkinnedDraws,
+    pub(crate) ropes: ropes::RopeDraws,
     pub(crate) camera: CameraState,
     pub(crate) clock: FrameClock,
     pub(crate) draw_stats: DrawStats,
@@ -937,17 +1005,37 @@ pub struct Renderer {
     pub(crate) lights: lights::LightGpu,
     pub(crate) grass: grass::GrassGpu,
     pub settings: RenderSettings,
+
+    /// The game shaders whose failure was reported: asked for again (every frame), `None` at once, without a message made and searched for.
+    shaders_reported: std::collections::HashSet<String>,
+
+    /// When the caches last gave back what nothing draws (`release_unused`).
+    released_at: Option<std::time::Instant>,
 }
 
 /// An immutable buffer.
 pub(crate) fn immutable_buffer(dev: &ID3D11Device, data: &[u8], bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: data.len() as u32, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: bind as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: data.len() as u32,
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: bind as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, Some(data)).ok()
 }
 
 /// A dynamic (CPU-written) buffer.
 pub(crate) fn dynamic_buffer(dev: &ID3D11Device, bytes: usize, bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: bytes as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: bind as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: bytes as u32,
+        Usage: D3D11_USAGE_DYNAMIC,
+        BindFlags: bind as u32,
+        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, None).ok()
 }
 
@@ -959,8 +1047,16 @@ pub(crate) fn f32_bytes(v: &[f32]) -> Vec<u8> {
 /// An immutable texture of one subresource, and its view.
 pub(crate) fn immutable_srv(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT, data: &[u8]) -> Option<ID3D11ShaderResourceView> {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE,
-        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: w,
+        Height: h,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: fmt,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let pitch = (data.len() / h.max(1) as usize) as u32;
@@ -985,12 +1081,26 @@ pub(crate) fn null_ps_srvs(ctx: &ID3D11DeviceContext, n: usize) {
 }
 
 impl Renderer {
-
     /// A renderer on a device, reading the game's files from `files`.
     ///
     /// # Errors
     ///
     /// Fails if the helper shaders don't compile.
+    /// A second renderer of the same device and files that shares `other`'s loaded models and textures, with its own frame state:
+    /// exposure adaptation, sky and environment cubes, wind, particles, targets. For drawing the scene a second way at the same time (the
+    /// Weather tool's split compare, gallery and sky strips) without disturbing `other`'s temporal state.
+    ///
+    /// # Errors
+    ///
+    /// As `new`.
+    pub fn new_sharing(other: &Renderer) -> Result<Self, RenderError> {
+        let mut r = Self::new(&other.dev, &other.ctx, other.files.clone())?;
+        r.textures = other.textures.clone();
+        r.models = other.models.sharing();
+        r.settings = other.settings.clone();
+        Ok(r)
+    }
+
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, files: Arc<dyn Files>) -> Result<Self, RenderError> {
         // Which GPU renders matters for reproducing pixels (two adapters: results differ between them).
         let mut video_memory = 0;
@@ -1051,6 +1161,7 @@ impl Renderer {
             climate: String::new(),
             draw_lists: SceneDraws::default(),
             skinned: skinned::SkinnedDraws::default(),
+            ropes: ropes::RopeDraws::default(),
             camera: CameraState::default(),
             clock: FrameClock::default(),
             draw_stats: DrawStats::default(),
@@ -1076,7 +1187,26 @@ impl Renderer {
             lights: lights::LightGpu::default(),
             grass: grass::GrassGpu::default(),
             settings: RenderSettings::default(),
+            released_at: None,
+            shaders_reported: Default::default(),
         })
+    }
+
+    /// Every 10 s: the models and textures nothing has drawn or asked for in a minute go (a map context streamed
+    /// across a large map kept every chunk's models on the GPU before).
+    fn release_unused(&mut self) {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+        const IDLE: std::time::Duration = std::time::Duration::from_secs(60);
+        let now = std::time::Instant::now();
+        if self.released_at.is_some_and(|t| now.duration_since(t) < EVERY) {
+            return;
+        }
+
+        self.released_at = Some(now);
+        let (models, textures) = (self.models.evict_idle(IDLE), self.textures.evict_unreferenced(IDLE));
+        if models + textures > 0 {
+            wce_foundation::log::info(format!("released {models} model(s) and {textures} texture(s) nothing draws"));
+        }
     }
 
     // ---- Public accessors.
@@ -1096,6 +1226,11 @@ impl Renderer {
     }
 
     /// The game shaders that couldn't be loaded (name: reason), newest first: the editor shows them where a pass would otherwise silently draw nothing.
+    /// The game it renders as (its shaders and passes).
+    pub fn render_game(&self) -> game::RenderGame {
+        self.game
+    }
+
     pub fn shader_failures(&self) -> &[String] {
         &self.shader_failures
     }
@@ -1162,7 +1297,10 @@ impl Renderer {
 
     /// The global snow normals (black until loaded: the shaders read them only while it snows).
     pub(crate) fn snow_normals_srv(&mut self) -> Option<ID3D11ShaderResourceView> {
-        self.textures.get(SNOW_NORMALS, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.black_srv.clone())
+        self.textures
+            .get(SNOW_NORMALS, false)
+            .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+            .or_else(|| self.res.black_srv.clone())
     }
 
     pub fn particles(&mut self) -> &mut ParticleSystem {
@@ -1184,6 +1322,10 @@ impl Renderer {
 
     /// A game shader, or `None` (reported) when it can't be loaded.
     pub(crate) fn shader(&mut self, name: &str) -> Option<Rc<GameShader>> {
+        if self.shaders_reported.contains(name) {
+            return None;
+        }
+
         let files = self.files.clone();
         let read: &FileReader = &|path: &str| files.read(path);
         match self.lib.get(read, &mut self.cbs, name) {
@@ -1195,8 +1337,25 @@ impl Renderer {
                     self.shader_failures.insert(0, why);
                 }
 
+                self.shaders_reported.insert(name.to_owned());
                 None
             }
+        }
+    }
+
+    /// A game shader some games don't have (Rome 2's packs have no rope shaders): `None`, not reported, when no pack has it; reported as
+    /// [`Self::shader`] when it is there but doesn't load.
+    pub(crate) fn optional_shader(&mut self, name: &str) -> Option<Rc<GameShader>> {
+        if self.shaders_reported.contains(name) {
+            return None;
+        }
+
+        let files = self.files.clone();
+        let read: &FileReader = &|path: &str| files.read(path);
+        match self.lib.get(read, &mut self.cbs, name) {
+            Ok(shader) => Some(shader),
+            Err(error) if error.0.starts_with("not found in any pack") => None,
+            Err(_) => self.shader(name),
         }
     }
 
@@ -1280,7 +1439,8 @@ impl Renderer {
 
     /// The near plane for a camera (see NEAR_FRACTION): from its clearance over the scene's terrains (their highest ground under the eye).
     fn near_plane(&self, scene: &RenderScene, cam: &Camera) -> f32 {
-        let ground = KindIndex::entities(&self.kinds.terrain, scene).into_iter()
+        let ground = KindIndex::entities(&self.kinds.terrain, scene)
+            .into_iter()
             .filter(|e| scene.drawable(e))
             .filter_map(|e| match &e.payload {
                 wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cam.eye.x, cam.eye.z),
@@ -1346,7 +1506,7 @@ impl Renderer {
 
         // The cascades read world positions in the same frame.
         let mut splits = self.camera.shadow_splits;
-        for c in splits.chunks_exact_mut(16) {
+        for c in splits.as_chunks_mut::<16>().0 {
             let mut m = Float4x4::IDENTITY;
             m.m.as_flattened_mut().copy_from_slice(c);
             c.copy_from_slice((m * t).data());
@@ -1428,6 +1588,8 @@ impl Renderer {
             self.error(format!("d3d11: refused {r}"));
         }
 
+        self.release_unused();
+
         self.grass.season.clone_from(&scene.vegetation_season);
         if !self.climate.eq_ignore_ascii_case(&scene.climate) {
             self.climate = scene.climate.to_lowercase();
@@ -1471,7 +1633,11 @@ impl Renderer {
         // thresholds (fns 0x115b2130, 0x115be0d0, 0x115d9ca0: 2 at 0 .. 2, 1 at 3, 0 at 4 and 5; Attila's 2 at 0 and 1, 1 at 2, 0 at 3): the
         // Attila level of the same variant. ASSUMPTION: the particle pool follows the variant as Attila's does (not traced in Rome 2).
         let effects = match self.game {
-            game::RenderGame::Rome2 => match self.settings.effects_quality { ..=2 => 0, 3 => 2, _ => 3 },
+            game::RenderGame::Rome2 => match self.settings.effects_quality {
+                ..=2 => 0,
+                3 => 2,
+                _ => 3,
+            },
             _ => self.settings.effects_quality,
         };
         if self.effects_applied != Some(effects) {
@@ -1492,7 +1658,13 @@ impl Renderer {
         self.place_effect_rigids();
         let waiting = self.draw_lists.waiting;
         self.begin_terrain_frame();
-        self.draw_stats = DrawStats { items: self.draw_stats.items, batches: self.draw_stats.batches, models: self.draw_stats.models, waiting_models: waiting, ..Default::default() };
+        self.draw_stats = DrawStats {
+            items: self.draw_stats.items,
+            batches: self.draw_stats.batches,
+            models: self.draw_stats.models,
+            waiting_models: waiting,
+            ..Default::default()
+        };
         self.resize(width, height);
         self.gpu_timer.begin_frame();
         self.gpu_timer.mark("setup");
@@ -1502,10 +1674,33 @@ impl Renderer {
             game::RenderGame::Attila => [TM_DOWN_LUMA, TM_LUMA_STATS, TM_STATS_DOWN, TM_POINTS],
             game::RenderGame::Rome2 => [TM_R2_DOWN, TM_R2_LOG_Y, TM_R2_STATS, TM_R2_STATS_DOWN],
         };
-        for s in [SKY_VS, SKY_GEN_PS, SKY_PS, RIGID_VS, RIGID_GBUFFER_PS, RIGID_GBUFFER_ALPHA_PS, DIR_LIGHT_PS, TM_POINTS, TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y,
-            TM_TONE_MAP, TO_SCREEN_PS, FOG_PS, SHADOW_VS, SHADOW_PS, SUN_VS, SUN_PS, CLOUD_VS, CLOUD_PS, SSAO_PS, SSAO_BLUR_X_PS, SSAO_BLUR_Y_PS]
-            .into_iter()
-            .chain(luma_stats)
+        for s in [
+            SKY_VS,
+            SKY_GEN_PS,
+            SKY_PS,
+            RIGID_VS,
+            RIGID_GBUFFER_PS,
+            RIGID_GBUFFER_ALPHA_PS,
+            DIR_LIGHT_PS,
+            TM_POINTS,
+            TM_HIGH_PASS,
+            TM_BLUR_X,
+            TM_BLUR_Y,
+            TM_TONE_MAP,
+            TO_SCREEN_PS,
+            FOG_PS,
+            SHADOW_VS,
+            SHADOW_PS,
+            SUN_VS,
+            SUN_PS,
+            CLOUD_VS,
+            CLOUD_PS,
+            SSAO_PS,
+            SSAO_BLUR_X_PS,
+            SSAO_BLUR_Y_PS,
+        ]
+        .into_iter()
+        .chain(luma_stats)
         {
             self.shader(s);
         }
@@ -1601,6 +1796,7 @@ impl Renderer {
         let proj = cam.projection(aspect);
 
         self.prepare_skinned(scene, cam.eye);
+        self.prepare_ropes(scene);
 
         // Before the shadows: the material terrain casts its own. The shadow pass sets only the cascades' view_projection; the rest of the
         // camera's constants (its position and view, which the trees' shaders take their LOD and billboards' facing from) must be the main
@@ -1678,62 +1874,7 @@ impl Renderer {
         self.gpu_timer.mark("faded");
         self.pass_faded();
 
-        self.gpu_timer.mark("particles");
-
-        // The weather precipitation (vfx1 of the WEATHER definition).
-        // The particles live in game units (the effects' sizes, speeds and the weather's volumes are the game's).
-        let frame = Frame {
-            eye: (cam.eye - o) * self.camera.units,
-            view: view_m,
-            time: time_s,
-            dt: self.clock.dt,
-            wind_velocity: self.wind.vfx_velocity,
-            wind_variance: self.wind.vfx_variance,
-            target: self.gbuffer.scene_hdr_rtv(),
-            depth: self.gbuffer.scene_dsv(),
-            depth_one_sample: self.gbuffer.depth.dsv_read_depth.clone(),
-            depth_zw: self.gbuffer.depth_srv(),
-            sky: self.sky.cube.srv.clone(),
-            width,
-            height,
-        };
-
-        // The placed effects (tile VFX instances), gathered again when the scene changes.
-        let units = self.camera.units;
-        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
-        if self.vfx_scene != scene_key {
-            // A new origin moves the effects (the particles alive keep where they were).
-            self.vfx_scene = scene_key;
-            let effects = scene.entities().iter().filter(|e| scene.drawable(e)).filter_map(|e| match &e.payload {
-                wce_scene::render_scene::Payload::VfxEmitter(v) => {
-                    let mut world = e.world;
-                    for (row, o) in world.m.iter_mut().zip([o.x, o.y, o.z]) {
-                        row[3] = (row[3] - o) * units;
-                    }
-
-                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, mesh: v.mesh.clone() })
-                }
-
-                _ => None,
-            }).collect::<Vec<_>>();
-            if self.game == game::RenderGame::Rome2 {
-                self.vfx_rome2.set_world_effects(&effects);
-            } else {
-                self.particles.set_world_effects(&effects);
-            }
-        }
-
-        let files = self.files.clone();
-        let read: &FileReader = &|path: &str| files.read(path);
-        // Rome 2's effects: CPU particles drawn by the shaders the game generated per effect (vfx_rome2).
-        // TODO(rome2): its weather particles (the WEATHER definition's vfx) are not drawn yet.
-        if self.game == game::RenderGame::Rome2 {
-            wce_prof!("render.particles");
-            self.vfx_rome2.render(&frame, &mut self.lib, read, &mut self.cbs, self.wind.vfx_velocity);
-        } else {
-            wce_prof!("render.particles");
-            self.particles.render(&frame, &mut self.lib, read, &mut self.cbs);
-        }
+        self.pass_particles(scene, cam.eye, o, view_m, time_s, (width, height));
         self.ctx.set_viewports(&[main_vp]);
 
         null_ps_srvs(&self.ctx, 16);
@@ -1756,6 +1897,90 @@ impl Renderer {
 
         self.gpu_timer.mark("display + overlay");
 
+        self.pass_to_target(target, scene, (width, height), (out_w, out_h));
+
+        self.gpu_timer.end_frame();
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_render_targets(&[], None);
+    }
+
+    /// The particles (`gpu_timer`'s "particles"): the weather's precipitation (vfx1 of the WEATHER definition) and the placed effects
+    /// (tile VFX instances, gathered again when the scene changes), in game units; Rome 2's as CPU particles. `eye` and `o` (the
+    /// render origin) in world units, `view_m` the camera's view from the origin, (`width`, `height`) the scene's size.
+    fn pass_particles(&mut self, scene: &RenderScene, eye: Float3, o: Float3, view_m: Float4x4, time_s: f32, (width, height): (u32, u32)) {
+        self.gpu_timer.mark("particles");
+
+        // The weather precipitation (vfx1 of the WEATHER definition).
+        // The particles live in game units (the effects' sizes, speeds and the weather's volumes are the game's).
+        let frame = Frame {
+            eye: (eye - o) * self.camera.units,
+            view: view_m,
+            time: time_s,
+            dt: self.clock.dt,
+            wind_velocity: self.wind.vfx_velocity,
+            wind_variance: self.wind.vfx_variance,
+            target: self.gbuffer.scene_hdr_rtv(),
+            depth: self.gbuffer.scene_dsv(),
+            depth_one_sample: self.gbuffer.depth.dsv_read_depth.clone(),
+            depth_zw: self.gbuffer.depth_srv(),
+            sky: self.sky.cube.srv.clone(),
+            width,
+            height,
+        };
+
+        // The placed effects (tile VFX instances), gathered again when the scene changes.
+        let units = self.camera.units;
+        let scene_key = (scene.uid(), scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
+        if self.vfx_scene != scene_key {
+            // A new origin moves the effects (the particles alive keep where they were).
+            self.vfx_scene = scene_key;
+            let effects = scene
+                .entities()
+                .iter()
+                .filter(|e| scene.drawable(e))
+                .filter_map(|e| match &e.payload {
+                    wce_scene::render_scene::Payload::VfxEmitter(v) => {
+                        let mut world = e.world;
+                        for (row, o) in world.m.iter_mut().zip([o.x, o.y, o.z]) {
+                            row[3] = (row[3] - o) * units;
+                        }
+
+                        Some(crate::particles::WorldEffect {
+                            key: u64::from(e.id),
+                            effect: v.effect.clone(),
+                            world,
+                            scale: v.scale * units,
+                            mesh: v.mesh.clone(),
+                        })
+                    }
+
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if self.game == game::RenderGame::Rome2 {
+                self.vfx_rome2.set_world_effects(&effects);
+            } else {
+                self.particles.set_world_effects(&effects);
+            }
+        }
+
+        let files = self.files.clone();
+        let read: &FileReader = &|path: &str| files.read(path);
+        // Rome 2's effects: CPU particles drawn by the shaders the game generated per effect (vfx_rome2).
+        // TODO(rome2): its weather particles (the WEATHER definition's vfx) are not drawn yet.
+        if self.game == game::RenderGame::Rome2 {
+            wce_prof!("render.particles");
+            self.vfx_rome2.render(&frame, &mut self.lib, read, &mut self.cbs, self.wind.vfx_velocity);
+        } else {
+            wce_prof!("render.particles");
+            self.particles.render(&frame, &mut self.lib, read, &mut self.cbs);
+        }
+    }
+
+    /// The scene shown in `target`: copied with alpha 1 (into a scene-sized texture first when the render scale is under 1: the
+    /// overlays test the scene's depth), the tint, ground overlay, selection outline and overlays over it in the final view, then
+    /// enlarged into `target` by NIS.
+    fn pass_to_target(&mut self, target: &mut RenderTarget, scene: &RenderScene, (width, height): (u32, u32), (out_w, out_h): (u32, u32)) {
         // Final: copies final_ with alpha = 1 for the viewport; scaled, into the scene's size first (the overlays test the scene's depth),
         // enlarged into the target after them.
         let mut scaled = ((width, height) != (out_w, out_h)).then(|| {
@@ -1807,10 +2032,6 @@ impl Renderer {
 
             self.scaled = Some(t);
         }
-
-        self.gpu_timer.end_frame();
-        null_ps_srvs(&self.ctx, 16);
-        self.ctx.set_render_targets(&[], None);
     }
 }
 

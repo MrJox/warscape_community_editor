@@ -64,8 +64,13 @@ impl PerfStats {
     pub fn report(&self) -> String {
         let m = self.mean_frame_ms(KEEP);
         format!(
-            "  frames: {}  mean {m:.2} ms ({:.1} fps)  p95 {:.2} ms  p99 {:.2} ms  worst {:.2} ms  | CPU mean {:.2} ms\n", self.count(), if m > 0.0 { 1000.0 / m } else { 0.0 },
-            self.percentile_frame_ms(0.95), self.percentile_frame_ms(0.99), self.worst_frame_ms(), self.mean_cpu_ms(KEEP)
+            "  frames: {}  mean {m:.2} ms ({:.1} fps)  p95 {:.2} ms  p99 {:.2} ms  worst {:.2} ms  | CPU mean {:.2} ms\n",
+            self.count(),
+            if m > 0.0 { 1000.0 / m } else { 0.0 },
+            self.percentile_frame_ms(0.95),
+            self.percentile_frame_ms(0.99),
+            self.worst_frame_ms(),
+            self.mean_cpu_ms(KEEP)
         )
     }
 }

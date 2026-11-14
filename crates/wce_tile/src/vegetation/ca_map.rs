@@ -91,16 +91,16 @@ impl Hasher for FastHasher {
 
     fn write(&mut self, bytes: &[u8]) {
         for &b in bytes {
-            self.0 = (self.0.rotate_left(5) ^ u64::from(b)).wrapping_mul(0x51_7cc1_b727_220a_95);
+            self.0 = (self.0.rotate_left(5) ^ u64::from(b)).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
     }
 
     fn write_u32(&mut self, v: u32) {
-        self.0 = (self.0.rotate_left(5) ^ u64::from(v)).wrapping_mul(0x51_7cc1_b727_220a_95);
+        self.0 = (self.0.rotate_left(5) ^ u64::from(v)).wrapping_mul(0x517c_c1b7_2722_0a95);
     }
 
     fn write_usize(&mut self, v: usize) {
-        self.0 = (self.0.rotate_left(5) ^ v as u64).wrapping_mul(0x51_7cc1_b727_220a_95);
+        self.0 = (self.0.rotate_left(5) ^ v as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
     }
 }
 
@@ -145,8 +145,10 @@ impl<K: CaKey, V> CaMap<K, V> {
         }
 
         let b = (k.ca_hash() % self.heads.len() as u32) as usize;
-        let in_bucket = |s: u32| self.slots[s as usize].entry.as_ref().is_some_and(|(kk, _)| (kk.ca_hash() % self.heads.len() as u32) as usize == b);
-        let found: Vec<u32> = exact.into_iter().chain(others.iter().filter_map(|id| self.index.get(id).copied())).filter(|&s| in_bucket(s)).collect();
+        let in_bucket =
+            |s: u32| self.slots[s as usize].entry.as_ref().is_some_and(|(kk, _)| (kk.ca_hash() % self.heads.len() as u32) as usize == b);
+        let found: Vec<u32> =
+            exact.into_iter().chain(others.iter().filter_map(|id| self.index.get(id).copied())).filter(|&s| in_bucket(s)).collect();
         if found.len() < 2 {
             return found.first().copied();
         }
@@ -419,7 +421,8 @@ mod tests {
                 assert_eq!(m.len(), r.count);
                 if step % 997 == 0 {
                     let ours: Vec<(u32, u32, u32)> = m.iter().map(|(k, v)| (k.0.to_bits(), k.1.to_bits(), *v)).collect();
-                    let theirs: Vec<(u32, u32, u32)> = r.buckets.iter().flatten().map(|(k, v)| (k.0.to_bits(), k.1.to_bits(), *v)).collect();
+                    let theirs: Vec<(u32, u32, u32)> =
+                        r.buckets.iter().flatten().map(|(k, v)| (k.0.to_bits(), k.1.to_bits(), *v)).collect();
                     assert_eq!(ours, theirs, "round {round} step {step}: the order");
                     assert_eq!(m.heads.len(), r.buckets.len());
                 }

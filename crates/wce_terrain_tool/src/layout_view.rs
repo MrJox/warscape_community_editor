@@ -55,8 +55,13 @@ impl LayoutView {
     /// empty.
     fn legend(&mut self, e: &Editor) -> &Legend {
         self.legend.get_or_insert_with(|| {
-            crate::tool::kit_roots(e).iter().filter_map(|r| r.parent()).map(|k| k.join("editor_working_data/Terry/layout_map_legend.xml"))
-                .find_map(|p| std::fs::read(p).ok()).map(|b| parse_legend(&String::from_utf8_lossy(&b))).unwrap_or_default()
+            crate::tool::kit_roots(e)
+                .iter()
+                .filter_map(|r| r.parent())
+                .map(|k| k.join("editor_working_data/Terry/layout_map_legend.xml"))
+                .find_map(|p| std::fs::read(p).ok())
+                .map(|b| parse_legend(&String::from_utf8_lossy(&b)))
+                .unwrap_or_default()
         })
     }
 
@@ -103,7 +108,12 @@ impl LayoutView {
                 let c = legend[k].0;
                 let colour = overlay_colour(f32::from(c[0]) / 255.0, f32::from(c[1]) / 255.0, f32::from(c[2]) / 255.0, 1.0);
                 // The sides facing a cell of another colour.
-                for (nx, ny, a, b) in [(x, y - 1, (x, y), (x + 1, y)), (x, y + 1, (x, y + 1), (x + 1, y + 1)), (x - 1, y, (x, y), (x, y + 1)), (x + 1, y, (x + 1, y), (x + 1, y + 1))] {
+                for (nx, ny, a, b) in [
+                    (x, y - 1, (x, y), (x + 1, y)),
+                    (x, y + 1, (x, y + 1), (x + 1, y + 1)),
+                    (x - 1, y, (x, y), (x, y + 1)),
+                    (x + 1, y, (x + 1, y), (x + 1, y + 1)),
+                ] {
                     if wanted(nx, ny) != Some(k) {
                         lines.push(wce_scene::render_scene::OverlayVertex { p: corner(a.0, a.1), rgba: colour });
                         lines.push(wce_scene::render_scene::OverlayVertex { p: corner(b.0, b.1), rgba: colour });
@@ -148,7 +158,9 @@ impl LayoutView {
 
         gui::checkbox("layout guide", &mut self.on);
         if gui::is_item_hovered() {
-            gui::set_tooltip("layout_map.png's legend colours (layout_map_legend.xml) outlined on the ground; paint the layer in the Map panel");
+            gui::set_tooltip(
+                "layout_map.png's legend colours (layout_map_legend.xml) outlined on the ground; paint the layer in the Map panel",
+            );
         }
 
         gui::same_line();
@@ -158,7 +170,11 @@ impl LayoutView {
         }
 
         if self.on {
-            gui::text_disabled(&format!("{} guide cells drawn; legend: {} colours", self.cells_drawn, self.legend.as_ref().map_or(0, Vec::len)));
+            gui::text_disabled(&format!(
+                "{} guide cells drawn; legend: {} colours",
+                self.cells_drawn,
+                self.legend.as_ref().map_or(0, Vec::len)
+            ));
         }
     }
 }
@@ -167,7 +183,9 @@ impl LayoutView {
 mod tests {
     #[test]
     fn legend() {
-        let l = super::parse_legend("<layout_map>\n\t<layout_map_entry color=\"0;0;255\">a/blue.rigid_model_v2</layout_map_entry>\n\t<layout_map_entry color=\"150;0;255\">b</layout_map_entry>\n</layout_map>");
+        let l = super::parse_legend(
+            "<layout_map>\n\t<layout_map_entry color=\"0;0;255\">a/blue.rigid_model_v2</layout_map_entry>\n\t<layout_map_entry color=\"150;0;255\">b</layout_map_entry>\n</layout_map>",
+        );
         assert_eq!(l, vec![([0, 0, 255], "a/blue.rigid_model_v2".to_owned()), ([150, 0, 255], "b".to_owned())]);
     }
 }

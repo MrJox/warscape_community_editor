@@ -32,3 +32,14 @@ weather and particle code: docs/plans/weather_current_state.md.
      (`wce_render` `renderer/decals.rs` ~391, `renderer/terrain.rs` ~1107).
    - The campaign skybox model and cube map.
    - A season cross-fade preview (spring, summer, autumn, winter) as the game does it.
+3. **Visual editing** (UX pass, 2026-11-13): done. The sun handle, the focus pick, the split compare, the tone curve and histogram,
+   Mix with another file, the wind arrow, the fog rings and the Inspector's fog curve, the preview switches, the sky strips, the gallery,
+   the reference screenshot with its colour comparison (`wce_weather_tool` `visual.rs`, `mix.rs`, `preview.rs`, `sky_strip.rs`,
+   `gallery.rs`, `reference.rs`; docs/editor.md). Left as they are: the colour eyedropper writes nothing into the file (the files'
+   colours are lit and tone-mapped inputs; the comparison guides the edit instead); fog_distance_start is an offset, not a distance
+   (docs/re/renderer.md, "Battle fog").
+4. **One panel: everything from the Inspector** (user, 2026-11-13; how to do it is for later). Every edit the Properties panel makes
+   reachable from the Inspector, each Inspector section collapsible, so the Properties panel can go. Today only Properties has: the tree
+   of `weather_definitions.xml` and VFX files (picking the element the Inspector edits), structural edits (add, duplicate, move, delete
+   elements, e.g. a second cloud layer), the elements no section lists (cloud sprites, scene nodes), the attribute filter, the Changes
+   tab (per-attribute revert) and Revert all; its Save button repeats File > Save.

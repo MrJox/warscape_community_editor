@@ -8,6 +8,8 @@
 mod bindings;
 
 pub use bindings::*;
+/// The result code D3D and DXGI calls return (a lost device's reason, `Present`'s).
+pub use windows_core::HRESULT;
 
 pub mod safe;
 
@@ -15,7 +17,7 @@ pub use safe::{ContextExt, DescExt, DeviceExt, InitData, InputElement, Mapped, V
 
 /// Prepares the platform for the first D3D11 call. On Linux, tells DXVK-native to use SDL3 for windows, and to log to stderr
 /// only instead of writing `<exe>_d3d11.log` files into the working directory, unless `DXVK_WSI_DRIVER` / `DXVK_LOG_PATH` say otherwise.
-/// Programs the editor starts inherit them: Launch in game takes them out for the game (`wce_tile_tool::proton::EDITOR_ONLY_ENV`).
+/// Programs the editor starts inherit them: Launch in game takes them out for the game (`wce_launch::proton::EDITOR_ONLY_ENV`).
 ///
 /// # Safety
 ///
@@ -81,5 +83,11 @@ pub fn adapter_info(adapter: &IDXGIAdapter1) -> Option<AdapterInfo> {
     let name = String::from_utf16_lossy(&d.description[..len]);
     #[cfg(not(windows))]
     let name = d.description[..len].iter().map(|&c| char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER)).collect();
-    Some(AdapterInfo { name, vendor_id: d.vendor_id, device_id: d.device_id, flags: d.flags, video_memory: d.dedicated_video_memory as u64 })
+    Some(AdapterInfo {
+        name,
+        vendor_id: d.vendor_id,
+        device_id: d.device_id,
+        flags: d.flags,
+        video_memory: d.dedicated_video_memory as u64,
+    })
 }

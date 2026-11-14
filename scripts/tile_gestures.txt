@@ -1,0 +1,135 @@
+# Undo and redo wait for the gesture under way (a brush stroke, a vegetation stroke, a gizmo drag: `mouse down` / `mouse up` hold the button
+# across commands), and opening another tile in the middle of one closes it on the tile before: nothing of it goes on in the new one. %TILE%
+# is a kit tile with buildings, %TILE2% another tile.
+tile "%TILE%"
+frames 3
+assert_tool tile
+assert_modified 0
+tile_select BUILDING_INSTANCE
+focus
+frames 3
+select none
+
+# a height stroke: refused while the button is down, one entry after
+tile_mode raise
+mouse down 45% 55%
+mouse move 48% 55%
+mouse move 52% 55%
+mouse move 55% 55%
+frames 2
+expect_fail undo
+expect_fail redo
+mouse up
+frames 2
+assert_history 1 1
+undo
+frames 2
+assert_modified 0
+tile_mode select
+
+# a vegetation stroke: refused while painting, its trees one entry after
+veg_set_add cypress.cypress_a
+veg_brush on 12 3 0 1
+mouse down 40% 55%
+mouse move 45% 56%
+mouse move 50% 57%
+mouse move 55% 58%
+frames 2
+expect_fail undo
+mouse up
+frames 2
+assert_modified 1
+undo
+frames 2
+assert_modified 0
+veg_brush off
+key Escape
+frames 2
+
+# a drag of the gizmo: refused until the button is let go
+tile_select BUILDING_INSTANCE
+focus
+cam 2.2 0.5 40 2
+gizmo translate
+frames 10
+gizmo_drag z 50 10 hold
+frames 4
+assert_modified 1
+expect_fail undo
+mouse up
+frames 4
+assert_history 1 1
+undo
+frames 2
+assert_modified 0
+
+# another tile opened mid-grab: the grab ends with the tile, and clicks in the new tile do not move anything
+tile_select BUILDING_INSTANCE
+mouse move 70% 65%
+frames 3
+key G
+frames 2
+mouse move 60% 62%
+frames 3
+assert_grabbing 1
+open "%TILE2%/tile.ted" disk discard
+frames 3
+assert_grabbing 0
+mouse move 40% 60%
+frames 3
+mouse click 40% 60%
+frames 2
+assert_modified 0
+expect_fail undo
+
+# mid-stroke: the rest of the stroke does not paint the new tile
+tile_mode raise
+mouse down 45% 55%
+mouse move 50% 55%
+frames 2
+open "%TILE%/tile.ted" disk discard
+frames 3
+mouse move 55% 55%
+mouse move 60% 55%
+frames 2
+mouse up
+frames 2
+assert_modified 0
+expect_fail undo
+
+# the grab's ends: a click confirms (one entry), Esc and a right click cancel (the entry before them kept)
+tile_mode select
+tile_select BUILDING_INSTANCE
+focus
+frames 3
+mouse move 70% 65%
+frames 3
+key G
+frames 2
+assert_grabbing 1
+mouse move 60% 62%
+frames 3
+mouse click 60% 62%
+frames 2
+assert_grabbing 0
+assert_history 1 1
+key G
+frames 2
+mouse move 40% 70%
+frames 3
+key Escape
+frames 2
+assert_grabbing 0
+assert_history 1 1
+key G
+frames 2
+mouse move 45% 68%
+frames 3
+mouse click 45% 68% right
+frames 2
+assert_grabbing 0
+assert_history 1 1
+undo
+frames 2
+assert_modified 0
+quit

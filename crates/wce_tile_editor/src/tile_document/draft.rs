@@ -4,13 +4,13 @@
 use std::collections::BTreeMap;
 
 use wce_editor_core::inspector::Inspector;
+use wce_foundation::math::{Double3, Double3x3};
 use wce_tile::properties::{Access, Kind, RuleContext, access, schema};
 use wce_tile::ted_scene::TedScene;
-use wce_foundation::math::{Double3, Double3x3};
 use wce_tile::world_transform::{rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
 use super::edits::{edit_value, point_instance, scene_point};
-use super::{TileDocument, item_of};
+use super::{BoundaryKind, TileDocument, item_of};
 
 /// A thing to place: an instance of `kind` (`key`: its building, tree, decal, model or effect), these attributes over the type's defaults
 /// (raw values), turned `yaw` degrees about the vertical.
@@ -26,6 +26,17 @@ impl Draft {
     pub fn new(kind: &str, key: &str) -> Self {
         Self { kind: kind.to_owned(), key: key.to_owned(), ..Default::default() }
     }
+}
+
+/// A boundary preset by its label (`BoundaryKind::label`).
+fn boundary_kind(label: &str) -> Option<BoundaryKind> {
+    BoundaryKind::ALL.into_iter().find(|k| k.label() == label)
+}
+
+/// The facing of a capture location draft's flag in degrees (`flag_facing`, radians; 0 without one): a semicircle's or square's turn
+/// when none is given.
+fn draft_flag_degrees(attrs: &BTreeMap<String, String>) -> f64 {
+    attrs.get("flag_facing").and_then(|v| v.trim().parse::<f64>().ok()).map_or(0.0, f64::to_degrees)
 }
 
 /// `text` (an element) turned `yaw` degrees about the vertical through its position.
@@ -107,8 +118,57 @@ impl TileDocument {
         };
 
         n.attrs.extend(d.attrs.clone());
+
+        // A capture location's boundary preset (the draft's, not the element's attributes).
+        let preset = super::edits::DRAFT_BOUNDARY.map(|k| n.attrs.remove(k));
+        if d.kind == "CaptureLocationInstance"
+            && let Some(kind) = preset[0].as_deref().and_then(boundary_kind)
+        {
+            let u = self.tile().unit();
+            let size = preset[1].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or(20.0).max(0.5);
+            let turn = preset[2].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or_else(|| draft_flag_degrees(&n.attrs));
+            n.children = vec![wce_tile::new_instances::element_text(&super::edits::preset_boundary(kind, size * u, turn)).ok()?];
+        }
+
         let text = wce_tile::new_instances::element_text(&n).ok()?;
         Some(turned(&text, d.yaw))
+    }
+
+    /// A capture location draft's Inspector rows of its boundary (`DRAFT_BOUNDARY`): its preset shape, size and turn. Returns whether
+    /// they changed.
+    fn inspect_draft_boundary(d: &mut Draft, ins: &mut dyn Inspector) -> bool {
+        let [shape_key, size_key, turn_key] = super::edits::DRAFT_BOUNDARY;
+        ins.section("Boundary");
+        let kinds = [BoundaryKind::Circle, BoundaryKind::Semicircle, BoundaryKind::Square];
+        let names = kinds.map(|k| k.label().to_owned());
+        let now = d.attrs.get(shape_key).and_then(|v| boundary_kind(v)).unwrap_or(BoundaryKind::Circle);
+        let mut idx = kinds.iter().position(|&k| k == now).unwrap_or(0) as i32;
+        let mut changed = false;
+        ins.hint("The shape of the boundary the new capture location gets.");
+        if ins.edit_choice(shape_key, "shape", &mut idx, &names) {
+            d.attrs.insert(shape_key.to_owned(), kinds[idx.clamp(0, 2) as usize].label().to_owned());
+            changed = true;
+        }
+
+        let mut size = d.attrs.get(size_key).and_then(|v| v.parse::<f32>().ok()).unwrap_or(20.0);
+        ins.hint("The boundary's size in metres: a circle's radius, half a square's side.");
+        if ins.edit_float(size_key, "size (m: radius or half side)", &mut size, 0.1, 0.5, 500.0) {
+            d.attrs.insert(size_key.to_owned(), size.max(0.5).to_string());
+            d.attrs.entry(shape_key.to_owned()).or_insert_with(|| now.label().to_owned());
+            changed = true;
+        }
+
+        let kind = d.attrs.get(shape_key).and_then(|v| boundary_kind(v)).unwrap_or(now);
+        if kind.turns() {
+            let mut turn = d.attrs.get(turn_key).and_then(|v| v.parse::<f32>().ok()).unwrap_or_else(|| draft_flag_degrees(&d.attrs) as f32);
+            ins.hint("Which way the boundary faces, in degrees (0: +z); left alone, the way the flag faces.");
+            if ins.edit_float(turn_key, "turn (deg; 0: +z; default: the flag's facing)", &mut turn, 1.0, -360.0, 360.0) {
+                d.attrs.insert(turn_key.to_owned(), turn.to_string());
+                changed = true;
+            }
+        }
+
+        changed
     }
 
     /// The Inspector of a draft: the type's properties (TEd's Property Editor rows) with the draft's values, else the kit's defaults; an edit
@@ -123,9 +183,15 @@ impl TileDocument {
         // The values a new one gets without the draft's: its kind's own (an effect's scale) over the type's defaults.
         let template = wce_tile::new_instances::template(&d.kind);
         let own = point_instance(&d.kind, Double3::ZERO, &d.key, self.tile().unit()).map(|n| n.attrs).unwrap_or_default();
-        let default = |attr: &str| own.get(attr).cloned().or_else(|| template.and_then(|t| t.attrs.iter().find(|(k, _)| *k == attr)).map(|(_, v)| (*v).to_owned()));
+        let default = |attr: &str| {
+            own.get(attr).cloned().or_else(|| template.and_then(|t| t.attrs.iter().find(|(k, _)| *k == attr)).map(|(_, v)| (*v).to_owned()))
+        };
         let before = d.yaw;
         let mut yaw = d.yaw;
+        if turnable {
+            ins.hint("The turn the new item is placed with, in degrees; R and Shift+R turn it too.");
+        }
+
         if turnable && ins.edit_float("yaw", "turn (deg; R / Shift+R)", &mut yaw, 1.0, -360.0, 360.0) {
             d.yaw = yaw;
         }
@@ -134,7 +200,9 @@ impl TileDocument {
         ins.section("Properties");
         let mut changed = d.yaw != before;
         for prop in props {
-            if matches!(prop.attr, "key" | "vfx" | "name") || matches!(prop.kind, Kind::Flags | Kind::Position | Kind::Orientation | Kind::DestructionLevel) {
+            if matches!(prop.attr, "key" | "vfx" | "name")
+                || matches!(prop.kind, Kind::Flags | Kind::Position | Kind::Orientation | Kind::DestructionLevel)
+            {
                 continue;
             }
 
@@ -143,7 +211,16 @@ impl TileDocument {
             let cur = cur.unwrap_or_default();
 
             // TEd's rules, as for a placed one (a building's category decides its wall properties; a draft has no file to go by).
-            let ctx = RuleContext { category: category.as_deref(), shape: d.attrs.get("polygon_shape").map(String::as_str), present: false, capture_location: wce_tile::export_as_prop::capture_location_set(d.attrs.get("capture_location").map(String::as_str)), export_as_prop: wce_tile::export_as_prop::exports_as_prop(d.attrs.get(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).map(String::as_str), d.attrs.get("capture_location").map(String::as_str)) };
+            let ctx = RuleContext {
+                category: category.as_deref(),
+                shape: d.attrs.get("polygon_shape").map(String::as_str),
+                present: false,
+                capture_location: wce_tile::export_as_prop::capture_location_set(d.attrs.get("capture_location").map(String::as_str)),
+                export_as_prop: wce_tile::export_as_prop::exports_as_prop(
+                    d.attrs.get(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).map(String::as_str),
+                    d.attrs.get("capture_location").map(String::as_str),
+                ),
+            };
             match access(prop, &ctx) {
                 Access::Hidden => continue,
                 Access::ReadOnly => {
@@ -160,7 +237,9 @@ impl TileDocument {
                 Kind::Placement => {
                     let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
                     let mut idx = i32::from(cur == "MSM_FREEFORM");
-                    ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes).then(|| if idx == 1 { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" }.to_owned())
+                    let tips = [super::edits::SURFACE_TIPS[0], super::edits::SURFACE_TIPS[1]].map(str::to_owned);
+                    ins.edit_choice_tips("surface_mode", "surface_mode", &mut idx, &modes, &tips)
+                        .then(|| if idx == 1 { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" }.to_owned())
                 }
 
                 Kind::Text => {
@@ -177,6 +256,10 @@ impl TileDocument {
             }
         }
 
+        if d.kind == "CaptureLocationInstance" {
+            changed |= Self::inspect_draft_boundary(d, ins);
+        }
+
         changed
     }
 
@@ -189,7 +272,12 @@ impl TileDocument {
             && let Some(target) = sc.doc().get(g, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
         {
             let v = target + (after - before);
-            let text = format!("vector({},{},{})", wce_tile::ted_scene::format_number(v.x), wce_tile::ted_scene::format_number(v.y), wce_tile::ted_scene::format_number(v.z));
+            let text = format!(
+                "vector({},{},{})",
+                wce_tile::ted_scene::format_number(v.x),
+                wce_tile::ted_scene::format_number(v.y),
+                wce_tile::ted_scene::format_number(v.z)
+            );
             self.tscene_mut().set_attr(g, "target", &text);
         }
     }
@@ -200,8 +288,17 @@ impl TileDocument {
     /// # Errors
     ///
     /// The text is not an element, or there is no such layer.
-    pub fn place_text(&mut self, what: &str, text: &[u8], into: usize, at: wce_foundation::math::Float3, name: Option<&str>, on_terrain: bool) -> Result<usize, String> {
+    pub fn place_text(
+        &mut self,
+        what: &str,
+        text: &[u8],
+        into: usize,
+        at: wce_foundation::math::Float3,
+        name: Option<&str>,
+        on_terrain: bool,
+    ) -> Result<usize, String> {
         self.check_structure(&[], Some(into))?;
+        self.check_fits([super::edits::text_kind(text)], into)?;
         let mark = self.begin()?;
         let result = (|| -> Result<usize, String> {
             let g = self.tscene_mut().insert_element_text(into, text)?;
@@ -219,7 +316,8 @@ impl TileDocument {
             // What is inside on the landscape goes onto the terrain where it now is: it kept the height it had where it was saved (a
             // prefab's parts floated or sank by the ground's difference).
             let unit = self.tile().unit();
-            let inside = self.tile().instances_below(&[g]).into_iter().filter(|&e| e != g && self.tile().on_the_terrain(e)).collect::<Vec<_>>();
+            let inside =
+                self.tile().instances_below(&[g]).into_iter().filter(|&e| e != g && self.tile().on_the_terrain(e)).collect::<Vec<_>>();
             for e in inside {
                 let t = self.tile();
                 let w = wce_tile::world_transform::world_transform(t.tscene(), e).position;
@@ -237,11 +335,7 @@ impl TileDocument {
                 Ok(g)
             }
 
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
     }
 }
@@ -252,7 +346,13 @@ mod tests {
 
     #[test]
     fn the_tilt_takes_up_to_the_normal() {
-        for n in [Double3::new(0.3, 1.0, -0.2), Double3::new(-1.0, 0.1, 0.0), Double3::new(0.0, 1.0, 0.0), Double3::new(0.0, -1.0, 0.0), Double3::new(0.2, -0.5, 0.7)] {
+        for n in [
+            Double3::new(0.3, 1.0, -0.2),
+            Double3::new(-1.0, 0.1, 0.0),
+            Double3::new(0.0, 1.0, 0.0),
+            Double3::new(0.0, -1.0, 0.0),
+            Double3::new(0.2, -0.5, 0.7),
+        ] {
             let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
             let up = tilt_to(n) * Double3::new(0.0, 1.0, 0.0);
             assert!((up - n * (1.0 / len)).max_abs_diff(Double3::ZERO) < 1e-12, "{n:?} -> {up:?}");

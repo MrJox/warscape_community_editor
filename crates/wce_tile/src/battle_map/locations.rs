@@ -36,12 +36,13 @@ pub struct BattleLocations {
 }
 
 impl BattleLocations {
-
     /// # Errors
     ///
     /// Fails on a file that isn't BLMF or is truncated.
     pub fn parse(b: &[u8]) -> Result<Self, String> {
-        let u32_at = |p: usize| b.get(p..p + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]])).ok_or_else(|| "locations.blm: truncated".to_owned());
+        let u32_at = |p: usize| {
+            b.get(p..p + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]])).ok_or_else(|| "locations.blm: truncated".to_owned())
+        };
         if b.get(..4) != Some(b"BLMF") {
             return Err("locations.blm: not a BLMF file".to_owned());
         }
@@ -69,17 +70,43 @@ impl BattleLocations {
         Ok(out)
     }
 
-    /// The file's bytes.
-    pub fn write(&self) -> Vec<u8> {
+    /// The file's bytes, reversing the parser's individual byte widening without a code-page conversion.
+    ///
+    /// # Errors
+    ///
+    /// A name contains a character above U+00FF, or a name/group/record count exceeds its native field.
+    /// All names and counts are checked before any output bytes are constructed.
+    pub fn write(&self) -> Result<Vec<u8>, String> {
+        let count = u32::try_from(self.types.len()).map_err(|_| "locations.blm: too many type groups".to_owned())?;
+        let names = self
+            .types
+            .iter()
+            .enumerate()
+            .map(|(i, (name, locations))| {
+                let records = u32::try_from(locations.len()).map_err(|_| format!("locations.blm: type {i}: too many records"))?;
+                let mut bytes = Vec::with_capacity(name.len().min(usize::from(u16::MAX)));
+                for c in name.chars() {
+                    let byte = u8::try_from(u32::from(c))
+                        .map_err(|_| format!("locations.blm: type {i}: U+{:04X} is not a native single-byte character", u32::from(c)))?;
+                    if bytes.len() == usize::from(u16::MAX) {
+                        return Err(format!("locations.blm: type {i}: name exceeds 65535 native bytes"));
+                    }
+                    bytes.push(byte);
+                }
+                let len = u16::try_from(bytes.len()).map_err(|_| format!("locations.blm: type {i}: name exceeds 65535 native bytes"))?;
+                Ok((len, bytes, records))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
         let mut o = b"BLMF".to_vec();
-        for v in [self.version, self.types.len() as u32, self.width, self.height] {
+        for v in [self.version, count, self.width, self.height] {
             o.extend_from_slice(&v.to_le_bytes());
         }
 
-        for (name, locations) in &self.types {
-            o.extend_from_slice(&(name.len() as u16).to_le_bytes());
-            o.extend(name.chars().map(|c| c as u8));
-            o.extend_from_slice(&(locations.len() as u32).to_le_bytes());
+        for ((_, locations), (len, name, records)) in self.types.iter().zip(names) {
+            o.extend_from_slice(&len.to_le_bytes());
+            o.extend_from_slice(&name);
+            o.extend_from_slice(&records.to_le_bytes());
             for l in locations {
                 for v in [l.rect[0], l.rect[1], l.rect[2], l.rect[3], l.centre[0], l.centre[1], l.id, l.extra[0], l.extra[1]] {
                     o.extend_from_slice(&v.to_le_bytes());
@@ -88,11 +115,14 @@ impl BattleLocations {
         }
 
         o.extend_from_slice(&self.tail);
-        o
+        Ok(o)
     }
 
     /// The locations whose rectangle holds the cell, as (battle type, location).
     pub fn at(&self, x: i32, y: i32) -> impl Iterator<Item = (&str, &Location)> {
-        self.types.iter().flat_map(|(t, l)| l.iter().map(move |l| (t.as_str(), l))).filter(move |(_, l)| l.rect[0] <= x && x <= l.rect[2] && l.rect[1] <= y && y <= l.rect[3])
+        self.types
+            .iter()
+            .flat_map(|(t, l)| l.iter().map(move |l| (t.as_str(), l)))
+            .filter(move |(_, l)| l.rect[0] <= x && x <= l.rect[2] && l.rect[1] <= y && y <= l.rect[3])
     }
 }

@@ -50,7 +50,6 @@ pub struct Climate {
 }
 
 impl Climate {
-
     pub fn find(&self, group: &str) -> Option<&ClimateTexture> {
         self.textures.iter().find(|texture| texture.name == group)
     }
@@ -84,7 +83,6 @@ fn num(doc: &XmlDoc, elem: usize, name: &str, default: f64) -> f64 {
 }
 
 impl ClimateList {
-
     /// Reads the climates of a settings file; no `<CLIMATES>` gives an empty list.
     ///
     /// # Errors
@@ -94,13 +92,17 @@ impl ClimateList {
         let doc = XmlDoc::parse(settings_xml.to_vec())?;
         let els = doc.elements();
         let text = |elem: usize, name: &str| doc.get(elem, name).unwrap_or_default();
-        let climates = els.iter().enumerate()
+        let climates = els
+            .iter()
+            .enumerate()
             .filter(|(_, el)| el.name == "CLIMATE" && el.parent.is_some_and(|parent| els[parent].name == "CLIMATES"))
             .map(|(i, el)| Climate {
                 name: text(i, "name"),
                 texture_set: text(i, "texture_set"),
                 destruction_climate: text(i, "destruction_climate"),
-                textures: el.children.iter()
+                textures: el
+                    .children
+                    .iter()
                     .filter(|&&list| els[list].name == "TEXTURES")
                     .flat_map(|&list| els[list].children.iter().copied().filter(|&t| els[t].name == "TEXTURE"))
                     .map(|t| {
@@ -110,13 +112,20 @@ impl ClimateList {
                             blend_pixel_scale: num(&doc, t, "blend_pixel_scale", default.blend_pixel_scale),
                             outfield_blend_pixel_scale: num(&doc, t, "outfield_blend_pixel_scale", default.outfield_blend_pixel_scale),
                             mid_distance_strength: num(&doc, t, "mid_distance_strength", default.mid_distance_strength),
-                            lerp_smoothness: std::array::from_fn(|v| num(&doc, t, &format!("lerp_smoothness{v}"), default.lerp_smoothness[v])),
-                            lerp_reflectivity: std::array::from_fn(|v| num(&doc, t, &format!("lerp_reflectivity{v}"), default.lerp_reflectivity[v])),
+                            lerp_smoothness: std::array::from_fn(|v| {
+                                num(&doc, t, &format!("lerp_smoothness{v}"), default.lerp_smoothness[v])
+                            }),
+                            lerp_reflectivity: std::array::from_fn(|v| {
+                                num(&doc, t, &format!("lerp_reflectivity{v}"), default.lerp_reflectivity[v])
+                            }),
                         }
-                    }).collect(),
-            }).collect();
+                    })
+                    .collect(),
+            })
+            .collect();
 
-        let blend_pixel_scale = els.iter().position(|el| el.name == "RENDER_PARAMS").and_then(|i| doc.get(i, "blend_pixel_scale")).and_then(|v| strtod(&v));
+        let blend_pixel_scale =
+            els.iter().position(|el| el.name == "RENDER_PARAMS").and_then(|i| doc.get(i, "blend_pixel_scale")).and_then(|v| strtod(&v));
         Ok(Self { climates, blend_pixel_scale, kind: String::new() })
     }
 
@@ -134,7 +143,10 @@ impl ClimateList {
                         }
                     }
 
-                    for (mine, theirs) in [(&mut climate.texture_set, base_climate.texture_set), (&mut climate.destruction_climate, base_climate.destruction_climate)] {
+                    for (mine, theirs) in [
+                        (&mut climate.texture_set, base_climate.texture_set),
+                        (&mut climate.destruction_climate, base_climate.destruction_climate),
+                    ] {
                         if mine.is_empty() {
                             *mine = theirs;
                         }
@@ -179,7 +191,15 @@ impl ClimateList {
     }
 
     /// [`climate_texture_path`] for this list's kind of textures.
-    pub fn texture_path(&self, climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
+    pub fn texture_path(
+        &self,
+        climate_folder: &str,
+        group: &str,
+        variation: i32,
+        season: &str,
+        normal: bool,
+        exists: impl Fn(&str) -> bool,
+    ) -> Option<String> {
         texture_path_in(&self.default_folder(), climate_folder, group, variation, season, normal, exists)
     }
 
@@ -207,14 +227,30 @@ impl ClimateList {
 
 /// The texture path of a group's variation: the climate's folder first, then `default`; a season (`su`, `au`, `wi`) falls back to
 /// summer. `exists` tells whether a path is in the packs. `None` when neither folder has it.
-pub fn climate_texture_path(climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
+pub fn climate_texture_path(
+    climate_folder: &str,
+    group: &str,
+    variation: i32,
+    season: &str,
+    normal: bool,
+    exists: impl Fn(&str) -> bool,
+) -> Option<String> {
     texture_path_in("terrain/textures/battle/default", climate_folder, group, variation, season, normal, exists)
 }
 
 /// [`climate_texture_path`] falling back to another `default` folder (the campaign's).
-fn texture_path_in(default_folder: &str, climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
+fn texture_path_in(
+    default_folder: &str,
+    climate_folder: &str,
+    group: &str,
+    variation: i32,
+    season: &str,
+    normal: bool,
+    exists: impl Fn(&str) -> bool,
+) -> Option<String> {
     let kind = if normal { "_normal.dds" } else { "_diffuse.dds" };
-    [climate_folder, default_folder].iter()
+    [climate_folder, default_folder]
+        .iter()
         .flat_map(|root| [season, "su"].map(|season| format!("{root}/{group}/{variation}_{season}{kind}")))
         .find(|path| exists(path))
 }

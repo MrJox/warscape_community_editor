@@ -15,7 +15,9 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() {
             files(&p, out);
-        } else if p.file_name().is_some_and(|n| n.to_string_lossy().contains("building_list") || n.to_string_lossy().starts_with("bmd.")) && p.extension().is_none() {
+        } else if p.file_name().is_some_and(|n| n.to_string_lossy().contains("building_list") || n.to_string_lossy().starts_with("bmd."))
+            && p.extension().is_none()
+        {
             out.push(p);
         }
     }

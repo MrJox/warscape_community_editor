@@ -83,7 +83,11 @@ pub fn report(reset_after: bool, min_ms: f64) -> String {
         }
 
         let worst = slot.worst.load(Ordering::Relaxed) as f64 * 1e-6;
-        out.push_str(&format!("  {:<34} {ms:>10.2} ms {calls:>9} calls {:>9.4} ms/call  worst {worst:>8.2} ms\n", slot.name, ms / calls as f64));
+        out.push_str(&format!(
+            "  {:<34} {ms:>10.2} ms {calls:>9} calls {:>9.4} ms/call  worst {worst:>8.2} ms\n",
+            slot.name,
+            ms / calls as f64
+        ));
     }
 
     if reset_after {

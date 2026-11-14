@@ -5,7 +5,6 @@
 //! TEd's is not reverse-engineered, its files are what is kept). The file's bytes before and after the samples are kept as read, so a map that
 //! was not painted is written back byte for byte, and a painted one differs only in the painted samples. Undo: `PixelLayer`'s block records.
 
-use std::io::Write;
 use std::path::Path;
 
 use wce_formats::image_containers::TiffFile;
@@ -202,7 +201,6 @@ pub struct BlendField {
 }
 
 impl BlendField {
-
     /// # Errors
     ///
     /// The image is not 16 samples of 16 bits per pixel.
@@ -232,17 +230,8 @@ impl BlendField {
     ///
     /// The file could not be written.
     pub fn write(&self, path: &Path) -> Result<()> {
-        let fail = |e: std::io::Error| format!("{}: {e}", path.display());
-        let file = std::fs::File::create(path).map_err(fail)?;
-        let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
-        out.write_all(&self.header).map_err(fail)?;
-        for row in self.layer.values().chunks(self.width() as usize * 16) {
-            let bytes = row.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<_>>();
-            out.write_all(&bytes).map_err(fail)?;
-        }
-
-        out.write_all(&self.tail).map_err(fail)?;
-        out.flush().map_err(fail)
+        // Whole or not at all: the user's only copy of the paint.
+        wce_foundation::files::write_replacing(path, self.to_bytes()).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// The file's bytes (as [`Self::write`] writes them).
@@ -305,6 +294,11 @@ impl BlendField {
         self.layer.changed()
     }
 
+    /// How many changes were made: equal while the weights are.
+    pub fn changes(&self) -> u64 {
+        self.layer.changes()
+    }
+
     /// The rectangle changed since the last call (exclusive end), `None` when nothing changed.
     pub fn take_changed(&mut self) -> Option<(u32, u32, u32, u32)> {
         self.layer.take_changed()
@@ -325,7 +319,14 @@ impl BlendField {
     /// # Errors
     ///
     /// No edit is open, or no such channel.
-    pub fn paint_mode(&mut self, b: &Brush, channel: usize, mode: PaintMode, mask: &dyn Fn(u32, u32) -> bool, slope: &dyn Fn(u32, u32) -> f64) -> Result<()> {
+    pub fn paint_mode(
+        &mut self,
+        b: &Brush,
+        channel: usize,
+        mode: PaintMode,
+        mask: &dyn Fn(u32, u32) -> bool,
+        slope: &dyn Fn(u32, u32) -> f64,
+    ) -> Result<()> {
         if !self.layer.is_editing() {
             return Err("begin_edit() before editing".to_owned());
         }
@@ -424,6 +425,45 @@ impl BlendField {
         self.layer.is_editing()
     }
 
+    /// Mirrors the map about the tile's middle during an edit (`PixelLayer::mirror`, as cells); the pixels changed.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open.
+    pub fn mirror(&mut self, across_x: bool) -> Result<usize> {
+        if !self.layer.is_editing() {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        Ok(self.layer.mirror(across_x, false))
+    }
+
+    /// Sets every pixel to `samples` (16 weights) during an edit; the pixels changed. `mask` says which pixels.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open, or not 16 weights.
+    pub fn fill(&mut self, samples: &[u16], mask: &dyn Fn(u32, u32) -> bool) -> Result<usize> {
+        if !self.layer.is_editing() {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        if samples.len() != 16 {
+            return Err("a blend map pixel has 16 weights".to_owned());
+        }
+
+        let mut changed = 0;
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                if mask(x, y) {
+                    changed += usize::from(self.layer.set_pixel(x, y, samples));
+                }
+            }
+        }
+
+        Ok(changed)
+    }
+
     pub fn undo(&mut self) -> bool {
         self.layer.undo()
     }
@@ -491,7 +531,11 @@ pub fn reduce_pixel(p: &[u16]) -> ([u8; 4], [u8; 4]) {
     for g in 0..4 {
         let s = f64::from(p[g * 4]) + f64::from(p[g * 4 + 1]) + f64::from(p[g * 4 + 2]) + f64::from(p[g * 4 + 3]);
         blend[g] = q8(s / 65535.0);
-        index[g] = if s > 0.0 { q8((f64::from(p[g * 4 + 1]) + 2.0 * f64::from(p[g * 4 + 2]) + 3.0 * f64::from(p[g * 4 + 3])) / s / 3.0) } else { 0 };
+        index[g] = if s > 0.0 {
+            q8((f64::from(p[g * 4 + 1]) + 2.0 * f64::from(p[g * 4 + 2]) + 3.0 * f64::from(p[g * 4 + 3])) / s / 3.0)
+        } else {
+            0
+        };
     }
 
     (blend, index)
@@ -520,7 +564,11 @@ mod tests {
         assert_eq!(q.iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
         assert_eq!(q[9], 32_768);
         assert!((f64::from(q[0]) / f64::from(q[1]) - 1.5).abs() < 1e-3);
-        assert_eq!(paint_pixel(&q, 9, 1.0), { let mut f = [0u16; 16]; f[9] = FULL; f });
+        assert_eq!(paint_pixel(&q, 9, 1.0), {
+            let mut f = [0u16; 16];
+            f[9] = FULL;
+            f
+        });
     }
 
     #[test]
@@ -553,7 +601,14 @@ mod tests {
         bytes.extend_from_slice(&px);
         let mut f = BlendField::from_tiff(TiffFile::parse(&bytes).unwrap()).unwrap();
         f.begin_edit().unwrap();
-        f.paint_mode(&Brush { cx: 10.0, cy: 2.0, radius: 6.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 0, PaintMode::Blur, &|_, _| true, &|_, _| 0.0).unwrap();
+        f.paint_mode(
+            &Brush { cx: 10.0, cy: 2.0, radius: 6.0, strength: 1.0, falloff: 0.0, ..Default::default() },
+            0,
+            PaintMode::Blur,
+            &|_, _| true,
+            &|_, _| 0.0,
+        )
+        .unwrap();
         f.end_edit();
         let (l, r) = (f.pixel(9, 2), f.pixel(10, 2));
         assert!(l[0] < FULL && l[4] > 0 && r[4] < FULL && r[0] > 0, "{l:?} {r:?}");
@@ -578,7 +633,10 @@ mod tests {
         assert_eq!(flange_pixel(&p, 2, 1.0, 0.0).unwrap()[11], FULL, "full weight: variation 3");
         let rim = flange_pixel(&p, 2, 0.25, 0.5).unwrap();
         assert_eq!((rim[8], rim[0]), (32767, 32768), "under the threshold variation 0 fades in (the tie goes to the lower channel)");
-        assert!(flange_pixel(&rim, 2, 0.1, 0.5).is_some() && flange_pixel(&[0, 0, 0, 0, 0, 0, 0, 0, FULL, 0, 0, 0, 0, 0, 0, 0], 2, 0.1, 0.5).is_none());
+        assert!(
+            flange_pixel(&rim, 2, 0.1, 0.5).is_some()
+                && flange_pixel(&[0, 0, 0, 0, 0, 0, 0, 0, FULL, 0, 0, 0, 0, 0, 0, 0], 2, 0.1, 0.5).is_none()
+        );
     }
 
     #[test]
@@ -598,7 +656,8 @@ mod tests {
 
         f.begin_edit().unwrap();
         f.paint(&Brush { cx: 63.0, cy: 64.0, radius: 9.0, strength: 0.8, falloff: 0.5, ..Default::default() }, 6, &|_, _| true).unwrap();
-        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15, &|x, _| x != 149).unwrap();
+        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15, &|x, _| x != 149)
+            .unwrap();
         f.end_edit();
         assert!(f.pixel(63, 64)[6] > 0 && f.pixel(148, 0)[15] == FULL && f.pixel(149, 0)[15] == 0, "the mask keeps column 149");
         assert_eq!(f.take_changed(), Some((55, 0, 149, 70)));

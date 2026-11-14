@@ -43,7 +43,18 @@ pub struct MaterialRequest {
 
 impl Default for MaterialRequest {
     fn default() -> Self {
-        Self { folder: PathBuf::new(), groups: TileTextureGroup::default(), x0: 0.0, z0: 0.0, x1: 0.0, z1: 0.0, y0: -100.0, y1: 1000.0, look: TerrainLook::default(), id: 1 }
+        Self {
+            folder: PathBuf::new(),
+            groups: TileTextureGroup::default(),
+            x0: 0.0,
+            z0: 0.0,
+            x1: 0.0,
+            z1: 0.0,
+            y0: -100.0,
+            y1: 1000.0,
+            look: TerrainLook::default(),
+            id: 1,
+        }
     }
 }
 
@@ -61,11 +72,24 @@ fn flat_normal() -> TerrainImage {
 /// # Errors
 ///
 /// None of the climate's textures exists.
-pub fn build_terrain_material(rq: &MaterialRequest, blend: &BlendField, climates: &ClimateList, files: &dyn Files) -> Result<(TerrainMaterial, String), String> {
+pub fn build_terrain_material(
+    rq: &MaterialRequest,
+    blend: &BlendField,
+    climates: &ClimateList,
+    files: &dyn Files,
+) -> Result<(TerrainMaterial, String), String> {
     wce_prof!("tile.terrain_material");
     let (bw, bh) = (blend.width(), blend.height());
     let mut m = TerrainMaterial {
-        id: rq.id, x0: rq.x0, z0: rq.z0, x1: rq.x1, z1: rq.z1, y0: rq.y0 - 20.0, y1: rq.y1 + 200.0, campaign: climates.kind == "campaign", ..Default::default()
+        id: rq.id,
+        x0: rq.x0,
+        z0: rq.z0,
+        x1: rq.x1,
+        z1: rq.z1,
+        y0: rq.y0 - 20.0,
+        y1: rq.y1 + 200.0,
+        campaign: climates.kind == "campaign",
+        ..Default::default()
     };
 
     // Blend / index maps (BOB's reduction of the 16 weights).
@@ -94,7 +118,9 @@ pub fn build_terrain_material(rq: &MaterialRequest, blend: &BlendField, climates
     let climate = climates.find(&rq.look.climate).or_else(|| climates.find("default"));
     let missing_text = if missing != 0 { format!(", {missing} texture(s) missing") } else { String::new() };
     let report = format!(
-        "{} {}: {wanted} layer(s){missing_text}, {bw} x {bh} blend map (the game's terrain shaders)", climate.map_or("default", |c| c.name.as_str()), rq.look.season
+        "{} {}: {wanted} layer(s){missing_text}, {bw} x {bh} blend map (the game's terrain shaders)",
+        climate.map_or("default", |c| c.name.as_str()),
+        rq.look.season
     );
 
     Ok((m, report))
@@ -122,7 +148,14 @@ pub fn patch_blend_maps(m: &mut TerrainMaterial, blend: &BlendField, (x0, y0, x1
 
 /// A material with another climate's (or season's) textures: its maps kept, its slots filled again for `look` (the groups are the
 /// tile entry's red, green, blue and alpha ones, as the material was built with). A new id for the renderer.
-pub fn retexture(base: &TerrainMaterial, groups: &TileTextureGroup, look: &TerrainLook, climates: &ClimateList, files: &dyn Files, id: u64) -> TerrainMaterial {
+pub fn retexture(
+    base: &TerrainMaterial,
+    groups: &TileTextureGroup,
+    look: &TerrainLook,
+    climates: &ClimateList,
+    files: &dyn Files,
+    id: u64,
+) -> TerrainMaterial {
     let mut m = base.clone();
     (m.diffuse, m.normal_tex) = Default::default();
     (m.detail_colour, m.detail_normal) = (String::new(), String::new());
@@ -133,7 +166,14 @@ pub fn retexture(base: &TerrainMaterial, groups: &TileTextureGroup, look: &Terra
 
 /// The textures and per-layer values of a look's climate into a material's slots (slot = 4 * group + variation), and its detail maps;
 /// with the blend map's peaks, how many of the used slots there are and how many have no texture.
-fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &TerrainLook, peak: Option<&[u32; 16]>, climates: &ClimateList, files: &dyn Files) -> (i32, i32) {
+fn apply_climate(
+    m: &mut TerrainMaterial,
+    groups: &TileTextureGroup,
+    look: &TerrainLook,
+    peak: Option<&[u32; 16]>,
+    climates: &ClimateList,
+    files: &dyn Files,
+) -> (i32, i32) {
     let climate = climates.find(&look.climate).or_else(|| climates.find("default"));
     let default_folder = climates.default_folder();
     let folder = climate.map_or_else(|| default_folder.clone(), |c| climates.folder_of(c));
@@ -234,7 +274,15 @@ fn normal_pixel(heights: &[f32], nx: i32, nz: i32, step_x: f64, step_z: f64, w: 
 /// `terrain_normal_image`'s image made again where the grid changed in `cells` (i0, j0, i1, j1; end exclusive): the pixels whose samples
 /// or their neighbours are there. The pixels written (x0, y0, x1, y1; end exclusive), none when the image is not one of this grid.
 #[allow(clippy::too_many_arguments, reason = "the image, the grid, its spacing and the cells")]
-pub fn patch_terrain_normal(img: &mut TerrainImage, heights: &[f32], nx: i32, nz: i32, step_x: f64, step_z: f64, cells: [i32; 4]) -> Option<[u32; 4]> {
+pub fn patch_terrain_normal(
+    img: &mut TerrainImage,
+    heights: &[f32],
+    nx: i32,
+    nz: i32,
+    step_x: f64,
+    step_z: f64,
+    cells: [i32; 4],
+) -> Option<[u32; 4]> {
     let (w, h) = (img.w, img.h);
     if nx < 2 || nz < 2 || heights.len() < nx as usize * nz as usize || w < 2 || h < 2 {
         return None;

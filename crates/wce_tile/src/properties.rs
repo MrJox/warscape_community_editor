@@ -100,7 +100,25 @@ pub enum Rule {
 impl Prop {
     /// The name the Inspector shows: TEd's, its attribute, or the editor's own for what TEd lacks.
     pub fn label(&self) -> &'static str {
-        if self.attr == crate::export_as_prop::EXPORT_AS_PROP_ATTR { "Export as prop" } else { self.attr }
+        match self.attr {
+            crate::export_as_prop::EXPORT_AS_PROP_ATTR => "Export as prop",
+            crate::new_instances::WALL_PROCEDURAL => "Procedural",
+            crate::building_spline::KEYS => "Buildings",
+            crate::building_spline::JOINERS => "Joiners",
+            "bspline_joiner_ends" => "Joiners at the ends",
+            "bspline_random" => "Random",
+            "bspline_seed" => "Seed",
+            "bspline_gap" => "Gap",
+            "bspline_align" => "Align to ground",
+            "bspline_tilt_across" => "Tilt across slope",
+            "bspline_closed" => "Closed loop",
+            "bspline_offset" => "Side offset",
+            "bspline_damage" => "Damage chance",
+            "bspline_flip" => "Flip chance",
+            "bspline_yaw_jitter" => "Turn jitter",
+            "bspline_side_jitter" => "Side jitter",
+            attr => attr,
+        }
     }
 }
 
@@ -214,11 +232,7 @@ const POINT_LIGHT: &[Prop] = base3d![
 const GROUP: &[Prop] = base3d![p("low_frequency_change_effect", Kind::Enum(en::LOW_FREQUENCY_CHANGE))];
 
 /// A layer: only the flags, the position and the export type are in the grid (`LayerInstance::property_flags`).
-const LAYER: &[Prop] = &[
-    p("flags", Kind::Flags),
-    p("position", Kind::Position),
-    p("export_type", Kind::Enum(en::EXPORT_TYPE)),
-];
+const LAYER: &[Prop] = &[p("flags", Kind::Flags), p("position", Kind::Position), p("export_type", Kind::Enum(en::EXPORT_TYPE))];
 
 const CAPTURE_LOCATION: &[Prop] = base3d![
     p("type", Kind::Enum(en::CAPTURE_TYPE)),
@@ -250,11 +264,16 @@ const POLYGON: &[Prop] = polygon![p("subdivision_length", Kind::Slider(0.0, 100.
 /// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), an open polyline whose points may be `sharp` (a corner). TEd does not
 /// know the class; the editor and the wall generator do.
 /// The rest of a reference is the tool's: combos of the game's units, not lines of text.
-const REFERENCE: &[Prop] = &[p("flags", Kind::Flags), p("surface_mode", Kind::Placement), p("position", Kind::Position), p("orientation", Kind::Orientation)];
+const REFERENCE: &[Prop] =
+    &[p("flags", Kind::Flags), p("surface_mode", Kind::Placement), p("position", Kind::Position), p("orientation", Kind::Orientation)];
+
+/// A tape measure (`new_instances::MEASURE_LINE`): its points are edited in the viewport, its lengths shown below the grid.
+const MEASURE: &[Prop] = &[p("flags", Kind::Flags), p("position", Kind::Position)];
 
 const WALL: &[Prop] = &[
     p("flags", Kind::Flags),
     p("position", Kind::Position),
+    p(crate::new_instances::WALL_PROCEDURAL, Kind::Bool),
     p("line_colour", Kind::Colour),
     p("selected_line_colour", Kind::Colour),
     p("wall_base", Kind::Enum(en::WALL_BASE)),
@@ -263,6 +282,48 @@ const WALL: &[Prop] = &[
     p("wall_access_every", Kind::Slider(0.0, 1000.0)),
     p("wall_defence_every", Kind::Slider(0.0, 1000.0)),
 ];
+
+/// The tooltip of a wall's (`WceWallSpline`) Inspector row: what it does, for which kind of wall, in what units. `None` for a row without
+/// one. (Only the walls have them for now; docs/plans/kit_walls.md, follow-up 6.)
+#[must_use]
+pub fn wall_tip(attr: &str) -> Option<&'static str> {
+    Some(match attr {
+        "flags" => {
+            "visible: drawn in the editor (a hidden wall has no pieces, and a kit wall's ground goes with them)\nactive: it can be selected\n\
+            draggable: the gizmo and the grab (G) move it; off, it can be selected without moving it by mistake"
+        }
+        "position" => "Where the wall's line is (its points are relative to it): moving it moves the whole line",
+        crate::new_instances::WALL_PROCEDURAL => {
+            "On: the wall is generated from its base piece, bent and stretched along the line, stepped where the \
+            ground changes level (any shape, any slope). Off: it is laid with its culture's own fort pieces, whole (straights, curves, \
+            steps, towers, caps), with a ground layer of its own under them; an end the pieces can't meet gets a short generated stretch"
+        }
+        "line_colour" => "The colour of the wall's line in the viewport",
+        "selected_line_colour" => "The colour of the wall's line while it is selected",
+        "wall_base" => {
+            "The wall's culture: its straight piece (8 m or 15 m high walls). A procedural wall is made from it; a kit wall is laid \
+            with the pieces of the same culture"
+        }
+        "wall_tolerance" => {
+            "How far the ground may rise or fall under a level stretch of a procedural wall before it steps (scene units). \
+            A kit wall uses it for its generated stretches only"
+        }
+        "wall_flip" => {
+            "Which side of the line is the wall's outer face: off, the left going from the first point to the last; on, the right"
+        }
+        "wall_access_every" => {
+            "The spacing of the door sections along the wall, the first at half of it (scene units: 2 a metre on battle maps, \
+            200 = 100 m; 0 = none). Only cultures with a door section (the 15 m walls) have them"
+        }
+        "wall_defence_every" => {
+            "The spacing of the towers and bastions along the wall, the first at half of it (scene units: 2 a metre on \
+            battle maps; 0 = none): a tower and a bastion in turn, the tower first (only bastions for the 8 m walls, which have no towers). \
+            Each tower gets a capture point over the wall behind it, which whoever holds it makes the tower fire for. A procedural wall \
+            puts them only where it is straight and level"
+        }
+        _ => return None,
+    })
+}
 
 const ROAD: &[Prop] = &[
     p("flags", Kind::Flags),
@@ -287,7 +348,68 @@ const ROAD: &[Prop] = &[
     p("road_fence_damage", Kind::Slider(0.0, 1.0)),
 ];
 
-const AI_HINT: &[Prop] = polygon![    p("subdivision_length", Kind::Slider(0.0, 100.0)),
+/// Not TEd's: a building spline (`building_spline`): buildings laid along a line. The list of buildings is edited below the grid.
+const BUILDING_SPLINE: &[Prop] = &[
+    p("flags", Kind::Flags),
+    p("position", Kind::Position),
+    p("line_colour", Kind::Colour),
+    p("selected_line_colour", Kind::Colour),
+    p(crate::building_spline::KEYS, Kind::Text),
+    p(crate::building_spline::JOINERS, Kind::Text),
+    p("bspline_joiner_ends", Kind::Bool),
+    p("bspline_random", Kind::Bool),
+    p("bspline_seed", Kind::Int(0, 9999)),
+    p("bspline_gap", Kind::Slider(-5.0, 20.0)),
+    p("bspline_align", Kind::Bool),
+    p("bspline_tilt_across", Kind::Bool),
+    p("bspline_closed", Kind::Bool),
+    p("bspline_offset", Kind::Slider(-20.0, 20.0)),
+    p("bspline_damage", Kind::Slider(0.0, 1.0)),
+    p("bspline_flip", Kind::Slider(0.0, 1.0)),
+    p("bspline_yaw_jitter", Kind::Slider(0.0, 45.0)),
+    p("bspline_side_jitter", Kind::Slider(0.0, 5.0)),
+];
+
+/// The tooltip of a building spline's (`WceBuildingSpline`) Inspector row. `None` for a row without one.
+#[must_use]
+pub fn building_spline_tip(attr: &str) -> Option<&'static str> {
+    Some(match attr {
+        "flags" => "visible: drawn in the editor (a hidden spline lays nothing); active: in the game; draggable: moved with the mouse",
+        "position" => "Where the line is (its points are relative to it): moving it moves the whole line",
+        "line_colour" => "The colour of the line in the viewport",
+        "selected_line_colour" => "The colour of the line while it is selected",
+        crate::building_spline::KEYS => {
+            "The buildings laid along the line, separated by commas (edit the list below the grid). Each is laid with its x along \
+            the line, as long as its model"
+        }
+        crate::building_spline::JOINERS => {
+            "Optional: buildings laid on each joint between two of the others (a post, a pillar), to hide the gap and break the \
+            line up; separated by commas (edit the list below the grid). Picked as the buildings are: in order, or by the seed"
+        }
+        "bspline_joiner_ends" => "A joiner at each end of the line too (an open line; a closed one has one on every joint already)",
+        "bspline_random" => "On: each building is picked from the list at random, by the seed. Off: the list repeats in order",
+        "bspline_seed" => "The seed of everything random here: the picks, the damage, the flips and the jitter",
+        "bspline_gap" => "The space between one building and the next (metres; below 0 they overlap)",
+        "bspline_align" => {
+            "Tilts each building to the slope under it, end to end, so a fence follows the ground (across too with Tilt across slope). \
+            Off: upright, its pivot on the ground"
+        }
+        "bspline_tilt_across" => {
+            "With Align to ground: each building also leans with the slope across it (on a hillside, sideways). Off: it follows the \
+            slope along the line only and stays level across"
+        }
+        "bspline_closed" => "Closes the line back to its first point (a ring: a pen, an enclosure)",
+        "bspline_offset" => "How far to the right of the line the buildings stand, as it runs from its first point (metres; below 0: left)",
+        "bspline_damage" => "The chance (0 to 1) that each building is laid destroyed, at a random damaged level",
+        "bspline_flip" => "The chance (0 to 1) that each building is turned end for end",
+        "bspline_yaw_jitter" => "How far each building may be turned about its middle, either way (degrees)",
+        "bspline_side_jitter" => "How far each building may be moved across the line, either way (metres)",
+        _ => return None,
+    })
+}
+
+const AI_HINT: &[Prop] = polygon![
+    p("subdivision_length", Kind::Slider(0.0, 100.0)),
     p("max_subdivisions", Kind::Int(0, 100)),
     Prop { attr: "generated", kind: Kind::Bool, rule: Rule::Normal, twin: Some("is_generated") },
     p("hint_type", Kind::Enum(en::AI_HINT_TYPE)),
@@ -337,7 +459,9 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "AI_HINT_POLYGON_INSTANCE" => AI_HINT,
         "WceWallSpline" => WALL,
         "WceRoadSpline" => ROAD,
-        "WceRefHuman" | "WceRefUnit" => REFERENCE,
+        "WceBuildingSpline" => BUILDING_SPLINE,
+        "WceRefHuman" | "WceRefUnit" | "WceRefShip" => REFERENCE,
+        "WceMeasureLine" | "WceAngleFinder" => MEASURE,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,
         "ZONE_POLYGON_INSTANCE" => ZONE_POLYGON,
         "AISeparatorInstance" => SEPARATOR,
@@ -345,8 +469,13 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
 
         // The polygon family that has nothing of its own in TEd (no-go, go region, siege AI, vegetation exclusion, lite building zone, capture
         // location boundaries): `POLYGON_LIST_INSTANCE_SUBDIVIDED_PROJECTED`.
-        "NOGO_REGION_POLYGON_INSTANCE" | "GO_REGION_POLYGON_INSTANCE" | "SIEGE_AI_POLYGON_INSTANCE" | "VegetationExclusionPolygonInstance"
-        | "LiteBuildingZone" | "CaptureLocationPolygonInstance" | "EF_POLYGON_INSTANCE" => POLYGON,
+        "NOGO_REGION_POLYGON_INSTANCE"
+        | "GO_REGION_POLYGON_INSTANCE"
+        | "SIEGE_AI_POLYGON_INSTANCE"
+        | "VegetationExclusionPolygonInstance"
+        | "LiteBuildingZone"
+        | "CaptureLocationPolygonInstance"
+        | "EF_POLYGON_INSTANCE" => POLYGON,
         _ => return None,
     })
 }
@@ -374,13 +503,37 @@ pub fn access(prop: &Prop, ctx: &RuleContext) -> Access {
         Rule::ReadOnly => Access::ReadOnly,
         Rule::Hidden => Access::Hidden,
         Rule::FortWall => match ctx.category {
-            Some(c) => if c == "fort_wall" { Access::Edit } else { Access::Hidden },
-            None => if ctx.present { Access::Edit } else { Access::Hidden },
+            Some(c) => {
+                if c == "fort_wall" {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
+            None => {
+                if ctx.present {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
         },
 
         Rule::FortWallOrUnbreachable => match ctx.category {
-            Some(c) => if c == "fort_wall" || c == "unbreachable_fort_wall" { Access::Edit } else { Access::Hidden },
-            None => if ctx.present { Access::Edit } else { Access::Hidden },
+            Some(c) => {
+                if c == "fort_wall" || c == "unbreachable_fort_wall" {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
+            None => {
+                if ctx.present {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
         },
 
         Rule::CircleShape => match ctx.shape {
@@ -388,7 +541,13 @@ pub fn access(prop: &Prop, ctx: &RuleContext) -> Access {
             _ => Access::Hidden,
         },
 
-        Rule::NoCaptureLocation => if ctx.capture_location { Access::ReadOnly } else { Access::Edit },
+        Rule::NoCaptureLocation => {
+            if ctx.capture_location {
+                Access::ReadOnly
+            } else {
+                Access::Edit
+            }
+        }
         Rule::WhenExportedAsProp => {
             if ctx.export_as_prop {
                 Access::Edit
@@ -491,6 +650,13 @@ pub fn format_seasons(on: [bool; 4]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_row_of_a_wall_has_a_tooltip() {
+        for p in WALL {
+            assert!(wall_tip(p.attr).is_some_and(|t| !t.is_empty()), "{} has no tooltip", p.attr);
+        }
+    }
 
     #[test]
     fn colours_keep_one_decimal_like_ted() {

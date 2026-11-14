@@ -141,7 +141,12 @@ fn check_map(dir: &Path, kind: MapKind, t: &mut Totals) {
         }
     }
 
-    let texts = m.xml.iter().map(|x| x.path.clone()).chain(m.explicit.iter().map(|e| e.path.clone())).chain(m.project.iter().map(|p| p.path.clone()));
+    let texts = m
+        .xml
+        .iter()
+        .map(|x| x.path.clone())
+        .chain(m.explicit.iter().map(|e| e.path.clone()))
+        .chain(m.project.iter().map(|p| p.path.clone()));
     for path in texts.collect::<Vec<_>>() {
         if bytes(&files.folder[&path]) == bytes(&out.folder[&path]) {
             t.text += 1;
@@ -197,15 +202,27 @@ fn check_map(dir: &Path, kind: MapKind, t: &mut Totals) {
 
     println!(
         "{label}: {} files, {} layers, {} LF, explicit {}, terry {}, {} xml, {} carried; {:.1} MB decoded; read {read_ms} ms, all {} ms",
-        files.folder.len(), m.layers.len(), m.lf.len(), m.explicit.is_some(), m.project.as_ref().map_or(0, |p| p.get().entities.len()), m.xml.len(),
-        m.carried.len(), m.decoded_bytes() as f64 / 1e6, start.elapsed().as_millis()
+        files.folder.len(),
+        m.layers.len(),
+        m.lf.len(),
+        m.explicit.is_some(),
+        m.project.as_ref().map_or(0, |p| p.get().entities.len()),
+        m.xml.len(),
+        m.carried.len(),
+        m.decoded_bytes() as f64 / 1e6,
+        start.elapsed().as_millis()
     );
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let filter = args.iter().position(|a| a == "--filter").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
-    let roots: Vec<PathBuf> = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--filter")).map(|(_, a)| PathBuf::from(a)).collect();
+    let roots: Vec<PathBuf> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--filter"))
+        .map(|(_, a)| PathBuf::from(a))
+        .collect();
     if roots.is_empty() {
         eprintln!("map_roundtrip_check <raw_data>... [--filter <substring>]");
         std::process::exit(2);
@@ -227,7 +244,14 @@ fn main() {
 
     println!(
         "{} maps, {} files; made again: {} PNGs byte for byte, {} the same pixels (another encoder), {} TIFFs, {} text files; {} minimal edits; {} failures",
-        t.maps, t.files, t.png_exact, t.png_pixels, t.tiff, t.text, t.edits, t.failures.len()
+        t.maps,
+        t.files,
+        t.png_exact,
+        t.png_pixels,
+        t.tiff,
+        t.text,
+        t.edits,
+        t.failures.len()
     );
 
     if !t.failures.is_empty() {

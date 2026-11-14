@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 wce_foundation = { path = "../wce_foundation" }
 wce_scene = { path = "../wce_scene" }
+
+[lints]
+workspace = true

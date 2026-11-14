@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 
-
 use super::TileDocument;
 
 /// The tile folder of a path (`terrain/tiles/<kind>/.../<variation>`, `/` separated), if it has one.
@@ -42,7 +41,7 @@ fn copy_entry(entry_xml: &Path, from_raw: &Path, to_raw: &Path, kind: &str) -> R
         let _ = std::fs::copy(&target, target.with_extension("xml.bak"));
     }
 
-    std::fs::write(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
+    wce_foundation::files::write_replacing(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
     let settings = database(to_raw).join("_settings.xml");
     let kit_settings = database(from_raw).join("_settings.xml");
     if !settings.exists() && kit_settings.is_file() {
@@ -74,6 +73,35 @@ impl TileDocument {
         let tile = self.tile_mut();
         tile.pack_categories = Some(categories);
         tile.building_db = std::cell::OnceCell::new();
+    }
+
+    /// The Assembly Kit whose battle tiles' colours a tile made by Save as must differ from (`save_as_new_tile`).
+    pub fn set_colour_kit(&mut self, kits: Vec<PathBuf>) {
+        self.tile_mut().colour_kits = kits;
+    }
+
+    /// The tile set, name and variation a Save as into `target` makes, when it makes a new tile: a battle tile's variation folder in the
+    /// projects (`<projects>/raw_data/terrain/tiles/battle/<set>/<name>/<variation>`, or a file in one) that is not the open tile's own, the
+    /// open tile having a database entry to make the new one's from. Saved there as is, the folder would hold a tile no entry points to:
+    /// it would open again without its height range, size and colour.
+    pub fn save_as_new_tile(&self, target: &Path) -> Option<(String, String, String)> {
+        let folder = if target.extension().is_some() { target.parent()? } else { target };
+        let raw = self.projects_root()?.join("raw_data");
+        let rel = folder.strip_prefix(&raw).ok()?.to_string_lossy().replace('\\', "/");
+        let parts = rel.trim_matches('/').split('/').collect::<Vec<_>>();
+        let [terrain, tiles, kind, set, name, variation] = parts[..] else { return None };
+        if !terrain.eq_ignore_ascii_case("terrain") || !tiles.eq_ignore_ascii_case("tiles") || !kind.eq_ignore_ascii_case("battle") {
+            return None;
+        }
+
+        let p = self.project();
+        let entry = p.entry.as_ref()?;
+        let own = format!("{}/{}", entry.location().replace('\\', "/"), entry.variations().get(p.variation?)?.location);
+        if own.eq_ignore_ascii_case(rel.trim_matches('/')) {
+            return None;
+        }
+
+        Some((set.to_owned(), name.to_owned(), variation.to_owned()))
     }
 
     pub fn projects_root(&self) -> Option<&Path> {
@@ -144,7 +172,7 @@ impl TileDocument {
     ///
     /// No projects folder, a bad name, no database entry, a tile of another size or a variation that exists already, or a file can't be
     /// written.
-    pub fn save_tile_as(&mut self, set: &str, name: &str, variation: &str, kit: Option<&Path>) -> Result<String, String> {
+    pub fn save_tile_as(&mut self, set: &str, name: &str, variation: &str, kits: &[PathBuf]) -> Result<String, String> {
         use wce_formats::tile_entry::TileEntry;
         use wce_tile::new_tile::{check_name, colour_of, colour_sources, colours_in};
 
@@ -162,7 +190,13 @@ impl TileDocument {
         let (mut there, index) = if entry_path.is_file() {
             let mut there = TileEntry::load(&entry_path).map_err(|e| e.to_string())?;
             if (there.width(), there.height()) != (entry.width(), entry.height()) {
-                return Err(format!("{set}/{name} is a {} x {} tile: a {} x {} tile can't be saved as a variation of it", there.width(), there.height(), entry.width(), entry.height()));
+                return Err(format!(
+                    "{set}/{name} is a {} x {} tile: a {} x {} tile can't be saved as a variation of it",
+                    there.width(),
+                    there.height(),
+                    entry.width(),
+                    entry.height()
+                ));
             }
 
             if there.find_variation(&variation).is_some() {
@@ -179,8 +213,8 @@ impl TileDocument {
             there.set_file(&entry_path);
             there.set_tile_attr("location", &format!("terrain\\tiles\\battle\\{set}\\{name}"));
             there.set_tile_attr("tile_set", &set);
-            let taken = colours_in(&colour_sources(&raw, kit));
-            let c = colour_of(&format!("{set}/{name}/{variation}"), kit, &taken);
+            let taken = colours_in(&colour_sources(&raw, kits));
+            let c = colour_of(&format!("{set}/{name}/{variation}"), kits.first().map(PathBuf::as_path), &taken);
             for (attr, value) in ["red", "green", "blue"].into_iter().zip(c) {
                 there.set_tile_attr(attr, &format!("{:.6}", f64::from(value)));
             }
@@ -193,7 +227,8 @@ impl TileDocument {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
 
-        std::fs::write(&entry_path, there.save()).map_err(|_| format!("could not write {}", entry_path.display()))?;
+        wce_foundation::files::write_replacing(&entry_path, there.save())
+            .map_err(|_| format!("could not write {}", entry_path.display()))?;
         there = TileEntry::load(&entry_path).map_err(|e| e.to_string())?;
         wce_formats::tile_index::TileIndex::forget_shared();
 
@@ -239,18 +274,21 @@ impl TileDocument {
         let all = t.instances.clone();
         let set = all.iter().copied().collect::<std::collections::HashSet<_>>();
         let sc = t.tscene();
-        let top = all.into_iter().filter(|&e| {
-            let mut p = sc.doc().elements()[e].parent;
-            while let Some(q) = p {
-                if set.contains(&q) {
-                    return false;
+        let top = all
+            .into_iter()
+            .filter(|&e| {
+                let mut p = sc.doc().elements()[e].parent;
+                while let Some(q) = p {
+                    if set.contains(&q) {
+                        return false;
+                    }
+
+                    p = sc.doc().elements()[q].parent;
                 }
 
-                p = sc.doc().elements()[q].parent;
-            }
-
-            true
-        }).collect::<Vec<_>>();
+                true
+            })
+            .collect::<Vec<_>>();
 
         if delta != wce_foundation::math::Double3::ZERO && !top.is_empty() {
             let mark = self.begin()?;
@@ -272,7 +310,7 @@ impl TileDocument {
         let mut there = wce_formats::tile_entry::TileEntry::load(&file).map_err(|e| e.to_string())?;
         there.set_tile_attr("width", &r.cells.0.to_string());
         there.set_tile_attr("height", &r.cells.1.to_string());
-        std::fs::write(&file, there.save()).map_err(|_| format!("could not write {}", file.display()))?;
+        wce_foundation::files::write_replacing(&file, there.save()).map_err(|_| format!("could not write {}", file.display()))?;
         wce_formats::tile_index::TileIndex::forget_shared();
 
         let msg = wce_tile::resize::resize_maps(&dir, old, density, r)?;
@@ -290,12 +328,16 @@ impl TileDocument {
         self.tile_mut().finish_road_jobs();
         let files = self.tile().files.as_deref();
         let models_in = |folder: &str| files.map_or_else(Vec::new, |f| f.list(folder, ".rigid_model_v2"));
-        let (text, report) = wce_tile::export_as_prop::apply(self.tile().tscene().save(), files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn))?;
+        let (text, report) = wce_tile::export_as_prop::apply(
+            self.tile().tscene().save(),
+            files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn),
+        )?;
         for line in if for_kit { report.kit_notes() } else { report.notes() } {
             wce_foundation::log::info(line);
         }
 
-        self.tile().with_road_items(text)
+        let text = self.tile().with_road_items(text)?;
+        self.tile().with_building_spline_items(text)
     }
 
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.
@@ -307,23 +349,33 @@ impl TileDocument {
     /// The tile is not in a kit's layout, it has walls and no `walls` sources, a wall can't be made, or a file can't be written.
     pub fn save_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>) -> Result<String, String> {
         self.end_stroke();
-        let folder = tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
+        let folder =
+            tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
         let target = kit_raw.join(&folder);
         let text = self.text_for_export(true)?;
         let (msg, report) = match walls {
             Some(w) if self.tile().has_generated_buildings() => {
-                let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data)?;
+                let kit_walls = self.tile_mut().kit_walls_for_export();
+                let (scene, n, notes) =
+                    wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data, &kit_walls)?;
                 for line in &notes {
                     wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
                 }
 
-                let polyfill = format!("{n} procedural wall(s) written as their pieces in the layer '{}' ({})", wce_walls::export::KIT_LAYER, wce_walls::pack::PROC_PACK);
+                let polyfill = format!(
+                    "{n} wall(s) written as their pieces in the layer '{}' ({})",
+                    wce_walls::export::KIT_LAYER,
+                    wce_walls::pack::PROC_PACK
+                );
                 let maps = self.tile_mut().project.export_maps()?;
                 self.project().save_for_kit_scene(&target, scene, vec![polyfill], &maps)?
             }
 
             None if self.tile().has_generated_buildings() => {
-                return Err(format!("the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})", wce_walls::pack::PROC_PACK));
+                return Err(format!(
+                    "the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})",
+                    wce_walls::pack::PROC_PACK
+                ));
             }
 
             w => {
@@ -357,7 +409,8 @@ impl TileDocument {
             if ours != kits && ours.is_file() && kits.is_file() {
                 let added = wce_tile::tile_sets::merge_into(&ours, &kits, &names)?;
                 if !added.is_empty() {
-                    msg += &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
+                    msg +=
+                        &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
                 }
             }
         }
@@ -365,13 +418,16 @@ impl TileDocument {
         Ok(msg)
     }
 
-    /// The procedural walls of the tile as text, each with the layer path it is in (to put back with [`Self::restore_walls`]).
+    /// The walls of the tile (both kinds) and its building splines as text, each with the layer path it is in (to put back with
+    /// [`Self::restore_walls`]).
     pub fn wall_texts(&self) -> Vec<(String, Vec<u8>)> {
         let sc = self.tile().tscene();
-        wce_walls::scene::walls(sc).into_iter().map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
+        let splines = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == super::BUILDING_SPLINE);
+        wce_walls::scene::all_walls(sc).into_iter().chain(splines).map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
     }
 
-    /// Import from Assembly Kit of a tile whose project has walls: the layer of their pieces (`wce_walls::export::KIT_LAYER`) goes and the
+    /// Import from Assembly Kit of a tile whose project has walls or building splines: the layers of their pieces (`wce_walls::export::KIT_LAYER`,
+    /// `building_splines::KIT_LAYER`) go and the
     /// walls are put back, each in its layer (the scene graph when it is no longer there); one undo entry. Returns how many were put back.
     ///
     /// # Errors
@@ -380,19 +436,30 @@ impl TileDocument {
     pub fn restore_walls(&mut self, walls: &[(String, Vec<u8>)]) -> Result<usize, String> {
         let sc = self.tile().tscene();
         let graph = sc.scene_graph().ok_or("this tile has no scene graph")?;
-        let pieces = sc.children(graph).into_iter().filter(|&c| sc.is_layer(c) && sc.name(c) == wce_walls::export::KIT_LAYER).collect::<Vec<_>>();
+        let pieces = sc
+            .children(graph)
+            .into_iter()
+            .filter(|&c| {
+                sc.is_layer(c) && [wce_walls::export::KIT_LAYER, super::building_splines::KIT_LAYER].iter().any(|n| sc.name(c) == *n)
+            })
+            .collect::<Vec<_>>();
         if walls.is_empty() && pieces.is_empty() {
             return Ok(0);
         }
 
         let mark = self.begin()?;
         for &l in pieces.iter().rev() {
-            self.tscene_mut().remove(l)?;
+            if let Err(e) = self.tscene_mut().remove(l) {
+                return self.rolled_back(mark, e);
+            }
         }
 
         for (layer, text) in walls {
             let into = self.tile().find_layer(layer).unwrap_or(graph);
-            self.tscene_mut().insert_element_text(into, text)?;
+            if let Err(e) = self.tscene_mut().insert_element_text(into, text) {
+                // Taken back: the pieces too, not the walls lost.
+                return self.rolled_back(mark, e);
+            }
         }
 
         self.push_splice("Restore the procedural walls".to_owned(), mark, vec![], vec![]);
@@ -419,6 +486,8 @@ impl TileDocument {
     /// The warning about them, if there are any.
     pub fn exclusion_warning(&self) -> Option<String> {
         let n = self.trees_outside_exclusions().len();
-        (n != 0).then(|| format!("{n} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out (Tile panel > Problems)"))
+        (n != 0).then(|| {
+            format!("{n} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out (Tile panel > Problems)")
+        })
     }
 }

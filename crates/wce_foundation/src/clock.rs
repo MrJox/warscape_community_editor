@@ -17,7 +17,6 @@ pub struct Clock {
 }
 
 impl Clock {
-
     /// A clock that follows the wall time.
     pub fn live() -> Self {
         Self::new(0.0)

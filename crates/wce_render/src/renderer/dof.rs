@@ -24,14 +24,26 @@ pub(crate) struct UavTarget {
 
 fn uav_target(dev: &ID3D11Device, w: u32, h: u32) -> UavTarget {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16G16B16A16_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: w,
+        Height: h,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R16G16B16A16_FLOAT,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS) as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let Ok(tex) = dev.create_texture_2d(&td, None) else { return UavTarget::default() };
     let res: ID3D11Resource = tex.clone().into();
     UavTarget {
-        t: Target { rtv: dev.create_render_target_view(&tex, None).ok(), srv: dev.create_shader_resource_view(&tex, None).ok(), tex: Some(tex) },
+        t: Target {
+            rtv: dev.create_render_target_view(&tex, None).ok(),
+            srv: dev.create_shader_resource_view(&tex, None).ok(),
+            tex: Some(tex),
+        },
         uav: dev.create_unordered_access_view(&res, None).ok(),
         w,
         h,

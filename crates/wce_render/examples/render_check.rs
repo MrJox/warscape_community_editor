@@ -54,9 +54,19 @@ fn make_device() -> Option<Gpu> {
         let driver = if adapter.is_some() { D3D_DRIVER_TYPE_UNKNOWN } else { D3D_DRIVER_TYPE_HARDWARE };
         let (mut dev, mut ctx) = (None, None);
         let flags = if debug { D3D11_CREATE_DEVICE_DEBUG as u32 } else { 0 };
-        D3D11CreateDevice(adapter.as_ref(), driver, HMODULE::default(), flags, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&mut dev), None, Some(&mut ctx))
-            .ok()
-            .ok()?;
+        D3D11CreateDevice(
+            adapter.as_ref(),
+            driver,
+            HMODULE::default(),
+            flags,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .ok()
+        .ok()?;
         Some(Gpu { dev: dev?, ctx: ctx? })
     }
 }
@@ -94,7 +104,10 @@ impl Pixels {
         for y in (cy - radius).max(0)..=(cy + radius).min(self.h - 1) {
             for x in (cx - radius).max(0)..=(cx + radius).min(self.w - 1) {
                 let p = self.at(x, y);
-                if (i32::from(p[0]) - rgb[0]).abs() <= tol && (i32::from(p[1]) - rgb[1]).abs() <= tol && (i32::from(p[2]) - rgb[2]).abs() <= tol {
+                if (i32::from(p[0]) - rgb[0]).abs() <= tol
+                    && (i32::from(p[1]) - rgb[1]).abs() <= tol
+                    && (i32::from(p[2]) - rgb[2]).abs() <= tol
+                {
                     n += 1;
                 }
             }
@@ -141,7 +154,10 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         let terrain_id = scene.entities().iter().rev().find(|e| matches!(e.payload, Payload::Terrain(_))).map_or(0, |e| e.id);
         let vp = ViewParams { camera: cam, time_s: 0.0 };
         g.check(r1.pick(&scene, &vp, &t1, 10, 2) == 0, "picking the sky finds nothing");
-        let ground_hits = [W as i32 - 8, W as i32 - 30, W as i32 - 60].into_iter().filter(|&x| r1.pick(&scene, &vp, &t1, x, H as i32 - 8) == terrain_id).count();
+        let ground_hits = [W as i32 - 8, W as i32 - 30, W as i32 - 60]
+            .into_iter()
+            .filter(|&x| r1.pick(&scene, &vp, &t1, x, H as i32 - 8) == terrain_id)
+            .count();
         g.check(ground_hits >= 2, "picking the ground at the bottom of the view finds the terrain entity");
         let (mut house_hits, mut houses_in_view) = (0, 0);
         for item in 1..=sm.buildings as u64 {
@@ -156,7 +172,9 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
                 let Some(m) = r1.models().model(&mi.model) else { continue };
                 for k in 0..8 {
                     let c = Float3::new(
-                        if k & 1 != 0 { m.bmax.x } else { m.bmin.x }, if k & 2 != 0 { m.bmax.y } else { m.bmin.y }, if k & 4 != 0 { m.bmax.z } else { m.bmin.z },
+                        if k & 1 != 0 { m.bmax.x } else { m.bmin.x },
+                        if k & 2 != 0 { m.bmax.y } else { m.bmin.y },
+                        if k & 4 != 0 { m.bmax.z } else { m.bmin.z },
                     );
                     let w = e.world.transform_point(c);
                     lo = Float3::new(lo.x.min(w.x), lo.y.min(w.y), lo.z.min(w.z));
@@ -183,7 +201,10 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         println!("houses in view {houses_in_view}, picked right {house_hits}");
 
         // The centre of a bounding box can be empty air (an arch) or hidden behind another house, so only a share has to match.
-        g.check(houses_in_view > 0 && house_hits >= 2 && house_hits * 3 >= houses_in_view, "picking the centre of a house often finds a piece of that house");
+        g.check(
+            houses_in_view > 0 && house_hits >= 2 && house_hits * 3 >= houses_in_view,
+            "picking the centre of a house often finds a piece of that house",
+        );
 
         // A locked layer is not pickable, a hidden one is not drawn.
         let (bx, by) = (W as i32 - 8, H as i32 - 8);
@@ -218,12 +239,14 @@ fn run(g: &mut Gate, env_path: &str) -> Result<(), String> {
         let marks = scene.add_layer(2, "Overlays");
 
         // Above the peak: always visible.
-        let mut up = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false };
+        let mut up =
+            Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false };
         up.line(Float3::new(0.0, 41.0, 0.0), Float3::new(0.0, 110.0, 0.0), overlay_colour(1.0, 0.0, 1.0, 1.0));
         let up_id = scene.add(marks, Float4x4::IDENTITY, Payload::Overlay(up), SourceRef { doc: 2, item: 1 });
 
         // Inside the hill: hidden by the depth test, visible without it.
-        let mut buried = Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false };
+        let mut buried =
+            Overlay { lines: vec![], triangles: vec![], depth_test: true, pickable: true, selection_mask: false, own_buffer: false };
         buried.line(Float3::new(0.0, 2.0, 0.0), Float3::new(0.0, 30.0, 0.0), overlay_colour(0.0, 1.0, 0.0, 1.0));
         let buried_id = scene.add(marks, Float4x4::IDENTITY, Payload::Overlay(buried), SourceRef { doc: 2, item: 2 });
         scene.environment.active = Some(env.clone());
@@ -295,4 +318,3 @@ fn main() {
     println!("{}", if g.failures != 0 { "FAILED" } else { "all passed" });
     std::process::exit(i32::from(g.failures != 0));
 }
-

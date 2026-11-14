@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use wce_formats::c_num::strtod;
 use wce_formats::env_value::{EnvValue, ValueKind, parse_value};
 use wce_formats::xml_doc::XmlDoc;
-use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::game::GameProfile;
+use wce_foundation::math::{Float3, Float4x4, normalize};
 
 use crate::clouds::{CloudPlane, read_cloud_planes};
 use crate::half::f32_to_f16;
@@ -202,7 +202,6 @@ impl Default for EnvironmentParams {
 }
 
 impl EnvironmentParams {
-
     /// The environment as seen in a scene turned `yaw` degrees about the vertical from the battle's frame (the battle's +z, its north, is
     /// the scene's (sin yaw, cos yaw)): the sun's azimuth turns with it, and the ambient cube's four sides are read again along the turned
     /// directions (exact for quarter turns; between them each side mixes its two neighbours by cos^2 / sin^2). ASSUMPTION: left / right
@@ -224,7 +223,8 @@ impl EnvironmentParams {
             px * (bx * bx) + pz * (bz * bz)
         };
 
-        (e.ambient_right, e.ambient_left, e.ambient_front, e.ambient_back) = (side(1.0, 0.0), side(-1.0, 0.0), side(0.0, 1.0), side(0.0, -1.0));
+        (e.ambient_right, e.ambient_left, e.ambient_front, e.ambient_back) =
+            (side(1.0, 0.0), side(-1.0, 0.0), side(0.0, 1.0), side(0.0, -1.0));
         e
     }
 
@@ -242,7 +242,6 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-
     /// The first element with this name anywhere in the document (each appears once in practice).
     fn new(doc: &'a XmlDoc, name: &str) -> Self {
         Self { doc, elem: doc.elements().iter().position(|el| el.name == name) }
@@ -511,7 +510,27 @@ pub struct GraphicsOptions {
 impl Default for GraphicsOptions {
     fn default() -> Self {
         Self {
-            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, building_quality: 3, unit_quality: 3, tree_quality: 3, sky_quality: 3, reflections: 2, effects_quality: 3, grain: false, cloud_shadows: false, god_rays: false, aa: 0, alpha_blend: 0, tessellation: false, texture_filtering: 3,
+            gamma: 2.2,
+            brightness: 1.0,
+            vignette: true,
+            ssao: true,
+            distortion: true,
+            depth_of_field: 1,
+            shadow_quality: 3,
+            water_quality: 3,
+            building_quality: 3,
+            unit_quality: 3,
+            tree_quality: 3,
+            sky_quality: 3,
+            reflections: 2,
+            effects_quality: 3,
+            grain: false,
+            cloud_shadows: false,
+            god_rays: false,
+            aa: 0,
+            alpha_blend: 0,
+            tessellation: false,
+            texture_filtering: 3,
             values: BTreeMap::new(),
         }
     }
@@ -609,6 +628,27 @@ pub fn preferences_file(game: &GameProfile) -> Option<PathBuf> {
 pub fn read_output_settings(game: &GameProfile) -> (f32, f32) {
     let o = read_graphics_options(game);
     (o.gamma, o.brightness)
+}
+
+/// The battle fog's opacity over the ground (battlefog.hlsl ps30_main, its DXBC and GLSL listing agree; docs/re/renderer.md, "Battle
+/// fog"; the Weather tool's fog rings and the Inspector's fog curve) at `r` metres from the point below the camera, the camera `h` metres over a ground at height `y`:
+/// saturate((height_strength * smoothstep((top - y - bottom) / (top - bottom)) + saturate(scale * (1 - exp(-(d / L - S))))) * smoothstep(min(r /
+/// clear, 1))), with d the distance from the camera, L = (1 - saturate(strength)) * 1000 metres, S = 8 * saturate(start) - 4 (start less
+/// the precipitation modifier) and bottom 0 (as the renderer sets it).
+pub fn fog_opacity(p: &EnvironmentParams, r: f32, h: f32, y: f32) -> f32 {
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let top = p.fog_height_top.max(0.001);
+    let height = smooth((top - y) / top);
+    let l = (1.0 - p.fog_distance_strength.clamp(0.0, 1.0)) * 1000.0;
+    let s = 8.0 * (p.fog_distance_start - p.fog_precipitation_distance_modifier).clamp(0.0, 1.0) - 4.0;
+    let d = r.hypot(h);
+    let distance =
+        if l > 1e-6 { (p.fog_distance_scale * (1.0 - (-(d / l - s)).exp())).clamp(0.0, 1.0) } else { p.fog_distance_scale.clamp(0.0, 1.0) };
+    let clear = smooth((r / p.fog_clear_distance.max(0.001)).min(1.0));
+    ((p.fog_height_strength * height + distance) * clear).clamp(0.0, 1.0)
 }
 
 /// A colour of the files to linear light: pow 2.2 (verified against the sun, sky, fog and ambient constants of 3 dumps).

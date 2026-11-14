@@ -32,8 +32,12 @@ pub fn type_icon(ty: &str) -> &'static str {
         "SEGMENTED_SPLINE_INSTANCE" => icons::SPLINE,
         "WceWallSpline" => icons::BRICK_WALL,
         "WceRoadSpline" => icons::ROUTE,
+        "WceBuildingSpline" => icons::BOXES,
         "WceRefHuman" => icons::USER,
         "WceRefUnit" => icons::USERS,
+        "WceRefShip" => icons::SAILBOAT,
+        "WceMeasureLine" => icons::RULER,
+        "WceAngleFinder" => icons::ANGLE,
         "LayerInstance" | "SCENE_GRAPH" => icons::LAYERS,
         "UserInstanceGroup" | "INSTANCE_GROUP" | "LAYER_INSTANCE_GROUP" => icons::BOXES,
         _ => icons::CIRCLE_HELP,
@@ -69,15 +73,23 @@ pub fn type_name(ty: &str) -> &'static str {
         "SEGMENTED_SPLINE_INSTANCE" => "Road",
         "WceWallSpline" => "Wall (procedural)",
         "WceRoadSpline" => "Road (procedural)",
+        "WceBuildingSpline" => "Building spline (fences, palisades)",
         "WceRefHuman" => "ref_human (a soldier, for scale)",
         "WceRefUnit" => "ref_unit (a whole unit, for scale)",
+        "WceRefShip" => "ref_ship (a naval unit: its ship and men, for scale)",
+        "WceMeasureLine" => "Tape measure (editor only)",
+        "WceAngleFinder" => "Angle finder (editor only)",
         _ => "Other",
     }
 }
 
 /// A layer's export types (without the `LayerExportType_` prefix), as TEd's layer properties name them.
 pub const EXPORT_TYPES: [(&str, &str); 6] = [
-    ("Normal", "Export"), ("Off", "Don't Export"), ("Separate", "Export Separately"), ("Escalation1", "Escalation 1"), ("Escalation2", "Escalation 2"),
+    ("Normal", "Export"),
+    ("Off", "Don't Export"),
+    ("Separate", "Export Separately"),
+    ("Escalation1", "Escalation 1"),
+    ("Escalation2", "Escalation 2"),
     ("Escalation3", "Escalation 3"),
 ];
 

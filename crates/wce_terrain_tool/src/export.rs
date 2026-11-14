@@ -16,6 +16,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
 
 use wce_editor::editor::Editor;
+use wce_foundation::log;
 use wce_scene::render_scene::DocumentId;
 use wce_terrain_editor::MapDocument;
 use wce_terrain_io::attila::build::{BuildInputs, build};
@@ -51,9 +52,16 @@ impl ExportJob {
     }
 }
 
-/// The first of the kits' files (`raw_data` relative), in the data source order.
-fn kit_file(roots: &[PathBuf], rel: &str) -> Vec<u8> {
-    roots.iter().find_map(|r| std::fs::read(r.join(rel)).ok()).unwrap_or_default()
+/// The first of the kits' files (`raw_data` relative), in the data source order, else the packs' (`pack_path`); empty, with a warning in
+/// the log, when none has it.
+fn kit_file(roots: &[PathBuf], rel: &str, packs: Option<&dyn wce_vfs::files::Files>, pack_path: &str) -> Vec<u8> {
+    wce_tile::sources::first_file(roots, rel)
+        .and_then(|p| std::fs::read(p).ok())
+        .or_else(|| packs.and_then(|f| f.read(pack_path).ok()))
+        .unwrap_or_else(|| {
+            log::warn(format!("terrain export: no kit or pack has {rel}: the export goes on without it"));
+            vec![]
+        })
 }
 
 /// A map's folder in the packs (`terrain/battles/<map>`, a campaign map's `terrain/campaigns/<map>`) and its bare name.
@@ -81,7 +89,7 @@ fn write(out: &Path, map: &str, files: &[(String, Vec<u8>)], profile: &wce_vfs::
             std::fs::create_dir_all(p).map_err(|err| format!("{}: {err}", p.display()))?;
         }
 
-        std::fs::write(&path, bytes).map_err(|err| format!("{}: {err}", path.display()))?;
+        wce_foundation::files::write_replacing(&path, bytes).map_err(|err| format!("{}: {err}", path.display()))?;
     }
 
     let pack = out.join(format!("terrain_{name}.pack"));
@@ -99,8 +107,9 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     let model = d.model().ok_or("a map of the game's packs can't be exported (open the kit's map)")?.clone();
     let map = d.name.clone();
     let revision = wce_editor_core::document::Document::history(d).version();
-    let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml");
-    let upgrades = kit_file(kit_roots, "terrain/tiles/battle/tile_upgrades.xml");
+    let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml", None, "");
+    let upgrades =
+        kit_file(kit_roots, "terrain/tiles/battle/tile_upgrades.xml", e.files().as_deref(), "terrain/tiles/battle/tile_upgrades.xml");
     let profile = e.game();
     let packs = e.files();
     let (tx, rx) = channel();
@@ -108,10 +117,21 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     std::thread::spawn(move || {
         let t0 = Instant::now();
         let built = if model.built { Some(built_changes(&model, &db, &name, packs.as_deref())) } else { None };
-        let r = built.unwrap_or_else(|| build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string()))
+        let r = built
+            .unwrap_or_else(|| {
+                build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string())
+            })
             .and_then(|b| {
                 let (folder, pack) = write(&out, &name, &b.files, profile)?;
-                Ok(Exported { map: name.clone(), revision, folder, pack, files: b.files, messages: b.messages, secs: t0.elapsed().as_secs_f64() })
+                Ok(Exported {
+                    map: name.clone(),
+                    revision,
+                    folder,
+                    pack,
+                    files: b.files,
+                    messages: b.messages,
+                    secs: t0.elapsed().as_secs_f64(),
+                })
             });
         let _ = tx.send(r);
     });
@@ -120,7 +140,12 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
 }
 
 /// A built map's files that differ from the packs' (or the packs lack), as a build's.
-fn built_changes(model: &wce_terrain::MapModel, db: &TileDatabase, name: &str, packs: Option<&dyn wce_vfs::files::Files>) -> Result<wce_terrain_io::attila::build::Built, String> {
+fn built_changes(
+    model: &wce_terrain::MapModel,
+    db: &TileDatabase,
+    name: &str,
+    packs: Option<&dyn wce_vfs::files::Files>,
+) -> Result<wce_terrain_io::attila::build::Built, String> {
     let written = wce_terrain_io::built::write(model, Some(db)).map_err(|err| err.to_string())?;
     let (folder, _) = game_folder(name);
     let mut files = vec![];
@@ -140,7 +165,12 @@ pub fn summary(x: &Exported) -> String {
     let bytes: usize = x.files.iter().map(|f| f.1.len()).sum();
     let mut m = format!(
         "exported {}: {} files, {:.1} MB in {:.1} s, to {} and {}",
-        x.map, x.files.len(), bytes as f64 / 1e6, x.secs, x.folder.display(), x.pack.display()
+        x.map,
+        x.files.len(),
+        bytes as f64 / 1e6,
+        x.secs,
+        x.folder.display(),
+        x.pack.display()
     );
 
     if !x.messages.is_empty() {

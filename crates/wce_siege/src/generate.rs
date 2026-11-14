@@ -90,11 +90,22 @@ pub const MIN_ENTRY_GAP: f64 = 20.0;
 
 /// The settlement's barrier attempts: whether the buildings are part of it, and the radius its gaps are closed with.
 const ENCLOSURES: [(bool, f64); 11] = [
-    (false, 0.0), (false, 6.0), (false, 12.0), (false, 24.0), (true, 12.0), (true, 24.0), (true, 40.0), (true, 60.0), (true, 90.0),
-    (true, 130.0), (true, 180.0),
+    (false, 0.0),
+    (false, 6.0),
+    (false, 12.0),
+    (false, 24.0),
+    (true, 12.0),
+    (true, 24.0),
+    (true, 40.0),
+    (true, 60.0),
+    (true, 90.0),
+    (true, 130.0),
+    (true, 180.0),
 ];
 
-/// The layout of a settlement.
+/// The layout of a settlement, in seven steps: the ground's rasters, (1) the settlement and its perimeter, (2) the free space inside,
+/// (3) the node seeds, (4) the regions and the streets between them, (5) the nodes' shapes and the edges, (6) the wall edges and the
+/// ring around the town, (7) the deployment zones and the approach lines. A step that finds nothing to go on stops with a warning.
 pub fn generate(input: &Input) -> Layout {
     let mut out = Layout::default();
     let (lo, hi) = input.bounds;
@@ -103,248 +114,354 @@ pub fn generate(input: &Input) -> Layout {
         return out;
     }
 
-    let g = Grid::new(lo, hi, CELL);
-    let mut nogo = g.mask();
-    for p in &input.nogo {
-        g.fill_polygon(&mut nogo, p);
-    }
+    let ground = Ground::new(input, &mut out);
+    let Some(town) = Settlement::find(input, &ground, &mut out) else { return out };
+    let space = Space::new(&ground, &town);
+    let Some(mut seeds) = node_seeds(input, &ground, &town, &space, &mut out) else { return out };
+    let (owner, comps) = regions(&ground.g, &space, &mut seeds);
+    shapes_and_streets(input, &ground, &space, &seeds, &owner, &comps, &mut out);
+    wall_edges(input, &ground, &town, &mut out);
 
-    // The steep ground blocks as the no-go regions do: the streets and areas never climb a cliff the units cannot.
-    for (n, s) in nogo.iter_mut().zip(even_odd(&g, &input.steep)) {
-        *n |= s;
-    }
-
-    let mut buildings = g.mask();
-    for p in &input.obstacles {
-        g.fill_polygon(&mut buildings, p);
-    }
-
-    // Each fort piece's cells: its footprint, its platforms, its outlines (thin parts, a gate's leaves, cover no cell centre) and its
-    // walkway line.
-    let wall_cells: Vec<Vec<usize>> = input.walls.iter().map(|w| {
-        let mut m = vec![];
-        for r in w.footprint.iter().chain(&w.platforms) {
-            m.extend(g.polygon_cells(r));
-            let mut ring = r.clone();
-            ring.push(r[0]);
-            m.extend(line_cells(&g, &ring, 1.2));
-        }
-
-        m.extend(line_cells(&g, &w.walkway, 3.0));
-        m
-    }).collect();
-    let mut walls = g.mask();
-    for c in wall_cells.iter().flatten() {
-        walls[*c] = true;
-    }
-
-    // An inner gate (a gate with the map's edge reachable from neither side: a citadel's, a second circle's) is a way through, not a
-    // wall: its passage opened, the streets run through it.
-    let others: Mask = (0..g.len()).map(|k| nogo[k] || input.sea.as_ref().is_some_and(|f| f.at(g.centre(k)))).collect();
-    let inner = inner_gates(input, &g, &walls, &others);
-    for &i in &inner {
-        for c in gate_passage(&g, &input.walls[i], &wall_cells[i]) {
-            walls[c] = false;
+    // ---- 7. Deployment zones and approach lines.
+    let g = &ground.g;
+    let centre = g.centre(town.seed);
+    let zones = deployment(&mut out, g, &town.region, &town.dout, &ground.sea, town.port, input.bounds, town.seed);
+    approaches(&mut out, g, &zones.attacker, &ground.nogo, input.bounds, centre);
+    if town.port
+        && let Some(heights) = &input.sea
+    {
+        let sea = &ground.sea;
+        let land: Mask = sea.iter().map(|&s| !s).collect();
+        let (to_land, to_sea) = (g.distance(&land), g.distance(sea));
+        let lobe: Mask = (0..g.len()).map(|k| sea[k] && zones.defender[k]).collect();
+        out.deployment_lines = crate::ports::deployment_lines(g, &lobe, &to_land, centre);
+        (out.beaches, out.beach_approaches) = crate::ports::beaches(g, sea, &ground.nogo, &town.dout, heights, &to_sea, centre);
+        if out.deployment_lines.is_empty() {
+            out.warnings.push("a port without room for the defender's deployment lines at sea".to_owned());
         }
     }
 
-    // An encampment's palisade: its runs are walls; its openings are shut for the settlement's outline (their entries open them again).
-    let runs = crate::palisade::runs(&input.palisade);
-    let openings = crate::palisade::openings(&runs);
-    for r in &runs {
-        for c in line_cells(&g, &r.line(), 1.5) {
-            walls[c] = true;
-        }
-    }
+    out
+}
 
-    let mut shut = g.mask();
-    for o in &openings {
-        for c in line_cells(&g, &[o.a, o.b], 2.5) {
-            shut[c] = true;
-        }
-    }
+/// The map's rasters `generate` works on: what blocks (no-go regions with the steep ground, buildings, fort pieces with the inner gates
+/// opened, the palisade with its openings shut) and the sea.
+struct Ground {
+    g: Grid,
+    nogo: Mask,
+    buildings: Mask,
 
-    // The sea: the water joined to the map's edge (not ponds and fountains), unless the settlement is in it (a town on low ground
-    // inland).
-    let mut sea: Mask = match &input.sea {
-        Some(f) => {
-            let raw: Mask = (0..g.len()).map(|k| f.at(g.centre(k))).collect();
-            g.flood(&raw, (0..g.len()).filter(|&k| g.on_border(k)))
-        }
-        None => g.mask(),
-    };
-    let wet = |p: P| g.at(p).is_some_and(|k| sea[k]);
-    if wet(settlement_seed(input)) || input.captures.iter().any(|c| wet(c.at)) {
-        out.warnings.push("the settlement stands on ground under 0 m joined to the map's edge: taken as land, not sea".to_owned());
-        sea = g.mask();
-    }
+    /// Each fort piece's cells, and all of them (an inner gate's passage open).
+    wall_cells: Vec<Vec<usize>>,
+    walls: Mask,
 
+    /// An encampment's palisade: its runs, its openings, and the cells shutting them.
+    runs: Vec<crate::palisade::Run>,
+    openings: Vec<crate::palisade::Opening>,
+    shut: Mask,
 
-    // ---- 1. The settlement and its perimeter: the first barrier that closes around the seed and every capture point near it (CA's
-    // perimeters hold all of them), else the first that closes around the seed.
-    let seed_point = settlement_seed(input);
-    let barrier0: Mask = (0..g.len()).map(|k| walls[k] || nogo[k] || sea[k] || shut[k]).collect();
-    let capture_cells: Vec<usize> = input.captures.iter().filter(|c| dist(c.at, seed_point) <= MAX_CAPTURE_REACH).filter_map(|c| g.at(c.at)).collect();
-    let (mut found, mut fallback) = (None, None);
-    for (with_buildings, r) in ENCLOSURES {
-        let raw: Mask = (0..g.len()).map(|k| barrier0[k] || (with_buildings && buildings[k])).collect();
-        let barrier = g.close(&raw, r);
-        let pass: Mask = barrier.iter().map(|&b| !b).collect();
-        let outside = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
-        let Some(seed) = nearest(&g, seed_point, |k| !raw[k] && !outside[k], 200.0) else { continue };
+    /// The water joined to the map's edge (none when the settlement stands in it).
+    sea: Mask,
+}
 
-        // Every capture point next to the inside (one in a block, a building or a tower on the wall: by the open ground next to it).
-        let inside = pockets(&g, &raw, &outside, seed, &[]);
-        let all = capture_cells.iter().all(|&c| {
-            let p = g.centre(c);
-            nearest(&g, p, |k| inside[k], 40.0).is_some() || nearest(&g, p, |k| !raw[k], 40.0).is_none()
-        });
-        let candidate = (with_buildings, r, raw, barrier, outside, seed);
-        if all {
-            found = Some(candidate);
-            break;
+impl Ground {
+    fn new(input: &Input, out: &mut Layout) -> Self {
+        let g = Grid::new(input.bounds.0, input.bounds.1, CELL);
+        let mut nogo = g.mask();
+        for p in &input.nogo {
+            g.fill_polygon(&mut nogo, p);
         }
 
-        fallback = fallback.or(Some(candidate));
-    }
+        // The steep ground blocks as the no-go regions do: the streets and areas never climb a cliff the units cannot.
+        for (n, s) in nogo.iter_mut().zip(even_odd(&g, &input.steep)) {
+            *n |= s;
+        }
 
-    if found.is_none() && fallback.is_some() {
-        out.warnings.push("some capture points stay outside the settlement's outline".to_owned());
-    }
+        let mut buildings = g.mask();
+        for p in &input.obstacles {
+            g.fill_polygon(&mut buildings, p);
+        }
 
-    let Some((with_buildings, closed_r, raw, _, outside, seed)) = found.or(fallback) else {
-        out.warnings.push("no settlement found: the walls, no-go regions and buildings around the main capture point never close, even over gaps of 360 units".to_owned());
-        return out;
-    };
+        // Each fort piece's cells: its footprint, its platforms, its outlines (thin parts, a gate's leaves, cover no cell centre) and its
+        // walkway line.
+        let wall_cells: Vec<Vec<usize>> = input
+            .walls
+            .iter()
+            .map(|w| {
+                let mut m = vec![];
+                // A ring of no points (the pieces' fields are public: a caller may give one) has no cells.
+                for r in w.footprint.iter().chain(&w.platforms).filter(|r| !r.is_empty()) {
+                    m.extend(g.polygon_cells(r));
+                    let mut ring = r.clone();
+                    ring.push(r[0]);
+                    m.extend(line_cells(&g, &ring, 1.2));
+                }
 
-    if closed_r >= MIN_ENTRY_GAP / 2.0 {
-        out.warnings.push(format!(
-            "the walls and no-go regions do not close around the settlement: its outline was closed over gaps up to {:.0} units{} (streets leaving there get entry nodes)",
-            2.0 * closed_r, if with_buildings { " with the buildings" } else { "" },
-        ));
-    }
+                m.extend(line_cells(&g, &w.walkway, 3.0));
+                m
+            })
+            .collect();
+        let mut walls = g.mask();
+        for c in wall_cells.iter().flatten() {
+            walls[*c] = true;
+        }
 
-    // The free inside around the seed (the closed barrier only decides what is outside: the streets it filled are in), and what bounds
-    // it: the fort pieces along it, the small no-go regions (blocks of houses) and buildings at its edge.
-    let capture_at: Vec<usize> = input.captures.iter().filter_map(|c| g.at(c.at)).collect();
-    let interior = pockets(&g, &raw, &outside, seed, &capture_at);
-    let near_interior = g.dilate(&interior, 4.0);
-    let mut core = interior.clone();
-    let mut bounding: Vec<Vec<usize>> = wall_cells.clone();
-    for p in input.nogo.iter().filter(|p| area2(p).abs() / 2.0 <= MAX_BLOCK_AREA) {
-        bounding.push(g.polygon_cells(p));
-    }
-
-    if with_buildings {
-        bounding.extend(input.obstacles.iter().map(|p| g.polygon_cells(p)));
-    }
-
-    for cells in &bounding {
-        if cells.iter().any(|&c| near_interior[c]) {
-            for &c in cells {
-                core[c] = true;
+        // An inner gate (a gate with the map's edge reachable from neither side: a citadel's, a second circle's) is a way through, not a
+        // wall: its passage opened, the streets run through it.
+        let others: Mask = (0..g.len()).map(|k| nogo[k] || input.sea.as_ref().is_some_and(|f| f.at(g.centre(k)))).collect();
+        let inner = inner_gates(input, &g, &walls, &others);
+        for &i in &inner {
+            for c in gate_passage(&g, &input.walls[i], &wall_cells[i]) {
+                walls[c] = false;
             }
         }
-    }
 
-    let region = {
-        let grown = g.dilate(&core, PERIMETER_OUT);
-        let filled = g.fill_holes(&grown);
-        // The part around the seed.
-        let (label, _) = g.components(&filled);
-        let id = label[seed];
-        filled.iter().enumerate().map(|(k, &s)| s && label[k] == id).collect::<Mask>()
-    };
-
-    out.perimeter = outer_loop(&g, &region, 2.0);
-
-    // A port: the town reaches the sea (a coastal town further from it is laid out as an inland one, as CA's).
-    let dout = g.distance(&region);
-    let port = (0..g.len()).any(|k| sea[k] && dout[k] <= PORT_REACH);
-    if out.perimeter.len() < 3 {
-        out.warnings.push("the settlement's outline is empty".to_owned());
-        return out;
-    }
-
-    // ---- 2. Free space: the inside, without what blocks.
-    let blocked: Mask = (0..g.len()).map(|k| nogo[k] || buildings[k] || walls[k] || sea[k]).collect();
-    let mut free: Mask = (0..g.len()).map(|k| interior[k] && !blocked[k]).collect();
-    free = g.dilate(&g.erode(&free, 3.0), 3.0).into_iter().zip(&free).map(|(a, &b)| a && b).collect();
-    fill_small_holes(&g, &mut free, 300.0);
-
-    // Each palisade opening and the ground outside it (its entry's) are free, and a way out (the lines into it are kept).
-    let mut entry_ground: Vec<(P, Vec<usize>)> = vec![];
-    for o in &openings {
-        let along = [(o.b[0] - o.a[0]) / o.width.max(1e-9), (o.b[1] - o.a[1]) / o.width.max(1e-9)];
-        let (across, depth) = (o.width.clamp(24.0, 32.0) / 2.0, 10.0);
-        let c = [o.mid[0] + o.out[0] * (depth + 1.0), o.mid[1] + o.out[1] * (depth + 1.0)];
-        let corner = |a: f64, b: f64| [c[0] + along[0] * a + o.out[0] * b, c[1] + along[1] * a + o.out[1] * b];
-        let mut cells = g.polygon_cells(&[corner(-across, -depth), corner(across, -depth), corner(across, depth), corner(-across, depth)]);
-        cells.extend(line_cells(&g, &[o.a, o.b], 3.0));
-        cells.extend(line_cells(&g, &[[o.mid[0] - o.out[0] * 8.0, o.mid[1] - o.out[1] * 8.0], o.mid], 4.0));
-        cells.retain(|&k| !blocked[k]);
-        for &k in &cells {
-            free[k] = true;
-        }
-
-        let ground = g.polygon_cells(&[corner(-across, -depth), corner(across, -depth), corner(across, depth), corner(-across, depth)]);
-        entry_ground.push((c, ground));
-    }
-
-    keep_large_parts(&g, &mut free, 1500.0, seed);
-    let clearance = g.distance(&free.iter().map(|&s| !s).collect());
-
-    // Where a street leaves the settlement: free cells next to the outside, in a gap the outline closed (one wide enough to walk through).
-    let mut exits = g.mask();
-    if closed_r >= MIN_ENTRY_GAP / 2.0 {
-        for k in 0..g.len() {
-            if free[k] && N8.iter().any(|&d| g.step(k, d).is_some_and(|n| outside[n] && !blocked[n])) {
-                exits[k] = true;
+        // An encampment's palisade: its runs are walls; its openings are shut for the settlement's outline (their entries open them again).
+        let runs = crate::palisade::runs(&input.palisade);
+        let openings = crate::palisade::openings(&runs);
+        for r in &runs {
+            for c in line_cells(&g, &r.line(), 1.5) {
+                walls[c] = true;
             }
         }
-    }
 
-    for (_, outer) in &entry_ground {
-        for &k in outer {
-            if free[k] {
-                exits[k] = true;
+        let mut shut = g.mask();
+        for o in &openings {
+            for c in line_cells(&g, &[o.a, o.b], 2.5) {
+                shut[c] = true;
             }
         }
+
+        // The sea: the water joined to the map's edge (not ponds and fountains), unless the settlement is in it (a town on low ground
+        // inland).
+        let mut sea: Mask = match &input.sea {
+            Some(f) => {
+                let raw: Mask = (0..g.len()).map(|k| f.at(g.centre(k))).collect();
+                g.flood(&raw, (0..g.len()).filter(|&k| g.on_border(k)))
+            }
+            None => g.mask(),
+        };
+        let wet = |p: P| g.at(p).is_some_and(|k| sea[k]);
+        if wet(settlement_seed(input)) || input.captures.iter().any(|c| wet(c.at)) {
+            out.warnings.push("the settlement stands on ground under 0 m joined to the map's edge: taken as land, not sea".to_owned());
+            sea = g.mask();
+        }
+
+        Self { g, nogo, buildings, wall_cells, walls, runs, openings, shut, sea }
     }
+}
 
-    let near_exit = g.dilate(&exits, 8.0);
-    let mut skel = g.thin(&free);
-    prune(&g, &mut skel, &near_exit, 6);
+/// The settlement: the barrier that closes around it, its inside and its region (the perimeter's), whether it is a port.
+struct Settlement {
+    /// The radius the barrier's gaps were closed with, what is outside it, and the seed cell inside.
+    closed_r: f64,
+    outside: Mask,
+    seed: usize,
 
-    // ---- 3. Node seeds.
+    /// The free inside around the seed; the region the perimeter outlines, and the distance out from it.
+    interior: Mask,
+    region: Mask,
+    dout: Vec<f64>,
+    port: bool,
+}
+
+impl Settlement {
+    /// ---- 1. The settlement and its perimeter (`out.perimeter`): the first barrier that closes around the seed and every capture point
+    /// near it (CA's perimeters hold all of them), else the first that closes around the seed. `None` (with a warning) without one.
+    fn find(input: &Input, ground: &Ground, out: &mut Layout) -> Option<Self> {
+        let Ground { g, nogo, buildings, walls, sea, shut, .. } = ground;
+        let seed_point = settlement_seed(input);
+        let barrier0: Mask = (0..g.len()).map(|k| walls[k] || nogo[k] || sea[k] || shut[k]).collect();
+        let capture_cells: Vec<usize> =
+            input.captures.iter().filter(|c| dist(c.at, seed_point) <= MAX_CAPTURE_REACH).filter_map(|c| g.at(c.at)).collect();
+        let (mut found, mut fallback) = (None, None);
+        for (with_buildings, r) in ENCLOSURES {
+            let raw: Mask = (0..g.len()).map(|k| barrier0[k] || (with_buildings && buildings[k])).collect();
+            let barrier = g.close(&raw, r);
+            let pass: Mask = barrier.iter().map(|&b| !b).collect();
+            let outside = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
+            let Some(seed) = nearest(g, seed_point, |k| !raw[k] && !outside[k], 200.0) else { continue };
+
+            // Every capture point next to the inside (one in a block, a building or a tower on the wall: by the open ground next to it).
+            let inside = pockets(g, &raw, &outside, seed, &[]);
+            let all = capture_cells.iter().all(|&c| {
+                let p = g.centre(c);
+                nearest(g, p, |k| inside[k], 40.0).is_some() || nearest(g, p, |k| !raw[k], 40.0).is_none()
+            });
+            let candidate = (with_buildings, r, raw, barrier, outside, seed);
+            if all {
+                found = Some(candidate);
+                break;
+            }
+
+            fallback = fallback.or(Some(candidate));
+        }
+
+        if found.is_none() && fallback.is_some() {
+            out.warnings.push("some capture points stay outside the settlement's outline".to_owned());
+        }
+
+        let Some((with_buildings, closed_r, raw, _, outside, seed)) = found.or(fallback) else {
+            out.warnings.push("no settlement found: the walls, no-go regions and buildings around the main capture point never close, even over gaps of 360 units".to_owned());
+            return None;
+        };
+
+        if closed_r >= MIN_ENTRY_GAP / 2.0 {
+            out.warnings.push(format!(
+                "the walls and no-go regions do not close around the settlement: its outline was closed over gaps up to {:.0} units{} (streets leaving there get entry nodes)",
+                2.0 * closed_r, if with_buildings { " with the buildings" } else { "" },
+            ));
+        }
+
+        // The free inside around the seed (the closed barrier only decides what is outside: the streets it filled are in), and what bounds
+        // it: the fort pieces along it, the small no-go regions (blocks of houses) and buildings at its edge.
+        let capture_at: Vec<usize> = input.captures.iter().filter_map(|c| g.at(c.at)).collect();
+        let interior = pockets(g, &raw, &outside, seed, &capture_at);
+        let near_interior = g.dilate(&interior, 4.0);
+        let mut core = interior.clone();
+        let mut bounding: Vec<Vec<usize>> = ground.wall_cells.clone();
+        for p in input.nogo.iter().filter(|p| area2(p).abs() / 2.0 <= MAX_BLOCK_AREA) {
+            bounding.push(g.polygon_cells(p));
+        }
+
+        if with_buildings {
+            bounding.extend(input.obstacles.iter().map(|p| g.polygon_cells(p)));
+        }
+
+        for cells in &bounding {
+            if cells.iter().any(|&c| near_interior[c]) {
+                for &c in cells {
+                    core[c] = true;
+                }
+            }
+        }
+
+        let region = {
+            let grown = g.dilate(&core, PERIMETER_OUT);
+            let filled = g.fill_holes(&grown);
+            // The part around the seed.
+            let (label, _) = g.components(&filled);
+            let id = label[seed];
+            filled.iter().enumerate().map(|(k, &s)| s && label[k] == id).collect::<Mask>()
+        };
+
+        out.perimeter = outer_loop(g, &region, 2.0);
+
+        // A port: the town reaches the sea (a coastal town further from it is laid out as an inland one, as CA's).
+        let dout = g.distance(&region);
+        let port = (0..g.len()).any(|k| sea[k] && dout[k] <= PORT_REACH);
+        if out.perimeter.len() < 3 {
+            out.warnings.push("the settlement's outline is empty".to_owned());
+            return None;
+        }
+
+        Some(Self { closed_r, outside, seed, interior, region, dout, port })
+    }
+}
+
+/// ---- 2. Free space: the inside without what blocks, with its skeleton (the streets' lines) and where streets leave the town.
+struct Space {
+    free: Mask,
+
+    /// Each palisade opening's entry point outside it and the ground there.
+    entry_ground: Vec<(P, Vec<usize>)>,
+
+    /// The distance to the nearest blocked cell; the cells near a way out; the free space thinned to lines.
+    clearance: Vec<f64>,
+    near_exit: Mask,
+    skel: Mask,
+}
+
+impl Space {
+    fn new(ground: &Ground, town: &Settlement) -> Self {
+        let Ground { g, nogo, buildings, walls, sea, openings, .. } = ground;
+        let blocked: Mask = (0..g.len()).map(|k| nogo[k] || buildings[k] || walls[k] || sea[k]).collect();
+        let mut free: Mask = (0..g.len()).map(|k| town.interior[k] && !blocked[k]).collect();
+        free = g.dilate(&g.erode(&free, 3.0), 3.0).into_iter().zip(&free).map(|(a, &b)| a && b).collect();
+        fill_small_holes(g, &mut free, 300.0);
+
+        // Each palisade opening and the ground outside it (its entry's) are free, and a way out (the lines into it are kept).
+        let mut entry_ground: Vec<(P, Vec<usize>)> = vec![];
+        for o in openings {
+            let along = [(o.b[0] - o.a[0]) / o.width.max(1e-9), (o.b[1] - o.a[1]) / o.width.max(1e-9)];
+            let (across, depth) = (o.width.clamp(24.0, 32.0) / 2.0, 10.0);
+            let c = [o.mid[0] + o.out[0] * (depth + 1.0), o.mid[1] + o.out[1] * (depth + 1.0)];
+            let corner = |a: f64, b: f64| [c[0] + along[0] * a + o.out[0] * b, c[1] + along[1] * a + o.out[1] * b];
+            let mut cells =
+                g.polygon_cells(&[corner(-across, -depth), corner(across, -depth), corner(across, depth), corner(-across, depth)]);
+            cells.extend(line_cells(g, &[o.a, o.b], 3.0));
+            cells.extend(line_cells(g, &[[o.mid[0] - o.out[0] * 8.0, o.mid[1] - o.out[1] * 8.0], o.mid], 4.0));
+            cells.retain(|&k| !blocked[k]);
+            for &k in &cells {
+                free[k] = true;
+            }
+
+            let outer = g.polygon_cells(&[corner(-across, -depth), corner(across, -depth), corner(across, depth), corner(-across, depth)]);
+            entry_ground.push((c, outer));
+        }
+
+        keep_large_parts(g, &mut free, 1500.0, town.seed);
+        let clearance = g.distance(&free.iter().map(|&s| !s).collect());
+
+        // Where a street leaves the settlement: free cells next to the outside, in a gap the outline closed (one wide enough to walk
+        // through).
+        let mut exits = g.mask();
+        if town.closed_r >= MIN_ENTRY_GAP / 2.0 {
+            for k in 0..g.len() {
+                if free[k] && N8.iter().any(|&d| g.step(k, d).is_some_and(|n| town.outside[n] && !blocked[n])) {
+                    exits[k] = true;
+                }
+            }
+        }
+
+        for (_, outer) in &entry_ground {
+            for &k in outer {
+                if free[k] {
+                    exits[k] = true;
+                }
+            }
+        }
+
+        let near_exit = g.dilate(&exits, 8.0);
+        let mut skel = g.thin(&free);
+        prune(g, &mut skel, &near_exit, 6);
+        Self { free, entry_ground, clearance, near_exit, skel }
+    }
+}
+
+/// ---- 3. Node seeds: a port's quays, the palisade openings' entries, the captures, the gates' city sides, the plazas, the dead ends and
+/// exits, the junctions. `None` (with a warning) when there is no free space inside.
+fn node_seeds(input: &Input, ground: &Ground, town: &Settlement, space: &Space, out: &mut Layout) -> Option<Vec<Seed>> {
+    let g = &ground.g;
+    let Space { free, skel, clearance, near_exit, entry_ground, .. } = space;
     let mut seeds: Vec<Seed> = vec![];
     let skel_cells: Vec<usize> = (0..g.len()).filter(|&k| skel[k]).collect();
     if skel_cells.is_empty() {
         out.warnings.push("no free space inside the perimeter".to_owned());
-        return out;
+        return None;
     }
 
-    let snap = |p: P, within: f64| -> Option<usize> { nearest(&g, p, |k| skel[k], within) };
+    let snap = |p: P, within: f64| -> Option<usize> { nearest(g, p, |k| skel[k], within) };
     let gates: Vec<&crate::WallPiece> = input.walls.iter().filter(|w| w.gate).collect();
 
     // A port's quays: entries on the waterfront inside the town (CA's walled ports have them ~16 units from the water), a few, apart.
-    if port {
-        let to_sea = g.distance(&sea);
+    if town.port {
+        let to_sea = g.distance(&ground.sea);
         let mut quay: Vec<usize> = skel_cells.iter().copied().filter(|&k| to_sea[k] <= QUAY_REACH).collect();
         quay.sort_by(|&a, &b| to_sea[a].total_cmp(&to_sea[b]));
         let mut placed = 0;
         for k in quay {
-            if placed < MAX_QUAY_ENTRIES && push_seed(&mut seeds, &g, k, NodeKind::Entry, QUAY_APART) {
+            if placed < MAX_QUAY_ENTRIES && push_seed(&mut seeds, g, k, NodeKind::Entry, QUAY_APART) {
                 placed += 1;
             }
         }
     }
 
     // An entry outside each palisade opening.
-    for (c, _) in &entry_ground {
+    for (c, _) in entry_ground {
         match snap(*c, 16.0) {
             Some(k) => {
-                push_seed(&mut seeds, &g, k, NodeKind::Entry, 30.0);
+                push_seed(&mut seeds, g, k, NodeKind::Entry, 30.0);
             }
             None => {
                 out.warnings.push(format!("no way through the palisade opening at ({:.0}, {:.0})", c[0], c[1]));
@@ -357,13 +474,13 @@ pub fn generate(input: &Input) -> Layout {
     captures.sort_by_key(|c| !c.major);
     for c in &captures {
         let at_gate = gates.iter().any(|w| crate::raster::seg_dist(c.at, w.ends[0], w.ends[1]) < 30.0);
-        let in_free = nearest(&g, c.at, |k| free[k], if c.major { 80.0 } else { 15.0 }).is_some();
+        let in_free = nearest(g, c.at, |k| free[k], if c.major { 80.0 } else { 15.0 }).is_some();
         if at_gate || !in_free {
             continue;
         }
 
         if let Some(k) = snap(c.at, if c.major { 100.0 } else { 60.0 }) {
-            push_seed(&mut seeds, &g, k, NodeKind::Area, 30.0);
+            push_seed(&mut seeds, g, k, NodeKind::Area, 30.0);
         }
     }
 
@@ -374,7 +491,7 @@ pub fn generate(input: &Input) -> Layout {
         let l = dx.hypot(dz).max(1e-6);
         let n = [-dz / l, dx / l];
         // The side towards the inside (from an inner gate, either).
-        let inside_at = |s: f64, d: f64| g.at([mid[0] + s * n[0] * d, mid[1] + s * n[1] * d]).is_some_and(|k| interior[k]);
+        let inside_at = |s: f64, d: f64| g.at([mid[0] + s * n[0] * d, mid[1] + s * n[1] * d]).is_some_and(|k| town.interior[k]);
         let inward = |s: f64| (10..=40).step_by(5).any(|d| inside_at(s, f64::from(d)));
         let side = [1.0, -1.0].into_iter().find(|&s| inward(s) && !inward(-s)).or_else(|| [1.0, -1.0].into_iter().find(|&s| inward(s)));
         let Some(s) = side else {
@@ -385,59 +502,69 @@ pub fn generate(input: &Input) -> Layout {
         let target = [mid[0] + s * n[0] * 24.0, mid[1] + s * n[1] * 24.0];
         match snap(target, 40.0) {
             Some(k) => {
-                push_seed(&mut seeds, &g, k, NodeKind::Area, 25.0);
+                push_seed(&mut seeds, g, k, NodeKind::Area, 25.0);
             }
             None => out.warnings.push(format!("no street behind the gate at ({:.0}, {:.0})", mid[0], mid[1])),
         }
     }
 
     // Plazas, widest first: wide spots, wider than the streets around them.
-    let mut wide: Vec<usize> = skel_cells.iter().copied().filter(|&k| clearance[k] >= PLAZA_CLEARANCE && clearance[k] >= 1.5 * street_width_near(&g, &skel, &clearance, k)).collect();
+    let mut wide: Vec<usize> = skel_cells
+        .iter()
+        .copied()
+        .filter(|&k| clearance[k] >= PLAZA_CLEARANCE && clearance[k] >= 1.5 * street_width_near(g, skel, clearance, k))
+        .collect();
     wide.sort_by(|&a, &b| clearance[b].total_cmp(&clearance[a]));
     for k in wide {
         let r = (2.0 * clearance[k]).max(70.0);
-        push_seed(&mut seeds, &g, k, NodeKind::Area, r);
+        push_seed(&mut seeds, g, k, NodeKind::Area, r);
     }
 
     // Dead ends and exits.
     for &k in &skel_cells {
-        if neighbours(&g, &skel, k) != 1 {
+        if neighbours(g, skel, k) != 1 {
             continue;
         }
 
         if near_exit[k] {
             // Back from the edge along the skeleton.
-            let k = walk_back(&g, &skel, k, 6);
-            push_seed(&mut seeds, &g, k, NodeKind::Entry, 40.0);
+            let k = walk_back(g, skel, k, 6);
+            push_seed(&mut seeds, g, k, NodeKind::Entry, 40.0);
         } else {
-            push_seed(&mut seeds, &g, k, NodeKind::Area, 40.0);
+            push_seed(&mut seeds, g, k, NodeKind::Area, 40.0);
         }
     }
 
     // Junctions no area covers.
     for &k in &skel_cells {
-        if crossings(&g, &skel, k) >= 3 {
-            push_seed(&mut seeds, &g, k, NodeKind::Intersection, 26.0);
+        if crossings(g, skel, k) >= 3 {
+            push_seed(&mut seeds, g, k, NodeKind::Intersection, 26.0);
         }
     }
 
-    // ---- 4. Regions, streets, area connections (more nodes where a street joins three nodes or is too long).
+    Some(seeds)
+}
+
+/// ---- 4. Regions, streets, area connections (more nodes where a street joins three nodes or is too long): each free cell's owner (a
+/// seed, `usize::MAX` for none) and the street pieces between the regions.
+fn regions(g: &Grid, space: &Space, seeds: &mut Vec<Seed>) -> (Vec<usize>, Vec<Piece>) {
+    let Space { free, skel, clearance, .. } = space;
     let mut split = None;
     let mut comps = vec![];
     for round in 0..6 {
         let sources: Vec<(usize, f64)> = seeds.iter().map(|s| (s.cell, reach(s.kind, clearance[s.cell]))).collect();
-        let (owner, _) = g.geodesic_split(&free, &sources);
-        comps = street_pieces(&g, &skel, &owner);
+        let (owner, _) = g.geodesic_split(free, &sources);
+        comps = street_pieces(g, skel, &owner);
         let mut added = false;
         for c in &comps {
             if c.touches.len() > 2 && round < 5 {
-                let k = c.cells.iter().copied().find(|&k| crossings(&g, &skel, k) >= 3).unwrap_or(c.cells[c.cells.len() / 2]);
-                added |= push_seed(&mut seeds, &g, k, NodeKind::Intersection, 0.0);
+                let k = c.cells.iter().copied().find(|&k| crossings(g, skel, k) >= 3).unwrap_or(c.cells[c.cells.len() / 2]);
+                added |= push_seed(seeds, g, k, NodeKind::Intersection, 0.0);
             } else if c.touches.len() == 2 && c.cells.len() as f64 * CELL > MAX_STREET && round < 5 {
-                let order = order_piece(&g, &skel, &c.cells, &owner, c.touches[0]);
+                let order = order_piece(g, skel, &c.cells, &owner, c.touches[0]);
                 let n = (order.len() as f64 * CELL / MAX_STREET).floor() as usize;
                 for i in 1..=n {
-                    added |= push_seed(&mut seeds, &g, order[i * order.len() / (n + 1)], NodeKind::Area, 0.0);
+                    added |= push_seed(seeds, g, order[i * order.len() / (n + 1)], NodeKind::Area, 0.0);
                 }
             }
         }
@@ -448,9 +575,14 @@ pub fn generate(input: &Input) -> Layout {
         }
     }
 
-    let owner = split.unwrap_or_default();
+    (split.unwrap_or_default(), comps)
+}
 
-    // ---- 5. Shapes.
+/// ---- 5. Shapes (`out.nodes`) and the edges between them (`out.edges`): the streets of the pieces, area connections or streets
+/// between touching regions, and streets joining the graph's parts through the gates.
+fn shapes_and_streets(input: &Input, ground: &Ground, space: &Space, seeds: &[Seed], owner: &[usize], comps: &[Piece], out: &mut Layout) {
+    let g = &ground.g;
+    let Space { free, skel, clearance, .. } = space;
     let mut cells_of: Vec<Vec<usize>> = vec![vec![]; seeds.len()];
     for (k, &o) in owner.iter().enumerate() {
         if o != usize::MAX {
@@ -458,16 +590,20 @@ pub fn generate(input: &Input) -> Layout {
         }
     }
 
-    let mut boxes: Vec<Rect> = seeds.iter().enumerate().map(|(i, s)| {
-        let mine: Vec<P> = cells_of[i].iter().copied().filter(|&k| skel[k]).map(|k| g.centre(k)).collect();
-        grow_rect(&g, &free, &owner, &clearance, i, s, &mine)
-    }).collect();
+    let mut boxes: Vec<Rect> = seeds
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let mine: Vec<P> = cells_of[i].iter().copied().filter(|&k| skel[k]).map(|k| g.centre(k)).collect();
+            grow_rect(g, free, owner, clearance, i, s, &mine)
+        })
+        .collect();
     separate(&mut boxes);
     for (i, s) in seeds.iter().enumerate() {
         let mut cells = cells_of[i].clone();
         let r = &boxes[i];
         cells.extend(g.polygon_cells(&r.corners()));
-        let boundary = local_outline(&g, &cells, 3.0);
+        let boundary = local_outline(g, &cells, 3.0);
         out.nodes.push(Node { kind: s.kind, centre: r.c, bbox: r.corners(), boundary });
     }
 
@@ -480,7 +616,9 @@ pub fn generate(input: &Input) -> Layout {
 
         let set: BTreeSet<usize> = c.cells.iter().copied().collect();
         let ok = |k: usize| skel[k] && (set.contains(&k) || owner[k] == a || owner[k] == b);
-        if let Some(e) = bfs_path(&g, seeds[a].cell, ok, |k| k == seeds[b].cell).and_then(|path| street(&g, &free, &owner, &boxes, &out.nodes, a, b, &path)) {
+        if let Some(e) =
+            bfs_path(g, seeds[a].cell, ok, |k| k == seeds[b].cell).and_then(|path| street(g, free, owner, &boxes, &out.nodes, a, b, &path))
+        {
             out.edges.push(e);
         }
     }
@@ -518,7 +656,9 @@ pub fn generate(input: &Input) -> Layout {
         }
 
         let ok = |k: usize| free[k] && (owner[k] == a || owner[k] == b);
-        if let Some(e) = bfs_path(&g, seeds[a].cell, ok, |k| k == seeds[b].cell).and_then(|path| street(&g, &free, &owner, &boxes, &out.nodes, a, b, &path)) {
+        if let Some(e) =
+            bfs_path(g, seeds[a].cell, ok, |k| k == seeds[b].cell).and_then(|path| street(g, free, owner, &boxes, &out.nodes, a, b, &path))
+        {
             joined.insert((a, b));
             out.edges.push(e);
         }
@@ -527,7 +667,7 @@ pub fn generate(input: &Input) -> Layout {
     // Parts of the graph joined: the nearest two nodes of two parts by a street through the free space and the gates (inner walls split
     // a town into parts joined by their gates), while that helps.
     let mut gate_cells = g.mask();
-    for (w, cells) in input.walls.iter().zip(&wall_cells) {
+    for (w, cells) in input.walls.iter().zip(&ground.wall_cells) {
         if w.gate {
             for &c in cells {
                 gate_cells[c] = true;
@@ -550,8 +690,8 @@ pub fn generate(input: &Input) -> Layout {
         }
 
         let Some((_, a, b)) = best else { break };
-        let path = bfs_path(&g, seeds[a].cell, |k| passable[k], |k| k == seeds[b].cell);
-        match path.and_then(|path| street(&g, &passable, &owner, &boxes, &out.nodes, a, b, &path)) {
+        let path = bfs_path(g, seeds[a].cell, |k| passable[k], |k| k == seeds[b].cell);
+        match path.and_then(|path| street(g, &passable, owner, &boxes, &out.nodes, a, b, &path)) {
             Some(e) => {
                 joined.insert((a.min(b), a.max(b)));
                 out.edges.push(e);
@@ -562,30 +702,42 @@ pub fn generate(input: &Input) -> Layout {
 
     let parts = graph_parts(out.nodes.len(), &joined);
     if parts > 1 {
-        out.warnings.push(format!("the street graph is in {parts} parts: some nodes cannot be reached from the others along the free ground"));
+        out.warnings
+            .push(format!("the street graph is in {parts} parts: some nodes cannot be reached from the others along the free ground"));
     }
+}
 
-    // ---- 6. Wall edges.
-    for run in wall_runs(input, &g, &nogo, &region) {
+/// ---- 6. Wall edges, the separators that close the ring where the walls don't (a warning where it stays open), the walls' zones and
+/// the palisade's edges.
+fn wall_edges(input: &Input, ground: &Ground, town: &Settlement, out: &mut Layout) {
+    let g = &ground.g;
+    for run in wall_runs(input, g, &ground.nogo, &town.region) {
         out.edges.push(Edge { kind: EdgeKind::Wall, line: run, sides: vec![], nodes: None });
     }
 
-    out.separators = separators(&out.perimeter, &out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| e.line.clone()).collect::<Vec<_>>());
-    out.wall_zones = out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).flat_map(|e| zone_runs(&e.line, 250.0, 60.0)).filter_map(|l| strip(&l, WALL_ZONE_HALF, 10.0)).collect();
+    out.separators =
+        separators(&out.perimeter, &out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| e.line.clone()).collect::<Vec<_>>());
+    out.wall_zones = out
+        .edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Wall)
+        .flat_map(|e| zone_runs(&e.line, 250.0, 60.0))
+        .filter_map(|l| strip(&l, WALL_ZONE_HALF, 10.0))
+        .collect();
 
     // The ring closed: walls, separators and no-go regions keep the outside from the town (as in CA's tiles but one).
     let wall_lines: Vec<&Vec<P>> = out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| &e.line).collect();
     if !out.separators.is_empty() {
-        let mut ring = nogo.clone();
+        let mut ring = ground.nogo.clone();
         for l in wall_lines.into_iter().chain(&out.separators) {
-            for c in line_cells(&g, l, 2.0) {
+            for c in line_cells(g, l, 2.0) {
                 ring[c] = true;
             }
         }
 
         let pass: Mask = ring.iter().map(|&r| !r).collect();
         let reached = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
-        if reached[seed] {
+        if reached[town.seed] {
             // Where: the stretches of the perimeter the outside comes through.
             let mut lp = out.perimeter.clone();
             lp.push(lp[0]);
@@ -597,34 +749,18 @@ pub fn generate(input: &Input) -> Layout {
             }
 
             let list = at.iter().take(4).map(|p| format!("({:.0}, {:.0})", p[0], p[1])).collect::<Vec<_>>().join(", ");
-            out.warnings.push(format!("the walls, separators and no-go regions leave the ring around the town open (the perimeter near {list})"));
+            out.warnings
+                .push(format!("the walls, separators and no-go regions leave the ring around the town open (the perimeter near {list})"));
         }
     }
 
-    for r in runs.iter().filter(|r| r.pieces.len() >= 2) {
+    for r in ground.runs.iter().filter(|r| r.pieces.len() >= 2) {
         out.edges.push(Edge { kind: EdgeKind::Palisade, line: simplify(&r.line(), 0.5), sides: vec![], nodes: None });
     }
 
     if input.walls.iter().any(|w| !w.platforms.is_empty()) && !out.edges.iter().any(|e| e.kind == EdgeKind::Wall) {
         out.warnings.push("the settlement has fort pieces but none with a walkway along the perimeter: no wall edges".to_owned());
     }
-
-    // ---- 7. Deployment zones and approach lines.
-    let town = g.centre(seed);
-    let zones = deployment(&mut out, &g, &region, &dout, &sea, port, input.bounds, seed);
-    approaches(&mut out, &g, &zones.attacker, &nogo, input.bounds, town);
-    if port && let Some(heights) = &input.sea {
-        let land: Mask = sea.iter().map(|&s| !s).collect();
-        let (to_land, to_sea) = (g.distance(&land), g.distance(&sea));
-        let lobe: Mask = (0..g.len()).map(|k| sea[k] && zones.defender[k]).collect();
-        out.deployment_lines = crate::ports::deployment_lines(&g, &lobe, &to_land, town);
-        (out.beaches, out.beach_approaches) = crate::ports::beaches(&g, &sea, &nogo, &dout, heights, &to_sea, town);
-        if out.deployment_lines.is_empty() {
-            out.warnings.push("a port without room for the defender's deployment lines at sea".to_owned());
-        }
-    }
-
-    out
 }
 
 /// The AI separators that close the ring where the walls don't (CA's: walls, separators and no-go regions close it in 47 of 48 walled
@@ -737,6 +873,11 @@ fn flip_short(flags: &mut [bool], value: bool, max: usize) {
 
 /// Points along the line at most `step` apart (its own points kept).
 fn resample(line: &[P], step: f64) -> Vec<P> {
+    // A step of 0 (or not a number) would ask for usize::MAX points a segment: the line's own points then.
+    if !(step > 0.0) {
+        return line.to_vec();
+    }
+
     let mut out = vec![];
     for w in line.windows(2) {
         let (a, b) = (w[0], w[1]);
@@ -871,7 +1012,11 @@ fn nearest(g: &Grid, p: P, ok: impl Fn(usize) -> bool, within: f64) -> Option<us
 /// The largest outer outline of the mask, simplified.
 fn outer_loop(g: &Grid, m: &Mask, tol: f64) -> Vec<P> {
     let filled = g.fill_holes(m);
-    g.contours(&filled).into_iter().max_by(|a, b| area2(a).abs().total_cmp(&area2(b).abs())).map(|l| simplify_loop(&l, tol)).unwrap_or_default()
+    g.contours(&filled)
+        .into_iter()
+        .max_by(|a, b| area2(a).abs().total_cmp(&area2(b).abs()))
+        .map(|l| simplify_loop(&l, tol))
+        .unwrap_or_default()
 }
 
 /// Unset parts enclosed by set cells and smaller than `max_area` are set.
@@ -893,16 +1038,27 @@ fn inner_gates(input: &Input, g: &Grid, walls: &Mask, others: &Mask) -> Vec<usiz
     let barrier: Mask = (0..g.len()).map(|k| walls[k] || others[k]).collect();
     let pass: Mask = barrier.iter().map(|&b| !b).collect();
     let outside = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
-    input.walls.iter().enumerate().filter(|(_, w)| w.gate).filter_map(|(i, w)| {
-        let mid = [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0];
-        let (dx, dz) = (w.ends[1][0] - w.ends[0][0], w.ends[1][1] - w.ends[0][1]);
-        let l = dx.hypot(dz).max(1e-6);
-        let n = [-dz / l, dx / l];
-        // A side: its ground just past the gate's footprint (open ground, not the barrier).
-        let side = |s: f64| (10..=40).step_by(5).filter_map(|d| g.at([mid[0] + s * n[0] * f64::from(d), mid[1] + s * n[1] * f64::from(d)])).find(|&k| !barrier[k]);
-        let (a, b) = (side(1.0)?, side(-1.0)?);
-        (!outside[a] && !outside[b]).then_some(i)
-    }).collect()
+    input
+        .walls
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.gate)
+        .filter_map(|(i, w)| {
+            let mid = [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0];
+            let (dx, dz) = (w.ends[1][0] - w.ends[0][0], w.ends[1][1] - w.ends[0][1]);
+            let l = dx.hypot(dz).max(1e-6);
+            let n = [-dz / l, dx / l];
+            // A side: its ground just past the gate's footprint (open ground, not the barrier).
+            let side = |s: f64| {
+                (10..=40)
+                    .step_by(5)
+                    .filter_map(|d| g.at([mid[0] + s * n[0] * f64::from(d), mid[1] + s * n[1] * f64::from(d)]))
+                    .find(|&k| !barrier[k])
+            };
+            let (a, b) = (side(1.0)?, side(-1.0)?);
+            (!outside[a] && !outside[b]).then_some(i)
+        })
+        .collect()
 }
 
 /// A gate's passage: its cells within a third of its length of the line across its middle.
@@ -911,10 +1067,14 @@ fn gate_passage(g: &Grid, w: &WallPiece, cells: &[usize]) -> Vec<usize> {
     let (dx, dz) = (w.ends[1][0] - w.ends[0][0], w.ends[1][1] - w.ends[0][1]);
     let l = dx.hypot(dz).max(1e-6);
     let along = [dx / l, dz / l];
-    cells.iter().copied().filter(|&k| {
-        let p = g.centre(k);
-        ((p[0] - mid[0]) * along[0] + (p[1] - mid[1]) * along[1]).abs() <= l / 3.0
-    }).collect()
+    cells
+        .iter()
+        .copied()
+        .filter(|&k| {
+            let p = g.centre(k);
+            ((p[0] - mid[0]) * along[0] + (p[1] - mid[1]) * along[1]).abs() <= l / 3.0
+        })
+        .collect()
 }
 
 /// A line cut where it turns by more than `corner` degrees and into pieces of at most `max_len` (a closed ring into several), so each
@@ -1093,7 +1253,9 @@ fn street_pieces(g: &Grid, skel: &Mask, owner: &[usize]) -> Vec<Piece> {
         pieces[l].cells.push(k);
         for &d in &N8 {
             if let Some(n) = g.step(k, d)
-                && skel[n] && owner[n] != usize::MAX && !pieces[l].touches.contains(&owner[n])
+                && skel[n]
+                && owner[n] != usize::MAX
+                && !pieces[l].touches.contains(&owner[n])
             {
                 pieces[l].touches.push(owner[n]);
             }
@@ -1108,7 +1270,8 @@ fn street_pieces(g: &Grid, skel: &Mask, owner: &[usize]) -> Vec<Piece> {
 /// A piece's cells in order from the end touching node `from`.
 fn order_piece(g: &Grid, skel: &Mask, cells: &[usize], owner: &[usize], from: usize) -> Vec<usize> {
     let set: BTreeSet<usize> = cells.iter().copied().collect();
-    let start = cells.iter().copied().find(|&k| N8.iter().any(|&d| g.step(k, d).is_some_and(|n| skel[n] && owner[n] == from))).unwrap_or(cells[0]);
+    let start =
+        cells.iter().copied().find(|&k| N8.iter().any(|&d| g.step(k, d).is_some_and(|n| skel[n] && owner[n] == from))).unwrap_or(cells[0]);
     let far = farthest(g, start, |k| set.contains(&k));
     bfs_path(g, start, |k| set.contains(&k), |k| k == far).unwrap_or_else(|| cells.to_vec())
 }
@@ -1122,7 +1285,8 @@ fn farthest(g: &Grid, start: usize, ok: impl Fn(usize) -> bool) -> usize {
         last = k;
         for &d in &N8 {
             if let Some(n) = g.step(k, d)
-                && ok(n) && !seen.contains_key(&n)
+                && ok(n)
+                && !seen.contains_key(&n)
             {
                 seen.insert(n, seen[&k] + 1);
                 q.push_back(n);
@@ -1153,7 +1317,8 @@ fn bfs_path(g: &Grid, start: usize, ok: impl Fn(usize) -> bool, goal: impl Fn(us
         // 4-neighbours first: straighter paths.
         for &d in N4.iter().chain(N8.iter().filter(|d| d.0 != 0 && d.1 != 0)) {
             if let Some(n) = g.step(k, d)
-                && ok(n) && !prev.contains_key(&n)
+                && ok(n)
+                && !prev.contains_key(&n)
             {
                 prev.insert(n, k);
                 q.push_back(n);
@@ -1214,7 +1379,14 @@ impl Rect {
 fn grow_rect(g: &Grid, free: &Mask, owner: &[usize], clearance: &[f64], i: usize, s: &Seed, skel_mine: &[P]) -> Rect {
     let c = g.centre(s.cell);
     let pca = principal_axis(skel_mine).map_or(0.0, |u| u[1].atan2(u[0]));
-    let angles = [pca, pca + std::f64::consts::FRAC_PI_4, 0.0, std::f64::consts::FRAC_PI_8, std::f64::consts::FRAC_PI_4, 3.0 * std::f64::consts::FRAC_PI_8];
+    let angles = [
+        pca,
+        pca + std::f64::consts::FRAC_PI_4,
+        0.0,
+        std::f64::consts::FRAC_PI_8,
+        std::f64::consts::FRAC_PI_4,
+        3.0 * std::f64::consts::FRAC_PI_8,
+    ];
     let (square, max) = match s.kind {
         NodeKind::Intersection => (true, (0.9 * clearance[s.cell]).clamp(5.0, 12.0)),
         NodeKind::Entry => (false, 16.0),
@@ -1245,7 +1417,11 @@ fn grow_rect(g: &Grid, free: &Mask, owner: &[usize], clearance: &[f64], i: usize
         while grow_x || grow_z {
             if square {
                 let t = Rect { hx: r.hx + 1.0, hz: r.hz + 1.0, ..r };
-                if t.hx <= max && fits(&t) { r = t } else { break }
+                if t.hx <= max && fits(&t) {
+                    r = t
+                } else {
+                    break;
+                }
                 continue;
             }
 
@@ -1312,7 +1488,9 @@ fn separate(rects: &mut [Rect]) {
 fn overlap(a: &Rect, b: &Rect) -> bool {
     let (ca, cb) = (a.corners(), b.corners());
     for axis in [a.u, a.v(), b.u, b.v()] {
-        let proj = |cs: &[P; 4]| cs.iter().map(|p| p[0] * axis[0] + p[1] * axis[1]).fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+        let proj = |cs: &[P; 4]| {
+            cs.iter().map(|p| p[0] * axis[0] + p[1] * axis[1]).fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
+        };
         let (pa, pb) = (proj(&ca), proj(&cb));
         if pa.1 < pb.0 || pb.1 < pa.0 {
             return false;
@@ -1324,6 +1502,11 @@ fn overlap(a: &Rect, b: &Rect) -> bool {
 
 /// The outline of a set of cells grown by `grow`: its largest outer loop, simplified. Worked on a window around the cells.
 fn local_outline(g: &Grid, cells: &[usize], grow: f64) -> Vec<P> {
+    local_outline_clear(g, cells, grow, None)
+}
+
+/// [`local_outline`], the growth kept off the cells of `keep_out` (the no-go regions: a Boundary stops at their edge).
+fn local_outline_clear(g: &Grid, cells: &[usize], grow: f64, keep_out: Option<&Mask>) -> Vec<P> {
     if cells.is_empty() {
         return vec![];
     }
@@ -1346,8 +1529,380 @@ fn local_outline(g: &Grid, cells: &[usize], grow: f64) -> Vec<P> {
         }
     }
 
-    let grown = lg.dilate(&lm, grow);
+    let mut grown = lg.dilate(&lm, grow);
+    if let Some(out) = keep_out {
+        for (l, cell) in grown.iter_mut().enumerate() {
+            let k = (j0 + l / lg.w) * g.w + i0 + l % lg.w;
+            *cell &= lm[l] || !out[k];
+        }
+    }
+
     outer_loop(&lg, &grown, 1.5)
+}
+
+/// One node's Boundary for the ground as it is (the editor's *Adjust the Boundary*), as `generate` makes each node's: the free ground
+/// (no no-go region, steep ground, building, fort piece or sea) nearest to it along the ground, within `reach` from its centre (scene
+/// units; `None`: the generator's, `reach`, from the room around its centre; at least its rectangle's half diagonal), with its
+/// rectangle, grown 3 units onto the faces of what is around it. The other nodes (`others`) bound it: one with a Boundary of its own
+/// (3 points or more) by that Boundary, which it comes up to and stops at as at a no-go region, leaving the ground hidden behind it from
+/// its centre (it never goes round it); one without, by the ground nearer to it. Its growth stops at the no-go regions' and the other
+/// Boundaries' edges. Empty when its rectangle is not one.
+pub fn node_boundary(input: &Input, node: &Node, others: &[Node], reach: Option<f64>) -> Vec<P> {
+    let centre = |n: &Node| [n.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, n.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
+    let half_diagonal = |n: &Node| {
+        let c = centre(n);
+        n.bbox.iter().map(|&p| dist(p, c)).fold(0.0, f64::max)
+    };
+
+    let c = centre(node);
+    if half_diagonal(node) < CELL {
+        return vec![];
+    }
+
+    // A grid around it: its reach and the nodes near enough to share its ground.
+    let most = reach.unwrap_or(60.0).max(half_diagonal(node) + CELL);
+    let span = most * 2.0 + 20.0;
+    // Not clamped to the map's bounds (a tile without its database entry has none worth the name).
+    let g = Grid::new([c[0] - span, c[1] - span], [c[0] + span, c[1] + span], CELL);
+    if g.is_empty() {
+        return vec![];
+    }
+
+    // What it may not go into, nor grow onto: the no-go regions and the other nodes' Boundaries.
+    let (mut blocked, mut keep_out) = blocked_ground(input, &g);
+    for o in others.iter().filter(|o| o.boundary.len() >= 3) {
+        g.fill_polygon(&mut keep_out, &o.boundary);
+        g.fill_polygon(&mut blocked, &o.boundary);
+    }
+
+    // Its own rectangle is its own, whatever is under it; the other nodes without a Boundary take the ground nearer to them.
+    let mut free: Mask = blocked.iter().map(|&b| !b).collect();
+    let mine = g.polygon_cells(&node.bbox);
+    for &k in &mine {
+        free[k] = true;
+        keep_out[k] = false;
+    }
+
+    let clearance = g.distance(&blocked);
+    let Some(k0) = g.at(c) else { return vec![] };
+    let own = reach.unwrap_or_else(|| reach_of(node.kind, clearance[k0])).max(half_diagonal(node) + CELL);
+    // A node without a Boundary has the ground nearer to it, within its reach (as the generator splits the ground).
+    let mut sources = vec![(k0, own)];
+    for o in others.iter().filter(|o| o.boundary.len() < 3) {
+        let Some(k) = g.at(centre(o)) else { continue };
+        for b in g.polygon_cells(&o.bbox) {
+            free[b] = true;
+        }
+
+        sources.push((k, reach_of(o.kind, clearance[k]).max(half_diagonal(o) + CELL)));
+    }
+
+    // A node with one: this one comes up to it (they touch, as CA's neighbours do), and leaves the ground hidden behind it seen from
+    // its centre, so that it never goes round it and holds it inside.
+    let walls: Vec<(P, P)> = others
+        .iter()
+        .filter(|o| o.boundary.len() >= 3)
+        .flat_map(|o| (0..o.boundary.len()).map(|i| (o.boundary[i], o.boundary[(i + 1) % o.boundary.len()])))
+        .filter(|&(a, b)| crate::raster::seg_dist(c, a, b) <= own + span)
+        .collect();
+    let hidden = |k: usize| walls.iter().any(|&(a, b)| segments_cross(c, g.centre(k), a, b));
+
+    let (owner, _) = g.geodesic_split(&free, &sources);
+    let mut cells: Vec<usize> = (0..g.len()).filter(|&k| owner[k] == 0 && !hidden(k)).collect();
+    cells.extend(mine);
+
+    // Grown onto the buildings' faces, not into what it is kept out of: a map's no-go regions are often drawn to ease the buildings'
+    // line for the pathfinder, and the Boundary stops at their edge (as at the other nodes').
+    simplify_loop(&local_outline_clear(&g, &cells, 3.0, Some(&keep_out)), 0.5)
+}
+
+/// Whether segments a-b and p-q cross (touching ends count).
+fn segments_cross(a: P, b: P, p: P, q: P) -> bool {
+    let side = |o: P, x: P, y: P| (x[0] - o[0]) * (y[1] - o[1]) - (x[1] - o[1]) * (y[0] - o[0]);
+    let (d1, d2, d3, d4) = (side(p, q, a), side(p, q, b), side(a, b, p), side(a, b, q));
+    ((d1 > 0.0) != (d2 > 0.0) || d1 == 0.0 || d2 == 0.0) && ((d3 > 0.0) != (d4 > 0.0) || d3 == 0.0 || d4 == 0.0)
+}
+
+/// The blocked ground around a place, as a node's Boundary and a street's sides see it: the no-go regions, the buildings, the steep
+/// ground, the fort pieces and the sea; and the no-go regions alone (what a Boundary is not grown onto).
+fn blocked_ground(input: &Input, g: &Grid) -> (Mask, Mask) {
+    let mut nogo = g.mask();
+    for p in &input.nogo {
+        g.fill_polygon(&mut nogo, p);
+    }
+
+    let mut blocked = nogo.clone();
+    for p in &input.obstacles {
+        g.fill_polygon(&mut blocked, p);
+    }
+
+    for (b, s) in blocked.iter_mut().zip(even_odd(g, &input.steep)) {
+        *b |= s;
+    }
+
+    for w in &input.walls {
+        for r in w.footprint.iter().chain(&w.platforms) {
+            g.fill_polygon(&mut blocked, r);
+        }
+
+        for k in line_cells(g, &w.walkway, 3.0) {
+            blocked[k] = true;
+        }
+    }
+
+    if let Some(sea) = &input.sea {
+        for (k, b) in blocked.iter_mut().enumerate() {
+            *b |= sea.at(g.centre(k));
+        }
+    }
+
+    (blocked, nogo)
+}
+
+/// How far a fitted street's side goes from its line to the nearest face (units): as far as the generator's (all the free ground between
+/// the nodes is the street's, user 2026-11-10; in open ground it gets wide).
+pub const STREET_SIDE_MAX: f64 = 80.0;
+
+/// The two sides of a street (the editor's *Fit the street boundaries*), much as `generate` makes each street's: along its line (`line`,
+/// its Street: from inside `a`'s rectangle to inside `b`'s) where it is in neither node's Boundary (their rectangles for one without),
+/// each side at the corridor's face (the no-go regions, buildings, fort pieces, steep ground, sea and the nodes' Boundaries, the two it
+/// joins too; the nearest, at most [`STREET_SIDE_MAX`] out), smoothed, each end ticked into the node's Boundary. `None` without a
+/// corridor.
+pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Node]) -> Option<[Vec<P>; 2]> {
+    if line.len() < 2 {
+        return None;
+    }
+
+    // A grid around the line and its nodes, 80 units out.
+    let pts = line.iter().chain(&a.bbox).chain(&b.bbox);
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for p in pts {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+
+    // Not clamped to the map's bounds (a tile without its database entry has none worth the name: the grid was a cell).
+    let g = Grid::new([lo[0] - 100.0, lo[1] - 100.0], [hi[0] + 100.0, hi[1] + 100.0], CELL);
+    if g.is_empty() {
+        return None;
+    }
+
+    // The sides stop at the other nodes' Boundaries and at the two it joins (not across their open ground).
+    let (mut blocked, _) = blocked_ground(input, &g);
+    for o in others.iter().chain([a, b]).filter(|o| o.boundary.len() >= 3) {
+        g.fill_polygon(&mut blocked, &o.boundary);
+    }
+
+    let free: Mask = blocked.iter().map(|&b| !b).collect();
+
+    // The corridor: the line, every unit, where it is in neither node (their Boundary, or rectangle).
+    let path = resample(line, 1.0);
+    let within = |n: &Node, p: P| if n.boundary.len() >= 3 { inside(p, &n.boundary) } else { inside(p, &n.bbox) };
+    let ia = path.iter().rposition(|&p| within(a, p)).map_or(0, |i| i + 1);
+    let ib = path.iter().position(|&p| within(b, p)).map_or(path.len() - 1, |i| i.saturating_sub(1));
+    if ib <= ia + 1 {
+        return None;
+    }
+
+    // The street's walkable ground, outlined; else (no outline that runs from one node to the other) the sides marched out from the line.
+    if let Some(sides) = corridor_outline_sides(&g, &free, &path, (ia, ib), a, b) {
+        return Some(sides);
+    }
+
+    // Marched every unit: where the corridor opens beside a face, one march goes far out and the next stops at the face, and the side
+    // between them crosses no more than a unit of it.
+    let corridor = &path[ia..=ib];
+    let mut sides = [vec![], vec![]];
+    for i in 0..corridor.len() {
+        let (p0, p1) = (corridor[i.saturating_sub(3)], corridor[(i + 3).min(corridor.len() - 1)]);
+        let t = [p1[0] - p0[0], p1[1] - p0[1]];
+        let l = t[0].hypot(t[1]);
+        if l > 1e-9 {
+            let n = [-t[1] / l, t[0] / l];
+            for (s, side) in [1.0, -1.0].into_iter().zip(sides.iter_mut()) {
+                side.push(march(&g, &free, corridor[i], [n[0] * s, n[1] * s], STREET_SIDE_MAX));
+            }
+        }
+    }
+
+    let clear = |p: P, q: P| clear_of_faces(&g, &free, p, q);
+    let mut out = [vec![], vec![]];
+    for (side, o) in sides.into_iter().zip(out.iter_mut()) {
+        if side.len() < 2 {
+            return None;
+        }
+
+        // Smoothed where that keeps it on the walkable ground: averaged across a jump to a face, a point went into the building.
+        let mut smoothed = smooth(&side);
+        for i in 0..smoothed.len() {
+            if !clear(smoothed[i], smoothed[i]) {
+                smoothed[i] = side[i];
+            }
+        }
+
+        for i in 1..smoothed.len() {
+            if !clear(smoothed[i - 1], smoothed[i]) {
+                (smoothed[i - 1], smoothed[i]) = (side[i - 1], side[i]);
+            }
+        }
+
+        let mut s = simplify_clear(&smoothed, 2.0, &clear);
+        let (start, end) = (seal(s[0], a), seal(s[s.len() - 1], b));
+        s.splice(0..0, start.into_iter().rev());
+        s.extend(end);
+        *o = s;
+    }
+
+    Some(out)
+}
+
+/// A street's two sides from its walkable ground (`street_sides`): the free ground reachable from its line between the two nodes'
+/// Boundaries (within [`STREET_SIDE_MAX`] of that stretch of it, `ia..=ib`; the nodes' Boundaries are not free), its outline split
+/// where it runs along each node's Boundary: the two stretches between are the sides, each run from `a` to `b` and its ends joined to
+/// the Boundaries (`seal`). So all the walkable ground between the nodes is the street's: marched out every few units from the line, a
+/// side left gaps where a march was cut short (by a Boundary's cell next to the line), and the ground beside them was walkable but in
+/// nothing. `None` when the outline does not touch both Boundaries once each.
+fn corridor_outline_sides(g: &Grid, free: &Mask, path: &[P], (ia, ib): (usize, usize), a: &Node, b: &Node) -> Option<[Vec<P>; 2]> {
+    if a.boundary.len() < 3 || b.boundary.len() < 3 {
+        return None;
+    }
+
+    // The free ground within reach of the line between the Boundaries (the corridor: not of the line inside the nodes, but whatever
+    // part of it is nearest; ground past a Boundary's crossing beside the node is the street's too, up to where a face meets it).
+    let corridor = &path[ia..=ib];
+    let pass: Mask = (0..g.len())
+        .map(|k| {
+            let c = g.centre(k);
+            free[k] && corridor.iter().step_by(2).any(|&q| dist(c, q) <= STREET_SIDE_MAX)
+        })
+        .collect();
+    let seeds = path[ia..=ib].iter().filter_map(|&p| g.at(p)).filter(|&k| pass[k]).collect::<Vec<_>>();
+    if seeds.is_empty() {
+        return None;
+    }
+
+    let region = g.flood(&pass, seeds);
+    let outline = outer_loop(g, &region, 1.0);
+    let n = outline.len();
+    if n < 4 {
+        return None;
+    }
+
+    // Which node's Boundary each outline point runs along (within a cell and a half of it), if any.
+    let edge_dist = |p: P, poly: &[P]| {
+        (0..poly.len()).map(|i| crate::raster::seg_dist(p, poly[i], poly[(i + 1) % poly.len()])).fold(f64::MAX, f64::min)
+    };
+    let reach = CELL * 1.75;
+    let mut label = outline
+        .iter()
+        .map(|&p| {
+            if edge_dist(p, &a.boundary) <= reach {
+                1u8
+            } else if edge_dist(p, &b.boundary) <= reach {
+                2
+            } else {
+                0
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // A point or two off a Boundary between two stretches along it (a notch of it) are along it too.
+    for gap in [1usize, 2] {
+        for i in 0..n {
+            let (before, after) = (label[(i + n - 1) % n], label[(i + gap) % n]);
+            if before != 0 && before == after && (0..gap).all(|k| label[(i + k) % n] == 0) {
+                for k in 0..gap {
+                    label[(i + k) % n] = before;
+                }
+            }
+        }
+    }
+
+    // The loop from the first point after a's run: a's run, a side, b's run, the other side; once each.
+    let start = (0..n).find(|&i| label[i] == 1 && label[(i + 1) % n] != 1)?;
+    let mut runs: Vec<(u8, Vec<P>)> = vec![];
+    for k in 1..=n {
+        let i = (start + k) % n;
+        match runs.last_mut() {
+            Some((l, pts)) if *l == label[i] => pts.push(outline[i]),
+            _ => runs.push((label[i], vec![outline[i]])),
+        }
+    }
+
+    let kinds = runs.iter().map(|r| r.0).collect::<Vec<_>>();
+    if kinds != [0, 2, 0, 1] {
+        return None;
+    }
+
+    // Each side with the run ends it joins (the last of a's run before it, the first of b's after), from a to b.
+    let a_end = *runs[3].1.last()?;
+    let b_first = *runs[1].1.first()?;
+    let b_end = *runs[1].1.last()?;
+    let a_first = *runs[3].1.first()?;
+    let mut one = vec![a_end];
+    one.extend(&runs[0].1);
+    one.push(b_first);
+    let mut two = vec![b_end];
+    two.extend(&runs[2].1);
+    two.push(a_first);
+    two.reverse();
+
+    let mut out = [vec![], vec![]];
+    for (side, o) in [one, two].into_iter().zip(out.iter_mut()) {
+        // The cells' stairs taken out (a cell's size: the faces are followed within it), never across a face's corner.
+        let mut s = simplify_clear(&side, CELL, &|p, q| clear_of_faces(g, free, p, q));
+        if s.len() < 2 {
+            return None;
+        }
+
+        let (first, last) = (seal(s[0], a), seal(s[s.len() - 1], b));
+        s.splice(0..0, first.into_iter().rev());
+        s.extend(last);
+        *o = s;
+    }
+
+    Some(out)
+}
+
+/// A fitted street side's end joined to a node (`street_sides`): to the nearest point of its Boundary, then a short way inside it across
+/// that edge, so that the side meets the Boundary where it reaches it and nothing walkable is left between them (ticked towards the
+/// node's centre, as the generator's, both sides met near the line and left a wedge on each side). Without a Boundary: `tick`.
+fn seal(end: P, node: &Node) -> Vec<P> {
+    let b = &node.boundary;
+    if b.len() < 3 {
+        return vec![tick(end, node)];
+    }
+
+    // The nearest point of the Boundary's outline, and its edge.
+    let mut best = (f64::MAX, end, [0.0, 0.0]);
+    for i in 0..b.len() {
+        let (p, q) = (b[i], b[(i + 1) % b.len()]);
+        let d = [q[0] - p[0], q[1] - p[1]];
+        let l2 = d[0] * d[0] + d[1] * d[1];
+        let t = if l2 > 1e-12 { (((end[0] - p[0]) * d[0] + (end[1] - p[1]) * d[1]) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let c = [p[0] + d[0] * t, p[1] + d[1] * t];
+        let dist = (end[0] - c[0]).hypot(end[1] - c[1]);
+        if dist < best.0 {
+            best = (dist, c, d);
+        }
+    }
+
+    // A step inside across that edge (its normal towards the inside), else towards the centre.
+    let (_, on, d) = best;
+    let l = d[0].hypot(d[1]).max(1e-9);
+    for n in [[-d[1] / l, d[0] / l], [d[1] / l, -d[0] / l]] {
+        let q = [on[0] + n[0] * 2.0, on[1] + n[1] * 2.0];
+        if inside(q, b) {
+            return vec![on, q];
+        }
+    }
+
+    vec![on, tick(on, node)]
+}
+
+/// [`reach`], a clearance that is not one (no obstacle near) taken as a large one.
+fn reach_of(kind: NodeKind, clearance: f64) -> f64 {
+    reach(kind, clearance.min(1e6))
 }
 
 /// A street from node a to node b along `path` (cells from a's seed to b's).
@@ -1429,6 +1984,54 @@ fn march(g: &Grid, free: &Mask, p: P, d: P, max: f64) -> P {
     }
 
     last
+}
+
+/// Whether the segment p..q stays on walkable ground (`free`) give or take half a cell: a fitted side runs along the faces, on the cells'
+/// edges, and may touch them but not cut into what they bound. Off the grid counts as walkable.
+fn clear_of_faces(g: &Grid, free: &Mask, p: P, q: P) -> bool {
+    let h = CELL * 0.5;
+    let near = |s: P| {
+        [[0.0, 0.0], [h, 0.0], [-h, 0.0], [0.0, h], [0.0, -h]].iter().any(|o| g.at([s[0] + o[0], s[1] + o[1]]).is_none_or(|k| free[k]))
+    };
+    let n = (dist(p, q) / h).ceil().max(1.0) as usize;
+    (0..=n).all(|i| {
+        let t = i as f64 / n as f64;
+        near([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t])
+    })
+}
+
+/// [`simplify`] whose shortcuts stay clear (`clear`): a stretch whose points are all within `tol` of its chord but whose chord is not
+/// clear is split further. Two neighbouring points are kept as they are.
+fn simplify_clear(line: &[P], tol: f64, clear: &dyn Fn(P, P) -> bool) -> Vec<P> {
+    if line.len() <= 2 {
+        return line.to_vec();
+    }
+
+    let mut keep = vec![false; line.len()];
+    keep[0] = true;
+    keep[line.len() - 1] = true;
+    let mut stack = vec![(0usize, line.len() - 1)];
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+
+        let (mut far, mut at) = (0.0, (a + b) / 2);
+        for i in a + 1..b {
+            let d = crate::raster::seg_dist(line[i], line[a], line[b]);
+            if d > far {
+                (far, at) = (d, i);
+            }
+        }
+
+        if far > tol || !clear(line[a], line[b]) {
+            keep[at] = true;
+            stack.push((a, at));
+            stack.push((at, b));
+        }
+    }
+
+    line.iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| *p).collect()
 }
 
 /// A side's points averaged with their neighbours (the faces are jagged on the raster).
@@ -1555,7 +2158,8 @@ pub(crate) fn remove_spurs(g: &Grid, skel: &mut Mask, max: f64) {
             let mut prev = usize::MAX;
             let mut k = e;
             let at_fork = loop {
-                let next: Vec<usize> = N8.iter().filter_map(|&d| g.step(k, d)).filter(|&c| skel[c] && c != prev && !path.contains(&c)).collect();
+                let next: Vec<usize> =
+                    N8.iter().filter_map(|&d| g.step(k, d)).filter(|&c| skel[c] && c != prev && !path.contains(&c)).collect();
                 if next.is_empty() {
                     break false;
                 }
@@ -1641,7 +2245,12 @@ struct Zones {
 #[allow(clippy::too_many_arguments)]
 fn deployment(out: &mut Layout, g: &Grid, region: &Mask, dout: &[f64], sea: &Mask, port: bool, bounds: (P, P), seed: usize) -> Zones {
     let (lo, hi) = bounds;
-    let rect = vec![[lo[0] - OVERHANG, lo[1] - OVERHANG], [hi[0] + OVERHANG, lo[1] - OVERHANG], [hi[0] + OVERHANG, hi[1] + OVERHANG], [lo[0] - OVERHANG, hi[1] + OVERHANG]];
+    let rect = vec![
+        [lo[0] - OVERHANG, lo[1] - OVERHANG],
+        [hi[0] + OVERHANG, lo[1] - OVERHANG],
+        [hi[0] + OVERHANG, hi[1] + OVERHANG],
+        [lo[0] - OVERHANG, hi[1] + OVERHANG],
+    ];
     let within = |r: f64| -> Mask { dout.iter().map(|&d| d <= r).collect() };
 
     // The defender: the perimeter a little in (and the sea off the town, the harbour in it).
@@ -1712,7 +2321,11 @@ fn deployment(out: &mut Layout, g: &Grid, region: &Mask, dout: &[f64], sea: &Mas
 fn approaches(out: &mut Layout, g: &Grid, attacker: &Mask, nogo: &Mask, bounds: (P, P), town: P) {
     let (lo, hi) = bounds;
     let good = |p: P| {
-        p[0] >= lo[0] + 20.0 && p[1] >= lo[1] + 20.0 && p[0] <= hi[0] - 20.0 && p[1] <= hi[1] - 20.0 && g.at(p).is_some_and(|k| attacker[k] && !nogo[k])
+        p[0] >= lo[0] + 20.0
+            && p[1] >= lo[1] + 20.0
+            && p[0] <= hi[0] - 20.0
+            && p[1] <= hi[1] - 20.0
+            && g.at(p).is_some_and(|k| attacker[k] && !nogo[k])
     };
 
     for i in 0..8 {
@@ -1765,6 +2378,14 @@ fn approaches(out: &mut Layout, g: &Grid, attacker: &Mask, nogo: &Mask, bounds: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_step_of_zero_keeps_the_line_and_does_not_ask_for_endless_points() {
+        let line = [[0.0, 0.0], [10.0, 0.0]];
+        assert_eq!(resample(&line, 0.0), line.to_vec());
+        assert_eq!(resample(&line, f64::NAN), line.to_vec());
+        assert_eq!(resample(&line, 5.0).len(), 3);
+    }
     use crate::Capture;
 
     /// A straight wall from p to q: pieces of 20, the walkway on the axis, 6 thick; the `gate_at`th piece a gate.
@@ -1775,8 +2396,19 @@ mod tests {
             let e = [p[0] + (q[0] - p[0]) * (i + 1) as f64 / n as f64, p[1] + (q[1] - p[1]) * (i + 1) as f64 / n as f64];
             let d = [(e[0] - s[0]) / 20.0, (e[1] - s[1]) / 20.0];
             let nrm = [-d[1] * 3.0, d[0] * 3.0];
-            let fp = vec![[s[0] - nrm[0], s[1] - nrm[1]], [e[0] - nrm[0], e[1] - nrm[1]], [e[0] + nrm[0], e[1] + nrm[1]], [s[0] + nrm[0], s[1] + nrm[1]]];
-            walls.push(WallPiece { footprint: vec![fp.clone()], platforms: vec![fp], walkway: vec![], gate: gate_at == Some(i), ends: [s, e] });
+            let fp = vec![
+                [s[0] - nrm[0], s[1] - nrm[1]],
+                [e[0] - nrm[0], e[1] - nrm[1]],
+                [e[0] + nrm[0], e[1] + nrm[1]],
+                [s[0] + nrm[0], s[1] + nrm[1]],
+            ];
+            walls.push(WallPiece {
+                footprint: vec![fp.clone()],
+                platforms: vec![fp],
+                walkway: vec![],
+                gate: gate_at == Some(i),
+                ends: [s, e],
+            });
         }
     }
 
@@ -1793,7 +2425,12 @@ mod tests {
         Input {
             bounds: ([0.0, 0.0], [1000.0, 1000.0]),
             nogo: vec![],
-            obstacles: vec![block(333.0, 333.0, 485.0, 485.0), block(515.0, 333.0, 667.0, 485.0), block(333.0, 515.0, 485.0, 667.0), block(515.0, 515.0, 667.0, 667.0)],
+            obstacles: vec![
+                block(333.0, 333.0, 485.0, 485.0),
+                block(515.0, 333.0, 667.0, 485.0),
+                block(333.0, 515.0, 485.0, 667.0),
+                block(515.0, 515.0, 667.0, 667.0),
+            ],
             walls,
             captures: vec![Capture { at: [500.0, 500.0], major: true }],
             ..Input::default()
@@ -1850,7 +2487,11 @@ mod tests {
         assert!(crate::check::check_steep(&l, &input.steep).is_empty());
 
         let blind = generate(&Input { steep: vec![], ..input.clone() });
-        assert!(!crate::check::check_steep(&blind, &input.steep).is_empty(), "made without the bank, no street crosses it: {}", blind.summary());
+        assert!(
+            !crate::check::check_steep(&blind, &input.steep).is_empty(),
+            "made without the bank, no street crosses it: {}",
+            blind.summary()
+        );
     }
 
     /// A citadel inside an open town: a walled square with its own gate on the north side, the main capture in it. The street graph is
@@ -1864,7 +2505,11 @@ mod tests {
         side([b, a], [b, b], None, &mut inner);
         side([b, b], [a, b], Some(4), &mut inner);
         side([a, b], [a, a], None, &mut inner);
-        let gate = inner.iter().find(|w| w.gate).map(|w| [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0]).expect("a gate");
+        let gate = inner
+            .iter()
+            .find(|w| w.gate)
+            .map(|w| [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0])
+            .expect("a gate");
         input.walls.extend(inner);
         let l = generate(&input);
         eprintln!("{}\n{:?}", l.summary(), l.warnings);
@@ -1883,7 +2528,11 @@ mod tests {
     /// A camp: a square palisade of side 200 (pieces every 10 along their z, 10 long towards -z, the camp on their +x), an opening of
     /// 30 in the middle of each side.
     fn camp() -> Input {
-        let mut input = Input { bounds: ([0.0, 0.0], [1000.0, 1000.0]), captures: vec![Capture { at: [500.0, 500.0], major: true }], ..Input::default() };
+        let mut input = Input {
+            bounds: ([0.0, 0.0], [1000.0, 1000.0]),
+            captures: vec![Capture { at: [500.0, 500.0], major: true }],
+            ..Input::default()
+        };
         for side in 0..4 {
             let (c, s) = (std::f64::consts::FRAC_PI_2 * f64::from(side)).sin_cos();
             let (along, inward) = ([-c, s], [-s, -c]);
@@ -1895,7 +2544,11 @@ mod tests {
                 let t = f64::from(k) * 10.0;
                 let at = [500.0 + s * 100.0 + along[0] * t, 500.0 + c * 100.0 + along[1] * t];
                 let p = |a: f64, z: f64| [at[0] + inward[0] * a + along[0] * z, at[1] + inward[1] * a + along[1] * z];
-                input.walls.push(WallPiece { footprint: vec![vec![p(-0.5, 0.25), p(0.5, 0.25), p(0.5, -10.25), p(-0.5, -10.25)]], ends: [at, at], ..WallPiece::default() });
+                input.walls.push(WallPiece {
+                    footprint: vec![vec![p(-0.5, 0.25), p(0.5, 0.25), p(0.5, -10.25), p(-0.5, -10.25)]],
+                    ends: [at, at],
+                    ..WallPiece::default()
+                });
                 input.palisade.push(crate::PalisadePiece { at });
             }
         }
@@ -1906,13 +2559,309 @@ mod tests {
     #[test]
     fn camp_has_an_entry_at_each_opening() {
         let l = generate(&camp());
-        eprintln!("{}
-{:?}", l.summary(), l.warnings);
+        eprintln!(
+            "{}
+{:?}",
+            l.summary(),
+            l.warnings
+        );
         assert_eq!(l.nodes.iter().filter(|n| n.kind == NodeKind::Entry).count(), 4);
         assert_eq!(l.edges.iter().filter(|e| e.kind == EdgeKind::Palisade).count(), 4);
         // Outside the palisade.
         for n in l.nodes.iter().filter(|n| n.kind == NodeKind::Entry) {
             assert!((n.centre[0] - 500.0).abs().max((n.centre[1] - 500.0).abs()) > 100.0, "{:?}", n.centre);
         }
+    }
+
+    /// An axis-aligned square of side 2 h around c, as a polygon in order.
+    fn square_at(c: P, h: f64) -> Vec<P> {
+        vec![[c[0] - h, c[1] - h], [c[0] + h, c[1] - h], [c[0] + h, c[1] + h], [c[0] - h, c[1] + h]]
+    }
+
+    /// A node of the given kind whose rectangle is the square of side 2 h around c, with `boundary` as its Boundary.
+    fn square_node(kind: NodeKind, c: P, h: f64, boundary: Vec<P>) -> Node {
+        let s = square_at(c, h);
+        Node { kind, centre: c, bbox: [s[0], s[1], s[2], s[3]], boundary }
+    }
+
+    /// The x and z ranges of a set of points.
+    fn extent(pts: &[P]) -> (P, P) {
+        pts.iter()
+            .fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]))
+    }
+
+    /// A rectangle that overlaps a smaller one: the larger is shrunk until they no longer overlap, the smaller is left as it was, and
+    /// rectangles apart (and none at all) are left alone.
+    #[test]
+    fn separate_shrinks_the_larger_of_two_overlapping_rectangles() {
+        let mut rects =
+            [Rect { c: [0.0, 0.0], u: [1.0, 0.0], hx: 10.0, hz: 10.0 }, Rect { c: [12.0, 0.0], u: [1.0, 0.0], hx: 4.0, hz: 4.0 }];
+        assert!(overlap(&rects[0], &rects[1]));
+        separate(&mut rects);
+        assert!(!overlap(&rects[0], &rects[1]));
+        assert!(rects[0].hx < 10.0 && rects[0].hz < 10.0);
+        assert_eq!((rects[1].hx, rects[1].hz), (4.0, 4.0));
+
+        let apart = [Rect { c: [0.0, 0.0], u: [1.0, 0.0], hx: 5.0, hz: 5.0 }, Rect { c: [50.0, 0.0], u: [0.0, 1.0], hx: 5.0, hz: 5.0 }];
+        let mut moved = apart;
+        separate(&mut moved);
+        for (a, b) in apart.iter().zip(&moved) {
+            assert_eq!((a.c, a.u, a.hx, a.hz), (b.c, b.u, b.hx, b.hz));
+        }
+
+        separate(&mut []);
+    }
+
+    /// A square node on open ground: its Boundary is a closed outline holding its rectangle, within its reach (grown 3 and a cell) of
+    /// its centre and about as far out on each side. A rectangle that is a point gives none.
+    #[test]
+    fn node_boundary_on_open_ground_is_a_disc_around_the_node() {
+        let input = Input { bounds: ([0.0, 0.0], [400.0, 400.0]), ..Input::default() };
+        let c = [200.0, 200.0];
+        let node = square_node(NodeKind::Area, c, 10.0, vec![]);
+        let b = node_boundary(&input, &node, &[], Some(30.0));
+        assert!(b.len() >= 3, "{b:?}");
+        assert!(inside(c, &b));
+        for &p in &node.bbox {
+            assert!(inside(p, &b), "the corner {p:?} outside the Boundary");
+        }
+
+        for &p in &b {
+            assert!(dist(p, c) <= 30.0 + 3.0 + 2.0 * CELL, "{p:?} out of reach");
+        }
+
+        let (lo, hi) = extent(&b);
+        assert!(((c[0] - lo[0]) - (hi[0] - c[0])).abs() <= CELL && ((c[1] - lo[1]) - (hi[1] - c[1])).abs() <= CELL, "{lo:?} {hi:?}");
+        assert!(hi[0] - c[0] >= 30.0, "{hi:?}");
+
+        // The generator's own reach gives one too.
+        assert!(node_boundary(&input, &node, &[], None).len() >= 3);
+
+        let point = Node { bbox: [c; 4], ..node };
+        assert!(node_boundary(&input, &point, &[], Some(30.0)).is_empty());
+    }
+
+    /// A building east of the node and a neighbour with a Boundary of its own west of it: the Boundary stops at the building's face
+    /// (grown 3 onto it) and at the neighbour's Boundary.
+    #[test]
+    fn node_boundary_stops_at_buildings_and_other_boundaries() {
+        let c = [200.0, 200.0];
+        let input = Input {
+            bounds: ([0.0, 0.0], [400.0, 400.0]),
+            obstacles: vec![vec![[220.0, 150.0], [300.0, 150.0], [300.0, 250.0], [220.0, 250.0]]],
+            ..Input::default()
+        };
+        let node = square_node(NodeKind::Area, c, 8.0, vec![]);
+        let neighbour =
+            square_node(NodeKind::Area, [150.0, 200.0], 10.0, vec![[120.0, 150.0], [180.0, 150.0], [180.0, 250.0], [120.0, 250.0]]);
+        let b = node_boundary(&input, &node, std::slice::from_ref(&neighbour), Some(40.0));
+        assert!(b.len() >= 3 && inside(c, &b), "{b:?}");
+        let (lo, hi) = extent(&b);
+        assert!(hi[0] <= 220.0 + 3.0 + 2.0 * CELL, "into the building: {hi:?}");
+        assert!(lo[0] >= 180.0 - 2.0 * CELL, "into the neighbour's Boundary: {lo:?}");
+    }
+
+    /// A corridor 40 wide (z 30..70) between two buildings over x 30..170, open ground at both ends; the sides `street_sides` gives a
+    /// straight line from a node at x 10 to one at x 190 along its middle, the nodes with their Boundaries (their rectangles) or without.
+    fn corridor_sides(with_boundaries: bool) -> [Vec<P>; 2] {
+        let input = Input {
+            bounds: ([0.0, 0.0], [200.0, 100.0]),
+            obstacles: vec![
+                vec![[30.0, 70.0], [170.0, 70.0], [170.0, 150.0], [30.0, 150.0]],
+                vec![[30.0, -50.0], [170.0, -50.0], [170.0, 30.0], [30.0, 30.0]],
+            ],
+            ..Input::default()
+        };
+        let node = |c: P| square_node(NodeKind::Area, c, 10.0, if with_boundaries { square_at(c, 10.0) } else { vec![] });
+        let (a, b) = (node([10.0, 50.0]), node([190.0, 50.0]));
+        street_sides(&input, &[[10.0, 50.0], [190.0, 50.0]], &a, &b, &[]).expect("a corridor")
+    }
+
+    /// Down the corridor: one side on each side of the line (the first on its left, +z), each at the corridor's face, as far out as
+    /// each other; with the nodes' Boundaries or without.
+    #[test]
+    fn street_sides_follow_the_corridor_faces() {
+        for with_boundaries in [false, true] {
+            let sides = corridor_sides(with_boundaries);
+            // Each side where it crosses x = 50, 100 and 150 (it is simplified: its points may all be past the middle).
+            let z_at = |s: &[P], x: f64| {
+                s.windows(2)
+                    .find(|w| (w[0][0] - x) * (w[1][0] - x) <= 0.0 && w[0][0] != w[1][0])
+                    .map(|w| w[0][1] + (x - w[0][0]) / (w[1][0] - w[0][0]) * (w[1][1] - w[0][1]))
+            };
+            for x in [50.0, 100.0, 150.0] {
+                let left = z_at(&sides[0], x).unwrap_or_else(|| panic!("{with_boundaries}: no left side at {x}: {sides:?}"));
+                let right = z_at(&sides[1], x).unwrap_or_else(|| panic!("{with_boundaries}: no right side at {x}: {sides:?}"));
+                assert!(left > 66.0 && left <= 70.0 + CELL, "{with_boundaries}: {left} at {x}");
+                assert!((30.0 - CELL..34.0).contains(&right), "{with_boundaries}: {right} at {x}");
+                assert!(((left - 50.0) - (50.0 - right)).abs() <= CELL, "{with_boundaries}: {left} {right} at {x}");
+            }
+        }
+    }
+
+    /// The sides are at the faces, so nowhere through a building (two cells in from its faces). They are: where the corridor opens
+    /// onto open ground by a node, a side goes out 80 there and straight back to the face, across the building's corner.
+    #[test]
+    fn street_sides_do_not_cross_the_buildings() {
+        let deep = |p: P| {
+            (30.0 + 2.0 * CELL..=170.0 - 2.0 * CELL).contains(&p[0])
+                && ((70.0 + 2.0 * CELL..=150.0 - 2.0 * CELL).contains(&p[1]) || (-50.0 + 2.0 * CELL..=30.0 - 2.0 * CELL).contains(&p[1]))
+        };
+        for with_boundaries in [false, true] {
+            for s in &corridor_sides(with_boundaries) {
+                for w in s.windows(2) {
+                    let n = (dist(w[0], w[1]) / 0.5).ceil().max(1.0) as usize;
+                    for i in 0..=n {
+                        let t = i as f64 / n as f64;
+                        let p = [w[0][0] + (w[1][0] - w[0][0]) * t, w[0][1] + (w[1][1] - w[0][1]) * t];
+                        assert!(!deep(p), "{with_boundaries}: a side through a building at {p:?}: {s:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// No line, or a line that never leaves the nodes, has no corridor.
+    #[test]
+    fn street_sides_without_a_corridor_are_none() {
+        let input = Input { bounds: ([0.0, 0.0], [200.0, 100.0]), ..Input::default() };
+        let (a, b) = (square_node(NodeKind::Area, [10.0, 50.0], 10.0, vec![]), square_node(NodeKind::Area, [25.0, 50.0], 10.0, vec![]));
+        assert!(street_sides(&input, &[], &a, &b, &[]).is_none());
+        assert!(street_sides(&input, &[[10.0, 50.0]], &a, &b, &[]).is_none());
+        assert!(street_sides(&input, &[[10.0, 50.0], [25.0, 50.0]], &a, &b, &[]).is_none());
+    }
+
+    /// The walls' runs of a straight wall, an L of two, a gate in the middle and no-go across it; none without walls or outside the
+    /// perimeter.
+    #[test]
+    fn wall_runs_follow_the_walkways() {
+        let g = Grid::new([0.0, 0.0], [300.0, 300.0], CELL);
+        let all: Mask = vec![true; g.len()];
+        let nogo = g.mask();
+        let length = |r: &[P]| r.windows(2).map(|w| dist(w[0], w[1])).sum::<f64>();
+
+        let mut walls = vec![];
+        side([50.0, 100.0], [250.0, 100.0], None, &mut walls);
+        let straight = Input { walls, ..Input::default() };
+        let runs = wall_runs(&straight, &g, &nogo, &all);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].iter().all(|p| (p[1] - 100.0).abs() <= 3.0), "{runs:?}");
+        assert!(length(&runs[0]) >= 180.0, "{}", length(&runs[0]));
+
+        // Outside the perimeter: none.
+        assert!(wall_runs(&straight, &g, &nogo, &g.mask()).is_empty());
+        // No walls: none.
+        assert!(wall_runs(&Input::default(), &g, &nogo, &all).is_empty());
+
+        // No-go across its middle cuts it in two, neither in the no-go.
+        let mut cut = g.mask();
+        g.fill_polygon(&mut cut, &[[140.0, 80.0], [160.0, 80.0], [160.0, 120.0], [140.0, 120.0]]);
+        let runs = wall_runs(&straight, &g, &cut, &all);
+        assert_eq!(runs.len(), 2, "{runs:?}");
+        assert!(runs.iter().flatten().all(|p| !(141.0..=159.0).contains(&p[0])), "{runs:?}");
+
+        // A gate in the middle: still one run, straight through it.
+        let mut walls = vec![];
+        side([50.0, 100.0], [250.0, 100.0], Some(5), &mut walls);
+        let runs = wall_runs(&Input { walls, ..Input::default() }, &g, &nogo, &all);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].iter().all(|p| (p[1] - 100.0).abs() <= 3.0), "{runs:?}");
+
+        // An L: one run round its corner.
+        let mut walls = vec![];
+        side([50.0, 100.0], [250.0, 100.0], None, &mut walls);
+        side([250.0, 100.0], [250.0, 280.0], None, &mut walls);
+        let runs = wall_runs(&Input { walls, ..Input::default() }, &g, &nogo, &all);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].iter().any(|&p| dist(p, [250.0, 100.0]) <= 8.0), "no corner: {runs:?}");
+        assert!(length(&runs[0]) >= 340.0, "{}", length(&runs[0]));
+    }
+
+    /// A square town of side 200 in the middle of a map of 2000, its distance field and no sea.
+    fn square_town() -> (Grid, Mask, Vec<f64>, usize) {
+        let g = Grid::new([0.0, 0.0], [2000.0, 2000.0], 4.0);
+        let mut region = g.mask();
+        g.fill_polygon(&mut region, &square_at([1000.0, 1000.0], 100.0));
+        let dout = g.distance(&region);
+        let seed = g.at([1000.0, 1000.0]).expect("on the grid");
+        (g, region, dout, seed)
+    }
+
+    /// An inland square town's zones: the defender's inside the perimeter and about the town's middle, the attacker's past
+    /// `ATTACKER_OUT` and the map's rectangle with its overhang; the two apart, every polygon closed.
+    #[test]
+    fn deployment_of_an_inland_square_town() {
+        let (g, region, dout, seed) = square_town();
+        let bounds = ([0.0, 0.0], [2000.0, 2000.0]);
+        let mut out = Layout::default();
+        let zones = deployment(&mut out, &g, &region, &dout, &g.mask(), false, bounds, seed);
+
+        let kinds = |d: &Deployment| d.polygons.iter().map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(kinds(&out.defender), [ZoneKind::Additive, ZoneKind::GuerrillaAdditive]);
+        assert_eq!(
+            kinds(&out.attacker),
+            [ZoneKind::Additive, ZoneKind::Subtractive, ZoneKind::GuerrillaAdditive, ZoneKind::GuerrillaSubtractive]
+        );
+        for (_, p) in out.defender.polygons.iter().chain(&out.attacker.polygons) {
+            assert!(p.len() >= 3, "{p:?}");
+        }
+
+        assert_eq!(extent(&out.attacker.polygons[0].1), ([-OVERHANG, -OVERHANG], [2000.0 + OVERHANG, 2000.0 + OVERHANG]));
+
+        // The defender's: inside the town, a little in, as far in on each side.
+        let (lo, hi) = extent(&out.defender.polygons[0].1);
+        assert!(lo[0] >= 900.0 && lo[1] >= 900.0 && hi[0] <= 1100.0 && hi[1] <= 1100.0, "{lo:?} {hi:?}");
+        assert!(((lo[0] - 900.0) - (1100.0 - hi[0])).abs() <= g.cell && ((lo[1] - 900.0) - (1100.0 - hi[1])).abs() <= g.cell);
+
+        assert!(zones.defender.iter().any(|&d| d));
+        for k in 0..g.len() {
+            assert!(!zones.defender[k] || region[k], "the defender's zone outside the town");
+            assert!(!zones.attacker[k] || dout[k] > ATTACKER_OUT, "the attacker's zone near the town");
+            assert!(!(zones.defender[k] && zones.attacker[k]));
+        }
+    }
+
+    /// No town at all: no panic, and the attacker's polygons are still all closed ones.
+    #[test]
+    fn deployment_without_a_town_does_not_panic() {
+        let g = Grid::new([0.0, 0.0], [400.0, 400.0], 4.0);
+        let region = g.mask();
+        let dout = g.distance(&region);
+        let mut out = Layout::default();
+        let zones = deployment(&mut out, &g, &region, &dout, &g.mask(), false, ([0.0, 0.0], [400.0, 400.0]), 0);
+        assert!(!zones.defender.iter().any(|&d| d));
+        assert!(out.attacker.polygons.iter().all(|(_, p)| p.len() >= 3));
+    }
+
+    /// Around a square town in the middle of a large map: eight approach lines, on the map and in the attacker's zone, the town on
+    /// their left, opposite ones as far out; with no attacker's zone, none and a warning.
+    #[test]
+    fn approaches_ring_a_square_town() {
+        let (g, region, dout, seed) = square_town();
+        let bounds = ([0.0, 0.0], [2000.0, 2000.0]);
+        let town = [1000.0, 1000.0];
+        let mut out = Layout::default();
+        let zones = deployment(&mut out, &g, &region, &dout, &g.mask(), false, bounds, seed);
+        approaches(&mut out, &g, &zones.attacker, &g.mask(), bounds, town);
+        assert_eq!(out.approaches.len(), 8, "{:?}", out.approaches);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        for l in &out.approaches {
+            for p in l {
+                assert!(p[0] >= 20.0 && p[1] >= 20.0 && p[0] <= 1980.0 && p[1] <= 1980.0, "{l:?}");
+                assert!(zones.attacker[g.at(*p).expect("on the grid")], "{l:?} outside the attacker's zone");
+            }
+
+            assert!(crate::ports::winding(l, town) > 0.0, "{l:?}");
+        }
+
+        let mid = |l: &[P; 2]| dist([(l[0][0] + l[1][0]) / 2.0, (l[0][1] + l[1][1]) / 2.0], town);
+        for i in 0..4 {
+            assert!((mid(&out.approaches[i]) - mid(&out.approaches[i + 4])).abs() <= 2.0 * g.cell, "{:?}", out.approaches);
+        }
+
+        let mut none = Layout::default();
+        approaches(&mut none, &g, &g.mask(), &g.mask(), bounds, town);
+        assert!(none.approaches.is_empty());
+        assert_eq!(none.warnings.len(), 1);
     }
 }

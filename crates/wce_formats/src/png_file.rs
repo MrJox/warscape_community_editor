@@ -68,7 +68,13 @@ fn put_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
 fn paeth(a: i32, b: i32, c: i32) -> u8 {
     let p = a + b - c;
     let (pa, pb, pc) = ((p - a).abs(), (p - b).abs(), (p - c).abs());
-    (if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }) as u8
+    (if pa <= pb && pa <= pc {
+        a
+    } else if pb <= pc {
+        b
+    } else {
+        c
+    }) as u8
 }
 
 /// The predictor of filter type `ft` for byte `i` of `row`, against `prev` (zeros for the first row).
@@ -163,7 +169,6 @@ fn deflate_kit(src: &[u8]) -> Result<Vec<u8>, PngError> {
 }
 
 impl PngFile {
-
     /// Bytes per pixel of the colour type and depth (0 for unsupported ones).
     pub fn bytes_per_pixel(&self) -> usize {
         let channels = match self.color_type {
@@ -242,7 +247,14 @@ impl PngFile {
 
         let stride = f.width as usize * bpp;
         let height = f.height as usize;
-        let mut raw = vec![0u8; (stride + 1) * height];
+        // Deflate makes at most about 1032 bytes of each one: a header asking for more than the image data can hold is a broken file, not an
+        // allocation to try (a hostile one would abort the editor).
+        let size = stride.checked_add(1).and_then(|row| row.checked_mul(height));
+        let Some(size) = size.filter(|&n| n <= idat.len().saturating_mul(1032)) else {
+            return fail(&format!("{} x {} pixels in {} bytes of image data", f.width, f.height, idat.len()));
+        };
+
+        let mut raw = vec![0u8; size];
         inflate_exact(&idat, &mut raw)?;
 
         f.pixels = vec![0u8; stride * height];
@@ -305,7 +317,12 @@ impl PngFile {
             }
 
             let kind = &b[i + 4..i + 8];
-            if kind == b"IHDR" && (be32(&b[i + 8..]) != self.width || be32(&b[i + 12..]) != self.height || b[i + 16] != self.bit_depth || b[i + 17] != self.color_type) {
+            if kind == b"IHDR"
+                && (be32(&b[i + 8..]) != self.width
+                    || be32(&b[i + 12..]) != self.height
+                    || b[i + 16] != self.bit_depth
+                    || b[i + 17] != self.color_type)
+            {
                 return fail("the original has another size or format");
             }
 

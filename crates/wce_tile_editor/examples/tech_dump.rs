@@ -54,7 +54,13 @@ fn main() -> Result<(), String> {
                     let pts = list(&p["vertices"]["outline"]);
                     println!("   platform {} points, {} flags {} {} {}", pts.len(), bounds(pts), p["flag_1"], p["flag_2"], p["flag_3"]);
                     if std::env::var("TECH_DUMP_POINTS").is_ok() {
-                        println!("     {}", pts.iter().map(|q| format!("({:.2} {:.2} {:.2})", num(&q["x"]), num(&q["y"]), num(&q["z"]))).collect::<Vec<_>>().join(" "));
+                        println!(
+                            "     {}",
+                            pts.iter()
+                                .map(|q| format!("({:.2} {:.2} {:.2})", num(&q["x"]), num(&q["y"]), num(&q["z"])))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
                     }
                 }
 
@@ -69,8 +75,16 @@ fn main() -> Result<(), String> {
                 }
 
                 for l in list(&d["ef_lines"]) {
-                    println!("   formation {} from ({:.2} {:.2} {:.2}) to ({:.2} {:.2} {:.2})", l["action"].as_str().unwrap_or_default(),
-                        num(&l["start"]["x"]), num(&l["start"]["y"]), num(&l["start"]["z"]), num(&l["end"]["x"]), num(&l["end"]["y"]), num(&l["end"]["z"]));
+                    println!(
+                        "   formation {} from ({:.2} {:.2} {:.2}) to ({:.2} {:.2} {:.2})",
+                        l["action"].as_str().unwrap_or_default(),
+                        num(&l["start"]["x"]),
+                        num(&l["start"]["y"]),
+                        num(&l["start"]["z"]),
+                        num(&l["end"]["x"]),
+                        num(&l["end"]["y"]),
+                        num(&l["end"]["z"])
+                    );
                 }
             }
         }

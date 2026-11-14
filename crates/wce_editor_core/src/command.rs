@@ -58,6 +58,9 @@ pub struct CommandStack<M: 'static> {
     position: usize,
     saved_position: usize,
     saved_valid: bool,
+
+    /// The saved state was dropped from the history (a redo tail it was in, a join over it): there is nothing to revert to.
+    saved_lost: bool,
     merge_open: bool,
     version: u64,
     last_dirty: Dirty,
@@ -71,10 +74,20 @@ impl<M: Default + 'static> Default for CommandStack<M> {
 }
 
 impl<M: 'static> CommandStack<M> {
-
     /// An empty history of `model`.
     pub fn new(model: M) -> Self {
-        Self { model, entries: vec![], position: 0, saved_position: 0, saved_valid: false, merge_open: false, version: 0, last_dirty: Dirty::default(), pending: Dirty::NONE }
+        Self {
+            model,
+            entries: vec![],
+            position: 0,
+            saved_position: 0,
+            saved_valid: false,
+            saved_lost: false,
+            merge_open: false,
+            version: 0,
+            last_dirty: Dirty::default(),
+            pending: Dirty::NONE,
+        }
     }
 
     /// The model the commands edit.
@@ -93,6 +106,7 @@ impl<M: 'static> CommandStack<M> {
             // The redo tail goes; the saved state may have been in it.
             if self.saved_valid && self.saved_position > self.position {
                 self.saved_valid = false;
+                self.saved_lost = true;
             }
 
             self.entries.truncate(self.position);
@@ -100,8 +114,12 @@ impl<M: 'static> CommandStack<M> {
         }
 
         c.apply(&mut self.model);
-        if self.merge_open && self.position > 0 && c.merge_key() != 0 && self.entries[self.position - 1].merge_key() == c.merge_key()
-            && !(self.saved_valid && self.saved_position == self.position) && self.entries[self.position - 1].merge_from(c.as_ref())
+        if self.merge_open
+            && self.position > 0
+            && c.merge_key() != 0
+            && self.entries[self.position - 1].merge_key() == c.merge_key()
+            && !(self.saved_valid && self.saved_position == self.position)
+            && self.entries[self.position - 1].merge_from(c.as_ref())
         {
             let items = self.entries[self.position - 1].dirty_items();
             self.note(items);
@@ -114,6 +132,29 @@ impl<M: 'static> CommandStack<M> {
         self.position = self.entries.len();
     }
 
+    /// The last `n` commands, all applied, as one entry named `name` (an edit made of edits of different kinds: a scene splice and a
+    /// terrain layer change): undone and redone together. Nothing when fewer than `n` are applied or some are undone.
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        if n < 2 || self.position != self.entries.len() || self.entries.len() < n {
+            return;
+        }
+
+        let from = self.entries.len() - n;
+        if self.saved_valid && self.saved_position > from && self.saved_position < self.position {
+            self.saved_valid = false;
+            self.saved_lost = true;
+        }
+
+        let parts = self.entries.split_off(from);
+        self.entries.push(Box::new(Joined { name: name.to_owned(), parts }));
+        if self.saved_valid && self.saved_position == self.position {
+            self.saved_position = self.entries.len();
+        }
+
+        self.position = self.entries.len();
+        self.merge_open = false;
+    }
+
     fn note(&mut self, items: Vec<u64>) {
         self.last_dirty.all = items.is_empty();
         if self.last_dirty.all {
@@ -124,6 +165,39 @@ impl<M: 'static> CommandStack<M> {
 
         self.last_dirty.items = items;
         self.version += 1;
+    }
+}
+
+/// Commands undone and redone as one (`CommandStack::join_last`): applied in order, reverted in reverse.
+struct Joined<M: 'static> {
+    name: String,
+    parts: Vec<Box<dyn Command<M>>>,
+}
+
+impl<M: 'static> Command<M> for Joined<M> {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, model: &mut M) {
+        for c in &mut self.parts {
+            c.apply(model);
+        }
+    }
+
+    fn revert(&mut self, model: &mut M) {
+        for c in self.parts.iter_mut().rev() {
+            c.revert(model);
+        }
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        let all = self.parts.iter().map(|c| c.dirty_items()).collect::<Vec<_>>();
+        if all.iter().any(Vec::is_empty) { vec![] } else { all.concat() }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -149,6 +223,9 @@ pub trait History {
     /// Saved state tracking: `modified` is false right after `mark_saved` and again after undoing back to that point.
     fn mark_saved(&mut self);
     fn modified(&self) -> bool;
+
+    /// Where the document is as saved (as opened when it never was): `None` when that state is no longer in the history.
+    fn saved_position(&self) -> Option<usize>;
 
     /// Changes whenever an entry is pushed, merged, undone or redone (documents re-publish when it moves).
     fn version(&self) -> u64;
@@ -210,6 +287,7 @@ impl<M: 'static> History for CommandStack<M> {
 
         if self.saved_valid && self.saved_position > self.position {
             self.saved_valid = false;
+            self.saved_lost = true;
         }
 
         self.entries.truncate(self.position);
@@ -242,6 +320,11 @@ impl<M: 'static> History for CommandStack<M> {
     fn mark_saved(&mut self) {
         self.saved_position = self.position;
         self.saved_valid = true;
+        self.saved_lost = false;
+    }
+
+    fn saved_position(&self) -> Option<usize> {
+        if self.saved_valid { Some(self.saved_position) } else { (!self.saved_lost).then_some(0) }
     }
 
     fn modified(&self) -> bool {
@@ -265,9 +348,80 @@ impl<M: 'static> History for CommandStack<M> {
         self.position = 0;
         self.saved_position = 0;
         self.saved_valid = false;
+        self.saved_lost = false;
         self.merge_open = false;
         self.last_dirty = Dirty::default();
         self.pending = Dirty::default();
         self.version += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Adds `by` to the model.
+    struct Add(i32);
+
+    impl Command<i32> for Add {
+        fn name(&self) -> String {
+            format!("add {}", self.0)
+        }
+
+        fn apply(&mut self, m: &mut i32) {
+            *m += self.0;
+        }
+
+        fn revert(&mut self, m: &mut i32) {
+            *m -= self.0;
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn commands_joined_are_undone_and_redone_together() {
+        let mut s = CommandStack::new(0);
+        s.push(Box::new(Add(1)));
+        s.mark_saved();
+        s.push(Box::new(Add(10)));
+        s.push(Box::new(Add(100)));
+        s.join_last(2, "both");
+        assert_eq!((*s.model(), s.size(), s.name(1).as_str()), (111, 2, "both"));
+        assert!(s.undo());
+        assert_eq!(*s.model(), 1);
+        assert!(!s.modified(), "back at the save");
+        assert!(s.redo());
+        assert_eq!(*s.model(), 111);
+        assert!(s.undo() && s.undo());
+        assert_eq!(*s.model(), 0);
+    }
+
+    #[test]
+    fn the_saved_point_is_known_until_it_leaves_the_history() {
+        let mut s = CommandStack::new(0);
+        assert_eq!(s.saved_position(), Some(0), "never saved: as opened");
+        s.push(Box::new(Add(1)));
+        s.push(Box::new(Add(2)));
+        s.mark_saved();
+        s.push(Box::new(Add(4)));
+        assert_eq!(s.saved_position(), Some(2));
+
+        // Revert: back to the saved point, Redo brings the edit back.
+        s.jump_to(s.saved_position().unwrap());
+        assert_eq!((*s.model(), s.modified()), (3, false));
+        assert!(s.redo());
+        assert_eq!(*s.model(), 7);
+
+        // Undone past the save, then a new edit: the saved state is gone from the history.
+        assert!(s.undo() && s.undo() && s.undo());
+        s.push(Box::new(Add(8)));
+        assert_eq!(s.saved_position(), None);
+        s.mark_saved();
+        assert_eq!(s.saved_position(), Some(1));
+        s.clear();
+        assert_eq!(s.saved_position(), Some(0));
     }
 }

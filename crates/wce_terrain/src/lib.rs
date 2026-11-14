@@ -2,6 +2,7 @@
 //! game's files into it and writes them out of it.
 
 pub mod bca;
+pub mod campaign_props;
 pub mod cell_edit;
 pub mod cells;
 pub mod deployment;

@@ -15,8 +15,8 @@ use wce_foundation::log;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::SourceRef;
 use wce_tile::prefab_refs::ContentIndex;
-use wce_tile::prefabs::{self, PrefabLibrary};
 use wce_tile::prefab_terrain::PrefabTerrain;
+use wce_tile::prefabs::{self, PrefabLibrary};
 use wce_tile::tile_project::{PrefabGroundSource, PrefabSource};
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
@@ -125,21 +125,27 @@ impl TileTool {
         let sc = d.tile().tscene();
         let refs = sc.find_all("UserInstanceGroup").into_iter().filter(|&g| d.is_prefab_reference(g)).count();
         gui::text(&format!("{refs} prefab reference(s)"));
-        gui::text_wrapped("A reference's contents are its prefab's; select it, then one of its items (click it again, or in the Scene tree), and what you edit is an override, marked in the Inspector.");
+        gui::text_wrapped(
+            "A reference's contents are its prefab's; select it, then one of its items (click it again, or in the Scene tree), and what you edit is an override, marked in the Inspector.",
+        );
         if gui::button(&format!("{}  Turn copies of prefabs into references", icons::BOXES)) {
             self.status = self.recognise_prefabs(e).unwrap_or_else(|err| err);
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Every instance group whose contents are exactly a prefab's becomes a reference to it (one undo entry). Done when a tile opens from the Assembly Kit.");
+            gui::set_tooltip(
+                "Every instance group whose contents are exactly a prefab's becomes a reference to it (one undo entry). Done when a tile opens from the Assembly Kit.",
+            );
         }
     }
 
     /// The folders the library is read from: the projects' `raw_data/art/prefabs` (new prefabs go there), then `art/prefabs` of the open
-    /// tile's kit and of the kits the Tiles panel lists (the Assembly Kit).
+    /// tile's kit and of every Assembly Kit in the settings' order (`wce_tile::sources::kit_raw_roots`: a kit of prefabs alone, without
+    /// tiles, too), then any other the Tiles panel lists.
     pub(crate) fn prefab_folders(&self, e: &mut Editor) -> Vec<std::path::PathBuf> {
         let mut folders = vec![prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"))];
-        let mut kits = self.kit_roots(e);
+        let mut kits = wce_tile::sources::kit_raw_roots(e.settings_ref());
+        kits.extend(self.kit_roots(e));
         if let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) {
             kits.insert(0, raw);
         }
@@ -164,7 +170,11 @@ impl TileTool {
 
         // The road pieces' placeholders, in the projects' folder of this game where they are missing (docs/plans/procedural_roads.md).
         match wce_tile::road_pieces::write_base(&folders[0]) {
-            Ok(written) if !written.is_empty() => wce_foundation::log::info(format!("road pieces: {} base piece(s) written to {}", written.len(), folders[0].join(wce_tile::road_pieces::FOLDER).display())),
+            Ok(written) if !written.is_empty() => wce_foundation::log::info(format!(
+                "road pieces: {} base piece(s) written to {}",
+                written.len(),
+                folders[0].join(wce_tile::road_pieces::FOLDER).display()
+            )),
             Ok(_) => {}
             Err(err) => wce_foundation::log::warn(format!("road pieces: {err}")),
         }
@@ -183,7 +193,11 @@ impl TileTool {
                     Err(err) => wce_foundation::log::warn(format!("road pieces: {err}")),
                 }
             } else {
-                wce_foundation::log::info(format!("road pieces: no {} pieces, the kit's {}* prefabs lack their decals", wce_tile::road_dirt::TYPE, wce_tile::road_dirt::KIT_PREFABS));
+                wce_foundation::log::info(format!(
+                    "road pieces: no {} pieces, the kit's {}* prefabs lack their decals",
+                    wce_tile::road_dirt::TYPE,
+                    wce_tile::road_dirt::KIT_PREFABS
+                ));
             }
         }
 
@@ -256,7 +270,7 @@ impl TileTool {
         }
 
         let previous = std::mem::take(&mut self.prefab_sel_before);
-        let from_tree = std::mem::take(&mut self.tree_picked);
+        let from_tree = std::mem::take(&mut self.tree.picked);
         let sc = d.tile().tscene();
         let els = sc.doc().elements();
         let sel = selected(e);
@@ -276,7 +290,9 @@ impl TileTool {
             copy.filter(|c| from_tree || previous.contains(c))
         });
 
-        if let Some(c) = opening && let Some(key) = layer_key(sc, c) {
+        if let Some(c) = opening
+            && let Some(key) = layer_key(sc, c)
+        {
             self.prefab_open = Some((id, key));
             self.prefab_version += 1;
         }
@@ -386,7 +402,12 @@ impl TileTool {
             return Err("only an instance group can be saved as a prefab".to_owned());
         }
 
-        let root = lib.roots().first().cloned().or_else(|| d.project().raw_root.as_deref().map(prefabs::prefab_root)).ok_or("no kit to put the prefab in")?;
+        let root = lib
+            .roots()
+            .first()
+            .cloned()
+            .or_else(|| d.project().raw_root.as_deref().map(prefabs::prefab_root))
+            .ok_or("no kit to put the prefab in")?;
         let folder = folder.trim().trim_matches(['/', '\\']);
         let path = if folder.is_empty() { root.join(format!("{name}.wce")) } else { root.join(folder).join(format!("{name}.wce")) };
         d.rename(group, name);
@@ -466,6 +487,10 @@ impl TileTool {
             gui::close_current_popup();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the group as a new prefab file; the group becomes a reference to it.");
+        }
+
         gui::same_line();
         if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
             self.prefab_save = None;
@@ -522,7 +547,9 @@ impl TileTool {
     }
 
     pub(crate) fn open_key_in_prefab_tool(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
-        let r = e.with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| p.open_prefab(e, key)).ok_or("there is no Prefab tool in this build")??;
+        let r = e
+            .with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| p.open_prefab(e, key))
+            .ok_or("there is no Prefab tool in this build")??;
         e.set_tool(crate::prefab_tool::PREFAB_TOOL_ID);
         Ok(r)
     }
@@ -540,7 +567,10 @@ impl TileTool {
             let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { continue };
             let (each, kept) = copies_with(d, key, old, &new, None);
             if kept != 0 {
-                log::warn(format!("{}: {kept} reference(s) to {key} differ from it by more than values: they keep their own contents", d.title()));
+                log::warn(format!(
+                    "{}: {kept} reference(s) to {key} differ from it by more than values: they keep their own contents",
+                    d.title()
+                ));
             }
 
             if each.iter().any(|(c, text)| d.children_text(*c) != *text) {
@@ -554,7 +584,6 @@ impl TileTool {
         n
     }
 }
-
 
 /// What turning copies into references says.
 pub(crate) fn recognised_message(n: usize, different: usize) -> String {

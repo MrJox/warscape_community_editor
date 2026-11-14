@@ -6,7 +6,9 @@
 use std::path::Path;
 
 use dear_imguizmo_sys as gz;
-use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraMode, CameraOptions, FlyCamera, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera};
+use wce_editor_core::camera_controller::{
+    CameraController, CameraInput, CameraMode, CameraOptions, FlyCamera, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera,
+};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, inverse, length, normalize};
 use wce_foundation::{clock::Clock, wce_prof};
@@ -92,6 +94,9 @@ pub struct Viewport {
     /// both do not fit beside it.
     pub chips_width: f32,
     pub chips_top: f32,
+
+    /// One of the tool's modes (a brush) was on last frame (`Tool::viewport_modes`): the mode strip shows the gizmo's buttons unlit.
+    pub tool_mode_on: bool,
     pub tool_chips_width: f32,
 
     /// The coordinates readout (crate::coords), the map a tool places the scene in (cells, height above the sea), the ground point under
@@ -107,7 +112,7 @@ pub struct Viewport {
     trace_w: u32,
     trace_h: u32,
     trace_n: u32,
-    gizmo_was_using: bool,
+    pub(crate) gizmo_was_using: bool,
 
     /// A drag of the gizmo that began off its handles (`gizmo_reach`): where it is shown the mouse, from the mouse.
     gizmo_offset: Option<[f32; 2]>,
@@ -135,12 +140,57 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
-            orbit: OrbitCamera::default(), mode: CameraMode::default(),
-            camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, fog: 1.0, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, battle_frame: None, cursor_ground: None, probe: Default::default(),
-            north: [0.0, 1.0], trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gizmo_offset: None, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, box_from: None, box_active: false, image_origin: gui::v2(0.0, 0.0),
+            total_war: TotalWarCamera::default(),
+            top_down: TopDownCamera::default(),
+            walk: WalkCamera::default(),
+            fly: FlyCamera::default(),
+            orbit: OrbitCamera::default(),
+            mode: CameraMode::default(),
+            camera_options: CameraOptions::default(),
+            edge_scroll: false,
+            obstacles: Default::default(),
+            target: RenderTarget::default(),
+            texture: None,
+            gizmo: GizmoMode::Translate,
+            local_coordinates: false,
+            snap: false,
+            snap_move: 1.0,
+            snap_angle: 15.0,
+            snap_scale: 0.1,
+            gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE,
+            gizmo_clip: 0.16,
+            show_grid: false,
+            game_view: false,
+            fog: 1.0,
+            hovered: false,
+            frames_rendered: 0,
+            show_compass: true,
+            chips_width: 0.0,
+            tool_mode_on: false,
+            chips_top: 6.0,
+            tool_chips_width: 0.0,
+            show_coords: true,
+            map_frame: None,
+            battle_frame: None,
+            cursor_ground: None,
+            probe: Default::default(),
+            north: [0.0, 1.0],
+            trace: String::new(),
+            trace_w: 0,
+            trace_h: 0,
+            trace_n: 0,
+            gizmo_was_using: false,
+            gizmo_offset: None,
+            wheel_owned: false,
+            gesture: 0,
+            press: (0.0, 0.0),
+            pressed: false,
+            right_press: None,
+            tool_drag: false,
+            orbit_drag: false,
+            box_from: None,
+            box_active: false,
+            image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -271,7 +321,14 @@ impl Viewport {
 
     /// The coordinates readout's lines, with the cursor's last ground point.
     pub fn coords_lines(&self, scene: &RenderScene) -> Vec<String> {
-        crate::coords::lines(&self.camera(), !matches!(self.mode, CameraMode::Walk | CameraMode::Fly), self.cursor_ground, scene.game_units, self.map_frame.as_ref(), self.battle_frame.as_ref())
+        crate::coords::lines(
+            &self.camera(),
+            !matches!(self.mode, CameraMode::Walk | CameraMode::Fly),
+            self.cursor_ground,
+            scene.game_units,
+            self.map_frame.as_ref(),
+            self.battle_frame.as_ref(),
+        )
     }
 
     pub fn ray(&self, x: i32, y: i32) -> Option<(Float3, Float3)> {
@@ -303,7 +360,11 @@ pub fn update_camera(e: &mut Editor, input: &CameraInput) {
     let opts = vp.camera_options;
     let far = vp.controller_ref().lens().zfar;
     let mut world = crate::camera_world::ViewportWorld {
-        scene: &e.scene, ground: &mut vp.probe, obstacles: &mut vp.obstacles, models: e.renderer.as_mut().map(|r| &*r.models()), far,
+        scene: &e.scene,
+        ground: &mut vp.probe,
+        obstacles: &mut vp.obstacles,
+        models: e.renderer.as_mut().map(|r| &*r.models()),
+        far,
     };
 
     let c: &mut dyn CameraController = match vp.mode {
@@ -327,7 +388,8 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     let Some(r) = e.renderer.as_mut() else { return };
     if let Some(go) = go {
         // Nothing lights the scene yet: the default environment with the player's output settings.
-        e.scene.environment.active = Some(EnvironmentParams { output_gamma: go.gamma, output_brightness: go.brightness, ..Default::default() });
+        e.scene.environment.active =
+            Some(EnvironmentParams { output_gamma: go.gamma, output_brightness: go.brightness, ..Default::default() });
     }
 
     let vp = &mut e.viewport;
@@ -362,6 +424,44 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     vp.trace_n += 1;
 }
 
+/// Why the selection shows no gizmo (`None`: it does), by the rules `draw` follows: for the status line's hint and `gizmo_why`.
+pub fn gizmo_blocker(e: &mut Editor) -> Option<String> {
+    if e.viewport.game_view {
+        return Some("the game view (camera chip) hides the gizmo".to_owned());
+    }
+
+    if e.selection.is_empty() {
+        return Some("nothing selected".to_owned());
+    }
+
+    if e.with_active_tool(|t, e| t.tool_gizmo(e, false)).flatten().is_some() {
+        return None;
+    }
+
+    if e.viewport.gizmo == GizmoMode::Off {
+        return Some("the Select mode (the arrow in the mode strip) has no gizmo: Move, Rotate or Scale (2 to 4)".to_owned());
+    }
+
+    if e.viewport_and_tool_claims() {
+        return Some("the tool has the left mouse button (a brush, placing, drawing, a grab, box select or the flip): Esc".to_owned());
+    }
+
+    let primary = e.selection.items()[0];
+    let Some(d) = e.docs.find(primary.doc) else { return Some("the selection's document is closed".to_owned()) };
+    if d.item_locked(primary) {
+        return Some("its draggable flag is off (Inspector > flags)".to_owned());
+    }
+
+    if d.item_transform(primary).is_none() {
+        return Some(format!(
+            "the first selected ({}) is not something the gizmo moves: a layer, a point, or hidden / not selectable here or in a layer above",
+            d.describe(primary)
+        ));
+    }
+
+    None
+}
+
 /// What is under a pixel of the last rendered image.
 pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
     wce_prof!("viewport.pick");
@@ -376,7 +476,12 @@ pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
 
 /// The surface under a pixel of the viewport image: the nearest mesh or terrain (overlays, locked layers and what `skip` says left out), its
 /// world point and normal (`Renderer::pick_surface`). For placing things on other things.
-pub fn surface_under(e: &mut Editor, x: i32, y: i32, skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool) -> Option<wce_render::renderer::SurfaceHit> {
+pub fn surface_under(
+    e: &mut Editor,
+    x: i32,
+    y: i32,
+    skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool,
+) -> Option<wce_render::renderer::SurfaceHit> {
     wce_prof!("viewport.surface_under");
     let r = e.renderer.as_mut()?;
     if !e.viewport.target.valid() {
@@ -391,7 +496,13 @@ pub fn surface_under(e: &mut Editor, x: i32, y: i32, skip: &dyn Fn(&wce_scene::r
 /// The topmost surfaces over a `size` metres square of the ground around `center`, seen straight down at `res` x `res` pixels
 /// (`Renderer::surfaces_below`; overlays, locked layers and what `skip` says left out). For putting things on whatever is below a ground
 /// point, wherever the camera is.
-pub fn surfaces_below(e: &mut Editor, center: wce_foundation::math::Float3, size: f32, res: u32, skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool) -> Option<wce_render::renderer::SurfaceGrid> {
+pub fn surfaces_below(
+    e: &mut Editor,
+    center: wce_foundation::math::Float3,
+    size: f32,
+    res: u32,
+    skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool,
+) -> Option<wce_render::renderer::SurfaceGrid> {
     wce_prof!("viewport.surfaces_below");
     let r = e.renderer.as_mut()?;
     let params = ViewParams { camera: e.viewport.camera(), time_s: e.clock.time() as f32 };
@@ -603,6 +714,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let origin = gui::cursor_screen_pos();
     e.viewport.image_origin = origin;
     gui::image(tex.id(), size);
+    e.with_active_tool(|t, e| t.viewport_underlay(e, origin, size));
     if e.viewport.show_compass {
         draw_compass(origin, size, &e.viewport.camera(), e.viewport.north);
     }
@@ -638,6 +750,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     }
 
     e.with_active_tool(|t, e| t.viewport_overlay(e, origin, size));
+    if size.x >= 120.0 && !e.viewport.game_view {
+        crate::chips::draw_mode_strip(e, origin, size);
+    }
 
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
@@ -649,13 +764,46 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     if let Some(frame) = tool_gizmo {
         gizmo_target = Some((SourceRef::default(), frame));
     } else if e.viewport.gizmo != GizmoMode::Off && !e.viewport.game_view && !claims && !e.selection.is_empty() {
+        // No gizmo on an item the mouse must not move (TEd's draggable flag off).
         let primary = e.selection.items()[0];
-        gizmo_target = e.docs.find(primary.doc).and_then(|d| d.item_transform(primary)).map(|world| (primary, world));
+        gizmo_target = e
+            .docs
+            .find(primary.doc)
+            .filter(|d| !d.item_locked(primary))
+            .and_then(|d| d.item_transform(primary))
+            .map(|world| (primary, world));
     }
 
     let mut using_gizmo = false;
     let mut over_gizmo_handle = false;
     let vp_gizmo = e.viewport.gizmo;
+
+    // The move gizmo's centre is the tool's (`Tool::can_centre_drag`): a drag there moves the selection over the surface under the cursor,
+    // as the Tile tool's G does. Taken before ImGuizmo, whose centre would move it in the screen's plane.
+    let mut centre_taken = false;
+    if let Some((_, world)) = gizmo_target.filter(|_| !tools && vp_gizmo == GizmoMode::Translate)
+        && e.with_active_tool(|t, e| t.can_centre_drag(e)).unwrap_or(false)
+        && let Some((x, y)) = e.viewport.camera().project(Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]), w as f32 / h as f32)
+    {
+        const CENTRE_GRAB: f32 = 9.0;
+        let at = gui::v2(origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y);
+        let mouse = gui::io().MousePos;
+        let near = hovered && (mouse.x - at.x).hypot(mouse.y - at.y) <= CENTRE_GRAB;
+        let dl = gui::window_draw_list();
+        dl.circle_filled(at, 6.0, gui::col32(10, 10, 12, 200));
+        dl.circle_filled(at, 4.5, if near { gui::col32(255, 230, 120, 255) } else { gui::col32(235, 235, 235, 230) });
+        if near {
+            gui::set_tooltip(
+                "Drag: move the selection over the surface under the cursor (as G): on the ground, onto what is under it, wall pieces joining",
+            );
+            if gui::is_mouse_clicked(0) && e.with_active_tool(|t, e| t.begin_centre_drag(e)).unwrap_or(false) {
+                e.viewport.tool_drag = true;
+                centre_taken = true;
+                gizmo_target = None;
+            }
+        }
+    }
+
     if let Some((primary, world)) = gizmo_target {
         let vp = &e.viewport;
         let cam = vp.camera();
@@ -670,7 +818,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
         // Local coordinates: the gizmo works on a stand-in with the parent's axes at the item (the delta it makes is the same world move);
         // the scale is the item's own.
-        let parent = (!tools && vp.local_coordinates && vp.gizmo != GizmoMode::Scale).then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary))).flatten();
+        let parent = (!tools && vp.local_coordinates && vp.gizmo != GizmoMode::Scale)
+            .then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary)))
+            .flatten();
         let frame = parent.map_or(world, |pm| axes_at(&pm, &world));
         let mut m = to_gizmo(&frame);
         let mode = if tools || parent.is_some() || vp.gizmo == GizmoMode::Scale && vp.local_coordinates { gz::LOCAL } else { gz::WORLD };
@@ -693,13 +843,25 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         // The whole gizmo takes the mouse: inside it but off its handles, it is shown the closest one.
         let (right, _, forward) = cam.axes();
         let aspect = w as f32 / h as f32;
-        let project = |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
+        let project =
+            |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
         let centre = Float3::new(frame.m[0][3], frame.m[1][3], frame.m[2][3]);
         let axis = |c: usize| normalize(Float3::new(frame.m[0][c], frame.m[1][c], frame.m[2][c]));
         let local_axes = tools || parent.is_some() || vp.gizmo == GizmoMode::Scale;
-        let axes = if local_axes { [axis(0), axis(1), axis(2)] } else { [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)] };
+        let axes = if local_axes {
+            [axis(0), axis(1), axis(2)]
+        } else {
+            [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)]
+        };
         let shape = crate::gizmo_reach::Gizmo {
-            project: &project, view: [size.x, size.y], centre, axes, right, forward, orthographic: cam.is_ortho(), size: gizmo_clip,
+            project: &project,
+            view: [size.x, size.y],
+            centre,
+            axes,
+            right,
+            forward,
+            orthographic: cam.is_ortho(),
+            size: gizmo_clip,
         };
 
         let held_offset = vp.gizmo_offset;
@@ -730,8 +892,15 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
             gui::with_mouse_at(shown.map(|[x, y]| gui::v2(x, y)), || {
                 gz::ImGuizmo_Manipulate(
-                    v.as_ptr(), p.as_ptr(), op, mode, m.as_mut_ptr(), std::ptr::null_mut(),
-                    if vp.snap && !tools { snap_values.as_ptr() } else { std::ptr::null() }, std::ptr::null(), std::ptr::null(),
+                    v.as_ptr(),
+                    p.as_ptr(),
+                    op,
+                    mode,
+                    m.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    if vp.snap && !tools { snap_values.as_ptr() } else { std::ptr::null() },
+                    std::ptr::null(),
+                    std::ptr::null(),
                 );
                 using_gizmo = gz::ImGuizmo_IsUsing();
                 over_gizmo_handle = gz::ImGuizmo_IsOver_Nil();
@@ -769,9 +938,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             }
 
             let delta = moved * inverse(&frame);
-            let items = e.selection.items().to_vec();
+            let mut items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
             if let Some(d) = e.docs.find_mut(primary.doc).filter(|_| !tools) {
+                items.retain(|&i| !d.item_locked(i));
                 if vp_gizmo == GizmoMode::Scale {
                     // ImGuizmo keeps the matrix the drag began with: its axes' lengths are the scale since then.
                     let m = &moved.m;
@@ -796,12 +966,18 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
     // ---- the active tool's mouse events (hover every frame, the left button's press / drag / release)
     let event = |kind| ViewportEvent {
-        kind, x: ((mouse_x - origin.x) * density) as i32, y: ((mouse_y - origin.y) * density) as i32, ctrl, shift, alt, ..Default::default()
+        kind,
+        x: ((mouse_x - origin.x) * density) as i32,
+        y: ((mouse_y - origin.y) * density) as i32,
+        ctrl,
+        shift,
+        alt,
+        ..Default::default()
     };
     let has_tool = e.has_active_tool();
     if has_tool && hovered && !over_gizmo {
         e.tool_viewport_input(&event(ViewportEventKind::Hover));
-        if gui::is_mouse_clicked(0) {
+        if gui::is_mouse_clicked(0) && !centre_taken {
             let taken = e.tool_viewport_input(&event(ViewportEventKind::Press));
             if taken || claims {
                 e.viewport.tool_drag = true;
@@ -891,8 +1067,20 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     if e.viewport.edge_scroll && hovered && !active {
         const EDGE: f32 = 12.0;
         let (rx, ry) = (mouse_x - origin.x, mouse_y - origin.y);
-        input.edge[0] = if rx < EDGE { -1.0 } else if rx > size.x - EDGE { 1.0 } else { 0.0 };
-        input.edge[1] = if ry < EDGE { 1.0 } else if ry > size.y - EDGE { -1.0 } else { 0.0 };
+        input.edge[0] = if rx < EDGE {
+            -1.0
+        } else if rx > size.x - EDGE {
+            1.0
+        } else {
+            0.0
+        };
+        input.edge[1] = if ry < EDGE {
+            1.0
+        } else if ry > size.y - EDGE {
+            -1.0
+        } else {
+            0.0
+        };
     }
 
     update_camera(e, &input);

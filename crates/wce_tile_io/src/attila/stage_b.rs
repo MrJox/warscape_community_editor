@@ -9,12 +9,13 @@ use wce_tile_model::Tile;
 
 use super::compile::CompileNotes;
 
-/// What stage B needs besides the project: the kit's `raw_data` (the tile database's `_settings.xml`, the linking tiles' final
+/// What stage B needs besides the project: the `raw_data` folders its kit-layout inputs come from, the first that has one winning (the
+/// projects', then the Assembly Kits' in the settings' order: the tile database's `_settings.xml` and entries, the linking tiles' final
 /// heights, the db tables and the buildings' raw height-map meshes) and a model's bytes by key (BOB's VFS: the game's packs, for the
 /// water planes).
 #[derive(Clone, Copy)]
 pub struct StageB<'a> {
-    pub raw_data: &'a Path,
+    pub roots: &'a [std::path::PathBuf],
     pub models: &'a (dyn Fn(&str) -> Option<Vec<u8>> + Sync),
 }
 
@@ -62,7 +63,12 @@ impl Group {
 pub fn group_of(name: &str) -> Option<Group> {
     Some(match name.to_lowercase().as_str() {
         "blend.dds" | "index.dds" | "ground_types.dds" => Group::Textures,
-        "normal.dds" | "tile.agf" | "mesh.rigid_model_v2" | "outfield_mesh.rigid_model_v2" | "hf_height_map.data" | "terrain_outlines.xml" => Group::Terrain,
+        "normal.dds"
+        | "tile.agf"
+        | "mesh.rigid_model_v2"
+        | "outfield_mesh.rigid_model_v2"
+        | "hf_height_map.data"
+        | "terrain_outlines.xml" => Group::Terrain,
         "hf_water_map.data" => Group::Water,
         _ => return None,
     })
@@ -75,12 +81,20 @@ pub fn fingerprints(raw: &Tile) -> std::collections::BTreeMap<&'static str, u64>
     wce_foundation::wce_prof!("stage_b.fingerprints");
     use super::carry::Fnv;
     use wce_tile_model::MapKind;
-    let entry = raw.entry.as_ref().map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &super::schema::EntrySchema)).unwrap_or_default();
+    let entry = raw
+        .entry
+        .as_ref()
+        .map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &super::schema::EntrySchema))
+        .unwrap_or_default();
     let mut base = Fnv::new();
     base.bytes(&entry).str(raw.variation.as_deref().unwrap_or_default());
     let mut rivers = Fnv::new();
     for r in &raw.rivers {
-        rivers.u32(r.index.unwrap_or(u32::MAX)).bytes(&crate::xml::write(&r.root, &crate::xml::DocStyle::ted(), &super::schema::RiverSchema));
+        rivers.u32(r.index.unwrap_or(u32::MAX)).bytes(&crate::xml::write(
+            &r.root,
+            &crate::xml::DocStyle::ted(),
+            &super::schema::RiverSchema,
+        ));
     }
 
     let instances = |h: &mut Fnv, list: Vec<(String, [f32; 16])>| {
@@ -150,7 +164,8 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
     let mut out = vec![];
     let tessellated = respliced.then(|| {
         // The tile's cells along z: the grid's (h - 1) / density of `terrain_files`.
-        let cells_y = raw.entry.as_ref().and_then(|e| e.root.get("height")).and_then(wce_tile_model::Value::as_int).unwrap_or(0).max(0) as usize;
+        let cells_y =
+            raw.entry.as_ref().and_then(|e| e.root.get("height")).and_then(wce_tile_model::Value::as_int).unwrap_or(0).max(0) as usize;
         super::river::tessellate(&super::river::river_splines(raw, cells_y), river)
     });
     for (name, blob) in &carried {
@@ -166,7 +181,9 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
     }
 
     if respliced {
-        notes.notes.push("stage B: the decompiled tile's meshes kept with their river block made again (only the rivers changed)".to_owned());
+        notes
+            .notes
+            .push("stage B: the decompiled tile's meshes kept with their river block made again (only the rivers changed)".to_owned());
     }
 
     let wanted = Group::ALL.into_iter().filter(|&g| !keep(g) && !(g == Group::Terrain && respliced)).collect::<Vec<_>>();
@@ -175,7 +192,9 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
     }
 
     for g in wanted.iter().filter(|&&g| has(g)) {
-        notes.notes.push(format!("stage B: the decompiled tile's {} files made again (the project changed since it was decompiled)", g.name()));
+        notes
+            .notes
+            .push(format!("stage B: the decompiled tile's {} files made again (the project changed since it was decompiled)", g.name()));
     }
 
     match made_files(raw, ctx, river) {
@@ -215,7 +234,7 @@ pub fn made_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) ->
 /// [`made_files`]' terrain: the building stamps, the meshes, the height fields, the outlines.
 fn made_terrain(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> Result<(Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
-    let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.raw_data);
+    let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.roots);
     if !missing.is_empty() {
         notes.notes.push(format!(
             "stage B: no height-map mesh for {} (BOB: \"Height map mesh file ... is missing\", no hf_height_map.data nor terrain_outlines.xml)",
@@ -223,8 +242,8 @@ fn made_terrain(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> R
         ));
     }
 
-    let angle = super::terrain_mesh::decimation_angle(ctx.raw_data);
-    let terrain = super::terrain_mesh::terrain_files(raw, ctx.raw_data, angle, &stamps, ctx.models, river)?;
+    let angle = super::terrain_mesh::decimation_angle(ctx.roots);
+    let terrain = super::terrain_mesh::terrain_files(raw, ctx.roots, angle, &stamps, ctx.models, river)?;
     Ok((terrain, notes))
 }
 
@@ -249,8 +268,13 @@ impl PackIndex {
         use rpfm_lib::files::pack::Pack;
         self.index.get_or_init(|| {
             let ours = |p: &Path| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase().starts_with("wce_"));
-            let mut packs = std::fs::read_dir(&self.data).into_iter().flatten().flatten().map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|x| x == "pack") && !ours(p)).collect::<Vec<_>>();
+            let mut packs = std::fs::read_dir(&self.data)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "pack") && !ours(p))
+                .collect::<Vec<_>>();
             packs.sort();
             let mut out = std::collections::HashMap::new();
             let Some(game) = Self::game() else { return out };
@@ -279,10 +303,14 @@ impl PackIndex {
     pub fn folder(&self, folder: &str) -> Vec<(String, Vec<u8>)> {
         use rpfm_lib::files::pack::Pack;
         let prefix = format!("{}/", Self::key(folder).trim_end_matches('/'));
+        // The path below the folder as the pack spells it: by its parts, not by the lower-cased key's length in bytes (lower case can
+        // change it in other alphabets, which cut the name wrong or inside a character).
+        let parts = prefix.split('/').filter(|p| !p.is_empty()).count();
         let mut by_pack: std::collections::BTreeMap<&std::path::PathBuf, Vec<(&String, String)>> = std::collections::BTreeMap::new();
         for (key, (pack, name)) in self.index() {
-            if let Some(rel) = key.strip_prefix(&prefix) {
-                by_pack.entry(pack).or_default().push((name, name[name.len() - rel.len()..].to_owned()));
+            if key.starts_with(&prefix) {
+                let rel = name.replace('\\', "/").split('/').skip(parts).collect::<Vec<_>>().join("/");
+                by_pack.entry(pack).or_default().push((name, rel));
             }
         }
 

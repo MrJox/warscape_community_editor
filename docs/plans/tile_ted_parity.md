@@ -128,6 +128,10 @@ the Blendmap Filters, Auto-Flange, Rock-painting (`workflow_review.md`, section 
   0x004814b0): `PaintMode::Blur`, each channel towards that average as the stroke found it, by the stroke's built-up weight. The paint
   brush's mode choice (tooltips), the Grouped variation slider, `brush_paint ... grouped [v] | blur`,
   `scripts/tile_paint_grouped_blur.txt`, unit tests. **Phase 5a is done.**
+- Added 2026-11-11 (not in TEd): **Paint the whole tile** (the paint brush's panel; `paint_whole_tile [g v]`;
+  `TileDocument::paint_whole_tile`): one dab over the whole blend map, border included, at the brush's strength with no falloff or
+  image, in its mode and through its filters (at strength 1, normal, no filter: every pixel that texture), into the working terrain layer
+  as a stroke; one undo entry (`BlendFillCommand`). **Flip the whole tile** is in docs/editor.md (Flip).
 
 ### Phase 5b
 - Moved to "Ideas for later" (user, 2026-10-27): painting polygons with a brush is not a TEd feature.

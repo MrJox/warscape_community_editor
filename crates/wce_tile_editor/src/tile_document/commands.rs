@@ -4,9 +4,9 @@
 //! Undo puts the attribute texts an edit replaced back as they were (writing the old numbers again could give other text than the file's,
 //! and the text splices of earlier structural commands must still fit the text).
 
-use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use std::any::Any;
 use std::collections::HashMap;
+use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 
 use wce_editor_core::command::Command;
 use wce_formats::xml_doc::XmlSplice;
@@ -15,7 +15,65 @@ use wce_foundation::math::Double3;
 use super::shift::{ElementShift, SHIFTED_ITEM, ViewChange};
 use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
 
+/// The moves of several elements in one step (the gizmo's drag of a selection): one entry, merging with the next steps of its gesture.
+pub(crate) struct TedMovesCommand {
+    pub gesture: u64,
+    pub moves: Vec<TedMoveCommand>,
+}
+
+impl Command<Tile> for TedMovesCommand {
+    fn name(&self) -> String {
+        match &self.moves[..] {
+            [one] => one.name.clone(),
+            all => format!("Move {} items", all.len()),
+        }
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        for m in &mut self.moves {
+            m.apply(t);
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        for m in self.moves.iter_mut().rev() {
+            m.revert(t);
+        }
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ 0x4d4f_5645_5300 } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
+        for nm in &n.moves {
+            match self.moves.iter_mut().find(|m| m.elem == nm.elem) {
+                Some(m) => {
+                    m.merge_from(nm);
+                }
+
+                None => self.moves.push(nm.clone()),
+            }
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        let mut items = self.moves.iter().flat_map(TedMoveCommand::dirty_items).collect::<Vec<_>>();
+        items.sort_unstable();
+        items.dedup();
+        items
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// A move and / or rotation of one element (local position and euler angles); the steps of one gesture merge.
+#[derive(Clone)]
 pub(crate) struct TedMoveCommand {
     pub name: String,
     pub elem: usize,
@@ -253,7 +311,9 @@ impl Command<Tile> for TedPointAttrsCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else { return false };
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else {
+            return false;
+        };
         if n.steps.iter().zip(&self.steps).any(|(a, b)| a.0 != b.0 || a.1 != b.1) {
             return false;
         }
@@ -318,7 +378,9 @@ impl TedSpliceCommand {
             }
 
             SpliceEffect::Remade(elems) => t.note_remade(elems),
-            SpliceEffect::Shift { spans, added, touched } => t.changes.push(ViewChange::Shift(ElementShift { spans: spans.clone(), came: *added == forward, touched: touched.clone() })),
+            SpliceEffect::Shift { spans, added, touched } => {
+                t.changes.push(ViewChange::Shift(ElementShift { spans: spans.clone(), came: *added == forward, touched: touched.clone() }))
+            }
             SpliceEffect::Structure => t.piece_props.clear(),
         }
 
@@ -413,7 +475,9 @@ impl Command<Tile> for TedAttrCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else { return false };
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else {
+            return false;
+        };
         if n.steps.iter().zip(&self.steps).any(|(a, b)| a.0 != b.0) {
             return false;
         }
@@ -467,7 +531,9 @@ impl Command<Tile> for TedAttrsCommand {
         let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
 
         // A step of a drag may leave out an item whose value did not change this time (at the end of its range), or bring in a new one.
-        let same_attrs = |a: &TedAttrCommand, b: &TedAttrCommand| a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0);
+        let same_attrs = |a: &TedAttrCommand, b: &TedAttrCommand| {
+            a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0)
+        };
         if n.edits.iter().any(|t| self.edits.iter().any(|m| m.elem == t.elem && !same_attrs(m, t))) {
             return false;
         }
@@ -613,6 +679,10 @@ impl Command<Tile> for TedPlacementCommand {
 /// One brush step; the steps of a stroke merge into one entry. The first step runs when pushed; undo and redo use the height field's own
 /// records (`HeightField::end_edit` stores them, so a stroke is closed before it can be undone). The landscape instances under the brush move
 /// with the terrain: the command keeps their local positions before the stroke and after its last step.
+///
+/// A stroke that changed no sample leaves no record in its field (Flatten on flat ground, a channel painted where it is full): the entry
+/// then must not take back or put again the field's record, which is another stroke's. `before_top` is the field's last record before the
+/// stroke; whether the stroke left one of its own is known once the stroke is closed, at the first undo (`recorded`).
 pub(crate) struct BrushStepCommand {
     pub kind: BrushKind,
     pub x: f32,
@@ -623,6 +693,17 @@ pub(crate) struct BrushStepCommand {
     pub first: bool,
     pub moved: Vec<Follow>,
     pub where_: HashMap<usize, usize>,
+    pub before_top: u64,
+    pub recorded: Option<bool>,
+}
+
+/// The serial of the last record of the field a brush edits (`top_id`), 0 with none.
+fn field_top(t: &Tile, kind: BrushKind) -> u64 {
+    match kind {
+        BrushKind::Paint(_) => t.project.blend.as_ref().map_or(0, wce_tile::blend_field::BlendField::top_id),
+        BrushKind::Ground(_) => t.project.ground.as_ref().map_or(0, wce_tile::ground_type_field::GroundTypeField::top_id),
+        _ => t.project.height.as_ref().map_or(0, wce_tile::height_field::HeightField::top_id),
+    }
 }
 
 impl Command<Tile> for BrushStepCommand {
@@ -645,10 +726,12 @@ impl Command<Tile> for BrushStepCommand {
     fn apply(&mut self, t: &mut Tile) {
         if self.first {
             self.first = false;
+            self.before_top = field_top(t, self.kind);
             t.apply_brush_following(self.kind, self.x, self.z, &self.settings, self.dt, &mut self.moved);
         } else {
             t.end_stroke_edit();
             match self.kind {
+                _ if self.recorded != Some(true) => {}
                 BrushKind::Paint(_) => {
                     if let Some(b) = &mut t.project.blend {
                         b.redo();
@@ -674,7 +757,9 @@ impl Command<Tile> for BrushStepCommand {
 
     fn revert(&mut self, t: &mut Tile) {
         t.end_stroke_edit();
+        let recorded = *self.recorded.get_or_insert_with(|| field_top(t, self.kind) != self.before_top);
         match self.kind {
+            _ if !recorded => {}
             BrushKind::Paint(_) => {
                 if let Some(b) = &mut t.project.blend {
                     b.undo();
@@ -775,22 +860,30 @@ impl Command<Tile> for TextureGroupCommand {
 pub(crate) struct EntryAttrCommand {
     pub variation: Option<usize>,
     pub attr: String,
-    pub before: String,
+
+    /// `None`: the entry did not have the attribute; undo takes it away again (an empty value would stay in the file).
+    pub before: Option<String>,
     pub after: String,
     pub gesture: u64,
+
+    /// The tile's normal strength before the first apply (`normal_strength` only): what undo puts back when the attribute was not there.
+    pub strength_before: Option<f64>,
 }
 
 impl EntryAttrCommand {
-    fn put(&self, t: &mut Tile, value: &str) {
+    fn put(&mut self, t: &mut Tile, value: Option<&str>) {
         if let Some(entry) = t.project.entry.as_mut() {
-            match self.variation {
-                Some(v) => entry.set_variation_attr(v, &self.attr, value),
-                None => entry.set_tile_attr(&self.attr, value),
+            match (self.variation, value) {
+                (Some(v), Some(value)) => entry.set_variation_attr(v, &self.attr, value),
+                (None, Some(value)) => entry.set_tile_attr(&self.attr, value),
+                (Some(v), None) => entry.remove_added_variation_attr(v, &self.attr),
+                (None, None) => entry.remove_added_tile_attr(&self.attr),
             };
         }
 
         if self.attr == "normal_strength" {
-            t.project.info.normal_strength = value.trim().parse().unwrap_or(t.project.info.normal_strength);
+            let before = *self.strength_before.get_or_insert(t.project.info.normal_strength);
+            t.project.info.normal_strength = value.and_then(|v| v.trim().parse().ok()).unwrap_or(before);
             t.material_base = None;
             t.skin = None;
         }
@@ -805,11 +898,13 @@ impl Command<Tile> for EntryAttrCommand {
     }
 
     fn apply(&mut self, t: &mut Tile) {
-        self.put(t, &self.after.clone());
+        let after = self.after.clone();
+        self.put(t, Some(&after));
     }
 
     fn revert(&mut self, t: &mut Tile) {
-        self.put(t, &self.before.clone());
+        let before = self.before.clone();
+        self.put(t, before.as_deref());
     }
 
     fn merge_key(&self) -> u64 {
@@ -817,7 +912,9 @@ impl Command<Tile> for EntryAttrCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.attr == self.attr && n.variation == self.variation) else { return false };
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.attr == self.attr && n.variation == self.variation) else {
+            return false;
+        };
         self.after = n.after.clone();
         true
     }
@@ -910,6 +1007,45 @@ impl Command<Tile> for GroundFillCommand {
     fn revert(&mut self, t: &mut Tile) {
         if let Some(g) = &mut t.project.ground {
             g.undo();
+        }
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![TERRAIN]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A whole-map edit of the blend map (the whole tile painted): undo and redo use the field's own records, as the brush strokes do; the edit
+/// is made before the command is pushed.
+pub(crate) struct BlendFillCommand {
+    pub name: String,
+    pub first: bool,
+}
+
+impl Command<Tile> for BlendFillCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        if std::mem::take(&mut self.first) {
+            return;
+        }
+
+        t.end_stroke_edit();
+        if let Some(b) = &mut t.project.blend {
+            b.redo();
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        t.end_stroke_edit();
+        if let Some(b) = &mut t.project.blend {
+            b.undo();
         }
     }
 

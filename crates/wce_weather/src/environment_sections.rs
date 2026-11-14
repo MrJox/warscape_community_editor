@@ -5,9 +5,9 @@
 
 use wce_editor_core::document::Document;
 use wce_editor_core::inspector::Inspector;
-use wce_foundation::log;
 use wce_formats::env_value::{EnvValue, NumStyle, ValueKind, format_value, parse_value};
 use wce_formats::xml_doc::{decode_entities, encode_entities};
+use wce_foundation::log;
 use wce_foundation::math::Float3;
 use wce_scene::environment::EnvironmentParams;
 
@@ -74,24 +74,72 @@ pub static SECTIONS: &[Section] = &[
         title: "Sun",
         each_element: false,
         fields: &[
-            f("LIGHTING", "sun_direction_azimuth", "azimuth (\u{b0})", Kind::Number, "Where the sun is, in degrees turned from the map's +Z axis towards +X. Shadows fall the opposite way."),
-            f("LIGHTING", "sun_direction_elevation", "elevation (\u{b0})", Kind::Number, "Height of the sun above the horizon in degrees: 0 on the horizon, 90 straight overhead."),
-            f("LIGHTING", "sun_colour", "sun_colour", Kind::Colour, "Colour of the direct sunlight. Stored as seen on screen; the game converts it to linear light."),
-            f("LIGHTING", "sun_colour_scale", "sun_colour_scale", Kind::Number, "Brightness of the sunlight (HDR multiplier of sun_colour). Also scales the sky when cubemap_sun_colour_scale is 0."),
+            f(
+                "LIGHTING",
+                "sun_direction_azimuth",
+                "azimuth (\u{b0})",
+                Kind::Number,
+                "Where the sun is, in degrees turned from the map's +Z axis towards +X. Shadows fall the opposite way.",
+            ),
+            f(
+                "LIGHTING",
+                "sun_direction_elevation",
+                "elevation (\u{b0})",
+                Kind::Number,
+                "Height of the sun above the horizon in degrees: 0 on the horizon, 90 straight overhead.",
+            ),
+            f(
+                "LIGHTING",
+                "sun_colour",
+                "sun_colour",
+                Kind::Colour,
+                "Colour of the direct sunlight. Stored as seen on screen; the game converts it to linear light.",
+            ),
+            f(
+                "LIGHTING",
+                "sun_colour_scale",
+                "sun_colour_scale",
+                Kind::Number,
+                "Brightness of the sunlight (HDR multiplier of sun_colour). Also scales the sky when cubemap_sun_colour_scale is 0.",
+            ),
             f("SUN_MESH", "sun_texture", "sun_texture", Kind::Text, "Texture of the visible sun disc (a .dds in the game's textures)."),
             f("SUN_MESH", "sun_scale", "sun_scale", Kind::Number, "Size of the visible sun disc."),
-            f("SUN_MESH", "sun_flare", "sun_flare", Kind::Number, "Strength of the sun's lens flare. Needs 'Lens flare' on in the Settings menu."),
+            f(
+                "SUN_MESH",
+                "sun_flare",
+                "sun_flare",
+                Kind::Number,
+                "Strength of the sun's lens flare. Needs Lens flare on (Settings > Graphics).",
+            ),
         ],
     },
     Section {
         title: "Ambient light",
         each_element: false,
         fields: &[
-            f("LIGHTING", "use_custom_ambient_cube_colours", "custom ambient cube", Kind::Bool, "On: the six ambient cube colours below are the ambient light. Off: they are not used."),
+            f(
+                "LIGHTING",
+                "use_custom_ambient_cube_colours",
+                "custom ambient cube",
+                Kind::Bool,
+                "On: the six ambient cube colours below are the ambient light. Off: they are not used.",
+            ),
             f("LIGHTING", "ambient_scale", "ambient_scale", Kind::Number, "Overall strength of the ambient light."),
-            f("LIGHTING", "ambient_cube_hdr_scaler", "ambient_cube_hdr_scaler", Kind::Number, "Multiplier that lifts the ambient cube colours into the HDR range."),
+            f(
+                "LIGHTING",
+                "ambient_cube_hdr_scaler",
+                "ambient_cube_hdr_scaler",
+                Kind::Number,
+                "Multiplier that lifts the ambient cube colours into the HDR range.",
+            ),
             f("LIGHTING", "ambient_cube_top", "top", Kind::Colour, "Ambient light reaching surfaces that face up (the sky's light)."),
-            f("LIGHTING", "ambient_cube_bottom", "bottom", Kind::Colour, "Ambient light reaching surfaces that face down (light bounced from the ground)."),
+            f(
+                "LIGHTING",
+                "ambient_cube_bottom",
+                "bottom",
+                Kind::Colour,
+                "Ambient light reaching surfaces that face down (light bounced from the ground).",
+            ),
             f("LIGHTING", "ambient_cube_left", "left", Kind::Colour, "Ambient light reaching surfaces that face left."),
             f("LIGHTING", "ambient_cube_right", "right", Kind::Colour, "Ambient light reaching surfaces that face right."),
             f("LIGHTING", "ambient_cube_front", "front", Kind::Colour, "Ambient light reaching surfaces that face front."),
@@ -102,19 +150,43 @@ pub static SECTIONS: &[Section] = &[
         title: "Sky",
         each_element: false,
         fields: &[
-            f("LIGHTING", "cubemap_sun_colour_scale", "cubemap_sun_colour_scale", Kind::Number, "Sun brightness used for the sky and the reflections (the sky is scaled by at most 5 of it). 0: sun_colour_scale is used instead."),
+            f(
+                "LIGHTING",
+                "cubemap_sun_colour_scale",
+                "cubemap_sun_colour_scale",
+                Kind::Number,
+                "Sun brightness used for the sky and the reflections (the sky is scaled by at most 5 of it). 0: sun_colour_scale is used instead.",
+            ),
             f("SKYGEN", "sky_colour", "sky_colour", Kind::Colour, "Colour of the open sky overhead."),
             f("SKYGEN", "sky_colour_scale", "sky_colour_scale", Kind::Number, "Brightness of sky_colour."),
             f("SKYGEN", "horizon_colour", "horizon_colour", Kind::Colour, "Colour of the sky near the horizon, on the sun's side."),
             f("SKYGEN", "horizon_colour_scale", "horizon_colour_scale", Kind::Number, "Brightness of horizon_colour."),
-            f("SKYGEN", "horizon_opposite_colour", "opposite_colour", Kind::Colour, "Colour of the sky near the horizon, away from the sun."),
+            f(
+                "SKYGEN",
+                "horizon_opposite_colour",
+                "opposite_colour",
+                Kind::Colour,
+                "Colour of the sky near the horizon, away from the sun.",
+            ),
             f("SKYGEN", "horizon_opposite_colour_scale", "opposite_colour_scale", Kind::Number, "Brightness of horizon_opposite_colour."),
             f("SKYGEN", "horizon_decay", "horizon_decay", Kind::Number, "How fast the horizon colour fades going up into the sky."),
             f("SKYGEN", "circumsolar_colour", "circumsolar_colour", Kind::Colour, "Colour of the glow around the sun."),
             f("SKYGEN", "circumsolar_colour_scale", "circumsolar_colour_scale", Kind::Number, "Brightness of the glow around the sun."),
             f("SKYGEN", "circumsolar_decay", "circumsolar_decay", Kind::Number, "How fast the glow fades with distance from the sun."),
-            f("SKYGEN", "backscatter_colour", "backscatter_colour", Kind::Colour, "Tint of the light the sky scatters back, away from the sun."),
-            f("SKYGEN", "backscatter_colour_scale", "backscatter_colour_scale", Kind::Number, "Brightness of backscatter_colour; 0 turns it off."),
+            f(
+                "SKYGEN",
+                "backscatter_colour",
+                "backscatter_colour",
+                Kind::Colour,
+                "Tint of the light the sky scatters back, away from the sun.",
+            ),
+            f(
+                "SKYGEN",
+                "backscatter_colour_scale",
+                "backscatter_colour_scale",
+                Kind::Number,
+                "Brightness of backscatter_colour; 0 turns it off.",
+            ),
             f("SKYGEN", "backscatter_decay", "backscatter_decay", Kind::Number, "How fast the backscatter fades across the sky."),
         ],
     },
@@ -123,29 +195,107 @@ pub static SECTIONS: &[Section] = &[
         each_element: false,
         fields: &[
             f("FOG", "volume_fog_colour", "volume_fog_colour", Kind::ColourA, "Colour of the fog (r, g, b) and its alpha."),
-            f("FOG", "fog_colour_blend", "fog_colour_blend", Kind::Number, "How much of the fog colour is mixed into the fog; usually 0 to 1."),
+            f(
+                "FOG",
+                "fog_colour_blend",
+                "fog_colour_blend",
+                Kind::Number,
+                "How much of the fog colour is mixed into the fog; usually 0 to 1.",
+            ),
             f("FOG", "fog_distance_start", "fog_distance_start", Kind::Number, "Where the distance fog starts to build up."),
             f("FOG", "fog_distance_strength", "fog_distance_strength", Kind::Number, "How strong the distance fog gets; 0 is none."),
-            f("FOG", "fog_distance_scale", "fog_distance_scale", Kind::Number, "Stretches or shrinks the distance over which the fog builds up."),
+            f(
+                "FOG",
+                "fog_distance_scale",
+                "fog_distance_scale",
+                Kind::Number,
+                "Stretches or shrinks the distance over which the fog builds up.",
+            ),
             f("FOG", "fog_height_top", "fog_height_top", Kind::Number, "Top of the height-fog layer: the fog is thickest below it."),
             f("FOG", "fog_height_strength", "fog_height_strength", Kind::Number, "How strong the height fog is; 0 is none."),
-            f("FOG", "terrain_relative_height_fog", "terrain_relative_height_fog", Kind::Bool, "On: the height fog is measured from the terrain under each point. Off: from a fixed level."),
-            f("FOG", "fog_clear_distance", "fog_clear_distance", Kind::Number, "Fog clear distance. Most files use 10000, far beyond any battle map, so it has no visible effect."),
-            f("FOG", "fog_precipitation_distance_modifier", "precipitation distance", Kind::Number, "How much rain or snow changes the fog distance; 0 means not at all."),
+            f(
+                "FOG",
+                "terrain_relative_height_fog",
+                "terrain_relative_height_fog",
+                Kind::Bool,
+                "On: the height fog is measured from the terrain under each point. Off: from a fixed level.",
+            ),
+            f(
+                "FOG",
+                "fog_clear_distance",
+                "fog_clear_distance",
+                Kind::Number,
+                "Fog clear distance. Most files use 10000, far beyond any battle map, so it has no visible effect.",
+            ),
+            f(
+                "FOG",
+                "fog_precipitation_distance_modifier",
+                "precipitation distance",
+                Kind::Number,
+                "How much rain or snow changes the fog distance; 0 means not at all.",
+            ),
         ],
     },
     Section {
         title: "Exposure and tone mapping",
         each_element: false,
         fields: &[
-            f("HDR", "auto_exposure_speed", "auto_exposure_speed", Kind::Number, "How fast the eye adapts to a brighter or darker view; larger is faster."),
-            f("HDR", "absolute_black_point", "absolute_black_point", Kind::Number, "The darkest level the exposure may ever treat as black."),
-            f("HDR", "max_black_point", "max_black_point", Kind::Number, "The highest level the black point may rise to as the exposure adapts."),
-            f("HDR", "min_white_point", "min_white_point", Kind::Number, "The lowest level the white point may fall to as the exposure adapts."),
-            f("HDR", "absolute_white_point", "absolute_white_point", Kind::Number, "The brightest level the exposure may ever treat as white."),
-            f("HDR", "lock_rgb_relative_tones", "lock_rgb_relative_tones", Kind::Bool, "Tone curve option: keeps the relative tones of the red, green and blue channels locked together."),
-            f("HDR", "low_tones_bias", "low_tones_bias", RGB_LONG, "Shapes the tone curve of the dark tones, per colour channel (red, green, blue)."),
-            f("HDR", "high_tones_bias", "high_tones_bias", RGB_LONG, "Shapes the tone curve of the bright tones, per colour channel (red, green, blue)."),
+            f(
+                "HDR",
+                "auto_exposure_speed",
+                "auto_exposure_speed",
+                Kind::Number,
+                "How fast the eye adapts to a brighter or darker view; larger is faster.",
+            ),
+            f(
+                "HDR",
+                "absolute_black_point",
+                "absolute_black_point",
+                Kind::Number,
+                "The darkest level the exposure may ever treat as black.",
+            ),
+            f(
+                "HDR",
+                "max_black_point",
+                "max_black_point",
+                Kind::Number,
+                "The highest level the black point may rise to as the exposure adapts.",
+            ),
+            f(
+                "HDR",
+                "min_white_point",
+                "min_white_point",
+                Kind::Number,
+                "The lowest level the white point may fall to as the exposure adapts.",
+            ),
+            f(
+                "HDR",
+                "absolute_white_point",
+                "absolute_white_point",
+                Kind::Number,
+                "The brightest level the exposure may ever treat as white.",
+            ),
+            f(
+                "HDR",
+                "lock_rgb_relative_tones",
+                "lock_rgb_relative_tones",
+                Kind::Bool,
+                "Tone curve option: keeps the relative tones of the red, green and blue channels locked together.",
+            ),
+            f(
+                "HDR",
+                "low_tones_bias",
+                "low_tones_bias",
+                RGB_LONG,
+                "Shapes the tone curve of the dark tones, per colour channel (red, green, blue).",
+            ),
+            f(
+                "HDR",
+                "high_tones_bias",
+                "high_tones_bias",
+                RGB_LONG,
+                "Shapes the tone curve of the bright tones, per colour channel (red, green, blue).",
+            ),
         ],
     },
     Section {
@@ -153,9 +303,21 @@ pub static SECTIONS: &[Section] = &[
         each_element: false,
         fields: &[
             f("POST_PROCESSING", "overlay", "overlay", Kind::Colour, "Tint the whole picture is multiplied by; white leaves it unchanged."),
-            f("POST_PROCESSING", "brightness", "brightness", RGB, "Brightness per colour channel (red, green, blue); 1 leaves it unchanged."),
+            f(
+                "POST_PROCESSING",
+                "brightness",
+                "brightness",
+                RGB,
+                "Brightness per colour channel (red, green, blue); 1 leaves it unchanged.",
+            ),
             f("POST_PROCESSING", "contrast", "contrast", RGB, "Contrast per colour channel (red, green, blue); 1 leaves it unchanged."),
-            f("POST_PROCESSING", "saturation", "saturation", RGB, "Colour saturation per channel (red, green, blue); 1 leaves it unchanged, 0 is grey."),
+            f(
+                "POST_PROCESSING",
+                "saturation",
+                "saturation",
+                RGB,
+                "Colour saturation per channel (red, green, blue); 1 leaves it unchanged, 0 is grey.",
+            ),
             f("POST_PROCESSING", "hue", "hue", Kind::Number, "Rotates the hues of the whole picture; 0 leaves them unchanged."),
         ],
     },
@@ -163,9 +325,29 @@ pub static SECTIONS: &[Section] = &[
         title: "Depth of field",
         each_element: false,
         fields: &[
-            f("DEPTH_OF_FIELD", "use_DOF", "use_DOF", Kind::Bool, "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings menu)."),
-            f("DEPTH_OF_FIELD", "DOF_focus", "DOF_focus", Kind::Pair, "Focus distance (first) and focal length (second)."),
-            f("DEPTH_OF_FIELD", "DOF_blur_size", "DOF_blur_size", Kind::Number, "How big the blur is outside the focus."),
+            f(
+                "DEPTH_OF_FIELD",
+                "use_DOF",
+                "use_DOF",
+                Kind::Bool,
+                "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings > Graphics).",
+            ),
+            f(
+                "DEPTH_OF_FIELD",
+                "DOF_focus",
+                "DOF_focus",
+                Kind::Pair,
+                "First: the distance in focus, in metres from the camera (the shader caps it at 500; Pick focus in the Weather scene panel \
+                 sets it with a click). Second: how far either side of it stays sharp, in metres; the blur grows past that.",
+            ),
+            f(
+                "DEPTH_OF_FIELD",
+                "DOF_blur_size",
+                "DOF_blur_size",
+                Kind::Number,
+                "How much of the blurred image is mixed in out of focus, 0 to 1 (the game's own file with depth of field on uses 0.25). Above \
+                 1 the game's shader overshoots: edges out of focus get bright and dark halos.",
+            ),
         ],
     },
     Section {
@@ -173,19 +355,61 @@ pub static SECTIONS: &[Section] = &[
         each_element: false,
         fields: &[
             f("LIGHTING", "deep_water_colour", "deep_water_colour", Kind::Colour, "Colour of deep water."),
-            f("LIGHTING", "shallow_water_colour", "shallow_water_colour", Kind::Colour, "Colour of shallow water, where the bed shows through."),
-            f("LIGHTING", "sea_bed_light_scatter", "sea_bed_light_scatter", RGB_LONG, "How much light the sea bed scatters back, per colour channel (red, green, blue)."),
-            f("LIGHTING", "refraction_light_scatter", "refraction_light_scatter", Kind::Number, "How much the light is scattered as it passes through the water."),
+            f(
+                "LIGHTING",
+                "shallow_water_colour",
+                "shallow_water_colour",
+                Kind::Colour,
+                "Colour of shallow water, where the bed shows through.",
+            ),
+            f(
+                "LIGHTING",
+                "sea_bed_light_scatter",
+                "sea_bed_light_scatter",
+                RGB_LONG,
+                "How much light the sea bed scatters back, per colour channel (red, green, blue).",
+            ),
+            f(
+                "LIGHTING",
+                "refraction_light_scatter",
+                "refraction_light_scatter",
+                Kind::Number,
+                "How much the light is scattered as it passes through the water.",
+            ),
         ],
     },
     Section {
         title: "Wind and snow",
         each_element: false,
         fields: &[
-            f("WEATHER", "definition_name", "definition_name", Kind::Text, "The wind and precipitation definition of weather_definitions.xml this environment uses."),
-            f("WEATHER", "wind_dir_random", "wind_dir_random", Kind::Bool, "On: the wind blows from a random direction each battle. Off: from wind_dir_degrees."),
-            f("WEATHER", "wind_dir_degrees", "wind_dir_degrees", Kind::Number, "Wind direction in degrees, used when wind_dir_random is off."),
-            f("WEATHER", "snowing_intensity", "snowing_intensity", Kind::Number, "Above 0 the terrain, trees and buildings are covered in snow; 0 is none (most files)."),
+            f(
+                "WEATHER",
+                "definition_name",
+                "definition_name",
+                Kind::Text,
+                "The wind and precipitation definition of weather_definitions.xml this environment uses.",
+            ),
+            f(
+                "WEATHER",
+                "wind_dir_random",
+                "wind_dir_random",
+                Kind::Bool,
+                "On: the wind blows from a random direction each battle. Off: from wind_dir_degrees.",
+            ),
+            f(
+                "WEATHER",
+                "wind_dir_degrees",
+                "wind_dir_degrees",
+                Kind::Number,
+                "Wind direction in degrees, used when wind_dir_random is off.",
+            ),
+            f(
+                "WEATHER",
+                "snowing_intensity",
+                "snowing_intensity",
+                Kind::Number,
+                "Above 0 the terrain, trees and buildings are covered in snow; 0 is none (most files).",
+            ),
         ],
     },
     Section {
@@ -194,12 +418,48 @@ pub static SECTIONS: &[Section] = &[
         fields: &[
             f("WEATHER_SCENE_NODE", "Enabled", "Enabled", Kind::Bool, "Whether the weather node is active."),
             f("WEATHER_SCENE_NODE", "weather_type", "weather_type", Kind::Text, "The kind of weather the node is (WT_...)."),
-            f("WEATHER_SCENE_NODE", "precipitation_land_height", "precipitation_land_height", Kind::Number, "Height above the land where precipitation starts."),
-            f("WEATHER_SCENE_NODE", "precipitation_sea_height", "precipitation_sea_height", Kind::Number, "Height above the sea where precipitation starts."),
-            f("WEATHER_SCENE_NODE", "lightning_strike_interval", "lightning_strike_interval", Kind::Number, "Time between lightning strikes; 0 is none."),
-            f("WEATHER_SCENE_NODE", "lightning_sheet_interval", "lightning_sheet_interval", Kind::Number, "Time between sheet lightning flashes in the clouds; 0 is none."),
-            f("WEATHER_SCENE_NODE", "lightning_light_scale", "lightning_light_scale", Kind::Number, "How much light a lightning flash adds to the scene."),
-            f("WEATHER_SCENE_NODE", "lightning_exposure_scale", "lightning_exposure_scale", Kind::Number, "How much a lightning flash raises the exposure."),
+            f(
+                "WEATHER_SCENE_NODE",
+                "precipitation_land_height",
+                "precipitation_land_height",
+                Kind::Number,
+                "Height above the land where precipitation starts.",
+            ),
+            f(
+                "WEATHER_SCENE_NODE",
+                "precipitation_sea_height",
+                "precipitation_sea_height",
+                Kind::Number,
+                "Height above the sea where precipitation starts.",
+            ),
+            f(
+                "WEATHER_SCENE_NODE",
+                "lightning_strike_interval",
+                "lightning_strike_interval",
+                Kind::Number,
+                "Time between lightning strikes; 0 is none.",
+            ),
+            f(
+                "WEATHER_SCENE_NODE",
+                "lightning_sheet_interval",
+                "lightning_sheet_interval",
+                Kind::Number,
+                "Time between sheet lightning flashes in the clouds; 0 is none.",
+            ),
+            f(
+                "WEATHER_SCENE_NODE",
+                "lightning_light_scale",
+                "lightning_light_scale",
+                Kind::Number,
+                "How much light a lightning flash adds to the scene.",
+            ),
+            f(
+                "WEATHER_SCENE_NODE",
+                "lightning_exposure_scale",
+                "lightning_exposure_scale",
+                Kind::Number,
+                "How much a lightning flash raises the exposure.",
+            ),
         ],
     },
     Section {
@@ -211,17 +471,71 @@ pub static SECTIONS: &[Section] = &[
             f("CLOUD_PLANE_MESH", "cloud_velocity", "cloud_velocity", Kind::Number, "How fast the layer drifts across the sky."),
             f("CLOUD_PLANE_MESH", "cloud_rotation", "cloud_rotation", Kind::Number, "How much the clouds are turned."),
             f("CLOUD_PLANE_MESH", "height_scale", "height_scale", Kind::Number, "Scales the height of the cloud layer."),
-            f("CLOUD_PLANE_MESH", "cloud_height_variation", "cloud_height_variation", Kind::Number, "How much the height of the clouds varies."),
-            f("CLOUD_PLANE_MESH", "flatten_factor", "flatten_factor", Kind::Number, "How flat the layer is: the dome it forms is pressed down by this."),
+            f(
+                "CLOUD_PLANE_MESH",
+                "cloud_height_variation",
+                "cloud_height_variation",
+                Kind::Number,
+                "How much the height of the clouds varies.",
+            ),
+            f(
+                "CLOUD_PLANE_MESH",
+                "flatten_factor",
+                "flatten_factor",
+                Kind::Number,
+                "How flat the layer is: the dome it forms is pressed down by this.",
+            ),
             f("CLOUD_PLANE_MESH", "grid_size", "grid_size", Kind::Int, "Resolution of the layer's mesh, in cells along a side."),
-            f("CLOUD_PLANE_MESH", "horizon_alpha_start", "horizon_alpha_start", Kind::Number, "Where the clouds start to fade out towards the horizon."),
-            f("CLOUD_PLANE_MESH", "horizon_alpha_end", "horizon_alpha_end", Kind::Number, "Where the clouds have faded out completely at the horizon."),
-            f("CLOUD_PLANE_MESH", "sun_reflected_colour", "sun_reflected_colour", Kind::Colour, "Colour of the sunlight the clouds reflect."),
-            f("CLOUD_PLANE_MESH", "sun_transmitted_colour", "sun_transmitted_colour", Kind::Colour, "Colour of the sunlight that shines through the clouds."),
-            f("CLOUD_PLANE_MESH", "sun_transmit_falloff", "sun_transmit_falloff", Kind::Number, "How fast the light shining through fades away from the sun."),
+            f(
+                "CLOUD_PLANE_MESH",
+                "horizon_alpha_start",
+                "horizon_alpha_start",
+                Kind::Number,
+                "Where the clouds start to fade out towards the horizon.",
+            ),
+            f(
+                "CLOUD_PLANE_MESH",
+                "horizon_alpha_end",
+                "horizon_alpha_end",
+                Kind::Number,
+                "Where the clouds have faded out completely at the horizon.",
+            ),
+            f(
+                "CLOUD_PLANE_MESH",
+                "sun_reflected_colour",
+                "sun_reflected_colour",
+                Kind::Colour,
+                "Colour of the sunlight the clouds reflect.",
+            ),
+            f(
+                "CLOUD_PLANE_MESH",
+                "sun_transmitted_colour",
+                "sun_transmitted_colour",
+                Kind::Colour,
+                "Colour of the sunlight that shines through the clouds.",
+            ),
+            f(
+                "CLOUD_PLANE_MESH",
+                "sun_transmit_falloff",
+                "sun_transmit_falloff",
+                Kind::Number,
+                "How fast the light shining through fades away from the sun.",
+            ),
             f("CLOUD_PLANE_MESH", "cloud_shadow_colour", "cloud_shadow_colour", Kind::Colour, "Colour of the shaded side of the clouds."),
-            f("CLOUD_PLANE_MESH", "cloud_shadow_falloff", "cloud_shadow_falloff", Kind::Number, "How fast the shading of the clouds fades."),
-            f("CLOUD_PLANE_MESH", "cloud_shadow_gradient", "cloud_shadow_gradient", Kind::Number, "How the shading of the clouds grades from light to dark."),
+            f(
+                "CLOUD_PLANE_MESH",
+                "cloud_shadow_falloff",
+                "cloud_shadow_falloff",
+                Kind::Number,
+                "How fast the shading of the clouds fades.",
+            ),
+            f(
+                "CLOUD_PLANE_MESH",
+                "cloud_shadow_gradient",
+                "cloud_shadow_gradient",
+                Kind::Number,
+                "How the shading of the clouds grades from light to dark.",
+            ),
         ],
     },
 ];
@@ -235,8 +549,18 @@ const IGNORED: [(&str, &str, &str); 4] = [
 ];
 
 /// Elements whose attributes no section lists are shown under "Other attributes" when they are one of these.
-const SECTION_ELEMENTS: [&str; 10] =
-    ["LIGHTING", "SKYGEN", "SUN_MESH", "FOG", "HDR", "POST_PROCESSING", "DEPTH_OF_FIELD", "WEATHER", "WEATHER_SCENE_NODE", "CLOUD_PLANE_MESH"];
+const SECTION_ELEMENTS: [&str; 10] = [
+    "LIGHTING",
+    "SKYGEN",
+    "SUN_MESH",
+    "FOG",
+    "HDR",
+    "POST_PROCESSING",
+    "DEPTH_OF_FIELD",
+    "WEATHER",
+    "WEATHER_SCENE_NODE",
+    "CLOUD_PLANE_MESH",
+];
 
 fn num(x: f32) -> EnvValue {
     EnvValue { kind: ValueKind::Float, f: vec![x], ..Default::default() }
@@ -257,7 +581,9 @@ fn default_of(p: &EnvironmentParams, f: &Field, component: usize) -> EnvValue {
         ("LIGHTING", "sun_direction_elevation") => num(p.sun_elevation),
         ("LIGHTING", "sun_colour") => rgb(p.sun_colour),
         ("LIGHTING", "sun_colour_scale") => num(p.sun_colour_scale),
-        ("LIGHTING", "use_custom_ambient_cube_colours") => EnvValue { kind: ValueKind::Bool, b: p.use_custom_ambient, ..Default::default() },
+        ("LIGHTING", "use_custom_ambient_cube_colours") => {
+            EnvValue { kind: ValueKind::Bool, b: p.use_custom_ambient, ..Default::default() }
+        }
         ("LIGHTING", "ambient_scale") => num(p.ambient_scale),
         ("LIGHTING", "ambient_cube_hdr_scaler") => num(p.ambient_hdr_scaler),
         ("LIGHTING", "ambient_cube_top") => rgb(p.ambient_top),
@@ -294,7 +620,9 @@ fn default_of(p: &EnvironmentParams, f: &Field, component: usize) -> EnvValue {
         ("FOG", "fog_distance_scale") => num(p.fog_distance_scale),
         ("FOG", "fog_height_top") => num(p.fog_height_top),
         ("FOG", "fog_height_strength") => num(p.fog_height_strength),
-        ("FOG", "terrain_relative_height_fog") => EnvValue { kind: ValueKind::Bool, b: p.terrain_relative_height_fog, ..Default::default() },
+        ("FOG", "terrain_relative_height_fog") => {
+            EnvValue { kind: ValueKind::Bool, b: p.terrain_relative_height_fog, ..Default::default() }
+        }
         ("FOG", "fog_clear_distance") => num(p.fog_clear_distance),
         ("FOG", "fog_precipitation_distance_modifier") => num(p.fog_precipitation_distance_modifier),
         ("HDR", "auto_exposure_speed") => num(p.auto_exposure_speed),
@@ -371,9 +699,24 @@ impl XmlFileDocument {
     }
 
     /// One row of a section for the element `elem`.
-    fn environment_row(&mut self, ins: &mut dyn Inspector, defaults: &EnvironmentParams, elem: usize, f: &Field, field: &str, gesture: u64) {
+    fn environment_row(
+        &mut self,
+        ins: &mut dyn Inspector,
+        defaults: &EnvironmentParams,
+        elem: usize,
+        f: &Field,
+        field: &str,
+        gesture: u64,
+    ) {
         let hint = |present: bool, elem_name: &str| {
-            if present { f.tip.to_owned() } else { format!("{}\n\nNot in this file yet: shown at the value the viewport assumes. Editing it adds @{} to <{elem_name}>.", f.tip, f.attr) }
+            if present {
+                f.tip.to_owned()
+            } else {
+                format!(
+                    "{}\n\nNot in this file yet: shown at the value the viewport assumes. Editing it adds @{} to <{elem_name}>.",
+                    f.tip, f.attr
+                )
+            }
         };
 
         if let Kind::Trio(suffixes) = f.kind {
@@ -403,7 +746,13 @@ impl XmlFileDocument {
 
                     let was_int = matches!(&found[i], Some((_, x)) if x.kind == ValueKind::Int);
                     let style = found[i].as_ref().map(|(_, x)| x.style).unwrap_or_default();
-                    self.write_value(elem, &names[i], found[i].as_ref().map(|(a, _)| *a), &number(v[i], was_int, style), gesture ^ ((i as u64 + 1) << 56));
+                    self.write_value(
+                        elem,
+                        &names[i],
+                        found[i].as_ref().map(|(a, _)| *a),
+                        &number(v[i], was_int, style),
+                        gesture ^ ((i as u64 + 1) << 56),
+                    );
                 }
             }
 
@@ -458,8 +807,83 @@ impl XmlFileDocument {
         }
     }
 
+    /// Sets a setting of the sections from outside the Inspector (the viewport's sun handle, its focus pick): `edit` changes the value the
+    /// file holds (else the one the viewport assumes) and it is written as the Inspector writes it (an integer stays one while whole; an
+    /// attribute the element lacks is added). Edits of one `gesture` merge into one undo step.
+    ///
+    /// # Errors
+    ///
+    /// The setting is not one of the sections', or the file has no such element.
+    pub fn edit_setting(&mut self, elem_name: &str, attr: &str, gesture: u64, edit: impl FnOnce(&mut [f32])) -> Result<(), String> {
+        let field = SECTIONS
+            .iter()
+            .flat_map(|s| s.fields)
+            .find(|f| f.elem == elem_name && f.attr == attr)
+            .ok_or_else(|| format!("{elem_name}.{attr} is not a setting of the sections"))?;
+        let elem = *self.elements_named(elem_name).first().ok_or_else(|| format!("this file has no <{elem_name}>"))?;
+        let found = self.attr_value(elem, attr);
+        let at = found.as_ref().map(|(a, _)| *a);
+        let mut v = match found {
+            Some((_, x)) if fits(field.kind, &x) => x,
+            _ => default_of(&EnvironmentParams::default(), field, 0),
+        };
+
+        let (was_int, style) = (v.kind == ValueKind::Int, v.style);
+        edit(&mut v.f);
+        if matches!(v.kind, ValueKind::Int | ValueKind::Float) {
+            v = number(v.f.first().copied().unwrap_or(0.0), was_int, style);
+        }
+
+        self.write_value(elem, attr, at, &v, gesture);
+        Ok(())
+    }
+
+    /// Makes the file's numbers `target`'s (a mix of two files, `blend_environments`): every number, colour and pair of the sections (the
+    /// cloud layers aside) whose value differs from what the file gives is written as the Inspector writes it, an attribute the element
+    /// lacks added; switches, texts and the cloud layers stay the file's (the mix takes them from the nearer file, which is this one).
+    /// Not undoable on its own: for a document made for the mix.
+    pub fn write_numbers_of(&mut self, target: &EnvironmentParams) {
+        let now = wce_scene::environment::read_environment(self.xml());
+        for s in SECTIONS.iter().filter(|s| !s.each_element) {
+            for f in s.fields {
+                let Some(&elem) = self.elements_named(f.elem).first() else { continue };
+                let names: Vec<(String, usize)> = match f.kind {
+                    Kind::Trio(suffixes) => suffixes.iter().enumerate().map(|(i, x)| (format!("{}{x}", f.attr), i)).collect(),
+                    Kind::Number | Kind::Int | Kind::Colour | Kind::ColourA | Kind::Pair => vec![(f.attr.to_owned(), 0)],
+                    Kind::Bool | Kind::Text => continue,
+                };
+
+                for (name, component) in names {
+                    let (want, have) = (default_of(target, f, component), default_of(&now, f, component));
+                    if want.f.len() != have.f.len() || want.f.iter().zip(&have.f).all(|(a, b)| (a - b).abs() <= 1e-6) {
+                        continue;
+                    }
+
+                    let found = self.attr_value(elem, &name);
+                    let at = found.as_ref().map(|(a, _)| *a);
+                    let v = match found {
+                        Some((_, x)) if matches!(x.kind, ValueKind::Int | ValueKind::Float) => {
+                            number(want.f[0], x.kind == ValueKind::Int, x.style)
+                        }
+
+                        Some((_, x)) if x.kind == want.kind => EnvValue { f: want.f.clone(), ..x },
+                        _ => want,
+                    };
+
+                    self.write_value(elem, &name, at, &v, 0);
+                }
+            }
+        }
+    }
+
     /// The Inspector of an environment or lighting file: every section, then the attributes no section lists.
     pub fn inspect_environment(&mut self, ins: &mut dyn Inspector) {
+        self.inspect_environment_with(ins, &mut |_, _| {});
+    }
+
+    /// `inspect_environment`, with `extra` called at the end of each section (its title) for rows of the caller's (the Weather tool's
+    /// sky strips under Sky).
+    pub fn inspect_environment_with(&mut self, ins: &mut dyn Inspector, extra: &mut dyn FnMut(&str, &mut dyn Inspector)) {
         let id = self.id();
         ins.begin(id, 0);
         let defaults = EnvironmentParams::default();
@@ -469,14 +893,22 @@ impl XmlFileDocument {
             let element = s.fields[0].elem;
             let elems = self.elements_named(element);
             if elems.is_empty() {
-                ins.section(s.title);
-                ins.text("missing", &format!("no <{element}>"), "this file has none");
+                if ins.open_section(s.title) {
+                    ins.text("missing", &format!("no <{element}>"), "this file has none");
+                }
+
                 continue;
             }
 
             for (k, &e) in elems.iter().enumerate().take(if s.each_element { usize::MAX } else { 1 }) {
                 let name = self.xml().get(e, "name").filter(|_| s.each_element);
-                ins.section(&name.map_or_else(|| s.title.to_owned(), |name| format!("{} '{name}'", s.title)));
+                // A folded section skips its rows (their numbering, which keys the gestures, goes on as if drawn).
+                let title = name.map_or_else(|| s.title.to_owned(), |name| format!("{} '{name}'", s.title));
+                if !ins.open_section(&format!("{title}##{e}")) {
+                    n += s.fields.len() as u64;
+                    continue;
+                }
+
                 let mut missing = vec![];
                 for fld in s.fields {
                     // A section may span elements (the Sun: LIGHTING and SUN_MESH).
@@ -500,10 +932,40 @@ impl XmlFileDocument {
                 for elem in missing {
                     ins.text("missing", &format!("no <{elem}>"), "this file has none");
                 }
+
+                if s.title == "Fog" {
+                    self.fog_curve(ins);
+                }
+
+                if !s.each_element {
+                    extra(s.title, ins);
+                }
             }
         }
 
         self.inspect_other_attributes(ins, &mut n, gesture_base);
+    }
+
+    /// The Fog section's curve: the fog's opacity over flat ground by the distance from the point below a battle camera 25 m up, as the game's
+    /// fog shader works it out (`wce_scene::environment::fog_opacity`), out to where it levels off.
+    fn fog_curve(&self, ins: &mut dyn Inspector) {
+        const CAMERA_HEIGHT: f32 = 25.0;
+        const SAMPLES: usize = 96;
+        let p = wce_scene::environment::read_environment(self.xml());
+        let at = |r: f32| wce_scene::environment::fog_opacity(&p, r, CAMERA_HEIGHT, 0.0);
+
+        // The x axis: past where the fog reaches 95 % of its strongest (or the clear distance), in round metres.
+        let strongest = (0..=300).map(|k| at(k as f32 * 100.0)).fold(0.0f32, f32::max);
+        let reach = (0..=300).map(|k| k as f32 * 100.0).find(|&r| at(r) >= strongest * 0.95).unwrap_or(30_000.0);
+        let end = (reach.max(p.fog_clear_distance) * 1.2).clamp(500.0, 30_000.0);
+        let end = (end / 500.0).ceil() * 500.0;
+        let values = (0..=SAMPLES).map(|k| at(end * k as f32 / SAMPLES as f32)).collect::<Vec<_>>();
+        ins.hint(
+            "How thick the fog is over flat ground, by the distance from the spot below a battle camera 25 m up (0: none, top: \
+             opaque), as the game's fog shader works it out from these settings: the distance fog, the height fog at the ground and the \
+             clear distance's fade-in. The Weather scene panel's Fog distances rings the ground where it reaches 25, 50 and 75 %.",
+        );
+        ins.plot("fog_curve", "fog by distance", &[([0.75, 0.82, 1.0, 1.0], values)], &format!("{end:.0} m"));
     }
 
     /// The elements of a name, in file order.
@@ -541,14 +1003,20 @@ impl XmlFileDocument {
             return;
         }
 
-        ins.section("Other attributes");
+        if !ins.open_section("Other attributes") {
+            return;
+        }
+
         for (e, elem, attr) in rows {
             let Some((_, mut v)) = self.attr_value(e, &attr) else { continue };
             *n += 1;
             let gesture = gesture_base ^ (*n << 20);
             let field = format!("other.{elem}#{e}.{attr}");
             let label = format!("{elem}.{attr}");
-            let note = IGNORED.iter().find(|(el, at, _)| *el == elem && *at == attr).map_or("Not one of the settings the game reads for an effect.", |i| i.2);
+            let note = IGNORED
+                .iter()
+                .find(|(el, at, _)| *el == elem && *at == attr)
+                .map_or("Not one of the settings the game reads for an effect.", |i| i.2);
             ins.hint(note);
             let was_int = v.kind == ValueKind::Int;
             let changed = match v.kind {

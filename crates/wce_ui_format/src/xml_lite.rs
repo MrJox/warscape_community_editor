@@ -222,4 +222,100 @@ mod tests {
         assert_eq!(e[3].1, Ev::Text("a < b\r\u{e01f}".into()));
         assert_eq!(e[5].1, Ev::Start("yes".into(), vec![]));
     }
+
+    fn events(src: &str) -> Vec<Ev> {
+        parse(src).unwrap().into_iter().map(|(_, e)| e).collect()
+    }
+
+    fn text(s: &str) -> Ev {
+        Ev::Text(s.into())
+    }
+
+    #[test]
+    fn character_references_are_decoded() {
+        assert_eq!(events("<a>&lt;&gt;&amp;&quot;&apos;&#65;&#x42;&#X43;&#x1F600;&#0252;</a>")[1], text("<>&\"'ABC\u{1f600}\u{fc}"));
+        // Text without references, and an ampersand that only looks like the start of one once decoded.
+        assert_eq!(events("<a>plain \u{fc}</a>")[1], text("plain \u{fc}"));
+        assert_eq!(events("<a>&amp;lt;</a>")[1], text("&lt;"));
+    }
+
+    #[test]
+    fn escaping_and_parsing_are_inverses() {
+        let s = "<tag attr=\"v\"> & 'x' \r\n\t\u{1f600} ]]> <!-- -->";
+        let doc = format!("<a v=\"{0}\">{0}</a>", crate::xml_escape(s));
+        let e = events(&doc);
+        assert_eq!(e[0], Ev::Start("a".into(), vec![("v".into(), s.into())]));
+        assert_eq!(e[1], text(s));
+    }
+
+    #[test]
+    fn attributes_take_either_quote_and_keep_the_other() {
+        let e = events("<a one='say \"hi\"' two=\"it's\" three = 'x>y' four=\"\"/>");
+        let attrs = vec![
+            ("one".into(), "say \"hi\"".into()),
+            ("two".into(), "it's".into()),
+            ("three".into(), "x>y".into()),
+            ("four".into(), String::new()),
+        ];
+        assert_eq!(e, [Ev::Start("a".into(), attrs), Ev::End("a".into())]);
+    }
+
+    #[test]
+    fn cdata_merges_with_the_text_around_it_and_comments_split_it() {
+        assert_eq!(events("<a>x<![CDATA[<&>]]>y</a>")[1], text("x<&>y"));
+        assert_eq!(events("<a>x<!--c-->y</a>")[1..4], [text("x"), Ev::Comment("c".into()), text("y")]);
+        // Declarations and doctypes are skipped; whitespace around the root is text.
+        assert_eq!(events("<!DOCTYPE a><?pi x?><a/>\n"), [Ev::Start("a".into(), vec![]), Ev::End("a".into()), text("\n")]);
+    }
+
+    #[test]
+    fn events_carry_their_offsets() {
+        let e = parse("<a>\n  <b/>x</a>").unwrap();
+        let at: Vec<usize> = e.iter().map(|(at, _)| *at).collect();
+        assert_eq!(at, [0, 3, 6, 6, 10, 11]);
+        assert_eq!(line_col("<a>\n  <b/>x</a>", 6), (2, 3));
+        assert_eq!(line_col("ab", 0), (1, 1));
+        assert_eq!(line_col("ab", 99), (1, 3));
+        assert_eq!(line_col("\u{fc}\n\u{fc}", 4), (2, 2));
+    }
+
+    #[test]
+    fn malformed_xml_is_an_error() {
+        for src in [
+            "<a>&bogus;</a>",
+            "<a>&amp</a>",
+            "<a>&#xD800;</a>",
+            "<a>&#x110000;</a>",
+            "<a>&#;</a>",
+            "<a>&#xZZ;</a>",
+            "<a x=\"&nope;\"/>",
+            "<a>",
+            "<a><b></b>",
+            "</a>",
+            "<a></a></a>",
+            "<a",
+            "<a x=\"1\"",
+            "<a x=1/>",
+            "<a x/>",
+            "<a x=\"1/>",
+            "<a / >",
+            "<>",
+            "< a/>",
+            "</a",
+            "<!-- unterminated",
+            "<a><![CDATA[x</a>",
+            "<?xml",
+            "<!DOCTYPE",
+        ] {
+            assert!(parse(src).is_err(), "{src:?}");
+        }
+        let e = parse("<a>\n<b x=1/></a>").unwrap_err();
+        assert_eq!((line_col("<a>\n<b x=1/></a>", e.offset), e.msg.as_str()), ((2, 6), "attribute value must be quoted"));
+    }
+
+    #[test]
+    fn end_tags_are_not_matched_to_their_start() {
+        // The writer checks the names; the reader only counts the depth.
+        assert_eq!(events("<a></b>"), [Ev::Start("a".into(), vec![]), Ev::End("b".into())]);
+    }
 }

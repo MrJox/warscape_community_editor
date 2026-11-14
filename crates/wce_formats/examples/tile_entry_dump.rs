@@ -42,17 +42,55 @@ fn main() {
             }
         };
 
-        println!("roundtrip {} root {} sv {} loc {} gen {} kind {} set {} mask {} w {} h {} rgb {} {} {}", i32::from(t.save() == std::fs::read(p).unwrap()),
-            t.root(), t.serialise_version(), t.location(), t.location_generic(), t.kind(), t.tile_set(), t.mask(), t.width(), t.height(), d(t.red()), d(t.green()), d(t.blue()));
-        println!("flags {} {} {} {} alpha {} blend {}", i32::from(t.requires_infield_lodding()), i32::from(t.random_rotatable()), i32::from(t.scalable()),
-            i32::from(t.encampable()), t.custom_alpha_blend_texture(), t.custom_blend_tile());
+        println!(
+            "roundtrip {} root {} sv {} loc {} gen {} kind {} set {} mask {} w {} h {} rgb {} {} {}",
+            i32::from(t.save() == std::fs::read(p).unwrap()),
+            t.root(),
+            t.serialise_version(),
+            t.location(),
+            t.location_generic(),
+            t.kind(),
+            t.tile_set(),
+            t.mask(),
+            t.width(),
+            t.height(),
+            d(t.red()),
+            d(t.green()),
+            d(t.blue())
+        );
+        println!(
+            "flags {} {} {} {} alpha {} blend {}",
+            i32::from(t.requires_infield_lodding()),
+            i32::from(t.random_rotatable()),
+            i32::from(t.scalable()),
+            i32::from(t.encampable()),
+            t.custom_alpha_blend_texture(),
+            t.custom_blend_tile()
+        );
         let g = t.texture_group();
         println!("group {} {} {} {}", g.red, g.green, g.blue, g.alpha);
         for (i, v) in t.variations().iter().enumerate() {
-            println!("var {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} | {} | {} | find {}", v.elem, v.serialise_version, v.location, d(v.min_height), d(v.scale),
-                d(v.normal_strength), d(v.overlap_border_size), v.raw_data_tri_density, v.blend_common, v.index_common, v.normal_common, d(v.red), d(v.green),
-                d(v.blue), i32::from(v.barbarian), rel(&t.variation_folder(&raw, i), &raw), rel(&t.ted_path(&raw, i), &raw),
-                index_of(t.find_variation(&format!("{}/", v.location.to_ascii_uppercase()))));
+            println!(
+                "var {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} | {} | {} | find {}",
+                v.elem,
+                v.serialise_version,
+                v.location,
+                d(v.min_height),
+                d(v.scale),
+                d(v.normal_strength),
+                d(v.overlap_border_size),
+                v.raw_data_tri_density,
+                v.blend_common,
+                v.index_common,
+                v.normal_common,
+                d(v.red),
+                d(v.green),
+                d(v.blue),
+                i32::from(v.barbarian),
+                rel(&t.variation_folder(&raw, i), &raw),
+                rel(&t.ted_path(&raw, i), &raw),
+                index_of(t.find_variation(&format!("{}/", v.location.to_ascii_uppercase())))
+            );
         }
 
         for l in t.link_targets() {
@@ -60,8 +98,21 @@ fn main() {
         }
 
         for l in t.links() {
-            println!("link {} {} {} {} {} {} {} {} {} {} {} {}", l.elem, l.serialise_version, l.link_set, l.x, l.y, l.base_x, l.base_y, i32::from(l.is_entry),
-                l.blend_size, i32::from(l.no_offline_blend), l.test, i32::from(l.has_blend_quad));
+            println!(
+                "link {} {} {} {} {} {} {} {} {} {} {} {}",
+                l.elem,
+                l.serialise_version,
+                l.link_set,
+                l.x,
+                l.y,
+                l.base_x,
+                l.base_y,
+                i32::from(l.is_entry),
+                l.blend_size,
+                i32::from(l.no_offline_blend),
+                l.test,
+                i32::from(l.has_blend_quad)
+            );
         }
 
         for u in t.unknown_names() {
@@ -81,8 +132,14 @@ fn main() {
         let cl = ClimateList::load(&raw.join("terrain/tiles").join(kind).join("_tile_database/_settings.xml")).unwrap();
         println!("== climates {kind} {}", cl.climates.len());
         for c in &cl.climates {
-            println!("climate {} {} {} {} find {}", c.name, c.texture_set, c.destruction_climate, c.folder(),
-                i32::from(cl.find(&c.name.to_ascii_uppercase()).is_some_and(|found| std::ptr::eq(found, c))));
+            println!(
+                "climate {} {} {} {} find {}",
+                c.name,
+                c.texture_set,
+                c.destruction_climate,
+                c.folder(),
+                i32::from(cl.find(&c.name.to_ascii_uppercase()).is_some_and(|found| std::ptr::eq(found, c)))
+            );
             for x in &c.textures {
                 print!("  tex {} {} {} {}", x.name, d(x.blend_pixel_scale), d(x.outfield_blend_pixel_scale), d(x.mid_distance_strength));
                 for v in 0..4 {
@@ -93,7 +150,10 @@ fn main() {
                 for v in 0..4 {
                     for s in ["su", "au", "wi"] {
                         for n in [false, true] {
-                            println!("    path {}", climate_texture_path(&c.folder(), &x.name, v, s, n, |p| p.len() % 3 == 0).unwrap_or_default());
+                            println!(
+                                "    path {}",
+                                climate_texture_path(&c.folder(), &x.name, v, s, n, |p| p.len() % 3 == 0).unwrap_or_default()
+                            );
                         }
                     }
                 }
@@ -115,8 +175,24 @@ fn main() {
 
         for e in idx.entries() {
             let vars = e.variations.iter().map(|v| format!("{v}|")).collect::<String>();
-            println!("row {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", e.name, rel(&e.xml, &raw), e.kind, e.location, e.key, e.tile_set, e.width, e.height,
-                d(f64::from(e.red)), d(f64::from(e.green)), d(f64::from(e.blue)), vars, e.links, e.targets, e.size);
+            println!(
+                "row {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+                e.name,
+                rel(&e.xml, &raw),
+                e.kind,
+                e.location,
+                e.key,
+                e.tile_set,
+                e.width,
+                e.height,
+                d(f64::from(e.red)),
+                d(f64::from(e.green)),
+                d(f64::from(e.blue)),
+                vars,
+                e.links,
+                e.targets,
+                e.size
+            );
             if run != "warm" {
                 continue;
             }

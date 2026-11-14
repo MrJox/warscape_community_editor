@@ -21,7 +21,11 @@ pub(crate) struct ExtractPrompt {
 
 impl ExtractPrompt {
     pub(crate) fn new(target: &str, project: &Path) -> Self {
-        Self { target: target.to_owned(), project: project.display().to_string(), extracted: wce_tile::project_files::is_extracted_dir(project) }
+        Self {
+            target: target.to_owned(),
+            project: project.display().to_string(),
+            extracted: wce_tile::project_files::is_extracted_dir(project),
+        }
     }
 }
 
@@ -52,9 +56,17 @@ impl TileTool {
             done = Some(self.open_exported(e, &p.target, None, false));
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the project as it is, with its edits; nothing is extracted.");
+        }
+
         gui::same_line();
         if gui::button("Overwrite") {
             done = Some(self.open_exported(e, &p.target, None, true));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Extracts the tile again over the project and opens it; the project's edits are lost.");
         }
 
         gui::same_line();

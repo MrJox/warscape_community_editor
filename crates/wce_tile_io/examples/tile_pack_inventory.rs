@@ -42,7 +42,9 @@ fn kind_of(name: &str) -> String {
 
 fn packs(arg: &Path, out: &mut Vec<PathBuf>) {
     if arg.is_dir() {
-        let mut found = std::fs::read_dir(arg).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>()).unwrap_or_default();
+        let mut found = std::fs::read_dir(arg)
+            .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>())
+            .unwrap_or_default();
         found.sort();
         out.extend(found);
     } else {

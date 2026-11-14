@@ -104,7 +104,9 @@ impl Command<Option<MapModel>> for TerryAttrsCommand {
 
     fn merge_from(&mut self, next: &dyn Command<Option<MapModel>>) -> bool {
         let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
-        if n.edits.len() != self.edits.len() || n.edits.iter().zip(&self.edits).any(|(a, b)| a.id != b.id || a.component != b.component || a.attr != b.attr) {
+        if n.edits.len() != self.edits.len()
+            || n.edits.iter().zip(&self.edits).any(|(a, b)| a.id != b.id || a.component != b.component || a.attr != b.attr)
+        {
             return false;
         }
 

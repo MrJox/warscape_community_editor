@@ -16,7 +16,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use wce_formats::dds_decode::{decode_bc1_block, decode_bc3_alpha_block, dds_decode_mip, dds_info};
+use wce_formats::dds_decode::{dds_decode_mip, dds_info, decode_bc1_block, decode_bc3_alpha_block};
 use wce_formats::tile_climate::{ClimateList, climate_texture_path};
 use wce_tile::tile_project::TileProject;
 use wce_tile_editor::climate_db::effective_climates;
@@ -99,7 +99,10 @@ fn test_dxt(g: &mut Gate) {
     g.check(info.format == "DXT5" && info.width == 10 && info.height == 6 && info.mips == 3, "dds_info of a DXT5 file");
     let m0 = dds_decode_mip(&dds, 0);
     g.check(m0.as_ref().is_ok_and(|im| im.w == 10 && im.h == 6), "decode mip 0 (10 x 6)");
-    g.check(m0.as_ref().is_ok_and(|im| im.w == 10 && im.at(9, 5)[0] == 255 && im.at(9, 5)[1] == 0 && im.at(9, 5)[3] == 255), "the last pixel of a partial block is decoded");
+    g.check(
+        m0.as_ref().is_ok_and(|im| im.w == 10 && im.at(9, 5)[0] == 255 && im.at(9, 5)[1] == 0 && im.at(9, 5)[3] == 255),
+        "the last pixel of a partial block is decoded",
+    );
     g.check(dds_decode_mip(&dds, 1).is_ok_and(|im| im.w == 5 && im.h == 3), "decode mip 1 (5 x 3)");
     g.check(dds_decode_mip(&dds, 9).is_ok_and(|im| im.w == 2 && im.h == 1), "a mip past the end is the last one");
     g.check(dds_decode_mip(&[0u8; 40], 0).is_err_and(|why| !why.is_empty()), "garbage is refused with a reason");
@@ -116,17 +119,25 @@ fn test_climates(g: &mut Gate, settings: &Path) {
         g.check(c.folder() == "terrain/textures/battle/rome_continental", "climate folder");
     }
 
-    let have = BTreeSet::from(["terrain/textures/battle/default/rock/0_su_diffuse.dds", "terrain/textures/battle/rome_med/grass/1_su_diffuse.dds"]);
+    let have = BTreeSet::from([
+        "terrain/textures/battle/default/rock/0_su_diffuse.dds",
+        "terrain/textures/battle/rome_med/grass/1_su_diffuse.dds",
+    ]);
     let ex = |p: &str| have.contains(p);
     g.check(
-        climate_texture_path("terrain/textures/battle/rome_med", "grass", 1, "wi", false, ex).as_deref() == Some("terrain/textures/battle/rome_med/grass/1_su_diffuse.dds"),
+        climate_texture_path("terrain/textures/battle/rome_med", "grass", 1, "wi", false, ex).as_deref()
+            == Some("terrain/textures/battle/rome_med/grass/1_su_diffuse.dds"),
         "season falls back to summer",
     );
     g.check(
-        climate_texture_path("terrain/textures/battle/rome_med", "rock", 0, "su", false, ex).as_deref() == Some("terrain/textures/battle/default/rock/0_su_diffuse.dds"),
+        climate_texture_path("terrain/textures/battle/rome_med", "rock", 0, "su", false, ex).as_deref()
+            == Some("terrain/textures/battle/default/rock/0_su_diffuse.dds"),
         "a group the climate lacks falls back to default",
     );
-    g.check(climate_texture_path("terrain/textures/battle/rome_med", "snow", 0, "su", false, ex).is_none(), "nothing found gives an empty path");
+    g.check(
+        climate_texture_path("terrain/textures/battle/rome_med", "snow", 0, "su", false, ex).is_none(),
+        "nothing found gives an empty path",
+    );
 }
 
 fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
@@ -138,8 +149,13 @@ fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
     let cl = ClimateList::load(&settings).unwrap_or_default();
     let b = project.border_m();
     let rq = BakeRequest {
-        blend_map: project.dir.join("blend_map.tif"), groups: entry.texture_group(), x0: -b, z0: -b, w_m: project.extent_x() + 2.0 * b,
-        h_m: project.extent_z() + 2.0 * b, ..Default::default()
+        blend_map: project.dir.join("blend_map.tif"),
+        groups: entry.texture_group(),
+        x0: -b,
+        z0: -b,
+        w_m: project.extent_x() + 2.0 * b,
+        h_m: project.extent_z() + 2.0 * b,
+        ..Default::default()
     };
 
     let a = bake_terrain_colour(&rq, None, &cl, &vfs);
@@ -165,7 +181,10 @@ fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
     let mut rq2 = rq.clone();
     rq2.look.climate = "ROME_Desert".to_owned();
     rq2.look.season = "au".to_owned();
-    g.check(bake_terrain_colour(&rq2, None, &cl, &vfs).is_ok_and(|o| o.rgba != a.rgba && o.w == a.w), "another climate and season give another image");
+    g.check(
+        bake_terrain_colour(&rq2, None, &cl, &vfs).is_ok_and(|o| o.rgba != a.rgba && o.w == a.w),
+        "another climate and season give another image",
+    );
 
     // An unknown climate falls back to the default textures instead of failing.
     let mut rq3 = rq.clone();
@@ -177,7 +196,11 @@ fn test_bake(g: &mut Gate, game: &Path, tile_dir: &Path) -> Result<(), String> {
 }
 
 fn test_mod_database(g: &mut Gate, game: &Path, kit: &Path) -> Result<(), String> {
-    let mods = ["tdd_pack2_battles_v1.1.0.pack", "tdd_pack3_campaign_v1.1.0.pack"].map(str::to_owned).into_iter().filter(|m| game.join("data").join(m).is_file()).collect::<Vec<_>>();
+    let mods = ["tdd_pack2_battles_v1.1.0.pack", "tdd_pack3_campaign_v1.1.0.pack"]
+        .map(str::to_owned)
+        .into_iter()
+        .filter(|m| game.join("data").join(m).is_file())
+        .collect::<Vec<_>>();
     if mods.len() < 2 {
         println!("mod database: TDD's battle and campaign packs are not in the data folder, skipped");
         return Ok(());
@@ -188,25 +211,38 @@ fn test_mod_database(g: &mut Gate, game: &Path, kit: &Path) -> Result<(), String
     let vfs = Vfs::mount(&config).map_err(|e| e.to_string())?;
     let exists = |p: &str| vfs.exists(p);
 
-    let battle = effective_climates(ClimateList::load(&kit.join("_tile_database").join("_settings.xml")).unwrap_or_default(), "battle", Some(&vfs));
+    let battle =
+        effective_climates(ClimateList::load(&kit.join("_tile_database").join("_settings.xml")).unwrap_or_default(), "battle", Some(&vfs));
     g.check(battle.climates.len() == 8, &format!("battle: 8 climates ({})", battle.climates.len()));
     for c in &battle.climates {
         let gravel = c.find("mordor_gravel");
         if c.name != "default" {
-            g.check(gravel.is_some_and(|t| t.blend_pixel_scale > 8.9 && t.blend_pixel_scale < 9.1), &format!("battle {}: mordor_gravel repeats every 9 m", c.name));
+            g.check(
+                gravel.is_some_and(|t| t.blend_pixel_scale > 8.9 && t.blend_pixel_scale < 9.1),
+                &format!("battle {}: mordor_gravel repeats every 9 m", c.name),
+            );
         }
 
         let path = battle.texture_path(&battle.folder_of(c), "mordor_gravel", 2, "wi", false, exists);
-        g.check(path.is_some_and(|p| p.ends_with("/mordor_gravel/2_su_diffuse.dds")), &format!("battle {}: mordor_gravel 2 is found (summer for winter)", c.name));
+        g.check(
+            path.is_some_and(|p| p.ends_with("/mordor_gravel/2_su_diffuse.dds")),
+            &format!("battle {}: mordor_gravel 2 is found (summer for winter)", c.name),
+        );
     }
 
     g.check(battle.find("rome_continental").and_then(|c| c.find("mud")).is_some(), "battle: the kit's groups are still there");
 
     let campaign_kit = kit.parent().map(|p| p.join("campaign").join("_tile_database").join("_settings.xml")).unwrap_or_default();
     let campaign = effective_climates(ClimateList::load(&campaign_kit).unwrap_or_default(), "campaign", Some(&vfs));
-    g.check(campaign.find("default").is_some_and(|c| c.find("mordor_a").is_some_and(|t| t.blend_pixel_scale > 619.0)), "campaign: default has mordor_a at 620 m");
+    g.check(
+        campaign.find("default").is_some_and(|c| c.find("mordor_a").is_some_and(|t| t.blend_pixel_scale > 619.0)),
+        "campaign: default has mordor_a at 620 m",
+    );
     let path = campaign.texture_path(&campaign.folder_named("wasteland"), "mordor_a", 1, "su", true, exists);
-    g.check(path.as_deref() == Some("terrain/textures/campaign/default/mordor_a/1_su_normal.dds"), &format!("campaign: mordor_a falls back to the campaign default ({path:?})"));
+    g.check(
+        path.as_deref() == Some("terrain/textures/campaign/default/mordor_a/1_su_normal.dds"),
+        &format!("campaign: mordor_a falls back to the campaign default ({path:?})"),
+    );
     println!("mod database: battle {} climates, campaign {} climates", battle.climates.len(), campaign.climates.len());
     Ok(())
 }

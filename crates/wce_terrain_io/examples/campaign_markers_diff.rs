@@ -14,7 +14,10 @@ fn main() {
             break;
         }
     }
-    for (name, ours) in [("prop_marker.markers", wce_terrain_io::attila::campaign::prop_markers(&p).expect("props")), ("particle_emitter_marker.markers", wce_terrain_io::attila::campaign::particle_markers(&p).expect("vfx"))] {
+    for (name, ours) in [
+        ("prop_marker.markers", wce_terrain_io::attila::campaign::prop_markers(&p).expect("props")),
+        ("particle_emitter_marker.markers", wce_terrain_io::attila::campaign::particle_markers(&p).expect("vfx")),
+    ] {
         let a = MarkersFile::parse(&ours).expect("ours");
         let b = MarkersFile::parse(&std::fs::read(out.join(name)).expect("BOB's")).expect("BOB's");
         let diff: Vec<usize> = (0..a.records.len().min(b.records.len())).filter(|&i| a.records[i] != b.records[i]).collect();
@@ -24,7 +27,10 @@ fn main() {
         }
 
         // `WCE_DUMP`: the first differing prop's entity and the one before it.
-        if std::env::var("WCE_DUMP").is_ok() && name.starts_with("prop") && let Some(&i) = diff.first() {
+        if std::env::var("WCE_DUMP").is_ok()
+            && name.starts_with("prop")
+            && let Some(&i) = diff.first()
+        {
             let props: Vec<_> = p.entities.iter().filter(|e| matches!(p.kind(e), wce_terrain::terry::EntityKind::Prop(_))).collect();
             let mut models = std::collections::BTreeMap::new();
             for (k, e) in props.iter().enumerate() {

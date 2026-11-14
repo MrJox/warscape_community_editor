@@ -23,13 +23,16 @@ fn child<'a>(r: &'a RecordNode, name: &str) -> Option<&'a RecordNode> {
 
 /// Every group's (u16, u16) cell of a record.
 fn cells(r: &RecordNode) -> Vec<(i32, i32)> {
-    r.children().iter().filter_map(|g| {
-        let mut v = g.iter().filter_map(|n| match n {
-            NodeType::U16(x) => Some(i32::from(*x)),
-            _ => None,
-        });
-        Some((v.next()?, v.next()?))
-    }).collect()
+    r.children()
+        .iter()
+        .filter_map(|g| {
+            let mut v = g.iter().filter_map(|n| match n {
+                NodeType::U16(x) => Some(i32::from(*x)),
+                _ => None,
+            });
+            Some((v.next()?, v.next()?))
+        })
+        .collect()
 }
 
 /// RPFM's neighbour order (`coords.rs`).
@@ -50,10 +53,16 @@ fn main() {
     let mut counts: BTreeMap<usize, usize> = BTreeMap::new();
     let mut dirs: BTreeMap<String, usize> = BTreeMap::new();
     for region in block.children().iter().flatten().filter_map(rec).filter(|r| r.name() == "REGION_DATA") {
-        let key = region.children().first().and_then(|g| g.iter().find_map(|n| match n {
-            NodeType::Ascii(s) => Some(s.clone()),
-            _ => None,
-        })).unwrap_or_default();
+        let key = region
+            .children()
+            .first()
+            .and_then(|g| {
+                g.iter().find_map(|n| match n {
+                    NodeType::Ascii(s) => Some(s.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
         let Some(info) = child(region, "SETTLEMENT_INFO") else { continue };
         let mut slots: Vec<(String, Vec<(i32, i32)>)> = vec![];
         if let Some(b) = child(info, "SLOT_ARRAY_BLOCK") {

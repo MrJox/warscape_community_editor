@@ -27,6 +27,20 @@ frames 2
 assert_modified 1
 undo
 
+# undo and redo wait for a drag to end (the button held across commands)
+mouse down 780 600
+mouse move 800 590
+mouse move 830 580
+frames 2
+expect_fail undo
+expect_fail redo
+mouse up
+frames 3
+assert_history 1 1
+undo
+frames 2
+assert_modified 0
+
 # typed edits: a size is set as typed; duplicate adds components and delete takes the copy away; add makes one more; undo undoes all of it
 ui_select 1
 ui_set w 800
