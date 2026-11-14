@@ -588,9 +588,7 @@ impl TileDocument {
         let mark = self.begin()?;
         for &g in changed.iter().rev() {
             if let Err(e) = self.tscene_mut().set_children_text(g, children) {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                return Err(e);
+                return self.rolled_back(mark, e);
             }
         }
 
@@ -615,9 +613,7 @@ impl TileDocument {
         let mark = self.begin()?;
         for (g, c) in groups.iter().rev() {
             if let Err(e) = self.tscene_mut().set_children_text(*g, c) {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                return Err(e);
+                return self.rolled_back(mark, e);
             }
         }
 

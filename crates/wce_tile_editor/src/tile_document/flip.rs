@@ -398,9 +398,7 @@ impl TileDocument {
         let mark = self.begin()?;
         let targets = self.flip_targets(&roots, plane, &factors, true);
         if let Err(e) = self.apply_flip(&targets) {
-            let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-            let _ = self.tscene_mut().unapply(&record);
-            return Err(e);
+            return self.rolled_back(mark, e);
         }
 
         // The packed tree and grass lists (BOB's, made before) are mirrored relative to the tile from now on: the root says along which axes.

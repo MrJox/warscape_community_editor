@@ -97,9 +97,7 @@ impl TileDocument {
         let moved = match self.tscene_mut().move_elements(top, layer, before) {
             Ok(moved) => moved,
             Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                return Err(e);
+                return self.rolled_back(mark, e);
             }
         };
 
@@ -166,9 +164,7 @@ impl TileDocument {
         let moved = match result {
             Ok(moved) => moved,
             Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                return Err(e);
+                return self.rolled_back(mark, e);
             }
         };
 
@@ -224,9 +220,7 @@ impl TileDocument {
         let (group, moved) = match result {
             Ok(r) => r,
             Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                return Err(e);
+                return self.rolled_back(mark, e);
             }
         };
 
