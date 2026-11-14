@@ -270,7 +270,7 @@ impl TileTool {
         }
 
         let previous = std::mem::take(&mut self.prefab_sel_before);
-        let from_tree = std::mem::take(&mut self.tree_picked);
+        let from_tree = std::mem::take(&mut self.tree.picked);
         let sc = d.tile().tscene();
         let els = sc.doc().elements();
         let sel = selected(e);

@@ -294,6 +294,21 @@ pub enum Profile {
 }
 
 pub struct TileTool {
+    /// The Tiles panel (the tile browser): its kit, filter, rows and marks, the packs' and the extracted tiles, the tile asked for.
+    pub(crate) browse: Browse,
+
+    /// Launch in game: the launched game, the prompt, the job preparing it and its progress window.
+    pub(crate) launch: Launch,
+
+    /// The Scene panel's tree: its rows, what is open, the filter, the renaming and the scroll.
+    pub(crate) tree: SceneTree,
+
+    /// The Problems panel's lists (worked out once the tile is still) and the off-terrain report.
+    pub(crate) checks: Checks,
+
+    /// The vegetation sets: the list, the one painted with, the new set being named.
+    pub(crate) veg_sets: VegSets,
+
     pub status: String,
     pub(crate) profile: Profile,
     pub(crate) layers: crate::layers_panel::LayersUi,
@@ -337,28 +352,6 @@ pub struct TileTool {
     /// The menu's Flip..., for the next update.
     pub(crate) flip_asked: bool,
 
-    // The off-terrain report of the Tile panel.
-    off_tol: f32,
-    off_list: Vec<OffTerrain>,
-    off_doc_version: Option<u64>,
-    off_doc: DocumentId,
-
-    // Scene panel: the flattened tree (open layers by name path), rename, delete confirmation, anchor of a shift-click range.
-    pub(crate) rename_buf: String,
-    pub(crate) tree_rows: Vec<TreeRow>,
-    pub(crate) tree_open: HashSet<String>,
-    pub(crate) tree_doc: DocumentId,
-    pub(crate) tree_version: Option<u64>,
-    pub(crate) tree_open_version: u64,
-    pub(crate) tree_open_version_seen: Option<u64>,
-
-    /// The Scene panel's filter (name or type, case-insensitive) and the one the rows were built for.
-    pub(crate) tree_filter: String,
-    pub(crate) tree_filter_seen: String,
-
-    /// The hidden types the tree was built with (the type toggles).
-    pub(crate) tree_hidden_seen: Option<Vec<String>>,
-
     /// TEd's working layer: the tile (document) and the layer's name path (`scene_panel::layer_key`). New items go into it (placed buildings,
     /// drawn polygons, groups, ungrouped items); without one they go to the scene graph.
     pub(crate) working_layer: Option<(DocumentId, String)>,
@@ -371,15 +364,11 @@ pub struct TileTool {
     /// The library's prefab contents, read once each and shared with the open tiles' projects (`TileProject::prefab_base`: a save keeps
     /// what the references differ by as their overrides), and the index of their contents (`prefab_refs::ContentIndex`).
     pub(crate) prefab_base: crate::prefab_panel::SharedBase,
-    pub(crate) tree_prefab_seen: u64,
 
     /// The copy opened for its items (`prefab_panel::opened_copy`): the tile and its name path; the selection the frame before (a click on an
     /// item of a copy selected then opens it).
     pub(crate) prefab_open: Option<(DocumentId, String)>,
     pub(crate) prefab_sel_before: Vec<usize>,
-
-    /// The selection came from a click on a Scene tree row this frame: an item of a copy picked there opens the copy.
-    pub(crate) tree_picked: bool,
 
     /// The Scene tree's override marks: each reference's overridden items (`TileDocument::overridden_items`), found when a row of it is
     /// drawn, for the (tile, history, library) they were found for.
@@ -388,16 +377,7 @@ pub struct TileTool {
     /// "Save as prefab": the group's name path, the name and the folder typed.
     pub(crate) prefab_save: Option<(String, String, String)>,
 
-    /// The first selected element the tree last followed (a new one picked elsewhere is opened up to and scrolled into view), and the row
-    /// to scroll to.
-    pub(crate) tree_synced: Option<usize>,
-    pub(crate) tree_scroll_to: Option<usize>,
-    pub(crate) rename_elem: Option<usize>,
     pub(crate) anchor: Option<usize>,
-    pub(crate) rename_wait: i32,
-    pub(crate) rename_focus: bool,
-    pub(crate) rename_active_seen: bool,
-    pub(crate) begin_rename_next: bool,
     pub(crate) delete_confirm: bool,
     pub(crate) delete_weight: usize,
 
@@ -545,15 +525,6 @@ pub struct TileTool {
     pub(crate) veg: Option<crate::settings::VegBrush>,
     pub(crate) random: crate::veg_brush::Random,
 
-    /// The vegetation sets (read on first use, again after a change, counted by the version) and the one being placed or painted.
-    pub(crate) veg_sets: Option<std::sync::Arc<Vec<wce_tile::vegetation_sets::VegetationSet>>>,
-    pub(crate) veg_sets_version: u64,
-    pub(crate) veg_set: Option<SetInUse>,
-
-    /// The "New vegetation set" dialog's name (and whether it opens on the next frame).
-    pub(crate) new_set_name: Option<String>,
-    pub(crate) new_set_open: bool,
-
     /// The "New tile" dialog (and whether it opens on the next frame).
     pub(crate) new_tile: Option<crate::new_tile_dialog::NewTileDialog>,
 
@@ -578,41 +549,13 @@ pub struct TileTool {
     pub(crate) share_notice: Option<crate::share_prompt::ShareNotice>,
     pub(crate) share_notice_open: bool,
 
-    /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
-    /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
-    pub(crate) launched: Option<crate::launch::Running>,
-    pub(crate) launch_swept: bool,
-    pub(crate) launch_prompt: Option<Vec<String>>,
-    pub(crate) launch_prompt_open: bool,
-
-    /// The launch being prepared on a thread, and whether its window opens on the next frame.
-    pub(crate) launch_job: Option<crate::launch_prompt::LaunchJob>,
-    pub(crate) launch_worker: Option<std::thread::JoinHandle<()>>,
-    pub(crate) launch_progress_open: bool,
-
-    /// The Tiles panel's extracted tiles (keys of the projects' rows), and the list and kit they were looked for in: looked for again
-    /// only when those change (it reads each tile's folder), not at each key typed in the filter.
-    browse_extracted: std::collections::HashSet<String>,
-    browse_extracted_for: (usize, usize),
-
     /// The new vegetation set (not saved; Ctrl + click on trees in the Create panel) and the name it will be saved with.
     pub(crate) scratch_set: Option<wce_tile::vegetation_sets::VegetationSet>,
     pub(crate) scratch_name: String,
 
-    /// The Problems section's trees, and the (tile, history, structure) they were found for.
-    problems: Option<((DocumentId, u64, u64), Arc<Vec<usize>>)>,
-
-    /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
-    river_problems: Option<((DocumentId, u64, u64), Arc<Vec<(Option<usize>, String)>>)>,
-    link_problems: Option<((DocumentId, u64, u64), Arc<Vec<wce_tile::link_checks::LinkProblem>>)>,
-    integrity: Option<((DocumentId, u64, u64), Arc<Vec<(usize, String)>>)>,
-
     /// The snapping's outlines (`Tile::snap_outlines`) and what they were made for: the tile (its history's version, its structure's) and
     /// the item left out. Made again only when one of those changes, not on every frame the mouse moves.
     snap_outlines: std::cell::RefCell<Option<((DocumentId, u64, u64, Option<usize>), Arc<Vec<(Vec<Float3>, bool)>>)>>,
-
-    /// The tile's state the Problems are behind, and since when (`gui::time`): they are made again once it has stayed so a moment.
-    problems_wait: Option<((DocumentId, u64, u64), f64)>,
 
     /// The last bridge check (`Tile::check_bridges`), for the tile and the edit it was made at; whether the viewport shows its edges.
     pub(crate) bridge_check: Option<((DocumentId, u64, u64), wce_tile_editor::tile_document::BridgeReport)>,
@@ -646,12 +589,6 @@ pub struct TileTool {
     /// mark_height values for the tests.
     pub(crate) marks: HashMap<String, f32>,
 
-    // The tile browser (Tiles panel), and the entry a pending open comes from (consumed by `open`).
-    browse_filter: String,
-
-    /// Frames left in which the Tiles panel takes the focus (the first time the tool is shown).
-    browse_focus_frames: u8,
-
     /// Frames left to bring the Scene tree to the front (a tile opened).
     pub(crate) scene_focus_frames: u8,
 
@@ -660,35 +597,6 @@ pub struct TileTool {
 
     /// A whole-tile flip waiting for its busy message to show (`flip_tool.rs`): the axis and the frames left.
     pub(crate) flip_tile_pending: Option<(wce_tile_editor::tile_document::TileFlipAxis, u8)>,
-    browse_kit: usize,
-    browse_kind: i32,
-
-    /// The entry's key (normalised location) selected in the list.
-    browse_selected: String,
-    pending_entry: Option<PathBuf>,
-    pending_variation: Option<usize>,
-
-    /// kit_roots, looked up at most every two seconds (the panel draws every frame).
-    browse_roots: Vec<PathBuf>,
-    browse_roots_time: f64,
-
-    /// The filtered, listed rows: indices of the index's entries (rebuilt when the kit, kind, filter or index changed).
-    browse_rows: Vec<usize>,
-    browse_rows_key: String,
-    browse_index: Option<Arc<TileIndex>>,
-
-    /// The kit index's rows, shared as the packs' are (copied when the index changes).
-    browse_kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
-
-    /// The favourite and the recent tiles (the settings' lists: read on first use, written through), and a count of their changes.
-    browse_marks: Option<(Vec<TileRef>, Vec<TileRef>)>,
-    browse_marks_version: u64,
-
-    /// The listed favourites and recent tiles of the source, filtered as the list: rows of the source (and, for a recent one, the variation
-    /// opened), and the keys of the source's favourites (the stars of every row).
-    browse_fav_rows: Vec<usize>,
-    browse_recent_rows: Vec<(usize, String)>,
-    browse_fav_keys: HashSet<String>,
 
     /// The raw_data folders of the workspaces exported tiles were opened into this session (besides the settings' one): their tiles are the
     /// packs' in the recent tiles.
@@ -709,16 +617,189 @@ pub struct TileTool {
     /// The game's tile data being read on a thread once a tile is open, so that an export or a launch finds it read.
     pub(crate) game_preload: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
     pub(crate) game_preload_tried: bool,
+}
+
+/// The Tiles panel (the tile browser): its kit, filter, rows and marks, the packs' and the extracted tiles, the tile asked for.
+pub(crate) struct Browse {
+    /// The Tiles panel's extracted tiles (keys of the projects' rows), and the list and kit they were looked for in: looked for again
+    /// only when those change (it reads each tile's folder), not at each key typed in the filter.
+    extracted: std::collections::HashSet<String>,
+    extracted_for: (usize, usize),
+    // The tile browser (Tiles panel), and the entry a pending open comes from (consumed by `open`).
+    filter: String,
+
+    /// Frames left in which the Tiles panel takes the focus (the first time the tool is shown).
+    focus_frames: u8,
+    kit: usize,
+    kind: i32,
+
+    /// The entry's key (normalised location) selected in the list.
+    selected: String,
+    pending_entry: Option<PathBuf>,
+    pending_variation: Option<usize>,
+
+    /// kit_roots, looked up at most every two seconds (the panel draws every frame).
+    roots: Vec<PathBuf>,
+    roots_time: f64,
+
+    /// The filtered, listed rows: indices of the index's entries (rebuilt when the kit, kind, filter or index changed).
+    rows: Vec<usize>,
+    rows_key: String,
+    index: Option<Arc<TileIndex>>,
+
+    /// The kit index's rows, shared as the packs' are (copied when the index changes).
+    kit_rows: Arc<Vec<wce_formats::tile_index::TileIndexEntry>>,
+
+    /// The favourite and the recent tiles (the settings' lists: read on first use, written through), and a count of their changes.
+    marks: Option<(Vec<TileRef>, Vec<TileRef>)>,
+    marks_version: u64,
+
+    /// The listed favourites and recent tiles of the source, filtered as the list: rows of the source (and, for a recent one, the variation
+    /// opened), and the keys of the source's favourites (the stars of every row).
+    fav_rows: Vec<usize>,
+    recent_rows: Vec<(usize, String)>,
+    fav_keys: HashSet<String>,
 
     /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
     /// The packs' tiles for the Tiles panel and the mount they were read from (`Files::mount_id`): read again for another (a failure
     /// before the packs were mounted, a list of the mods before).
-    browse_packs: Option<(u64, Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>)>,
+    packs: Option<(u64, Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>)>,
+}
+
+impl Default for Browse {
+    fn default() -> Self {
+        Self {
+            extracted: Default::default(),
+            extracted_for: (0, usize::MAX),
+            filter: String::new(),
+            focus_frames: 3,
+            kit: 0,
+            kind: 0,
+            selected: String::new(),
+            pending_entry: None,
+            pending_variation: None,
+            roots: vec![],
+            roots_time: -1e9,
+            rows: vec![],
+            rows_key: String::new(),
+            index: None,
+            kit_rows: Arc::default(),
+            marks: None,
+            marks_version: 0,
+            fav_rows: vec![],
+            recent_rows: vec![],
+            fav_keys: HashSet::new(),
+            packs: None,
+        }
+    }
+}
+
+/// Launch in game: the launched game, the prompt, the job preparing it and its progress window.
+#[derive(Default)]
+pub(crate) struct Launch {
+    /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
+    /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
+    pub(crate) launched: Option<crate::launch::Running>,
+    pub(crate) swept: bool,
+    pub(crate) prompt: Option<Vec<String>>,
+    pub(crate) prompt_open: bool,
+
+    /// The launch being prepared on a thread, and whether its window opens on the next frame.
+    pub(crate) job: Option<crate::launch_prompt::LaunchJob>,
+    pub(crate) worker: Option<std::thread::JoinHandle<()>>,
+    pub(crate) progress_open: bool,
+}
+
+/// The Scene panel's tree: its rows, what is open, the filter, the renaming and the scroll.
+#[derive(Default)]
+pub(crate) struct SceneTree {
+    pub(crate) rows: Vec<TreeRow>,
+    pub(crate) open: HashSet<String>,
+    pub(crate) doc: DocumentId,
+    pub(crate) version: Option<u64>,
+    pub(crate) open_version: u64,
+    pub(crate) open_version_seen: Option<u64>,
+
+    /// The Scene panel's filter (name or type, case-insensitive) and the one the rows were built for.
+    pub(crate) filter: String,
+    pub(crate) filter_seen: String,
+
+    /// The hidden types the tree was built with (the type toggles).
+    pub(crate) hidden_seen: Option<Vec<String>>,
+    pub(crate) prefab_seen: u64,
+
+    /// The selection came from a click on a Scene tree row this frame: an item of a copy picked there opens the copy.
+    pub(crate) picked: bool,
+
+    /// The first selected element the tree last followed (a new one picked elsewhere is opened up to and scrolled into view), and the row
+    /// to scroll to.
+    pub(crate) synced: Option<usize>,
+    pub(crate) scroll_to: Option<usize>,
+    // Scene panel: the flattened tree (open layers by name path), rename, delete confirmation, anchor of a shift-click range.
+    pub(crate) rename_buf: String,
+    pub(crate) rename_elem: Option<usize>,
+    pub(crate) rename_wait: i32,
+    pub(crate) rename_focus: bool,
+    pub(crate) rename_active_seen: bool,
+    pub(crate) begin_rename_next: bool,
+}
+
+/// The Problems panel's lists (worked out once the tile is still) and the off-terrain report.
+pub(crate) struct Checks {
+    /// The Problems section's trees, and the (tile, history, structure) they were found for.
+    problems: Option<((DocumentId, u64, u64), Arc<Vec<usize>>)>,
+
+    /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
+    rivers: Option<((DocumentId, u64, u64), Arc<Vec<(Option<usize>, String)>>)>,
+    links: Option<((DocumentId, u64, u64), Arc<Vec<wce_tile::link_checks::LinkProblem>>)>,
+    integrity: Option<((DocumentId, u64, u64), Arc<Vec<(usize, String)>>)>,
+
+    /// The tile's state the Problems are behind, and since when (`gui::time`): they are made again once it has stayed so a moment.
+    wait: Option<((DocumentId, u64, u64), f64)>,
+    // The off-terrain report of the Tile panel.
+    off_tol: f32,
+    off_list: Vec<OffTerrain>,
+    off_doc_version: Option<u64>,
+    off_doc: DocumentId,
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Self {
+            problems: None,
+            rivers: None,
+            links: None,
+            integrity: None,
+            wait: None,
+            off_tol: 0.5,
+            off_list: vec![],
+            off_doc_version: None,
+            off_doc: 0,
+        }
+    }
+}
+
+/// The vegetation sets: the list, the one painted with, the new set being named.
+#[derive(Default)]
+pub(crate) struct VegSets {
+    /// The vegetation sets (read on first use, again after a change, counted by the version) and the one being placed or painted.
+    pub(crate) list: Option<std::sync::Arc<Vec<wce_tile::vegetation_sets::VegetationSet>>>,
+    pub(crate) version: u64,
+    pub(crate) current: Option<SetInUse>,
+
+    /// The "New vegetation set" dialog's name (and whether it opens on the next frame).
+    pub(crate) new_name: Option<String>,
+    pub(crate) new_open: bool,
 }
 
 impl Default for TileTool {
     fn default() -> Self {
         Self {
+            browse: Browse::default(),
+            launch: Launch::default(),
+            tree: SceneTree::default(),
+            checks: Checks::default(),
+            veg_sets: VegSets::default(),
             status: String::new(),
             profile: Profile::Tile,
             layers: Default::default(),
@@ -736,38 +817,15 @@ impl Default for TileTool {
             angle_step: 15.0,
             alt_turn: None,
             gesture: None,
-            off_tol: 0.5,
-            off_list: vec![],
-            off_doc_version: None,
-            off_doc: 0,
-            rename_buf: String::new(),
-            tree_rows: vec![],
-            tree_open: HashSet::new(),
-            tree_doc: 0,
-            tree_version: None,
-            tree_open_version: 0,
-            tree_open_version_seen: None,
-            tree_filter: String::new(),
-            tree_filter_seen: String::new(),
-            tree_hidden_seen: None,
             working_layer: None,
             prefabs: None,
             prefab_version: 0,
             prefab_base: Default::default(),
-            tree_prefab_seen: 0,
             prefab_open: None,
             prefab_sel_before: vec![],
-            tree_picked: false,
             override_rows: Default::default(),
             prefab_save: None,
-            tree_synced: None,
-            tree_scroll_to: None,
-            rename_elem: None,
             anchor: None,
-            rename_wait: 0,
-            rename_focus: false,
-            rename_active_seen: false,
-            begin_rename_next: false,
             delete_confirm: false,
             delete_weight: 0,
             terrain_hit: false,
@@ -838,11 +896,6 @@ impl Default for TileTool {
             place_chips_width: 0.0,
             veg: None,
             random: crate::veg_brush::Random::new(),
-            veg_sets: None,
-            veg_sets_version: 0,
-            veg_set: None,
-            new_set_name: None,
-            new_set_open: false,
             new_tile: None,
             new_tile_open: false,
             height_import: None,
@@ -855,22 +908,8 @@ impl Default for TileTool {
             import_prompt_open: false,
             share_notice: None,
             share_notice_open: false,
-            launched: None,
-            launch_swept: false,
-            launch_prompt: None,
-            launch_prompt_open: false,
-            launch_job: None,
-            launch_worker: None,
-            launch_progress_open: false,
-            browse_extracted: Default::default(),
-            browse_extracted_for: (0, usize::MAX),
             scratch_set: None,
             scratch_name: String::new(),
-            problems: None,
-            river_problems: None,
-            link_problems: None,
-            integrity: None,
-            problems_wait: None,
             snap_outlines: Default::default(),
             bridge_check: None,
             bridge_overlay: true,
@@ -883,27 +922,9 @@ impl Default for TileTool {
             camera_set_for: 0,
             gesture_tile: 0,
             marks: HashMap::new(),
-            browse_filter: String::new(),
-            browse_focus_frames: 3,
             scene_focus_frames: 0,
             create_focus_frames: 0,
             flip_tile_pending: None,
-            browse_kit: 0,
-            browse_kind: 0,
-            browse_selected: String::new(),
-            pending_entry: None,
-            pending_variation: None,
-            browse_roots: vec![],
-            browse_roots_time: -1e9,
-            browse_rows: vec![],
-            browse_rows_key: String::new(),
-            browse_index: None,
-            browse_kit_rows: Arc::default(),
-            browse_marks: None,
-            browse_marks_version: 0,
-            browse_fav_rows: vec![],
-            browse_recent_rows: vec![],
-            browse_fav_keys: HashSet::new(),
             workspaces: HashSet::new(),
             weather: Default::default(),
             minimap: Default::default(),
@@ -911,7 +932,6 @@ impl Default for TileTool {
             exported_game: None,
             game_preload: None,
             game_preload_tried: false,
-            browse_packs: None,
         }
     }
 }
@@ -1172,7 +1192,7 @@ impl TileTool {
 
     /// The Tiles panel's source as a [`TileRef`] source: the kit's raw_data folder, or the packs.
     pub(crate) fn browse_source(&self) -> String {
-        match self.browse_roots.get(self.browse_kit) {
+        match self.browse.roots.get(self.browse.kit) {
             Some(root) => source_of(root),
             None => PACKS_SOURCE.to_owned(),
         }
@@ -1180,17 +1200,17 @@ impl TileTool {
 
     /// The favourite and the recent tiles, read from the settings on first use.
     pub(crate) fn marks(&mut self, e: &Editor) -> &(Vec<TileRef>, Vec<TileRef>) {
-        if self.browse_marks.is_none() {
+        if self.browse.marks.is_none() {
             let s = e.tool_settings::<TileSettings>(SETTINGS_ID);
-            self.browse_marks = Some((s.favourites, s.recent));
+            self.browse.marks = Some((s.favourites, s.recent));
         }
 
-        self.browse_marks.as_ref().expect("read above")
+        self.browse.marks.as_ref().expect("read above")
     }
 
     fn save_marks(&mut self, e: &mut Editor) {
-        let Some((favourites, recent)) = self.browse_marks.clone() else { return };
-        self.browse_marks_version += 1;
+        let Some((favourites, recent)) = self.browse.marks.clone() else { return };
+        self.browse.marks_version += 1;
         e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
             s.favourites = favourites;
             s.recent = recent;
@@ -1200,7 +1220,7 @@ impl TileTool {
     /// Stars a tile of a source in the Tiles panel, or takes its star away; true when it is a favourite now.
     pub fn toggle_favourite(&mut self, e: &mut Editor, source: &str, key: &str) -> bool {
         self.marks(e);
-        let (favourites, _) = self.browse_marks.as_mut().expect("read above");
+        let (favourites, _) = self.browse.marks.as_mut().expect("read above");
         let now = match favourites.iter().position(|r| r.source == source && r.key == key) {
             Some(i) => {
                 favourites.remove(i);
@@ -1230,7 +1250,7 @@ impl TileTool {
         let exported = self.workspaces.contains(&raw_root) && raw_root != source_of(&Self::workspace_dir(e).join("raw_data"));
         let source = if exported { PACKS_SOURCE.to_owned() } else { raw_root };
         self.marks(e);
-        let (_, recent) = self.browse_marks.as_mut().expect("read above");
+        let (_, recent) = self.browse.marks.as_mut().expect("read above");
         recent.retain(|r| r.source != source || r.key != key);
         recent.insert(0, TileRef { source, key, variation });
         recent.truncate(RECENT_KEEP);
@@ -1357,11 +1377,11 @@ impl TileTool {
             }
         }
 
-        self.pending_entry = Some(entry_xml.clone());
-        self.pending_variation = Some(v);
+        self.browse.pending_entry = Some(entry_xml.clone());
+        self.browse.pending_variation = Some(v);
         let opened = e.open_path_from(self, &ted.display().to_string(), false, true);
-        self.pending_entry = None;
-        self.pending_variation = None;
+        self.browse.pending_entry = None;
+        self.browse.pending_variation = None;
         let mut msg = opened?;
         if vars.len() > 1 {
             msg += &format!("  (entry {file_name}, variation {} of: {names})", vars[v].location);
@@ -1449,7 +1469,7 @@ impl TileTool {
     /// background: `Err` saying so meanwhile, not kept).
     fn pack_entries(&mut self, e: &mut Editor) -> Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String> {
         let mount = e.vfs().map_or(0, |v| wce_vfs::files::Files::mount_id(v.as_ref()));
-        if let Some((m, r)) = &self.browse_packs
+        if let Some((m, r)) = &self.browse.packs
             && *m == mount
         {
             return r.clone();
@@ -1486,7 +1506,7 @@ impl TileTool {
             rows.sort_by(|a, b| a.key.cmp(&b.key));
             Arc::new(rows)
         });
-        self.browse_packs = Some((mount, r.clone()));
+        self.browse.packs = Some((mount, r.clone()));
         r
     }
 
@@ -1497,7 +1517,7 @@ impl TileTool {
     /// No such kit.
     pub fn browse(&mut self, e: &mut Editor, source: &str, filter: &str) -> Result<String, String> {
         let roots = self.kit_roots(e);
-        self.browse_kit = match source {
+        self.browse.kit = match source {
             "packs" => roots.len(),
             n => n
                 .parse::<usize>()
@@ -1505,14 +1525,14 @@ impl TileTool {
                 .filter(|&n| n < roots.len())
                 .ok_or_else(|| format!("no kit {n}: {} kits, or 'packs'", roots.len()))?,
         };
-        self.browse_filter = filter.to_owned();
+        self.browse.filter = filter.to_owned();
         gui::set_window_focus("Tiles");
         // Asked for (a script, a command): read now, not in the background as the panel does.
         if source == "packs" {
             self.exported_game(e)?;
         }
 
-        let rows = if source == "packs" { self.pack_entries(e)?.len() } else { TileIndex::shared(&roots[self.browse_kit]).entries().len() };
+        let rows = if source == "packs" { self.pack_entries(e)?.len() } else { TileIndex::shared(&roots[self.browse.kit]).entries().len() };
         Ok(format!("{rows} tiles in the source"))
     }
 
@@ -1638,7 +1658,7 @@ impl TileTool {
             log::warn(format!("not migrated: {line}"));
         }
 
-        self.browse_rows_key.clear();
+        self.browse.rows_key.clear();
         Ok(format!("{} old extracted project(s) moved, {} left as they are (see the log)", m.moved.len(), m.skipped.len()))
     }
 
@@ -2781,24 +2801,24 @@ impl TileTool {
         // is the one from before. The first time, at once.
         let stamp = (id, d.history().version(), d.tile().structure_version());
         let now = gui::time();
-        if self.problems_wait.is_none_or(|(s, _)| s != stamp) {
-            self.problems_wait = Some((stamp, now));
+        if self.checks.wait.is_none_or(|(s, _)| s != stamp) {
+            self.checks.wait = Some((stamp, now));
         }
 
-        let settled = self.problems_wait.is_some_and(|(_, since)| now - since >= 0.3);
-        let first = self.problems.as_ref().is_none_or(|(s, _)| s.0 != id);
-        if self.problems.as_ref().is_none_or(|(s, _)| *s != stamp) && (settled || first) {
-            self.problems = Some((stamp, Arc::new(d.trees_outside_exclusions())));
-            self.river_problems = Some((stamp, Arc::new(d.river_link_problems())));
-            self.link_problems = Some((stamp, Arc::new(d.link_problems())));
-            self.integrity = Some((stamp, Arc::new(d.tile().integrity_errors())));
+        let settled = self.checks.wait.is_some_and(|(_, since)| now - since >= 0.3);
+        let first = self.checks.problems.as_ref().is_none_or(|(s, _)| s.0 != id);
+        if self.checks.problems.as_ref().is_none_or(|(s, _)| *s != stamp) && (settled || first) {
+            self.checks.problems = Some((stamp, Arc::new(d.trees_outside_exclusions())));
+            self.checks.rivers = Some((stamp, Arc::new(d.river_link_problems())));
+            self.checks.links = Some((stamp, Arc::new(d.link_problems())));
+            self.checks.integrity = Some((stamp, Arc::new(d.tile().integrity_errors())));
         }
 
         // Shared, not copied each frame.
-        let trees = self.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
-        let rivers = self.river_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
-        let links = self.link_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
-        let integrity = self.integrity.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let trees = self.checks.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
+        let rivers = self.checks.rivers.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let links = self.checks.links.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+        let integrity = self.checks.integrity.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
         let bridges = self.bridge_check.as_ref().filter(|(s, _)| s.0 == id).map_or(0, |(_, r)| r.problems.len());
         let n = trees.len() + rivers.len() + links.len() + integrity.len() + bridges;
         let title =
@@ -2989,23 +3009,23 @@ impl TileTool {
         let c = d.tile().placement_counts();
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
         gui::set_next_item_width(90.0);
-        gui::drag_float("tolerance (m)", &mut self.off_tol, 0.05, 0.001, 50.0, "%.3f");
+        gui::drag_float("tolerance (m)", &mut self.checks.off_tol, 0.05, 0.001, 50.0, "%.3f");
         if gui::is_item_hovered() {
             gui::set_tooltip("How far from the terrain, in metres, a landscape instance may be before the report lists it.");
         }
 
         gui::same_line();
         if gui::button("Report off-terrain") {
-            self.off_list = d.tile().off_terrain(self.off_tol, None);
-            self.off_doc = id;
-            self.off_doc_version = Some(d.history().version());
+            self.checks.off_list = d.tile().off_terrain(self.checks.off_tol, None);
+            self.checks.off_doc = id;
+            self.checks.off_doc_version = Some(d.history().version());
         }
 
         if gui::is_item_hovered() {
             gui::set_tooltip("Lists the landscape instances further from the terrain than the tolerance, worst first.");
         }
 
-        let Some(version) = self.off_doc_version.filter(|_| self.off_doc == id) else { return };
+        let Some(version) = self.checks.off_doc_version.filter(|_| self.checks.off_doc == id) else { return };
         // The report names elements by number: after an edit they may be others (a delete, a paste), or none. Neither the rows nor the
         // buttons act on them then.
         if version != d.history().version() {
@@ -3015,10 +3035,10 @@ impl TileTool {
 
         gui::text(&format!(
             "{} landscape instance(s) more than {} m off the terrain",
-            self.off_list.len(),
-            wce_formats::c_num::printf_g_prec(f64::from(self.off_tol), 3),
+            self.checks.off_list.len(),
+            wce_formats::c_num::printf_g_prec(f64::from(self.checks.off_tol), 3),
         ));
-        let elems = self.off_list.iter().map(|o| o.elem).collect::<Vec<_>>();
+        let elems = self.checks.off_list.iter().map(|o| o.elem).collect::<Vec<_>>();
         gui::begin_disabled(elems.is_empty());
         let select_them = gui::button("Select them");
         if gui::is_item_hovered_allow_disabled() {
@@ -3029,8 +3049,8 @@ impl TileTool {
         if gui::button("Snap them") {
             let n = d.snap_to_terrain(&elems, false);
             self.status = format!("{n} snapped to the terrain");
-            self.off_list.clear();
-            self.off_doc_version = Some(d.history().version());
+            self.checks.off_list.clear();
+            self.checks.off_doc_version = Some(d.history().version());
         }
 
         if gui::is_item_hovered_allow_disabled() {
@@ -3038,9 +3058,9 @@ impl TileTool {
         }
 
         gui::end_disabled();
-        let shown = self.off_list.len().min(12);
+        let shown = self.checks.off_list.len().min(12);
         let mut pick = None;
-        for o in &self.off_list[..shown] {
+        for o in &self.checks.off_list[..shown] {
             let sc = d.tile().tscene();
             let mut n = sc.name(o.elem);
             if n.is_empty() {
@@ -3056,8 +3076,8 @@ impl TileTool {
             }
         }
 
-        if self.off_list.len() > shown {
-            gui::text_disabled(&format!("... {} more", self.off_list.len() - shown));
+        if self.checks.off_list.len() > shown {
+            gui::text_disabled(&format!("... {} more", self.checks.off_list.len() - shown));
         }
 
         if select_them {
@@ -3079,10 +3099,10 @@ impl TileTool {
 
         // The first time the tool is shown, the Tiles list is the panel in front (a tile is opened from it), its filter ready for typing.
         // A few frames: the dock layout is applied on the first ones and would take the focus back.
-        let focus = self.browse_focus_frames > 0;
+        let focus = self.browse.focus_frames > 0;
         if focus {
             gui::set_next_window_focus();
-            self.browse_focus_frames -= 1;
+            self.browse.focus_frames -= 1;
         }
 
         if !gui::begin("Tiles", None, 0) {
@@ -3092,13 +3112,13 @@ impl TileTool {
 
         self.left_dock = Some(gui::window_dock_id());
 
-        if gui::time() - self.browse_roots_time > 2.0 {
-            self.browse_roots = self.kit_roots(e);
-            self.browse_roots_time = gui::time();
+        if gui::time() - self.browse.roots_time > 2.0 {
+            self.browse.roots = self.kit_roots(e);
+            self.browse.roots_time = gui::time();
         }
 
         // Without a kit (or projects) the list is the game's packs: a game whose kit has no tiles (Rome 2) has only those.
-        if self.browse_roots.is_empty() && e.game().features.kit_tiles {
+        if self.browse.roots.is_empty() && e.game().features.kit_tiles {
             gui::text_disabled(
                 "No assembly kit found (set the game folder or add Assembly Kits in Settings > Game): the game's packs only.",
             );
@@ -3110,7 +3130,8 @@ impl TileTool {
         let projects_raw = Self::workspace_dir(e).join("raw_data");
         let folder_name = |r: &Path| r.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
         let kit_labels = self
-            .browse_roots
+            .browse
+            .roots
             .iter()
             .map(|r| {
                 if *r == projects_raw {
@@ -3118,22 +3139,22 @@ impl TileTool {
                 }
 
                 let name = folder_name(r);
-                let twins = self.browse_roots.iter().filter(|o| **o != projects_raw && folder_name(o) == name).count();
+                let twins = self.browse.roots.iter().filter(|o| **o != projects_raw && folder_name(o) == name).count();
                 if twins > 1 { r.parent().unwrap_or(r).display().to_string() } else { name }
             })
             .collect::<Vec<_>>();
-        self.browse_kit = self.browse_kit.min(self.browse_roots.len());
-        let packs = self.browse_kit == self.browse_roots.len();
+        self.browse.kit = self.browse.kit.min(self.browse.roots.len());
+        let packs = self.browse.kit == self.browse.roots.len();
         gui::set_next_item_width(220.0);
-        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_labels[self.browse_kit].clone() }) {
+        if gui::begin_combo("kit", &if packs { PACKS_LABEL.to_owned() } else { kit_labels[self.browse.kit].clone() }) {
             for (i, label) in kit_labels.iter().enumerate() {
-                if gui::selectable(label, i == self.browse_kit, 0) {
-                    self.browse_kit = i;
+                if gui::selectable(label, i == self.browse.kit, 0) {
+                    self.browse.kit = i;
                 }
             }
 
             if gui::selectable(PACKS_LABEL, packs, 0) {
-                self.browse_kit = self.browse_roots.len();
+                self.browse.kit = self.browse.roots.len();
             }
 
             gui::end_combo();
@@ -3143,20 +3164,20 @@ impl TileTool {
             gui::set_tooltip("Where the tiles listed come from: the projects, an Assembly Kit, or the game's packs (exported tiles).");
         }
 
-        let packs = self.browse_kit == self.browse_roots.len();
+        let packs = self.browse.kit == self.browse.roots.len();
 
         gui::same_line();
         gui::set_next_item_width(110.0);
-        gui::combo("##kind", &mut self.browse_kind, &["all kinds", "battle", "campaign"]);
+        gui::combo("##kind", &mut self.browse.kind, &["all kinds", "battle", "campaign"]);
         if gui::is_item_hovered() {
             gui::set_tooltip("Lists only the battle tiles, only the campaign tiles, or both.");
         }
         gui::set_next_item_width(-1.0);
-        if focus && self.browse_focus_frames == 0 {
+        if focus && self.browse.focus_frames == 0 {
             gui::set_keyboard_focus_here(0);
         }
 
-        gui::input_text("##tilefilter", Some("filter: set, tile, variation (words are and-ed)"), &mut self.browse_filter, 96, 0);
+        gui::input_text("##tilefilter", Some("filter: set, tile, variation (words are and-ed)"), &mut self.browse.filter, 96, 0);
         // The rows' source: the kit's index, or the packs' databases (read on first use: the game's packs, a few seconds).
         let source: Arc<Vec<wce_formats::tile_index::TileIndexEntry>> = if packs {
             match self.pack_entries(e) {
@@ -3168,13 +3189,13 @@ impl TileTool {
                 }
             }
         } else {
-            let index = TileIndex::shared(&self.browse_roots[self.browse_kit]);
-            if self.browse_index.as_ref().is_none_or(|i| !Arc::ptr_eq(i, &index)) {
-                self.browse_kit_rows = Arc::new(index.entries().to_vec());
-                self.browse_index = Some(index);
+            let index = TileIndex::shared(&self.browse.roots[self.browse.kit]);
+            if self.browse.index.as_ref().is_none_or(|i| !Arc::ptr_eq(i, &index)) {
+                self.browse.kit_rows = Arc::new(index.entries().to_vec());
+                self.browse.index = Some(index);
             }
 
-            self.browse_kit_rows.clone()
+            self.browse.kit_rows.clone()
         };
 
         // The rows, the favourites and the recent tiles of the source, filtered alike (rebuilt when the source, a filter or the marks changed).
@@ -3182,20 +3203,20 @@ impl TileTool {
         self.marks(e);
         let key = format!(
             "{}|{}|{}|{:p}|{}",
-            self.browse_kit,
-            self.browse_kind,
-            self.browse_filter,
+            self.browse.kit,
+            self.browse.kind,
+            self.browse.filter,
             Arc::as_ptr(&source),
-            self.browse_marks_version
+            self.browse.marks_version
         );
         // The projects' extracted tiles (a variation's tile.wce marked), shown so.
-        let extracted_for = (Arc::as_ptr(&source) as usize, self.browse_kit);
-        if extracted_for != self.browse_extracted_for {
-            self.browse_extracted_for = extracted_for;
-            self.browse_extracted.clear();
-            if !packs && self.browse_roots[self.browse_kit] == projects_raw {
-                let raw = &self.browse_roots[self.browse_kit];
-                self.browse_extracted = source
+        let extracted_for = (Arc::as_ptr(&source) as usize, self.browse.kit);
+        if extracted_for != self.browse.extracted_for {
+            self.browse.extracted_for = extracted_for;
+            self.browse.extracted.clear();
+            if !packs && self.browse.roots[self.browse.kit] == projects_raw {
+                let raw = &self.browse.roots[self.browse.kit];
+                self.browse.extracted = source
                     .iter()
                     .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
                     .map(|en| en.key.clone())
@@ -3203,10 +3224,10 @@ impl TileTool {
             }
         }
 
-        if key != self.browse_rows_key {
-            self.browse_rows_key = key;
-            let words = self.browse_filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
-            let kind = self.browse_kind;
+        if key != self.browse.rows_key {
+            self.browse.rows_key = key;
+            let words = self.browse.filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
+            let kind = self.browse.kind;
             let pass = |en: &wce_formats::tile_index::TileIndexEntry| {
                 let kind_ok = match kind {
                     1 => en.kind == "battle",
@@ -3217,25 +3238,25 @@ impl TileTool {
                 kind_ok && matches_words(en, &words)
             };
 
-            self.browse_rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
+            self.browse.rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
 
             let by_key: HashMap<&str, usize> = source.iter().enumerate().map(|(i, en)| (en.key.as_str(), i)).collect();
-            let (fav, recent) = self.browse_marks.as_ref().expect("read above");
+            let (fav, recent) = self.browse.marks.as_ref().expect("read above");
             let row = |r: &TileRef| (r.source == src).then(|| by_key.get(r.key.as_str()).copied()).flatten().filter(|&i| pass(&source[i]));
-            self.browse_fav_keys = fav.iter().filter(|r| r.source == src).map(|r| r.key.clone()).collect();
-            self.browse_fav_rows = fav.iter().filter_map(row).collect();
-            self.browse_recent_rows = recent.iter().filter_map(|r| row(r).map(|i| (i, r.variation.clone()))).collect();
+            self.browse.fav_keys = fav.iter().filter(|r| r.source == src).map(|r| r.key.clone()).collect();
+            self.browse.fav_rows = fav.iter().filter_map(row).collect();
+            self.browse.recent_rows = recent.iter().filter_map(|r| row(r).map(|i| (i, r.variation.clone()))).collect();
         }
 
         let footer = gui::frame_height_with_spacing() * 4.5;
         let mut open = None;
         let mut star = None;
         let entries = &source[..];
-        let filtered = !self.browse_filter.trim().is_empty();
+        let filtered = !self.browse.filter.trim().is_empty();
         if gui::begin_child("tilelist", gui::v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
-            let selected_key = &mut self.browse_selected;
-            let favs = &self.browse_fav_keys;
-            let extracted = &self.browse_extracted;
+            let selected_key = &mut self.browse.selected;
+            let favs = &self.browse.fav_keys;
+            let extracted = &self.browse.extracted;
 
             // Favourites and recent tiles first: a double-click opens a favourite's first variation, a recent tile's variation opened.
             let open_row = |en: &wce_formats::tile_index::TileIndexEntry, variation: &str| {
@@ -3244,12 +3265,12 @@ impl TileTool {
             };
 
             let header = |id: &str, title: String| gui::tree_node_ex_id(id, gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &title);
-            if header("favourites", format!("{}  Favourites ({})", icons::STAR, self.browse_fav_rows.len())) {
-                if self.browse_fav_rows.is_empty() {
+            if header("favourites", format!("{}  Favourites ({})", icons::STAR, self.browse.fav_rows.len())) {
+                if self.browse.fav_rows.is_empty() {
                     gui::text_disabled(if filtered { "No favourite matches the filter." } else { "Click a tile's star to add it here." });
                 }
 
-                for (i, &r) in self.browse_fav_rows.iter().enumerate() {
+                for (i, &r) in self.browse.fav_rows.iter().enumerate() {
                     let en = &entries[r];
                     gui::push_id_int(i as i32);
                     let (clicked, double, starred) = tile_row(en, *selected_key == en.key, true, "", extracted.contains(&en.key));
@@ -3271,8 +3292,8 @@ impl TileTool {
                 gui::tree_pop();
             }
 
-            if header("recent", format!("{}  Recently opened ({})", icons::HISTORY, self.browse_recent_rows.len())) {
-                if self.browse_recent_rows.is_empty() {
+            if header("recent", format!("{}  Recently opened ({})", icons::HISTORY, self.browse.recent_rows.len())) {
+                if self.browse.recent_rows.is_empty() {
                     gui::text_disabled(if filtered {
                         "No recent tile matches the filter."
                     } else {
@@ -3280,7 +3301,7 @@ impl TileTool {
                     });
                 }
 
-                for (i, (r, variation)) in self.browse_recent_rows.iter().enumerate() {
+                for (i, (r, variation)) in self.browse.recent_rows.iter().enumerate() {
                     let en = &entries[*r];
                     gui::push_id_int(i as i32);
                     let note = if variation.is_empty() { String::new() } else { format!("  ({variation})") };
@@ -3304,7 +3325,7 @@ impl TileTool {
                 gui::tree_pop();
             }
 
-            let rows = &self.browse_rows;
+            let rows = &self.browse.rows;
             gui::separator_text(&format!("All tiles ({} of {})", rows.len(), source.len()));
             gui::push_id("all");
             gui::clipped(rows.len(), |i| {
@@ -3334,7 +3355,7 @@ impl TileTool {
             self.toggle_favourite(e, &src, &key);
         }
 
-        match self.browse_rows.iter().map(|&i| &entries[i]).find(|en| en.key == self.browse_selected) {
+        match self.browse.rows.iter().map(|&i| &entries[i]).find(|en| en.key == self.browse.selected) {
             Some(sel) => {
                 gui::text(&sel.name);
                 gui::same_line();
@@ -3902,10 +3923,13 @@ impl Tool for TileTool {
             angle_step: old.angle_step,
             left_dock: old.left_dock,
             right_dock: old.right_dock,
-            launched: old.launched,
-            launch_job: old.launch_job,
-            launch_worker: old.launch_worker,
-            launch_progress_open: old.launch_progress_open,
+            launch: Launch {
+                launched: old.launch.launched,
+                job: old.launch.job,
+                worker: old.launch.worker,
+                progress_open: old.launch.progress_open,
+                ..Launch::default()
+            },
             ..Self::default()
         };
     }
@@ -3932,8 +3956,8 @@ impl Tool for TileTool {
 
     fn settings_applied(&mut self, _: &mut Editor) {
         // The favourites and recent tiles are read again (the window writes the whole table).
-        self.browse_marks = None;
-        self.browse_marks_version += 1;
+        self.browse.marks = None;
+        self.browse.marks_version += 1;
 
         // The Assembly Kit or the projects folder may have changed.
         self.prefabs = None;
@@ -4177,7 +4201,7 @@ impl Tool for TileTool {
             self.context.tile_changed(e, id);
 
             // The Scene tree in front, not the Tiles list.
-            self.browse_focus_frames = 0;
+            self.browse.focus_frames = 0;
             self.scene_focus_frames = 3;
         }
 
@@ -4411,14 +4435,14 @@ impl Tool for TileTool {
             );
         }
 
-        let label = if self.launch_job.is_some() {
+        let label = if self.launch.job.is_some() {
             "Launch in game (preparing)"
-        } else if self.launched.is_some() {
+        } else if self.launch.launched.is_some() {
             "Launch in game (running)"
         } else {
             "Launch in game"
         };
-        if gui::menu_item(label, None, false, document(e).is_some() && self.launched.is_none() && self.launch_job.is_none()) {
+        if gui::menu_item(label, None, false, document(e).is_some() && self.launch.launched.is_none() && self.launch.job.is_none()) {
             let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
             e.status(&msg, false);
         }
@@ -5166,7 +5190,7 @@ impl Tool for TileTool {
     }
 
     fn writing(&self) -> Option<String> {
-        self.launch_worker.as_ref().is_some_and(|w| !w.is_finished()).then(|| "the launch's pack".to_owned())
+        self.launch.worker.as_ref().is_some_and(|w| !w.is_finished()).then(|| "the launch's pack".to_owned())
     }
 
     fn open_gesture(&self) -> Option<&'static str> {
@@ -5190,8 +5214,8 @@ impl Tool for TileTool {
         let dir = tile_dir_of(path);
 
         // Opened by its database entry: the entry file is the root, the folder is what it names.
-        let mut project = match self.pending_entry.take() {
-            Some(entry) => TileProject::open_entry(&entry, self.pending_variation.take()),
+        let mut project = match self.browse.pending_entry.take() {
+            Some(entry) => TileProject::open_entry(&entry, self.browse.pending_variation.take()),
             None => TileProject::open(&dir),
         }
         .map_err(|err| err.to_string())?;

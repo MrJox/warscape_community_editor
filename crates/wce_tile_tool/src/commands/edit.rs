@@ -6,7 +6,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     c.add("scene_filter", "scene_filter [text]", "filter the Scene panel's tree by name or type (no text: clear it)", |e, a| {
         let text = a.join(" ");
         with_tile(e, |t, _| {
-            t.tree_filter = text;
+            t.tree.filter = text;
             ok("")
         })
     });

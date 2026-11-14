@@ -135,16 +135,16 @@ fn label_of(sc: &TedScene, e: usize) -> String {
 
 impl TileTool {
     pub(crate) fn rebuild_tree(&mut self, d: &TileDocument) {
-        self.tree_rows.clear();
-        self.tree_filter_seen = self.tree_filter.clone();
+        self.tree.rows.clear();
+        self.tree.filter_seen = self.tree.filter.clone();
         let hidden = &d.tile().display().hidden_types;
-        self.tree_hidden_seen = Some(hidden.iter().cloned().collect());
-        self.tree_prefab_seen = self.prefab_version;
+        self.tree.hidden_seen = Some(hidden.iter().cloned().collect());
+        self.tree.prefab_seen = self.prefab_version;
         let sc = d.tile().tscene();
         let Some(g) = sc.scene_graph() else { return };
 
         // With a filter: only the elements that match or hold a match, their layers open.
-        let filter = self.tree_filter.trim().to_lowercase();
+        let filter = self.tree.filter.trim().to_lowercase();
         let mut opened = HashSet::new();
         let keep = (!filter.is_empty()).then(|| {
             let mut keep = HashSet::new();
@@ -169,8 +169,8 @@ impl TileTool {
             // The types turned off at the top are not listed (layers and groups always are).
             kids.retain(|&k| sc.is_layer(k) || !hidden.contains(sc.type_of(k)));
 
-            let open = depth == 0 || (branch && !kids.is_empty() && (opened.contains(&e) || self.tree_open.contains(&key)));
-            self.tree_rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, branch, open, kids: kids.len() });
+            let open = depth == 0 || (branch && !kids.is_empty() && (opened.contains(&e) || self.tree.open.contains(&key)));
+            self.tree.rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, branch, open, kids: kids.len() });
             if !open {
                 continue;
             }
@@ -191,9 +191,9 @@ impl TileTool {
             stack.extend(children.into_iter().rev());
         }
 
-        self.tree_doc = d.id();
-        self.tree_version = Some(d.tile().structure_version());
-        self.tree_open_version_seen = Some(self.tree_open_version);
+        self.tree.doc = d.id();
+        self.tree.version = Some(d.tile().structure_version());
+        self.tree.open_version_seen = Some(self.tree.open_version);
     }
 
     /// Deletes the selection (layers with everything in them), asking first when a layer holds a lot.
@@ -217,9 +217,9 @@ impl TileTool {
     }
 
     pub(crate) fn begin_rename(&mut self, d: &TileDocument, elem: usize) {
-        self.rename_elem = Some(elem);
-        self.rename_focus = true;
-        self.rename_buf = d.tile().tscene().name(elem);
+        self.tree.rename_elem = Some(elem);
+        self.tree.rename_focus = true;
+        self.tree.rename_buf = d.tile().tscene().name(elem);
     }
 
     /// Opens the layers above an element picked elsewhere (the viewport) and asks for its row to be scrolled into view. An element inside a
@@ -254,22 +254,22 @@ impl TileTool {
         layers.reverse();
         let Some(first) = layers.iter().position(|&l| Some(l) == sc.scene_graph()) else { return };
         let mut key = "root".to_owned();
-        self.tree_open.insert(key.clone());
+        self.tree.open.insert(key.clone());
         for w in layers[first..].windows(2) {
             let (layer, child) = (w[0], w[1]);
             let nm = label_of(sc, child);
             let ordinal = sc.children(layer).into_iter().take_while(|&k| k != child).filter(|&k| label_of(sc, k) == nm).count();
             key = format!("{key}/{nm}#{ordinal}");
-            self.tree_open.insert(key.clone());
+            self.tree.open.insert(key.clone());
         }
 
-        self.tree_open_version += 1;
-        self.tree_scroll_to = Some(row);
+        self.tree.open_version += 1;
+        self.tree.scroll_to = Some(row);
     }
 
     /// The open-state key of an element: the name path of the layers above it (see `rebuild_tree`).
     pub(crate) fn tree_key_of(&self, elem: usize) -> String {
-        self.tree_rows.iter().find(|r| r.elem == elem).map(|r| r.key.clone()).unwrap_or_default()
+        self.tree.rows.iter().find(|r| r.elem == elem).map(|r| r.key.clone()).unwrap_or_default()
     }
 }
 
@@ -344,20 +344,20 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     // A selection made elsewhere (the viewport): open the tree down to it and scroll it into view. The tree's own clicks mark what they
     // selected as followed already.
     let first = selected(e).first().copied();
-    if first != tool.tree_synced {
-        tool.tree_synced = first;
+    if first != tool.tree.synced {
+        tool.tree.synced = first;
         if let Some(el) = first {
             tool.reveal(d, el);
         }
     }
 
     let hidden_now = d.tile().display().hidden_types.iter().cloned().collect::<Vec<_>>();
-    if tool.tree_doc != id
-        || tool.tree_version != Some(d.tile().structure_version())
-        || tool.tree_open_version_seen != Some(tool.tree_open_version)
-        || tool.tree_filter != tool.tree_filter_seen
-        || tool.tree_hidden_seen.as_ref() != Some(&hidden_now)
-        || tool.tree_prefab_seen != tool.prefab_version
+    if tool.tree.doc != id
+        || tool.tree.version != Some(d.tile().structure_version())
+        || tool.tree.open_version_seen != Some(tool.tree.open_version)
+        || tool.tree.filter != tool.tree.filter_seen
+        || tool.tree.hidden_seen.as_ref() != Some(&hidden_now)
+        || tool.tree.prefab_seen != tool.prefab_version
     {
         tool.rebuild_tree(d);
     }
@@ -384,9 +384,9 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         if gui::button("New layer") {
             match d.add_layer(Some(target), "New layer") {
                 Ok(_) => {
-                    tool.tree_open.insert(tool.tree_key_of(target));
-                    tool.tree_open_version += 1;
-                    tool.begin_rename_next = true;
+                    tool.tree.open.insert(tool.tree_key_of(target));
+                    tool.tree.open_version += 1;
+                    tool.tree.begin_rename_next = true;
                     tool.status = "layer added".to_owned();
                 }
 
@@ -496,7 +496,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     let types_label = if hidden_n == 0 { icons::FUNNEL.to_owned() } else { format!("{} {hidden_n}", icons::FUNNEL) };
     let types_width = gui::calc_text_width(&types_label) + gui::style_frame_padding().x * 2.0;
     gui::set_next_item_width(-(types_width + gui::item_spacing().x));
-    gui::input_text("##treefilter", Some("Filter by name or type"), &mut tool.tree_filter, 256, 0);
+    gui::input_text("##treefilter", Some("Filter by name or type"), &mut tool.tree.filter, 256, 0);
     gui::same_line();
     draw_type_filter(e, id, &types_label, hidden_n);
 
@@ -509,7 +509,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     gui::end_child();
 
     // A layer created by a button or a menu: its name goes into edit mode as soon as the selection has caught up with the hint.
-    if tool.begin_rename_next {
+    if tool.tree.begin_rename_next {
         let sel = selected(e);
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let sc = d.tile().tscene();
@@ -519,20 +519,20 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             // Open its ancestors so the row is visible.
             let mut p = parent_layer(sc, sel[0]);
             while let Some(l) = p {
-                tool.tree_open.insert(tool.tree_key_of(l));
+                tool.tree.open.insert(tool.tree_key_of(l));
                 p = parent_layer(sc, l);
             }
 
-            tool.tree_open_version += 1;
-            tool.begin_rename_next = false;
+            tool.tree.open_version += 1;
+            tool.tree.begin_rename_next = false;
         } else {
-            tool.rename_wait += 1;
-            if tool.rename_wait > 5 {
-                tool.begin_rename_next = false;
+            tool.tree.rename_wait += 1;
+            if tool.tree.rename_wait > 5 {
+                tool.tree.begin_rename_next = false;
             }
         }
     } else {
-        tool.rename_wait = 0;
+        tool.tree.rename_wait = 0;
     }
 
     // ---- delete confirmation
@@ -695,8 +695,8 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     let mut actions = vec![];
     let mut pending_drop: Option<(Vec<usize>, usize, Option<usize>)> = None;
     let mut activate = false;
-    if let Some(target) = tool.tree_scroll_to.take()
-        && let Some(i) = tool.tree_rows.iter().position(|r| r.elem == target)
+    if let Some(target) = tool.tree.scroll_to.take()
+        && let Some(i) = tool.tree.rows.iter().position(|r| r.elem == target)
     {
         let (y, h) = (i as f32 * row_h, gui::window_height());
         if y < gui::scroll_y() || y + row_h > gui::scroll_y() + h {
@@ -725,7 +725,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             |el: usize| -> Option<String> { d.prefab_key(el).and_then(|k| lib.as_ref().and_then(|l| l.get(&k).map(|p| p.key.clone()))) };
         let t = d.tile();
         let sc = t.tscene();
-        let rows = tool.tree_rows.clone();
+        let rows = tool.tree.rows.clone();
         let selection = &mut e.selection;
         let tool_ref = &mut *tool;
         gui::clipped_rows(rows.len(), row_h, |i| {
@@ -754,7 +754,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             );
             let row_hovered = gui::is_item_hovered();
             let (rmin, rmax) = (p0, v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH, p0.y + row_h));
-            if clicked && tool_ref.rename_elem != Some(el) {
+            if clicked && tool_ref.tree.rename_elem != Some(el) {
                 let io = gui::io();
                 if io.KeyCtrl {
                     selection.toggle(r);
@@ -770,7 +770,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 }
 
                 activate = true;
-                tool_ref.tree_picked = true;
+                tool_ref.tree.picked = true;
                 if gui::is_mouse_double_clicked(0) && !is_graph {
                     actions.push(RowAction::Rename(el));
                 }
@@ -1032,31 +1032,31 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 tx += 18.0;
             }
 
-            if tool_ref.rename_elem == Some(el) {
+            if tool_ref.tree.rename_elem == Some(el) {
                 gui::set_cursor_screen_pos(v2(tx, p0.y));
                 gui::set_next_item_width((avail - ICON_COLUMNS * ICON_WIDTH - (tx - p0.x) - 4.0).max(60.0));
-                if tool_ref.rename_focus {
+                if tool_ref.tree.rename_focus {
                     gui::set_keyboard_focus_here(0);
-                    tool_ref.rename_focus = false;
-                    tool_ref.rename_active_seen = false;
+                    tool_ref.tree.rename_focus = false;
+                    tool_ref.tree.rename_active_seen = false;
                 }
 
                 let enter = gui::input_text(
                     "##rename",
                     None,
-                    &mut tool_ref.rename_buf,
+                    &mut tool_ref.tree.rename_buf,
                     128,
                     gui::INPUT_ENTER_RETURNS_TRUE | gui::INPUT_AUTO_SELECT_ALL,
                 );
                 if gui::is_item_active() {
-                    tool_ref.rename_active_seen = true;
+                    tool_ref.tree.rename_active_seen = true;
                 }
 
                 if enter {
-                    actions.push(RowAction::CommitRename(el, tool_ref.rename_buf.clone()));
-                    tool_ref.rename_elem = None;
-                } else if gui::is_key_pressed(gui::KEY_ESCAPE, true) || (tool_ref.rename_active_seen && !gui::is_item_active()) {
-                    tool_ref.rename_elem = None;
+                    actions.push(RowAction::CommitRename(el, tool_ref.tree.rename_buf.clone()));
+                    tool_ref.tree.rename_elem = None;
+                } else if gui::is_key_pressed(gui::KEY_ESCAPE, true) || (tool_ref.tree.rename_active_seen && !gui::is_item_active()) {
+                    tool_ref.tree.rename_elem = None;
                 }
             } else {
                 let mut label = label_of(sc, el);
@@ -1158,7 +1158,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     // A click on a row: the tree does not scroll to what it selected itself.
     if activate {
         tool.leave_for_selection(e);
-        tool.tree_synced = selected(e).first().copied();
+        tool.tree.synced = selected(e).first().copied();
     }
 
     // Keys while the pointer is over the tree.
@@ -1180,9 +1180,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
             RowAction::AddLayer(layer, key) => match d.add_layer(Some(layer), "New layer") {
                 Ok(_) => {
-                    tool.tree_open.insert(key);
-                    tool.tree_open_version += 1;
-                    tool.begin_rename_next = true;
+                    tool.tree.open.insert(key);
+                    tool.tree.open_version += 1;
+                    tool.tree.begin_rename_next = true;
                     tool.status = "layer added".to_owned();
                 }
 
@@ -1192,7 +1192,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             RowAction::GroupIntoLayer(sel) => match d.group_items(&sel, "New layer") {
                 Ok(_) => {
                     tool.status = "grouped into a new layer".to_owned();
-                    tool.begin_rename_next = true;
+                    tool.tree.begin_rename_next = true;
                 }
 
                 Err(err) => tool.status = err,
@@ -1249,12 +1249,12 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
             RowAction::ToggleOpen(key, open) => {
                 if open {
-                    tool.tree_open.remove(&key);
+                    tool.tree.open.remove(&key);
                 } else {
-                    tool.tree_open.insert(key);
+                    tool.tree.open.insert(key);
                 }
 
-                tool.tree_open_version += 1;
+                tool.tree.open_version += 1;
             }
         }
     }

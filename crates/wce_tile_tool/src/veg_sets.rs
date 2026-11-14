@@ -19,18 +19,18 @@ impl TileTool {
 
     /// The sets, read on first use and again after a change.
     pub(crate) fn vegetation_sets(&mut self, e: &mut Editor) -> Arc<Vec<VegetationSet>> {
-        if let Some(sets) = &self.veg_sets {
+        if let Some(sets) = &self.veg_sets.list {
             return sets.clone();
         }
 
         let sets = Arc::new(scan(&Self::sets_folder(e)));
-        self.veg_sets = Some(sets.clone());
+        self.veg_sets.list = Some(sets.clone());
         sets
     }
 
     /// The set being placed or painted, as it is now.
     pub(crate) fn set_in_use(&mut self, e: &mut Editor) -> Option<VegetationSet> {
-        match self.veg_set.clone()? {
+        match self.veg_sets.current.clone()? {
             SetInUse::New => self.scratch_set.clone(),
             SetInUse::Saved(name) => self.vegetation_sets(e).iter().find(|s| s.name == name).cloned(),
         }
@@ -38,8 +38,8 @@ impl TileTool {
 
     /// The sets changed: read them again (the Create panel's entries follow).
     pub(crate) fn rescan_vegetation_sets(&mut self) {
-        self.veg_sets = None;
-        self.veg_sets_version += 1;
+        self.veg_sets.list = None;
+        self.veg_sets.version += 1;
     }
 
     /// The keys of the selected trees (in the selected groups and layers too), once per tree.
@@ -80,8 +80,8 @@ impl TileTool {
 
     /// Asks for the name of a new set from the selected trees (the dialog opens on the next frame).
     pub(crate) fn request_new_vegetation_set(&mut self) {
-        self.new_set_name = Some(String::new());
-        self.new_set_open = true;
+        self.veg_sets.new_name = Some(String::new());
+        self.veg_sets.new_open = true;
     }
 
     /// Whether some trees are selected (the "New vegetation set" action).
@@ -91,7 +91,7 @@ impl TileTool {
 
     /// The "New vegetation set" dialog.
     pub(crate) fn draw_new_set_popup(&mut self, e: &mut Editor) {
-        if std::mem::take(&mut self.new_set_open) {
+        if std::mem::take(&mut self.veg_sets.new_open) {
             gui::open_popup("New vegetation set");
         }
 
@@ -99,7 +99,7 @@ impl TileTool {
             return;
         }
 
-        let Some(mut name) = self.new_set_name.clone() else {
+        let Some(mut name) = self.veg_sets.new_name.clone() else {
             gui::close_current_popup();
             gui::end_popup();
             return;
@@ -110,10 +110,10 @@ impl TileTool {
         );
         gui::set_next_item_width(320.0);
         let enter = gui::input_text("Name", Some("the set's file name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
-        self.new_set_name = Some(name.clone());
+        self.veg_sets.new_name = Some(name.clone());
         if gui::button("Save") || enter {
             self.status = self.new_vegetation_set(e, &name).unwrap_or_else(|err| err);
-            self.new_set_name = None;
+            self.veg_sets.new_name = None;
             gui::close_current_popup();
         }
 
@@ -123,7 +123,7 @@ impl TileTool {
 
         gui::same_line();
         if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
-            self.new_set_name = None;
+            self.veg_sets.new_name = None;
             gui::close_current_popup();
         }
 
@@ -133,7 +133,7 @@ impl TileTool {
     /// The saved set in use, in the Inspector (its box): its trees, their weights and scale ranges, remove; saved at once (the new one has
     /// its own box, `inspect_new_set`).
     pub(crate) fn inspect_veg_set(&mut self, e: &mut Editor) {
-        if !matches!(self.veg_set, Some(SetInUse::Saved(_))) {
+        if !matches!(self.veg_sets.current, Some(SetInUse::Saved(_))) {
             return;
         }
 
@@ -166,7 +166,7 @@ impl TileTool {
         }
 
         let kinds = set.entries.len();
-        if self.veg_set != Some(SetInUse::New) {
+        if self.veg_sets.current != Some(SetInUse::New) {
             self.start_new_set(e);
         }
 
@@ -193,7 +193,7 @@ impl TileTool {
             gui::end_disabled();
 
             // Placing with it already from the first tree; again after Esc.
-            if self.veg_set != Some(SetInUse::New) {
+            if self.veg_sets.current != Some(SetInUse::New) {
                 gui::same_line();
                 gui::begin_disabled(set.entries.is_empty());
                 use_it = gui::small_button(&format!("{}  Place / paint", icons::MOUSE_POINTER_2));
@@ -221,7 +221,7 @@ impl TileTool {
             self.start_new_set(e);
         } else if drop {
             // Placed or painted with: that stops too.
-            if self.veg_set == Some(SetInUse::New) {
+            if self.veg_sets.current == Some(SetInUse::New) {
                 self.stop_making();
             }
 
@@ -248,8 +248,8 @@ impl TileTool {
         self.scratch_set = None;
         self.scratch_name.clear();
         self.rescan_vegetation_sets();
-        if self.veg_set == Some(SetInUse::New) {
-            self.veg_set = Some(SetInUse::Saved(name.clone()));
+        if self.veg_sets.current == Some(SetInUse::New) {
+            self.veg_sets.current = Some(SetInUse::Saved(name.clone()));
         }
 
         Ok(format!("vegetation set {name} saved ({})", set.path.display()))
