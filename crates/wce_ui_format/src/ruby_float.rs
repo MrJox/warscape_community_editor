@@ -91,4 +91,63 @@ mod tests {
         let f = 1.0000001f32;
         assert_eq!(pretty_single(f), f as f64);
     }
+
+    fn text_of(f: f32) -> String {
+        ruby_float_to_s(pretty_single(f))
+    }
+
+    #[test]
+    fn edge_values() {
+        assert_eq!(text_of(0.0), "0.0");
+        assert_eq!(text_of(-0.0), "-0.0");
+        assert_eq!(text_of(0.1), "0.1");
+        assert_eq!(text_of(-0.1), "-0.1");
+        assert_eq!(text_of(1e-7), "1.0000000116860974e-07");
+        assert_eq!(text_of(1e-45), "1.401298464324817e-45");
+        assert_eq!(text_of(3.0), "3.0");
+        assert_eq!(text_of(-7.0), "-7.0");
+        assert_eq!(text_of(16_777_216.0), "16777216.0");
+        assert_eq!(text_of(123_456.79), "123456.78906");
+        // A small value that rounds to zero at five decimals keeps its own value, sign included.
+        assert_eq!(text_of(-1e-10), "-1.000000013351432e-10");
+        assert_eq!(text_of(0.000_01), "1.0e-05");
+        assert_eq!(text_of(0.000_1), "0.0001");
+        assert_eq!(text_of(0.001), "0.001");
+    }
+
+    #[test]
+    fn exponent_boundaries_follow_ruby() {
+        assert_eq!(ruby_float_to_s(9_999_999_999_999_998.0), "9999999999999998.0");
+        assert_eq!(ruby_float_to_s(1.5e16), "1.5e+16");
+        assert_eq!(ruby_float_to_s(1e100), "1.0e+100");
+        assert_eq!(ruby_float_to_s(-2.5e-300), "-2.5e-300");
+        assert_eq!(ruby_float_to_s(f64::MIN_POSITIVE), "2.2250738585072014e-308");
+        assert_eq!(ruby_float_to_s(0.000_123), "0.000123");
+        assert_eq!(ruby_float_to_s(0.000_012_3), "1.23e-05");
+        assert_eq!(ruby_float_to_s(1.0 / 3.0), "0.3333333333333333");
+        assert_eq!(ruby_float_to_s(123.456), "123.456");
+    }
+
+    #[test]
+    fn every_text_reads_back_to_the_same_f32() {
+        let mut state = 1u64;
+        let mut fs = vec![f32::MAX, f32::MIN, f32::MIN_POSITIVE, -f32::MIN_POSITIVE, f32::EPSILON, 1e-45, -1e-45, 0.0, -0.0];
+        while fs.len() < 200_000 {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            fs.push(f32::from_bits((state >> 32) as u32));
+        }
+        for f in fs.into_iter().filter(|f| f.is_finite()) {
+            let s = text_of(f);
+            let back = s.parse::<f64>().unwrap() as f32;
+            assert_eq!(back.to_bits(), f.to_bits(), "{f:e} written as {s}");
+        }
+    }
+
+    #[test]
+    fn degrees_round_to_two_decimals() {
+        assert_eq!(round2_to_s(0.0), "0.0");
+        assert_eq!(round2_to_s(90.000_002_5), "90.0");
+        assert_eq!(round2_to_s(-57.295_779_5), "-57.3");
+        assert_eq!(round2_to_s(12.345_6), "12.35");
+    }
 }
