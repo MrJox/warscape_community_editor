@@ -2108,22 +2108,6 @@ impl Editor {
             return;
         }
 
-        gui::set_cursor_pos_x(gui::cursor_pos_x() + 8.0);
-        gui::align_text_to_frame_padding();
-        let colour = if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) };
-        gui::push_style_color(gui::COL_TEXT, colour);
-        let status = if self.status.is_empty() { " ".to_owned() } else { self.status.clone() };
-        gui::text(&status);
-        gui::pop_style_color(1);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(&format!("{status}\nClick: the Log, with every message"));
-        }
-
-        if gui::is_item_clicked() {
-            self.panels.log = true;
-            self.pending_focus = Some("Log".to_owned());
-        }
-
         // The frame rate (not in scripted runs: their shots must not depend on the machine's speed); the active document left of it.
         let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
             let ms = self.perf.mean_frame_ms(60);
@@ -2134,6 +2118,29 @@ impl Editor {
 
         let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
         let label = self.document_label();
+        let label_w = if label.is_empty() { 0.0 } else { gui::calc_text_width(&label) + 16.0 };
+
+        // The message in what the two leave of the bar, its first line, cut short with "..." (the whole of it in the tooltip and the Log): a
+        // long one was drawn under them.
+        const GAP: f32 = 24.0;
+        let left = 8.0;
+        gui::set_cursor_pos_x(gui::cursor_pos_x() + left);
+        gui::align_text_to_frame_padding();
+        let colour = if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) };
+        gui::push_style_color(gui::COL_TEXT, colour);
+        let status = if self.status.is_empty() { " ".to_owned() } else { self.status.clone() };
+        let room = gui::window_width() - left - label_w - fps_w - GAP;
+        gui::text(&fit_text(status.lines().next().unwrap_or(" "), room));
+        gui::pop_style_color(1);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("{status}\nClick: the Log, with every message"));
+        }
+
+        if gui::is_item_clicked() {
+            self.panels.log = true;
+            self.pending_focus = Some("Log".to_owned());
+        }
+
         if !label.is_empty() {
             gui::same_line();
             gui::set_cursor_pos_x(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
@@ -2594,4 +2601,23 @@ impl Editor {
     pub fn has_active_tool(&self) -> bool {
         !self.tools.is_empty()
     }
+}
+
+/// `text` as it fits in `width` pixels of the current font: whole, else its longest start that fits with "..." after it (nothing when not
+/// even that does).
+fn fit_text(text: &str, width: f32) -> String {
+    if gui::calc_text_width(text) <= width {
+        return text.to_owned();
+    }
+
+    let ends = text.char_indices().map(|(i, _)| i).skip(1).collect::<Vec<_>>();
+    let fits = |n: usize| gui::calc_text_width(&format!("{}...", &text[..ends[n]])) <= width;
+    // The number of characters kept: the most that fit (`fits` is monotonic in it).
+    let (mut lo, mut hi) = (0usize, ends.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if mid > 0 && fits(mid - 1) { lo = mid } else { hi = mid - 1 }
+    }
+
+    if lo == 0 { String::new() } else { format!("{}...", &text[..ends[lo - 1]]) }
 }
