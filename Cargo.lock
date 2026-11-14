@@ -2382,6 +2382,8 @@ dependencies = [
 name = "wce_editor_core"
 version = "0.0.1"
 dependencies = [
+ "serde",
+ "toml",
  "wce_foundation",
  "wce_scene",
 ]

@@ -581,6 +581,71 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         if all { ok(s) } else { fail(s) }
     });
 
+    c.add(
+        "autosave_now",
+        "autosave_now",
+        "copy the modified documents into the projects' autosave folder now (docs/plans/autosave.md)",
+        |e, _| e.autosave_run().map_or_else(fail, |n| ok(format!("{n} cop{} written", if n == 1 { "y" } else { "ies" }))),
+    );
+
+    c.add(
+        "autosave_abandon",
+        "autosave_abandon",
+        "test: leave this session's autosaved copies behind as a crash would (the quit that follows does not delete them)",
+        |e, _| {
+            e.abandon_autosave();
+            ok("")
+        },
+    );
+
+    c.add("autosave_status", "autosave_status", "autosave's settings and this session's copies", |e, _| ok(e.autosave_status()));
+
+    c.add(
+        "autosave_found",
+        "autosave_found",
+        "the autosaved copies sessions that did not end cleanly left, numbered for autosave_restore and autosave_discard",
+        |e, _| {
+            let found = e.autosave_found();
+            let lines = found
+                .iter()
+                .enumerate()
+                .map(|(n, f)| {
+                    format!(
+                        "{n}: {} ({}, {} cop{})",
+                        f.meta.title,
+                        f.meta.kind,
+                        f.meta.copies.len(),
+                        if f.meta.copies.len() == 1 { "y" } else { "ies" }
+                    )
+                })
+                .collect::<Vec<_>>();
+            ok(if lines.is_empty() { "none".to_owned() } else { lines.join("; ") })
+        },
+    );
+
+    c.add(
+        "autosave_restore",
+        "autosave_restore <n> [copy]",
+        "restore autosave_found's document n from its newest copy (or copy, 0 the oldest): it opens modified, Save writes it into the project",
+        |e, a| {
+            let found = e.autosave_found();
+            let Some(f) = a.first().and_then(|n| n.parse::<usize>().ok()).and_then(|n| found.get(n)) else { return fail("no such autosave") };
+            let copy = a.get(1).and_then(|c| c.parse::<usize>().ok()).unwrap_or(f.meta.copies.len().saturating_sub(1));
+            if copy >= f.meta.copies.len() {
+                return fail("no such copy");
+            }
+
+            e.restore_autosave(f, copy).map_or_else(fail, ok)
+        },
+    );
+
+    c.add("autosave_discard", "autosave_discard <n>", "drop autosave_found's document n's copies", |e, a| {
+        let found = e.autosave_found();
+        let Some(f) = a.first().and_then(|n| n.parse::<usize>().ok()).and_then(|n| found.get(n)) else { return fail("no such autosave") };
+        wce_editor_core::autosave::discard(f);
+        ok(format!("{}: copies discarded", f.meta.title))
+    });
+
     c.add("undo", "undo [n]", "undo the last edit (or n edits) of the active document", |e, a| {
         if let Some(gesture) = e.open_gesture() {
             return fail(format!("not during {gesture}"));

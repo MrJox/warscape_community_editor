@@ -5,7 +5,7 @@
 //! (`wce_map_view::MapView`) in the map's own frame: origin at the map's centre, x along the columns, z up the rows, heights from the sea.
 
 use std::any::Any;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
@@ -54,6 +54,9 @@ struct Loaded {
 
     /// A campaign's roads at its start (none for a battle map, or when its files can't be read).
     roads: Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>>,
+
+    /// Read from an autosave copy (`OpenInputs::restored_from`).
+    restored_from: Option<PathBuf>,
 }
 
 impl Loaded {
@@ -61,6 +64,7 @@ impl Loaded {
         let mut d = MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db);
         d.fill_messages = self.messages;
         d.view_roads = self.roads;
+        d.restored_from = self.restored_from;
         d.terry_frame = if map_kind(&d.name).0 == MapKind::Campaign {
             wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height)
         } else {
@@ -335,6 +339,9 @@ struct OpenInputs {
     /// The game and its install folder (a campaign's startpos and db: its roads at the start).
     game: &'static wce_foundation::game::GameProfile,
     install: Option<PathBuf>,
+
+    /// The map is read from an autosave copy (this folder, `raw` or `built` pointing into it): the document is modified until saved.
+    restored_from: Option<PathBuf>,
 }
 
 /// The Terrain tool's id: the owner of its documents.
@@ -651,7 +658,7 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     }
 
     let roads = if kind == MapKind::Campaign { campaign_roads(i) } else { None };
-    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages, roads })
+    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages, roads, restored_from: i.restored_from.clone() })
 }
 
 impl TerrainTool {
@@ -743,6 +750,7 @@ impl TerrainTool {
                 built,
                 game: e.game(),
                 install: e.settings_ref().game_dir(),
+                restored_from: None,
             });
         }
 
@@ -768,6 +776,7 @@ impl TerrainTool {
             built: None,
             game: e.game(),
             install: e.settings_ref().game_dir(),
+            restored_from: None,
         })
     }
 
@@ -794,26 +803,65 @@ impl TerrainTool {
         }
 
         match self.inputs(e, name) {
-            Ok(i) => {
-                let (tx, rx) = channel();
-                // A kit map is filled as BOB does: the campaign map's 2.9 million cells take a while.
-                let kit = game_map_folder(name, e.game().campaign_battle_map).is_none();
-                self.busy = if kit {
-                    format!("reading {name} and filling it with tiles as BOB does (the kit's campaign map: about a minute and a half)")
-                } else {
-                    format!("reading {name}")
-                };
-
-                self.busy_since = Some(std::time::Instant::now());
-                e.status(&format!("Terrain: {}...", self.busy), false);
-                self.rx = Some(rx);
-                std::thread::spawn(move || {
-                    let _ = tx.send(Job::Opened(open_map(&i)));
-                });
-            }
-
+            Ok(i) => self.spawn_read(e, i),
             Err(err) => self.status = err,
         }
+    }
+
+    /// Reads a map on a worker; `poll` takes the document in.
+    fn spawn_read(&mut self, e: &mut Editor, i: OpenInputs) {
+        let name = i.name.clone();
+        let (tx, rx) = channel();
+        // A kit map is filled as BOB does: the campaign map's 2.9 million cells take a while.
+        let kit = game_map_folder(&name, e.game().campaign_battle_map).is_none();
+        self.busy = if kit {
+            format!("reading {name} and filling it with tiles as BOB does (the kit's campaign map: about a minute and a half)")
+        } else {
+            format!("reading {name}")
+        };
+
+        self.busy_since = Some(std::time::Instant::now());
+        e.status(&format!("Terrain: {}...", self.busy), false);
+        self.rx = Some(rx);
+        std::thread::spawn(move || {
+            let r = open_map(&i);
+            if let (Err(err), Some(copy)) = (&r, &i.restored_from) {
+                log::warn(format!(
+                    "terrain: {name}'s autosave copy did not open ({err}); it stays in {} until the editor quits",
+                    copy.display()
+                ));
+            }
+
+            let _ = tx.send(Job::Opened(r));
+        });
+    }
+
+    /// A map's autosave copy (`MapDocument::autosave_to`) read as the map: made whole, in the layout the map is read from (a kit map's
+    /// `raw_data/terrain/...`, a built map's folder), then read on a worker like any open.
+    fn restore_map(&mut self, e: &mut Editor, copy: &Path, name: &str) -> Result<(), String> {
+        if self.rx.is_some() {
+            return Err(format!("the Terrain tool is busy ({})", self.busy));
+        }
+
+        let map = MapDocument::complete_autosave(copy)?;
+        self.refresh_maps(e);
+        let mut i = self.inputs(e, name)?;
+        if i.built.is_some() {
+            i.built = Some(map);
+        } else {
+            let raw = copy.join("raw_data");
+            let dir = kit_map_dir(&raw, name);
+            if let Some(parent) = dir.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("{}: {err}", parent.display()))?;
+            }
+
+            std::fs::rename(&map, &dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+            i.raw = raw;
+        }
+
+        i.restored_from = Some(copy.to_path_buf());
+        self.spawn_read(e, i);
+        Ok(())
     }
 
     /// The view's request for a map document: the map's own frame (no open tile), the panel's rings.
@@ -2884,6 +2932,16 @@ impl Tool for TerrainTool {
                 })
             },
         );
+    }
+
+    /// The map read from its copy on a worker (`restore_map`); its document comes in when the read is done.
+    fn restore(
+        &mut self,
+        e: &mut Editor,
+        copy: &Path,
+        meta: &wce_editor_core::autosave::AutosaveMeta,
+    ) -> Result<Option<Box<dyn wce_editor_core::document::Document>>, String> {
+        self.restore_map(e, copy, &meta.open).map(|()| None)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

@@ -45,6 +45,7 @@ fn inputs(raw: PathBuf, roots: &[PathBuf]) -> OpenInputs {
         built: None,
         game: &wce_foundation::game::GameProfile::ATTILA,
         install: None,
+        restored_from: None,
     }
 }
 

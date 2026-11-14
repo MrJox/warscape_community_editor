@@ -482,6 +482,8 @@ unsafe fn run_editor(
 
             if editor.wants_quit() {
                 exit_code = editor.exit_code();
+                // A clean quit (what was unsaved was saved or discarded): the autosaved copies go. A lost device below keeps them.
+                editor.finish_autosave();
                 break;
             }
 

@@ -349,6 +349,40 @@ pub trait Tool: Any {
         Err(format!("{} does not open {path}", self.title()))
     }
 
+    /// Autosave recovery (docs/plans/autosave.md): a document of this tool made from its copy in `copy` (`meta`: what it was a copy of,
+    /// `meta.inner` its file or folder in `copy`, which stays until the session ends). It opens modified, and its Save writes where the
+    /// document's did. `Ok(None)`: the tool takes the copy back on its own (a map read on a worker, the weather database).
+    ///
+    /// # Errors
+    ///
+    /// Why the copy can't be taken back (its file is gone, the copy does not read).
+    fn restore(
+        &mut self,
+        editor: &mut Editor,
+        copy: &std::path::Path,
+        meta: &wce_editor_core::autosave::AutosaveMeta,
+    ) -> Result<Option<Box<dyn Document>>, String> {
+        let _ = (editor, copy, meta);
+        Err(format!("{} does not take autosave copies back", self.title()))
+    }
+
+    /// Unsaved work the tool holds outside its documents that autosave copies too (the weather database): what it is, and whether it
+    /// changed since its last copy; `None` while there is nothing unsaved.
+    fn autosave_work(&self, editor: &Editor) -> Option<(wce_editor_core::autosave::AutosaveMeta, bool)> {
+        let _ = editor;
+        None
+    }
+
+    /// Writes the copy of `autosave_work` into `dir` (an empty folder), and takes it as copied.
+    ///
+    /// # Errors
+    ///
+    /// Why it could not be written.
+    fn write_autosave_work(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        let _ = dir;
+        Err(format!("{} has nothing to autosave", self.title()))
+    }
+
     /// True when the tool has a page in the Settings window (`draw_settings`).
     fn has_settings(&self) -> bool {
         false

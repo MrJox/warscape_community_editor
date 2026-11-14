@@ -116,6 +116,10 @@ struct Source {
     xml: bool,
 }
 
+/// The weather database's autosave copies: their kind, and their file in a copy.
+pub const AUTOSAVE_KIND: &str = "weather_database";
+const AUTOSAVE_FILE: &str = "warscape_asset_variation_db.xml";
+
 #[derive(Default)]
 pub struct WeatherPicker {
     /// The "Weather picker" window is shown.
@@ -137,6 +141,9 @@ pub struct WeatherPicker {
 
     /// The database's paths in the packs that Save wrote into the project since the last `take_changed`.
     changed: Vec<String>,
+
+    /// The working copy as autosave last copied it (`autosave_work`).
+    autosaved: Option<AssetVariationDb>,
 
     /// What the packs say about the climates and climate change phases the game sends (read with the database).
     facts: GameFacts,
@@ -396,6 +403,55 @@ impl WeatherPicker {
 
             Err(e) => self.message = format!("Cannot save: {e}"),
         }
+    }
+
+    /// Autosave (docs/plans/autosave.md): the edited working copy as a copy of the project's database (where Save writes it), and
+    /// whether it changed since its last copy; `None` while it is not edited.
+    pub fn autosave_work(&self, loose_dir: &Path) -> Option<(wce_editor_core::autosave::AutosaveMeta, bool)> {
+        let db = self.db.as_ref().filter(|db| **db != self.orig)?;
+        let meta = wce_editor_core::autosave::AutosaveMeta {
+            kind: AUTOSAVE_KIND.to_owned(),
+            title: "Weather database".to_owned(),
+            target: loose_dir.join("warscape_asset_variation_db"),
+            inner: AUTOSAVE_FILE.to_owned(),
+            ..Default::default()
+        };
+        Some((meta, self.autosaved.as_ref() != Some(db)))
+    }
+
+    /// Writes the autosave copy of the working copy into `dir`.
+    ///
+    /// # Errors
+    ///
+    /// Nothing edited, or the file can't be written.
+    pub fn write_autosave(&mut self, dir: &Path) -> Result<(), String> {
+        let db = self.db.as_ref().ok_or("no weather database")?;
+        write_db(db, &dir.join(AUTOSAVE_FILE))?;
+        self.autosaved = Some(db.clone());
+        Ok(())
+    }
+
+    /// An autosave copy taken back: the database the game uses is loaded (if it was not), and the copy becomes the working copy, edited
+    /// (Undo goes back to the loaded one); the picker opens on it.
+    ///
+    /// # Errors
+    ///
+    /// The copy does not read.
+    pub fn restore_autosave(&mut self, e: &Editor, file: &Path) -> Result<(), String> {
+        let db = read_db(file)?;
+        if !self.loaded {
+            self.load(e);
+        }
+
+        if let Some(current) = self.db.take() {
+            self.undo.push(current);
+        }
+
+        self.redo.clear();
+        self.db = Some(db);
+        self.open = true;
+        self.message = "restored from an autosave: Save writes it into the project".to_owned();
+        Ok(())
     }
 
     /// The database's paths in the packs that Save wrote into the project since the last call: the editor indexes them again

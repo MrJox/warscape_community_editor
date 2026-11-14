@@ -7,6 +7,7 @@ use std::any::Any;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use wce_editor_core::autosave::AutosaveMeta;
 use wce_editor_core::command::{Command, CommandStack, History};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::inspector::Inspector;
@@ -232,6 +233,19 @@ impl XmlFileDocument {
         Ok(sel)
     }
 
+    /// An autosave copy of the file (`Document::autosave`) taken back: its text as one undoable edit over the file as opened, so the
+    /// document is modified and Save writes the copy's text where it saves.
+    ///
+    /// # Errors
+    ///
+    /// The copy is not an XML document.
+    pub fn restore_from(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        let next = XmlDoc::parse_over(bytes, self.xml().origin_bytes()).map_err(|error| error.to_string())?;
+        let before = Arc::new(self.xml().clone());
+        self.history.push(Box::new(XmlSnapshotCommand { name: "Restore from autosave".to_owned(), before, after: Arc::new(next) }));
+        Ok(())
+    }
+
     /// Back to the file as first loaded (also undoes structural edits), clears the history.
     pub fn revert_all(&mut self) {
         let xml = self.history.model_mut();
@@ -329,6 +343,25 @@ impl Document for XmlFileDocument {
         }
 
         Ok(())
+    }
+
+    fn autosave_meta(&self) -> Option<AutosaveMeta> {
+        let from_packs = !self.source.vfs_path.is_empty();
+        let open = if from_packs { self.source.vfs_path.clone() } else { self.source.disk.to_string_lossy().into_owned() };
+        Some(AutosaveMeta {
+            kind: self.kind(),
+            title: self.title(),
+            target: self.default_save_path(),
+            open,
+            from_packs,
+            inner: self.title(),
+            ..AutosaveMeta::default()
+        })
+    }
+
+    fn autosave(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        let to = dir.join(self.title());
+        std::fs::write(&to, self.xml().save()).map_err(|e| format!("cannot write {}: {e}", to.display()))
     }
 
     /// Lights the scene through the weather tool, owns no entities.

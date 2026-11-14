@@ -187,6 +187,7 @@ pub struct Editor {
 
     /// Revert to game's version, the old output folder's files.
     pub(crate) project_prompts: crate::project_prompts::ProjectPrompts,
+    pub(crate) autosaver: crate::autosave::Autosaver,
 
     /// The Fixes menu.
     pub(crate) fixes: crate::fixes::Fixes,
@@ -300,6 +301,7 @@ impl Editor {
             mod_checks_for: String::new(),
             mods_popup: false,
             project_prompts: Default::default(),
+            autosaver: Default::default(),
             perf: PerfStats::default(),
             wait_loaded_start: None,
             vsync: true,
@@ -702,6 +704,11 @@ impl Editor {
     pub fn request_quit(&mut self, exit_code: i32) {
         self.quit = true;
         self.exit_code = exit_code;
+    }
+
+    /// Tool `i`, unless it is lent out (`with_tool_at`).
+    pub(crate) fn tool_ref(&self, i: usize) -> Option<&dyn Tool> {
+        self.tools.get(i)?.as_deref()
     }
 
     pub fn tool_count(&self) -> usize {
@@ -1850,11 +1857,17 @@ impl Editor {
         self.follow_saves();
         if !self.first_run {
             self.check_old_output();
+            self.check_autosaves();
         }
 
         {
             wce_prof!("editor.docs_update");
             self.docs.update(&mut self.scene);
+        }
+
+        if !self.first_run {
+            wce_prof!("editor.autosave");
+            self.autosave_tick();
         }
 
         if self.tools.is_empty() {
@@ -1905,6 +1918,7 @@ impl Editor {
         gui::end();
         self.draw_mods_popup();
         self.draw_project_prompts();
+        self.draw_recovery();
         self.draw_fix_window();
         self.draw_settings_window();
         self.draw_updates();
@@ -2287,6 +2301,16 @@ impl Editor {
 
                 self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Revert));
                 gui::end_menu();
+            }
+
+            if gui::menu_item("Recover autosaves...", None, false, true) {
+                self.open_recovery(true);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "The autosaved copies a session that did not close cleanly left in the projects' autosave folder: restore one (it opens with the copy's changes, unsaved) or discard them. Settings > General sets how often copies are made.",
+                );
             }
 
             gui::separator();

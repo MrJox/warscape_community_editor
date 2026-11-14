@@ -128,6 +128,19 @@ impl XmlDoc {
         Ok(Self { text, origin: Arc::new(bytes), encoding, elems, roots, ..Default::default() })
     }
 
+    /// `bytes` read as the document, which came from `origin` (the file as it is): modified, as after a structural edit, until saved; going
+    /// back to the file reads `origin` again. An autosave copy taken back into the document of its file.
+    ///
+    /// # Errors
+    ///
+    /// `bytes` are not an XML document.
+    pub fn parse_over(bytes: Vec<u8>, origin: &[u8]) -> Result<Self> {
+        let mut doc = Self::parse(bytes)?;
+        doc.origin = Arc::new(origin.to_vec());
+        doc.structural = doc.structural.max(1);
+        Ok(doc)
+    }
+
     /// The document as a file, with every edit applied.
     pub fn save(&self) -> Vec<u8> {
         encode_text(&self.baked_text(), self.encoding)
