@@ -1608,10 +1608,11 @@ pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Nod
         return Some(sides);
     }
 
+    // Marched every unit: where the corridor opens beside a face, one march goes far out and the next stops at the face, and the side
+    // between them crosses no more than a unit of it.
     let corridor = &path[ia..=ib];
     let mut sides = [vec![], vec![]];
-    let mut i = 0usize;
-    loop {
+    for i in 0..corridor.len() {
         let (p0, p1) = (corridor[i.saturating_sub(3)], corridor[(i + 3).min(corridor.len() - 1)]);
         let t = [p1[0] - p0[0], p1[1] - p0[1]];
         let l = t[0].hypot(t[1]);
@@ -1621,21 +1622,30 @@ pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Nod
                 side.push(march(&g, &free, corridor[i], [n[0] * s, n[1] * s], STREET_SIDE_MAX));
             }
         }
-
-        if i + 1 == corridor.len() {
-            break;
-        }
-
-        i = (i + 3).min(corridor.len() - 1);
     }
 
+    let clear = |p: P, q: P| clear_of_faces(&g, &free, p, q);
     let mut out = [vec![], vec![]];
     for (side, o) in sides.into_iter().zip(out.iter_mut()) {
         if side.len() < 2 {
             return None;
         }
 
-        let mut s = simplify(&smooth(&side), 2.0);
+        // Smoothed where that keeps it on the walkable ground: averaged across a jump to a face, a point went into the building.
+        let mut smoothed = smooth(&side);
+        for i in 0..smoothed.len() {
+            if !clear(smoothed[i], smoothed[i]) {
+                smoothed[i] = side[i];
+            }
+        }
+
+        for i in 1..smoothed.len() {
+            if !clear(smoothed[i - 1], smoothed[i]) {
+                (smoothed[i - 1], smoothed[i]) = (side[i - 1], side[i]);
+            }
+        }
+
+        let mut s = simplify_clear(&smoothed, 2.0, &clear);
         let (start, end) = (seal(s[0], a), seal(s[s.len() - 1], b));
         s.splice(0..0, start.into_iter().rev());
         s.extend(end);
@@ -1738,8 +1748,8 @@ fn corridor_outline_sides(g: &Grid, free: &Mask, path: &[P], (ia, ib): (usize, u
 
     let mut out = [vec![], vec![]];
     for (side, o) in [one, two].into_iter().zip(out.iter_mut()) {
-        // The cells' stairs taken out (a cell's size: the faces are followed within it).
-        let mut s = simplify(&side, CELL);
+        // The cells' stairs taken out (a cell's size: the faces are followed within it), never across a face's corner.
+        let mut s = simplify_clear(&side, CELL, &|p, q| clear_of_faces(g, free, p, q));
         if s.len() < 2 {
             return None;
         }
@@ -1873,6 +1883,54 @@ fn march(g: &Grid, free: &Mask, p: P, d: P, max: f64) -> P {
     }
 
     last
+}
+
+/// Whether the segment p..q stays on walkable ground (`free`) give or take half a cell: a fitted side runs along the faces, on the cells'
+/// edges, and may touch them but not cut into what they bound. Off the grid counts as walkable.
+fn clear_of_faces(g: &Grid, free: &Mask, p: P, q: P) -> bool {
+    let h = CELL * 0.5;
+    let near = |s: P| {
+        [[0.0, 0.0], [h, 0.0], [-h, 0.0], [0.0, h], [0.0, -h]].iter().any(|o| g.at([s[0] + o[0], s[1] + o[1]]).is_none_or(|k| free[k]))
+    };
+    let n = (dist(p, q) / h).ceil().max(1.0) as usize;
+    (0..=n).all(|i| {
+        let t = i as f64 / n as f64;
+        near([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t])
+    })
+}
+
+/// [`simplify`] whose shortcuts stay clear (`clear`): a stretch whose points are all within `tol` of its chord but whose chord is not
+/// clear is split further. Two neighbouring points are kept as they are.
+fn simplify_clear(line: &[P], tol: f64, clear: &dyn Fn(P, P) -> bool) -> Vec<P> {
+    if line.len() <= 2 {
+        return line.to_vec();
+    }
+
+    let mut keep = vec![false; line.len()];
+    keep[0] = true;
+    keep[line.len() - 1] = true;
+    let mut stack = vec![(0usize, line.len() - 1)];
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+
+        let (mut far, mut at) = (0.0, (a + b) / 2);
+        for i in a + 1..b {
+            let d = crate::raster::seg_dist(line[i], line[a], line[b]);
+            if d > far {
+                (far, at) = (d, i);
+            }
+        }
+
+        if far > tol || !clear(line[a], line[b]) {
+            keep[at] = true;
+            stack.push((a, at));
+            stack.push((at, b));
+        }
+    }
+
+    line.iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| *p).collect()
 }
 
 /// A side's points averaged with their neighbours (the faces are jagged on the raster).
@@ -2543,7 +2601,6 @@ mod tests {
     /// The sides are at the faces, so nowhere through a building (two cells in from its faces). They are: where the corridor opens
     /// onto open ground by a node, a side goes out 80 there and straight back to the face, across the building's corner.
     #[test]
-    #[ignore = "street_sides cuts across a building's corner where the corridor opens onto open ground (generate.rs street_sides)"]
     fn street_sides_do_not_cross_the_buildings() {
         let deep = |p: P| {
             (30.0 + 2.0 * CELL..=170.0 - 2.0 * CELL).contains(&p[0])
