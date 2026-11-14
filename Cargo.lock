@@ -2421,6 +2421,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_launch"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "tempfile",
+ "wce_foundation",
+ "wce_siege",
+ "wce_tile_editor",
+ "wce_vfs",
+ "wce_walls",
+]
+
+[[package]]
 name = "wce_map_view"
 version = "0.0.1"
 dependencies = [
@@ -2513,6 +2526,7 @@ dependencies = [
  "wce_editor_core",
  "wce_formats",
  "wce_foundation",
+ "wce_launch",
  "wce_map_view",
  "wce_scene",
  "wce_terrain",
@@ -2520,7 +2534,6 @@ dependencies = [
  "wce_terrain_io",
  "wce_tile",
  "wce_tile_editor",
- "wce_tile_tool",
  "wce_vfs",
 ]
 
@@ -2591,6 +2604,7 @@ dependencies = [
  "wce_editor_core",
  "wce_formats",
  "wce_foundation",
+ "wce_launch",
  "wce_map_view",
  "wce_render",
  "wce_scene",

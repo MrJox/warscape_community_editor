@@ -1,16 +1,16 @@
 //! Launch in game (docs/plans/terrain_editor.md, Phase 7): the shown kit map's export (`crate::export`) in the launch pack, with a battle
-//! at a battle catchment area the user picks: the Tile tool's launch (`wce_tile_tool::launch`: the battle XML, the launch pack, the
+//! at a battle catchment area the user picks: the Tile tool's launch (`wce_launch::launch`: the battle XML, the launch pack, the
 //! command line, the start, the clean-up when the game exits) with the battle map `terrain/battles/<map>/` and the BCA's centre as the
 //! tile map position. One unit a side, the game's vanilla keys, day, dry, summer.
 
 use std::path::PathBuf;
 
 use wce_editor::editor::Editor;
+use wce_launch::LaunchArmy;
+use wce_launch::launch::{self, Battle, BattleMap, BattleWeather, Delivery, LAUNCH_PACK, Running};
 use wce_scene::render_scene::DocumentId;
 use wce_terrain::terry::EntityKind;
 use wce_terrain_editor::MapDocument;
-use wce_tile_tool::launch::{self, Battle, BattleMap, BattleWeather, Delivery, LAUNCH_PACK, Running};
-use wce_tile_tool::settings::LaunchArmy;
 
 /// Where a launch's battle is: a BCA's centre cell, its type and its size in cells (its `Catchment Region`'s).
 #[derive(Clone, Debug, PartialEq)]
