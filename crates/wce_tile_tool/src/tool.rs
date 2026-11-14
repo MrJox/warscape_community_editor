@@ -2998,8 +2998,11 @@ impl TileTool {
         }
 
         let Some(version) = self.off_doc_version.filter(|_| self.off_doc == id) else { return };
+        // The report names elements by number: after an edit they may be others (a delete, a paste), or none. Neither the rows nor the
+        // buttons act on them then.
         if version != d.history().version() {
             gui::text_disabled("(the tile changed since: press Report again)");
+            return;
         }
 
         gui::text(&format!(
