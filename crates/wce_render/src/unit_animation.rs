@@ -144,6 +144,12 @@ pub struct UnitInstance {
     /// Between the unit's origin (scaled) and this instance: the identity but for a prop.
     pub local: Float4x4,
     pub instance: SkinnedInstance,
+
+    /// Per part of the instance, the figure's part it shows (an index into its `parts.parts`), `None` for a prop a clip holds.
+    pub sources: Vec<Option<usize>>,
+
+    /// The mount's (else the man's).
+    pub mount: bool,
 }
 
 fn qmul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
@@ -497,11 +503,12 @@ impl Figure {
             (ons.peek().is_some() || Some(bone) == ammunition) && !ons.any(|e| e.start <= inside)
         };
 
-        let parts = self
+        let (sources, parts): (Vec<Option<usize>>, Vec<SkinnedPart>) = self
             .parts
             .parts
             .iter()
-            .filter_map(|p| {
+            .enumerate()
+            .filter_map(|(k, p)| {
                 let (bone, offset) = match &p.attach {
                     Attach::None => (None, SKINNED_NO_OFFSET),
                     Attach::Bone(name) => (self.rig.bone(name), SKINNED_NO_OFFSET),
@@ -509,19 +516,24 @@ impl Figure {
                 };
 
                 // A prop takes the bone's place.
-                (bone.is_none() || !(held.iter().any(|h| Some(h.bone) == bone) || bone.is_some_and(hidden))).then(|| SkinnedPart {
-                    model: p.model.clone(),
-                    tint: p.tint,
-                    decal_diffuse: p.decal_diffuse.clone(),
-                    decal_normal: p.decal_normal.clone(),
-                    masks: p.masks,
-                    bone,
-                    offset,
+                (bone.is_none() || !(held.iter().any(|h| Some(h.bone) == bone) || bone.is_some_and(hidden))).then(|| {
+                    (
+                        Some(k),
+                        SkinnedPart {
+                            model: p.model.clone(),
+                            tint: p.tint,
+                            decal_diffuse: p.decal_diffuse.clone(),
+                            decal_normal: p.decal_normal.clone(),
+                            masks: p.masks,
+                            bone,
+                            offset,
+                        },
+                    )
                 })
             })
-            .collect();
+            .unzip();
         let body = SkinnedInstance { parts, palette: body_palette, bones: body_bones, casts_shadow, faction_colours, faction_scale: 0.0 };
-        let mut out = vec![UnitInstance { scale, local: Float4x4::IDENTITY, instance: body }];
+        let mut out = vec![UnitInstance { scale, local: Float4x4::IDENTITY, instance: body, sources, mount: false }];
         for prop in held {
             let (prop_palette, bones) = match &prop.anim {
                 Some((rig, anim)) => rig.pose(&anim.sample(inside - prop.start)),
@@ -547,7 +559,7 @@ impl Figure {
             };
             let instance =
                 SkinnedInstance { parts: vec![part], palette: prop_palette, bones, casts_shadow, faction_colours, faction_scale: 0.0 };
-            out.push(UnitInstance { scale, local: carrier * prop.offset, instance });
+            out.push(UnitInstance { scale, local: carrier * prop.offset, instance, sources: vec![None], mount: false });
         }
 
         out
@@ -652,7 +664,7 @@ impl UnitModel {
         let t = t + self.phase;
         let mut out = self.man.instances(t, self.scale, self.faction_colours, casts_shadow);
         if let Some(mount) = &self.mount {
-            out.extend(mount.instances(t, 1.0, self.faction_colours, casts_shadow));
+            out.extend(mount.instances(t, 1.0, self.faction_colours, casts_shadow).into_iter().map(|i| UnitInstance { mount: true, ..i }));
         }
 
         out
