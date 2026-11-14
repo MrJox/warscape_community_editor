@@ -386,6 +386,11 @@ pub struct Settings {
     /// Per tool, the fields of its table kept per game (the tools declare them when added).
     #[serde(skip)]
     game_fields: BTreeMap<String, &'static [&'static str]>,
+
+    /// settings.toml is there but could not be read (locked by another program, no permission): this session runs on the defaults and
+    /// never writes over the file, which still holds the user's settings.
+    #[serde(skip)]
+    unread: bool,
 }
 
 impl Default for Settings {
@@ -405,6 +410,7 @@ impl Default for Settings {
             tools: BTreeMap::new(),
             paths: Paths::default(),
             game_fields: BTreeMap::new(),
+            unread: false,
         }
     }
 }
@@ -415,24 +421,33 @@ impl Settings {
         Self::load(Paths::standard())
     }
 
-    /// Reads settings.toml. No file gives the defaults (or what the old wce.ini had); a file that can't be read is kept aside as
-    /// `settings.toml.bad` and gives the defaults.
+    /// Reads settings.toml. No file gives the defaults (or what the old wce.ini had); a file that is not valid settings is kept aside as
+    /// `settings.toml.bad` and gives the defaults; a file that can't be opened (locked, no permission) gives the defaults for this session
+    /// and is left alone (`save` refuses to write over it).
     pub fn load(paths: Paths) -> Self {
         let file = paths.settings_file();
+        let set_aside = |e: &dyn std::fmt::Display| {
+            let bad = file.with_extension("toml.bad");
+            log::error(format!("{} can't be read, using the defaults (the file is kept as {}): {e}", file.display(), bad.display()));
+            let _ = std::fs::rename(&file, &bad);
+            Self::default()
+        };
+
         let mut settings = match std::fs::read_to_string(&file) {
             Ok(text) => match toml::from_str::<Self>(&text) {
                 Ok(s) => s,
-                Err(e) => {
-                    let bad = file.with_extension("toml.bad");
-                    log::error(format!(
-                        "{} can't be read, using the defaults (the file is kept as {}): {e}",
-                        file.display(),
-                        bad.display()
-                    ));
-                    let _ = std::fs::rename(&file, &bad);
-                    Self::default()
-                }
+                Err(e) => set_aside(&e),
             },
+
+            // Not UTF-8: not settings either.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => set_aside(&e),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                log::error(format!(
+                    "{} can't be opened, using the defaults for this session; the file is left as it is and not written: {e}",
+                    file.display()
+                ));
+                Self { unread: true, ..Self::default() }
+            }
 
             Err(_) => {
                 // TODO(pre-release): remove with the `legacy` module.
@@ -519,9 +534,13 @@ impl Settings {
     ///
     /// # Errors
     ///
-    /// Fails if the folder or the file can't be written.
+    /// Fails if the folder or the file can't be written, or if the file was there but could not be read at start.
     pub fn save(&self) -> std::io::Result<()> {
         let file = self.paths.settings_file();
+        if self.unread {
+            return Err(std::io::Error::other(format!("{} could not be read at start: not written over", file.display())));
+        }
+
         std::fs::create_dir_all(self.paths.config_dir())?;
         let text = toml::to_string(self).map_err(std::io::Error::other)?;
         let tmp = file.with_extension("toml.tmp");
