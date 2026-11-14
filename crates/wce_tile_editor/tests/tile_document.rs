@@ -2465,3 +2465,24 @@ fn an_element_number_past_the_scene_moves_nothing_and_does_not_panic() {
     assert!(!d.tilt_to_surface(past, Double3::new(0.0, 1.0, 0.0), 1));
     assert_eq!(d.history().size(), 0);
 }
+
+#[test]
+fn a_drag_of_several_items_is_one_entry() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let p = d.tile().tscene().find_all("AI_HINT_POLYGON_INSTANCE")[0];
+    let items = [d.ref_of(b), d.ref_of(p)];
+    let mut step = wce_foundation::math::Float4x4::IDENTITY;
+    step.m[0][3] = 1.0;
+    for _ in 0..3 {
+        d.transform_items(&items, &step, 7);
+    }
+
+    assert_eq!(d.history().size(), 1, "one entry for both items and every step");
+    assert_ne!(text(&d), original);
+    d.history_mut().undo();
+    assert_eq!(String::from_utf8_lossy(&text(&d)), String::from_utf8_lossy(&original));
+    d.history_mut().redo();
+    assert_ne!(text(&d), original);
+}

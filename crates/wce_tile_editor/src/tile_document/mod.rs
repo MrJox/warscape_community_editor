@@ -774,6 +774,9 @@ pub struct TileDocument {
     core: DocumentCore,
     pub(crate) history: CommandStack<Tile>,
 
+    /// While several items move together (`transform_selected`): their moves, gathered into one undo entry instead of one each.
+    pub(crate) move_batch: Option<Vec<commands::TedMoveCommand>>,
+
     /// A tile that stands in for something else (the Prefab tool's stage): what it is called and what saving it does.
     stage: Option<Stage>,
 }
@@ -1061,7 +1064,7 @@ impl TileDocument {
             total - t_index - t_models
         );
         log::info(tile.load_info.clone());
-        Self { core, history: CommandStack::new(tile), stage: None }
+        Self { core, history: CommandStack::new(tile), stage: None, move_batch: None }
     }
 
     pub fn tile(&self) -> &Tile {

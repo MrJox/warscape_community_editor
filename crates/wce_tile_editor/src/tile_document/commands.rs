@@ -15,7 +15,65 @@ use wce_foundation::math::Double3;
 use super::shift::{ElementShift, SHIFTED_ITEM, ViewChange};
 use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
 
+/// The moves of several elements in one step (the gizmo's drag of a selection): one entry, merging with the next steps of its gesture.
+pub(crate) struct TedMovesCommand {
+    pub gesture: u64,
+    pub moves: Vec<TedMoveCommand>,
+}
+
+impl Command<Tile> for TedMovesCommand {
+    fn name(&self) -> String {
+        match &self.moves[..] {
+            [one] => one.name.clone(),
+            all => format!("Move {} items", all.len()),
+        }
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        for m in &mut self.moves {
+            m.apply(t);
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        for m in self.moves.iter_mut().rev() {
+            m.revert(t);
+        }
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ 0x4d4f_5645_5300 } else { 0 }
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
+        for nm in &n.moves {
+            match self.moves.iter_mut().find(|m| m.elem == nm.elem) {
+                Some(m) => {
+                    m.merge_from(nm);
+                }
+
+                None => self.moves.push(nm.clone()),
+            }
+        }
+
+        true
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        let mut items = self.moves.iter().flat_map(TedMoveCommand::dirty_items).collect::<Vec<_>>();
+        items.sort_unstable();
+        items.dedup();
+        items
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// A move and / or rotation of one element (local position and euler angles); the steps of one gesture merge.
+#[derive(Clone)]
 pub(crate) struct TedMoveCommand {
     pub name: String,
     pub elem: usize,

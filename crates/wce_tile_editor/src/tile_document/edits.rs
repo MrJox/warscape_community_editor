@@ -705,7 +705,7 @@ impl TileDocument {
         let name = format!("Move {}", if n.is_empty() { sc.type_of(elem).to_owned() } else { n });
         let old_pos_text = old_pos.and_then(|_| sc.doc().get(elem, "position"));
         let old_euler_text = old_euler.and_then(|_| sc.doc().get(elem, "orientation"));
-        self.history.push(Box::new(TedMoveCommand {
+        let cmd = TedMoveCommand {
             name,
             elem,
             old_pos,
@@ -717,7 +717,13 @@ impl TileDocument {
             gesture,
             below,
             grounded: vec![],
-        }));
+        };
+        match &mut self.move_batch {
+            // Moved with the others: applied with them (`transform_selected`).
+            Some(batch) => batch.push(cmd),
+            None => self.history.push(Box::new(cmd)),
+        }
+
         true
     }
 
@@ -4453,6 +4459,10 @@ impl TileDocument {
         let els = self.tile().tscene().doc().elements();
         let inside = |e: usize| std::iter::successors(els[e].parent, |&p| els[p].parent).any(|p| mine.contains(&p));
         let items = items.iter().copied().filter(|r| elem_of(r.item).is_none_or(|e| e >= els.len() || !inside(e))).collect::<Vec<_>>();
+
+        // Every item's move in one entry, merging with the drag's next step: one entry per item and step, the keys taking turns, never
+        // merged (a two-second drag of three items left about 360 entries).
+        self.move_batch = Some(vec![]);
         for r in items {
             let t = self.tile();
             let Some(before) = t.item_transform(r).filter(|_| r.doc == self.id()) else { continue };
@@ -4482,6 +4492,11 @@ impl TileDocument {
             }
 
             self.set_local(e, Some(lp), le, gesture);
+        }
+
+        let moves = self.move_batch.take().unwrap_or_default();
+        if !moves.is_empty() {
+            self.history.push(Box::new(super::commands::TedMovesCommand { gesture, moves }));
         }
     }
 }
