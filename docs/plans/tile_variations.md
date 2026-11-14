@@ -6,7 +6,8 @@ project**. Every layer, group and instance says which variations it belongs to (
 An export makes the variation it is asked for: everything that belongs to it, and nothing else. The idea comes from Warhammer III's
 catchment layers.
 
-State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`.
+State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
+and 2 for the scene (`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below.
 
 ## What the games and kits do
 
@@ -72,9 +73,13 @@ packs. Adding a variation to a combined project adds a row to the entry. The per
   handles) never varies by itself.
 - The root's other parts (`modules`, `camera`) can differ between variations (their vegetation seeds, their camera): each variation's
   copy is kept in a `WceVariationFolder` there too.
+- **View state** (`WceVariationStart`): TEd's `flags` on a layer or group (whether it showed, was active) often differ between
+  variations of the same layer. A shared layer keeps the first variation's in its start tag; each variation whose value differs gets a
+  `<WceVariationStart wce_variations="small" flags="..."/>` as the layer's first child, put back into the start tag by `to_variation`.
+  The root does the same for any attribute (an older file's `version`: `plains/8x8` has 16 and 15).
 - The elements' order is kept so that each variation's elements, read in file order, are exactly that variation's file. The merge
   below builds the file that way.
-- `to_variation(text, v)` keeps what belongs to `v`, unwraps the variation folders and drops the attributes. The result is a
+- `to_variation(text, v)` keeps what belongs to `v`, unwraps the variation folders, applies the view states and drops the attributes. The result is a
   single-variation tile.wce, which `to_ted` turns into TEd's file as today. Every export goes through it.
 
 ### The terrain (`terrain_layers.wcl`, version 4)
@@ -180,8 +185,8 @@ is the one with the most shared elements by default. It gives the terrain base.
 3. Two layers with the same start tag but different contents merge into one layer with tagged children. Two layers with the same
    `wce_layer_id` but different start tags (renamed in one variation) stay two layers. One gets a new id, and the terrain layers that
    depend on it in that variation are changed to the new id.
-4. Root attributes that differ (an old `version`) are kept per variation in a `WceVariationRoot variation="..."` element and put back by
-   `to_variation`. The kit's tiles are expected to have none. The check below catches any.
+4. A container's start tag is matched without its view state (`flags`); the root's without any attribute value. What differs goes in
+   `WceVariationStart` lines (above).
 
 **The terrain merge**:
 
@@ -235,6 +240,22 @@ variation has.
 8. **Combine and Separate**: the dialog, the backup, the commands.
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`
    version 4), this plan's state.
+
+## Results
+
+`tile_combine_check` on the Attila kit (2026-11-15, `assembly_kit/raw_data/terrain/tiles/battle`): **154 tiles combined, every
+variation byte-identical** as tile.wce and, through `to_ted`, as the kit's tile.ted. 74 entries list variations the kit has no
+tile.ted for. About 6 s for a big settlement (three 50 MB files).
+
+- Most vanilla settlements share little as files. CA rebuilt or regrouped each level: in `western_city_a` minor's "Buildings" holds
+  338 groups at other places than small's 3,428, so the same buildings sit in different groups. Shares of each variation's instances
+  that another has too: `western_city_b` 49 to 56%, `sassanid_city_a` minor/small 50%, `western_port_a` minor/small 31%,
+  `western_city_rome` small/medium 45% / 28%, most others under 5%.
+- Settlements made by copying one level into the next share a lot: TDD's `dunedain_city_cair_andros` 97 to 99%, `middle_men_city_edoras`
+  95%, `orc_city_a` small/medium 88 to 94%, `middle_men_city_a` minor/small 70%. 31.8 MB of `orc_city_a` become 17.7 MB.
+- Random alternatives (`plains`, `town_greek_plains`) share nothing; their combined file is about the sum of theirs.
+- Found on the way, not part of this plan: `to_ted(to_wce(tile.ted))` is not the kit's file for `orc_city_a`'s three variations:
+  TEd wrote `parallax_scale="-0"` and `ted_number_text` shortens it to `0`.
 
 ## Gates
 
