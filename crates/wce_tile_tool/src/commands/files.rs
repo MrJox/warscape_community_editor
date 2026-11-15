@@ -69,7 +69,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 Some("tile") => Some(crate::settings::LaunchMap::Tile),
                 Some("context") => Some(crate::settings::LaunchMap::MapContext),
                 Some("climate") => Some(crate::settings::LaunchMap::Climate),
-                Some(other) => return fail(&format!("--map {other}: tile, context or climate")),
+                Some(other) => return fail(format!("--map {other}: tile, context or climate")),
             };
             with_tile(e, |t, e| {
                 t.launch.variation = variation;
