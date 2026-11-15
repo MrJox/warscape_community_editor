@@ -202,58 +202,113 @@ pub fn layer_key_variations(doc: &XmlDoc, all: &[String]) -> std::collections::H
 /// places it: the same as [`to_variation`] gives, without making that text.
 #[derive(Clone, Debug, Default)]
 pub struct View {
+    /// The variation of the whole tile: the first shown (its height range, what the editor makes over the terrain).
     pub variation: String,
+
+    /// The variations shown, in the project's order (docs/plans/tile_variations.md, Revision 1: everything, with filters).
+    pub shown: Vec<String>,
     state: Vec<u8>,
+
+    /// Each element's display variation, by its index in `shown` (an element that is there).
+    display: Vec<u8>,
     values: std::collections::HashMap<usize, Vec<(String, Vec<u8>)>>,
+}
+
+/// The variation of `shown` (in its order) an element is drawn as: the first it belongs to; none when it belongs to none of them.
+#[must_use]
+pub fn display_variation<'a>(doc: &XmlDoc, elem: usize, shown: &'a [String]) -> Option<&'a str> {
+    let mut allowed = shown.iter().map(String::as_str).collect::<Vec<_>>();
+    for e in std::iter::successors(Some(elem), |&e| doc.elements()[e].parent) {
+        if let Some(l) = own_variations(doc, e) {
+            allowed.retain(|v| l.iter().any(|x| x == v));
+            if allowed.is_empty() {
+                return None;
+            }
+        }
+    }
+
+    allowed.first().copied()
 }
 
 const GONE: u8 = 1;
 const THROUGH: u8 = 2;
 
 impl View {
-    /// The view of a variation; of a document of one variation, everything is there.
+    /// The view of one variation; of a document of one variation, everything is there.
     #[must_use]
     pub fn new(doc: &XmlDoc, variation: &str) -> Self {
+        Self::of_shown(doc, &[variation.to_owned()])
+    }
+
+    /// The view of several variations at once (Revision 1 of docs/plans/tile_variations.md): an element is there when it belongs to one
+    /// of them, and is as its display variation has it (the first of `shown` it belongs to, [`display_variation`]): its own values, the
+    /// groups it goes through. `shown` in the project's order; the first is the tile's (`variation`).
+    #[must_use]
+    pub fn of_shown(doc: &XmlDoc, shown: &[String]) -> Self {
         let els = doc.elements();
+        let shown = shown.iter().take(64).cloned().collect::<Vec<_>>();
+        let full = if shown.len() == 64 { u64::MAX } else { (1u64 << shown.len()) - 1 };
+        let mask_of = |l: &[String]| shown.iter().enumerate().filter(|(_, v)| l.contains(v)).fold(0u64, |m, (i, _)| m | (1 << i));
+        let mut allowed = vec![0u64; els.len()];
         let mut state = vec![0u8; els.len()];
-        let mut values = std::collections::HashMap::<usize, Vec<(String, Vec<u8>)>>::new();
-        let named = |l: Option<String>| l.is_none_or(|l| parse_list(&l).iter().any(|v| v == variation));
+        let mut display = vec![0u8; els.len()];
+        let mut lines = vec![];
 
         // Document order: a parent comes before its children.
         for e in 0..els.len() {
             let el = &els[e];
-            if el.parent.is_some_and(|p| state[p] == GONE) || !named(own_variations(doc, e).map(|l| list_text(&l))) {
+            let from_parent = el.parent.map_or(full, |p| allowed[p]);
+            let a = own_variations(doc, e).map_or(from_parent, |l| from_parent & mask_of(&l));
+            allowed[e] = a;
+            if el.parent.is_some_and(|p| state[p] == GONE) || a == 0 {
                 state[e] = GONE;
                 continue;
             }
 
             if el.name == START || el.name == VALUES {
                 state[e] = GONE;
-                let target = if el.name == START {
-                    el.parent
-                } else {
-                    el.parent.and_then(|p| {
-                        let list = &els[p].children;
-                        let at = list.iter().position(|&c| c == e)?;
-                        list[at + 1..].iter().copied().find(|&c| els[c].name != VALUES)
-                    })
-                };
-
-                if let Some(target) = target {
-                    let own = el.attrs.iter().enumerate().filter(|(_, a)| a.name != VARIATIONS_ATTR);
-                    values.entry(target).or_default().extend(own.map(|(i, a)| (a.name.clone(), doc.attr_raw(e, i).to_vec())));
-                }
-
+                lines.push(e);
                 continue;
             }
 
+            let d = a.trailing_zeros() as usize;
+            display[e] = d as u8;
+            let named = |l: Option<String>| l.is_none_or(|l| parse_list(&l).iter().any(|v| *v == shown[d]));
             let through_group = el.parent.is_some_and(|p| state[p] == THROUGH && els[p].name != FOLDER) && el.name == "children";
             if el.name == FOLDER || !named(doc.get(e, GROUP_ATTR)) || through_group {
                 state[e] = THROUGH;
             }
         }
 
-        Self { variation: variation.to_owned(), state, values }
+        // The values of the display variation of the element each line is for.
+        let mut values = std::collections::HashMap::<usize, Vec<(String, Vec<u8>)>>::new();
+        for e in lines {
+            let el = &els[e];
+            let target = if el.name == START {
+                el.parent
+            } else {
+                el.parent.and_then(|p| {
+                    let list = &els[p].children;
+                    let at = list.iter().position(|&c| c == e)?;
+                    list[at + 1..].iter().copied().find(|&c| els[c].name != VALUES)
+                })
+            };
+
+            let Some(target) = target.filter(|&t| state[t] != GONE) else { continue };
+            let d = &shown[display[target] as usize];
+            if own_variations(doc, e).is_some_and(|l| l.contains(d)) {
+                let own = el.attrs.iter().enumerate().filter(|(_, a)| a.name != VARIATIONS_ATTR);
+                values.entry(target).or_default().extend(own.map(|(i, a)| (a.name.clone(), doc.attr_raw(e, i).to_vec())));
+            }
+        }
+
+        Self { variation: shown.first().cloned().unwrap_or_default(), shown, state, display, values }
+    }
+
+    /// The variation an element is drawn as (the first shown it belongs to), none when it is not there.
+    #[must_use]
+    pub fn display(&self, elem: usize) -> Option<&str> {
+        (!self.is_gone(elem)).then(|| self.display.get(elem).and_then(|&d| self.shown.get(d as usize)).map(String::as_str)).flatten()
     }
 
     /// Not in the variation (another's, or the bookkeeping): not shown, not picked.
@@ -526,6 +581,24 @@ mod tests {
     use super::*;
 
     const COMBINED: &str = "<project version=\"16\" wce_version=\"1\" wce_variations=\"minor,small\">\r\n    <scene>\r\n        <SCENE_GRAPH name=\"root\">\r\n            <children>\r\n                <LayerInstance name=\"walls\" wce_variations=\"small\">\r\n                    <children>\r\n                        <BUILDING_INSTANCE key=\"wall\"/>\r\n                    </children>\r\n                </LayerInstance>\r\n                <BUILDING_INSTANCE key=\"house\"/>\r\n                <WceVariationFolder wce_variations=\"minor\">\r\n                    <BUILDING_INSTANCE key=\"hut\"/>\r\n                    <UserInstanceGroup name=\"g\">\r\n                        <children>\r\n                            <BUILDING_INSTANCE key=\"shed\"/>\r\n                        </children>\r\n                    </UserInstanceGroup>\r\n                </WceVariationFolder>\r\n            </children>\r\n        </SCENE_GRAPH>\r\n    </scene>\r\n</project>\r\n";
+
+    #[test]
+    fn several_shown_show_each_element_as_the_first_it_belongs_to() {
+        let doc = XmlDoc::parse(COMBINED.as_bytes().to_vec()).unwrap();
+        let named = |key: &str| (0..doc.elements().len()).find(|&e| doc.get(e, "key").as_deref() == Some(key)).unwrap();
+        let (wall, house, hut) = (named("wall"), named("house"), named("hut"));
+        let both = ["minor".to_owned(), "small".to_owned()];
+        let view = View::of_shown(&doc, &both);
+        assert_eq!(view.variation, "minor", "the first shown is the tile's");
+        assert_eq!(view.display(house), Some("minor"));
+        assert_eq!(view.display(wall), Some("small"), "only small has it");
+        assert_eq!(view.display(hut), Some("minor"));
+        assert_eq!(display_variation(&doc, wall, &both), Some("small"));
+
+        let small = View::of_shown(&doc, &both[1..]);
+        assert!(small.is_gone(hut) && !small.is_gone(wall));
+        assert_eq!(display_variation(&doc, hut, &both[1..]), None);
+    }
 
     #[test]
     fn a_variation_keeps_what_belongs_to_it_and_no_trace_of_the_others() {

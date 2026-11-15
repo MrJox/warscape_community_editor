@@ -1077,11 +1077,11 @@ impl TileDocument {
     }
 }
 
-/// An attribute's text as the Inspector shows it: the file's (still entity-encoded), or the viewed variation's own value of a combined
+/// An attribute's text as the Inspector shows it: the file's (still entity-encoded), or its display variation's own value of a combined
 /// scene.
 fn shown_raw(sc: &wce_tile::ted_scene::TedScene, e: usize, i: usize) -> String {
     let name = &sc.doc().elements()[e].attrs[i].name;
-    sc.variation()
+    sc.display_variation(e)
         .and_then(|v| wce_tile::variations::own_value(sc.doc(), e, v, name))
         .unwrap_or_else(|| String::from_utf8_lossy(sc.doc().attr_raw(e, i)).into_owned())
 }

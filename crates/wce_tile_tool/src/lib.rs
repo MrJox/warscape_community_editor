@@ -45,7 +45,6 @@ mod tile_database;
 mod tile_properties;
 mod tile_stats;
 pub mod tool;
-pub mod variation_chip;
 pub mod veg_brush;
 pub mod veg_sets;
 mod water_view;

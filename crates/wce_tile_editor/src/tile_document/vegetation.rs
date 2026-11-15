@@ -675,9 +675,9 @@ pub fn convert_whole_tile_exclusion(project: &mut TileProject) -> Result<Option<
         edited.add_polygon(Some(layer), "VegetationExclusionPolygonInstance", "Static trees", pts, &BTreeMap::new())?;
     }
 
-    let lens = project.scene.variation().map(str::to_owned);
+    let lens = project.scene.shown().map(<[String]>::to_vec);
     project.scene = TedScene::parse(edited.save())?;
-    project.scene.set_variation(lens);
+    project.scene.set_shown(lens);
     Ok(Some(cover.len()))
 }
 

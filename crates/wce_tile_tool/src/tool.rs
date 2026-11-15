@@ -544,8 +544,6 @@ pub struct TileTool {
     /// The Areas chip: its width, and the polygons' look, read from the settings at first use.
     pub(crate) areas_chip_width: f32,
 
-    /// The Variation chip's (a combined project's), 0 without one.
-    pub(crate) variation_chip_width: f32,
     pub(crate) areas: Option<wce_tile_editor::tile_document::PolygonLook>,
 
     /// The buildings' categories in the packs, and what they were read from.
@@ -921,7 +919,6 @@ impl Default for TileTool {
             flip_asked: false,
             ground_chip_width: 0.0,
             areas_chip_width: 0.0,
-            variation_chip_width: 0.0,
             pack_categories: None,
             areas: None,
             tech_chip_width: 0.0,
@@ -4729,13 +4726,8 @@ impl Tool for TileTool {
 
         if let Some(r) = e.renderer.as_mut() {
             let models = r.models();
-            // The other variations' ghosts are outlines: nothing draws their buildings, so their models are asked for here.
-            let ghosts = d.tile().display().variation_ghosts;
             d.tile_mut().poll_models(&|piece: &str| {
                 let (m, st) = models.peek(piece);
-                if ghosts && st == ModelState::Absent {
-                    models.try_get(piece, 1e6);
-                }
 
                 match m {
                     Some(m) => PieceState { status: PieceStatus::Ready, bmin: m.bmin, bmax: m.bmax },
@@ -4945,12 +4937,10 @@ impl Tool for TileTool {
                 );
             }
 
-            let mut ghosts = document(e).is_some_and(|d| d.tile().display().variation_ghosts);
-            if gui::menu_item("Show the other variations", None, ghosts, combined) {
-                ghosts = !ghosts;
-                if let Some(d) = document(e) {
-                    d.tile_mut().set_variation_ghosts(ghosts);
-                }
+            // The variations shown (as the Scene panel's header): a filter of the view, not an edit.
+            if gui::begin_menu_enabled("Show", combined) {
+                self.shown_variation_items(e);
+                gui::end_menu();
             }
 
             gui::end_menu();
@@ -5201,7 +5191,6 @@ impl Tool for TileTool {
         e.viewport.tool_chips_width = self.ground_chip_width
             + self.tech_chip_width
             + self.areas_chip_width
-            + if self.variation_chip_width > 0.0 { self.variation_chip_width + 4.0 } else { 0.0 }
             + 8.0
             + if placing { 4.0 + self.place_chips_width } else { 0.0 };
         let top = e.viewport.chips_top;
@@ -5210,13 +5199,10 @@ impl Tool for TileTool {
         self.draw_tech_chip(e, origin, size, top);
         self.sync_polygon_look(e);
         self.draw_areas_chip(e, origin, size, top);
-        let right = self.ground_chip_width + self.tech_chip_width + self.areas_chip_width + 16.0;
-        self.draw_variation_chip(e, origin, size, top, right);
-        let variation = if self.variation_chip_width > 0.0 { self.variation_chip_width + 4.0 } else { 0.0 };
         self.draw_placement_chips(
             e,
             origin,
-            gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - variation - 12.0, size.y),
+            gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 12.0, size.y),
             top,
         );
         self.draw_measure_labels(e, origin);

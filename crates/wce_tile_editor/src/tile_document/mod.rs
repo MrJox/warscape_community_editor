@@ -268,9 +268,6 @@ pub struct TileDisplay {
     /// load are not drawn ("Don't Export" ones, the other escalation layers: `index::in_game`). None: every layer as its eye says, as TEd.
     /// Set with [`Tile::set_game_layers`].
     pub game_layers: Option<u8>,
-
-    /// A combined project's: what only other variations have, drawn as tinted outlines where those variations have it (not picked).
-    pub variation_ghosts: bool,
 }
 
 impl Default for TileDisplay {
@@ -296,7 +293,6 @@ impl Default for TileDisplay {
             show_auto_nogo: false,
             tech: TechSettings::default(),
             game_layers: None,
-            variation_ghosts: false,
         }
     }
 }
@@ -680,9 +676,6 @@ pub struct Tile {
     pub(crate) links_entity: EntityId,
     pub(crate) links_dirty: bool,
 
-    /// The other variations' ghosts (`TileDisplay::variation_ghosts`), one overlay.
-    pub(crate) ghost_entity: EntityId,
-    pub(crate) ghost_dirty: bool,
     pub(crate) water_dirty: bool,
     pub(crate) water_version: u64,
     pub(crate) water_note: String,
@@ -1012,8 +1005,6 @@ impl TileDocument {
             collapses: collapse::CollapseState::default(),
             fire: fire::FirePreview::default(),
             links_entity: 0,
-            ghost_entity: 0,
-            ghost_dirty: true,
             links_dirty: true,
             water_dirty: true,
             water_version: 0,
