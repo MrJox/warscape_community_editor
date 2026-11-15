@@ -3429,10 +3429,19 @@ impl TileTool {
             self.browse.recent_rows = recent.iter().filter_map(|r| row(r).map(|i| (i, r.variation.clone()))).collect();
         }
 
-        let footer = gui::frame_height_with_spacing() * 4.5;
         let mut open = None;
         let mut star = None;
         let entries = &source[..];
+        // Under the list, what it is drawn with: the selected tile's line and its variations' buttons (a combined one's line of text), or
+        // the hint; the list takes the rest.
+        let selected_shown = self.browse.rows.iter().any(|&i| entries[i].key == self.browse.selected);
+        let (text, button) = (gui::text_line_height_with_spacing(), gui::frame_height_with_spacing());
+        let footer = gui::item_spacing().y
+            + match (selected_shown, self.browse.combined.contains(&self.browse.selected)) {
+                (false, _) => text,
+                (true, true) => text * 2.0,
+                (true, false) => text + button,
+            };
         let filtered = !self.browse.filter.trim().is_empty();
         if gui::begin_child("tilelist", gui::v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
             let selected_key = &mut self.browse.selected;
