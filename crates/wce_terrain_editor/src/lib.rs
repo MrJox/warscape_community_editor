@@ -4,6 +4,10 @@ pub mod cells;
 pub mod document;
 pub mod lf;
 pub mod lf_region;
+mod save_validation;
 pub mod terry;
 
 pub use document::{MapDocument, MapSource};
+
+#[cfg(test)]
+mod publication_tests;
