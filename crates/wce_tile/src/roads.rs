@@ -37,6 +37,54 @@ pub struct RoadSettings {
     /// How far the texture fades out past the road's edge.
     pub feather: f64,
     pub seed: u32,
+
+    /// How irregular the road is (0 to 1; docs/plans/procedural_roads.md, "Variety"): its line wanders off its spline between points
+    /// ([`wandered`]), its width wobbles along it ([`Strip`]), its texture's edge is ragged, and its pieces' decals are jittered.
+    pub irregularity: f64,
+}
+
+/// At full irregularity: how far the line wanders off the spline at most (metres), and the width's wobble (a fraction of it), each over
+/// the stretch its noise varies along (metres).
+pub const WANDER: f64 = 1.5;
+const WANDER_SPAN: f64 = 25.0;
+pub const WOBBLE: f64 = 0.25;
+const WOBBLE_SPAN: f64 = 12.0;
+
+/// A road's centre line wandering off its spline by its irregularity: each sample moved across by a smooth noise along the road, nothing at
+/// its points (`at_point`, so it still goes through them, its corners and ends where they were) and most between them.
+#[must_use]
+pub fn wandered(line: &[[f64; 2]], at_point: &[usize], irregularity: f64, seed: u32) -> Vec<[f64; 2]> {
+    if irregularity <= 0.0 || line.len() < 3 || at_point.len() < 2 {
+        return line.to_vec();
+    }
+
+    let mut out = line.to_vec();
+    let mut along = 0.0;
+    let mut runs = vec![0.0; line.len()];
+    for i in 1..line.len() {
+        along += (line[i][0] - line[i - 1][0]).hypot(line[i][1] - line[i - 1][1]);
+        runs[i] = along;
+    }
+
+    for w in at_point.windows(2) {
+        let (a, b) = (w[0], w[1].min(line.len() - 1));
+        if b <= a + 1 {
+            continue;
+        }
+
+        let (s0, s1) = (runs[a], runs[b]);
+        for i in a + 1..b {
+            let t = (runs[i] - s0) / (s1 - s0).max(1e-9);
+            let envelope = (std::f64::consts::PI * t).sin();
+            let off = irregularity * WANDER * (2.0 * noise(runs[i] / WANDER_SPAN, 0.37, seed ^ 0x57A1) - 1.0) * envelope;
+            let (p, q) = (line[i - 1], line[i + 1]);
+            let (dx, dz) = (q[0] - p[0], q[1] - p[1]);
+            let l = dx.hypot(dz).max(1e-9);
+            out[i] = [line[i][0] + dz / l * off, line[i][1] - dx / l * off];
+        }
+    }
+
+    out
 }
 
 /// The widest a bank gets. Past this the road stands on a slope steeper than asked (a canyon: it is the bridges' business).
@@ -572,6 +620,17 @@ pub struct Strip {
 }
 
 impl Strip {
+    /// Half the road's flat at a sample: its width's, wobbling along it by its irregularity.
+    fn half(&self, at: usize) -> f64 {
+        let s = &self.settings;
+        let wobble = if s.irregularity > 0.0 {
+            s.irregularity * WOBBLE * (2.0 * noise(at as f64 * SAMPLE / WOBBLE_SPAN, 0.71, s.seed ^ 0xB0B) - 1.0)
+        } else {
+            0.0
+        };
+        s.width * 0.5 * (1.0 + wobble)
+    }
+
     #[must_use]
     pub fn new(line: Vec<[f64; 2]>, heights: Vec<f64>, settings: RoadSettings) -> Self {
         let reach = settings.width * 0.5 + MAX_BANK.max(settings.feather) + CELL;
@@ -635,17 +694,8 @@ impl Strip {
         [lo[0] - self.reach, lo[1] - self.reach, hi[0] + self.reach, hi[1] + self.reach]
     }
 
-    /// The distance from a point to the line and the road's height at the nearest place on it.
-    fn nearest(&self, x: f64, z: f64) -> Option<(f64, f64, bool)> {
-        self.nearest_open(x, z).filter(|n| !n.2).map(|n| (n.0, n.1, n.3))
-    }
-
-    /// As [`Self::nearest`] (and whether the place on the line is a ford's), and whether it is over a gap.
-    fn nearest_open(&self, x: f64, z: f64) -> Option<(f64, f64, bool, bool)> {
-        self.nearest_at(x, z).map(|n| (n.0, n.1, n.2, n.3))
-    }
-
-    /// As [`Self::nearest_open`], and the nearest sample.
+    /// The distance from a point to the line, the road's height at the nearest place on it, whether that is over a gap and whether it is a
+    /// ford's, and the nearest sample.
     fn nearest_at(&self, x: f64, z: f64) -> Option<(f64, f64, bool, bool, usize)> {
         let (cx, cz) = ((x - self.origin[0]) / CELL, (z - self.origin[1]) / CELL);
         if cx < 0.0 || cz < 0.0 {
@@ -697,7 +747,7 @@ impl Strip {
         // through it beside the water).
         if open {
             let cap = y - sink;
-            return (wider > 0.0 && d <= s.width * 0.5 + wider && ground > cap).then_some(cap);
+            return (wider > 0.0 && d <= self.half(at) + wider && ground > cap).then_some(cap);
         }
 
         if kept {
@@ -705,7 +755,7 @@ impl Strip {
         }
 
         let y = y - sink;
-        let past = d - s.width * 0.5 - wider;
+        let past = d - self.half(at) - wider;
         if past <= 0.0 {
             return Some(if sink > 0.0 { y.min(ground) } else { y });
         }
@@ -722,21 +772,25 @@ impl Strip {
         let s = &self.settings;
         // Under a bridge's span too: the ground there is cut to just under the deck, and grass on it came up through the planks (user
         // 2026-11-08).
-        let Some((d, _, _, _, _)) = self.nearest_at(x, z) else { return 0.0 };
-        let edge = s.width * 0.5 + (noise(x / 5.0, z / 5.0, s.seed) - 0.5) * s.feather;
+        let Some((d, _, _, _, at)) = self.nearest_at(x, z) else { return 0.0 };
+        // Ragged by its irregularity: the edge's noise stronger, and a finer one over it.
+        let r = s.irregularity.clamp(0.0, 1.0);
+        let coarse = (noise(x / 5.0, z / 5.0, s.seed) - 0.5) * s.feather * (1.0 + 1.5 * r);
+        let fine = (noise(x / 1.3, z / 1.3, s.seed ^ 0xF1E) - 0.5) * s.feather.max(1.0) * 1.2 * r;
+        let edge = self.half(at) + coarse + fine;
         (1.0 - smooth((d - edge) / s.feather.max(0.01) + 0.5)) as f32
     }
 
     /// Whether a point is road, for the ground type.
     #[must_use]
     pub fn on_road(&self, x: f64, z: f64) -> bool {
-        self.nearest(x, z).is_some_and(|(d, _, _)| d <= self.settings.width * 0.5)
+        self.nearest_at(x, z).filter(|n| !n.2).is_some_and(|n| n.0 <= self.half(n.4))
     }
 
     /// Whether a point takes the road's ground type: on the road, and under its bridges' spans (their decks' width).
     #[must_use]
     pub fn covers(&self, x: f64, z: f64) -> bool {
-        self.nearest_at(x, z).is_some_and(|n| n.0 <= self.settings.width * 0.5 + if n.2 { self.deck[n.4].0 } else { 0.0 })
+        self.nearest_at(x, z).is_some_and(|n| n.0 <= self.half(n.4) + if n.2 { self.deck[n.4].0 } else { 0.0 })
     }
 }
 
@@ -777,7 +831,46 @@ mod tests {
             clearance: 2.0,
             feather: 2.0,
             seed: 1,
+            irregularity: 0.0,
         }
+    }
+
+    #[test]
+    fn an_irregular_road_wanders_between_its_points_and_goes_through_them() {
+        let pts = [[0.0, 0.0], [0.0, 60.0], [40.0, 120.0], [40.0, 200.0]];
+        let (line, at) = centre_line_handled(&pts, &[], &[]);
+        assert_eq!(wandered(&line, &at, 0.0, 3), line, "regular: as it was");
+
+        let w = wandered(&line, &at, 1.0, 3);
+        assert_eq!(w.len(), line.len());
+        for &i in &at {
+            assert_eq!(w[i], line[i], "through its points");
+        }
+
+        let off = line.iter().zip(&w).map(|(a, b)| (a[0] - b[0]).hypot(a[1] - b[1])).collect::<Vec<_>>();
+        let most = off.iter().copied().fold(0.0, f64::max);
+        assert!(most > 0.3 && most <= WANDER + 1e-9, "wanders, at most {WANDER} m: {most}");
+        let half = wandered(&line, &at, 0.5, 3);
+        let most_half = line.iter().zip(&half).map(|(a, b)| (a[0] - b[0]).hypot(a[1] - b[1])).fold(0.0, f64::max);
+        assert!((most_half - most * 0.5).abs() < 1e-6, "half as much at half the irregularity");
+    }
+
+    #[test]
+    fn an_irregular_roads_width_wobbles_within_its_bounds() {
+        let line = (0..=200).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let heights = vec![0.0; line.len()];
+        let width_at = |s: &RoadSettings, z: f64| {
+            let strip = Strip::new(line.clone(), heights.clone(), s.clone());
+            // The farthest out across that is still road.
+            (0..=400).map(|k| f64::from(k) * 0.01).filter(|&x| strip.on_road(x, z)).fold(0.0, f64::max) * 2.0
+        };
+
+        let plain = settings();
+        let rough = RoadSettings { irregularity: 1.0, ..settings() };
+        let widths = [20.0, 60.0, 100.0, 140.0, 180.0].map(|z| width_at(&rough, z));
+        assert!(widths.iter().all(|&w| w >= 6.0 * (1.0 - WOBBLE) - 0.02 && w <= 6.0 * (1.0 + WOBBLE) + 0.02), "{widths:?}");
+        assert!(widths.iter().any(|&w| (w - 6.0).abs() > 0.2), "it wobbles: {widths:?}");
+        assert!((width_at(&plain, 60.0) - 6.0).abs() < 0.02, "regular: its width");
     }
 
     #[test]

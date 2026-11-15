@@ -244,7 +244,11 @@ impl Tile {
     /// The curve a road follows, on the terrain: what its outline draws, so that the line is where the road is.
     pub(super) fn road_world_curve(&self, elem: usize) -> Vec<Float3> {
         let points = self.polygon_world_points(elem).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>();
-        let line = centre_line_handled(&points, &self.road_handles(elem), &self.road_sharp(elem, &points)).0;
+        let (line, at_point) = centre_line_handled(&points, &self.road_handles(elem), &self.road_sharp(elem, &points));
+        let doc = self.tscene().doc();
+        let number = |name: &str, or: f64| doc.get(elem, name).and_then(|v| wce_formats::c_num::strtod(&v)).unwrap_or(or);
+        let line =
+            wce_tile::roads::wandered(&line, &at_point, number("road_irregularity", 0.0).clamp(0.0, 1.0), number("road_seed", 1.0) as u32);
         let every = (line.len() / 400).max(2);
         let mut curve: Vec<_> = line
             .iter()
@@ -385,6 +389,7 @@ impl Tile {
                     clearance: number(e, "road_bridge_clearance", 2.0).max(0.0),
                     feather: number(e, "road_feather", 2.0).max(0.0),
                     seed: number(e, "road_seed", 1.0) as u32,
+                    irregularity: number(e, "road_irregularity", 0.0).clamp(0.0, 1.0),
                 };
 
                 let sharp = self.road_sharp(e, &line);
@@ -521,6 +526,8 @@ impl Tile {
     /// deep or the ground drops away, graded with those taken out so that it does not dip into them.
     fn plan_road(road: &Road, sample: &dyn Fn(f64, f64) -> f64, water: &WaterMap, on_other: &dyn Fn(f64, f64) -> bool) -> Plan {
         let (line, at_point) = centre_line_handled(&road.line, &road.handles, &road.sharp);
+        // Off its spline by its irregularity, between its points: the line its terrain and its pieces are made on.
+        let line = wce_tile::roads::wandered(&line, &at_point, road.settings.irregularity, road.settings.seed);
         let raw = line.iter().map(|p| sample(p[0], p[1])).collect::<Vec<_>>();
         let wet = line.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
         let p = wce_tile::roads::plan(&line, &raw, &wet, &road.settings, on_other);
@@ -1334,7 +1341,13 @@ fn road_items(i: ItemsInput) -> ItemsMade {
             let Some((_, p, key, children)) = pick(&laid.laid, k, &pieces[..], road) else { continue };
             // Their buildings (the banks) tilted to the ground under them.
             let keep = |index: usize, part: &wce_tile::road_pieces::Part| detail_kept(road, k as u64, index, part);
-            let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::PIECE_TILT), attrs: None, keep: Some(&keep) };
+            let dress = wce_tile::road_layout::Dress {
+                tilt: Some(wce_tile::road_layout::PIECE_TILT),
+                attrs: None,
+                keep: Some(&keep),
+                jitter: road.settings.irregularity,
+                jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12),
+            };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => {
                     items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None })
@@ -1446,6 +1459,8 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         tilt: Some(wce_tile::road_layout::FENCE_TILT),
                         attrs: Some(&damage),
                         keep: Some(&keep),
+                        jitter: 0.0,
+                        jitter_seed: 0,
                     };
                     match wce_tile::road_layout::fit_dressed(
                         fp,
