@@ -7,7 +7,6 @@
 use std::path::{Path, PathBuf};
 
 use wce_formats::png_file::PngFile;
-use wce_formats::tile_entry::TileEntry;
 
 use crate::blend_field::BlendField;
 use crate::ground_type_field::GroundTypeField;
@@ -314,24 +313,15 @@ impl TileProject {
         Ok(Materialized { variation: variation.to_owned(), dir, range, refit })
     }
 
-    /// The tile's entry under `raw_out`, its row `row` with the height range `range`; the others with what the entry there has (an earlier
-    /// write's), else the project's. The tile sets' `_settings.xml` beside it when it has none.
+    /// The tile's entry under `raw_out`, its row `row` with the height range `range`, the others the project's. The tile sets' `_settings.xml` beside it when it has none.
     fn materialize_entry(&self, raw_out: &Path, row: usize, range: (f64, f64)) -> Result<(), String> {
         let entry = self.entry.as_ref().ok_or("no tile database entry")?;
         let database = |raw: &Path| raw.join("terrain/tiles").join(entry.kind()).join("_tile_database");
         let name = entry.file().file_name().ok_or("the entry has no file name")?;
         let target = database(raw_out).join("TILES").join(name);
+        // The other rows as the project has them (not an earlier write's): an extracted tile's carried files hold while its entry is the
+        // one it was extracted with (`stage_b::fingerprints` hashes the whole entry), and another variation's export changes only its own.
         let mut out = entry.clone();
-        if let Ok(there) = TileEntry::load(&target) {
-            for (i, v) in there.variations().iter().enumerate() {
-                if i != row
-                    && let Some(k) = out.find_variation(&v.location)
-                {
-                    out.set_height_range(k, v.min_height, v.scale);
-                }
-            }
-        }
-
         out.set_height_range(row, range.0, range.1);
         let wrote = put(&target, &out.save())?;
         if let Some(from) = entry.raw_root().map(|r| database(&r).join("_settings.xml")).filter(|p| p.is_file()) {
