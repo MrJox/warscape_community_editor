@@ -1388,6 +1388,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         keep: Some(&keep),
                         jitter: road.settings.irregularity,
                         jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12 ^ (t as u64) << 36),
+                        decal_depth: None,
                     };
                     match fit_dressed(&tp.1, &tp.3, &tp.2, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                         Ok(f) => items.push(RoadItem {
@@ -1413,12 +1414,53 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 keep: Some(&keep),
                 jitter: road.settings.irregularity,
                 jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12),
+                decal_depth: None,
             };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => {
                     items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None })
                 }
                 Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
+            }
+        }
+
+        // Over its bridges, the road goes on (docs/plans/procedural_roads.md, "Variety", V7): its straights from rim to rim at the deck's height,
+        // their decals alone (no bank or building on a deck), in boxes shallow enough not to reach the ground or the water under it. The game
+        // paints decals on a bridge's planks (checked 2026-11-15, docs/re/renderer.md).
+        for (&(a, b), &(from, to)) in plan.gaps.iter().zip(spans.iter()) {
+            let deck_height = |x: f64, z: f64| {
+                let s = wce_tile::road_layout::nearest(&plan.line, [x, z]).0;
+                let i = (a..=b).min_by(|&i, &j| (st.of_sample(i) - s).abs().total_cmp(&(st.of_sample(j) - s).abs())).unwrap_or(a);
+                plan.heights.get(i).copied().unwrap_or(0.0) + DECK_LIFT
+            };
+            let options = pieces.iter().filter(|q| q.0 == "straight" && q.1.parts.iter().all(|part| !part.solid)).collect::<Vec<_>>();
+            let n = (((to - from) / measures.straight).round() as usize).max(1);
+            for j in 0..n {
+                let (s0, s1) = (from + (to - from) * j as f64 / n as f64, from + (to - from) * (j + 1) as f64 / n as f64);
+                let number = 1_000_000 + (a as u64) * 1000 + j as u64;
+                let Some(q) = weighted(&options, |q| q.1.weight, road_hash(road.settings.seed, road.id, number)) else { continue };
+                let laid =
+                    wce_tile::road_layout::Laid { piece: "straight", frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 } };
+                let keep = |index: usize, part: &wce_tile::road_pieces::Part| !part.solid && detail_kept(road, number, index, part);
+                let dress = wce_tile::road_layout::Dress {
+                    tilt: None,
+                    attrs: None,
+                    keep: Some(&keep),
+                    jitter: road.settings.irregularity,
+                    jitter_seed: road_hash(road.settings.seed, road.id, number ^ 0x1771_7E12),
+                    decal_depth: Some(DECK_DECAL_DEPTH),
+                };
+                match fit_dressed(&q.1, &q.3, &q.2, &laid, &Site { line: &plan.line, width, unit, ground: &deck_height }, &dress) {
+                    Ok(f) => items.push(RoadItem {
+                        road: *elem,
+                        text: f.text,
+                        position: f.position,
+                        meshes: vec![],
+                        export: None,
+                        building: None,
+                    }),
+                    Err(why) => wce_foundation::log::warn(format!("road {}: {} over a bridge: {why}", road.id, q.2)),
+                }
             }
         }
 
@@ -1527,6 +1569,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         keep: Some(&keep),
                         jitter: 0.0,
                         jitter_seed: 0,
+                        decal_depth: None,
                     };
                     match wce_tile::road_layout::fit_dressed(
                         fp,
@@ -1663,6 +1706,10 @@ fn level_past_rims(line: &[[f64; 2]], mut heights: Vec<f64>, gaps: &[(usize, usi
 /// as laid by hand and crossed, `bridge_wood_2`'s walkway 1 unit over the ground and its end pieces' ramps from it down to the ground
 /// (user 2026-11-08).
 const DECK_LIFT: f64 = 0.5;
+
+/// How tall the boxes of the road's decals laid on a bridge's deck are (metres): the deck's planks inside them, the ground or the water
+/// under the span not (the road's own boxes are 15 m, which over a shallow gap reached the bed).
+const DECK_DECAL_DEPTH: f64 = 3.0;
 
 /// Under a bridge's deck the bank beside the road is held back this far past its sides (more than a height-map pixel: 2 m on a
 /// 64-density tile; metres).
