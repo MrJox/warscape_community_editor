@@ -265,11 +265,9 @@ pub(crate) const TO_SCREEN_DOF_DISTORT_PS: &str =
     "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 pub(crate) const FOG_PS: &str = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 
-/// Stencil bit 7: the pixels projected decals may paint. With decals drawn, the game's G-buffer writes 129 (bit 7 | 1) for the ground,
-/// the TerrainBlend meshes and the buildings and props (RenderDoc 2026-11-15, wce_decal_test: a bridge's and a house's draws `REPLACE`
-/// 129; at the decals' `EQUAL` 129 every pixel but the grass's 0x41 passes), so a decal's box paints what stands in it too. (coast.rdc,
-/// at the lowest settings, which draw no decals, had its models at 1.) Trees and ropes stay at 1 (not captured). The other stencil tests
-/// leave the bit out (`STENCIL_LOW`).
+/// Stencil bit 7: the pixels projected decals may paint. The game's G-buffer writes 129 (bit 7 | 1) for the ground and the TerrainBlend
+/// meshes (its rocks) and 1 for every other model (RenderDoc, coast.rdc: events 307, 692, 808 against 552 .. 776); a decal's box paints
+/// the ground in it, not the tents, walls or tables standing there. The other stencil tests leave the bit out (`STENCIL_LOW`).
 pub(crate) const DECAL_RECEIVER: u8 = 0x80;
 
 /// The stencil bits below the decal bit: what the lights, the fog and the terrain's resolve compare.
