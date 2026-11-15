@@ -117,6 +117,7 @@ impl Prop {
             "bspline_flip" => "Flip chance",
             "bspline_yaw_jitter" => "Turn jitter",
             "bspline_side_jitter" => "Side jitter",
+            "destruction_preview" => "Destruction (preview)",
             attr => attr,
         }
     }
@@ -281,6 +282,7 @@ const WALL: &[Prop] = &[
     p("wall_flip", Kind::Bool),
     p("wall_access_every", Kind::Slider(0.0, 1000.0)),
     p("wall_defence_every", Kind::Slider(0.0, 1000.0)),
+    p("destruction_preview", Kind::Int(0, 3)),
 ];
 
 /// The tooltip of a wall's (`WceWallSpline`) Inspector row: what it does, for which kind of wall, in what units. `None` for a row without
@@ -321,6 +323,9 @@ pub fn wall_tip(attr: &str) -> Option<&'static str> {
             Each tower gets a capture point over the wall behind it, which whoever holds it makes the tower fire for. A procedural wall \
             puts them only where it is straight and level"
         }
+        "destruction_preview" => {
+            "The editor only, not saved for the game: the destruction level the wall's pieces show (0, intact). Raising it plays their             collapses, as a building's level does; each piece goes as far as its own levels"
+        }
         _ => return None,
     })
 }
@@ -348,6 +353,7 @@ const ROAD: &[Prop] = &[
     p("road_fence_damage", Kind::Slider(0.0, 1.0)),
     p("road_detail_density", Kind::Slider(0.0, 1.0)),
     p("road_irregularity", Kind::Slider(0.0, 1.0)),
+    p("destruction_preview", Kind::Int(0, 3)),
 ];
 
 /// Not TEd's: a building spline (`building_spline`): buildings laid along a line. The list of buildings is edited below the grid.

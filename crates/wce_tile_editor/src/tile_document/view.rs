@@ -1847,6 +1847,12 @@ impl Tile {
         if self.is_wall(elem) {
             self.wall_changed(elem);
         }
+
+        // A wall's or a road's generated pieces at its destruction level (a wall's made with every level for it, if not yet: then once
+        // remade).
+        if self.is_wall(elem) || self.is_road(elem) {
+            self.sync_generated(scene, elem);
+        }
     }
 
     /// The pieces whose properties were edited: their entities follow (the position, the visibility, the destruction level).

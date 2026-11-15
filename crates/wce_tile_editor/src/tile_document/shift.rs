@@ -151,6 +151,7 @@ impl Tile {
         self.columns_shifted(map);
         self.tech_shifted(map);
         self.walls_shifted(map);
+        self.generated_shifted(map);
         self.fire_shifted(map);
     }
 
