@@ -216,7 +216,12 @@ reads it, with a warning, and Save writes that repaired text.
   The unit's own definition (or its mount's) is replaced by the document; a part's file (a helmet's, a shield's) is worn where the unit's
   definitions reference it, at any depth (`Pins::focus`), and alone when they never do. The panel says which.
 - **Soldiers**: the seed (the editor's generator, not the game's), up to 16 side by side, the animation slot looped, play / pause and the
-  time, own colours, the stage's weather. **Pins** force what a slot shows (the seed's, nothing, or an alternative), a mesh's tint and its
+  time, own colours. **The stage's weather** (`weather.rs`) is set as a tile's: chips at the top left of the viewport, beside the compass
+  (climate, season, precipitation, time of day, climate change; the cloud lists the files they let through, with the campaign and snow
+  attrition filters, and a click lights the stage with one; the pencil opens it in the Weather tool), on the packs' variation database
+  (campaign `default_map` until one is picked, always a land battle); a filter the file no longer passes gives way to the first dry one
+  without snow that does. Climate and season pick the ground's grass too (`terrain/textures/battle/<climate>/grass/0_<season>_diffuse.dds`,
+  else the climate's summer, else the default climate's). **Pins** force what a slot shows (the seed's, nothing, or an alternative), a mesh's tint and its
   `.texture_array` decal; by default the slots above the selected node show it (*Show the selection*), and *Isolate* draws only its parts.
   A pin changes only its node: each node draws from a generator of its own.
 - **Structure** (`structure.rs`, laid out as the Tile tool's Scene panel): one row per node, an arrow, its icon (the root, a slot, a mesh,
@@ -245,7 +250,9 @@ reads it, with a warning, and Save writes that repaired text.
   by a soldier: assembled as the game assembles a ship (its pieces intact, a part on every point of a list), with the oars and weapons of
   its naval unit's logic (the row's; with none naming the file, the unit whose ship's definition is named most like it; chosen in the
   Preview panel), as rigid meshes, its decal and weighted parts (the shields along the sides) and sails at rest by the skinned path, its
-  ropes as the file has them, lifted onto its keel and framed. Its parts are picked and outlined by the renderer as a building's. A ship's
+  ropes as the file has them, lifted onto its keel and framed. A click picks the nearest part from the parts' triangles at rest (the
+  renderer picks only rigid meshes); the selection outlines the rigid parts by their entities and the sails and skinned parts by a mask of
+  their triangles. In ship mode the pictures show parts at rest, as the ship draws them (a sail on a soldier's palette came out empty). A ship's
   part file (`variantmeshes/_variantmodels/ships/<ship>/att_sas_01.variantmeshdefinition`: its sails) is shown on the first ship row's
   definition that references it, pinned where it does, with its edits; one no ship references, but in the ships' folder, is drawn alone as a
   ship's pieces, never on a soldier.
@@ -261,7 +268,7 @@ reads it, with a warning, and Save writes that repaired text.
   `loose/db/<table>_tables/!wce_unit_tool`; they sort before the game's, so they are read first.
 - While the tool is active the other tools' layers are hidden (`Tool::deactivated` shows them again).
 - Script commands: `unit_preview`, `unit_seed`, `unit_select`, `unit_pin`, `unit_set`, `unit_edit`, `unit_play`, `unit_isolate`,
-  `unit_reorder`, `unit_click_part`, `unit_grid`, `unit_takes`, `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
+  `unit_reorder`, `unit_click_part`, `unit_weather`, `unit_grid`, `unit_takes`, `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
 
 ## Cross-tool composition (Phase 7)
 

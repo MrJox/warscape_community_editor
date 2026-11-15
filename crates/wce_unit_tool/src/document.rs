@@ -124,16 +124,37 @@ pub struct VmdDocument {
 
     /// The tree of the document as of a history version.
     tree: Option<(u64, Arc<VariantMeshFile>)>,
+
+    /// The stage's grass (the weather chips' climate and season).
+    ground: String,
 }
 
+/// The stage's grass until the weather chips pick a climate's.
+const GROUND: &str = "terrain/textures/battle/default/grass/0_su_diffuse.dds";
+
 impl VmdDocument {
+    /// The stage's grass: kept for the next publish, and the ground to draw now.
+    pub fn set_ground(&mut self, texture: &str, game_units: f32) -> Terrain {
+        texture.clone_into(&mut self.ground);
+        let units = game_units.max(1e-3);
+        Terrain::flat(400.0 / units, &self.ground, 8.0 / units)
+    }
+
     /// # Errors
     ///
     /// The bytes are not a variant mesh definition, even repaired.
     pub fn new(source: Source, bytes: Vec<u8>, loose_dir: PathBuf) -> Result<Self, String> {
         let file = VariantMeshFile::parse(bytes).map_err(|e| e.to_string())?;
         let repaired = file.repaired;
-        Ok(Self { core: DocumentCore::new(), history: CommandStack::new(file.doc), source, repaired, loose_dir, tree: None })
+        Ok(Self {
+            core: DocumentCore::new(),
+            history: CommandStack::new(file.doc),
+            source,
+            repaired,
+            loose_dir,
+            tree: None,
+            ground: GROUND.to_owned(),
+        })
     }
 
     pub fn xml(&self) -> &XmlDoc {
@@ -374,7 +395,7 @@ impl Document for VmdDocument {
     fn publish(&mut self, scene: &mut RenderScene, layer: LayerId) {
         scene.clear_layer(layer);
         let units = scene.game_units.max(1e-3);
-        let ground = Terrain::flat(400.0 / units, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0 / units);
+        let ground = Terrain::flat(400.0 / units, &self.ground, 8.0 / units);
         scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Terrain(ground), SourceRef { doc: self.id(), item: 0 });
     }
 

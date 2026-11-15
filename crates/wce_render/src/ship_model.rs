@@ -69,7 +69,7 @@ pub struct PartMeshes {
 }
 
 /// What a model holds; a model that can't be read is taken for a solid one (the rigid path reports it).
-fn part_meshes(read: &Reader, model: &str) -> PartMeshes {
+pub fn part_meshes(read: &Reader, model: &str) -> PartMeshes {
     let solid = PartMeshes { solid: true, ..PartMeshes::default() };
     let Some(bytes) = read(model) else { return solid };
     let Ok(m) = RigidModel::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())) else { return solid };
