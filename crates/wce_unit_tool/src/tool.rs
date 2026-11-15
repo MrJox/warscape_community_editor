@@ -2342,6 +2342,14 @@ impl Tool for UnitTool {
 
     fn deactivated(&mut self, e: &mut Editor) {
         self.show_others(e);
+        // The outlines' selection is the tool's own (its masks, a ship's parts): the next tool starts without it; it comes back with the
+        // tool.
+        if self.doc != 0 && e.selection.items().iter().any(|r| r.doc == self.doc) {
+            e.selection.clear();
+        }
+
+        self.mask_for = None;
+        self.ship_selection_lost();
     }
 
     fn game_changed(&mut self, e: &mut Editor) {
