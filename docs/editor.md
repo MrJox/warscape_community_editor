@@ -229,6 +229,14 @@ reads it, with a warning, and Save writes that repaired text.
   counts and the problems are at the bottom. The **Inspector** edits the selected node: a mesh's model, decals
   and imposter (with a filtered list of the packs' files), its colour mask, tints; a slot's name, attach point (the weapon bones and the
   points of the model above), probability; a reference's file; attributes the panel doesn't know as text.
+- **The viewport**: a click selects the part under the cursor (a ray against the soldiers' parts as posed that frame, on the CPU:
+  `wce_render::skinned_geometry`); the selected node's parts are outlined as a selected building is (a `selection_mask` overlay of their
+  triangles, made again each frame). A part from another file selects its reference.
+- **Pictures** (`thumbs.rs`, on the editor's thumbnail renderer, `wce_editor::thumbnails`, which the Create panel uses too): a slot's
+  alternatives in the Inspector are pictures (a click shows one, a second lets the seed pick), as are a texture array's decals; each file
+  field shows a picture of what it names and a browse button (a grid of pictures or a list, filtered); Unit files and Units show pictures
+  with their grid toggle. Parts are rendered alone in the previewed unit's standing pose and colours, from the front; textures are a small
+  mip decoded on the CPU. Kept in the cache folder, named by what they show.
 - **Problems**: files the packs don't have (models, decals and the textures of their arrays, references), masks and probabilities out of
   range, attach points nothing has, references that come back to the file. A click selects the node.
 - **The unit's looks (DB)** (Preview panel): the previewed unit's `unit_variants` row for its faction (the definition it wears, *Wear the
@@ -237,7 +245,7 @@ reads it, with a warning, and Save writes that repaired text.
   `loose/db/<table>_tables/!wce_unit_tool`; they sort before the game's, so they are read first.
 - While the tool is active the other tools' layers are hidden (`Tool::deactivated` shows them again).
 - Script commands: `unit_preview`, `unit_seed`, `unit_select`, `unit_pin`, `unit_set`, `unit_edit`, `unit_play`, `unit_isolate`,
-  `unit_reorder`, `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
+  `unit_reorder`, `unit_click_part`, `unit_grid`, `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
 
 ## Cross-tool composition (Phase 7)
 

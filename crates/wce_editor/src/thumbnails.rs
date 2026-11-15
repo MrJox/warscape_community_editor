@@ -3,6 +3,9 @@
 //! PNGs in the cache folder (`thumbnails/<game folder hash>/`), so that each is made once per game. They are lit by the weather the
 //! editor shows when they are made.
 //!
+//! Skinned parts (the Unit tool's) come with their bounds (`request_framed`: the renderer has none for them), are seen from in front, and stand
+//! on a skin's ground. `WCE_THUMB_DEBUG` logs each thumbnail's bounds, camera and draws.
+//!
 //! The rendering has a renderer of its own, made when there is something to render and dropped a while after the last one: the editor's
 //! keeps its draw lists, sizes and temporal state. A thumbnail waits for its models to load (a few frames), then renders at twice its size
 //! and is box-filtered down.
@@ -10,8 +13,8 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 
-use wce_editor::editor::Editor;
-use wce_editor::images::ImageRef;
+use crate::editor::Editor;
+use crate::images::ImageRef;
 use wce_formats::png_file::PngFile;
 use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, length, normalize};
@@ -35,6 +38,14 @@ const IDLE_DROP_S: f64 = 20.0;
 /// The direction the camera looks from: south-east of the model and 40 degrees above it (24 before: what is wide and low, decals above
 /// all, was seen too flat).
 const VIEW_FROM: [f32; 3] = [0.75, 1.05, -1.0];
+
+/// A unit's parts (skinned) are seen from in front of the figure (it faces +z), a little to its side and above.
+const UNIT_VIEW_FROM: [f32; 3] = [0.55, 0.45, 1.0];
+
+/// Where the camera looks from for a job: skinned parts or the rest.
+fn view_from(skinned: bool) -> [f32; 3] {
+    if skinned { UNIT_VIEW_FROM } else { VIEW_FROM }
+}
 
 /// The sun is put behind the camera, this far round to its side (degrees), and at least this high: under the weather's own sun a model
 /// was often seen from its dark side. Its side gives the faces some shading.
@@ -74,18 +85,25 @@ enum Phase {
     Settle { camera: Camera, done: u32, renders: u32, effects: bool },
 }
 
+/// What a thumbnail shows: its id, its parts, and its bounds when the caller knows them (skinned parts: the renderer has none for them).
+type Request = (String, Vec<(Float4x4, Payload)>, Option<(Float3, Float3)>);
+
 struct Job {
     id: String,
     scene: RenderScene,
+    bounds: Option<(Float3, Float3)>,
+
+    /// The skinned parts' models, which the draw stats don't count while they load.
+    skinned: Vec<String>,
     waited: u32,
     phase: Phase,
 }
 
 #[derive(Default)]
-pub(crate) struct Thumbnails {
+pub struct Thumbnails {
     renderer: Option<Renderer>,
     target: RenderTarget,
-    queue: VecDeque<(String, Vec<(Float4x4, Payload)>)>,
+    queue: VecDeque<Request>,
     job: Option<Job>,
 
     /// Ids with nothing to show (no models, or none loaded).
@@ -115,7 +133,7 @@ fn fnv(bytes: &[u8]) -> u64 {
 
 /// The cache folder of a game folder's thumbnails. Rome 2's are in a folder of their own below it: their ground is a skin (`add_ground`);
 /// the ones made before on a baked ground came out black, and are not taken.
-pub(crate) fn cache_dir(e: &Editor) -> PathBuf {
+pub fn cache_dir(e: &Editor) -> PathBuf {
     let game = e.settings_ref().game_dir().map(|d| d.display().to_string()).unwrap_or_default();
     let dir = e.settings_ref().paths().cache_dir().join("thumbnails").join(format!("{:016x}", fnv(game.to_lowercase().as_bytes())));
     if e.game().key == wce_vfs::GameProfile::ROME_2.key { dir.join("skin_ground") } else { dir }
@@ -149,7 +167,7 @@ impl Thumbnails {
     pub fn known(&self, id: &str) -> bool {
         self.failed.contains(id)
             || self.job.as_ref().is_some_and(|j| j.id == id)
-            || self.queue.iter().any(|(q, _)| q == id)
+            || self.queue.iter().any(|(q, ..)| q == id)
             || self.dir.join(file_name(id)).exists()
     }
 
@@ -164,6 +182,11 @@ impl Thumbnails {
 
     /// Queues an entry's models (`first`: before the others, what the mouse is on).
     pub fn request(&mut self, id: &str, parts: Vec<(Float4x4, Payload)>, first: bool) {
+        self.request_framed(id, parts, None, first);
+    }
+
+    /// [`Self::request`] with the bounds to frame (world, scene units): for what the renderer has no bounds of, a unit's skinned parts.
+    pub fn request_framed(&mut self, id: &str, parts: Vec<(Float4x4, Payload)>, bounds: Option<(Float3, Float3)>, first: bool) {
         if self.known(id) {
             return;
         }
@@ -175,9 +198,9 @@ impl Thumbnails {
 
         self.asked += 1;
         if first {
-            self.queue.push_front((id.to_owned(), parts));
+            self.queue.push_front((id.to_owned(), parts, bounds));
         } else {
-            self.queue.push_back((id.to_owned(), parts));
+            self.queue.push_back((id.to_owned(), parts, bounds));
         }
     }
 
@@ -229,19 +252,27 @@ impl Thumbnails {
         }
 
         if self.job.is_none() {
-            let Some((id, parts)) = self.queue.pop_front() else { return };
+            let Some((id, parts, bounds)) = self.queue.pop_front() else { return };
             let mut scene = RenderScene::default();
+            let view = view_from(parts.iter().any(|(_, p)| matches!(p, Payload::SkinnedInstance(_))));
             let mut env = e.scene.environment.active.clone().unwrap_or_default();
-            env.sun_azimuth = VIEW_FROM[0].atan2(VIEW_FROM[2]).to_degrees() + SUN_TURN;
+            env.sun_azimuth = view[0].atan2(view[2]).to_degrees() + SUN_TURN;
             env.sun_elevation = env.sun_elevation.max(SUN_LEAST_ELEVATION);
             scene.environment.active = Some(env);
             scene.game_units = e.scene.game_units;
             let layer = scene.add_layer(0, "thumbnail");
+            let mut skinned = vec![];
             for (m, p) in parts {
+                if let Payload::SkinnedInstance(si) = &p {
+                    skinned.extend(si.parts.iter().map(|part| format!("{}{}", part.model, wce_scene::render_scene::MODEL_SKINNED_SUFFIX)));
+                }
+
                 scene.add(layer, m, p, SourceRef::default());
             }
 
-            self.job = Some(Job { id, scene, waited: 0, phase: Phase::Loading });
+            skinned.sort();
+            skinned.dedup();
+            self.job = Some(Job { id, scene, bounds, skinned, waited: 0, phase: Phase::Loading });
         }
 
         let (Some(r), Some(job)) = (self.renderer.as_mut(), self.job.as_mut()) else { return };
@@ -254,7 +285,8 @@ impl Thumbnails {
                 }
 
                 r.render(&job.scene, &ViewParams { camera: Camera::default(), time_s: 0.0 }, &mut self.target);
-                if r.draw_stats().waiting_models > 0 && job.waited < MAX_WAIT_FRAMES {
+                let skinned_waiting = job.skinned.iter().any(|m| r.models().model(m).is_none()) && r.models().pending() > 0;
+                if (r.draw_stats().waiting_models > 0 || skinned_waiting) && job.waited < MAX_WAIT_FRAMES {
                     return;
                 }
 
@@ -265,7 +297,9 @@ impl Thumbnails {
                 };
 
                 // The ground's GPU side is made on a loading thread.
-                let ground = add_ground(&mut job.scene, floor, radius, r.render_game() == wce_render::renderer::game::RenderGame::Rome2);
+                // Skinned parts: the ground of a skin (legacy patches), as Rome 2's: the baked material's terrain pass drew over them.
+                let skin = r.render_game() == wce_render::renderer::game::RenderGame::Rome2 || !job.skinned.is_empty();
+                let ground = add_ground(&mut job.scene, floor, radius, skin);
                 job.phase = Phase::Ground { camera, ground, waited: 0 };
                 return;
             }
@@ -303,6 +337,26 @@ impl Thumbnails {
                     return;
                 }
             }
+        }
+
+        if std::env::var("WCE_THUMB_DEBUG").is_ok()
+            && let Some(r) = self.renderer.as_ref()
+            && let Some(job) = self.job.as_ref()
+        {
+            let s = r.draw_stats();
+            log::info(format!(
+                "thumbnail {}: skinned runs {}, phase camera {:?}, bounds {:?}, {} entities, draw calls {}, triangles {}",
+                job.id,
+                r.skinned_runs(),
+                match &job.phase {
+                    Phase::Settle { camera, .. } => Some((camera.eye, camera.target, camera.znear, camera.zfar)),
+                    _ => None,
+                },
+                job.bounds,
+                job.scene.entities().len(),
+                s.draw_calls,
+                s.triangles
+            ));
         }
 
         let job = self.job.take().expect("a job");
@@ -435,6 +489,10 @@ fn ground_height(job: &Job) -> f32 {
 fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     let mut lo = Float3::new(f32::MAX, f32::MAX, f32::MAX);
     let mut hi = Float3::new(f32::MIN, f32::MIN, f32::MIN);
+    if let Some((a, b)) = job.bounds {
+        (lo, hi) = (a, b);
+    }
+
     for en in job.scene.entities() {
         // A decal is a box, the unit one under its matrix.
         if matches!(en.payload, Payload::Decal(_)) {
@@ -482,7 +540,8 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     let centre = (lo + hi) * 0.5;
     let radius = length((hi - lo) * 0.5).max(0.25);
     let cam = Camera::default();
-    let d = normalize(Float3::new(VIEW_FROM[0], VIEW_FROM[1], VIEW_FROM[2]));
+    let view = view_from(!job.skinned.is_empty());
+    let d = normalize(Float3::new(view[0], view[1], view[2]));
     // The bounding sphere of the box is loose for long, low models: a little closer than it asks.
     let dist = radius / (cam.fov_y * 0.5).sin() * 0.85;
     let camera = Camera {
@@ -492,7 +551,8 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
         zfar: dist + radius * (GROUND_SPAN + 4.0),
         ..cam
     };
-    Some((camera, Float3::new(centre.x, ground_height(job), centre.z), radius))
+    let floor = if job.bounds.is_some() { lo.y } else { ground_height(job) };
+    Some((camera, Float3::new(centre.x, floor, centre.z), radius))
 }
 
 /// Box-filters RGBA8 pixels to half their size, alpha 255.

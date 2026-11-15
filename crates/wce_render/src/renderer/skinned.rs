@@ -539,6 +539,11 @@ impl Renderer {
     }
 
     /// Draws the units into the bound G-buffer. The rigid instances stay bound afterwards.
+    /// The skinned draws the last frame prepared (one per mesh and colours run): for checks.
+    pub fn skinned_runs(&self) -> usize {
+        self.skinned.runs.len()
+    }
+
     pub(crate) fn draw_skinned_gbuffer(&mut self) {
         if self.skinned.runs.is_empty() {
             return;
