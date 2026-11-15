@@ -23,6 +23,96 @@ pub const OWN_DIR: &str = "variations";
 /// The maps an export makes from the terrain layers: a project's own copies of them are not taken over.
 const MAPS: [&str; 3] = ["height_map_0.png", "blend_map.tif", "ground_type_map.png"];
 
+/// The file in a variation written for the loaders ([`served`]) that says what it was written from ([`stamp_of`]); an export's write
+/// has none (it is made from the editor's scene, roads and walls laid), so a loader writes it again.
+pub const STAMP: &str = "wce_variation.stamp";
+
+/// Held while variations are written under a [`build_root`]: by the loaders ([`served`], from the map context's threads) and the exports
+/// (`TileDocument::materialize_variations`), one at a time.
+pub fn writing() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What a [`STAMP`] is made with: another when what `materialize` writes changes.
+const STAMP_VERSION: u32 = 1;
+
+/// Where the variations of the combined projects in a `raw_data` folder are written as projects of their own: beside its kit layout,
+/// `<projects>/build/variations/raw_data` for the projects' `<projects>/assembly_kit/raw_data` (docs/plans/tile_variations.md, the
+/// loaders). Throw-away: made again when asked for.
+#[must_use]
+pub fn build_root(raw_root: &Path) -> PathBuf {
+    let base = raw_root.parent().and_then(Path::parent).unwrap_or(raw_root);
+    base.join("build").join("variations").join("raw_data")
+}
+
+/// What a variation of the combined project in `tile_dir` is written from, as a [`STAMP`]: the scene, the layers, the entry, the files the
+/// variations share and its own, each by its name, size and time.
+#[must_use]
+pub fn stamp_of(tile_dir: &Path, entry: Option<&Path>, variation: &str) -> String {
+    let mut out = format!("wce variation {STAMP_VERSION} {variation}\n");
+    let mut add = |path: &Path| {
+        if let Ok(m) = std::fs::metadata(path) {
+            let time = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            out += &format!("{} {} {time}\n", path.display(), m.len());
+        }
+    };
+
+    if let Some(e) = entry {
+        add(e);
+    }
+
+    for dir in [tile_dir.to_path_buf(), tile_dir.join(OWN_DIR).join(variation)] {
+        let mut files = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|f| f.path())
+            .filter(|p| p.is_file() && !p.to_string_lossy().ends_with(".bak"))
+            .collect::<Vec<_>>();
+        files.sort();
+        for f in files {
+            add(&f);
+        }
+    }
+
+    out
+}
+
+/// For the loaders (`sources::find_tile`): the folder of a variation the combined project in `tile_dir` (under the `raw_data` folder
+/// `raw_root`) serves, a project of its own under [`build_root`], written again when what it was written from changed ([`STAMP`]). One
+/// at a time: the map context asks from several threads.
+///
+/// # Errors
+///
+/// The project does not open, has no such variation, or a file can't be written.
+pub fn served(tile_dir: &Path, variation: &str, raw_root: &Path) -> Result<PathBuf, String> {
+    let _one = writing();
+
+    // The project's name of it (a map may write it in another case).
+    let listed = super::listed_in_file(&tile_dir.join(WCE_FILE));
+    let name = listed
+        .iter()
+        .find(|v| v.eq_ignore_ascii_case(variation))
+        .cloned()
+        .ok_or_else(|| format!("{} has no variation '{variation}'", tile_dir.display()))?;
+    let found = crate::tile_project::find_tile_info(&tile_dir.join(&name));
+    let entry = found.entry.as_ref().ok_or_else(|| format!("{}: no tile database entry", tile_dir.display()))?;
+    let row = entry.find_variation(&name).ok_or_else(|| format!("{} has no variation '{name}'", entry.file().display()))?;
+    let build = build_root(raw_root);
+    let dir = entry.variation_folder(&build, row);
+    let stamp = stamp_of(tile_dir, Some(entry.file()), &name);
+    if std::fs::read_to_string(dir.join(STAMP)).is_ok_and(|s| s == stamp) && crate::tile_project::has_tile(&dir) {
+        return Ok(dir);
+    }
+
+    let project = TileProject::open(&tile_dir.join(&name))?;
+    let m = project.materialize(&name, &project.scene.save(), &build)?;
+    put(&m.dir.join(STAMP), stamp.as_bytes())?;
+    wce_foundation::log::info(format!("{}: {name} written as a project of its own in {}", tile_dir.display(), m.dir.display()));
+    Ok(m.dir)
+}
+
 /// A variation written as a project of its own.
 #[derive(Clone, Debug)]
 pub struct Materialized {
@@ -239,6 +329,25 @@ impl TileProject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_build_folder_is_beside_the_kit_layout_and_a_change_is_a_new_stamp() {
+        let projects = std::path::Path::new("projects");
+        assert_eq!(build_root(&projects.join("assembly_kit").join("raw_data")), projects.join("build").join("variations").join("raw_data"));
+
+        let dir = std::env::temp_dir().join(format!("wce_stamp_test_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(OWN_DIR).join("small")).unwrap();
+        std::fs::write(dir.join(WCE_FILE), b"<project/>").unwrap();
+        let before = stamp_of(&dir, None, "small");
+        assert_eq!(stamp_of(&dir, None, "small"), before, "the same files, the same stamp");
+        std::fs::write(dir.join(OWN_DIR).join("small").join("nogo.png"), b"x").unwrap();
+        let own = stamp_of(&dir, None, "small");
+        assert_ne!(own, before, "a file of its own");
+        assert_eq!(stamp_of(&dir, None, "minor").lines().count(), before.lines().count(), "not another variation's");
+        std::fs::write(dir.join(WCE_FILE), b"<project wce_variations=\"small\"/>").unwrap();
+        assert_ne!(stamp_of(&dir, None, "small"), own, "the scene");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn project_files_are_not_shared_files() {

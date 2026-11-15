@@ -177,7 +177,7 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
     }
 
     for ((loc, var), (n, at)) in used {
-        if wce_tile::sources::find_tile(roots, &loc, &var).is_none() {
+        if !wce_tile::sources::serves(roots, &loc, &var) {
             out.push(Finding {
                 severity: Severity::Warning, cell: Some(at),
                 text: format!("{loc}\\{var} ({n} placements, the first at {}, {}): its folder is in no kit (the packs' copy is drawn, if a pack has it)", at.0, at.1),
