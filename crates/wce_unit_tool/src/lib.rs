@@ -3,6 +3,7 @@
 pub mod db;
 mod document;
 mod problems;
+pub mod slot_kinds;
 mod tool;
 
 pub use document::VmdDocument;

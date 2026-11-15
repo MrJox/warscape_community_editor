@@ -42,6 +42,7 @@ mod thumbs;
 use crate::db::{LooksTables, Row, project_path};
 use crate::document::{Source, Structural, VmdDocument};
 use crate::problems::{Problem, WEAPON_POINTS, check};
+use crate::slot_kinds::{Field, SlotKinds};
 
 /// The Unit tool's id: the owner of its documents, its settings' table.
 pub const UNIT_TOOL_ID: &str = "unit";
@@ -226,6 +227,10 @@ pub struct UnitTool {
     /// The pictures of models, definitions, textures and alternatives.
     pics: thumbs::ThumbState,
 
+    /// What each slot name takes, read from the game's definitions on a thread.
+    kinds: Option<Arc<SlotKinds>>,
+    kinds_rx: Option<Receiver<SlotKinds>>,
+
     // The filters of the lists and pickers.
     file_filter: String,
     unit_filter: String,
@@ -288,6 +293,8 @@ impl Default for UnitTool {
             tree: structure::TreeState::default(),
             dragging_file: None,
             pics: thumbs::ThumbState::new(),
+            kinds: None,
+            kinds_rx: None,
             file_filter: String::new(),
             unit_filter: String::new(),
             combo_filters: BTreeMap::new(),
@@ -370,7 +377,35 @@ impl UnitTool {
         });
     }
 
+    /// What each slot name takes: every definition of the packs read once, on a thread.
+    fn load_kinds(&mut self, e: &Editor) {
+        if self.kinds.is_some() || self.kinds_rx.is_some() {
+            return;
+        }
+
+        let Some(vfs) = e.vfs().cloned() else { return };
+        let (tx, rx) = channel();
+        self.kinds_rx = Some(rx);
+        std::thread::spawn(move || {
+            let mut kinds = SlotKinds::default();
+            for p in vfs.list("variantmeshes/", ".variantmeshdefinition") {
+                if let Some(f) = vfs.read(p).ok().and_then(|b| VariantMeshFile::parse(b).ok()) {
+                    kinds.add(&f);
+                }
+            }
+
+            let _ = tx.send(kinds);
+        });
+    }
+
     fn poll(&mut self) {
+        if let Some(rx) = &self.kinds_rx
+            && let Ok(kinds) = rx.try_recv()
+        {
+            self.kinds = Some(Arc::new(kinds));
+            self.kinds_rx = None;
+        }
+
         if let Some(rx) = &self.catalog_rx {
             match rx.try_recv() {
                 Ok(Ok((catalog, schema))) => {
@@ -1718,7 +1753,18 @@ impl UnitTool {
 
     /// A file's path: its name above, the text, and a button listing the packs' files.
     /// A file's path: a picture of what it names, its name, the text, and a button browsing the packs' files with pictures.
-    fn path_field(&mut self, e: &mut Editor, elem: usize, name: &str, tip: &str, items: &[String], kind: thumbs::Browse) {
+    /// `slot`: the slot the node is an alternative of, for what the browser lists.
+    #[allow(clippy::too_many_arguments, reason = "a field's description, laid out in the call")]
+    fn path_field(
+        &mut self,
+        e: &mut Editor,
+        elem: usize,
+        name: &str,
+        tip: &str,
+        items: &[String],
+        kind: thumbs::Browse,
+        slot: Option<&wce_formats::variant_mesh::Slot>,
+    ) {
         let Some(value) = document(e).map(|d| d.xml().get(elem, name).unwrap_or_default()) else { return };
         let side = 2.0 * gui::frame_height_with_spacing() + gui::text_line_height_with_spacing() - gui::item_spacing().y;
         let thing = match kind {
@@ -1769,7 +1815,11 @@ impl UnitTool {
         }
 
         gui::same_line();
-        if let Some(p) = self.browse(e, &format!("{name}{elem}"), &normalize(&value), items, kind)
+        let field = if kind == thumbs::Browse::Texture { Field::Decal } else { Field::Part };
+        let folders =
+            slot.and_then(|s| self.kinds.as_ref().map_or_else(|| SlotKinds::default().folders(s, field), |k| k.folders(s, field)));
+        let only = slot.zip(folders.as_deref()).map(|(s, f)| (s.name.as_str(), f));
+        if let Some(p) = self.browse(e, &format!("{name}{elem}"), &normalize(&value), items, kind, only)
             && let Some(d) = document(e)
         {
             d.set_value(elem, name, &p, 0);
@@ -1787,8 +1837,12 @@ impl UnitTool {
         let Some(tree) = document(e).map(|d| d.tree()) else { return };
         let Some(Node::Mesh(mesh)) = tree.node(path) else { return };
         let elem = mesh.element;
+        let slot = match path.split_last().and_then(|(_, up)| tree.node(up)) {
+            Some(Node::Slot(s)) => Some(s),
+            _ => None,
+        };
         gui::separator_text(if path.is_empty() { "The file's root" } else { "Mesh" });
-        self.path_field(e, elem, "model", "The part's model (RMV2).", &listings.0, thumbs::Browse::Model);
+        self.path_field(e, elem, "model", "The part's model (RMV2).", &listings.0, thumbs::Browse::Model, slot);
         self.path_field(
             e,
             elem,
@@ -1796,6 +1850,7 @@ impl UnitTool {
             "A decal's colours: a texture, or a .texture_array of them (one picked per soldier).",
             &listings.1,
             thumbs::Browse::Texture,
+            slot,
         );
         self.path_field(
             e,
@@ -1804,8 +1859,9 @@ impl UnitTool {
             "The decal's normals: a texture, or a .texture_array.",
             &listings.1,
             thumbs::Browse::Texture,
+            slot,
         );
-        self.path_field(e, elem, "imposter_model", "The model drawn far away.", &listings.0, thumbs::Browse::Model);
+        self.path_field(e, elem, "imposter_model", "The model drawn far away.", &listings.0, thumbs::Browse::Model, slot);
         let Some(d) = document(e) else { return };
 
         gui::separator_text("Colour mask");
@@ -2046,9 +2102,13 @@ impl UnitTool {
         let definitions = self.listings(e).definitions.clone();
         let tree = document(e)?.tree();
         let Some(Node::Reference { element, definition }) = tree.node(path) else { return None };
+        let slot = match path.split_last().and_then(|(_, up)| tree.node(up)) {
+            Some(Node::Slot(s)) => Some(s),
+            _ => None,
+        };
         gui::separator_text("Reference");
         gui::text_wrapped("Another definition file, used whole as this alternative.");
-        self.path_field(e, element, "definition", "The definition file.", &definitions, thumbs::Browse::Definition);
+        self.path_field(e, element, "definition", "The definition file.", &definitions, thumbs::Browse::Definition, slot);
         let file = normalize(definition);
         (!file.is_empty() && gui::button("Open it")).then_some(file)
     }
@@ -2192,6 +2252,7 @@ impl Tool for UnitTool {
     fn update(&mut self, e: &mut Editor) {
         self.hide_others(e);
         self.load_catalog(e);
+        self.load_kinds(e);
         self.poll();
         self.light(e);
         let Some(id) = e.docs.of_tool(UNIT_TOOL_ID).filter(|&id| e.docs.find_as::<VmdDocument>(id).is_some()) else {
@@ -2568,6 +2629,21 @@ fn register(c: &mut CommandRegistry<Editor>) {
             _ => fail("files or units"),
         })
     });
+
+    c.add(
+        "unit_takes",
+        "unit_takes <slot path>",
+        "what a slot's pickers list: its models' and definitions' folders, its decals'",
+        |e, a| {
+            let Some(path) = a.first().and_then(|p| parse_path(p)) else { return fail("usage: unit_takes <slot path>") };
+            with_unit(e, |t, e| {
+                let Some(kinds) = t.kinds.clone() else { return CommandResult { repeat: true, ..ok("") } };
+                let Some(tree) = document(e).map(|d| d.tree()) else { return fail("no definition open") };
+                let Some(Node::Slot(slot)) = tree.node(&path) else { return fail("not a slot") };
+                ok(format!("{}: parts {:?}; decals {:?}", slot.name, kinds.folders(slot, Field::Part), kinds.folders(slot, Field::Decal)))
+            })
+        },
+    );
 
     c.add("unit_isolate", "unit_isolate <0|1>", "only the selected node's parts", |e, a| {
         let on = a.first().is_some_and(|v| v == "1");

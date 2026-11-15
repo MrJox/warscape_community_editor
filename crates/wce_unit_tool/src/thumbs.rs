@@ -79,6 +79,9 @@ pub(super) struct ThumbState {
 
     /// The browse popups and the Unit files and Units panels show pictures (else lists).
     pub browse_grid: bool,
+
+    /// The browse popups list only what the node's slot takes.
+    pub restrict: bool,
     pub files_grid: bool,
     pub units_grid: bool,
     filters: HashMap<String, String>,
@@ -87,7 +90,7 @@ pub(super) struct ThumbState {
 impl ThumbState {
     /// The browse popups start as grids of pictures; the panels as lists.
     pub fn new() -> Self {
-        Self { browse_grid: true, ..Self::default() }
+        Self { browse_grid: true, restrict: true, ..Self::default() }
     }
 }
 
@@ -401,7 +404,16 @@ impl UnitTool {
     }
 
     /// A button with a picture's icon: its popup lists `items` (filtered; as a grid of pictures or a list) and returns the one picked.
-    pub(super) fn browse(&mut self, e: &mut Editor, id: &str, current: &str, items: &[String], kind: Browse) -> Option<String> {
+    /// `only`: what the node's slot takes (its name, and the folders), listed alone unless the user lifts it.
+    pub(super) fn browse(
+        &mut self,
+        e: &mut Editor,
+        id: &str,
+        current: &str,
+        items: &[String],
+        kind: Browse,
+        only: Option<(&str, &[String])>,
+    ) -> Option<String> {
         let popup = format!("##browse{id}");
         if gui::small_button(&format!("{}##{id}", icons::IMAGE)) {
             gui::open_popup(&popup);
@@ -424,9 +436,28 @@ impl UnitTool {
             let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
             gui::same_line();
             grid_toggle(&format!("{id}_grid"), &mut self.pics.browse_grid);
+            if only.is_none() {
+                gui::text_disabled("Any file: nothing tells what this field takes.");
+                gui::same_line();
+            }
 
-            let shown: Vec<&String> = items.iter().filter(|i| wce_editor::pickers::matches(i, &words)).collect();
-            gui::same_line();
+            if let Some((slot, folders)) = only {
+                gui::checkbox(&format!("Only what '{slot}' takes##{id}_only"), &mut self.pics.restrict);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(&format!(
+                        "What slots named '{slot}' hold in the game's definitions (and this one's own alternatives):\n{}",
+                        folders.join("\n")
+                    ));
+                }
+
+                gui::same_line();
+            }
+
+            let restricted = only.filter(|_| self.pics.restrict).map(|(_, f)| f);
+            let shown: Vec<&String> = items
+                .iter()
+                .filter(|i| restricted.is_none_or(|f| crate::slot_kinds::within(i, f)) && wce_editor::pickers::matches(i, &words))
+                .collect();
             gui::text_disabled(&format!("{} of {}", shown.len(), items.len()));
             if gui::begin_child(&format!("##{id}_list"), v2(0.0, 0.0), 0, 0) {
                 if self.pics.browse_grid {
