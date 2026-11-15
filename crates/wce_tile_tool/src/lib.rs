@@ -22,6 +22,7 @@ pub mod ground_views;
 mod height_import_dialog;
 mod image_brush;
 pub mod kit_prompt;
+mod launch_climate;
 pub mod launch_prompt;
 mod layers_panel;
 mod links_editor;
