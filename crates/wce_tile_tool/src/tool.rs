@@ -1815,6 +1815,31 @@ impl TileTool {
         Ok(x)
     }
 
+    /// The projects an export compiles ([`ExportPart`]): the open project, or a combined project's variations (`only`, empty: all) each
+    /// written as a project of its own (docs/plans/tile_variations.md); each with the radar drawn from it (`crate::minimap_panel::
+    /// put_export_radar`).
+    ///
+    /// # Errors
+    ///
+    /// A variation is not written, or a scene does not read.
+    pub(crate) fn export_parts(&mut self, e: &mut Editor, id: DocumentId, only: &[String]) -> Result<Vec<ExportPart>, String> {
+        let radar = crate::minimap_panel::ExportRadar::of(e);
+        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
+        if d.project().is_combined() {
+            let made = d.materialize_variations_with(only, false, &mut |tile, dir| {
+                radar.put(tile, dir);
+                Ok(())
+            })?;
+            return variation_parts(made);
+        }
+
+        let text = d.text_for_export(false)?;
+        let generated = d.tile().has_generated_buildings();
+        let dir = d.project().dir.clone();
+        radar.put(d.tile_mut(), &dir);
+        Ok(vec![(dir, text, d.tile_mut().kit_walls_for_export(), generated)])
+    }
+
     /// What an export needs from the editor, taken on the main thread (the tile saved first if it is modified) so that the compile can run
     /// on another ([`ExportInputs::run`]).
     ///
@@ -1833,16 +1858,8 @@ impl TileTool {
             e.docs.save_one(id)?;
         }
 
-        // The scene as the editor holds it (the prefab references with their contents), as TEd's.
-        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        let parts = if d.project().is_combined() {
-            // A combined project's variations, each written as a project of its own (docs/plans/tile_variations.md).
-            variation_parts(d.materialize_variations(only.unwrap_or_default(), false)?)?
-        } else {
-            let text = d.text_for_export(false)?;
-            let generated = d.tile().has_generated_buildings();
-            vec![(d.project().dir.clone(), text, d.tile_mut().kit_walls_for_export(), generated)]
-        };
+        // The scene as the editor holds it (the prefab references with their contents), as TEd's; each with its radar.
+        let parts = self.export_parts(e, id, only.unwrap_or_default())?;
         let generated = parts.iter().any(|p| p.3);
         let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
@@ -1867,15 +1884,8 @@ impl TileTool {
             e.docs.save_one(id)?;
         }
 
-        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        let parts = if d.project().is_combined() {
-            // A combined project's variations, each written as a project of its own, each into its folder of the pack.
-            variation_parts(d.materialize_variations(only.as_deref().unwrap_or_default(), false)?)?
-        } else {
-            let text = d.text_for_export(false)?;
-            let generated = d.tile().has_generated_buildings();
-            vec![(d.project().dir.clone(), text, d.tile_mut().kit_walls_for_export(), generated)]
-        };
+        // A combined project's variations, each written as a project of its own, each into its folder of the pack.
+        let parts = self.export_parts(e, id, only.as_deref().unwrap_or_default())?;
 
         let mut folders = vec![];
         let mut count = 0;

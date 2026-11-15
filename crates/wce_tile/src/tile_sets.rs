@@ -19,6 +19,18 @@ pub struct TileSetInfo {
     pub also_place_tile_set: String,
 }
 
+/// Whether a battle tile set lies on the sea (`sea`, `sea_coast`, `sea_coast_landing`, the `settlement_*_ports`, `river_mouth*`): the
+/// game draws the sea only on these (at a placement on a map whose sea it is); another set's ground under 0 m is dry ground.
+pub fn coastal_set(set: &str) -> bool {
+    let set = set.to_ascii_lowercase();
+    set.starts_with("sea") || set.starts_with("river_mouth") || set.ends_with("_ports")
+}
+
+/// The tile set of a tile's location (`terrain\tiles\battle\<set>\<tile>`, either slash), empty when it has none.
+pub fn set_of_location(location: &str) -> &str {
+    location.split(['\\', '/']).nth(3).unwrap_or_default()
+}
+
 /// The settings file of a raw_data folder.
 pub fn settings_file(raw: &Path) -> std::path::PathBuf {
     raw.join("terrain/tiles/battle/_tile_database/_settings.xml")
@@ -129,6 +141,15 @@ pub fn merge_into(from: &Path, into: &Path, names: &[String]) -> Result<Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_location_s_set_and_whether_it_is_on_the_sea() {
+        let port = "terrain\\tiles\\battle\\tdd_settlement_middle_men_ports\\middle_men_port_a";
+        assert_eq!(set_of_location(port), "tdd_settlement_middle_men_ports");
+        assert!(coastal_set(set_of_location(port)));
+        assert!(!coastal_set(set_of_location("terrain/tiles/battle/settlement_western_cities/western_city_b")));
+        assert_eq!(set_of_location("terrain"), "");
+    }
 
     #[test]
     fn a_set_is_added_as_teds_line() {

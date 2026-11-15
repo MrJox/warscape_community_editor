@@ -157,7 +157,6 @@ pub fn stage_b_of(
         }
     }
 
-    let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
     // As the export reads them: the tile's own raw_data first, then the kits'.
     let roots = match (game, &p.raw_root) {
         (Some(g), Some(raw)) => g.bob_roots(raw),
@@ -167,7 +166,42 @@ pub fn stage_b_of(
     let none = |_: &str| None;
     let packs = |k: &str| game.and_then(|g| g.files.read(k).ok());
     let models: &dyn Fn(&str) -> Option<Vec<u8>> = if game.is_some() { &packs } else { &none };
-    let f = water_fields(&raw, &roots, models)?;
+    stage_b_of_files(&files, &roots, models, nogos, (d.tile().extent_x(), d.tile().extent_z()))
+}
+
+/// A project folder's files as stage B reads them: its tile.wce as TEd's tile.ted (a combined project's variation written as a project of
+/// its own, `TileDocument::materialize_variations`).
+///
+/// # Errors
+///
+/// The folder or its scene does not read.
+pub fn project_files_for_stage_b(dir: &std::path::Path) -> Result<TileFiles, String> {
+    use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
+
+    let mut files = TileFiles::from_kit_dir(dir).map_err(|e| e.to_string())?;
+    if let Some(wce) = files.folder.remove(WCE_FILE) {
+        let (ted, _) = to_ted(wce.bytes().map_err(|e| e.to_string())?.to_vec())?;
+        files.folder.insert(TED_FILE.to_owned(), Blob::Bytes(ted.into()));
+    }
+
+    Ok(files)
+}
+
+/// [`stage_b_of`] of a project's files: `roots` the raw_data folders the linked tiles are read from (the tile's own first), `models` the
+/// water planes' models from the packs; `extent` the tile's size without its border (metres).
+///
+/// # Errors
+///
+/// The project does not read, or stage B failed.
+pub fn stage_b_of_files(
+    files: &TileFiles,
+    roots: &[std::path::PathBuf],
+    models: &dyn Fn(&str) -> Option<Vec<u8>>,
+    nogos: bool,
+    extent: (f64, f64),
+) -> Result<(WaterDepth, Option<Outlines>), String> {
+    let (raw, _) = TedProject.read(files).map_err(|e| e.to_string())?;
+    let f = water_fields(&raw, roots, models)?;
     let depth = match &f.water {
         Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
         None => vec![f32::NAN; f.w * f.h],
@@ -175,7 +209,7 @@ pub fn stage_b_of(
 
     // The grid's vertices over the tile without its border, row j along +z.
     let nogos = nogos.then(|| {
-        let (sx, sz) = (d.tile().extent_x() as f32 / (f.w - 1).max(1) as f32, d.tile().extent_z() as f32 / (f.h - 1).max(1) as f32);
+        let (sx, sz) = (extent.0 as f32 / (f.w - 1).max(1) as f32, extent.1 as f32 / (f.h - 1).max(1) as f32);
         f.no_go_outlines(&raw).into_iter().map(|o| o.into_iter().map(|(x, y)| [x * sx, y * sz]).collect()).collect()
     });
 

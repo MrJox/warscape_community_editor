@@ -107,11 +107,7 @@ pub fn climate_alone_note(climate: &str) -> String {
     )
 }
 
-/// Whether a battle tile set lies on the sea (`sea`, `sea_coast`, `sea_coast_landing`, the `settlement_*_ports`, `river_mouth*`).
-pub fn coastal_set(set: &str) -> bool {
-    let set = set.to_ascii_lowercase();
-    set.starts_with("sea") || set.starts_with("river_mouth") || set.ends_with("_ports")
-}
+pub use wce_tile::tile_sets::coastal_set;
 
 /// What the battle XML is made from.
 pub struct Battle<'a> {
