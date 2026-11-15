@@ -16,8 +16,11 @@
 //! ```
 //!
 //! Contents that differ by more than values (an element added, taken away or of another kind) are not a reference's: such a reference keeps
-//! its own contents in the file. The height of what stands on the terrain (Landscape: Above, and the points of such a polygon) is not
-//! compared: it is the terrain's wherever a copy is, so a reference gets its prefab's and keeps no override of it.
+//! its own contents in the file. Matching a copy and the Inspector's marks leave out the height of what stands on the terrain (Landscape:
+//! Above, and the points of such a polygon) and a drift of hundredths across: a copy on other ground is still the prefab's. What tile.wce
+//! keeps ([`saved_overrides`]) is exact, those included: the game and TEd draw a landscape item at its file's height, not the terrain's, so
+//! a reference filled in again has every byte its contents had (2026-11-15: a kit tile's fences and carts, saved as references, came back
+//! at their prefab's heights, up to 4.8 m off the ground).
 
 use std::collections::HashMap;
 
@@ -126,6 +129,20 @@ fn at_path(doc: &XmlDoc, path: &[usize]) -> Option<usize> {
 ///
 /// A text does not read, or they differ by more than values (says where).
 pub fn overrides(current: &[u8], base: &[u8]) -> Result<Vec<Override>, String> {
+    overrides_with(current, base, false)
+}
+
+/// [`overrides`] as tile.wce keeps them: every value whose text differs from the prefab's (the landscape heights and the drift across too),
+/// so that filling the reference in gives its contents back byte for byte.
+///
+/// # Errors
+///
+/// As [`overrides`].
+pub fn saved_overrides(current: &[u8], base: &[u8]) -> Result<Vec<Override>, String> {
+    overrides_with(current, base, true)
+}
+
+fn overrides_with(current: &[u8], base: &[u8], exact: bool) -> Result<Vec<Override>, String> {
     let (cur, base) = (wrapped(current)?, wrapped(base)?);
     let (ce, be) = (cur.elements(), base.elements());
     let on_terrain = landscape_flags(&base);
@@ -144,7 +161,9 @@ pub fn overrides(current: &[u8], base: &[u8]) -> Result<Vec<Override>, String> {
 
         for (i, a) in ce[c].attrs.iter().enumerate() {
             let raw = cur.attr_raw(c, i);
-            if base.find_attr(b, &a.name).is_none_or(|j| !same_value(&a.name, on_terrain[b], base.attr_raw(b, j), raw)) {
+            let same =
+                |j: usize| if exact { base.attr_raw(b, j) == raw } else { same_value(&a.name, on_terrain[b], base.attr_raw(b, j), raw) };
+            if base.find_attr(b, &a.name).is_none_or(|j| !same(j)) {
                 out.push(Override {
                     path: path_of(&cur, c),
                     element: ce[c].name.clone(),
@@ -471,6 +490,23 @@ mod tests {
             overrides(drift.as_bytes(), base.as_bytes()).unwrap(),
             vec![],
             "a drift of hundredths across (and the area it changes) is no override"
+        );
+
+        // What tile.wce keeps is exact: the copy comes back byte for byte, its landscape heights and drift included.
+        for text in [&copy, &moved, &drift] {
+            let saved = saved_overrides(text.as_bytes(), base.as_bytes()).unwrap();
+            let (back, lost) = apply(base.as_bytes(), &saved).unwrap();
+            assert_eq!((String::from_utf8(back).unwrap(), lost), (text.clone(), vec![]), "saved overrides give the copy back");
+        }
+
+        assert_eq!(
+            saved_overrides(copy.as_bytes(), base.as_bytes())
+                .unwrap()
+                .iter()
+                .map(|o| (o.path.clone(), o.value.clone()))
+                .collect::<Vec<_>>(),
+            vec![(vec![0], "vector(1,7,2)".to_owned()), (vec![2, 0], "5,-3,6".to_owned())],
+            "the landscape heights are kept"
         );
 
         let index = ContentIndex::new([("p", base.as_bytes().to_vec())]);

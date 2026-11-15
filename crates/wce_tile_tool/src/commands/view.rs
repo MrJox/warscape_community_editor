@@ -103,6 +103,20 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "tile_height",
+        "tile_height <x> <z>",
+        "the terrain's height at a point of the open tile (world metres; TEd's cursor readout is twice these)",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let (Some(x), Some(z)) = (a.first().and_then(|v| v.parse::<f32>().ok()), a.get(1).and_then(|v| v.parse::<f32>().ok())) else {
+                return fail("usage: tile_height <x> <z>");
+            };
+
+            ok(format!("{:.3}", d.tile().terrain_height(x, z)))
+        },
+    );
+
     c.add("tile_polygons", "tile_polygons on|off", "show or hide the tile's polygons (the Areas chip's Show polygons)", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let on = match a.first().map(String::as_str) {
