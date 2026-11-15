@@ -112,7 +112,7 @@ impl TileTool {
         let t = d.tile_mut();
         let v = t.display_mut();
         if gui::checkbox("Show polygons##areas", &mut v.show_polygons) {
-            t.display_changed();
+            t.polygons_shown_changed();
         }
 
         if gui::is_item_hovered() {

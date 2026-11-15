@@ -103,6 +103,19 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_polygons", "tile_polygons on|off", "show or hide the tile's polygons (the Areas chip's Show polygons)", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: tile_polygons on|off"),
+        };
+
+        d.tile_mut().display_mut().show_polygons = on;
+        d.tile_mut().polygons_shown_changed();
+        ok("")
+    });
+
     c.add(
         "tile_links",
         "tile_links [on|off]",

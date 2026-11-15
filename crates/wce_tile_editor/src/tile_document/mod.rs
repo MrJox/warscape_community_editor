@@ -548,6 +548,9 @@ pub struct Tile {
     pub(crate) markers_dirty: bool,
     pub(crate) polygons_dirty: bool,
 
+    /// Only Show polygons changed: the polygons are drawn again (or hidden) from the covers kept, nothing else is rebuilt.
+    pub(crate) polygons_toggled: bool,
+
     /// The procedural walls' preview pieces (`walls.rs`).
     pub(crate) wall_preview: walls::WallPreview,
     pub(crate) hidden_signature: u64,
@@ -947,6 +950,7 @@ impl TileDocument {
             fallbacks: vec![],
             markers_dirty: true,
             polygons_dirty: false,
+            polygons_toggled: false,
             wall_preview: walls::WallPreview::default(),
             hidden_signature: 0,
             lod_eye: Float3::new(1e30, 1e30, 1e30),
