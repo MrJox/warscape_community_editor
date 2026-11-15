@@ -411,6 +411,9 @@ pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) 
 /// A part's own attributes, by its index in the piece: (name, value) pairs.
 pub type PartAttrs<'a> = &'a dyn Fn(usize, &Part) -> Vec<(String, String)>;
 
+/// Whether a part is laid, by its index in the piece: a detail part the road's density leaves out is not.
+pub type PartKeep<'a> = &'a dyn Fn(usize, &Part) -> bool;
+
 /// What a piece's parts get besides their place: buildings tilted to the ground (`tilt`: how far along and across them the ground is read,
 /// each way, metres: a fence follows the slope it stands on), and attributes of their own (`attrs`, by the part's index in the piece: a
 /// fence's `destruction_level`).
@@ -418,6 +421,9 @@ pub type PartAttrs<'a> = &'a dyn Fn(usize, &Part) -> Vec<(String, String)>;
 pub struct Dress<'a> {
     pub tilt: Option<[f64; 2]>,
     pub attrs: Option<PartAttrs<'a>>,
+
+    /// The parts laid (none: all); those left out are not in the text, so neither drawn nor exported.
+    pub keep: Option<PartKeep<'a>>,
 }
 
 /// How far along and across a fence the ground is read to tilt it (metres): its ends, its width.
@@ -538,9 +544,24 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
 
     text.extend_from_slice(b"    </children>\n</UserInstanceGroup>\n");
 
-    // Without its guides: they are the piece's drawing, not the road.
+    // Without its guides (they are the piece's drawing, not the road) and the parts left out: found by their paths before any goes, then
+    // taken out from the last, so that no removal moves another's element.
     let mut scene = TedScene::parse_any(text).map_err(|e| e.to_string())?;
-    for g in scene.find_all(ROAD_GUIDE).into_iter().rev() {
+    let mut gone = scene.find_all(ROAD_GUIDE);
+    if let Some(keep) = dress.keep {
+        let root = (0..scene.doc().elements().len()).find(|&e| scene.doc().elements()[e].parent.is_none()).unwrap_or(0);
+        for (index, part) in piece.parts.iter().enumerate() {
+            if !keep(index, part)
+                && let Some(e) = crate::prefab_refs::element_at(scene.doc(), root, &part.path)
+            {
+                gone.push(e);
+            }
+        }
+    }
+
+    gone.sort_unstable();
+    gone.dedup();
+    for g in gone.into_iter().rev() {
         scene.remove(g).map_err(|e| e.to_string())?;
     }
 
@@ -1414,7 +1435,7 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "fence", frame: Frame::Along { from: 5.0, to: 10.0 } };
-        let dress = Dress { tilt: Some(FENCE_TILT), attrs: None };
+        let dress = Dress { tilt: Some(FENCE_TILT), attrs: None, keep: None };
         let orientation = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1428,6 +1449,38 @@ mod tests {
     }
 
     #[test]
+    fn the_detail_left_out_is_not_in_the_fitted_text_and_the_rest_is() {
+        let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let (_, children) = crate::road_dirt::pieces().into_iter().find(|p| p.0 == "straight_5").unwrap();
+        let text = crate::road_pieces::group_text("road_dirt_straight_5", &children);
+        let piece = crate::road_pieces::read(&text).unwrap();
+        let scene = TedScene::parse_any(text).unwrap();
+        let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
+        let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
+        let detail = piece.parts.iter().filter(|p| p.role == Some(crate::road_pieces::PartRole::Detail)).count();
+        assert!(detail >= 3, "straight_5 has its rocks and erosion as detail: {detail}");
+
+        let decals = |keep: Option<PartKeep>| {
+            let dress = Dress { tilt: None, attrs: None, keep };
+            let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
+                .unwrap();
+            let s = TedScene::parse_any(f.text).unwrap();
+            assert!(s.find_all(crate::new_instances::ROAD_GUIDE).is_empty(), "no guides");
+            s.find_all("ProjectedDecalInstance").len()
+        };
+
+        let all = decals(None);
+        assert_eq!(all, piece.parts.len());
+        let none_of_it = |_: usize, p: &Part| p.role != Some(crate::road_pieces::PartRole::Detail);
+        assert_eq!(decals(Some(&none_of_it)), all - detail, "the detail went, the ruts and borders stayed");
+
+        // Every other detail part: the right ones go, whatever their place among the parts.
+        let odd = |i: usize, p: &Part| p.role != Some(crate::road_pieces::PartRole::Detail) || i % 2 == 0;
+        let kept = piece.parts.iter().enumerate().filter(|(i, p)| odd(*i, p)).count();
+        assert_eq!(decals(Some(&odd)), kept);
+    }
+
+    #[test]
     fn a_bank_follows_the_slope_under_it_and_keeps_its_roll() {
         let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
         let mut children = crate::road_pieces::base_guides("straight_2");
@@ -1437,7 +1490,7 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
-        let dress = Dress { tilt: Some(PIECE_TILT), attrs: None };
+        let dress = Dress { tilt: Some(PIECE_TILT), attrs: None, keep: None };
         let up = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "b", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
