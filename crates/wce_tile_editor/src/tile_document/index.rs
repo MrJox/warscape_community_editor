@@ -584,7 +584,34 @@ impl Tile {
 
     /// This element's own flags attribute (true when it has none).
     pub fn own_flag(&self, elem: usize, flag: &str) -> bool {
+        // A variation folder has no flags of its own: it is visible (selectable) while something in it is.
+        if self.is_variation_folder(elem) {
+            let inside = self.folder_contents(elem);
+            return inside.is_empty() || inside.iter().any(|&c| self.own_flag(c, flag));
+        }
+
         self.tscene().get(elem, "flags").is_none_or(|f| f.contains(flag))
+    }
+
+    /// Whether an element is a combined project's variation folder (`WceVariationFolder`).
+    pub fn is_variation_folder(&self, elem: usize) -> bool {
+        self.elements().get(elem).is_some_and(|e| e.name == wce_tile::variations::FOLDER)
+    }
+
+    /// What a variation folder holds, the contents of the folders in it in their place (its own values per variation left out): what
+    /// its eye and its lock act on.
+    pub fn folder_contents(&self, elem: usize) -> Vec<usize> {
+        let els = self.elements();
+        let mut out = vec![];
+        for &c in &els[elem].children {
+            if els[c].name == wce_tile::variations::FOLDER {
+                out.extend(self.folder_contents(c));
+            } else if els[c].name != wce_tile::variations::VALUES && els[c].name != wce_tile::variations::START {
+                out.push(c);
+            }
+        }
+
+        out
     }
 
     /// Draggable (TEd's OIF_DRAGGABLE on the item itself): the gizmo and the grab move it. Off, it can be selected without the risk of

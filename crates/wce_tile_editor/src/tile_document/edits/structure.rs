@@ -10,6 +10,9 @@ impl TileDocument {
     /// gizmo. One undo entry; elements without a flags attribute are left alone.
     pub fn set_flags(&mut self, elems: &[usize], flag: &str, on: bool) -> bool {
         let t = self.tile();
+        // A variation folder has no flags of its own: its eye and its lock are its contents'.
+        let elems = elems.iter().flat_map(|&e| if t.is_variation_folder(e) { t.folder_contents(e) } else { vec![e] }).collect::<Vec<_>>();
+        let elems = elems.as_slice();
         // Only elements with a flags attribute (layers and instances; TEd writes none on the scene graph): own_flag reads a missing attribute
         // as every flag set, which set_flag cannot write, and an added attribute is text the attribute edits of the command cannot take back.
         let todo = elems
