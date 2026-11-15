@@ -945,6 +945,8 @@ impl Tile {
 
         let unit = self.unit();
         let mut ids = vec![];
+        // Each road's bridge pieces, played at its destruction level (collapse.rs); the roads that had some and have none now too.
+        let mut generated: HashMap<usize, Vec<_>> = self.generated_elems().into_iter().map(|e| (e, vec![])).collect();
         for item in &self.road_items {
             let source = self.source(super::item_of(item.road));
             let [x, y, z] = item.position;
@@ -953,7 +955,9 @@ impl Tile {
                 let world = super::index::matrix_of(&wt, unit, Some(Double3::new(1.0 / unit, 1.0 / unit, 1.0 / unit)));
                 for model in &item.meshes {
                     let mi = wce_scene::render_scene::MeshInstance { model: model.clone(), lod: true, ..Default::default() };
-                    ids.push(scene.add(self.layer, world, wce_scene::render_scene::Payload::MeshInstance(mi), source));
+                    let id = scene.add(self.layer, world, wce_scene::render_scene::Payload::MeshInstance(mi), source);
+                    generated.entry(item.road).or_default().push((id, world, model.clone()));
+                    ids.push(id);
                 }
 
                 continue;
@@ -969,6 +973,11 @@ impl Tile {
         }
 
         self.road_entities = ids;
+        // (A wall's are its own: walls.rs.)
+        let generated = generated.into_iter().filter(|(e, _)| self.is_road(*e)).collect::<Vec<_>>();
+        for (road, pieces) in generated {
+            self.show_generated(scene, road, pieces);
+        }
     }
 
     /// The layer of generated instances an export adds: what stands along the roads, as TEd and the game read it.

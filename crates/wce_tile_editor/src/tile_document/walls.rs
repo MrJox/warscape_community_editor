@@ -6,7 +6,7 @@
 //! Units: the solver works in scene units (the models' units); the document's world is scene / unit on every axis, and the height map's
 //! metres are the scene's y.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -72,6 +72,10 @@ pub(crate) struct WallPreview {
 
     /// The tile's structure the kit walls' height layers were last swept against (`sweep_wall_ground`: a wall deleted takes its layer out).
     swept: u64,
+
+    /// The walls whose pieces are made with every level and their collapses (`Tile::levels_mark`): those shown at a destruction level
+    /// once (a preview of the intact meshes alone is quicker to make).
+    pub(super) all_levels: HashSet<usize>,
 
     /// The job of the wall being remade, taken out while it is (`make_wall_pieces`): one making what is wanted again goes on instead of
     /// starting over (the walls are remade whenever the polygons are, which on a large tile came often enough that its pieces never were).
@@ -441,6 +445,17 @@ impl Tile {
         map.keys(&mut self.wall_preview.pending);
         map.keys(&mut self.wall_preview.jobs);
         map.keys(&mut self.wall_preview.kit_layouts);
+        map.set(&mut self.wall_preview.all_levels);
+    }
+
+    /// A wall's signature with whether its pieces are made with every level (from the first time its `destruction_preview` is above 0
+    /// on): its pieces of the intact level alone are not those.
+    pub(super) fn levels_mark(&mut self, elem: usize, signature: u64) -> u64 {
+        if self.destruction_preview(elem) > 0 {
+            self.wall_preview.all_levels.insert(elem);
+        }
+
+        if self.wall_preview.all_levels.contains(&elem) { signature ^ 0x9e37_79b9_7f4a_7c15 } else { signature }
     }
 
     /// Every wall's preview is made again (the layer was cleared, or the ground changed).
@@ -572,15 +587,18 @@ impl Tile {
             let ps = pieces(&l.plan, l.profile).into_iter().filter(|p| !p.rigid).collect::<Vec<_>>();
             self.wall_signature(l, &self.wall_doors(l, &ps).0)
         });
+        let signature = signature.map(|s| self.levels_mark(elem, s));
 
-        // As it was: its pieces stay where they are.
+        // As it was: its pieces stay where they are (at its destruction level, `sync_generated`).
         if let Some(sig) = signature.filter(|s| Some(s) == before.as_ref() && !ids.is_empty()) {
             self.wall_preview.entities.insert(elem, ids);
             self.wall_preview.shown_as.insert(elem, sig);
+            self.sync_generated(scene, elem);
             return;
         }
 
         let (Some(layout), Some(signature)) = (layout, signature) else {
+            self.forget_generated(scene, elem);
             for id in ids {
                 scene.remove(id);
             }
@@ -656,6 +674,8 @@ impl Tile {
 
         let u = self.unit();
         let ground = super::jobs::Ground::of(&self.project);
+        // Every level and the collapses once the wall was shown destroyed; its intact meshes alone until then.
+        let only_level = (!self.wall_preview.all_levels.contains(&elem)).then_some(1);
         self.wall_preview.revision += 1;
         let revision = self.wall_preview.revision;
 
@@ -680,7 +700,7 @@ impl Tile {
                         _ => &base,
                     };
 
-                    match make_piece(from, &key, &warp, steps, true, Some(1)) {
+                    match make_piece(from, &key, &warp, steps, true, only_level) {
                         Ok(files) => made.push((key, piece, files)),
                         Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),
                     }
@@ -733,14 +753,23 @@ impl Tile {
         }
 
         let source = self.source(super::item_of(elem));
+        let mut generated = vec![];
         let ids = made
             .models
             .into_iter()
             .map(|(world, model)| {
-                scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source)
+                let id = scene.add(
+                    self.layer,
+                    world,
+                    Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }),
+                    source,
+                );
+                generated.push((id, world, model));
+                id
             })
             .collect();
         self.wall_preview.entities.insert(elem, ids);
+        self.show_generated(scene, elem, generated);
         self.wall_preview.shown_as.insert(elem, signature);
         self.drop_unused_wall_pieces();
         true
@@ -808,6 +837,9 @@ impl Tile {
             }
         }
 
+        // At its destruction level (collapse.rs): the models drawn are the entities', one for one.
+        let generated = ids.iter().zip(&models).map(|(&id, (world, model))| (id, *world, model.clone())).collect();
+        self.show_generated(scene, elem, generated);
         self.wall_preview.entities.insert(elem, ids);
         self.wall_preview.shown_as.insert(elem, signature);
         self.wall_preview.made.insert(signature, Made { models, keys, buildings });

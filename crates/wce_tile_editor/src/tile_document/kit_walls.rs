@@ -172,6 +172,7 @@ impl Tile {
         let before = self.wall_preview.shown_as.remove(&elem);
         let ids = self.wall_preview.entities.remove(&elem).unwrap_or_default();
         let Some(layout) = self.kit_layout(elem).filter(|_| self.shown(elem)) else {
+            self.forget_generated(scene, elem);
             for id in ids {
                 scene.remove(id);
             }
@@ -222,6 +223,7 @@ impl Tile {
 
             h.finish()
         };
+        let signature = self.levels_mark(elem, signature);
 
         // Its lines (`wall_overlay`) drawn through the pieces as laid now.
         self.wall_preview.kit_layouts.insert(elem, layout);
@@ -231,6 +233,7 @@ impl Tile {
         if Some(signature) == before && !ids.is_empty() {
             self.wall_preview.entities.insert(elem, ids);
             self.wall_preview.shown_as.insert(elem, signature);
+            self.sync_generated(scene, elem);
             return;
         }
 

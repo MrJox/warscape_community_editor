@@ -99,7 +99,39 @@ pub(crate) struct CollapseState {
 
     /// Piece file -> its triangles in model space (`Tile::piece_triangles`).
     piece_meshes: HashMap<String, Option<EmitMesh>>,
+
+    /// The generated pieces of walls and bridges (`Tile::show_generated`), by (wall or road, slot): played as a building's pieces are.
+    generated: HashMap<(usize, usize), Generated>,
 }
+
+/// A generated piece on the scene (a wall's or a bridge's, the editor's preview): its entity, where it stands, its levels' files.
+#[derive(Clone)]
+struct Generated {
+    id: EntityId,
+    world: Float4x4,
+
+    /// Its intact file (`..._destruct01.rigid_model_v2`), and how many levels it has.
+    file: String,
+    levels: i64,
+
+    /// The level it shows (or collapses to).
+    shown: i64,
+}
+
+impl Generated {
+    /// Its file at `level` (its last for one past it).
+    fn file_at(&self, level: i64) -> String {
+        level_file(&self.file, level.clamp(0, self.levels - 1))
+    }
+}
+
+/// An intact piece file's (`..._destruct01.rigid_model_v2`) at `level` (0, intact: `_destruct01`; 1: `_destruct02`).
+fn level_file(intact: &str, level: i64) -> String {
+    intact.replace("_destruct01.rigid_model_v2", &format!("_destruct{:02}.rigid_model_v2", level + 1))
+}
+
+/// The attribute of a wall or a road with the destruction level its generated pieces show in the editor (not exported).
+pub(crate) const DESTRUCTION_PREVIEW: &str = "destruction_preview";
 
 /// The column-vector matrix of a bone's local transform.
 fn bone_matrix(t: [f32; 3], q: [f32; 4]) -> Float4x4 {
@@ -167,6 +199,21 @@ impl Tile {
     pub(crate) fn reset_collapses(&mut self) {
         self.collapses.active.clear();
         self.collapses.effects.clear();
+        self.collapses.generated.clear();
+    }
+
+    /// The elements were renumbered: the generated pieces, and their collapses, follow their wall or road (those of one gone go).
+    pub(crate) fn generated_shifted(&mut self, map: &super::shift::ElementMap) {
+        let generated = std::mem::take(&mut self.collapses.generated);
+        let ours = generated.keys().copied().collect::<std::collections::HashSet<_>>();
+        self.collapses.active.retain_mut(|c| {
+            if !ours.contains(&(c.elem, c.piece)) {
+                return true;
+            }
+
+            map.map(c.elem).map(|e| c.elem = e).is_some()
+        });
+        self.collapses.generated = generated.into_iter().filter_map(|((e, k), g)| Some(((map.map(e)?, k), g))).collect();
     }
 
     /// Whether pieces are collapsing (their entities and steps are by element).
@@ -223,12 +270,20 @@ impl Tile {
 
     /// The world matrix of piece `piece` of `elem` (its building's, times its own placement).
     fn piece_world(&self, elem: usize, piece: usize) -> Float4x4 {
+        if let Some(g) = self.collapses.generated.get(&(elem, piece)) {
+            return g.world;
+        }
+
         let p = self.piece_props.get(&(elem, piece)).cloned().unwrap_or_default();
         self.world_matrix(elem) * piece_local(&p)
     }
 
     /// The standing file of piece `piece` of `elem` at `level`.
     fn standing_file(&self, elem: usize, piece: usize, level: i64) -> Option<String> {
+        if let Some(g) = self.collapses.generated.get(&(elem, piece)) {
+            return (level < g.levels).then(|| g.file_at(level));
+        }
+
         let m = self.model_of(elem)?;
         let base = m.pieces.get(piece)?.clone();
         let levels = m.piece_levels.get(piece).copied().unwrap_or(m.levels);
@@ -237,6 +292,10 @@ impl Tile {
 
     /// Whether the building of `elem` (or the piece) burns.
     fn burning(&self, elem: usize, piece: usize) -> bool {
+        if self.collapses.generated.contains_key(&(elem, piece)) {
+            return false;
+        }
+
         self.tscene().get(elem, "burn").is_some_and(|v| v.trim() == "true") || self.piece_props.get(&(elem, piece)).is_some_and(|p| p.burn)
     }
 
@@ -332,6 +391,18 @@ impl Tile {
 
     /// The standing piece entity of a collapse: shows `level` (or hides).
     fn show_standing(&self, scene: &mut RenderScene, elem: usize, piece: usize, level: Option<i64>) {
+        if let Some(g) = self.collapses.generated.get(&(elem, piece)) {
+            if let Some(en) = scene.find_mut(g.id) {
+                en.visible = level.is_some();
+                if let (Some(l), Payload::MeshInstance(mi)) = (level, &mut en.payload) {
+                    mi.model = g.file_at(l);
+                }
+            }
+
+            scene.touch();
+            return;
+        }
+
         let Some(id) = self.first_entity.get(elem).copied().filter(|&f| f != 0).map(|f| f + piece as EntityId) else { return };
         let file = level.and_then(|l| self.standing_file(elem, piece, l));
         let visible = level.is_some()
@@ -560,5 +631,102 @@ impl Tile {
         // Collapses begun while these played (none: begin_collapse runs from flush_pieces, not from here).
         active.append(&mut self.collapses.active);
         self.collapses.active = active;
+    }
+
+    /// The destruction level the generated pieces of a wall or a road show (its `destruction_preview`; 0, intact, when none).
+    pub(crate) fn destruction_preview(&self, elem: usize) -> i64 {
+        self.tscene().get(elem, DESTRUCTION_PREVIEW).and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0).max(0)
+    }
+
+    /// A wall's or a road's generated pieces put on the scene (`entities`: each one's entity, world matrix and intact file), in place of
+    /// those it had: each shows the level its old one showed (intact when new), and goes on to the element's preview level as a
+    /// building's piece does (`sync_generated`: collapsing up, at once down). A piece with one level (a preview made of its intact
+    /// meshes alone) stays intact.
+    pub(crate) fn show_generated(&mut self, scene: &mut RenderScene, elem: usize, entities: Vec<(EntityId, Float4x4, String)>) {
+        let old = self.forget_generated(scene, elem);
+        let files = self.files.clone();
+        let exists = |f: &str| files.as_deref().is_some_and(|fs| fs.exists(f));
+        for (slot, (id, world, file)) in entities.into_iter().enumerate() {
+            if !file.ends_with("_destruct01.rigid_model_v2") {
+                continue;
+            }
+
+            let mut g = Generated { id, world, file, levels: 1, shown: 0 };
+            while g.levels < 9 && exists(&level_file(&g.file, g.levels)) {
+                g.levels += 1;
+            }
+
+            g.shown = old.get(slot).copied().unwrap_or(0).min(g.levels - 1);
+            if let Some(en) = scene.find_mut(id)
+                && let Payload::MeshInstance(mi) = &mut en.payload
+            {
+                mi.model = g.file_at(g.shown);
+            }
+
+            self.collapses.generated.insert((elem, slot), g);
+        }
+
+        self.sync_generated(scene, elem);
+    }
+
+    /// The walls and roads with generated pieces on the scene.
+    pub(crate) fn generated_elems(&self) -> Vec<usize> {
+        let mut out = self.collapses.generated.keys().map(|k| k.0).collect::<Vec<_>>();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// A wall's or a road's generated pieces go (their entities did, or will): their collapses stop. Returns the levels they showed, by slot.
+    pub(crate) fn forget_generated(&mut self, scene: &mut RenderScene, elem: usize) -> Vec<i64> {
+        let mut slots = self.collapses.generated.keys().filter(|k| k.0 == elem).map(|k| k.1).collect::<Vec<_>>();
+        slots.sort_unstable();
+        let mut shown = vec![];
+        for slot in slots {
+            self.cancel_collapse(scene, elem, slot);
+            let g = self.collapses.generated.remove(&(elem, slot)).expect("a slot");
+            shown.resize(slot, 0);
+            shown.push(g.shown);
+        }
+
+        shown
+    }
+
+    /// A wall's or a road's generated pieces go to its preview level: collapsing up (each piece as far as its levels go), at once down.
+    pub(crate) fn sync_generated(&mut self, scene: &mut RenderScene, elem: usize) {
+        let want = self.destruction_preview(elem);
+        let mut slots = self.collapses.generated.iter().filter(|(k, _)| k.0 == elem).map(|(k, g)| (k.1, g.clone())).collect::<Vec<_>>();
+        slots.sort_by_key(|s| s.0);
+        for (slot, g) in slots {
+            let to = want.min(g.levels - 1);
+            if to == g.shown {
+                continue;
+            }
+
+            if to > g.shown {
+                self.begin_collapse(elem, slot, g.shown, to);
+            } else {
+                self.cancel_collapse(scene, elem, slot);
+                self.show_standing(scene, elem, slot, Some(to));
+            }
+
+            if let Some(g) = self.collapses.generated.get_mut(&(elem, slot)) {
+                g.shown = to;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_level_files() {
+        let f = "rigidmodels/buildings/wce_preview_3_7_0/wce_preview_3_7_0_piece01_destruct01.rigid_model_v2";
+        assert_eq!(level_file(f, 2), f.replace("_destruct01.", "_destruct03."));
+        let g = Generated { id: 1, world: Float4x4::default(), file: f.to_owned(), levels: 3, shown: 0 };
+        assert_eq!(g.file_at(7), f.replace("_destruct01.", "_destruct03."), "past its last level: its last");
+        assert_eq!(g.file_at(-1), f, "below intact: intact");
     }
 }
