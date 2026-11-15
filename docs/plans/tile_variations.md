@@ -325,9 +325,15 @@ variation has.
      variation viewed is viewed again after. The water a road crosses is the viewed variation's rivers (`river_ribbons`).
      Checked: a road drawn across `orc_city_a` where `minor`'s ground differs: after For Assembly Kit, three layers of each type,
      `minor`'s pieces on its ground (0.4 m lower), `small` and `medium` the same where theirs is.
-   Left: the walls the editor lays (`kit_walls_for_export`, the procedural walls' layout) are the viewed variation's for every
-   variation exported (a warning in the log for now). Combined projects are the editor's only: Import from Assembly Kit does not
-   make one (the user, 2026-11-15).
+   - The kit walls, the same way: each variation a wall is in has its own height layer of it (`wall:<key>@<variation>#<signature>`,
+     "Kit wall <name> (<variation>)"), and an export lays each variation's walls on its ground and lowers that layout
+     (`Tile::kit_walls_laid_for_export`, `VariationExport::kit_walls`). Whether a variation's export makes buildings (walls, road
+     bridges) is its own (`VariationExport::generated`); `has_walls` of a combined project reads the scene as viewed, not the index.
+     The procedural walls' export already read each variation's own project (its heights, its scene).
+     Checked: a kit wall drawn across `orc_city_a` where `minor`'s ground differs, As exported tile of `minor` and `small`: two
+     height layers, each variation's maps with its own pads (616 pixels differing by more than 5 cm), its layout its own (a step one
+     piece later in `minor`), each packed with its walls.
+   Combined projects are the editor's only: Import from Assembly Kit does not make one (the user, 2026-11-15).
 7. **Loaders**: materialization in `sources::find_tile`, `build/variations/`, the stamp.
 8. **Combine and Separate**: the dialog, the backup, the commands.
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`

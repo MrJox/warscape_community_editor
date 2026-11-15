@@ -770,7 +770,7 @@ impl Tile {
     }
 
     /// The variation whose road layers are made and read: the one viewed in a combined project, none in a project of one.
-    fn road_variation(&self) -> Option<String> {
+    pub(super) fn road_variation(&self) -> Option<String> {
         self.project.is_combined().then(|| self.viewed_variation().map(str::to_owned)).flatten()
     }
 
