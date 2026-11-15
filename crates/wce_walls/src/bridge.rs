@@ -215,7 +215,7 @@ fn platform(x: (f64, f64), z: (f64, f64), y: f64) -> Value {
 ///
 /// A file of the base doesn't read or write back, or it has no intact mesh.
 pub fn prepare(base: &BuildingFiles) -> Result<Prepared, String> {
-    let mut files = base.clone().without_collapses();
+    let mut files = base.clone();
     let cuts = Cuts::every(1.0e6);
     let logic_name = files.logic_name();
     let zones_name = files.zones_name();
@@ -227,6 +227,11 @@ pub fn prepare(base: &BuildingFiles) -> Result<Prepared, String> {
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), &QuarterTurn, 1.0e6)?.into_bytes();
         }
+    }
+
+    // Its collapses turned with it (`BuildingFiles::warp_collapses`): each generated piece bends them as it bends its meshes.
+    for why in files.warp_collapses(&QuarterTurn, &cuts) {
+        wce_foundation::log::warn(format!("bridges: {}: a collapse left out: {why}", base.key));
     }
 
     // The intact meshes' extent.
@@ -417,13 +422,17 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp, ends: Ends) -> 
             *bytes = if ends == Ends::EndPiece { footprint_from_platform(&made)? } else { made };
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
-        } else if !name.ends_with(".meta") {
+        } else if !name.ends_with(".meta") && !crate::building::is_collapse(name) {
             drop.push(name.clone());
         }
     }
 
     for n in drop {
         b.files.remove(&n);
+    }
+
+    for why in b.warp_collapses(warp, &cuts) {
+        wce_foundation::log::warn(format!("bridges: {key}: a collapse left out: {why}"));
     }
 
     Ok(b)

@@ -97,6 +97,38 @@ impl BuildingFiles {
         self
     }
 
+    /// Its collapses (each a mesh with its `.anim`, `<piece>_destructNN_anim.*`) under a warp, as its standing meshes are
+    /// (`mesh::warp_collapse`). A collapse that cannot be warped (an animation of another version, a bone before its parent) goes, with its
+    /// `.meta`: that level then changes with no animation, as every generated piece's did before. Returns what went, and why.
+    pub fn warp_collapses(&mut self, warp: &dyn crate::warp::Warp, cuts: &crate::warp::Cuts) -> Vec<String> {
+        let meshes = self.files.keys().filter(|n| is_collapse(n) && n.ends_with(".rigid_model_v2")).cloned().collect::<Vec<_>>();
+        let mut gone = vec![];
+        for mesh in meshes {
+            let stem = mesh.trim_end_matches(".rigid_model_v2").to_owned();
+            let anim = format!("{stem}.anim");
+            let warped = match (self.files.get(&mesh), self.files.get(&anim)) {
+                (Some(m), Some(a)) => crate::mesh::warp_collapse(m, a, warp, cuts),
+                _ => Err("no animation".to_owned()),
+            };
+            match warped {
+                Ok((m, a)) => {
+                    self.files.insert(mesh, m);
+                    self.files.insert(anim, a);
+                }
+
+                Err(why) => {
+                    for ext in [".rigid_model_v2", ".anim", ".meta"] {
+                        self.files.remove(&format!("{stem}{ext}"));
+                    }
+
+                    gone.push(format!("{stem}: {why}"));
+                }
+            }
+        }
+
+        gone
+    }
+
     /// The files by their paths in a pack.
     pub fn into_pack_files(self) -> Vec<(String, Vec<u8>)> {
         let prefix = folder(&self.key);

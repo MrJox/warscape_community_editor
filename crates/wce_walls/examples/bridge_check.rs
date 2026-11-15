@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use rpfm_lib::files::{Decodeable, cs2_parsed::Cs2Parsed};
 use wce_vfs::{Config, GameProfile, Vfs};
 use wce_walls::bridge::{BASES, BridgeWarp, Deck, make_piece, prepare};
-use wce_walls::building::{BuildingFiles, is_piece_mesh};
+use wce_walls::building::BuildingFiles;
 
 /// The intact collision outlines of a logic file, as their corners (and whether each is a collision outline, with heights, or the
 /// footprint ring beside them, without).
@@ -278,6 +278,7 @@ fn main() {
         let mut ends: Vec<((f64, f64), [f64; 3])> = vec![];
         let mut grounds: Vec<(usize, Vec<[f64; 3]>)> = vec![];
         let mut footprints: Vec<Vec<(Vec<[f64; 3]>, bool)>> = vec![];
+        let mut collapses = 0;
         for (k, part) in parts.iter().enumerate() {
             let (s, origin) = (part.s, part.origin);
             let pb = if part.end { end.as_ref().unwrap_or(&base) } else { &base };
@@ -285,8 +286,12 @@ fn main() {
             let key = format!("wce_check_bridge_{}_{k:02}", b.name);
             let made = make_piece(pb, &key, &warp, part.ends(end.is_some())).expect("a piece made");
             for (name, bytes) in &made.files {
-                let ok = if is_piece_mesh(name) {
+                let ok = if name.ends_with(".rigid_model_v2") {
                     wce_walls::mesh::round_trips(bytes)
+                } else if wce_walls::building::is_collapse(name) && name.ends_with(".anim") {
+                    // Its warped animation (mesh::warp_collapse).
+                    collapses += 1;
+                    Ok(wce_formats::anim::RawAnim::decode(bytes).is_some_and(|a| a.encode() == *bytes))
                 } else if name.ends_with(".cs2.parsed") {
                     wce_walls::logic::round_trips(bytes)
                 } else {
@@ -323,7 +328,12 @@ fn main() {
             }
         }
 
-        println!("  {} piece(s) ({} of them end pieces), {} platform(s)", parts.len(), parts.len() - deck_pieces, all.len());
+        println!(
+            "  {} piece(s) ({} of them end pieces), {} platform(s), {collapses} collapse(s)",
+            parts.len(),
+            parts.len() - deck_pieces,
+            all.len()
+        );
         if all.is_empty() {
             println!("  FAIL: no platform");
             failed = true;

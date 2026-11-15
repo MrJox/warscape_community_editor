@@ -14,7 +14,7 @@ use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_vfs::{Config, GameProfile, Vfs};
-use wce_walls::building::{BuildingFiles, is_piece_mesh};
+use wce_walls::building::{BuildingFiles, is_collapse, is_piece_mesh};
 use wce_walls::pieces::{PieceWarp, StepFiles, door_pieces, level_of, make_piece, pieces, step_ranges};
 use wce_walls::profile::profile;
 use wce_walls::solver::{WallInput, solve};
@@ -101,13 +101,23 @@ fn run() -> Result<(), String> {
         bad += usize::from(!same);
 
         for (i, b) in first.iter().enumerate() {
-            let (mut meshes, mut bytes) = (0, 0);
+            let (mut meshes, mut collapses, mut bytes) = (0, 0, 0);
             for (name, data) in &b.files {
                 bytes += data.len();
-                if is_piece_mesh(name) {
-                    meshes += 1;
+                if name.ends_with(".rigid_model_v2") {
+                    meshes += usize::from(is_piece_mesh(name));
                     RigidModel::decode(&mut Cursor::new(data), &Some(DecodeableExtraData::default()))
                         .map_err(|e| format!("{name}: {e}"))?;
+                }
+
+                // A collapse goes with its warped mesh and animation (mesh::warp_collapse): both must read back.
+                if is_collapse(name) && name.ends_with(".anim") {
+                    collapses += 1;
+                    wce_formats::anim::RawAnim::decode(data).ok_or(format!("{name}: does not read back"))?;
+                    let mesh = name.replace(".anim", ".rigid_model_v2");
+                    if !b.files.contains_key(&mesh) {
+                        return Err(format!("{name}: no mesh"));
+                    }
                 }
             }
 
@@ -163,7 +173,7 @@ fn run() -> Result<(), String> {
                 let step_logic = [&up, &down].iter().any(|f| f.files.contains_key(&f.logic_name()));
                 for (k, (a, z)) in with.iter().zip(&without).enumerate().filter(|_| step_logic) {
                     let same = a["platforms"] == z["platforms"];
-                    wrong += usize::from(same == (k as u32 + 1 <= levels));
+                    wrong += usize::from(same == ((k as u32) < levels));
                 }
 
                 stair = format!(", a stair at levels 1..{levels} only: {}", if wrong == 0 { "yes" } else { "NO" });
@@ -172,12 +182,13 @@ fn run() -> Result<(), String> {
 
             let pc = ps[i];
             println!(
-                "  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} door feet{stair}, {} problems",
+                "  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} collapses, {} KB), {} platforms, {} firing lines, {} door feet{stair}, {} problems",
                 pc.s.0,
                 pc.s.1,
                 pc.scale,
                 b.files.len(),
                 meshes,
+                collapses,
                 bytes / 1024,
                 plats,
                 lines,
