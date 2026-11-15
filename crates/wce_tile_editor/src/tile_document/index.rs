@@ -972,18 +972,28 @@ impl Tile {
             return Ok(());
         }
 
-        self.project.show_variations(list)?;
+        wce_prof!("tile.show_variations");
+        {
+            wce_prof!("tile.show_variations.project");
+            self.project.show_variations(list)?;
+        }
+
         self.view_changed();
         self.material_base = None;
         self.skin = None;
         self.roads_stale = true;
         self.prefab_ground_stale = true;
         self.links_dirty = true;
-        self.reload_tree_list();
-        self.reload_grass();
+        {
+            wce_prof!("tile.show_variations.vegetation");
+            self.reload_tree_list();
+            self.reload_grass();
+        }
+
         self.structure_version += 1;
         self.rebuild_items(true);
         if self.scene_key == super::scene_key(scene) && self.terrain_entity != 0 {
+            wce_prof!("tile.show_variations.publish");
             let layer = self.layer;
             self.publish_items(scene, layer, false);
         }

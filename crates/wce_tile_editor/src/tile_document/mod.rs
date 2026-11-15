@@ -534,9 +534,7 @@ pub struct Tile {
     /// The covers of the last rebuild of every polygon, by what they were built from (`Tile::cover_for`).
     pub(crate) cover_spare: HashMap<u64, cover::Cover>,
 
-    /// The heights' hash for `cover_spare` (0 outside a rebuild of every polygon), and whether the last publish built every polygon on
-    /// the buildings there are (so the rebuild it asked for is not done twice).
-    pub(crate) cover_ground: u64,
+    /// Whether the last publish built every polygon on the buildings there are (so the rebuild it asked for is not done twice).
     pub(crate) polygons_published: bool,
     pub(crate) tops: HashMap<String, Option<Arc<wce_scene::model_top::ModelTop>>>,
     pub(crate) tops_wanted: BTreeSet<String>,
@@ -939,7 +937,6 @@ impl TileDocument {
             covers: HashMap::new(),
             covers_dirty: BTreeSet::new(),
             cover_spare: HashMap::new(),
-            cover_ground: 0,
             polygons_published: false,
             tops: HashMap::new(),
             tops_wanted: BTreeSet::new(),

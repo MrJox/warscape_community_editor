@@ -321,9 +321,11 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "tile_variations_shown", "tile_variations_shown [<variation,...> | all]",
-        "the variations of a combined project shown (the Scene panel's header: a filter of the view, docs/plans/tile_variations.md); no argument logs them",
+        "tile_variations_shown", "tile_variations_shown [--overlay] [<variation,...> | all]",
+        "the variations of a combined project shown (the Scene panel's header: a filter of the view, docs/plans/tile_variations.md); no argument logs them; --overlay: as a click on the header does (\"Updating...\" over the viewport first, the switch a frame later)",
         |e, a| {
+            let overlay = a.iter().any(|x| x == "--overlay");
+            let a = a.iter().filter(|x| *x != "--overlay").cloned().collect::<Vec<_>>();
             let Some(id) = crate::tool::document_id(e) else { return fail("no tile") };
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             let vars = d.tile().variations().to_vec();
@@ -345,6 +347,13 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                     }
                     out
                 };
+
+                if overlay {
+                    return with_tile(e, |t, _| {
+                        t.shown_pending = Some((list, 2));
+                        ok("asked for (shown in two frames)")
+                    });
+                }
 
                 if let Err(m) = d.tile_mut().show_variations(&mut e.scene, &list) {
                     return fail(m);

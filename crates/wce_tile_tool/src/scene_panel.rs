@@ -40,6 +40,26 @@ impl TileTool {
     /// A checkbox per variation of the open combined project: whether it shows (docs/plans/tile_variations.md, Revision 1: the user
     /// works on the tile, the variations shown are a filter of the view). The last one shown can't be unticked. Side by side
     /// (`inline`: the Scene panel's header) or one under the other (a menu).
+    /// The variations shown asked for (`shown_pending`): counted down a frame at a time so that "Updating..." is on screen first, then
+    /// shown (blocking that frame), the overlay kept for the frame after (what is made again then).
+    pub(crate) fn apply_shown_pending(&mut self, e: &mut Editor) {
+        self.shown_overlay = self.shown_overlay.saturating_sub(u8::from(self.shown_pending.is_none()));
+        let Some((list, frames)) = self.shown_pending.as_mut() else { return };
+        if *frames > 0 {
+            *frames -= 1;
+            return;
+        }
+
+        let list = std::mem::take(list);
+        self.shown_pending = None;
+        self.shown_overlay = 2;
+        let Some(id) = document_id(e) else { return };
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        if let Err(m) = d.tile_mut().show_variations(&mut e.scene, &list) {
+            e.status(&m, false);
+        }
+    }
+
     pub(crate) fn shown_variation_items(&mut self, e: &mut Editor) {
         self.shown_variation_checkboxes(e, false);
     }
@@ -48,7 +68,8 @@ impl TileTool {
         let Some(id) = document_id(e) else { return };
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         let all = d.tile().variations().to_vec();
-        let shown = d.tile().shown_variations().to_vec();
+        // What was asked for already, while it waits to be shown (the viewport's "Updating...").
+        let shown = self.shown_pending.as_ref().map_or_else(|| d.tile().shown_variations().to_vec(), |(l, _)| l.clone());
         let mut want = None;
         for (i, v) in all.iter().enumerate() {
             if inline && i > 0 {
@@ -71,11 +92,9 @@ impl TileTool {
             }
         }
 
+        // Shown once the viewport has said it is updating (the switch blocks a frame for seconds on a big tile).
         if let Some(list) = want {
-            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-            if let Err(m) = d.tile_mut().show_variations(&mut e.scene, &list) {
-                e.status(&m, false);
-            }
+            self.shown_pending = Some((list, 2));
         }
     }
 }
