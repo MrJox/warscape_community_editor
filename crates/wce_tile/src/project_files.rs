@@ -314,7 +314,7 @@ pub fn strip_prefab_contents_with(text: Vec<u8>, base: Option<PrefabContents<'_>
     for r in reference_spans(&doc, &text) {
         // What the contents differ by (the overrides read with them are in them already).
         let ovs = match base.map(|b| b(&r.key)) {
-            Some(Some(b)) if r.start < r.end || r.open => match crate::prefab_refs::overrides(&text[r.start..r.end], &b) {
+            Some(Some(b)) if r.start < r.end || r.open => match crate::prefab_refs::saved_overrides(&text[r.start..r.end], &b) {
                 Ok(ovs) => ovs,
                 Err(why) => {
                     kept.push(format!("{}: {why}", r.key));
