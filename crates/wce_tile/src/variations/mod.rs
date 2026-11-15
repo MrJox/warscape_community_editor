@@ -23,12 +23,23 @@ pub const FOLDER: &str = "WceVariationFolder";
 /// container: its attributes are the values that variation's start tag has.
 pub const START: &str = "WceVariationStart";
 
+/// A variation's own values of the attributes of the element after it (an instance that variations share but for its height on
+/// their terrains): to the element's start tag in that variation.
+pub const VALUES: &str = "WceVariationValues";
+
 /// The attributes of a container's start tag that variations may differ in and still share it ([`START`]).
 pub const VIEW_STATE: [&str; 1] = ["flags"];
 
 /// The folders that may carry the attribute themselves (TEd's layers and groups). Anything else that is only some variations' goes in a
 /// variation folder.
 pub const TAGGABLE: [&str; 4] = ["LayerInstance", "UserInstanceGroup", "INSTANCE_GROUP", "LAYER_INSTANCE_GROUP"];
+
+/// The variations a group is a group in, when not all it is in: in the others it is not there, and what its `children` holds takes its
+/// place (one level up). The same buildings that each level of a settlement keeps in other groups are kept once that way.
+pub const GROUP_ATTR: &str = "wce_group_variations";
+
+/// The groups that may be a group in some variations only ([`GROUP_ATTR`]). Never a layer: what is in a layer exports with it.
+pub const WRAPPABLE: [&str; 2] = ["UserInstanceGroup", "INSTANCE_GROUP"];
 
 /// The variations of an attribute's value, in its order (empty names dropped).
 #[must_use]
@@ -66,6 +77,13 @@ pub fn own_variations(doc: &XmlDoc, elem: usize) -> Option<Vec<String>> {
 pub fn belongs(doc: &XmlDoc, elem: usize, variation: &str) -> bool {
     std::iter::successors(Some(elem), |&e| doc.elements()[e].parent)
         .all(|e| own_variations(doc, e).is_none_or(|l| l.iter().any(|v| v == variation)))
+}
+
+/// Whether an element is there in a variation as itself: it belongs to it, and it is not a group of other variations only
+/// ([`GROUP_ATTR`]; its contents are there, in its parent's place).
+#[must_use]
+pub fn is_there(doc: &XmlDoc, elem: usize, variation: &str) -> bool {
+    belongs(doc, elem, variation) && doc.get(elem, GROUP_ATTR).is_none_or(|l| parse_list(&l).iter().any(|v| v == variation))
 }
 
 /// The variations an element belongs to, of the project's `all`, in their order.
@@ -138,6 +156,102 @@ pub fn layer_key_variations(doc: &XmlDoc, all: &[String]) -> std::collections::H
         .collect()
 }
 
+/// How one variation sees a combined scene, element by element: what is not there (another variation's, or the bookkeeping: [`START`],
+/// [`VALUES`]), what it goes through (a [`FOLDER`], a group of other variations only: [`GROUP_ATTR`]; their contents are there, in
+/// their place), and the values its start tags have of their own. What the editor shows and picks of a combined project, and how it
+/// places it: the same as [`to_variation`] gives, without making that text.
+#[derive(Clone, Debug, Default)]
+pub struct View {
+    pub variation: String,
+    state: Vec<u8>,
+    values: std::collections::HashMap<usize, Vec<(String, Vec<u8>)>>,
+}
+
+const GONE: u8 = 1;
+const THROUGH: u8 = 2;
+
+impl View {
+    /// The view of a variation; of a document of one variation, everything is there.
+    #[must_use]
+    pub fn new(doc: &XmlDoc, variation: &str) -> Self {
+        let els = doc.elements();
+        let mut state = vec![0u8; els.len()];
+        let mut values = std::collections::HashMap::<usize, Vec<(String, Vec<u8>)>>::new();
+        let named = |l: Option<String>| l.is_none_or(|l| parse_list(&l).iter().any(|v| v == variation));
+
+        // Document order: a parent comes before its children.
+        for e in 0..els.len() {
+            let el = &els[e];
+            if el.parent.is_some_and(|p| state[p] == GONE) || !named(own_variations(doc, e).map(|l| list_text(&l))) {
+                state[e] = GONE;
+                continue;
+            }
+
+            if el.name == START || el.name == VALUES {
+                state[e] = GONE;
+                let target = if el.name == START {
+                    el.parent
+                } else {
+                    el.parent.and_then(|p| {
+                        let list = &els[p].children;
+                        let at = list.iter().position(|&c| c == e)?;
+                        list[at + 1..].iter().copied().find(|&c| els[c].name != VALUES)
+                    })
+                };
+
+                if let Some(target) = target {
+                    let own = el.attrs.iter().enumerate().filter(|(_, a)| a.name != VARIATIONS_ATTR);
+                    values.entry(target).or_default().extend(own.map(|(i, a)| (a.name.clone(), doc.attr_raw(e, i).to_vec())));
+                }
+
+                continue;
+            }
+
+            let through_group = el.parent.is_some_and(|p| state[p] == THROUGH && els[p].name != FOLDER) && el.name == "children";
+            if el.name == FOLDER || !named(doc.get(e, GROUP_ATTR)) || through_group {
+                state[e] = THROUGH;
+            }
+        }
+
+        Self { variation: variation.to_owned(), state, values }
+    }
+
+    /// Not in the variation (another's, or the bookkeeping): not shown, not picked.
+    #[must_use]
+    pub fn is_gone(&self, elem: usize) -> bool {
+        self.state.get(elem) == Some(&GONE)
+    }
+
+    /// A variation folder, or a group of other variations only (with its `children`): not there as itself, its contents are, in its
+    /// place: it adds no transform and no view state.
+    #[must_use]
+    pub fn is_through(&self, elem: usize) -> bool {
+        self.state.get(elem) == Some(&THROUGH)
+    }
+
+    /// An attribute's raw value as the variation has it: its own ([`START`], [`VALUES`]), else the element's.
+    #[must_use]
+    pub fn raw<'a>(&'a self, doc: &'a XmlDoc, elem: usize, name: &str) -> Option<&'a [u8]> {
+        if let Some((_, v)) = self.values.get(&elem).and_then(|l| l.iter().find(|(n, _)| n == name)) {
+            return Some(v);
+        }
+
+        doc.find_attr(elem, name).map(|i| doc.attr_raw(elem, i))
+    }
+
+    /// The values the variation has of its own for an element (none for most).
+    #[must_use]
+    pub fn own_values(&self, elem: usize) -> &[(String, Vec<u8>)] {
+        self.values.get(&elem).map_or(&[], Vec::as_slice)
+    }
+
+    /// The element as the variation has it above `elem`: the nearest ancestor it does not go through.
+    #[must_use]
+    pub fn parent(&self, doc: &XmlDoc, elem: usize) -> Option<usize> {
+        std::iter::successors(doc.elements()[elem].parent, |&p| doc.elements()[p].parent).find(|&p| !self.is_through(p))
+    }
+}
+
 /// The attribute that names a scene layer for the terrain layers that export with it.
 pub const LAYER_ID_ATTR: &str = "wce_layer_id";
 
@@ -188,6 +302,52 @@ pub fn to_variation(text: &[u8], variation: &str) -> Result<Vec<u8>, String> {
             continue;
         }
 
+        if el.name == VALUES {
+            // This variation's values of the next element: put in its start tag, the line gone.
+            cuts.push(whole_lines(text, el.start_off, el.end_off).unwrap_or((el.start_off, el.end_off)));
+            let next = el.parent.and_then(|p| {
+                let list = &els[p].children;
+                let at = list.iter().position(|&c| c == e)?;
+                list[at + 1..].iter().copied().find(|&c| els[c].name != VALUES)
+            });
+            let Some(next) = next else { return Err(format!("{VALUES} at offset {} is the last of its parent's", el.start_off)) };
+            for (i, a) in el.attrs.iter().enumerate().filter(|(_, a)| a.name != VARIATIONS_ATTR) {
+                let Some(ni) = doc.find_attr(next, &a.name) else {
+                    return Err(format!("{VALUES} at offset {} sets {}, which the element after it does not have", el.start_off, a.name));
+                };
+                let na = &els[next].attrs[ni];
+                values.push((na.value_off, na.value_off + na.value_len, doc.attr_raw(e, i).to_vec()));
+            }
+
+            continue;
+        }
+
+        if let Some(groups) = doc.get(e, GROUP_ATTR)
+            && !parse_list(&groups).iter().any(|v| v == variation)
+        {
+            // Not a group in this variation: its lines go (with its view states), what its `children` holds is in its place.
+            let bad = || format!("a group at offset {} with {GROUP_ATTR} is not laid out one element per line", el.start_off);
+            let &c = el.children.iter().find(|&&c| els[c].name == "children").ok_or_else(bad)?;
+            let group_line = line_start(text, el.start_off).ok_or_else(bad)?;
+            let after_open = line_end(text, els[c].start_end).ok_or_else(bad)?;
+            let close = close_tag(&doc, text, c).ok_or_else(bad)?;
+            let (close_line, after) = whole_lines(text, close, el.end_off).ok_or_else(bad)?;
+            cuts.push((group_line, after_open));
+            cuts.push((close_line, after));
+            if let Some(&first) = els[c].children.first() {
+                let unit =
+                    indent_len(text, line_start(text, els[first].start_off).ok_or_else(bad)?).saturating_sub(indent_len(text, group_line));
+                let mut at = after_open;
+                while at < close_line {
+                    *dedent.entry(at).or_default() += unit;
+                    at = text[at..close_line].iter().position(|&c| c == b'\n').map_or(close_line, |i| at + i + 1);
+                }
+            }
+
+            stack.extend(els[c].children.iter().rev().copied());
+            continue;
+        }
+
         if el.name == FOLDER {
             let not_alone = || format!("{FOLDER} at offset {} is not on lines of its own", el.start_off);
             let (start_line, after_start) = whole_lines(text, el.start_off, el.start_end).ok_or_else(not_alone)?;
@@ -205,8 +365,8 @@ pub fn to_variation(text: &[u8], variation: &str) -> Result<Vec<u8>, String> {
                     }
                 }
             }
-        } else if let Some(span) = attr_span(text, &doc, e, VARIATIONS_ATTR) {
-            cuts.push(span);
+        } else {
+            cuts.extend([VARIATIONS_ATTR, GROUP_ATTR].iter().filter_map(|a| attr_span(text, &doc, e, a)));
         }
 
         stack.extend(el.children.iter().rev().copied());
@@ -214,7 +374,7 @@ pub fn to_variation(text: &[u8], variation: &str) -> Result<Vec<u8>, String> {
 
     for (at, n) in dedent {
         if text[at..].iter().take(n).any(|&c| c != b' ' && c != b'\t') {
-            return Err(format!("a line in a {FOLDER} at offset {at} has less indent than its folder's contents"));
+            return Err(format!("a line in a {FOLDER} or a group at offset {at} has less indent than the rest of its contents"));
         }
 
         cuts.push((at, at + n));
@@ -275,6 +435,27 @@ mod tests {
         assert_eq!(effective(&doc, find("wall"), &all), ["small"]);
         assert_eq!(effective(&doc, find("house"), &all), ["minor", "small"]);
         assert_eq!(effective(&doc, find("shed"), &all), ["minor"]);
+    }
+
+    #[test]
+    fn a_view_sees_what_to_variation_gives() {
+        let text = "<project wce_variations=\"a,b\">\n    <WceVariationStart wce_variations=\"b\" version=\"15\"/>\n    <UserInstanceGroup position=\"1\" wce_group_variations=\"a\">\n        <WceVariationStart wce_variations=\"b\" position=\"9\"/>\n        <children>\n            <WceVariationValues wce_variations=\"b\" position=\"vector(0,2,0)\"/>\n            <x position=\"vector(0,1,0)\"/>\n            <WceVariationFolder wce_variations=\"b\">\n                <y/>\n            </WceVariationFolder>\n        </children>\n    </UserInstanceGroup>\n</project>\n";
+        let doc = XmlDoc::parse(text.as_bytes().to_vec()).unwrap();
+        let find = |name: &str| (0..doc.elements().len()).find(|&e| doc.elements()[e].name == name).unwrap();
+        let (root, group, x, y, folder) = (find("project"), find("UserInstanceGroup"), find("x"), find("y"), find(FOLDER));
+        let a = View::new(&doc, "a");
+        assert!(!a.is_through(group) && a.is_gone(y) && !a.is_gone(x));
+        assert_eq!(a.raw(&doc, x, "position"), Some(&b"vector(0,1,0)"[..]));
+        assert_eq!(a.parent(&doc, x), Some(doc.elements()[x].parent.unwrap()), "the group's children");
+
+        let b = View::new(&doc, "b");
+        assert!(b.is_through(group) && b.is_through(folder) && !b.is_gone(y));
+        assert_eq!(b.raw(&doc, x, "position"), Some(&b"vector(0,2,0)"[..]), "its own height");
+        assert_eq!(b.raw(&doc, group, "position"), Some(&b"9"[..]));
+        assert_eq!(b.raw(&doc, root, "version"), Some(&b"15"[..]));
+        assert_eq!(b.parent(&doc, x), Some(root), "the group is not there in b");
+        assert_eq!(b.parent(&doc, y), Some(root));
+        assert!(b.is_gone(find(START)) && b.is_gone(find(VALUES)));
     }
 
     #[test]
