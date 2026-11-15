@@ -109,14 +109,16 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "tile_combine",
-        "tile_combine [--ref <variation>] <variation> <variation>...",
+        "tile_combine [--ref <variation>] [--align] <variation> <variation>...",
         "Tile > Variations > Combine: the open tile's variations named made one combined project in the projects (each from its project, else the kit, else the packs; checked before anything is written; the projects that went in moved to the backup), opened",
         move |e, a| {
+            let align = a.iter().any(|x| x == "--align");
+            let a = a.iter().filter(|x| *x != "--align").cloned().collect::<Vec<_>>();
             let at = a.iter().position(|x| x == "--ref");
             let reference = at.and_then(|i| a.get(i + 1)).cloned();
             let names = a.iter().enumerate().filter(|(i, _)| at.is_none_or(|r| *i != r && *i != r + 1)).map(|(_, x)| x.clone()).collect::<Vec<_>>();
             let names = list(&names);
-            with_tile(e, |t, e| t.combine_now(e, &names, reference.as_deref()).map_or_else(fail, ok))
+            with_tile(e, |t, e| t.combine_now(e, &names, reference.as_deref(), align).map_or_else(fail, ok))
         },
     );
 

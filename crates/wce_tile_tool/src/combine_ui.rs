@@ -50,6 +50,9 @@ pub(crate) struct CombineUi {
 
     /// The variation to view after combining.
     pub view: String,
+
+    /// *Align heights*: a level whose height map is another's stored with another range takes that one's heights.
+    pub align: bool,
     job: Option<Receiver<Msg>>,
     pub busy: String,
     pub error: String,
@@ -166,6 +169,7 @@ impl TileTool {
             stats: None,
             stats_rows: vec![],
             view,
+            align: false,
             job: Some(rx),
             busy: "Reading the variations and what they share...".to_owned(),
             error: String::new(),
@@ -206,7 +210,7 @@ impl TileTool {
     /// # Errors
     ///
     /// Fewer than two variations, one that can't be read, the tile has unsaved changes, or what `combine` refuses.
-    pub fn combine_now(&mut self, e: &mut Editor, names: &[String], reference: Option<&str>) -> Result<String, String> {
+    pub fn combine_now(&mut self, e: &mut Editor, names: &[String], reference: Option<&str>, align: bool) -> Result<String, String> {
         let (entry, projects_raw, rows, provider) = self.combine_rows(e)?;
         let location = entry.location();
         let mut inputs = vec![];
@@ -228,7 +232,7 @@ impl TileTool {
         };
         let view = inputs[reference].variation.clone();
         Self::close_tile_documents(e, &location, false)?;
-        let report = wce_tile::variations::combine::combine(&inputs, reference, &entry, &projects_raw)?;
+        let report = wce_tile::variations::combine::combine_with(&inputs, reference, &entry, &projects_raw, align)?;
         wce_foundation::log::info(&report.message);
         self.open_variation(e, &entry, &projects_raw, &view)?;
         Ok(report.message)
@@ -347,6 +351,13 @@ impl TileTool {
         }
 
         gui::separator();
+        gui::checkbox("Align heights", &mut ui.align);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "For a level copied from another and saved again with another height range (its ground then stands a little higher or lower): it takes the other's heights where its stored samples are the same, and its range, and its buildings' own heights that only followed that shift go. Its export changes there (the report says how much); the others come back as they are.",
+            );
+        }
+
         gui::text_disabled("Checked before anything is written: each variation must come back from the combined project as it is.");
         gui::text_disabled("The projects that go in are moved to the projects' backup folder; the kit and the packs are not touched.");
         if !ui.busy.is_empty() {
@@ -388,10 +399,11 @@ impl TileTool {
                         ui.view = inputs[reference].variation.clone();
                     }
 
-                    let (entry, raw) = (ui.entry.clone(), ui.projects_raw.clone());
+                    let (entry, raw, align) = (ui.entry.clone(), ui.projects_raw.clone(), ui.align);
                     let (tx, rx) = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
-                        let _ = tx.send(Msg::Combined(wce_tile::variations::combine::combine(&inputs, reference, &entry, &raw)));
+                        let _ =
+                            tx.send(Msg::Combined(wce_tile::variations::combine::combine_with(&inputs, reference, &entry, &raw, align)));
                     });
                     ui.job = Some(rx);
                     ui.error.clear();

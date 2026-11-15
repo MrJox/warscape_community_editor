@@ -68,6 +68,12 @@ struct Read {
     text: Vec<u8>,
     layers: TerrainLayers,
 
+    /// Its heights (metres) and the range they are stored in (its row's), and whether its own layers file has height layers (it is
+    /// not aligned then: its base is not the whole of its heights).
+    hf: HeightField,
+    range: (f64, f64),
+    height_layers: bool,
+
     /// Its maps as they are on disk: the height map's samples, the blend and ground type maps' bytes.
     height: Vec<u8>,
     blend: Option<Vec<u8>>,
@@ -116,10 +122,13 @@ fn read_input(input: &Input, entry: &TileEntry) -> Result<Read, String> {
         Some(p) => TerrainLayers::from_bytes(&read(&p)?)?,
         None => TerrainLayers::default(),
     };
+    let height_layers = layers.height.as_ref().is_some_and(|s| !s.layers.is_empty());
 
     if layers.height.is_none() {
         layers.height = Some(Stack::<Height>::new(&hf));
     }
+
+    let range = (row.min_height, row.scale);
 
     if layers.blend.is_none()
         && let Some(p) = &blend
@@ -172,6 +181,9 @@ fn read_input(input: &Input, entry: &TileEntry) -> Result<Read, String> {
         text,
         below,
         layers,
+        hf,
+        range,
+        height_layers,
         height,
         blend: blend.as_deref().map(read).transpose()?,
         ground: ground.as_deref().map(read).transpose()?,
@@ -191,6 +203,195 @@ pub fn shares(inputs: &[Input]) -> Result<Stats, String> {
         .map(|i| scene_text(&i.dir).map(|text| Source { variation: i.variation.clone(), text }))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(merge(&sources)?.stats)
+}
+
+/// A level aligned to an earlier one (Combine's *align heights*): a level whose height map is another's samples stored with another range
+/// (copied, then saved with another `min_height` / `scale`) takes that one's heights where its samples are the same, and its range.
+struct Aligned {
+    /// The level whose heights it took, its new range, how many samples took them.
+    to: usize,
+    range: (f64, f64),
+    samples: usize,
+
+    /// Per height pixel, what its heights moved by (metres; 0 where they did not), row after row; the map's width.
+    shift: Vec<f32>,
+    width: u32,
+}
+
+/// The big-endian 16-bit samples of a height map's pixels.
+fn samples16(pixels: &[u8]) -> Vec<u16> {
+    pixels.chunks_exact(2).map(|p| u16::from_be_bytes([p[0], p[1]])).collect()
+}
+
+/// Aligns each level (after the first) to the earlier one whose stored samples it shares the most of, where their ranges differ. Per 64 x
+/// 64 block it is read the way that agrees with that one for most of the block's samples: its samples in that one's range (the block
+/// was copied: same samples, another range, so it stood higher or lower) or its own heights (the block was saved again in its range:
+/// the same heights, rounded otherwise); its own changes come along either way. A sample that either way reads within a centimetre of
+/// that one's height is that one's (where the two ways meet in a block, and the rounding of a range). Its range becomes that one's (or what holds its heights then), its expected height map what that stores. A level whose own layers file has height layers is left as it is. Per level, what was done.
+fn align_heights(reads: &mut [Read]) -> Result<Vec<Option<Aligned>>, String> {
+    let mut out = vec![];
+    for k in 0..reads.len() {
+        if k == 0 || reads[k].height_layers {
+            out.push(None);
+            continue;
+        }
+
+        let own = samples16(&reads[k].height);
+        let best = (0..k)
+            .filter(|&u| reads[u].range != reads[k].range && reads[u].height.len() == reads[k].height.len())
+            .map(|u| (u, samples16(&reads[u].height).iter().zip(&own).filter(|(a, b)| a == b).count()))
+            .max_by_key(|&(_, n)| n);
+        let Some((u, n)) = best.filter(|&(_, n)| n > 0) else {
+            out.push(None);
+            continue;
+        };
+
+        let theirs = samples16(&reads[u].height);
+        let (w, h) = (reads[k].hf.width(), reads[k].hf.height());
+        // Within a centimetre: what no one sees, and more than a step of any range (a step of 134 m is 2 mm).
+        let step = (reads[k].range.1.abs() / 65535.0).max(0.01);
+        let (min_u, scale_u) = reads[u].range;
+        let in_theirs = |i: usize| min_u + f64::from(own[i]) / 65535.0 * scale_u;
+        let mut taken = 0;
+        let mut field = reads[k].hf.clone();
+        let mut shift = vec![0f32; own.len()];
+        let _ = &theirs;
+        field.begin_edit()?;
+        for by in (0..h).step_by(64) {
+            for bx in (0..w).step_by(64) {
+                let pixels = (by..(by + 64).min(h)).flat_map(|y| (bx..(bx + 64).min(w)).map(move |x| (x, y))).collect::<Vec<_>>();
+                let near = |m: f64, x: u32, y: u32| (m - reads[u].hf.metres(x, y)).abs() <= step;
+                let copied = pixels.iter().filter(|&&(x, y)| near(in_theirs((y * w + x) as usize), x, y)).count();
+                let saved = pixels.iter().filter(|&&(x, y)| near(reads[k].hf.metres(x, y), x, y)).count();
+                for &(x, y) in &pixels {
+                    let i = (y * w + x) as usize;
+                    let was = reads[k].hf.metres(x, y);
+                    let theirs_m = reads[u].hf.metres(x, y);
+                    let now = if near(in_theirs(i), x, y) || near(was, x, y) {
+                        theirs_m
+                    } else if copied > saved {
+                        in_theirs(i)
+                    } else {
+                        was
+                    };
+                    if now != was {
+                        field.set_metres(x, y, now)?;
+                        shift[i] = (now - was) as f32;
+                    }
+
+                    taken += usize::from(now == theirs_m);
+                }
+            }
+        }
+
+        field.end_edit();
+        let mut range = reads[u].range;
+        field.set_range(range.0, range.1);
+        if !field.holds_range() {
+            range = field.fit_range();
+            field.set_range(range.0, range.1);
+        }
+
+        // What its export stores: the heights as the layers hold them (f32 metres), in its range.
+        let stack = Stack::<Height>::new(&field);
+        reads[k].height = stack
+            .composite(&|_| true)
+            .iter()
+            .flat_map(|&m| crate::height_field::quantize(f64::from(m), range.0, range.1).to_be_bytes())
+            .collect();
+        reads[k].layers.height = Some(stack);
+        reads[k].hf = field;
+        reads[k].range = range;
+        let _ = n;
+        out.push(Some(Aligned { to: u, range, samples: taken, shift, width: w }));
+    }
+
+    Ok(out)
+}
+
+/// The `WceVariationValues` lines of an aligned level's own heights that its terrain's shift alone made (TEd put the instance on the
+/// shifted ground): a line of `variation`'s whose only value is a `position` that is the element's but for its height, by what the
+/// terrain moved under the instance (within 5 cm). Their element indices in `project`'s scene.
+fn shifted_values(project: &TileProject, variation: &str, a: &Aligned) -> Vec<usize> {
+    let sc = &project.scene;
+    let doc = sc.doc();
+    let els = doc.elements();
+    let unit = project.unit_scale;
+    let shift_at = |xm: f64, zm: f64| {
+        let (px, pz) = (project.pixel_x(xm), project.pixel_z(zm));
+        let h = (a.shift.len() as u32 / a.width.max(1)).max(1);
+        let (x0, z0) = (px.floor().clamp(0.0, f64::from(a.width - 1)) as u32, pz.floor().clamp(0.0, f64::from(h - 1)) as u32);
+        let (x1, z1) = ((x0 + 1).min(a.width - 1), (z0 + 1).min(h - 1));
+        let at = |x: u32, z: u32| f64::from(a.shift[(z * a.width + x) as usize]);
+        let (tx, tz) = ((px - f64::from(x0)).clamp(0.0, 1.0), (pz - f64::from(z0)).clamp(0.0, 1.0));
+        let top = at(x0, z0) + (at(x1, z0) - at(x0, z0)) * tx;
+        let bottom = at(x0, z1) + (at(x1, z1) - at(x0, z1)) * tx;
+        top + (bottom - top) * tz
+    };
+    let vector = |e: usize| doc.get(e, "position").and_then(|t| crate::ted_scene::parse_vec3(&t, "vector"));
+    let mut out = vec![];
+    for line in 0..els.len() {
+        let el = &els[line];
+        if el.name != super::VALUES
+            || el.attrs.iter().any(|x| x.name != VARIATIONS_ATTR && x.name != "position")
+            || !own_variations(doc, line).is_some_and(|l| l.iter().any(|v| v == variation))
+        {
+            continue;
+        }
+
+        let target = el.parent.and_then(|p| {
+            let list = &els[p].children;
+            let at = list.iter().position(|&c| c == line)?;
+            list[at + 1..].iter().copied().find(|&c| els[c].name != super::VALUES)
+        });
+        let (Some(target), Some(mine)) = (target, vector(line)) else { continue };
+        let Some(shared) = vector(target) else { continue };
+        if (mine.x - shared.x).abs() > 1e-4 || (mine.z - shared.z).abs() > 1e-4 {
+            continue;
+        }
+
+        let w = crate::world_transform::world_transform_as(sc, target, Some(variation)).position;
+        let moved = shift_at(w.x / unit, w.z / unit);
+        if ((shared.y - mine.y) - moved).abs() <= 0.05 {
+            out.push(line);
+        }
+    }
+
+    out
+}
+
+/// A text without `variation` in the lists of the `WceVariationValues` lines `lines` (a line of it alone goes whole).
+fn without_values(text: &[u8], variation: &str, lines: &[usize]) -> Result<Vec<u8>, String> {
+    let doc = XmlDoc::parse(text.to_vec()).map_err(|e| e.to_string())?;
+    let els = doc.elements();
+    let original = doc.original_text();
+    let mut cuts: Vec<(usize, usize, Vec<u8>)> = vec![];
+    for &line in lines {
+        let Some(list) = own_variations(&doc, line) else { continue };
+        let left = list.iter().filter(|v| *v != variation).cloned().collect::<Vec<_>>();
+        if left.is_empty() {
+            let el = &els[line];
+            let (s, t) = whole_lines(original, el.start_off, el.end_off).unwrap_or((el.start_off, el.end_off));
+            cuts.push((s, t, vec![]));
+        } else if let Some(i) = doc.find_attr(line, VARIATIONS_ATTR) {
+            let a = &els[line].attrs[i];
+            cuts.push((a.value_off, a.value_off + a.value_len, list_text(&left).into_bytes()));
+        }
+    }
+
+    cuts.sort_unstable();
+    let mut out = Vec::with_capacity(original.len());
+    let mut at = 0;
+    for (s, t, with) in cuts {
+        if s >= at {
+            out.extend_from_slice(&original[at..s]);
+            out.extend_from_slice(&with);
+            at = t;
+        }
+    }
+
+    out.extend_from_slice(&original[at..]);
+    Ok(out)
 }
 
 /// What a combination did.
@@ -291,6 +492,18 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 /// Fewer than two variations, the tile is combined already, a variation does not read or does not come back as it was (nothing is
 /// written then), or a file can't be written.
 pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_raw: &Path) -> Result<Report, String> {
+    combine_with(inputs, reference, entry, projects_raw, false)
+}
+
+/// [`combine`], `align`: a level whose height map is an earlier one's samples stored with another range takes that one's heights and range
+/// where its samples are the same, and its instances' own heights that only followed that shift go (Combine's *align heights*; the
+/// user, 2026-11-15: a level copied from another and saved again with another range). Its export then is the earlier one's terrain there
+/// (the report says how many samples moved and how many own heights went); the other levels come back byte for byte, as without it.
+///
+/// # Errors
+///
+/// As `combine`.
+pub fn combine_with(inputs: &[Input], reference: usize, entry: &TileEntry, projects_raw: &Path, align: bool) -> Result<Report, String> {
     if inputs.len() < 2 {
         return Err("tick at least two variations to combine".to_owned());
     }
@@ -308,17 +521,25 @@ pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_r
     let (inputs, reference) = (&ordered[..], 0);
 
     let names = inputs.iter().map(|i| i.variation.clone()).collect::<Vec<_>>();
-    let reads = inputs.iter().map(|i| read_input(i, entry).map_err(|e| format!("{}: {e}", i.variation))).collect::<Result<Vec<_>, _>>()?;
+    let mut reads =
+        inputs.iter().map(|i| read_input(i, entry).map_err(|e| format!("{}: {e}", i.variation))).collect::<Result<Vec<_>, _>>()?;
+    let aligned = if align { align_heights(&mut reads)? } else { reads.iter().map(|_| None).collect() };
+
+    // The entry: an aligned level's row with its new range.
+    let mut entry = entry.clone();
+    for (k, a) in aligned.iter().enumerate() {
+        if let (Some(a), Some(row)) = (a, entry.find_variation(&names[k])) {
+            entry.set_height_range(row, a.range.0, a.range.1);
+        }
+    }
+
+    let entry = &entry;
     let sources = names.iter().zip(&reads).map(|(v, r)| Source { variation: v.clone(), text: r.text.clone() }).collect::<Vec<_>>();
     let merged = merge(&sources)?;
     check(&merged.text, &sources)?;
     let layer_sources = names.iter().zip(&reads).map(|(v, r)| (v.as_str(), &r.layers)).collect::<Vec<_>>();
-    // Heights compared as each variation stores them (its row's range): a level stored in another range still shares its patches.
-    let rows = entry.variations();
-    let ranges = names
-        .iter()
-        .map(|v| rows.iter().find(|r| r.location.eq_ignore_ascii_case(v)).map_or((0.0, 1.0), |r| (r.min_height, r.scale)))
-        .collect::<Vec<_>>();
+    // Heights compared as each variation stores them (its range): a level stored in another range still shares its patches.
+    let ranges = reads.iter().map(|r| r.range).collect::<Vec<_>>();
     let layers = TerrainLayers::combine_in(&layer_sources, reference, Some(&ranges))?;
 
     // The files: those every variation has the same go in the tile's folder, the others in each one's own.
@@ -379,22 +600,52 @@ pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_r
 
         put_entry(entry, &staging_raw)?;
 
-        // Each variation back from it, compared with what it was made from.
+        // An aligned level's own heights that only followed its terrain's shift go (its instances stand where the level it took the
+        // heights of has them).
+        let mut dropped = vec![0usize; names.len()];
+        if aligned.iter().any(Option::is_some) {
+            let project = TileProject::open(&staged.join(&names[0]))?;
+            let mut text = project.scene.save();
+            for (k, a) in aligned.iter().enumerate() {
+                let Some(a) = a else { continue };
+                let parsed = TileProject::open(&staged.join(&names[0]))?;
+                let lines = shifted_values(&parsed, &names[k], a);
+                dropped[k] = lines.len();
+                text = without_values(&text, &names[k], &lines)?;
+                put(staged.join(WCE_FILE), &mark_wce_text(text.clone()))?;
+            }
+        }
+
+        // Each variation back from it, compared with what it was made from (an aligned level: its heights with what it took).
         let project = TileProject::open(&staged.join(&names[0]))?;
         let back_raw = checking.join("raw_data");
         let mut bad = vec![];
+        let mut rounded = vec![0usize; names.len()];
         for (k, read) in reads.iter().enumerate() {
             let v = &names[k];
             let m = project.materialize(v, &project.scene.save(), &back_raw)?;
             let file = |name: &str| std::fs::read(m.dir.join(name)).ok();
             let scene = file(WCE_FILE).ok_or("no tile.wce written")?;
-            if to_ted(scene)?.0 != to_ted(read.text.clone())?.0 {
+            if aligned[k].is_none() && to_ted(scene)?.0 != to_ted(read.text.clone())?.0 {
                 bad.push(format!("{v}: its scene"));
             }
 
             let back_height = file(MAPS[0]).and_then(|b| PngFile::parse(&b).ok()).map(|p| p.pixels);
-            if m.refit || back_height.as_ref() != Some(&read.height) {
-                bad.push(format!("{v}: its height map"));
+            let (got, want) = (samples16(back_height.as_deref().unwrap_or_default()), samples16(&read.height));
+            let n = got.iter().zip(&want).filter(|(x, y)| x != y).count() + got.len().abs_diff(want.len());
+            let worst = got.iter().zip(&want).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+            // An aligned level's heights are what it took (its export changes anyway): a step's rounding where it shares a patch is
+            // allowed, and said.
+            if aligned[k].is_some() && !m.refit && got.len() == want.len() && worst <= 1 {
+                rounded[k] = n;
+            } else if m.refit || back_height.as_ref() != Some(&read.height) {
+                bad.push(format!(
+                    "{v}: its height map ({n} of {} samples differ, by up to {worst}; stored in {:.3} / {:.3}{})",
+                    want.len(),
+                    m.range.0,
+                    m.range.1,
+                    if m.refit { ", out of its row's range" } else { "" }
+                ));
             }
 
             if read.blend.is_some() && file(MAPS[1]) != read.blend {
@@ -430,13 +681,25 @@ pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_r
             move_path(&f.path(), &tile_dir.join(f.file_name()))?;
         }
 
-        if !entry_file(entry, projects_raw)?.is_file() {
+        // The entry into the projects when they have none, or when a level's range changed (aligned).
+        if !entry_file(entry, projects_raw)?.is_file() || aligned.iter().any(Option::is_some) {
             put_entry(entry, projects_raw)?;
         }
 
         wce_formats::tile_index::TileIndex::forget_shared();
+        let alignment = aligned
+            .iter()
+            .enumerate()
+            .filter_map(|(k, a)| {
+                let a = a.as_ref()?;
+                Some(format!(
+                    "; {} aligned to {}: {} height samples took {}'s, its range {:.3} / {:.3}, {} of its instances' own heights went, {} samples a step off by rounding",
+                    names[k], names[a.to], a.samples, names[a.to], a.range.0, a.range.1, dropped[k], rounded[k]
+                ))
+            })
+            .collect::<String>();
         let message = format!(
-            "{} combined into {} ({}){}",
+            "{} combined into {} ({}){alignment}{}",
             names.join(", "),
             tile_dir.display(),
             merged.stats.summary(),
