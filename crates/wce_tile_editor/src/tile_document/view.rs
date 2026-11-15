@@ -1935,6 +1935,11 @@ impl Tile {
         self.polygons_dirty = true;
     }
 
+    /// Show polygons changed: they are drawn (from the covers kept while hidden) or hidden at the next update, and nothing else is rebuilt.
+    pub fn polygons_shown_changed(&mut self) {
+        self.polygons_toggled = true;
+    }
+
     /// The display settings changed: everything shown is rebuilt at the next update.
     pub fn display_changed(&mut self) {
         self.columns_changed();
@@ -2092,20 +2097,24 @@ impl Tile {
             }
         }
 
-        if self.polygons_dirty {
+        if self.polygons_dirty || self.polygons_toggled {
             wce_prof!("tile.polygons");
-            self.polygons_dirty = false;
+            // Something they lie on changed, not just whether they are shown: the walls' previews follow too.
+            let changed = std::mem::take(&mut self.polygons_dirty);
+            self.polygons_toggled = false;
 
-            // The publish just built them all (on the terrain: no building it had not placed yet raises them).
+            // The publish just built them all (on the terrain: no building it had not placed yet raises them). Hidden, the covers are
+            // kept: showing them again reuses those still standing on the same ground (their keys), rather than building every one.
             let published = std::mem::take(&mut self.polygons_published);
-            if !published {
+            let respare = self.display.show_polygons && !published;
+            if respare {
                 self.spare_covers();
+                self.covers_dirty.clear();
             }
 
-            self.covers_dirty.clear();
-            let solids = if self.display.show_polygons && !published { self.cover_solids(scene) } else { vec![] };
+            let solids = if respare { self.cover_solids(scene) } else { vec![] };
             for e in self.instances.clone() {
-                if self.is_wall(e) {
+                if changed && self.is_wall(e) {
                     self.wall_changed(e);
                 }
 
@@ -2121,7 +2130,9 @@ impl Tile {
                 }
             }
 
-            self.end_spare_covers();
+            if respare {
+                self.end_spare_covers();
+            }
         } else if !self.covers_dirty.is_empty() {
             // Covers a moved building is (or was) under.
             let solids = self.cover_solids(scene);
