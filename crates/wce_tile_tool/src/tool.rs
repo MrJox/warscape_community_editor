@@ -604,6 +604,9 @@ pub struct TileTool {
     /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
     pub(crate) open_kit_copy: bool,
 
+    /// A road point's fence damage being dragged in the Polygon panel (road, point, value): written when let go.
+    pub(crate) road_damage_draft: Option<(usize, usize, f32)>,
+
     /// A kit's tile with a project too, the kit's copy chosen (`kit_copy_prompt.rs`): its folder opens as itself, not as the project.
     pub(crate) kit_choice: Option<PathBuf>,
     pub(crate) copy_prompt: Option<crate::kit_copy_prompt::CopyPrompt>,
@@ -984,6 +987,7 @@ impl Default for TileTool {
             bridge_check: None,
             bridge_overlay: true,
             open_kit_copy: false,
+            road_damage_draft: None,
             kit_choice: None,
             copy_prompt: None,
             copy_prompt_open: false,
@@ -3894,6 +3898,83 @@ impl TileTool {
                 if gui::is_item_hovered() {
                     gui::set_tooltip("The selected point's sharp mark. A turn of 90 degrees or more is a corner whatever the mark.");
                 }
+
+                self.draw_road_point_fence(d, s, pt, p);
+            }
+        }
+    }
+
+    /// A road point's own fence (`road_fence`: a fence piece of the road's type, or none) and damage (`road_fence_damage`): they cover the
+    /// fences nearest the point, halfway to its neighbours; unset, the road's settings hold there.
+    fn draw_road_point_fence(&mut self, d: &mut TileDocument, road: usize, pt: usize, p: usize) {
+        let own = d.tile().tscene().get(p, "road_fence").filter(|v| !v.trim().is_empty());
+        let mut choices = d.tile().road_fence_choices(road);
+        if let Some(o) = own.as_ref().filter(|o| *o != "none" && !choices.contains(o)) {
+            choices.push(o.clone());
+        }
+
+        let preview = match own.as_deref() {
+            None => "the road's".to_owned(),
+            Some("none") => "none (a gap)".to_owned(),
+            Some(o) => o.to_owned(),
+        };
+        gui::set_next_item_width(200.0);
+        if gui::begin_combo("fence here##road_point_fence", &preview) {
+            let mut pick = None;
+            if gui::selectable("the road's", own.is_none(), 0) {
+                pick = Some(String::new());
+            }
+
+            if gui::selectable("none (a gap)", own.as_deref() == Some("none"), 0) {
+                pick = Some("none".to_owned());
+            }
+
+            for c in &choices {
+                if gui::selectable(c, own.as_deref() == Some(c.as_str()), 0) {
+                    pick = Some(c.clone());
+                }
+            }
+
+            gui::end_combo();
+            if let Some(v) = pick {
+                d.set_point_attribute(road, pt, "road_fence", &v);
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The fence around this point (halfway to its neighbours): a fence piece of the road's type (road_<type>_fence_<name> in roads_proc), none for a gap, or the road's. The road's Fences setting still says which sides have them.",
+            );
+        }
+
+        let damage = d.tile().tscene().get(p, "road_fence_damage").and_then(|v| v.trim().parse::<f32>().ok());
+        let mut on = damage.is_some();
+        if gui::checkbox("own fence damage##road_point_damage", &mut on) {
+            let value = if on {
+                let road_value = d.tile().tscene().get(road, "road_fence_damage").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+                wce_tile::ted_scene::format_number(f64::from(road_value))
+            } else {
+                String::new()
+            };
+            d.set_point_attribute(road, pt, "road_fence_damage", &value);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Off: the road's fence damage. On: the chance each fence around this point is destroyed.");
+        }
+
+        if let Some(saved) = damage {
+            // Dragged as a draft, written once when let go (one undo entry, the road made again once).
+            let mut v = self.road_damage_draft.filter(|d| d.0 == road && d.1 == pt).map_or(saved, |d| d.2);
+            gui::same_line();
+            gui::set_next_item_width(140.0);
+            if gui::slider_float("##road_point_damage_v", &mut v, 0.0, 1.0, "%.2f") {
+                self.road_damage_draft = Some((road, pt, v));
+            }
+
+            if gui::is_item_deactivated_after_edit() {
+                self.road_damage_draft = None;
+                d.set_point_attribute(road, pt, "road_fence_damage", &wce_tile::ted_scene::format_number(f64::from(v)));
             }
         }
     }

@@ -49,7 +49,23 @@ struct Road {
 
     /// The share of its pieces' detail parts laid (0 to 1; `road_pieces::PartRole::Detail`), by its seed.
     detail_density: f64,
+
+    /// Its points' own fence settings, one per point (none: the road's): the fence piece (`none`: no fence there; `fence` or a named one,
+    /// `fence_wood`: `road_<type>_fence_wood`) and the damage chance. Each covers the fences nearest it, halfway to its neighbours.
+    point_fences: Vec<Option<String>>,
+    point_damage: Vec<Option<f64>>,
     signature: u64,
+}
+
+/// What a road type's named fence pieces are filed under in its piece list (their keys tell them apart): not picked at random as the
+/// fence's variants are, only where a point asks for one.
+const NAMED_FENCE: &str = "fence_named";
+
+/// The point whose fences a place on a road is among: the nearest along the road (so each point covers halfway to its neighbours).
+fn point_of(line: &[[f64; 2]], at_point: &[usize], p: [f64; 2]) -> Option<usize> {
+    let st = Stations::new(line);
+    let s = wce_tile::road_layout::nearest(line, p).0;
+    at_point.iter().enumerate().min_by(|a, b| (st.of_sample(*a.1) - s).abs().total_cmp(&(st.of_sample(*b.1) - s).abs())).map(|(i, _)| i)
 }
 
 /// Whether a detail part is laid: by the road's density, its seed, the piece's number (`n`) and the part's index in the piece; any other
@@ -387,8 +403,15 @@ impl Tile {
 
                 let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
                 let detail_density = number(e, "road_detail_density", 0.5).clamp(0.0, 1.0);
+                let points = self.tscene().polygon_points(e);
+                let point_fences =
+                    points.iter().map(|&p| doc.get(p, "road_fence").map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())).collect::<Vec<_>>();
+                let point_damage = points
+                    .iter()
+                    .map(|&p| doc.get(p, "road_fence_damage").and_then(|v| wce_formats::c_num::strtod(&v)).map(|v| v.clamp(0.0, 1.0)))
+                    .collect::<Vec<_>>();
                 let signature = hash_text(&format!(
-                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {water:x}"
+                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {water:x}"
                 ));
                 Road {
                     id: number(e, "road_id", 0.0) as u32,
@@ -401,6 +424,8 @@ impl Tile {
                     fences,
                     fence_damage,
                     detail_density,
+                    point_fences,
+                    point_damage,
                     signature,
                 }
             })
@@ -858,6 +883,39 @@ impl Tile {
                 Some((name, piece, k, prefab.children_text))
             })
             .chain(variants)
+            .chain(self.road_named_fences(road_type))
+            .collect()
+    }
+
+    /// A road type's named fence pieces (`road_<type>_fence_<name>`, the name not a variant's number), filed under [`NAMED_FENCE`].
+    fn road_named_fences(&self, road_type: &str) -> Vec<(&'static str, Piece, String, Vec<u8>)> {
+        let Some(lib) = &self.road_prefabs else { return vec![] };
+        let prefix = format!("{}_", key(road_type, "fence"));
+        let mut keys = lib
+            .entries()
+            .map(|en| en.key.clone())
+            .filter(|k| k.strip_prefix(&prefix).is_some_and(|name| !name.is_empty() && name.parse::<u32>().is_err()))
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys.dedup();
+        keys.into_iter()
+            .filter_map(|k| {
+                let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
+                let piece =
+                    read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
+                Some((NAMED_FENCE, piece, k, prefab.children_text))
+            })
+            .collect()
+    }
+
+    /// The fence pieces a road's points may choose (Polygon panel): `fence` and the type's named ones (`fence_wood`, ...).
+    #[must_use]
+    pub fn road_fence_choices(&self, road: usize) -> Vec<String> {
+        let road_type =
+            self.tscene().get(road, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
+        let lead = key(&road_type, "");
+        std::iter::once("fence".to_owned())
+            .chain(self.road_named_fences(&road_type).into_iter().filter_map(|n| n.2.strip_prefix(&lead).map(str::to_owned)))
             .collect()
     }
 
@@ -1341,6 +1399,15 @@ fn road_items(i: ItemsInput) -> ItemsMade {
 
                     k += 1;
                     let n = k;
+
+                    // The point it is nearest: its own fence and damage, else the road's.
+                    let at = point_of(&plan.line, &plan.at_point, fst.at((from + to) * 0.5).0);
+                    let own_fence = at.and_then(|i| road.point_fences.get(i).cloned().flatten());
+                    let chance = at.and_then(|i| road.point_damage.get(i).copied().flatten()).unwrap_or(road.fence_damage);
+                    if own_fence.as_deref() == Some("none") {
+                        continue;
+                    }
+
                     let damage = |_: usize, part: &wce_tile::road_pieces::Part| {
                         let max = levels.get(&part.key).copied().unwrap_or(1);
                         let roll = |salt: u64| {
@@ -1354,7 +1421,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                             (h >> 11) as f64 / (1u64 << 53) as f64
                         };
 
-                        if !part.solid || max < 2 || roll(1) >= road.fence_damage {
+                        if !part.solid || max < 2 || roll(1) >= chance {
                             return vec![];
                         }
 
@@ -1364,7 +1431,13 @@ fn road_items(i: ItemsInput) -> ItemsMade {
 
                     // This fence: the fence piece or one of its variants, by their weights (laid at the piece's length: a variant
                     // keeps it).
-                    let fence_options = pieces.iter().filter(|q| q.0 == "fence").collect::<Vec<_>>();
+                    // A point's named fence (`fence_wood`) where it asks for one and the type has it.
+                    let named = own_fence.filter(|f| f != "fence").map(|f| wce_tile::road_pieces::key(&road.road_type, &f));
+                    let fence_options =
+                        match named.as_ref().map(|nk| pieces.iter().filter(|q| q.0 == NAMED_FENCE && &q.2 == nk).collect::<Vec<_>>()) {
+                            Some(found) if !found.is_empty() => found,
+                            _ => pieces.iter().filter(|q| q.0 == "fence").collect::<Vec<_>>(),
+                        };
                     let (fp, fkey, fchildren) =
                         weighted(&fence_options, |q| q.1.weight, road_hash(road.settings.seed, road.id, n ^ 0xFE4C_E000))
                             .map_or((p, key, children), |q| (&q.1, &q.2, &q.3));
@@ -1595,5 +1668,35 @@ mod tests {
             Some(Owner { id: 7, variation: Some("small".to_owned()), signature: 0xab })
         );
         assert_eq!(parse_owner("kitwall:x#1"), None);
+    }
+
+    #[test]
+    fn a_points_fences_are_those_nearest_it_halfway_to_its_neighbours() {
+        // A straight road 0..90 m along z sampled every metre, its points at 0, 30 and 90 m.
+        let line = (0..=90).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let at_point = [0, 30, 90];
+        let of = |z: f64| point_of(&line, &at_point, [2.0, z]);
+        assert_eq!(of(0.0), Some(0));
+        assert_eq!(of(14.0), Some(0), "short of halfway to the second point");
+        assert_eq!(of(16.0), Some(1));
+        assert_eq!(of(59.0), Some(1), "halfway between 30 and 90 is 60");
+        assert_eq!(of(61.0), Some(2));
+        assert_eq!(of(90.0), Some(2));
+    }
+
+    #[test]
+    fn weighted_picks_follow_the_weights_and_skip_zero() {
+        let options = [1.0f64, 3.0, 0.0];
+        let refs = options.iter().collect::<Vec<_>>();
+        let mut count = [0usize; 3];
+        for n in 0..4000u64 {
+            let picked = weighted(&refs, |w| *w, road_hash(7, 3, n)).unwrap();
+            count[options.iter().position(|o| std::ptr::eq(o, picked)).unwrap()] += 1;
+        }
+
+        assert_eq!(count[2], 0, "weight 0: never");
+        let ratio = count[1] as f64 / count[0] as f64;
+        assert!((2.6..3.4).contains(&ratio), "3 to 1: {count:?}");
+        assert!(weighted(&[&0.0f64, &0.0], |w| *w, 1).is_some(), "all nothing: the first");
     }
 }
