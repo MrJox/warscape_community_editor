@@ -370,9 +370,20 @@ fn orders(n: usize) -> Vec<Vec<usize>> {
 /// on the right, laid where the branch is on the left, takes its through arms swapped: its outer side stays outside.
 fn arranged(piece: &Piece, frame: &Frame) -> Frame {
     let Frame::Star { at, ways } = frame else { return frame.clone() };
+    match arm_ways(piece, frame) {
+        Some(best) => Frame::Star { at: *at, ways: best.iter().map(|&i| ways[i]).collect() },
+        None => frame.clone(),
+    }
+}
+
+/// For each of a star piece's arms, the way of `frame` it is laid along ([`arranged`]'s order): which road runs out of each arm at a
+/// junction. None for a piece along the road, or arms that do not match the ways.
+#[must_use]
+pub fn arm_ways(piece: &Piece, frame: &Frame) -> Option<Vec<usize>> {
+    let Frame::Star { ways, .. } = frame else { return None };
     let n = piece.arms.len();
     if ways.len() != n || n > 5 {
-        return frame.clone();
+        return None;
     }
 
     let arms = piece.arms.iter().map(arm_way).collect::<Vec<_>>();
@@ -388,8 +399,7 @@ fn arranged(piece: &Piece, frame: &Frame) -> Frame {
         c
     };
 
-    let best = orders(n).into_iter().min_by(|a, b| cost(a).total_cmp(&cost(b))).unwrap_or_else(|| (0..n).collect());
-    Frame::Star { at: *at, ways: best.iter().map(|&i| ways[i]).collect() }
+    Some(orders(n).into_iter().min_by(|a, b| cost(a).total_cmp(&cost(b))).unwrap_or_else(|| (0..n).collect()))
 }
 
 /// The heading of a direction on the ground as the files turn it (`euler_matrix`: Ry(a) takes +x to (cos a, 0, -sin a)).
@@ -880,6 +890,18 @@ pub struct Junctions {
     /// Each road's ends that end on another road.
     pub joined: Vec<[bool; 2]>,
     pub notes: Vec<String>,
+
+    /// Each junction laid: where, the road laying it, and the road of each of its ways (as its `Frame::Star` has them): roads of other
+    /// types meeting there each lay their arms of it.
+    pub meetings: Vec<Meeting>,
+}
+
+/// A junction where roads meet ([`Junctions::meetings`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Meeting {
+    pub at: [f64; 2],
+    pub road: usize,
+    pub ways: Vec<usize>,
 }
 
 /// Where two lines cross: (distance along the first, distance along the second, the place).
@@ -925,7 +947,7 @@ fn crossings(a: &[[f64; 2]], b: &[[f64; 2]]) -> Vec<(f64, f64, [f64; 2])> {
 #[must_use]
 pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
     let n = lines.len();
-    let mut out = Junctions { holds: vec![vec![]; n], joined: vec![[false; 2]; n], notes: vec![] };
+    let mut out = Junctions { holds: vec![vec![]; n], joined: vec![[false; 2]; n], notes: vec![], meetings: vec![] };
     let st = lines.iter().map(|l| Stations::new(l)).collect::<Vec<_>>();
     let way = |r: usize, s: f64, at: [f64; 2]| {
         let q = st[r].at(s).0;
@@ -956,6 +978,7 @@ pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
 
             let ways = vec![way(b, b1, q), way(b, b2, q), way(a, sa, q)];
             out.holds[b].push(Hold { from: b1, to: b2, laid: Some(Laid { piece: "t_junction", frame: Frame::Star { at: q, ways } }) });
+            out.meetings.push(Meeting { at: q, road: b, ways: vec![b, b, a] });
             out.holds[a].push(if e == 1 { Hold { from: sa, to: la, laid: None } } else { Hold { from: 0.0, to: sa, laid: None } });
             out.joined[a][e] = true;
         }
@@ -984,6 +1007,7 @@ pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
                 let ways = vec![way(a, a1, x), way(a, a2, x), way(b, b1, x), way(b, b2, x)];
                 out.holds[a].push(Hold { from: a1, to: a2, laid: Some(Laid { piece: "x_junction", frame: Frame::Star { at: x, ways } }) });
                 out.holds[b].push(Hold { from: b1, to: b2, laid: None });
+                out.meetings.push(Meeting { at: x, road: a, ways: vec![a, a, b, b] });
             }
         }
     }
@@ -1302,6 +1326,25 @@ mod tests {
         assert_eq!(names(0).iter().filter(|n| **n == "x_junction").count(), 1, "the first road lays the crossing: {:?}", names(0));
         assert!(!names(1).contains(&"x_junction"), "the second leaves it its stretch: {:?}", names(1));
         assert_eq!(names(2).iter().filter(|n| **n == "end").count(), 1, "C's end on A has no end piece: {:?}", names(2));
+    }
+
+    #[test]
+    fn a_junction_knows_the_road_of_each_way_and_each_arm() {
+        let (_, j, laid) = three_roads();
+        // The T: laid by A (0), its through ways A's, its branch C's (2); the X: laid by A, two ways A's and two B's (1).
+        let t = j.meetings.iter().find(|m| m.ways.len() == 3).unwrap();
+        assert_eq!((t.road, t.ways.clone()), (0, vec![0, 0, 2]));
+        let x = j.meetings.iter().find(|m| m.ways.len() == 4).unwrap();
+        assert_eq!((x.road, x.ways.clone()), (0, vec![0, 0, 1, 1]));
+
+        // The T piece's arms, matched to its ways: two through arms on A, the branch arm on C, whichever order the piece draws them in.
+        let piece = dirt("t_junction").0;
+        let laid_t = laid[0].laid.iter().find(|l| l.piece == "t_junction").unwrap();
+        let order = arm_ways(&piece, &laid_t.frame).unwrap();
+        let mut roads = order.iter().map(|&w| t.ways[w]).collect::<Vec<_>>();
+        roads.sort_unstable();
+        assert_eq!(roads, [0, 0, 2]);
+        assert_eq!(arm_ways(&piece, &Frame::Along { from: 0.0, to: 8.0 }), None);
     }
 
     #[test]

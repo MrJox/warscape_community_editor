@@ -1053,6 +1053,8 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
     let (bpx, bpz) = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
     let (gpx, gpz) = (f64::from(gw) / (ex + 2.0 * border), f64::from(gh) / (ez + 2.0 * border));
     let mut earlier: Vec<Strip> = vec![];
+    // Each earlier road's texture (its blend channel): where this one meets one of another texture, the two cross-fade.
+    let mut earlier_channels: Vec<usize> = vec![];
     for (road, ids) in roads.iter().zip(&new_ids) {
         if road.line.len() < 2 {
             continue;
@@ -1109,7 +1111,16 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
         for y in y0..y1 {
             for x in x0..x1 {
                 let (wx, wz) = ((f64::from(x) + 0.5) / bpx - border, (f64::from(y) + 0.5) / bpz - border);
-                let w = strip.texture_at(wx, wz);
+                let mut w = strip.texture_at(wx, wz);
+
+                // Over an earlier road of another texture (a junction): half of each at the middle, fading out with the other's texture
+                // (docs/plans/procedural_roads.md, "Variety": road types blend at junctions).
+                for (other, &ch) in earlier.iter().zip(&earlier_channels) {
+                    if ch != road.settings.channel && w > 0.0 {
+                        w *= 1.0 - 0.5 * other.texture_at(wx, wz);
+                    }
+                }
+
                 if w > 0.0 {
                     let mut px = [0u16; 16];
                     px[road.settings.channel] = (w * 65535.0).round() as u16;
@@ -1129,6 +1140,7 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
         }
 
         earlier.push(strip);
+        earlier_channels.push(road.settings.channel);
     }
 
     (height, blend, ground)
@@ -1339,6 +1351,60 @@ fn road_items(i: ItemsInput) -> ItemsMade {
         let width = road.settings.width;
         for (k, l) in laid.laid.iter().enumerate() {
             let Some((_, p, key, children)) = pick(&laid.laid, k, &pieces[..], road) else { continue };
+
+            // A junction where roads of other types meet (docs/plans/procedural_roads.md, "Variety"): each type lays its own junction
+            // piece's arms where its roads run out, and the middle's fixed parts are shared between them by the seed, as many as their
+            // arms.
+            if let wce_tile::road_layout::Frame::Star { at, .. } = &l.frame
+                && let Some(m) = meet.meetings.iter().find(|m| m.road == r && (m.at[0] - at[0]).hypot(m.at[1] - at[1]) < 0.5)
+                && m.ways.iter().any(|&o| planned[o].1.road_type != road.road_type)
+            {
+                let mut types = m.ways.iter().map(|&o| planned[o].1.road_type.clone()).collect::<Vec<_>>();
+                types.sort();
+                types.dedup();
+                for (t, ty) in types.iter().enumerate() {
+                    // That type's junction piece (or a variant of it), from a road of that type at the meeting.
+                    let Some(&of) = m.ways.iter().find(|&&o| &planned[o].1.road_type == ty) else { continue };
+                    let options = kit[of].0.iter().filter(|q| q.0 == l.piece).collect::<Vec<_>>();
+                    let Some(tp) = weighted(&options, |q| q.1.weight, road_hash(road.settings.seed, road.id, k as u64 ^ (t as u64) << 40))
+                    else {
+                        continue;
+                    };
+                    let Some(order) = wce_tile::road_layout::arm_ways(&tp.1, &l.frame) else { continue };
+                    let arm_type = |arm: usize| order.get(arm).and_then(|&w| m.ways.get(w)).map(|&o| &planned[o].1.road_type);
+                    let share = m.ways.iter().filter(|&&o| &planned[o].1.road_type == ty).count() as f64 / m.ways.len() as f64;
+                    let keep = |index: usize, part: &wce_tile::road_pieces::Part| {
+                        let mine = if part.anchor == wce_tile::road_pieces::Anchor::Fixed {
+                            let h = road_hash(road.settings.seed, road.id, (k as u64) << 8 ^ index as u64 ^ (t as u64) << 32 ^ 0x3E7D);
+                            ((h >> 11) as f64 / (1u64 << 53) as f64) < share
+                        } else {
+                            arm_type(part.arm) == Some(ty)
+                        };
+                        mine && detail_kept(road, k as u64, index, part)
+                    };
+                    let dress = wce_tile::road_layout::Dress {
+                        tilt: Some(wce_tile::road_layout::PIECE_TILT),
+                        attrs: None,
+                        keep: Some(&keep),
+                        jitter: road.settings.irregularity,
+                        jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12 ^ (t as u64) << 36),
+                    };
+                    match fit_dressed(&tp.1, &tp.3, &tp.2, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
+                        Ok(f) => items.push(RoadItem {
+                            road: *elem,
+                            text: f.text,
+                            position: f.position,
+                            meshes: vec![],
+                            export: None,
+                            building: None,
+                        }),
+                        Err(why) => wce_foundation::log::warn(format!("road {}: {}: {why}", road.id, tp.2)),
+                    }
+                }
+
+                continue;
+            }
+
             // Their buildings (the banks) tilted to the ground under them.
             let keep = |index: usize, part: &wce_tile::road_pieces::Part| detail_kept(road, k as u64, index, part);
             let dress = wce_tile::road_layout::Dress {
@@ -1560,7 +1626,7 @@ fn bridge_items(
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 9;
+const ROAD_MAKING: u32 = 10;
 
 /// How far past each rim of a bridge the road stays level with it (metres): its end piece's length (`bridge_wood_2_end`, 2 units: 1 m)
 /// and a height-map pixel more (2 m on a 64-density tile: the ground the game reads is interpolated between pixels, and at 1.5 the ramps'
