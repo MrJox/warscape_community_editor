@@ -575,6 +575,9 @@ pub struct Tile {
     // Edit state.
     pub(crate) gesture: u64,
     pub(crate) structure_version: u64,
+
+    /// Counts the changes of a combined project's variations shown: what is drawn of the tile from above (the minimap) follows them.
+    pub(crate) view_version: u64,
     pub(crate) hint: Option<Vec<u64>>,
     pub(crate) stroke_open: bool,
 
@@ -961,6 +964,7 @@ impl TileDocument {
             edits_seen: 0,
             gesture: 0x100,
             structure_version: 1,
+            view_version: 0,
             hint: None,
             stroke_open: false,
             road_items: vec![],

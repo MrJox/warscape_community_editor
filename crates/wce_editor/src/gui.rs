@@ -663,20 +663,26 @@ pub fn tree_pop() {
     call!(sys::igTreePop())
 }
 
-/// Headers a script asked to open (`gui_open_header`): opened the next time each is drawn.
-static OPEN_HEADERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Headers a script asked to open or close (`gui_open_header`, `gui_close_header`): opened (true) or closed the next time each is
+/// drawn.
+static OPEN_HEADERS: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
 
 /// Opens the collapsing header `label` the next time it is drawn (for scripts: captures of a panel's sections).
 pub fn open_header(label: &str) {
-    OPEN_HEADERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(label.to_owned());
+    OPEN_HEADERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((label.to_owned(), true));
+}
+
+/// Closes the collapsing header `label` the next time it is drawn (for scripts: the sections under it in view).
+pub fn close_header(label: &str) {
+    OPEN_HEADERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((label.to_owned(), false));
 }
 
 pub fn collapsing_header(label: &str, flags: i32) -> bool {
     {
         let mut open = OPEN_HEADERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(k) = open.iter().position(|l| l == label) {
-            open.remove(k);
-            set_next_item_open(true, COND_ALWAYS);
+        if let Some(k) = open.iter().position(|(l, _)| l == label) {
+            let (_, on) = open.remove(k);
+            set_next_item_open(on, COND_ALWAYS);
         }
     }
 

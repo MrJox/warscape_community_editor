@@ -20,6 +20,24 @@ const EXPORTS_WITH_TIP: &str = "A scene layer this one goes with: exports (Save 
 pub struct LayersUi {
     kind: usize,
     name: String,
+
+    /// *New layer for...*: the variations ticked for the new layer.
+    new_for: Vec<String>,
+}
+
+/// A combined project's variations as checkboxes, those of `set` ticked; what was ticked when one changed (all ticked: empty, every
+/// variation).
+fn variation_checks(all: &[String], set: &[String], id: &str) -> Option<Vec<String>> {
+    let mut out = None;
+    for v in all {
+        let mut on = set.is_empty() || set.contains(v);
+        if gui::checkbox(&format!("{v}##{id}"), &mut on) {
+            let now = all.iter().filter(|x| if *x == v { on } else { set.is_empty() || set.contains(x) }).cloned().collect::<Vec<_>>();
+            out = Some(if now.len() == all.len() { vec![] } else { now });
+        }
+    }
+
+    out
 }
 
 impl TileTool {
@@ -49,25 +67,49 @@ impl TileTool {
     fn draw_layer_list(&mut self, d: &mut TileDocument, kind: LayerType) {
         let (rows, working) = d.terrain_layers(kind);
         let all = d.tile().variations().to_vec();
-        let viewed = d.tile().viewed_variation().unwrap_or_default().to_owned();
         let can_add = gui::button(&format!("{} New layer", icons::PLUS));
         if gui::is_item_hovered() {
-            gui::set_tooltip("Adds an empty layer of this type on top; it becomes the working layer.");
+            gui::set_tooltip(if all.is_empty() {
+                "Adds an empty layer of this type on top; it becomes the working layer."
+            } else {
+                "Adds an empty layer of this type on top, of every variation; it becomes the working layer."
+            });
         }
 
-        let mut for_viewed = false;
+        // A combined project: a layer of some variations only (a patch: `small, medium` under one of `medium` builds on it).
+        let mut for_some = None;
         if !all.is_empty() {
             gui::same_line();
-            for_viewed = gui::button(&format!("{} New layer for {viewed}", icons::PLUS));
+            if gui::button(&format!("{} New layer for...", icons::PLUS)) {
+                self.layers.new_for.retain(|v| all.contains(v));
+                gui::open_popup("new_layer_for");
+            }
+
             if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("Adds an empty layer that only {viewed} has; it becomes the working layer."));
+                gui::set_tooltip(
+                    "Adds an empty layer that the variations you tick have (a patch of their terrain); it becomes the working layer.",
+                );
+            }
+
+            if gui::begin_popup("new_layer_for") {
+                gui::text_disabled("The new layer's variations:");
+                if let Some(list) = variation_checks(&all, &self.layers.new_for, "new_for") {
+                    self.layers.new_for = list;
+                }
+
+                let label = if self.layers.new_for.is_empty() { "all".to_owned() } else { self.layers.new_for.join(", ") };
+                if gui::button(&format!("Add the layer of {label}")) {
+                    for_some = Some(self.layers.new_for.clone());
+                    gui::close_current_popup();
+                }
+
+                gui::end_popup();
             }
         }
 
-        if can_add || for_viewed {
+        if can_add || for_some.is_some() {
             let name = format!("Layer {}", rows.len() + 1);
-            let only = if for_viewed { vec![viewed.clone()] } else { vec![] };
-            if let Err(why) = d.add_terrain_layer_for(kind, &name, &only) {
+            if let Err(why) = d.add_terrain_layer_for(kind, &name, &for_some.unwrap_or_default()) {
                 self.status = why;
             }
 
@@ -91,8 +133,29 @@ impl TileTool {
                 gui::set_tooltip("Shows or hides the layer; a hidden layer leaves the terrain as if it weren't there.");
             }
 
+            // A combined project's: the layer's variations, a click changes them.
+            if !all.is_empty() {
+                gui::same_line();
+                let text = if row.variations.is_empty() { "all".to_owned() } else { row.variations.join(", ") };
+                if gui::small_button(&text) {
+                    gui::open_popup("layer_variations");
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The variations this layer belongs to (all: every one). Click to change them.");
+                }
+
+                if gui::begin_popup("layer_variations") {
+                    if let Some(list) = variation_checks(&all, &row.variations, "layer_var") {
+                        d.set_terrain_layer_variations(kind, row.id, &list);
+                    }
+
+                    gui::end_popup();
+                }
+            }
+
             gui::same_line();
-            let label = if row.variations.is_empty() { row.name.clone() } else { format!("{}  ({})", row.name, row.variations.join(", ")) };
+            let label = row.name.clone();
             if !row.in_view {
                 gui::push_style_color(gui::COL_TEXT, theme::v4(theme::dim()));
             }
@@ -109,7 +172,7 @@ impl TileTool {
                 gui::set_tooltip(if row.in_view {
                     "Makes it the working layer: brushes of this type paint into it."
                 } else {
-                    "Not in the variation viewed (it belongs to others, or exports with a scene layer this one does not have): it does not show. A click makes it the working layer."
+                    "In no variation shown (it belongs to others, or exports with a scene layer they lack): it does not show. A click makes it the working layer."
                 });
             }
 
@@ -141,9 +204,9 @@ impl TileTool {
 
             Some(row) if !row.in_view => {
                 gui::push_style_color(gui::COL_TEXT, theme::v4(theme::warning()));
-                gui::text_wrapped(&format!(
-                    "The working layer is not in {viewed}: what you paint goes into it, but won't show in this variation."
-                ));
+                gui::text_wrapped(
+                    "The working layer is in no variation shown: what you paint goes into it, but won't show until one of its variations is shown.",
+                );
                 gui::pop_style_color(1);
             }
 
@@ -178,18 +241,22 @@ impl TileTool {
             d.commit_terrain_layer("Layer opacity", kind);
         }
 
-        // A combined project's variations it belongs to (none ticked: all).
+        // A combined project's variations it belongs to (all ticked: every one).
         let all = d.tile().variations().to_vec();
         if !all.is_empty() {
-            gui::row_tip("Variations", "The variations this layer belongs to; none ticked: all of them.");
+            gui::row_tip("Variations", "The variations this layer belongs to (all ticked: every one, and the ones added later).");
             for (i, v) in all.iter().enumerate() {
                 if i > 0 {
                     gui::same_line();
                 }
 
-                let mut on = row.variations.contains(v);
-                if gui::checkbox(&format!("{v}##layer_var"), &mut on) {
-                    let list = all.iter().filter(|x| if *x == v { on } else { row.variations.contains(x) }).cloned().collect::<Vec<_>>();
+                let mut on = row.variations.is_empty() || row.variations.contains(v);
+                if gui::checkbox(&format!("{v}##working_layer_var"), &mut on) {
+                    let list = all
+                        .iter()
+                        .filter(|x| if *x == v { on } else { row.variations.is_empty() || row.variations.contains(x) })
+                        .cloned()
+                        .collect::<Vec<_>>();
                     let list = if list.len() == all.len() { vec![] } else { list };
                     d.set_terrain_layer_variations(kind, row.id, &list);
                 }

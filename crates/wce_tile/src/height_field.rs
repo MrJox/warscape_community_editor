@@ -643,7 +643,7 @@ pub fn fractal_noise(x: f64, y: f64) -> f64 {
 }
 
 /// A height as a 16-bit sample of the range (min_height, scale): rounded to nearest, clamped.
-fn quantize(m: f64, min_height: f64, scale: f64) -> u16 {
+pub(crate) fn quantize(m: f64, min_height: f64, scale: f64) -> u16 {
     let r = (m - min_height) / scale * 65535.0;
     r.clamp(0.0, 65535.0).round() as u16
 }

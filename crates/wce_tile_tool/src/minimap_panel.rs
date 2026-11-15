@@ -112,6 +112,9 @@ struct GroundKey {
     climate: String,
     season: String,
     maps: (u64, u64, usize),
+
+    /// A combined project's variations shown (`Tile::view_version`).
+    shown: u64,
 }
 
 fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey {
@@ -132,7 +135,7 @@ fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey
     } else {
         Default::default()
     };
-    GroundKey { doc, view, climate, season, maps }
+    GroundKey { doc, view, climate, season, maps, shown: t.view_version() }
 }
 
 /// A view of the ground baked for the minimap on a thread (`Tile::minimap_ground_bake`): the last bake, shown while the next one is made
@@ -694,8 +697,12 @@ impl MinimapUi {
 
     fn refresh_radar(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        let key =
-            (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some(), d.tile().radar_models_resolved());
+        let key = (
+            d.history().version().wrapping_add(d.tile().view_version() << 40),
+            d.tile().water_depth().is_some(),
+            d.tile().auto_nogos().is_some(),
+            d.tile().radar_models_resolved(),
+        );
         let idle = !(0..3).any(gui::is_mouse_down);
         if self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY)) {
             let started = std::time::Instant::now();
