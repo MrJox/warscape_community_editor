@@ -17,7 +17,7 @@ use wce_editor::thumbnails::{Thumbnails, cache_dir};
 use wce_editor::{icons, theme};
 use wce_formats::variant_mesh::NodePath;
 use wce_foundation::math::{Float3, scaling};
-use wce_render::unit_assembly::{AssembledPart, Attach, Pins, SlotPin, assemble, assemble_with, decals};
+use wce_render::unit_assembly::{AssembledPart, Attach, Pins, SlotPin, assemble, assemble_ship, assemble_with, decals};
 use wce_scene::render_scene::{Payload, SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart};
 
 use super::{UnitTool, document, file_name};
@@ -153,6 +153,14 @@ impl UnitTool {
     }
 
     fn kit(&self) -> Option<Kit> {
+        // A ship's parts at rest (a sail's bones are the cloth's, not a soldier's).
+        if self.ship.on {
+            let colours = self.ship_colours()?;
+            let rest = Arc::new(vec![SKINNED_NO_OFFSET; 4096]);
+            let key = format!("ship|rest|{:?}", colours.map(|c| c.map(|v| (v * 255.0).round() as u8)));
+            return Some(Kit { key, palette: rest.clone(), bones: rest, colours });
+        }
+
         let model = self.models.first()?;
         let figure = if self.dressed_mount { model.mount.as_ref()? } else { &model.man };
         let body = model
@@ -166,6 +174,12 @@ impl UnitTool {
 
     /// Asks for the picture of parts (in the kit's pose), under `id`.
     fn request_parts(&mut self, e: &Editor, id: &str, parts: &[AssembledPart], kit: &Kit, first: bool) {
+        if self.ship.on {
+            let (shown, bounds) = self.ship_picture(e, parts, kit.colours);
+            self.pics.thumbs.request_framed(id, shown, bounds, first);
+            return;
+        }
+
         let Some(model) = self.models.first() else { return };
         let figure = if self.dressed_mount { model.mount.as_ref() } else { Some(&model.man) };
         let Some(figure) = figure else { return };
@@ -292,7 +306,7 @@ impl UnitTool {
                 Thing::Definition(p) => {
                     let vfs = e.vfs().cloned()?;
                     let read = |f: &str| vfs.read(f).ok();
-                    assemble(&read, p, 1).map(|u| u.parts).unwrap_or_default()
+                    if self.ship.on { assemble_ship(&read, p, 1) } else { assemble(&read, p, 1) }.map(|u| u.parts).unwrap_or_default()
                 }
 
                 _ => vec![],

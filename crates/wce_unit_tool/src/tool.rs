@@ -40,6 +40,8 @@ mod ship;
 mod structure;
 #[path = "thumbs.rs"]
 mod thumbs;
+#[path = "weather.rs"]
+mod weather;
 
 use crate::db::{LooksTables, Row, project_path};
 use crate::document::{Source, Structural, VmdDocument};
@@ -67,6 +69,9 @@ fn default_unit(game: &str) -> (&'static str, &'static str) {
 struct UnitSettings {
     /// The weather that lights the stage (empty: the game's default).
     weather: String,
+
+    /// The weather chips' filters (category, value; empty: any): climate and season pick the ground's grass too.
+    weather_query: BTreeMap<String, String>,
 
     /// Per definition (its path in the packs), the unit and faction it was last previewed as.
     preview: BTreeMap<String, (String, String)>,
@@ -135,6 +140,12 @@ enum Action {
 }
 
 pub struct UnitTool {
+    /// The weather chips' database.
+    weather: weather::StageWeather,
+
+    /// The grass the stage was last given, and for which document.
+    ground: Option<(DocumentId, String)>,
+
     settings: UnitSettings,
     catalog: Option<Arc<UnitCatalog>>,
     catalog_rx: Option<Receiver<Result<(UnitCatalog, Arc<Schema>), String>>>,
@@ -289,6 +300,8 @@ impl Default for UnitTool {
             own_hidden: vec![],
             environment: None,
             listings: None,
+            weather: weather::StageWeather::default(),
+            ground: None,
             problems: vec![],
             problems_for: None,
             aimed: 0,
@@ -568,6 +581,23 @@ impl UnitTool {
 
         self.mask_for = None;
         self.posed.clear();
+    }
+
+    /// The stage's grass follows the weather chips' climate and season.
+    fn update_ground(&mut self, e: &mut Editor, id: DocumentId) {
+        let texture = self.ground_texture(e);
+        if self.ground.as_ref().is_some_and(|(d, t)| *d == id && *t == texture) {
+            return;
+        }
+
+        self.ground = Some((id, texture.clone()));
+        let Some(d) = e.docs.find_as_mut::<VmdDocument>(id) else { return };
+        let ground = d.set_ground(&texture, e.scene.game_units);
+        for entity in e.scene.entities_of(SourceRef { doc: id, item: 0 }) {
+            if e.scene.find(entity).is_some_and(|en| matches!(en.payload, Payload::Terrain(_))) {
+                e.scene.update_payload(entity, Payload::Terrain(ground.clone()));
+            }
+        }
     }
 
     /// The stage's light: the chosen weather, else the game's default.
@@ -1405,15 +1435,6 @@ impl UnitTool {
             for (k, name) in ["Primary", "Secondary", "Uniform"].iter().enumerate() {
                 gui::color_edit3(name, &mut colours[k], 0);
             }
-        }
-
-        gui::separator_text("Light");
-        let weathers = self.listings(e).weathers.clone();
-        let current =
-            if self.settings.weather.is_empty() { e.game().default_environment.to_owned() } else { self.settings.weather.clone() };
-        if let Some(w) = self.combo("Weather", "The weather file lighting the stage.", &current, &weathers) {
-            e.update_tool_settings::<UnitSettings>(UNIT_TOOL_ID, |s| s.weather.clone_from(&w));
-            self.settings.weather = w;
         }
 
         self.draw_looks(e);
@@ -2284,7 +2305,7 @@ impl Tool for UnitTool {
         }
 
         if self.ship.on {
-            let picked = self.ship_pick(event.hit_source);
+            let picked = self.ship_pick(e, event.x, event.y, event.hit_source);
             if let Some(p) = &picked {
                 e.status(&self.ship_part_name(p), false);
             }
@@ -2341,6 +2362,8 @@ impl Tool for UnitTool {
             self.doc = 0;
             return;
         };
+
+        self.update_ground(e, id);
 
         // The catalog arrived after the document: its unit now.
         if id != self.doc {
@@ -2421,6 +2444,12 @@ impl Tool for UnitTool {
         }
 
         true
+    }
+
+    fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        if document(e).is_some() {
+            self.draw_weather_chips(e, origin, size);
+        }
     }
 
     fn inspector_subject(&mut self, _: &Editor) -> Option<u64> {
@@ -2552,6 +2581,30 @@ fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "unit_weather",
+        "unit_weather [<category> <value|any> | file <path>]",
+        "the weather chips: set a filter (climate, season, precipitation, time_of_day, climate_change_index, map, snow_attrition) or \
+         the file; prints the filters, the file and the ground",
+        |e, a| {
+            with_unit(e, |t, e| {
+                match (a.first().map(String::as_str), a.get(1)) {
+                    (Some("file"), Some(f)) => t.set_weather_file(e, f),
+                    (Some(category), Some(v)) => {
+                        let v = if v == "any" { "" } else { v.as_str() };
+                        if let Err(m) = t.set_weather_filter(e, category, v) {
+                            return fail(&m);
+                        }
+                    }
+
+                    (None, _) => {}
+                    _ => return fail("usage: unit_weather [<category> <value|any> | file <path>]"),
+                }
+
+                ok(format!("filters {:?} file '{}' ground {}", t.settings.weather_query, t.settings.weather, t.ground_texture(e)))
+            })
+        },
+    );
     c.add("unit_seed", "unit_seed <n> [side by side]", "the first soldier's seed, and how many stand side by side", |e, a| {
         let Some(seed) = a.first().and_then(|s| s.parse().ok()) else { return fail("usage: unit_seed <n> [count]") };
         let grid = a.get(1).and_then(|s| s.parse().ok());

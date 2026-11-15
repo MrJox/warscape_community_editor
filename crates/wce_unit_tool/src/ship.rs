@@ -3,22 +3,24 @@
 //! list), with what its naval unit's logic adds (oars, weapons: `ShipModel::with_parts`), as rigid meshes, its sails at rest, its ropes as
 //! the file has them. It stands on the stage on its keel; the camera frames it once its models are in.
 //!
-//! The parts are meshes the renderer picks by itself: a click finds a part's entity, whose item names the part, and the selection outlines
-//! the selected node's parts as a building's.
+//! A click picks the nearest part under the cursor from the parts' triangles (the renderer picks only rigid meshes, not the sails or the
+//! skinned shields); the selection outlines the selected node's rigid parts as a building's (their entities' items name the parts) and its
+//! skinned parts and sails through a mask of their triangles, as the soldiers' are.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_formats::variant_mesh::{Alternative, NodePath, VariantMesh, VariantMeshFile};
-use wce_foundation::math::{Float3, scaling, translation};
+use wce_foundation::math::{Float3, Float4x4, scaling, translation};
 use wce_render::model_cache::State;
-use wce_render::ship_model::{ShipModel, ShipPart};
-use wce_render::unit_assembly::{Pins, assemble_ship_with};
+use wce_render::ship_model::{ShipModel, ShipPart, part_meshes};
+use wce_render::skinned_geometry::ray_triangle;
+use wce_render::unit_assembly::{AssembledPart, Pins, assemble_ship_with};
 use wce_render::unit_catalog::variant_path;
 use wce_scene::render_scene::{
-    DocumentId, EntityId, MODEL_ROPES_SUFFIX, MODEL_SKINNED_SUFFIX, MeshInstance, Payload, SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart,
-    SourceRef,
+    DocumentId, EntityId, LayerId, MODEL_ROPES_SUFFIX, MODEL_SKINNED_SUFFIX, MeshInstance, Overlay, Payload, SKINNED_NO_OFFSET,
+    SkinnedInstance, SkinnedPart, SourceRef,
 };
 use wce_vfs::normalize;
 
@@ -26,6 +28,9 @@ use super::{UnitTool, document, hash_of};
 
 /// A ship part's entities have item `SHIP_ITEM + its index` (the ground and soldiers are 0, the outline's mask 1).
 const SHIP_ITEM: u64 = 1000;
+
+/// The item of the outline's mask of the selected skinned parts and sails.
+const SHIP_MASK_ITEM: u64 = 2;
 
 /// The sails' palette at rest: every cloth bone where the file has it (as the tile's references draw a sail without its cloth).
 const SAIL_BONES: usize = 4096;
@@ -60,6 +65,9 @@ pub(super) struct ShipState {
 
     /// Looked at with the unit tables read (a ship is told by them).
     pub checked: bool,
+
+    /// The outline's mask of the selected skinned parts and sails (the renderer outlines rigid meshes only).
+    mask: Option<EntityId>,
 }
 
 /// Whether a definition is a ship's: a `unit_variants_ships` row names it, or its slots are pieces with damage states (`_dm1`).
@@ -161,6 +169,10 @@ impl UnitTool {
     pub(super) fn clear_ship(&mut self, e: &mut Editor) {
         e.scene.remove_ids(&self.ship.entities);
         self.ship.entities.clear();
+        if let Some(m) = self.ship.mask.take() {
+            e.scene.remove_ids(&[m]);
+        }
+
         self.ship.model = None;
         self.ship.key = None;
         self.ship.outlined = None;
@@ -213,6 +225,10 @@ impl UnitTool {
             let model = ShipModel::with_parts(&read, &catalog, self.ship.unit.as_deref(), &self.faction, &name, parts, self.seed);
             e.scene.remove_ids(&self.ship.entities);
             self.ship.entities.clear();
+            if let Some(m) = self.ship.mask.take() {
+                e.scene.remove_ids(&[m]);
+            }
+
             self.ship.model = Some(model);
             self.ship.key = Some(key);
             self.ship.outlined = None;
@@ -233,7 +249,7 @@ impl UnitTool {
             self.ship.lift = self.keel(e, units);
         }
 
-        let place = translation(Float3::new(0.0, self.ship.lift.unwrap_or(0.0), 0.0)) * scaling(1.0 / units);
+        let place = self.ship_place(e);
         if self.ship.entities.is_empty()
             && let Some(model) = &self.ship.model
         {
@@ -256,19 +272,43 @@ impl UnitTool {
             e.viewport.controller().set_orbit(std::f32::consts::PI + 0.7, 0.3, radius * 1.7, Float3::new(0.0, y, 0.0));
         }
 
-        self.outline_ship(e, id);
+        self.outline_ship(e, id, layer);
     }
 
-    /// The selection outlines the selected node's parts (the renderer outlines meshes by their entities).
-    fn outline_ship(&mut self, e: &mut Editor, id: DocumentId) {
+    /// The faction colours the ship is drawn with, once it is made.
+    pub(super) fn ship_colours(&self) -> Option<[[f32; 3]; 4]> {
+        let model = self.ship.model.as_ref()?;
+        Some(self.colours.map_or(model.faction_colours, |c| [c[0], c[1], c[2], model.faction_colours[3]]))
+    }
+
+    /// Where the ship stands: lifted onto its keel, in scene units.
+    fn ship_place(&self, e: &Editor) -> Float4x4 {
+        translation(Float3::new(0.0, self.ship.lift.unwrap_or(0.0), 0.0)) * scaling(1.0 / e.scene.game_units.max(1e-3))
+    }
+
+    /// A ship part's triangles in the world, as drawn: its model at rest where the part is.
+    fn ship_triangles(&mut self, e: &Editor, k: usize) -> Vec<[Float3; 3]> {
+        let Some(p) = self.ship.model.as_ref().and_then(|m| m.parts.get(k)).cloned() else { return vec![] };
+        if !(p.what.solid || p.what.skinned || p.what.cloth) {
+            return vec![];
+        }
+
+        let Some(g) = self.geometry_of(e, &p.model) else { return vec![] };
+        let rest = self.ship.rest.get_or_insert_with(|| Arc::new(vec![SKINNED_NO_OFFSET; SAIL_BONES])).clone();
+        let world = self.ship_place(e) * ShipModel::part_at(&p, 0.0, false);
+        g.triangles(&ShipModel::rest_part(&p), &world, &rest, &rest)
+    }
+
+    /// The selection outlines the selected node's parts: the rigid ones by their entities (the renderer outlines those), the skinned ones
+    /// and sails by a mask of their triangles.
+    fn outline_ship(&mut self, e: &mut Editor, id: DocumentId, layer: LayerId) {
         if self.ship.outlined.as_ref() == Some(&self.selected) {
             return;
         }
 
-        self.ship.outlined = Some(self.selected.clone());
         let Some(model) = &self.ship.model else { return };
-        let mine = |r: &SourceRef| r.doc == id;
-        let items: Vec<SourceRef> = self
+        self.ship.outlined = Some(self.selected.clone());
+        let chosen: Vec<(usize, bool)> = self
             .selected
             .as_ref()
             .map(|sel| {
@@ -277,12 +317,41 @@ impl UnitTool {
                     .iter()
                     .enumerate()
                     .filter(|(_, p)| p.node.as_ref().is_some_and(|n| n.starts_with(sel)))
-                    .map(|(k, _)| SourceRef { doc: id, item: SHIP_ITEM + k as u64 })
+                    .map(|(k, p)| (k, p.what.solid || p.what.ropes))
                     .collect()
             })
             .unwrap_or_default();
+        let mut items: Vec<SourceRef> =
+            chosen.iter().filter(|(_, rigid)| *rigid).map(|(k, _)| SourceRef { doc: id, item: SHIP_ITEM + *k as u64 }).collect();
+        let mut tris = vec![];
+        for (k, _) in chosen {
+            let skinned = self.ship.model.as_ref().is_some_and(|m| m.parts[k].what.skinned || m.parts[k].what.cloth);
+            if skinned {
+                tris.extend(self.ship_triangles(e, k));
+            }
+        }
+
+        let mask_ref = SourceRef { doc: id, item: SHIP_MASK_ITEM };
+        if tris.is_empty() {
+            if let Some(m) = self.ship.mask.take() {
+                e.scene.remove_ids(&[m]);
+            }
+        } else {
+            let mut overlay = Overlay { pickable: false, selection_mask: true, own_buffer: true, ..Default::default() };
+            for t in &tris {
+                overlay.triangle(t[0], t[1], t[2], 0xffff_ffff);
+            }
+
+            match self.ship.mask.filter(|&m| e.scene.find(m).is_some()) {
+                Some(m) => e.scene.update_payload(m, Payload::Overlay(overlay)),
+                None => self.ship.mask = Some(e.scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(overlay), mask_ref)),
+            }
+
+            items.push(mask_ref);
+        }
+
         if items.is_empty() {
-            if e.selection.items().iter().any(mine) {
+            if e.selection.items().iter().any(|r| r.doc == id) {
                 e.selection.clear();
             }
 
@@ -368,9 +437,71 @@ impl UnitTool {
         )
     }
 
-    /// The node of what a click hit, when it is a part of the ship.
-    pub(super) fn ship_pick(&self, hit: SourceRef) -> Option<NodePath> {
-        (hit.doc == self.doc).then(|| self.ship_node_of(hit.item)).flatten()
+    /// The node of the part under a pixel: the nearest of the parts' triangles (the renderer doesn't pick sails or skinned parts); the
+    /// renderer's hit when none is (a model not read here).
+    pub(super) fn ship_pick(&mut self, e: &Editor, x: i32, y: i32, hit: SourceRef) -> Option<NodePath> {
+        let count = self.ship.model.as_ref().map_or(0, |m| m.parts.len());
+        let mut best: Option<(f32, usize)> = None;
+        if let Some((origin, dir)) = e.viewport.ray(x, y) {
+            for k in 0..count {
+                for t in self.ship_triangles(e, k) {
+                    if let Some(d) = ray_triangle(origin, dir, &t)
+                        && best.is_none_or(|(b, _)| d < b)
+                    {
+                        best = Some((d, k));
+                    }
+                }
+            }
+        }
+
+        match best {
+            Some((_, k)) => self.ship.model.as_ref()?.parts.get(k)?.node.clone(),
+            None => (hit.doc == self.doc).then(|| self.ship_node_of(hit.item)).flatten(),
+        }
+    }
+
+    /// What a picture of parts of a ship shows (the thumbnails, in ship mode): each part as the ship draws it, at rest, and their bounds
+    /// (scene units).
+    pub(super) fn ship_picture(
+        &mut self,
+        e: &Editor,
+        parts: &[AssembledPart],
+        colours: [[f32; 3]; 4],
+    ) -> (Vec<(Float4x4, Payload)>, Option<(Float3, Float3)>) {
+        let Some(vfs) = e.vfs().cloned() else { return (vec![], None) };
+        let read = |p: &str| vfs.read(p).ok();
+        let rest = self.ship.rest.get_or_insert_with(|| Arc::new(vec![SKINNED_NO_OFFSET; SAIL_BONES])).clone();
+        let world = scaling(1.0 / e.scene.game_units.max(1e-3));
+        let mut out = vec![];
+        let mut lo = Float3::new(f32::MAX, f32::MAX, f32::MAX);
+        let mut hi = Float3::new(f32::MIN, f32::MIN, f32::MIN);
+        for a in parts {
+            let p = ShipPart {
+                model: a.model.clone(),
+                node: None,
+                local: Float4x4::IDENTITY,
+                masks: a.masks,
+                decal_diffuse: a.decal_diffuse.clone(),
+                decal_normal: a.decal_normal.clone(),
+                tint: a.tint,
+                what: part_meshes(&read, &a.model),
+                row: None,
+                row_offset: 0.0,
+                cloth: None,
+            };
+            if let Some(g) = self.geometry_of(e, &p.model) {
+                for t in g.triangles(&ShipModel::rest_part(&p), &world, &rest, &rest) {
+                    for q in t {
+                        lo = Float3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z));
+                        hi = Float3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z));
+                    }
+                }
+            }
+
+            out.extend(payloads(&p, &rest, colours).into_iter().map(|payload| (world, payload)));
+        }
+
+        (out, (lo.x <= hi.x).then_some((lo, hi)))
     }
 
     /// The model of a ship's part of a node, for the status line.
