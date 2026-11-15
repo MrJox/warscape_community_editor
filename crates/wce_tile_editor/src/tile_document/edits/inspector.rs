@@ -474,10 +474,15 @@ impl TileDocument {
 
                     let t = self.tile();
                     if t.on_the_terrain(e) {
+                        // Shown on the terrain; its file's height may be another (a terrain edited after it was placed).
                         let w = t.world_position(e);
-                        let dy = w.y - t.landscape_y(e, w.x, w.z);
+                        let dy = t.file_world_y(e) - t.landscape_y(e, w.x, w.z);
                         if dy.abs() > 0.005 {
-                            ins.text("off_terrain", "off the terrain", &format!("{dy:+.3} m from the terrain"));
+                            ins.text(
+                                "off_terrain",
+                                "off the terrain",
+                                &format!("file: {dy:+.3} m from the terrain (shown on it; Snap to terrain writes it)"),
+                            );
                         }
                     }
                 }
