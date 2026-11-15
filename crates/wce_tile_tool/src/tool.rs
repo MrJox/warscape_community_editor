@@ -1291,7 +1291,11 @@ impl TileTool {
         let p = d.project();
         let (Some(entry), Some(raw_root)) = (&p.entry, &p.raw_root) else { return };
         let key = wce_formats::tile_entry::normalize_location(&entry.location());
-        let variation = p.dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        // A combined project's folder is the tile's, not a variation's: its first variation shown (it opens the combined project).
+        let variation = match p.view.as_ref().filter(|_| p.is_combined()) {
+            Some(view) => view.variation.clone(),
+            None => p.dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+        };
         // A tile of the projects (extracted ones too) is listed with the projects' source.
         let raw_root = source_of(raw_root);
         let exported = self.workspaces.contains(&raw_root) && raw_root != source_of(&Self::workspace_dir(e).join("raw_data"));
@@ -1365,8 +1369,12 @@ impl TileTool {
                 Err(_) => entry.find_variation(variation),
             };
 
+            // Not one of its variations, its tile combined (a recent entry of a combined project kept its folder's name, the tile's):
+            // the combined project, from its first variation.
+            let combined = (0..vars.len()).any(|i| wce_tile::variations::combined_for(&entry.variation_folder(&root, i)).is_some());
             match n.filter(|&n| n < vars.len()) {
                 Some(n) => v = n,
+                None if combined => v = 0,
                 None => return Err(format!("the entry {file_name} has no variation '{variation}' (it has: {names})")),
             }
         }
