@@ -278,6 +278,40 @@ impl TileTool {
         Ok(msg)
     }
 
+    /// Separate's question (Tile > Variations > Separate > <v>...): what it does, then Separate or Cancel. A click on the menu does nothing
+    /// by itself (it sat next to Launch in game's list of the same variations, and a launch became a separation).
+    pub(crate) fn draw_separate_confirm(&mut self, e: &mut Editor) {
+        const TITLE: &str = "Separate a variation";
+        let Some(v) = self.separate_ask.clone() else { return };
+        if std::mem::take(&mut self.separate_opening) {
+            gui::open_popup(TITLE);
+        }
+
+        if !gui::begin_popup_modal(TITLE, None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            return;
+        }
+
+        gui::text(&format!("Separate {v} from the combined project?"));
+        gui::text_disabled(&format!(
+            "{v} becomes a project of its own again (its folder in the tile's), and the combined project keeps the others."
+        ));
+        gui::text_disabled("The tile is saved first; the combined project's old files go to the projects' backup folder.");
+        if gui::button(&format!("Separate {v}")) {
+            self.separate_ask = None;
+            gui::close_current_popup();
+            let msg = self.separate_variation(e, &v).unwrap_or_else(|m| format!("separate: {m}"));
+            e.status(&msg, false);
+        }
+
+        gui::same_line();
+        if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
+            self.separate_ask = None;
+            gui::close_current_popup();
+        }
+
+        gui::end_popup();
+    }
+
     /// The Combine dialog, while it is open.
     pub(crate) fn draw_combine(&mut self, e: &mut Editor) {
         const TITLE: &str = "Combine variations";

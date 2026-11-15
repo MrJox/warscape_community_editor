@@ -472,6 +472,10 @@ pub struct TileTool {
     pub(crate) shown_pending: Option<(Vec<String>, u8)>,
     pub(crate) shown_overlay: u8,
 
+    /// Tile > Variations > Separate's variation, asked about before it is done (`draw_separate_confirm`).
+    pub(crate) separate_ask: Option<String>,
+    pub(crate) separate_opening: bool,
+
     /// The Tile database window.
     pub(crate) tile_db: Option<crate::tile_database::DbUi>,
 
@@ -909,6 +913,8 @@ impl Default for TileTool {
             combine: None,
             shown_pending: None,
             shown_overlay: 0,
+            separate_ask: None,
+            separate_opening: false,
             tile_db: None,
             link_candidates: None,
             clipboard: vec![],
@@ -4912,6 +4918,7 @@ impl Tool for TileTool {
         self.draw_save_tile_as(e);
         self.draw_resize_tile(e);
         self.draw_combine(e);
+        self.draw_separate_confirm(e);
         self.draw_tile_database(e);
         self.draw_height_import_dialog(e);
         self.draw_falloff_window(e);
@@ -4982,7 +4989,7 @@ impl Tool for TileTool {
             }
         } else if gui::begin_menu_enabled(label, can_launch) {
             for v in &launch_vars {
-                if gui::menu_item(v, None, false, true) {
+                if gui::menu_item(&format!("Launch {v}"), None, false, true) {
                     self.launch.variation = Some(v.clone());
                     let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
                     e.status(&msg, false);
@@ -4998,7 +5005,9 @@ impl Tool for TileTool {
             );
         }
 
-        // A combined project's variations (docs/plans/tile_variations.md); a tile of several, combined.
+        // A combined project's variations (docs/plans/tile_variations.md); a tile of several, combined. Apart from Launch in game: both
+        // list the variations, and a click meant for one landed in the other.
+        gui::separator();
         let combined = document(e).is_some_and(|d| !d.tile().variations().is_empty());
         let several = document(e).is_some_and(|d| d.project().entry.as_ref().is_some_and(|en| en.variations().len() > 1));
         if gui::begin_menu_enabled("Variations", combined || several) {
@@ -5015,9 +5024,10 @@ impl Tool for TileTool {
             let names = document(e).map(|d| d.tile().variations().to_vec()).unwrap_or_default();
             if gui::begin_menu_enabled("Separate", combined) {
                 for v in &names {
-                    if gui::menu_item(v, None, false, true) {
-                        let msg = self.separate_variation(e, v).unwrap_or_else(|m| format!("separate: {m}"));
-                        e.status(&msg, false);
+                    // Asked first (`draw_separate_confirm`): it takes the variation out of the combined project.
+                    if gui::menu_item(&format!("Separate {v}..."), None, false, true) {
+                        self.separate_ask = Some(v.clone());
+                        self.separate_opening = true;
                     }
 
                     if gui::is_item_hovered() {

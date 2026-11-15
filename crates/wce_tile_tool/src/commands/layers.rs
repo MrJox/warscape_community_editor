@@ -143,10 +143,20 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "tile_separate",
-        "tile_separate <variation>",
-        "Tile > Variations > Separate: a variation of the open combined project made a project of its own again, the others left combined (the tile saved first, opened again)",
+        "tile_separate [--ask] <variation>",
+        "Tile > Variations > Separate: a variation of the open combined project made a project of its own again, the others left combined (the tile saved first, opened again); --ask: the menu's question instead",
         |e, a| {
-            let Some(v) = a.first().cloned() else { return fail("usage: tile_separate <variation>") };
+            let ask = a.iter().any(|x| x == "--ask");
+            let a = a.iter().filter(|x| *x != "--ask").cloned().collect::<Vec<_>>();
+            let Some(v) = a.first().cloned() else { return fail("usage: tile_separate [--ask] <variation>") };
+            if ask {
+                return with_tile(e, |t, _| {
+                    t.separate_ask = Some(v);
+                    t.separate_opening = true;
+                    ok("asked")
+                });
+            }
+
             with_tile(e, |t, e| t.separate_variation(e, &v).map_or_else(fail, ok))
         },
     );
