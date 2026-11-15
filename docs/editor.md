@@ -241,6 +241,10 @@ reads it, with a warning, and Save writes that repaired text.
   slot's own alternatives' folders; models and definitions apart from decals): a `helmets` slot's model lists helmets. *Only what
   '<slot>' takes* lifts it; a slot name the game never uses, without alternatives, lists everything. `unit_takes <slot path>` tells the
   folders; the example `slot_kinds` reports them for every slot name.
+- **Slot names** are free labels but for the ones the engine looks up ([re/variant_mesh_slots.md](re/variant_mesh_slots.md)): a soldier's
+  `shield` and `weapon_1` to `weapon_4`, a ship piece's `<piece>_dm<state>`, `misc_99_dm1`, `night_lights_dm1`. The slot's name field lists
+  the names the game uses (most used first) and says what the engine makes of one; a name that is nearly one of the soldiers'
+  (`weapon_01`, `weapon_5`, `Shield`, `shield 1`) is a warning there and in Problems.
 - **Problems**: files the packs don't have (models, decals and the textures of their arrays, references), masks and probabilities out of
   range, attach points nothing has, references that come back to the file. A click selects the node.
 - **The unit's looks (DB)** (Preview panel): the previewed unit's `unit_variants` row for its faction (the definition it wears, *Wear the

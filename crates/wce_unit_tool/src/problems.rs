@@ -90,6 +90,10 @@ impl Checker<'_> {
         for (i, slot) in mesh.slots.iter().enumerate() {
             let mut at = path.clone();
             at.push(i);
+            if let Some(like) = crate::slot_kinds::near_miss(&slot.name) {
+                self.add(&at, format!("slot '{}': nearly '{like}', which the game looks up by name; this name it won't find", slot.name));
+            }
+
             if let Some(p) = doc.doc.get(slot.element, "probability")
                 && p.trim().parse::<f32>().map_or(true, |p| !(0.0..=1.0).contains(&p))
             {

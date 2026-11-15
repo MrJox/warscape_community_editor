@@ -1991,14 +1991,50 @@ impl UnitTool {
         let elem = slot.element;
         gui::separator_text("Slot");
         let mut name = slot.name.clone();
-        gui::set_next_item_width(-100.0);
-        if gui::input_text(&format!("name##{elem}"), None, &mut name, 128, 0) {
+        gui::text_colored(theme::dim(), "name");
+        gui::set_next_item_width(-gui::button_width("...") - 8.0);
+        if gui::input_text(&format!("##name{elem}"), None, &mut name, 128, 0) {
             d.set_value(elem, "name", &name, gesture(elem, "name"));
         }
 
         if gui::is_item_deactivated_after_edit() {
             d.break_merge();
         }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Any name: the game reads it as a label (docs/re/variant_mesh_slots.md), but for the ones it looks up: a soldier's \
+                 shield and weapon_1 to weapon_4, a ship piece's _dm<state>.",
+            );
+        }
+
+        // The names the game's slots have, most used first.
+        gui::same_line();
+        let names: Vec<String> =
+            self.kinds.as_ref().map(|k| k.names().into_iter().map(|(n, c)| format!("{n}  ({c})")).collect()).unwrap_or_default();
+        let filter = self.combo_filters.entry("slot_name#pick".to_owned()).or_default();
+        if let Some(p) =
+            pick_button(&format!("names{elem}"), "The names the game's slots have (how many), most used first.", filter, &slot.name, &names)
+        {
+            let picked = p.rsplit_once("  (").map_or(p.as_str(), |(n, _)| n).to_owned();
+            d.set_value(elem, "name", &picked, 0);
+        }
+
+        gui::push_text_wrap_pos(0.0);
+        if let Some(m) = crate::slot_kinds::meaning(&slot.name) {
+            gui::text_colored(theme::palette().highlight, &format!("{} {m}", wce_editor::icons::INFO));
+        } else if let Some(like) = crate::slot_kinds::near_miss(&slot.name) {
+            gui::text_colored(
+                theme::warning(),
+                &format!(
+                    "{} Nearly '{like}', which the game looks up by name; this name it won't find. (A slot's name and its attach point's \
+                     bone are numbered apart: weapon_2 hangs from weapon_02.)",
+                    wce_editor::icons::TRIANGLE_ALERT
+                ),
+            );
+        }
+
+        gui::pop_text_wrap_pos();
 
         // The points: the weapon bones, and the parent model's own.
         let parent_model = parent_model(&tree, path);
