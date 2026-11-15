@@ -140,6 +140,7 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
             ("road_fences", "none"),
             ("road_fence_damage", "0"),
             ("road_detail_density", "0.5"),
+            ("road_irregularity", "0.3"),
         ],
         wrappers: &["points"],
         point_attrs: &[("position", "0,0,0")],

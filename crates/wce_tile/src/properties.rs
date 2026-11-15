@@ -347,6 +347,7 @@ const ROAD: &[Prop] = &[
     p("road_fences", Kind::Enum(en::ROAD_FENCES)),
     p("road_fence_damage", Kind::Slider(0.0, 1.0)),
     p("road_detail_density", Kind::Slider(0.0, 1.0)),
+    p("road_irregularity", Kind::Slider(0.0, 1.0)),
 ];
 
 /// Not TEd's: a building spline (`building_spline`): buildings laid along a line. The list of buildings is edited below the grid.

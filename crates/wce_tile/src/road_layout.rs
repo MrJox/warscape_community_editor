@@ -424,6 +424,23 @@ pub struct Dress<'a> {
 
     /// The parts laid (none: all); those left out are not in the text, so neither drawn nor exported.
     pub keep: Option<PartKeep<'a>>,
+
+    /// How much each decal is jittered (the road's irregularity, 0 to 1: up to [`JITTER`] off its place, turned and resized), and the seed
+    /// of this piece's jitter.
+    pub jitter: f64,
+    pub jitter_seed: u64,
+}
+
+/// A decal's jitter at full irregularity: along and across its way (metres), its turn (radians) and its size (a fraction).
+pub const JITTER: [f64; 4] = [0.6, 0.4, 0.21, 0.2];
+
+/// A number from -1 to 1 for a decal's jitter.
+fn jitter_roll(seed: u64, index: usize, salt: u64) -> f64 {
+    let mut h = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (index as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ salt.rotate_left(29);
+    h ^= h >> 31;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 29;
+    (h >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
 }
 
 /// How far along and across a fence the ground is read to tilt it (metres): its ends, its width.
@@ -486,7 +503,22 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
     let n = format_number;
     let mut ovs = vec![];
     for (index, part) in piece.parts.iter().enumerate() {
-        let (at, x, tilt_at) = place(piece, part, &frame, &st, width);
+        let (mut at, mut x, tilt_at) = place(piece, part, &frame, &st, width);
+
+        // A decal a little off its place, turned and resized by the road's irregularity (more of it, more misaligned).
+        let jittered = dress.jitter > 0.0 && part.kind == "ProjectedDecalInstance";
+        let mut size_factor = 1.0;
+        if jittered {
+            let (j, r) = (dress.jitter.min(1.0), |salt: u64| jitter_roll(dress.jitter_seed, index, salt));
+            let l = x[0].hypot(x[1]).max(1e-9);
+            let (ux, uz) = (x[0] / l, x[1] / l);
+            let (da, dc) = (r(1) * JITTER[0] * j, r(2) * JITTER[1] * j);
+            at = [at[0] + ux * da - uz * dc, at[1] + uz * da + ux * dc];
+            let (sn, cs) = (r(3) * JITTER[2] * j).sin_cos();
+            x = [x[0] * cs - x[1] * sn, x[0] * sn + x[1] * cs];
+            size_factor = 1.0 + r(4) * JITTER[3] * j;
+        }
+
         let height = ground(at[0], at[1]);
         let own_x = part.rotation * Double3::new(1.0, 0.0, 0.0);
         let turn = heading(x) - heading([own_x.x, own_x.z]);
@@ -523,6 +555,7 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
             let x_along = part.turn.cos().abs() >= part.turn.sin().abs();
             let across = if part.anchor == Anchor::Surface { width / piece.width.max(1e-6) } else { 1.0 };
             let (sx, sz) = if x_along { (s.x * stretch, s.z * across) } else { (s.x * across, s.z * stretch) };
+            let (sx, sz) = (sx * size_factor, sz * size_factor);
             set("scale", format!("vector({},{},{})", n(sx), n(s.y), n(sz)));
         }
     }
@@ -1435,7 +1468,7 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "fence", frame: Frame::Along { from: 5.0, to: 10.0 } };
-        let dress = Dress { tilt: Some(FENCE_TILT), attrs: None, keep: None };
+        let dress = Dress { tilt: Some(FENCE_TILT), attrs: None, keep: None, jitter: 0.0, jitter_seed: 0 };
         let orientation = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1461,7 +1494,7 @@ mod tests {
         assert!(detail >= 3, "straight_5 has its rocks and erosion as detail: {detail}");
 
         let decals = |keep: Option<PartKeep>| {
-            let dress = Dress { tilt: None, attrs: None, keep };
+            let dress = Dress { tilt: None, attrs: None, keep, jitter: 0.0, jitter_seed: 0 };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
                 .unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1481,6 +1514,33 @@ mod tests {
     }
 
     #[test]
+    fn jittered_decals_move_within_the_jitter_and_buildings_do_not() {
+        let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let (_, children) = crate::road_dirt::pieces().into_iter().find(|p| p.0 == "straight_2").unwrap();
+        let text = crate::road_pieces::group_text("road_dirt_straight_2", &children);
+        let piece = crate::road_pieces::read(&text).unwrap();
+        let scene = TedScene::parse_any(text).unwrap();
+        let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
+        let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
+        let places = |jitter: f64| {
+            let dress = Dress { tilt: None, attrs: None, keep: None, jitter, jitter_seed: 99 };
+            let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
+                .unwrap();
+            let s = TedScene::parse_any(f.text).unwrap();
+            let of = |kind: &str| s.find_all(kind).into_iter().map(|e| s.position(e).unwrap()).collect::<Vec<_>>();
+            (of("ProjectedDecalInstance"), of("BUILDING_INSTANCE"))
+        };
+
+        let (still, banks) = places(0.0);
+        let (moved, banks_j) = places(1.0);
+        assert_eq!(banks, banks_j, "buildings keep their places");
+        let reach = JITTER[0].hypot(JITTER[1]) * 2.0 + 1e-6;
+        let shifts = still.iter().zip(&moved).map(|(a, b)| (a.x - b.x).hypot(a.z - b.z)).collect::<Vec<_>>();
+        assert!(shifts.iter().all(|&d| d <= reach), "within the jitter (file units): {shifts:?}");
+        assert!(shifts.iter().filter(|&&d| d > 0.05).count() * 2 >= shifts.len(), "most decals moved: {shifts:?}");
+    }
+
+    #[test]
     fn a_bank_follows_the_slope_under_it_and_keeps_its_roll() {
         let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
         let mut children = crate::road_pieces::base_guides("straight_2");
@@ -1490,7 +1550,7 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
-        let dress = Dress { tilt: Some(PIECE_TILT), attrs: None, keep: None };
+        let dress = Dress { tilt: Some(PIECE_TILT), attrs: None, keep: None, jitter: 0.0, jitter_seed: 0 };
         let up = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "b", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
