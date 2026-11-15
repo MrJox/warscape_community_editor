@@ -4577,12 +4577,16 @@ impl Tool for TileTool {
 
         settings_window::help("Loose files lose to the game's packs; a tile falls back to the pack.");
         settings_window::label("Map");
-        if gui::radio_button("The tile alone", s.launch.map == crate::settings::LaunchMap::Tile) {
+        if gui::radio_button("The tile alone, in the editor's climate", s.launch.map == crate::settings::LaunchMap::Tile) {
             s.launch.map = crate::settings::LaunchMap::Tile;
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The battle map is the tile on its own.");
+            gui::set_tooltip(
+                "The battle map is the tile on its own, drawn in the climate and season the editor draws its ground with (the game draws a \
+                 tile alone in the default climate: the launch gives that climate's ground textures, grass and trees to it). Choose the \
+                 default climate in the editor for the game's own look of a tile alone.",
+            );
         }
 
         gui::same_line();
@@ -4591,23 +4595,13 @@ impl Tool for TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The battle map is the tile where the Map context places it in its map, with its neighbours.");
-        }
-
-        gui::same_line();
-        if gui::radio_button("The tile alone, in the editor's climate", s.launch.map == crate::settings::LaunchMap::Climate) {
-            s.launch.map = crate::settings::LaunchMap::Climate;
-        }
-
-        if gui::is_item_hovered() {
             gui::set_tooltip(
-                "The tile on its own, drawn in the climate and season the editor draws its ground with: the game draws a tile alone in the \
-                 default climate, so the launch gives that climate's ground textures, grass and trees to it.",
+                "The battle map is the tile where the Map context places it in its map, with its neighbours, in the map's climate.",
             );
         }
 
         settings_window::help(
-            "The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used. The tile alone is in the default climate unless it is launched in the editor's climate (the Tile panel's climate and season).",
+            "The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.",
         );
         if !cfg!(windows) {
             settings_window::folder_field("Proton", &mut s.launch.proton, "the one Steam runs the game with");

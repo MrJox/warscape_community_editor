@@ -70,7 +70,7 @@ struct Plan {
     /// The battle map when it is a position in a map; `None`: the tile alone (its folder is known after the export).
     position: Option<BattleMap>,
 
-    /// The tile alone in another climate than `default` (`LaunchMap::Climate`).
+    /// The tile alone in another climate than `default` (`LaunchMap::Tile`).
     climate: Option<crate::launch_climate::AloneClimate>,
 
     /// The tile's deployment zones in the battle's frame (a tile alone).
@@ -434,13 +434,9 @@ impl TileTool {
             settings.map = map;
         }
 
-        let (position, mut note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
-        let in_climate = settings.map == LaunchMap::Climate;
-        if position.is_none() && !in_climate && !climate.is_empty() && !climate.eq_ignore_ascii_case(launch::ALONE_CLIMATE) {
-            note.push_str(&launch::climate_alone_note(&climate));
-        }
-
-        let alone_climate = (in_climate && position.is_none() && !climate.is_empty()).then(|| crate::launch_climate::AloneClimate {
+        let (position, note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
+        // The tile alone (also a placement that can't be used): in the editor's climate.
+        let alone_climate = (position.is_none() && !climate.is_empty()).then(|| crate::launch_climate::AloneClimate {
             climate: climate.clone(),
             season: look.season.clone(),
             groups: groups.clone().unwrap_or_default(),

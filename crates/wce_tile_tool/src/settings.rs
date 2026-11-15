@@ -118,16 +118,15 @@ pub struct TileSettings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchMap {
-    /// The tile alone is the battle map (any tile, painted on a map or not).
+    /// The tile alone is the battle map (any tile, painted on a map or not), drawn in the climate and season the editor draws its ground
+    /// with (its terrain look): the game draws a tile alone in the `default` climate, so the launch gives `default` that climate's
+    /// ground textures, grass and trees (`launch_climate`; nothing when the editor's climate is `default`).
     #[default]
+    #[serde(alias = "climate")]
     Tile,
 
-    /// The Map context's placement in its map (the neighbours and seams), the tile alone without one.
+    /// The Map context's placement in its map (the neighbours and seams; the map's climate), the tile alone without one.
     MapContext,
-
-    /// The tile alone, drawn in the climate and season the editor draws its ground with (its terrain look): the game draws a tile alone
-    /// in the `default` climate, so the launch gives `default` that climate's ground textures, grass and trees (`launch_climate`).
-    Climate,
 }
 
 /// How Launch in game hands the tile to the game.
