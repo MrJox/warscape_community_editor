@@ -76,6 +76,17 @@ the ground's colour in one of two ways:
 Without a terrain material (the weather tool's flat ground) the tool draws them with `ps30_gbuffer` and their own textures (white when they
 have none).
 
+**Decals on TerrainBlend meshes** (2026-11-15; the user's TEd screenshot: the kit's `rocky_4` prefab's decals painting the top of
+`attila_cliff_mud_03`, its sides showing its own cliff texture). That model is one TerrainBlend mesh with its own textures
+(`cliffmud_diffuse` / `_normal` / `_gloss_map`), all its vertex colours 0 as rpfm reads them. `rigidterrainblend`'s techniques are
+registered with stencil 0x81, the value the decal pass tests for (docs/re/renderer.md, "Which pixels take projected decals"), so decals
+paint a TerrainBlend mesh wherever they face up; a building of any other material writes 1 and takes none. The game's GLSL copies
+(`fxc/glsl_sm_3_0_rigidterrainblend.hlsl_ps_*.glsl`) show three pixel shaders: `ps30_gbuffer`, the mesh's own textures as a rigid
+model's; `ps_terrain_material`, its own diffuse written into the terrain's blend weighted by its vertex colour's alpha (x 10); and
+`ps30_null_gbuffer`, the terrain's composite. **Not settled**: which of them the game uses for which TerrainBlend mesh (this one shows its own
+texture, which `ps30_gbuffer` gives; its alpha 0 gives `ps_terrain_material` nothing). The editor draws every TerrainBlend mesh through the
+terrain pass only (`draw_blend_meshes`), so it shows this model with the ground's colour, not its own texture.
+
 ## The terrain virtual texture (`virtualtexture.hlsl`, 2026-10-18, from the shader code)
 
 The game has two ways to colour the terrain. The **screen-space** one is the tool's (`ps30_blend` boxes every frame, `ps30_terrain_to_gbuffer_ss`).
