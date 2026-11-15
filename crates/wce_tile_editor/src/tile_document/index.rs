@@ -860,6 +860,19 @@ impl Tile {
         self.project.shown_variations()
     }
 
+    /// The variations shown changed: what is drawn of the tile from above (the minimap's ground, heights, radar and siege overlays)
+    /// is drawn again.
+    fn view_changed(&mut self) {
+        self.view_version += 1;
+        self.terrain_version = self.terrain_version.wrapping_add(1);
+        self.siege_version = self.siege_version.wrapping_add(1);
+    }
+
+    /// Counts the changes of the variations shown (`view_changed`).
+    pub fn view_version(&self) -> u64 {
+        self.view_version
+    }
+
     /// A layer's, group's or variation folder's children as the viewed variation has them (`TedScene::children` of a project of one):
     /// without what other variations have, with the contents of a group of other variations in its place. A variation folder of the
     /// viewed variation is a row of its own (what it holds is below it), so that it can be seen, retagged and taken away.
@@ -924,6 +937,7 @@ impl Tile {
         }
 
         self.project.show_variations(list)?;
+        self.view_changed();
         self.material_base = None;
         self.skin = None;
         self.roads_stale = true;
@@ -962,6 +976,7 @@ impl Tile {
     /// What `TileProject::show_variations` refuses.
     pub(crate) fn end_export_view(&mut self, shown: &[String]) -> Result<(), String> {
         self.project.show_variations(shown)?;
+        self.view_changed();
         self.material_base = None;
         self.skin = None;
         self.layers_shown = true;

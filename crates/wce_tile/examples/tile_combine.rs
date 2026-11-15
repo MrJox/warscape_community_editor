@@ -51,7 +51,26 @@ fn main() {
     let reference = reference.and_then(|r| inputs.iter().position(|i| i.variation == r)).unwrap_or(0);
     let t = std::time::Instant::now();
     match combine(&inputs, reference, &entry, &projects) {
-        Ok(r) => println!("{} ({:.1} s)", r.message, t.elapsed().as_secs_f64()),
+        Ok(r) => {
+            println!("{} ({:.1} s)", r.message, t.elapsed().as_secs_f64());
+            // The terrain layers it made: each type's, with their variations and how many 64 x 64 blocks they hold.
+            let bytes = std::fs::read(r.tile_dir.join(wce_tile::terrain_layers::FILE)).expect("its layers");
+            let layers = wce_tile::terrain_layers::TerrainLayers::from_bytes(&bytes).expect("they read");
+            let list = |name: &str, l: Vec<(String, Option<[u32; 4]>)>| {
+                println!("  {name}: {}", l.iter().map(|(n, e)| format!("{n} {e:?}")).collect::<Vec<_>>().join("; "));
+            };
+            if let Some(s) = &layers.height {
+                list("height", s.layers.iter().map(|l| (l.name.clone(), l.extent())).collect());
+            }
+
+            if let Some(s) = &layers.blend {
+                list("blend", s.layers.iter().map(|l| (l.name.clone(), l.extent())).collect());
+            }
+
+            if let Some(s) = &layers.ground {
+                list("ground type", s.layers.iter().map(|l| (l.name.clone(), l.extent())).collect());
+            }
+        }
         Err(e) => {
             println!("not combined: {e}");
             std::process::exit(1);

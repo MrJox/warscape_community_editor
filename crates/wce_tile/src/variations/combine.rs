@@ -300,13 +300,26 @@ pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_r
         return Err(format!("{} is a combined project already", tile_dir.display()));
     }
 
+    // The reference first (the project's first variation: what the editor draws an element several have as, with everything shown),
+    // then the others in their order (each one's terrain patches build on those before it).
+    let mut ordered = inputs.to_vec();
+    let first = ordered.remove(reference.min(inputs.len() - 1));
+    ordered.insert(0, first);
+    let (inputs, reference) = (&ordered[..], 0);
+
     let names = inputs.iter().map(|i| i.variation.clone()).collect::<Vec<_>>();
     let reads = inputs.iter().map(|i| read_input(i, entry).map_err(|e| format!("{}: {e}", i.variation))).collect::<Result<Vec<_>, _>>()?;
     let sources = names.iter().zip(&reads).map(|(v, r)| Source { variation: v.clone(), text: r.text.clone() }).collect::<Vec<_>>();
     let merged = merge(&sources)?;
     check(&merged.text, &sources)?;
     let layer_sources = names.iter().zip(&reads).map(|(v, r)| (v.as_str(), &r.layers)).collect::<Vec<_>>();
-    let layers = TerrainLayers::combine(&layer_sources, reference.min(inputs.len() - 1))?;
+    // Heights compared as each variation stores them (its row's range): a level stored in another range still shares its patches.
+    let rows = entry.variations();
+    let ranges = names
+        .iter()
+        .map(|v| rows.iter().find(|r| r.location.eq_ignore_ascii_case(v)).map_or((0.0, 1.0), |r| (r.min_height, r.scale)))
+        .collect::<Vec<_>>();
+    let layers = TerrainLayers::combine_in(&layer_sources, reference, Some(&ranges))?;
 
     // The files: those every variation has the same go in the tile's folder, the others in each one's own.
     let mut shared = vec![];

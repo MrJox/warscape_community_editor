@@ -402,7 +402,7 @@ pub struct Layer<T> {
     /// The variations of a combined project it belongs to, empty: all (narrowed further by its `depends` layer's).
     pub variations: Vec<String>,
 
-    /// Where it holds a block, it is what shows there, whatever is below (a combined project's "Variation base" layer: those variations'
+    /// Where it holds a block, it is what shows there, whatever is below (a combined project's "Variation patch" layer: those variations'
     /// own base, by the 64 x 64 blocks it differs in). Exact for every type: no difference to add, no rounding.
     pub replace: bool,
     samples: Blocks<T>,
@@ -843,9 +843,11 @@ impl<K: Kind> Stack<K> {
         }
     }
 
-    /// One stack of several variations' (docs/plans/tile_variations.md, "The terrain merge"): the base is the reference's; each group of
-    /// other variations whose base differs gets a "Variation base" layer of theirs right above it, which replaces the base by the blocks
-    /// their base differs in; then every variation's layers, in each variation's order, a layer that several have the same (id, settings and samples)
+    /// One stack of several variations' (docs/plans/tile_variations.md, "The terrain merge"): the base is the reference's; the others'
+    /// bases become **patches** right above it, patches building on patches (Revision 1: a level is often the one below it changed). In
+    /// the sources' order, each variation against what the patches so far give it: a 64 x 64 block where its base differs goes into a
+    /// replacing layer "Variation patch: <variations>" of it and of every later variation whose base has that block the same (`small`'s
+    /// changes one layer of `small, medium`, `medium`'s own one of `medium`); then every variation's layers, in each variation's order, a layer that several have the same (id, settings and samples)
     /// once. A layer belongs to the variations that had it (none listed: all). What a variation's export composes is then its own
     /// composite, sample for sample ([`Self::composite`]). Layer ids that two different layers had are made new by `new_id`.
     ///
@@ -853,6 +855,22 @@ impl<K: Kind> Stack<K> {
     ///
     /// No sources, no such reference, or maps of different sizes.
     pub fn combine(sources: &[(&str, &Self)], reference: usize, new_id: &mut dyn FnMut() -> u64) -> Result<Self, String> {
+        Self::combine_by(sources, reference, new_id, &|_, a, b| a == b)
+    }
+
+    /// [`Self::combine`] with what makes a block of samples the same for a variation (`same(variation, candidate, its own)`): heights
+    /// are the same when they are stored as the same 16-bit values in its range, so that a level stored in another range shares the
+    /// patches of the levels it builds on and still exports as it was.
+    ///
+    /// # Errors
+    ///
+    /// As `combine`.
+    pub fn combine_by(
+        sources: &[(&str, &Self)],
+        reference: usize,
+        new_id: &mut dyn FnMut() -> u64,
+        same: &dyn Fn(usize, &[K::Sample], &[K::Sample]) -> bool,
+    ) -> Result<Self, String> {
         let Some(&(_, r)) = sources.get(reference) else { return Err(format!("no variation {reference} of {}", sources.len())) };
         if let Some((name, s)) = sources.iter().find(|(_, s)| (s.w, s.h) != (r.w, r.h)) {
             return Err(format!("{name}'s map is {} x {}, the reference's {} x {}", s.w, s.h, r.w, r.h));
@@ -862,34 +880,51 @@ impl<K: Kind> Stack<K> {
             if set.len() == sources.len() { vec![] } else { set.iter().map(|&i| sources[i].0.to_owned()).collect() }
         };
 
-        // The groups of variations whose base is the same, but for the reference's.
-        let mut groups: Vec<Vec<usize>> = vec![];
-        for (i, (_, s)) in sources.iter().enumerate() {
-            if i == reference || s.base == r.base {
-                continue;
+        // The patches: per variation (but the reference) in order, the blocks the patches so far do not give it, each in a layer of the
+        // variations from it on whose base has that block the same.
+        let blank = || Some(Arc::new(vec![K::Sample::default(); (BLOCK * BLOCK) as usize * K::CHANNELS]));
+        let zeros = vec![K::Sample::default(); (BLOCK * BLOCK) as usize * K::CHANNELS];
+        let same_block = |v: usize, candidate: &Option<Arc<Vec<K::Sample>>>, own: &Option<Arc<Vec<K::Sample>>>| {
+            same(v, candidate.as_deref().map_or(zeros.as_slice(), Vec::as_slice), own.as_deref().map_or(zeros.as_slice(), Vec::as_slice))
+        };
+        let order = (0..sources.len()).filter(|&i| i != reference).collect::<Vec<_>>();
+        let mut patches: Vec<(Vec<usize>, Blocks<K::Sample>)> = vec![];
+        for (at, &v) in order.iter().enumerate() {
+            let base = &sources[v].1.base;
+            let mut by_set: Vec<(Vec<usize>, Blocks<K::Sample>)> = vec![];
+            for (i, block) in base.blocks.iter().enumerate() {
+                // What the patches so far give it here: the last of them of it that holds the block, else the reference's base.
+                let given = patches
+                    .iter()
+                    .rev()
+                    .find(|(set, b)| set.contains(&v) && b.blocks[i].is_some())
+                    .map_or(&r.base.blocks[i], |(_, b)| &b.blocks[i]);
+                if same_block(v, given, block) {
+                    continue;
+                }
+
+                let set = std::iter::once(v)
+                    .chain(order[at + 1..].iter().copied().filter(|&w| same_block(w, block, &sources[w].1.base.blocks[i])))
+                    .collect::<Vec<_>>();
+                let slot = match by_set.iter().position(|(s, _)| *s == set) {
+                    Some(k) => k,
+                    None => {
+                        by_set.push((set, Blocks::new(r.w, r.h)));
+                        by_set.len() - 1
+                    }
+                };
+                by_set[slot].1.blocks[i] = block.clone().or_else(blank);
             }
 
-            match groups.iter_mut().find(|g| sources[g[0]].1.base == s.base) {
-                Some(g) => g.push(i),
-                None => groups.push(vec![i]),
-            }
+            patches.extend(by_set);
         }
 
         let mut layers = vec![];
-        for g in &groups {
-            let base = &sources[g[0]].1.base;
-            let mut samples = Blocks::new(r.w, r.h);
-            for (i, block) in base.blocks.iter().enumerate() {
-                if *block != r.base.blocks[i] {
-                    samples.blocks[i] =
-                        block.clone().or_else(|| Some(Arc::new(vec![K::Sample::default(); (BLOCK * BLOCK) as usize * K::CHANNELS])));
-                }
-            }
-
-            let variations = names(g);
+        for (set, samples) in patches {
+            let variations = names(&set);
             layers.push(Layer {
                 id: new_id(),
-                name: format!("Variation base: {}", variations.join(", ")),
+                name: format!("Variation patch: {}", variations.join(", ")),
                 visible: true,
                 opacity: 1.0,
                 owner: String::new(),
@@ -1187,6 +1222,16 @@ impl TerrainLayers {
     ///
     /// A type some variations have and others not, or what [`Stack::combine`] refuses.
     pub fn combine(sources: &[(&str, &Self)], reference: usize) -> Result<Self, String> {
+        Self::combine_in(sources, reference, None)
+    }
+
+    /// [`Self::combine`] with each source's height range (min_height, scale; its row's): heights the same as stored in it are the same
+    /// ([`Stack::combine_by`]).
+    ///
+    /// # Errors
+    ///
+    /// As `combine`.
+    pub fn combine_in(sources: &[(&str, &Self)], reference: usize, ranges: Option<&[(f64, f64)]>) -> Result<Self, String> {
         let mut out = Self { next_id: sources.iter().map(|(_, s)| s.next_id).max().unwrap_or(0), ..Self::default() };
         let mut next_id = out.next_id;
         let mut new_id = || {
@@ -1200,6 +1245,7 @@ impl TerrainLayers {
             get: impl Fn(&TerrainLayers) -> Option<&Stack<K>>,
             reference: usize,
             new_id: &mut dyn FnMut() -> u64,
+            same: &dyn Fn(usize, &[K::Sample], &[K::Sample]) -> bool,
         ) -> Result<Option<Stack<K>>, String> {
             let stacks = sources.iter().filter_map(|(n, s)| get(s).map(|st| (*n, st))).collect::<Vec<_>>();
             if stacks.is_empty() {
@@ -1210,12 +1256,18 @@ impl TerrainLayers {
                 return Err(format!("{what} layers: some variations have them, others not"));
             }
 
-            Stack::combine(&stacks, reference, new_id).map(Some)
+            Stack::combine_by(&stacks, reference, new_id, same).map(Some)
         }
 
-        out.height = kind("height", sources, |s| s.height.as_ref(), reference, &mut new_id)?;
-        out.blend = kind("blend", sources, |s| s.blend.as_ref(), reference, &mut new_id)?;
-        out.ground = kind("ground type", sources, |s| s.ground.as_ref(), reference, &mut new_id)?;
+        let stored = |v: usize, a: &[f32], b: &[f32]| match ranges.and_then(|r| r.get(v)) {
+            Some(&(min, scale)) => a.iter().zip(b).all(|(x, y)| {
+                crate::height_field::quantize(f64::from(*x), min, scale) == crate::height_field::quantize(f64::from(*y), min, scale)
+            }),
+            None => a == b,
+        };
+        out.height = kind("height", sources, |s| s.height.as_ref(), reference, &mut new_id, &stored)?;
+        out.blend = kind("blend", sources, |s| s.blend.as_ref(), reference, &mut new_id, &|_, a, b| a == b)?;
+        out.ground = kind("ground type", sources, |s| s.ground.as_ref(), reference, &mut new_id, &|_, a, b| a == b)?;
         out.next_id = next_id;
         out.dirty = true;
         Ok(out)
@@ -1379,7 +1431,7 @@ mod tests {
         let names = combined.layers.iter().map(|l| (l.name.as_str(), l.variations.join(","))).collect::<Vec<_>>();
         assert_eq!(
             names,
-            [("Variation base: c", "c".to_owned()), ("hills", "a,b".to_owned()), ("walls", "b".to_owned()), ("moat", "c".to_owned())]
+            [("Variation patch: c", "c".to_owned()), ("hills", "a,b".to_owned()), ("walls", "b".to_owned()), ("moat", "c".to_owned())]
         );
         let ids = combined.layers.iter().map(|l| l.id).collect::<std::collections::HashSet<_>>();
         assert_eq!(ids.len(), 4, "the moat got an id of its own");
@@ -1449,6 +1501,33 @@ mod tests {
     }
 
     #[test]
+    fn patches_build_on_patches() {
+        // `b` is `a` with its first block changed; `c` is `b` with its second block changed too.
+        let field = |first: f64, second: f64| {
+            let mut f = HeightField::flat(130, 2, 0.0);
+            f.set_range(0.0, 30.0);
+            f.begin_edit().unwrap();
+            f.set_metres(3, 0, first).unwrap();
+            f.set_metres(70, 0, second).unwrap();
+            f.end_edit();
+            f
+        };
+        let (a, b, c) = (field(1.0, 1.0), field(5.0, 1.0), field(5.0, 9.0));
+        let stacks = [Stack::<Height>::new(&a), Stack::<Height>::new(&b), Stack::<Height>::new(&c)];
+        let mut next = 0;
+        let combined = Stack::combine(&[("a", &stacks[0]), ("b", &stacks[1]), ("c", &stacks[2])], 0, &mut || {
+            next += 1;
+            next
+        })
+        .unwrap();
+        let patches = combined.layers.iter().map(|l| (l.name.as_str(), l.samples.blocks.iter().flatten().count())).collect::<Vec<_>>();
+        assert_eq!(patches, [("Variation patch: b, c", 1), ("Variation patch: c", 1)], "b's change is c's too; c's own on it");
+        for (v, s) in ["a", "b", "c"].iter().zip(&stacks) {
+            assert_eq!(combined.composite(&|l| l.in_variation(v)), s.composite(&|_| true), "{v}");
+        }
+    }
+
+    #[test]
     fn a_variation_alone_keeps_its_layers_and_composes_the_same() {
         let field = |m: f64| {
             let mut f = HeightField::flat(130, 2, 0.0);
@@ -1485,7 +1564,7 @@ mod tests {
         for (v, layers) in [("aa", vec!["everywhere", "with the keep"]), ("ab", vec!["everywhere"])] {
             let one = combined.for_variation(v, &|k| k != "keep" || v == "aa");
             let s = one.height.as_ref().unwrap();
-            let mut names = s.layers.iter().filter(|l| l.name != "Variation base: aa").map(|l| l.name.as_str()).collect::<Vec<_>>();
+            let mut names = s.layers.iter().filter(|l| l.name != "Variation patch: aa").map(|l| l.name.as_str()).collect::<Vec<_>>();
             names.sort_unstable();
             assert_eq!(names, layers, "{v}");
             assert!(s.layers.iter().all(|l| l.variations.is_empty()), "{v}: no variations of its own");
