@@ -126,6 +126,11 @@ impl Tile {
     }
 
     pub fn has_walls(&self) -> bool {
+        // A combined project's variation as the scene views it (an export's is not the index's: `export_view`).
+        if self.project.is_combined() {
+            return !wce_walls::scene::all_walls(self.tscene()).is_empty();
+        }
+
         if self.idx.valid {
             return self.idx.type_names.iter().any(|t| t == WALL_SPLINE);
         }

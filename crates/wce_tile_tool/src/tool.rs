@@ -212,15 +212,33 @@ pub(crate) struct ExportInputs {
     /// The game's tile data if it was read before (else read by `run`), or being read (`TileTool::game_preload`).
     pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
     pub(crate) pending: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
-    /// The projects to compile, each a variation folder with its scene as tile.wce text: the open project's, or a combined project's
-    /// variations written as projects of their own (`TileDocument::materialize_variations`).
-    parts: Vec<(PathBuf, Vec<u8>)>,
+    /// The projects to compile, each a variation folder with its scene as tile.wce text and its kit walls as the editor laid them
+    /// (`TileDocument::kit_walls_for_export`): the open project's, or a combined project's variations written as projects of their own
+    /// (`TileDocument::materialize_variations`), each with its own.
+    parts: Vec<ExportPart>,
 
     /// A tile with procedural walls: the game files and rpfm's schema (its path).
     walls: Option<(Arc<dyn wce_vfs::files::Files>, PathBuf)>,
+}
 
-    /// Its kit walls as the editor laid them (`TileDocument::kit_walls_for_export`).
-    kit_walls: Vec<wce_walls::export::KitWall>,
+/// A project an export compiles: its variation folder, its scene as tile.wce text, its kit walls as the editor laid them, and whether
+/// it makes buildings (walls, road bridges: lowered with the walls' export).
+pub(crate) type ExportPart = (PathBuf, Vec<u8>, Vec<wce_walls::export::KitWall>, bool);
+
+/// The parts of a combined project's export (`TileDocument::materialize_variations`): each variation's folder, scene, kit walls and
+/// whether it makes buildings.
+///
+/// # Errors
+///
+/// A variation's tile.wce does not read.
+fn variation_parts(made: Vec<wce_tile_editor::tile_document::kit::VariationExport>) -> Result<Vec<ExportPart>, String> {
+    made.into_iter()
+        .map(|x| {
+            std::fs::read(x.made.dir.join(wce_tile::project_files::WCE_FILE))
+                .map(|t| (x.made.dir.clone(), t, x.kit_walls, x.generated))
+                .map_err(|err| format!("{}: {err}", x.made.dir.display()))
+        })
+        .collect()
 }
 
 impl ExportInputs {
@@ -268,11 +286,11 @@ impl ExportInputs {
         };
 
         let mut done = vec![];
-        for (project_dir, text) in std::mem::take(&mut self.parts) {
+        for (project_dir, text, kit_walls, generated) in std::mem::take(&mut self.parts) {
             // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
-            if let (Some((files, _)), Some(schema)) = (&self.walls, &schema) {
+            if let (true, Some((files, _)), Some(schema)) = (generated, &self.walls, &schema) {
                 let (pack, saved, notes) =
-                    wce_walls::export::save_exported_walls(&game, files.as_ref(), schema, &project_dir, text, out, &self.kit_walls)?;
+                    wce_walls::export::save_exported_walls(&game, files.as_ref(), schema, &project_dir, text, out, &kit_walls)?;
                 for n in &notes {
                     log::info(format!("{}: {n}", saved.display()));
                 }
@@ -1782,22 +1800,16 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let parts = if d.project().is_combined() {
             // A combined project's variations, each written as a project of its own (docs/plans/tile_variations.md).
-            let made = d.materialize_variations(only.unwrap_or_default(), false)?;
-            made.iter()
-                .map(|m| {
-                    std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE))
-                        .map(|t| (m.dir.clone(), t))
-                        .map_err(|err| format!("{}: {err}", m.dir.display()))
-                })
-                .collect::<Result<Vec<_>, _>>()?
+            variation_parts(d.materialize_variations(only.unwrap_or_default(), false)?)?
         } else {
-            vec![(d.project().dir.clone(), d.text_for_export(false)?)]
+            let text = d.text_for_export(false)?;
+            let generated = d.tile().has_generated_buildings();
+            vec![(d.project().dir.clone(), text, d.tile_mut().kit_walls_for_export(), generated)]
         };
-        let generated = d.tile().has_generated_buildings();
-        let kit_walls = d.tile_mut().kit_walls_for_export();
+        let generated = parts.iter().any(|p| p.3);
         let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
-        Ok(ExportInputs { files, kits, game, pending, parts, walls, kit_walls })
+        Ok(ExportInputs { files, kits, game, pending, parts, walls })
     }
 
     /// Saves the open tile, then writes it as an exported tile (stages A, B and C) with the tile database's files into a mod pack
@@ -1821,23 +1833,16 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let parts = if d.project().is_combined() {
             // A combined project's variations, each written as a project of its own, each into its folder of the pack.
-            let made = d.materialize_variations(only.as_deref().unwrap_or_default(), false)?;
-            made.iter()
-                .map(|m| {
-                    std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE))
-                        .map(|t| (m.dir.clone(), t))
-                        .map_err(|err| format!("{}: {err}", m.dir.display()))
-                })
-                .collect::<Result<Vec<_>, _>>()?
+            variation_parts(d.materialize_variations(only.as_deref().unwrap_or_default(), false)?)?
         } else {
-            vec![(d.project().dir.clone(), d.text_for_export(false)?)]
+            let text = d.text_for_export(false)?;
+            let generated = d.tile().has_generated_buildings();
+            vec![(d.project().dir.clone(), text, d.tile_mut().kit_walls_for_export(), generated)]
         };
-        let kit_walls = d.tile_mut().kit_walls_for_export();
-        let generated = d.tile().has_generated_buildings();
 
         let mut folders = vec![];
         let mut count = 0;
-        for (dir, text) in parts {
+        for (dir, text, kit_walls, generated) in parts {
             // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
             let (folder, notes) = if generated {
                 let files = e.files().ok_or("no game files are mounted")?;
@@ -2015,7 +2020,12 @@ impl TileTool {
 
         // The procedural walls are written as their pieces, which go into the game's data (and a tile without walls takes its old ones out).
         let data = e.settings_ref().game_dir().map(|g| g.join("data"));
-        let has_walls = e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.tile().has_generated_buildings());
+        // A combined project: a wall any variation has (each is exported viewed in turn).
+        let has_walls = e.docs.find_as::<TileDocument>(id).is_some_and(|d| {
+            d.tile().has_generated_buildings()
+                || (d.project().is_combined()
+                    && d.tile().tscene().doc().elements().iter().any(|el| el.name == wce_tile::new_instances::WALL_SPLINE))
+        });
         let pack_there = data.as_ref().is_some_and(|d| d.join(wce_walls::pack::PROC_PACK).is_file());
         let files = e.files();
         let schema = if has_walls || pack_there { Some(walls_schema(e)) } else { None };

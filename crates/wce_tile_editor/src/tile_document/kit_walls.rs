@@ -6,6 +6,9 @@
 //! procedural walls' pieces are (`spawn_wall_job`).
 //!
 //! Scene units throughout, as `walls.rs`.
+//!
+//! In a combined project (docs/plans/tile_variations.md) a kit wall has a height layer in each variation it is in, laid on that
+//! variation's ground and belonging to it alone (`wall:<key>@<variation>#<signature>`), as the procedural roads have theirs.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -344,10 +347,39 @@ impl Tile {
         out
     }
 
-    /// The height stack's layer of a wall's key, if it has one.
+    /// The height stack's layer of a wall's key, if it has one (the viewed variation's, in a combined project).
     pub(super) fn wall_layer_id(&self, key: &str) -> Option<u64> {
         let s = self.project.layers.as_ref()?.height.as_ref()?;
-        s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|(k, _)| k == key)).map(|l| l.id)
+        let own = self.wall_owner_key(key);
+        s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|(k, _)| k == own)).map(|l| l.id)
+    }
+
+    /// What a wall's height layer's owner names it by: its key, and in a combined project the variation viewed (`<key>@<variation>`).
+    fn wall_owner_key(&self, key: &str) -> String {
+        match self.road_variation() {
+            Some(v) => format!("{key}@{v}"),
+            None => key.to_owned(),
+        }
+    }
+
+    /// The kit walls of the variation viewed as an export of it lowers them (`kit_walls_for_export`), their height layers made first on
+    /// its ground (`kit_wall_ground`) and those of walls it no longer has taken out: a combined project's export views each variation it
+    /// writes in turn (`TileDocument::materialize_variations`), whose layers the preview has not made.
+    pub fn kit_walls_laid_for_export(&mut self) -> Vec<wce_walls::export::KitWall> {
+        self.sweep_wall_ground();
+        let sc = self.tscene();
+        let visible = |e: usize| sc.get(e, "flags").is_none_or(|f| f.contains("OIF_VISIBLE"));
+        let walls = wce_walls::scene::all_walls(sc)
+            .into_iter()
+            .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && visible(e))
+            .collect::<Vec<_>>();
+        for e in walls {
+            if let Some(layout) = self.kit_layout(e) {
+                self.kit_wall_ground(e, &layout);
+            }
+        }
+
+        self.kit_walls_for_export()
     }
 
     /// The ground (scene y at x, z, scene units) as it is below a wall's height layer (`key`; none, or no layer: the ground as it shows):
@@ -477,15 +509,20 @@ impl Tile {
 
             hs.finish()
         };
-        let owner = format!("{OWNER}{key}#{signature:x}");
+        let own_key = self.wall_owner_key(&key);
+        let owner = format!("{OWNER}{own_key}#{signature:x}");
         let current = stack.and_then(|s| old.and_then(|id| s.layers.iter().find(|l| l.id == id)).map(|l| l.owner.clone()));
         if writes.is_empty() && old.is_none() || current.as_deref() == Some(owner.as_str()) {
             return false;
         }
 
         // Where it goes: its own place, else before the first layer of a wall after it in the document (all over the roads').
-        let order = self.wall_order();
-        let name = format!("Kit wall {}", self.tscene().name(elem));
+        let order = self.wall_order().into_iter().map(|k| self.wall_owner_key(&k)).collect::<Vec<_>>();
+        let variation = self.road_variation();
+        let name = match &variation {
+            Some(v) => format!("Kit wall {} ({v})", self.tscene().name(elem)),
+            None => format!("Kit wall {}", self.tscene().name(elem)),
+        };
         let p = &mut self.project;
         let Some(hf) = p.height.as_mut() else { return false };
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
@@ -505,7 +542,7 @@ impl Tile {
                     height.add(new_id, &name, "pending");
                     let layer = height.layers.pop().expect("the layer just added");
                     let rank = |o: &str| parse_owner(o).and_then(|(k, _)| order.iter().position(|q| q == k));
-                    let mine = order.iter().position(|q| *q == key);
+                    let mine = order.iter().position(|q| *q == own_key);
                     let at = height
                         .layers
                         .iter()
@@ -523,6 +560,7 @@ impl Tile {
             if let Some(l) = height.layers.iter_mut().find(|l| l.id == id) {
                 l.owner = owner;
                 l.name = name;
+                l.variations = variation.into_iter().collect();
             }
 
             let r = [rect[0], rect[1], rect[2], rect[3]];
@@ -557,21 +595,28 @@ impl Tile {
         wce_walls::scene::all_walls(self.tscene()).into_iter().filter_map(|e| self.wall_layer_key(e)).collect()
     }
 
-    /// The walls' height layers that no shown kit wall owns (a wall gone, hidden, made procedural) taken out.
+    /// The walls' height layers that no shown kit wall owns (a wall gone, hidden, made procedural) taken out: of the variation viewed in a
+    /// combined project (another's stay; one made for no variation, before it was one, goes).
     pub(super) fn sweep_wall_ground(&mut self) {
         let sc = self.tscene();
         let live = wce_walls::scene::all_walls(sc)
             .into_iter()
             .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && self.shown(e))
             .filter_map(|e| self.wall_layer_key(e))
+            .map(|k| self.wall_owner_key(&k))
             .collect::<Vec<_>>();
+        let variation = self.road_variation();
+        let others = |k: &str| match (k.split_once('@'), &variation) {
+            (Some((_, v)), Some(cur)) => v != cur,
+            _ => false,
+        };
         let p = &mut self.project;
         let (Some(hf), Some(layers)) = (p.height.as_mut(), p.layers.as_mut()) else { return };
         let Some(height) = layers.height.as_mut() else { return };
         let gone = height
             .layers
             .iter()
-            .filter(|l| parse_owner(&l.owner).is_some_and(|(k, _)| !live.iter().any(|q| q == k)))
+            .filter(|l| parse_owner(&l.owner).is_some_and(|(k, _)| !others(k) && !live.iter().any(|q| q == k)))
             .map(|l| (l.id, l.extent()))
             .collect::<Vec<_>>();
         if gone.is_empty() {

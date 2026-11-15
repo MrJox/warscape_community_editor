@@ -434,17 +434,14 @@ impl TileDocument {
 
     /// A combined project's variations (`list`, empty: all) written as projects of their own under [`Self::variations_build_root`], each
     /// from the scene as an export reads it ([`Self::text_for_export`]) with that variation viewed (`Tile::export_view`): what the editor
-    /// makes over the terrain (the procedural roads' layers and pieces, the building splines' items) is made for each on its own ground.
-    /// The variation viewed is viewed again after.
+    /// makes over the terrain (the procedural roads' layers and pieces, the building splines' items, the kit walls' height layers and
+    /// layouts) is made for each on its own ground; each with its kit walls as its export lowers them. The variation viewed is viewed
+    /// again after.
     ///
     /// # Errors
     ///
     /// Not a combined project, a variation it does not have, or what `materialize` refuses.
-    pub fn materialize_variations(
-        &mut self,
-        list: &[String],
-        for_kit: bool,
-    ) -> Result<Vec<wce_tile::variations::materialize::Materialized>, String> {
+    pub fn materialize_variations(&mut self, list: &[String], for_kit: bool) -> Result<Vec<VariationExport>, String> {
         if !self.project().is_combined() {
             return Err("the tile has one variation: it is not a combined project".to_owned());
         }
@@ -468,7 +465,10 @@ impl TileDocument {
                 }
 
                 let text = self.text_for_export(for_kit)?;
-                self.project().materialize(v, &text, &raw)
+                // Its kit walls' height layers made on its ground (over its roads') before its maps are composed.
+                let kit_walls = self.tile_mut().kit_walls_laid_for_export();
+                let generated = self.tile().has_generated_buildings();
+                Ok::<_, String>(VariationExport { made: self.project().materialize(v, &text, &raw)?, kit_walls, generated })
             })();
             match step {
                 Ok(m) => made.push(m),
@@ -484,18 +484,10 @@ impl TileDocument {
         }
 
         result?;
-        for m in made.iter().filter(|m| m.refit) {
+        for m in made.iter().map(|x| &x.made).filter(|m| m.refit) {
             wce_foundation::log::info(format!(
                 "{}: the heights left the row's range; exported with min_height {:.3}, scale {:.3}",
                 m.variation, m.range.0, m.range.1
-            ));
-        }
-
-        // What the editor lays for the viewed variation only goes into every one (docs/plans/tile_variations.md, step 6's "Left").
-        let others = list.iter().any(|v| *v != viewed);
-        if others && self.tile().has_generated_buildings() {
-            wce_foundation::log::warn(format!(
-                "the procedural walls are laid for the variation viewed ({viewed}): every variation exported gets them laid so"
             ));
         }
 
@@ -509,18 +501,17 @@ impl TileDocument {
     ///
     /// As `save_for_kit`.
     pub fn save_variations_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>, list: &[String]) -> Result<String, String> {
-        let generated = self.tile().has_generated_buildings();
-        if generated && walls.is_none() {
+        let made = self.materialize_variations(list, true)?;
+        if walls.is_none() && made.iter().any(|x| x.generated) {
             return Err(format!(
                 "the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})",
                 wce_walls::pack::PROC_PACK
             ));
         }
 
-        let made = self.materialize_variations(list, true)?;
-        let kit_walls = if generated { self.tile_mut().kit_walls_for_export() } else { vec![] };
         let mut said = vec![];
-        for m in &made {
+        for VariationExport { made: m, kit_walls, generated } in &made {
+            let generated = *generated;
             let folder = tile_folder(&m.dir).ok_or_else(|| format!("{} is not under terrain/tiles/", m.dir.display()))?;
             let target = kit_raw.join(&folder);
             let mut p = wce_tile::tile_project::TileProject::open(&m.dir)?;
@@ -528,7 +519,7 @@ impl TileDocument {
             let maps = p.export_maps()?;
             let (msg, report) = match &walls {
                 Some(w) if generated => {
-                    let (scene, n, notes) = wce_walls::export::walls_for_kit(&p, scene, w.files, w.schema, &folder, w.data, &kit_walls)?;
+                    let (scene, n, notes) = wce_walls::export::walls_for_kit(&p, scene, w.files, w.schema, &folder, w.data, kit_walls)?;
                     for line in &notes {
                         wce_foundation::log::info(format!("Save for Assembly Kit, {}: {line}", m.variation));
                     }
@@ -559,6 +550,8 @@ impl TileDocument {
             wce_foundation::log::info(format!("Save for Assembly Kit, {}: {msg}", m.variation));
             said.push(format!("{} ({})", m.variation, report.summary()));
         }
+
+        let made = made.into_iter().map(|x| x.made).collect::<Vec<_>>();
 
         // The entry with each row's height range as its variation was written (`materialize`), and the tile sets it uses.
         let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone()) else {
@@ -639,6 +632,14 @@ impl TileDocument {
         self.push_splice("Restore the procedural walls".to_owned(), mark, vec![], vec![]);
         Ok(walls.len())
     }
+}
+
+/// A variation of a combined project written for an export (`TileDocument::materialize_variations`): its folder, its kit walls as its
+/// export lowers them, and whether its export makes buildings (walls, road bridges: `Tile::has_generated_buildings` while it was viewed).
+pub struct VariationExport {
+    pub made: wce_tile::variations::materialize::Materialized,
+    pub kit_walls: Vec<wce_walls::export::KitWall>,
+    pub generated: bool,
 }
 
 /// What the procedural walls need to be written for TEd: the game's files (the base pieces, their rows), rpfm's schema, and the game's
