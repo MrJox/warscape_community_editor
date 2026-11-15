@@ -7,8 +7,9 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-to 9 (see "Steps" and "Results" below): done 2026-11-15, to be tested by the user. Not written: the Gates' scripted run
-(`scripts/tile_variations.txt`); its parts were checked one by one (each step's "Checked").
+to 9 (see "Steps" and "Results" below): done 2026-11-15. Not written: the Gates' scripted run (`scripts/tile_variations.txt`);
+its parts were checked one by one (each step's "Checked"). **Revised 2026-11-15** after the user tried it: no viewed variation, the
+user works on the tile itself ("Revision 1: one tile" below, decisions 7 to 10); steps R1 to R4 to do.
 
 ## What the games and kits do
 
@@ -417,6 +418,51 @@ tile.ted for. About 6 s for a big settlement (three 50 MB files).
   `small` differs only where the edits went.
 - Round trip of version 1 projects: open, save, unchanged bytes.
 
+## Revision 1: one tile (the user, 2026-11-15)
+
+The first version had the user pick a variation to work in (the Variation chip) and see the tile as that variation has it. That is not
+what the user wants: **the user works on the tile itself**, and marks layers, groups, folders and terrain patches as belonging to one or
+more variations. There is no variation to be in. What stays: the file formats, Combine and Separate, the exports, the loaders, every
+mark and folder, the per-variation roads and walls of the exports.
+
+- **The view: everything, with filters** (decision 7). The viewport, the Scene panel and picking show every variation's elements
+  at once, each element once. The Scene panel's header gets a toggle per variation (and `tile_variations_shown <list|all>`): what
+  belongs to no shown variation is hidden, like a hidden layer. All shown at first; a view setting, not saved in the tile and not
+  undone. Showing one variation alone shows exactly its tile. No chip, no ghosts (the filters replace them).
+- **Where an element is drawn.** An element whose variations differ in a value (a `WceVariationValues` line, a container's
+  `WceVariationStart`, a group that is a group in some variations only) is drawn as its **display variation** has it: the first shown
+  variation (in the root's order) that it belongs to. Combine lists the reference variation first, so with everything shown that is
+  the reference. Edits keep their rule (decision 1, and 9): a move moves each variation's copy by the same amount.
+- **The terrain: one terrain with patches** (decision 8). The base is the reference's; every difference is a terrain layer tagged
+  with its variations (Combine's "Variation base" layers among them), shown or hidden like any layer. The viewport composes the base
+  with every visible layer belonging to a shown variation (everything shown: the patches of every variation together; one shown:
+  exactly its terrain). Painting goes into the working layer, whose variations say which variations get it; the panel warns when the
+  working layer belongs to no shown variation (the paint would not show).
+- **Per-level heights stay** (decision 9): Combine keeps each level's own height of a shared building (`WceVariationValues`), the
+  exports are byte-identical to the originals; the editor draws the display variation's.
+- **The tools that stay** (decision 10): the layer, group and folder checkboxes (Inspector, the Scene panel's Variations column),
+  *Move to a variation folder*, *Split for a variation* (a submenu of the variations: the selection copied into a folder for the one
+  chosen, the originals into one for the others), the terrain layers' variations (checkboxes on every layer, *New layer for...* a
+  choice of variations). Tidy and Problems stay.
+- **What the editor makes over the terrain** (the procedural roads' layers and pieces, the kit walls, the vegetation generator, the
+  siege AI, the minimap) is made for the display variation of the whole tile: the first shown variation. The exports make each
+  variation's own, as now.
+- **Launch in game** asks which variation (the first shown at first). The Tile panel's variation chooser shows the combined
+  project's variations and their rows (height range, colour...), and no longer switches anything.
+
+Steps:
+
+- **R1. The view.** `TedScene`'s lens becomes the shown set: an element is there when it belongs to a shown variation, its values
+  are its display variation's (`variations::own_value`, `world_transform_as` per element). The element index, picking, the Scene
+  panel's tree and the readers of the whole scene go by it. The chip and the ghosts go; the header's toggles and
+  `tile_variations_shown` come.
+- **R2. The terrain.** `TerrainLayers::set_view` with the shown set; the Terrain layers section's checkboxes on every layer, *New
+  layer for...*, the warning by the shown set. Combine lists the reference first.
+- **R3. The tools.** *Split for a variation* as a submenu; the roads, walls, vegetation and siege of the display variation; Launch
+  in game's choice; the Tile panel's chooser.
+- **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the
+  Scene panel, the Inspector, the Terrain layers section and the Combine dialog, looked at before it is called done.
+
 ## Decisions (the user, 2026-11-15)
 
 1. **An edit changes every variation the element is in.** Something meant for one variation does not sit in a shared folder: it
@@ -426,4 +472,9 @@ tile.ted for. About 6 s for a big settlement (three 50 MB files).
    (proposed after the user was unsure, accepted when the plan was settled).
 4. **nogo, LF influence and protection maps stay per variation** (`variations/<v>/`).
 5. **Random alternatives can be combined**, but only when the user ticks them and presses Combine; nothing is ticked at first.
-6. **Ghosts of the other variations are in the first version** (step 5), off by default.
+6. **Ghosts of the other variations are in the first version** (step 5), off by default. Replaced by decision 7.
+7. **No viewed variation: everything shown, with a filter per variation** (Revision 1). No chip.
+8. **One terrain with patches**: the reference's base, every difference a layer tagged with its variations.
+9. **Per-level heights stay**: exports byte-identical; the editor draws one (the display variation's).
+10. **The tools that stay**: layer, group and folder checkboxes, Move to a variation folder, Split for a variation (chosen in a
+    submenu), the terrain layers' variations.
