@@ -676,8 +676,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     }
 
     draw_tree_header(e, &all);
-    let footer = gui::frame_height_with_spacing() * 1.2;
-    if gui::begin_child("scenetree", v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
+    if gui::begin_child("scenetree", v2(0.0, 0.0), gui::CHILD_BORDERS, 0) {
         draw_tree(tool, e, id);
     }
 

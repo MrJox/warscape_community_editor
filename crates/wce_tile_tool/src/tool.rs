@@ -670,6 +670,10 @@ pub(crate) struct Browse {
     /// only when those change (it reads each tile's folder), not at each key typed in the filter.
     extracted: std::collections::HashSet<String>,
     extracted_for: (usize, usize),
+
+    /// The projects' combined tiles (their tile folder's tile.wce lists their variations; docs/plans/tile_variations.md), found with
+    /// the extracted ones.
+    combined: std::collections::HashSet<String>,
     // The tile browser (Tiles panel), and the entry a pending open comes from (consumed by `open`).
     filter: String,
 
@@ -716,6 +720,7 @@ impl Default for Browse {
         Self {
             extracted: Default::default(),
             extracted_for: (0, usize::MAX),
+            combined: Default::default(),
             filter: String::new(),
             focus_frames: 3,
             kit: 0,
@@ -1741,6 +1746,12 @@ impl TileTool {
 
         self.browse.rows_key.clear();
         Ok(format!("{} old extracted project(s) moved, {} left as they are (see the log)", m.moved.len(), m.skipped.len()))
+    }
+
+    /// The Tiles panel looks again for the projects' extracted and combined tiles (a tile was combined or separated).
+    pub(crate) fn browse_changed(&mut self) {
+        self.browse.extracted_for = (0, usize::MAX);
+        self.browse.rows_key.clear();
     }
 
     /// Asks before an exported tile is extracted over a project (`extract_prompt.rs`), else extracts it.
@@ -3372,11 +3383,23 @@ impl TileTool {
         if extracted_for != self.browse.extracted_for {
             self.browse.extracted_for = extracted_for;
             self.browse.extracted.clear();
+            self.browse.combined.clear();
             if !packs && self.browse.roots[self.browse.kit] == projects_raw {
                 let raw = &self.browse.roots[self.browse.kit];
+                // A combined project's tile.wce is in its tile's folder (marked there when extracted).
                 self.browse.extracted = source
                     .iter()
-                    .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
+                    .filter(|en| {
+                        wce_tile::project_files::is_extracted_dir(&raw.join(&en.key))
+                            || en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v)))
+                    })
+                    .map(|en| en.key.clone())
+                    .collect();
+                self.browse.combined = source
+                    .iter()
+                    .filter(|en| {
+                        !wce_tile::variations::listed_in_file(&raw.join(&en.key).join(wce_tile::project_files::WCE_FILE)).is_empty()
+                    })
                     .map(|en| en.key.clone())
                     .collect();
             }
@@ -3415,6 +3438,7 @@ impl TileTool {
             let selected_key = &mut self.browse.selected;
             let favs = &self.browse.fav_keys;
             let extracted = &self.browse.extracted;
+            let combined = &self.browse.combined;
 
             // Favourites and recent tiles first: a double-click opens a favourite's first variation, a recent tile's variation opened.
             let open_row = |en: &wce_formats::tile_index::TileIndexEntry, variation: &str| {
@@ -3431,7 +3455,8 @@ impl TileTool {
                 for (i, &r) in self.browse.fav_rows.iter().enumerate() {
                     let en = &entries[r];
                     gui::push_id_int(i as i32);
-                    let (clicked, double, starred) = tile_row(en, *selected_key == en.key, true, "", extracted.contains(&en.key));
+                    let (clicked, double, starred) =
+                        tile_row(en, *selected_key == en.key, true, "", extracted.contains(&en.key), combined.contains(&en.key));
                     if clicked {
                         selected_key.clone_from(&en.key);
                     }
@@ -3463,8 +3488,14 @@ impl TileTool {
                     let en = &entries[*r];
                     gui::push_id_int(i as i32);
                     let note = if variation.is_empty() { String::new() } else { format!("  ({variation})") };
-                    let (clicked, double, starred) =
-                        tile_row(en, *selected_key == en.key, favs.contains(&en.key), &note, extracted.contains(&en.key));
+                    let (clicked, double, starred) = tile_row(
+                        en,
+                        *selected_key == en.key,
+                        favs.contains(&en.key),
+                        &note,
+                        extracted.contains(&en.key),
+                        combined.contains(&en.key),
+                    );
                     if clicked {
                         selected_key.clone_from(&en.key);
                     }
@@ -3489,8 +3520,14 @@ impl TileTool {
             gui::clipped(rows.len(), |i| {
                 let en = &entries[rows[i]];
                 gui::push_id_int(i as i32);
-                let (clicked, double, starred) =
-                    tile_row(en, *selected_key == en.key, favs.contains(&en.key), "", extracted.contains(&en.key));
+                let (clicked, double, starred) = tile_row(
+                    en,
+                    *selected_key == en.key,
+                    favs.contains(&en.key),
+                    "",
+                    extracted.contains(&en.key),
+                    combined.contains(&en.key),
+                );
                 if clicked {
                     selected_key.clone_from(&en.key);
                 }
@@ -3527,17 +3564,26 @@ impl TileTool {
                     sel.links,
                     sel.targets,
                 ));
-                for (v, name) in sel.variations.iter().enumerate() {
-                    if v != 0 {
-                        gui::same_line();
-                    }
+                // A combined project opens whole (its variations shown together): no variation to choose.
+                if self.browse.combined.contains(&sel.key) {
+                    gui::text_disabled(&format!(
+                        "{} Combined: {} in one project; double-click opens it.",
+                        icons::LAYERS,
+                        sel.variations.join(", ")
+                    ));
+                } else {
+                    for (v, name) in sel.variations.iter().enumerate() {
+                        if v != 0 {
+                            gui::same_line();
+                        }
 
-                    if gui::button(&format!("{name}##v{v}")) {
-                        open = Some((sel.xml.display().to_string(), v.to_string(), sel.key.clone(), name.clone()));
-                    }
+                        if gui::button(&format!("{name}##v{v}")) {
+                            open = Some((sel.xml.display().to_string(), v.to_string(), sel.key.clone(), name.clone()));
+                        }
 
-                    if gui::is_item_hovered() {
-                        gui::set_tooltip("Opens this variation of the tile.");
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Opens this variation of the tile.");
+                        }
                     }
                 }
             }
@@ -3918,22 +3964,41 @@ fn tile_row(
     favourite: bool,
     note: &str,
     extracted: bool,
+    combined: bool,
 ) -> (bool, bool, bool) {
     gui::color_swatch("##c", [en.red / 255.0, en.green / 255.0, en.blue / 255.0, 1.0], gui::v2(12.0, 12.0));
     gui::same_line();
     let prefix = format!("terrain/tiles/{}/", en.kind);
     let shown = en.key.strip_prefix(&prefix).unwrap_or(&en.key);
-    let vars = if en.variations.len() > 1 { format!("  +{}v", en.variations.len()) } else { String::new() };
+    // A combined project: the layers icon before its name (seen however narrow the panel), its variations "in one".
+    let (lead, vars) = match (combined, en.variations.len()) {
+        (true, n) => (format!("{} ", icons::LAYERS), format!("  {n}v in one")),
+        (false, n) if n > 1 => (String::new(), format!("  +{n}v")),
+        _ => (String::new(), String::new()),
+    };
     let width = (gui::content_region_avail().x - gui::frame_height_with_spacing()).max(10.0);
     let mark = if extracted { format!("  {}", icons::PACKAGE) } else { String::new() };
     let clicked = gui::selectable_sized(
-        &format!("{shown}  {}x{}{vars}{note}{mark}", en.width, en.height),
+        &format!("{lead}{shown}  {}x{}{vars}{note}{mark}", en.width, en.height),
         selected,
         gui::SELECTABLE_ALLOW_DOUBLE_CLICK,
         gui::v2(width, 0.0),
     );
-    if extracted && gui::is_item_hovered() {
-        gui::set_tooltip("Extracted from the game's packs (wce_extracted_tile)");
+    if gui::is_item_hovered() {
+        match (combined, extracted) {
+            (true, true) => gui::set_tooltip(&format!(
+                "A combined project: its {} variations ({}) in one, worked on together. Extracted from the game's packs.",
+                en.variations.len(),
+                en.variations.join(", ")
+            )),
+            (true, false) => gui::set_tooltip(&format!(
+                "A combined project: its {} variations ({}) in one, worked on together.",
+                en.variations.len(),
+                en.variations.join(", ")
+            )),
+            (false, true) => gui::set_tooltip("Extracted from the game's packs (wce_extracted_tile)"),
+            (false, false) => {}
+        }
     }
 
     let double = clicked && gui::is_mouse_double_clicked(0);
