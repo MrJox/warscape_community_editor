@@ -34,6 +34,8 @@ use wce_scene::environment::{EnvironmentParams, read_environment};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, Payload, SourceRef};
 use wce_vfs::normalize;
 
+#[path = "ship.rs"]
+mod ship;
 #[path = "structure.rs"]
 mod structure;
 #[path = "thumbs.rs"]
@@ -227,6 +229,9 @@ pub struct UnitTool {
     /// The pictures of models, definitions, textures and alternatives.
     pics: thumbs::ThumbState,
 
+    /// The open definition as a ship, when it is one.
+    ship: ship::ShipState,
+
     /// What each slot name takes, read from the game's definitions on a thread.
     kinds: Option<Arc<SlotKinds>>,
     kinds_rx: Option<Receiver<SlotKinds>>,
@@ -293,6 +298,7 @@ impl Default for UnitTool {
             tree: structure::TreeState::default(),
             dragging_file: None,
             pics: thumbs::ThumbState::new(),
+            ship: ship::ShipState::default(),
             kinds: None,
             kinds_rx: None,
             file_filter: String::new(),
@@ -1258,6 +1264,33 @@ impl UnitTool {
         }
 
         let path = document(e).map(|d| d.source().vfs_path.clone()).unwrap_or_default();
+        if self.ship.on
+            && let Some(c) = self.catalog.clone()
+        {
+            gui::separator_text("A ship's definition");
+            match &self.ship.host {
+                Some(host) => gui::text_wrapped(&format!(
+                    "A part of a ship: shown where {} references it, the ship's pieces intact, with the oars and weapons of the naval unit below.",
+                    file_name(host)
+                )),
+                None => gui::text_wrapped("Drawn as a ship: its pieces intact, with the oars and weapons of the naval unit below."),
+            }
+            if self.ship.guessed {
+                gui::text_colored(
+                    theme::dim(),
+                    "No unit_variants_ships row names this file: the unit below has the ship named most like it.",
+                );
+            }
+
+            let mut units: Vec<String> = vec!["(none: the pieces alone)".to_owned()];
+            units.extend(c.naval().into_iter().map(str::to_owned));
+            let current = self.ship.unit.clone().unwrap_or_else(|| units[0].clone());
+            if let Some(u) = self.combo("Naval unit", "The naval unit whose ship logic places the oars and weapons.", &current, &units) {
+                let unit = (u != units[0]).then_some(u);
+                self.set_ship_unit(e, unit);
+            }
+        }
+
         if let Some(c) = self.catalog.clone() {
             gui::separator_text("Preview as");
             let units: Vec<String> = c.units().into_iter().map(str::to_owned).collect();
@@ -2250,6 +2283,16 @@ impl Tool for UnitTool {
             return false;
         }
 
+        if self.ship.on {
+            let picked = self.ship_pick(event.hit_source);
+            if let Some(p) = &picked {
+                e.status(&self.ship_part_name(p), false);
+            }
+
+            self.selected = picked;
+            return true;
+        }
+
         let picked = self.pick_part(e, event.x, event.y);
         if let Some((path, model)) = &picked {
             let through = match document(e)
@@ -2282,6 +2325,7 @@ impl Tool for UnitTool {
 
     fn game_changed(&mut self, e: &mut Editor) {
         self.clear(e);
+        self.clear_ship(e);
         *self = Self::default();
     }
 
@@ -2293,6 +2337,7 @@ impl Tool for UnitTool {
         self.light(e);
         let Some(id) = e.docs.of_tool(UNIT_TOOL_ID).filter(|&id| e.docs.find_as::<VmdDocument>(id).is_some()) else {
             self.clear(e);
+            self.clear_ship(e);
             self.doc = 0;
             return;
         };
@@ -2300,9 +2345,17 @@ impl Tool for UnitTool {
         // The catalog arrived after the document: its unit now.
         if id != self.doc {
             self.document_opened(e, id);
+            let path = self.preview_path.clone();
+            self.ship_opened(e, &path);
         } else if self.default_pending && self.catalog.is_some() {
             let path = self.preview_path.clone();
             self.preview_default(e, &path);
+        }
+
+        // A ship is told by the unit tables, which may come after the file.
+        if !self.ship.checked && self.catalog.is_some() {
+            let path = self.preview_path.clone();
+            self.ship_opened(e, &path);
         }
 
         self.update_problems(e);
@@ -2316,8 +2369,15 @@ impl Tool for UnitTool {
             self.load_models(e, wanted);
         }
 
-        self.dress(e);
-        self.pose(e);
+        if self.ship.on {
+            // The soldiers are loaded all the same (their pose and colours make the pictures), not shown.
+            self.clear(e);
+            self.update_ship(e);
+        } else {
+            self.dress(e);
+            self.pose(e);
+        }
+
         self.update_thumbs(e);
     }
 
@@ -2680,6 +2740,29 @@ fn register(c: &mut CommandRegistry<Editor>) {
             })
         },
     );
+
+    c.add("unit_ships", "unit_ships <text>", "the unit_variants_ships rows and naval units whose names have a text", |e, a| {
+        let text = a.first().cloned().unwrap_or_default().to_lowercase();
+        with_unit(e, |t, e| {
+            let Some(c) = t.catalog.clone() else { return CommandResult { repeat: true, ..ok("") } };
+            let rows: Vec<String> = c
+                .ships
+                .iter()
+                .filter(|s| s.variant.to_lowercase().contains(&text) || s.unit.to_lowercase().contains(&text))
+                .map(|s| format!("{} {} -> {}", s.unit, s.faction, s.variant))
+                .take(12)
+                .collect();
+            let navals: Vec<String> = c
+                .naval_units
+                .iter()
+                .filter(|(k, n)| k.to_lowercase().contains(&text) || n.naval_unit.to_lowercase().contains(&text))
+                .map(|(k, n)| format!("{k} (naval_unit {})", n.naval_unit))
+                .take(12)
+                .collect();
+            let state = t.ship_state(e);
+            ok(format!("ships: {rows:?}; naval units: {navals:?}; ship unit {:?}; {state}", t.ship.unit))
+        })
+    });
 
     c.add("unit_isolate", "unit_isolate <0|1>", "only the selected node's parts", |e, a| {
         let on = a.first().is_some_and(|v| v == "1");

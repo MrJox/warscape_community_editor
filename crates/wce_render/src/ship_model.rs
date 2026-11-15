@@ -27,13 +27,22 @@ use crate::unit_catalog::{UnitCatalog, variant_path};
 pub struct ShipPart {
     pub model: String,
 
+    /// Its node in the definition (`AssembledPart::node`); `None` for what the ship's logic adds (oars, weapons).
+    pub node: Option<wce_formats::variant_mesh::NodePath>,
+
     /// Where it is in the ship's space.
     pub local: Float4x4,
 
     /// The faction colour each channel of the colour mask takes.
     pub masks: [u8; 3],
 
-    /// What its model holds: meshes the rigid path draws, ropes (`#ropes`), sails (WeightedCloth, the skinned path).
+    /// Its decals and tint, from its definition (a shield's emblem): drawn with a `skinned` part.
+    pub decal_diffuse: Option<String>,
+    pub decal_normal: Option<String>,
+    pub tint: [f32; 4],
+
+    /// What its model holds: meshes the rigid path draws, ropes (`#ropes`), sails (WeightedCloth, the skinned path), decal or weighted
+    /// meshes (the skinned path at rest).
     pub what: PartMeshes,
 
     /// An oar's row (`models_oars.left_row` / `right_row`): its one bone turns the oar about the oarlock, `local`'s origin.
@@ -52,6 +61,11 @@ pub struct PartMeshes {
     pub solid: bool,
     pub ropes: bool,
     pub cloth: bool,
+
+    /// Decal (Decal, DecalDirtmap: the shields along a ship's sides) or weighted meshes: only the skinned path builds them (a model
+    /// loaded as a rigid one has no meshes then, and fails). The skinned path draws the model's rigid meshes too, so such a model isn't
+    /// `solid` as well.
+    pub skinned: bool,
 }
 
 /// What a model holds; a model that can't be read is taken for a solid one (the rigid path reports it).
@@ -66,9 +80,24 @@ fn part_meshes(read: &Reader, model: &str) -> PartMeshes {
             MaterialType::WeightedCloth => out.cloth = true,
 
             // The cloth simulation's own meshes (`sim_*`, grey test textures) and its colliders: never drawn.
-            MaterialType::Cloth | MaterialType::CollisionShape => {}
+            // The hull's volume that keeps the sea out of it (`misc_99_dm1`, which the engine looks up by name): never drawn.
+            MaterialType::Cloth | MaterialType::CollisionShape | MaterialType::WaterDisplaceVolume => {}
+            MaterialType::Decal
+            | MaterialType::DecalDirtmap
+            | MaterialType::Weighted
+            | MaterialType::WeightedDirtmap
+            | MaterialType::WeightedDecal
+            | MaterialType::WeightedDecalDirtmap
+            | MaterialType::WeightedSkin
+            | MaterialType::WeightedSkinDirtmap
+            | MaterialType::WeightedSkinDecal
+            | MaterialType::WeightedSkinDecalDirtmap => out.skinned = true,
             _ => out.solid = true,
         }
+    }
+
+    if out.skinned {
+        out.solid = false;
     }
 
     out
@@ -223,6 +252,21 @@ impl ShipModel {
             .ok_or_else(|| format!("no unit_variants_ships row for '{}'", naval.naval_unit))?;
         let definition = variant_path(&entry.variant);
         let assembled = assemble_ship(read, &definition, seed).ok_or_else(|| format!("{definition} could not be read"))?;
+        Ok(Self::with_parts(read, catalog, Some(unit), faction, &entry.variant, assembled, seed))
+    }
+
+    /// A ship of parts already assembled (`assemble_ship`, `assemble_ship_with`: an editor's definition, with its edits), with what the logic
+    /// of naval unit `unit` adds (its oars, its weapons) when there is one.
+    pub fn with_parts(
+        read: &Reader,
+        catalog: &UnitCatalog,
+        unit: Option<&str>,
+        faction: &str,
+        variant: &str,
+        assembled: crate::unit_assembly::AssembledUnit,
+        seed: u64,
+    ) -> Self {
+        let naval = unit.and_then(|u| catalog.naval_units.get(u));
         let mut missing = assembled.missing;
         let mut parts: Vec<ShipPart> = assembled
             .parts
@@ -233,12 +277,24 @@ impl ShipModel {
                     Attach::None | Attach::Bone(_) => Float4x4::IDENTITY,
                 };
 
-                ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None, row_offset: 0.0, cloth: None }
+                ShipPart {
+                    model: p.model,
+                    node: p.node,
+                    local,
+                    masks: p.masks,
+                    decal_diffuse: p.decal_diffuse,
+                    decal_normal: p.decal_normal,
+                    tint: p.tint,
+                    what: PartMeshes::default(),
+                    row: None,
+                    row_offset: 0.0,
+                    cloth: None,
+                }
             })
             .collect();
 
-        let logic = catalog.ship_logic.get(&naval.model).cloned();
-        if let Some(logic) = &logic {
+        let logic = naval.and_then(|n| catalog.ship_logic.get(&n.model).cloned());
+        if let (Some(logic), Some(naval)) = (&logic, naval) {
             let mut clips: HashMap<String, Option<Arc<Animation>>> = HashMap::new();
             let mut clip = |path: &str| {
                 clips
@@ -250,7 +306,19 @@ impl ShipModel {
             let mut add = |model: String, local: Float4x4, row: Option<Arc<Animation>>| {
                 if read(&model).is_some() {
                     let row_offset = if row.is_some() { MAX_OAR_ANIM_OFFSET * rng.unit() } else { 0.0 };
-                    parts.push(ShipPart { model, local, masks: [0, 1, 2], what: PartMeshes::default(), row, row_offset, cloth: None });
+                    parts.push(ShipPart {
+                        model,
+                        node: None,
+                        local,
+                        masks: [0, 1, 2],
+                        decal_diffuse: None,
+                        decal_normal: None,
+                        tint: [0.0; 4],
+                        what: PartMeshes::default(),
+                        row,
+                        row_offset,
+                        cloth: None,
+                    });
                 } else if !missing.contains(&model) {
                     missing.push(model);
                 }
@@ -281,7 +349,7 @@ impl ShipModel {
 
         let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
         let faction_colours = catalog.colours.get(faction).copied().unwrap_or(white);
-        Ok(Self { unit: unit.to_owned(), variant: entry.variant.clone(), parts, logic, faction_colours, missing })
+        Self { unit: unit.unwrap_or_default().to_owned(), variant: variant.to_owned(), parts, logic, faction_colours, missing }
     }
 
     /// Where `men` stand aboard and which way each faces ([`crew_spots`]); none without its logic.
@@ -320,6 +388,19 @@ impl ShipModel {
         match part.row.as_ref().and_then(|clip| clip.sample(at(clip)).first().copied()) {
             Some((offset, turn)) => part.local * bone_matrix(offset, turn),
             None => part.local,
+        }
+    }
+
+    /// A `skinned` part at rest, as the skinned path draws it (`rest`: identity matrices, enough for the model's bones).
+    pub fn rest_part(part: &ShipPart) -> wce_scene::render_scene::SkinnedPart {
+        wce_scene::render_scene::SkinnedPart {
+            model: part.model.clone(),
+            tint: part.tint,
+            decal_diffuse: part.decal_diffuse.clone(),
+            decal_normal: part.decal_normal.clone(),
+            masks: part.masks,
+            bone: None,
+            offset: wce_scene::render_scene::SKINNED_NO_OFFSET,
         }
     }
 

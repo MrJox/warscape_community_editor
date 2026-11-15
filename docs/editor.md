@@ -241,6 +241,14 @@ reads it, with a warning, and Save writes that repaired text.
   slot's own alternatives' folders; models and definitions apart from decals): a `helmets` slot's model lists helmets. *Only what
   '<slot>' takes* lifts it; a slot name the game never uses, without alternatives, lists everything. `unit_takes <slot path>` tells the
   folders; the example `slot_kinds` reports them for every slot name.
+- **A ship's definition** (`ship.rs`: one a `unit_variants_ships` row names, or whose root has `_dm1` slots) is drawn as the ship, not worn
+  by a soldier: assembled as the game assembles a ship (its pieces intact, a part on every point of a list), with the oars and weapons of
+  its naval unit's logic (the row's; with none naming the file, the unit whose ship's definition is named most like it; chosen in the
+  Preview panel), as rigid meshes, its decal and weighted parts (the shields along the sides) and sails at rest by the skinned path, its
+  ropes as the file has them, lifted onto its keel and framed. Its parts are picked and outlined by the renderer as a building's. A ship's
+  part file (`variantmeshes/_variantmodels/ships/<ship>/att_sas_01.variantmeshdefinition`: its sails) is shown on the first ship row's
+  definition that references it, pinned where it does, with its edits; one no ship references, but in the ships' folder, is drawn alone as a
+  ship's pieces, never on a soldier.
 - **Slot names** are free labels but for the ones the engine looks up ([re/variant_mesh_slots.md](re/variant_mesh_slots.md)): a soldier's
   `shield` and `weapon_1` to `weapon_4`, a ship piece's `<piece>_dm<state>`, `misc_99_dm1`, `night_lights_dm1`. The slot's name field lists
   the names the game uses (most used first) and says what the engine makes of one; a name that is nearly one of the soldiers'
