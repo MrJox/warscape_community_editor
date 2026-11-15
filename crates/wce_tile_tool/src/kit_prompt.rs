@@ -71,7 +71,7 @@ impl TileTool {
         if chosen.is_some() || cancelled {
             let msg = match chosen {
                 Some(raw) => match p.what {
-                    KitSave::Tile => self.save_for_kit(e, Some(raw)),
+                    KitSave::Tile => self.save_for_kit(e, Some(raw), None),
                     KitSave::Prefab(key) => self.save_prefab_for_kit(e, &key, Some(raw)),
                 }
                 .unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}")),

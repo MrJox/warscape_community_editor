@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// A command's `--variations a,b` (a combined project's variations to export, comma or space separated up to the next `--`), and the
+/// other arguments.
+fn variations_arg(a: &[String]) -> (Vec<String>, Option<Vec<String>>) {
+    let Some(at) = a.iter().position(|x| x == "--variations") else { return (a.to_vec(), None) };
+    let end = a[at + 1..].iter().position(|x| x.starts_with("--")).map_or(a.len(), |k| at + 1 + k);
+    let list = a[at + 1..end].iter().flat_map(|x| x.split(',')).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned).collect();
+    let rest = a[..at].iter().chain(&a[end..]).cloned().collect();
+    (rest, Some(list))
+}
+
 pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     c.add(
         "tile", "tile <entry xml | tile name | folder | tile.ted> [variation]",
@@ -56,21 +66,23 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "save_exported", "save_exported [folder]",
-        "File > Export > As exported tile: save the open tile, then write it as an exported tile (stages A, B and C) and the tile database under the folder (default: its last one, else the projects folder)",
+        "save_exported", "save_exported [folder] [--variations a,b]",
+        "File > Export > As exported tile: save the open tile, then write it as an exported tile (stages A, B and C) and the tile database under the folder (default: its last one, else the projects folder); a combined project's variations ticked in the menu, or those of --variations",
         |e, a| {
+            let (a, only) = variations_arg(a);
             let out = a.first().map_or_else(|| e.export_dir(crate::tool::EXPORTED_TILE_KEY), PathBuf::from);
-            with_tile(e, |t, e| t.save_exported(e, &out).map_or_else(fail, ok))
+            with_tile(e, |t, e| t.save_exported(e, &out, only.as_deref()).map_or_else(fail, ok))
         },
     );
 
     c.add(
-        "save_to_pack", "save_to_pack <mod pack>",
-        "save the open tile, then write it as an exported tile with the tile database's files into the mod pack (created if missing; the pack's files of the tile's folder replaced)",
+        "save_to_pack", "save_to_pack <mod pack> [--variations a,b]",
+        "save the open tile, then write it as an exported tile with the tile database's files into the mod pack (created if missing; the pack's files of the tile's folder replaced); a combined project's variations ticked in the menu, or those of --variations",
         |e, a| {
-            let Some(pack) = a.first() else { return fail("usage: save_to_pack <mod pack>") };
+            let (a, only) = variations_arg(a);
+            let Some(pack) = a.first() else { return fail("usage: save_to_pack <mod pack> [--variations a,b]") };
             let pack = PathBuf::from(pack);
-            with_tile(e, |t, e| t.save_to_pack(e, &pack).map_or_else(fail, ok))
+            with_tile(e, |t, e| t.save_to_pack(e, &pack, only.as_deref()).map_or_else(fail, ok))
         },
     );
 
@@ -434,11 +446,12 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "save_for_kit",
-        "save_for_kit [raw_data folder]",
-        "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder)",
+        "save_for_kit [raw_data folder] [--variations a,b]",
+        "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder); a combined project's variations ticked in File > Export, or those of --variations, each in its folder",
         |e, a| {
+            let (a, only) = variations_arg(a);
             let kit = a.first().map(std::path::PathBuf::from);
-            with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))
+            with_tile(e, |t, e| t.save_for_kit(e, kit, only.as_deref()).map_or_else(fail, ok))
         },
     );
 

@@ -7,9 +7,8 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-and 2 for the scene (with sharing across regrouped and re-snapped levels, asked for by the user 2026-11-15), step 3 for the terrain
-(`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below. Step 4 mostly
-done (below: what it does, what is left).
+to 6 (see "Steps" and "Results" below). Not done: step 7 (loaders), step 8 (Combine and Separate: until then a combined project
+is only made outside the editor, by `tile_combine_check`), step 9 (docs).
 
 ## What the games and kits do
 
@@ -303,6 +302,25 @@ variation has.
      to save.
    Left: the ghosts are outlines, not tinted models; the variations column is text, not icons.
 6. **Exports**: For Assembly Kit, As exported tile, To mod pack, Launch in game. The per-variation height scale.
+   Done (2026-11-15):
+   - `TileProject::materialize` (`variations::materialize`): a variation written as a project of its own under a `raw_data` of the
+     kit's layout: `to_variation` of the scene, its maps composed from the layers that belong to it (`TerrainLayers::for_variation`,
+     also written as its `.wcl` so that a layer exporting with a "Don't Export" scene layer is still left out), its rivers' files, the
+     files the variations share (the tile folder's) and its own (`variations/<v>/`) over them, the entry. The height map keeps its
+     row's range while the composite fits it (`HeightField::holds_range`), else gets the composite's, and the entry written there has
+     it: no fingerprints. The editor's root is `<projects>/build/variations/raw_data` (`TileDocument::variations_build_root`); step 7
+     takes it over.
+   - Every export of a combined project goes through it: For Assembly Kit writes each variation in its folder of the kit
+     (`TileDocument::save_variations_for_kit`) and the entry with every row; As exported tile and To mod pack compile each variation
+     (`ExportInputs::parts`); Launch in game the viewed one. File > Export ticks the variations (all at first); the commands take
+     `--variations a,b` (`save_for_kit`, `save_exported`, `save_to_pack`).
+   - Checked on `orc_city_a` combined from the kit (`examples/tile_materialize_check.rs`, and the editor): every variation's tile.ted
+     is the kit's as the editor reads and writes it back (TEd's `parallax_scale="-0"` aside, as for any kit tile), its height, blend and
+     ground type maps and the entry the kit's byte for byte; `small` compiled from the combined project is the kit's `small`
+     compiled, all 57 files byte for byte, once its `protection_map.dds` is in `variations/small/` (where Combine will put it).
+   Left: what the editor makes for the viewed variation goes into every variation exported (a warning in the log for now): the
+   walls it lays (`kit_walls_for_export`, the procedural walls' layout) and the procedural roads' pieces (`with_road_items`, in a
+   layer every variation has). Import from Assembly Kit does not know a combined project.
 7. **Loaders**: materialization in `sources::find_tile`, `build/variations/`, the stamp.
 8. **Combine and Separate**: the dialog, the backup, the commands.
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`

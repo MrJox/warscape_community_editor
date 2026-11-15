@@ -212,10 +212,9 @@ pub(crate) struct ExportInputs {
     /// The game's tile data if it was read before (else read by `run`), or being read (`TileTool::game_preload`).
     pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
     pub(crate) pending: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
-    project_dir: PathBuf,
-
-    /// The scene as tile.wce text.
-    text: Vec<u8>,
+    /// The projects to compile, each a variation folder with its scene as tile.wce text: the open project's, or a combined project's
+    /// variations written as projects of their own (`TileDocument::materialize_variations`).
+    parts: Vec<(PathBuf, Vec<u8>)>,
 
     /// A tile with procedural walls: the game files and rpfm's schema (its path).
     walls: Option<(Arc<dyn wce_vfs::files::Files>, PathBuf)>,
@@ -255,33 +254,43 @@ impl ExportInputs {
         Ok(game)
     }
 
-    /// Compiles the tile into an exported tile under `out` (as `TileTool::save_exported`); also returns the game's tile data, to keep.
+    /// Compiles the tile into an exported tile under `out` (as `TileTool::save_exported`), each part (a combined project's variations)
+    /// into its folder; also returns the game's tile data, to keep.
     ///
     /// # Errors
     ///
     /// The game's data or the project doesn't read, the compile fails, or a file can't be written.
-    pub fn run(mut self, out: &Path) -> Result<(Exported, Arc<wce_tile_io::attila::workflow::Game>), String> {
+    pub fn run(mut self, out: &Path) -> Result<(Vec<Exported>, Arc<wce_tile_io::attila::workflow::Game>), String> {
         let game = self.game()?;
+        let schema = match &self.walls {
+            Some((_, schema)) => Some(rpfm_lib::schema::Schema::load(schema, None).map_err(|err| format!("{}: {err}", schema.display()))?),
+            None => None,
+        };
 
-        // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
-        if let Some((files, schema)) = &self.walls {
-            let schema = rpfm_lib::schema::Schema::load(schema, None).map_err(|err| format!("{}: {err}", schema.display()))?;
-            let (pack, saved, notes) =
-                wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &self.project_dir, self.text, out, &self.kit_walls)?;
-            for n in &notes {
+        let mut done = vec![];
+        for (project_dir, text) in std::mem::take(&mut self.parts) {
+            // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
+            if let (Some((files, _)), Some(schema)) = (&self.walls, &schema) {
+                let (pack, saved, notes) =
+                    wce_walls::export::save_exported_walls(&game, files.as_ref(), schema, &project_dir, text, out, &self.kit_walls)?;
+                for n in &notes {
+                    log::info(format!("{}: {n}", saved.display()));
+                }
+
+                done.push(Exported { dir: saved, pack: Some(pack), notes: notes.len() });
+                continue;
+            }
+
+            let (scene, _) = wce_tile::project_files::to_ted(text)?;
+            let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &project_dir, Some(scene), out)?;
+            for n in &notes.notes {
                 log::info(format!("{}: {n}", saved.display()));
             }
 
-            return Ok((Exported { dir: saved, pack: Some(pack), notes: notes.len() }, game));
+            done.push(Exported { dir: saved, pack: None, notes: notes.notes.len() });
         }
 
-        let (scene, _) = wce_tile::project_files::to_ted(self.text)?;
-        let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &self.project_dir, Some(scene), out)?;
-        for n in &notes.notes {
-            log::info(format!("{}: {n}", saved.display()));
-        }
-
-        Ok((Exported { dir: saved, pack: None, notes: notes.notes.len() }, game))
+        Ok((done, game))
     }
 }
 
@@ -623,6 +632,9 @@ pub struct TileTool {
     /// The game's tile data for opening and saving exported tiles (read once per game folder).
     pub(crate) exported_game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
 
+    /// A combined project's variations File > Export leaves out (unticked there); the others are exported.
+    pub(crate) export_skip: Vec<String>,
+
     /// The game's tile data being read on a thread once a tile is open, so that an export or a launch finds it read.
     pub(crate) game_preload: Option<std::sync::mpsc::Receiver<Result<Arc<wce_tile_io::attila::workflow::Game>, String>>>,
     pub(crate) game_preload_tried: bool,
@@ -942,6 +954,7 @@ impl Default for TileTool {
             reference: Default::default(),
             context: Default::default(),
             exported_game: None,
+            export_skip: vec![],
             game_preload: None,
             game_preload_tried: false,
         }
@@ -1714,17 +1727,21 @@ impl TileTool {
     /// # Errors
     ///
     /// No tile is open, the project can't be saved, or the compile fails.
-    pub fn save_exported(&mut self, e: &mut Editor, out: &Path) -> Result<String, String> {
-        let x = self.export_to(e, out)?;
-        Ok(match &x.pack {
-            Some(pack) => format!(
-                "saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)",
-                x.dir.display(),
-                pack.display(),
-                x.notes
-            ),
-            None => format!("saved as an exported tile in {} ({} notes in the log)", x.dir.display(), x.notes),
-        })
+    pub fn save_exported(&mut self, e: &mut Editor, out: &Path, only: Option<&[String]>) -> Result<String, String> {
+        let all = self.export_to(e, out, only)?;
+        let said = all
+            .iter()
+            .map(|x| match &x.pack {
+                Some(pack) => format!(
+                    "saved as an exported tile in {} and packed with its walls in {} ({} notes in the log)",
+                    x.dir.display(),
+                    pack.display(),
+                    x.notes
+                ),
+                None => format!("saved as an exported tile in {} ({} notes in the log)", x.dir.display(), x.notes),
+            })
+            .collect::<Vec<_>>();
+        Ok(said.join("; "))
     }
 
     /// [`Self::save_exported`]'s work: the exported folder, the pack of a tile with procedural walls, the count of notes (logged).
@@ -1732,8 +1749,12 @@ impl TileTool {
     /// # Errors
     ///
     /// As `save_exported`.
-    pub(crate) fn export_to(&mut self, e: &mut Editor, out: &Path) -> Result<Exported, String> {
-        let inputs = self.export_inputs(e)?;
+    pub(crate) fn export_to(&mut self, e: &mut Editor, out: &Path, only: Option<&[String]>) -> Result<Vec<Exported>, String> {
+        let only = match only {
+            Some(l) => Some(l.to_vec()),
+            None => self.export_variations(e)?,
+        };
+        let inputs = self.export_inputs(e, only.as_deref())?;
         let (x, game) = inputs.run(out)?;
         self.exported_game = Some(game);
         Ok(x)
@@ -1745,7 +1766,7 @@ impl TileTool {
     /// # Errors
     ///
     /// No tile or game folder, the project can't be saved, or a tile with procedural walls has no game files or schema.
-    pub(crate) fn export_inputs(&mut self, e: &mut Editor) -> Result<ExportInputs, String> {
+    pub(crate) fn export_inputs(&mut self, e: &mut Editor, only: Option<&[String]>) -> Result<ExportInputs, String> {
         let files = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
         let kits = kit_raws(e);
         let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files) && g.made_for(&kits));
@@ -1759,13 +1780,24 @@ impl TileTool {
 
         // The scene as the editor holds it (the prefab references with their contents), as TEd's.
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        let project_dir = d.project().dir.clone();
-        let text = d.text_for_export(false)?;
+        let parts = if d.project().is_combined() {
+            // A combined project's variations, each written as a project of its own (docs/plans/tile_variations.md).
+            let (_, made) = d.materialize_variations(only.unwrap_or_default(), false)?;
+            made.iter()
+                .map(|m| {
+                    std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE))
+                        .map(|t| (m.dir.clone(), t))
+                        .map_err(|err| format!("{}: {err}", m.dir.display()))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            vec![(d.project().dir.clone(), d.text_for_export(false)?)]
+        };
         let generated = d.tile().has_generated_buildings();
         let kit_walls = d.tile_mut().kit_walls_for_export();
         let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
-        Ok(ExportInputs { files, kits, game, pending, project_dir, text, walls, kit_walls })
+        Ok(ExportInputs { files, kits, game, pending, parts, walls, kit_walls })
     }
 
     /// Saves the open tile, then writes it as an exported tile (stages A, B and C) with the tile database's files into a mod pack
@@ -1774,8 +1806,12 @@ impl TileTool {
     /// # Errors
     ///
     /// No tile is open, the project can't be saved, the compile fails, or the pack can't be written.
-    pub fn save_to_pack(&mut self, e: &mut Editor, pack: &Path) -> Result<String, String> {
+    pub fn save_to_pack(&mut self, e: &mut Editor, pack: &Path, only: Option<&[String]>) -> Result<String, String> {
         let game = self.exported_game(e)?;
+        let only = match only {
+            Some(l) => Some(l.to_vec()),
+            None => self.export_variations(e)?,
+        };
         let id = document_id(e).ok_or("no tile is open")?;
         e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
         if e.docs.find(id).is_some_and(|d| d.modified()) {
@@ -1783,23 +1819,42 @@ impl TileTool {
         }
 
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        let dir = d.project().dir.clone();
-        let text = d.text_for_export(false)?;
-        let kit_walls = d.tile_mut().kit_walls_for_export();
-
-        // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
-        let (folder, notes) = if d.tile().has_generated_buildings() {
-            let files = e.files().ok_or("no game files are mounted")?;
-            let schema = walls_schema(e)?;
-            wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack, &kit_walls)?
+        let parts = if d.project().is_combined() {
+            // A combined project's variations, each written as a project of its own, each into its folder of the pack.
+            let (_, made) = d.materialize_variations(only.as_deref().unwrap_or_default(), false)?;
+            made.iter()
+                .map(|m| {
+                    std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE))
+                        .map(|t| (m.dir.clone(), t))
+                        .map_err(|err| format!("{}: {err}", m.dir.display()))
+                })
+                .collect::<Result<Vec<_>, _>>()?
         } else {
-            let (scene, _) = wce_tile::project_files::to_ted(text)?;
-            let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
-            (folder, notes.notes)
+            vec![(d.project().dir.clone(), d.text_for_export(false)?)]
         };
+        let kit_walls = d.tile_mut().kit_walls_for_export();
+        let generated = d.tile().has_generated_buildings();
 
-        for n in &notes {
-            log::info(format!("{folder}: {n}"));
+        let mut folders = vec![];
+        let mut count = 0;
+        for (dir, text) in parts {
+            // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
+            let (folder, notes) = if generated {
+                let files = e.files().ok_or("no game files are mounted")?;
+                let schema = walls_schema(e)?;
+                wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack, &kit_walls)?
+            } else {
+                let (scene, _) = wce_tile::project_files::to_ted(text)?;
+                let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
+                (folder, notes.notes)
+            };
+
+            for n in &notes {
+                log::info(format!("{folder}: {n}"));
+            }
+
+            count += notes.len();
+            folders.push(folder);
         }
 
         let key = e.game().key.to_owned();
@@ -1807,7 +1862,7 @@ impl TileTool {
         e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| {
             s.mod_packs.insert(key, path);
         });
-        Ok(format!("saved {folder} into {} ({} notes in the log)", pack.display(), notes.len()))
+        Ok(format!("saved {} into {} ({count} notes in the log)", folders.join(", "), pack.display()))
     }
 
     /// Where the map context's neighbours come from (`wce_tile::sources`): the projects and the kits (looked up again every two seconds),
@@ -1925,7 +1980,7 @@ impl TileTool {
             return Ok(self.ask_kit(crate::kit_prompt::KitSave::Tile, kits));
         }
 
-        self.save_for_kit(e, None)
+        self.save_for_kit(e, None, None)
     }
 
     /// "Save for Assembly Kit" of a prefab from the buttons: into the only kit there is, or after asking which of several.
@@ -1945,7 +2000,7 @@ impl TileTool {
     /// # Errors
     ///
     /// No tile, no kit, or the save fails.
-    pub fn save_for_kit(&mut self, e: &mut Editor, kit_raw: Option<PathBuf>) -> Result<String, String> {
+    pub fn save_for_kit(&mut self, e: &mut Editor, kit_raw: Option<PathBuf>, only: Option<&[String]>) -> Result<String, String> {
         let id = document_id(e).ok_or("no tile is open")?;
         e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
         if e.docs.find(id).is_some_and(|d| d.modified()) {
@@ -1973,10 +2028,39 @@ impl TileTool {
             _ => None,
         };
 
+        let only = match only {
+            Some(l) => Some(l.to_vec()),
+            None => self.export_variations(e)?,
+        };
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let walls =
             sources.as_ref().map(|(f, schema, data)| wce_tile_editor::tile_document::kit::WallSources { files: f.as_ref(), schema, data });
+        if d.project().is_combined() {
+            return d.save_variations_for_kit(&kit, walls, only.as_deref().unwrap_or_default());
+        }
+
         d.save_for_kit(&kit, walls)
+    }
+
+    /// The variations of the open combined project its exports write (File > Export's ticks; none unticked: all), `None` for a project
+    /// of one variation.
+    ///
+    /// # Errors
+    ///
+    /// Every variation is unticked.
+    pub(crate) fn export_variations(&self, e: &Editor) -> Result<Option<Vec<String>>, String> {
+        let Some(d) = document_id(e).and_then(|id| e.docs.find_as::<TileDocument>(id)) else { return Ok(None) };
+        let all = d.tile().variations();
+        if all.is_empty() {
+            return Ok(None);
+        }
+
+        let list = all.iter().filter(|v| !self.export_skip.contains(v)).cloned().collect::<Vec<_>>();
+        if list.is_empty() {
+            return Err("no variation is ticked to export (File > Export)".to_owned());
+        }
+
+        Ok(Some(list))
     }
 
     /// "Import from Assembly Kit": opens the kit's copy of the open project (its next save replaces the project); an extracted tile is
@@ -5198,6 +5282,29 @@ impl Tool for TileTool {
     fn export_menu(&mut self, e: &mut Editor) -> bool {
         let has = document(e).is_some();
 
+        // A combined project's variations: the exports below write those ticked.
+        let all = document(e).map(|d| d.tile().variations().to_vec()).unwrap_or_default();
+        if !all.is_empty() {
+            gui::text_disabled("Variations to export:");
+            for v in &all {
+                let mut on = !self.export_skip.contains(v);
+                if gui::checkbox(&format!("{v}##export_variation"), &mut on) {
+                    self.export_skip.retain(|x| x != v);
+                    if !on {
+                        self.export_skip.push(v.clone());
+                    }
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "A combined project: For Assembly Kit, As exported tile and To mod pack write each ticked variation in its own folder. Launch in game takes the viewed one.",
+                    );
+                }
+            }
+
+            gui::separator();
+        }
+
         // A game without the tiles in its kit (Rome 2) exports into mod packs only.
         if e.game().features.kit_tiles {
             if gui::menu_item("For Assembly Kit", None, false, has) {
@@ -5218,7 +5325,7 @@ impl Tool for TileTool {
                 "Folder for the exported tile (its terrain/tiles/... and the tile database go under it)",
             )
         {
-            let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("export failed: {m}"));
+            let msg = self.save_exported(e, &out, None).unwrap_or_else(|m| format!("export failed: {m}"));
             e.status(&msg, false);
         }
 
@@ -5231,7 +5338,7 @@ impl Tool for TileTool {
         if gui::menu_item("To mod pack...", None, false, has)
             && let Some(pack) = file_dialog(true, &Self::default_mod_pack(e), &[("Mod pack".to_owned(), "*.pack".to_owned())])
         {
-            let msg = self.save_to_pack(e, &pack).unwrap_or_else(|m| format!("export failed: {m}"));
+            let msg = self.save_to_pack(e, &pack, None).unwrap_or_else(|m| format!("export failed: {m}"));
             e.status(&msg, false);
         }
 
