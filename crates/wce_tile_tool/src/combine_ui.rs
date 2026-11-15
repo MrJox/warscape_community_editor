@@ -237,6 +237,7 @@ impl TileTool {
         let view = inputs[reference].variation.clone();
         Self::close_tile_documents(e, &location, false)?;
         let report = wce_tile::variations::combine::combine_with(&inputs, reference, &entry, &projects_raw, align)?;
+        self.browse_changed();
         wce_foundation::log::info(&report.message);
         self.open_variation(e, &entry, &projects_raw, &view)?;
         Ok(report.message)
@@ -268,6 +269,7 @@ impl TileTool {
             .ok_or_else(|| format!("the project has no variation '{variation}'"))?;
         Self::close_tile_documents(e, &location, true)?;
         let result = wce_tile::variations::combine::separate(&tile_dir, &name);
+        self.browse_changed();
         let open = if result.is_err() || (viewed != name && all.len() > 1) { viewed } else { name };
         let reopened = self.open_variation(e, &entry, &projects_raw, &open);
         let msg = result?;
@@ -429,6 +431,7 @@ impl TileTool {
         gui::end_disabled();
         if let Some(r) = combined {
             wce_foundation::log::info(&r.message);
+            self.browse_changed();
             let (entry, raw, view) = (ui.entry.clone(), ui.projects_raw.clone(), ui.view.clone());
             let opened = self.open_variation(e, &entry, &raw, &view);
             e.status(&opened.map_or_else(|m| format!("combined, but it did not open: {m}"), |_| r.message.clone()), false);
