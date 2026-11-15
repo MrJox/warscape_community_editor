@@ -7,8 +7,7 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-to 7 (see "Steps" and "Results" below). Not done: step 8 (Combine and Separate: until then a combined project is only made
-outside the editor, by `tile_combine_check`), step 9 (docs).
+to 8 (see "Steps" and "Results" below). Not done: step 9 (docs).
 
 ## What the games and kits do
 
@@ -351,6 +350,33 @@ variation has.
      after its layers' file changed; it opens as a project of one variation with its row's numbers and its `protection_map.dds`.
      Not checked in the editor's map context: no kit map places a combined tile.
 8. **Combine and Separate**: the dialog, the backup, the commands.
+   Done (2026-11-15):
+   - `variations::combine::combine`: each ticked variation read from its folder (a project's tile.wce, else tile.ted through `to_wce`;
+     its `.wcl`, else stacks over its maps, with its row's range; its other files), the scenes merged and checked (`merge::check`),
+     the terrain combined on the reference's base. A file every variation has the same goes in the tile's folder, the others (and each
+     one's river files, for their factors) in `variations/<v>/`; BOB's intermediates are left out. The combined project is written to
+     `<projects>/build/combine/` with its entry, each variation written back from it (`materialize`) and compared with its source:
+     its scene through `to_ted`, its height map's samples and range, its blend and ground type maps and its files byte for byte.
+     Only then are the projects that went in moved to `<projects>/backup/combine/<when>/<location>/<v>/` and the combined project put
+     in their tile's folder (the entry copied into the projects when they have none).
+   - `combine::separate`: the variation written as a project of its own in its folder (`materialize`), the combined project without
+     it (`without_variation`: what only it has goes, its name leaves every list, a group of it only gives its place to its contents;
+     then Tidy; its layers only it has go, and those exporting with a scene layer that went), checked that every other variation's
+     scene and terrain stay as they were before anything is written; the old files to `<projects>/backup/separate/<when>/`. The last
+     one separated leaves no combined project.
+   - Tile > Variations > Combine... (a tile of several variations, not combined): the dialog lists the entry's variations with where
+     each comes from (project, kit, packs: decompiled when read) and the share of its instances the reference has too, read on a thread;
+     none ticked; a reference to choose (the one sharing the most at first). Combining runs on a thread, the tile closed (it must be
+     saved), and opens it again combined. Tile > Variations > Separate > <variation>: saves, separates, opens again (the variation's
+     own project when it was the one viewed). Commands `tile_combine [--ref <v>] <v>...`, `tile_separate <v>`; `examples/tile_combine.rs`.
+   - Checked: `orc_city_a` from the kit combined (6.5 s, 31.8 MB of scenes in 14.2 MB), every variation the kit's
+     (`tile_materialize_check`); `small` separated is that variation byte for byte, `minor` and `medium` stay the kit's; the other two
+     separated (the last leaves the tile's folder with the three projects only), combined again from those projects (moved to the
+     backup), still the kit's. In the editor: `tile_combine` on the kit's tile opens the combined project viewing `small`;
+     `tile_separate medium` opens it again with `minor, small`. `western_city_b` (18 s, 166 MB in 88 MB) and `plains/1x1`'s random
+     alternatives pass the check.
+   Left: adding a variation to a combined project (Separate one and Combine again does not: Combine needs a tile not combined); the
+   dialog itself was not seen (the script captures show the viewport only).
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`
    version 4), this plan's state.
 

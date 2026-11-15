@@ -9,6 +9,7 @@
 //! place to its children (one indent less), and the attributes go. A file of one variation has no trace of the others, so a combined
 //! project that was made from variations gives each of them back byte for byte ([`merge`]).
 
+pub mod combine;
 pub mod edit;
 pub mod materialize;
 pub mod merge;

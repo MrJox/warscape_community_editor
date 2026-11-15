@@ -464,6 +464,9 @@ pub struct TileTool {
     pub(crate) save_as: Option<crate::save_tile_as::SaveAsUi>,
     pub(crate) resize: Option<crate::resize_tile::ResizeUi>,
 
+    /// Tile > Variations > Combine...'s dialog, while it is open.
+    pub(crate) combine: Option<crate::combine_ui::CombineUi>,
+
     /// The Tile database window.
     pub(crate) tile_db: Option<crate::tile_database::DbUi>,
 
@@ -892,6 +895,7 @@ impl Default for TileTool {
             link_follow: true,
             save_as: None,
             resize: None,
+            combine: None,
             tile_db: None,
             link_candidates: None,
             clipboard: vec![],
@@ -4822,6 +4826,7 @@ impl Tool for TileTool {
         self.draw_new_tile_dialog(e);
         self.draw_save_tile_as(e);
         self.draw_resize_tile(e);
+        self.draw_combine(e);
         self.draw_tile_database(e);
         self.draw_height_import_dialog(e);
         self.draw_falloff_window(e);
@@ -4892,10 +4897,40 @@ impl Tool for TileTool {
             );
         }
 
-        // A combined project's variations (docs/plans/tile_variations.md).
+        // A combined project's variations (docs/plans/tile_variations.md); a tile of several, combined.
         let combined = document(e).is_some_and(|d| !d.tile().variations().is_empty());
-        if gui::begin_menu_enabled("Variations", combined) {
-            if gui::menu_item("Tidy", None, false, true) {
+        let several = document(e).is_some_and(|d| d.project().entry.as_ref().is_some_and(|en| en.variations().len() > 1));
+        if gui::begin_menu_enabled("Variations", combined || several) {
+            if gui::menu_item("Combine...", None, false, several && !combined) {
+                self.open_combine(e);
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(
+                    "Makes the tile's variations (those you tick) one project in the projects: what they share kept once, each one's own in folders for it. Checked before anything is written; the projects that go in are moved to the backup folder.",
+                );
+            }
+
+            let names = document(e).map(|d| d.tile().variations().to_vec()).unwrap_or_default();
+            if gui::begin_menu_enabled("Separate", combined) {
+                for v in &names {
+                    if gui::menu_item(v, None, false, true) {
+                        let msg = self.separate_variation(e, v).unwrap_or_else(|m| format!("separate: {m}"));
+                        e.status(&msg, false);
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(&format!(
+                            "Makes {v} a project of its own again (its folder in the tile's) and takes it out of the combined project; the others stay as they are. The tile is saved first; the old files go to the backup folder."
+                        ));
+                    }
+                }
+
+                gui::end_menu();
+            }
+
+            gui::separator();
+            if gui::menu_item("Tidy", None, false, combined) {
                 let msg = document(e).map_or_else(String::new, |d| match d.tidy_variations() {
                     Ok(0) => "tidy: nothing to do".to_owned(),
                     Ok(n) => format!("tidy: {n} edits (no variation changed)"),
@@ -4911,7 +4946,7 @@ impl Tool for TileTool {
             }
 
             let mut ghosts = document(e).is_some_and(|d| d.tile().display().variation_ghosts);
-            if gui::menu_item("Show the other variations", None, ghosts, true) {
+            if gui::menu_item("Show the other variations", None, ghosts, combined) {
                 ghosts = !ghosts;
                 if let Some(d) = document(e) {
                     d.tile_mut().set_variation_ghosts(ghosts);
