@@ -484,6 +484,23 @@ impl TileProject {
         Ok(project)
     }
 
+    /// The folder of what the viewed variation has of its own: a combined project's `variations/<v>/` (a decompiled tile's carried
+    /// `decompiled_terrain` and `decompiled_vegetation` among them), else the project's folder.
+    #[must_use]
+    pub fn own_dir(&self) -> PathBuf {
+        match self.view.as_ref().filter(|_| self.is_combined()) {
+            Some(v) => self.dir.join(crate::variations::materialize::OWN_DIR).join(&v.variation),
+            None => self.dir.clone(),
+        }
+    }
+
+    /// A file of the project by its name: the viewed variation's own (`own_dir`) when it has one, else the project folder's.
+    #[must_use]
+    pub fn own_file(&self, name: &str) -> PathBuf {
+        let own = self.own_dir().join(name);
+        if own.exists() { own } else { self.dir.join(name) }
+    }
+
     /// Whether it holds several variations (or one, listed on its root): a combined project.
     #[must_use]
     pub fn is_combined(&self) -> bool {

@@ -297,6 +297,16 @@ pub fn style_frame_padding() -> Vec2 {
     call!((*sys::igGetStyle()).FramePadding)
 }
 
+/// The style's scrollbar width.
+pub fn style_scrollbar_size() -> f32 {
+    call!((*sys::igGetStyle()).ScrollbarSize)
+}
+
+/// The mouse cursor as a left-right resize arrow, this frame (a column's edge being dragged or hovered).
+pub fn set_mouse_cursor_resize_ew() {
+    call!(sys::igSetMouseCursor(sys::ImGuiMouseCursor_ResizeEW as _))
+}
+
 /// The style's spacing between items (x, y).
 pub fn item_spacing() -> Vec2 {
     call!((*sys::igGetStyle()).ItemSpacing)

@@ -62,18 +62,19 @@ pub fn stamp_of(tile_dir: &Path, entry: Option<&Path>, variation: &str) -> Strin
         add(e);
     }
 
-    for dir in [tile_dir.to_path_buf(), tile_dir.join(OWN_DIR).join(variation)] {
-        let mut files = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|f| f.path())
-            .filter(|p| p.is_file() && !p.to_string_lossy().ends_with(".bak"))
-            .collect::<Vec<_>>();
-        files.sort();
-        for f in files {
-            add(&f);
-        }
+    // The tile folder's files (not its folders: a variation's own is below), and every file of the variation's own, subfolders too.
+    let mut files = std::fs::read_dir(tile_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|f| f.path())
+        .filter(|p| p.is_file() && !p.to_string_lossy().ends_with(".bak"))
+        .collect::<Vec<_>>();
+    files.sort();
+    let own = tile_dir.join(OWN_DIR).join(variation);
+    files.extend(files_below(&own).into_iter().filter(|n| !n.ends_with(".bak")).map(|n| own.join(n)));
+    for f in files {
+        add(&f);
     }
 
     out
@@ -169,6 +170,25 @@ fn project_file(name: &str) -> bool {
         || MAPS.contains(&lower.as_str())
 }
 
+/// The files below a folder, by their path from it (`/` separated), in their subfolders too.
+pub(crate) fn files_below(dir: &Path) -> Vec<String> {
+    let mut out = vec![];
+    let mut pending = vec![(dir.to_path_buf(), String::new())];
+    while let Some((d, prefix)) = pending.pop() {
+        for f in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let name = format!("{prefix}{}", f.file_name().to_string_lossy());
+            if f.path().is_dir() {
+                pending.push((f.path(), format!("{name}/")));
+            } else {
+                out.push(name);
+            }
+        }
+    }
+
+    out.sort();
+    out
+}
+
 /// Writes `bytes` to `path` unless it holds them already. Whether it wrote.
 fn put(path: &Path, bytes: &[u8]) -> Result<bool, String> {
     if std::fs::read(path).is_ok_and(|old| old == bytes) {
@@ -212,19 +232,23 @@ impl TileProject {
         put(&dir.join(WCE_FILE), &mark_wce_text(one))?;
         written.insert(WCE_FILE.to_owned());
 
-        // The files the variations share, then its own over them.
-        let own_dir = self.dir.join(OWN_DIR).join(variation);
-        for from in [&self.dir, &own_dir] {
-            let Ok(read) = std::fs::read_dir(from) else { continue };
+        // The files the variations share, then its own over them (with their folders: a decompiled tile's carried terrain and
+        // vegetation).
+        if let Ok(read) = std::fs::read_dir(&self.dir) {
             for f in read.flatten().filter(|f| f.path().is_file()) {
                 let name = f.file_name().to_string_lossy().into_owned();
-                if from == &self.dir && project_file(&name) {
-                    continue;
+                if !project_file(&name) {
+                    put(&dir.join(&name), &std::fs::read(f.path()).map_err(|e| format!("{}: {e}", f.path().display()))?)?;
+                    written.insert(name);
                 }
-
-                put(&dir.join(&name), &std::fs::read(f.path()).map_err(|e| format!("{}: {e}", f.path().display()))?)?;
-                written.insert(name);
             }
+        }
+
+        let own_dir = self.dir.join(OWN_DIR).join(variation);
+        for name in files_below(&own_dir) {
+            let from = own_dir.join(&name);
+            put(&dir.join(&name), &std::fs::read(&from).map_err(|e| format!("{}: {e}", from.display()))?)?;
+            written.insert(name);
         }
 
         // The rivers' files, with the factors of its own (when it keeps the files TEd wrote).
@@ -278,12 +302,11 @@ impl TileProject {
             }
         }
 
-        // What an earlier write left that it no longer has.
-        if let Ok(read) = std::fs::read_dir(&dir) {
-            for f in read.flatten().filter(|f| f.path().is_file()) {
-                if !written.contains(&f.file_name().to_string_lossy().into_owned()) {
-                    std::fs::remove_file(f.path()).map_err(|e| format!("{}: {e}", f.path().display()))?;
-                }
+        // What an earlier write left that it no longer has, in its folders too.
+        for name in files_below(&dir) {
+            if !written.contains(&name) {
+                let p = dir.join(&name);
+                std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
             }
         }
 

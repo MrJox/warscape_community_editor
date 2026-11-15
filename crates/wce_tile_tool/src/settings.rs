@@ -77,6 +77,10 @@ pub struct TileSettings {
     /// The Prefab tool's Prefabs panel shows its prefabs as a grid of pictures instead of a list.
     pub prefab_grid: bool,
 
+    /// The Scene panel's variations column's width (a combined project's), as its header's edge was dragged; 0: as wide as the
+    /// variations' names.
+    pub scene_variations_width: f32,
+
     /// How far a siege AI node's adjusted Boundary reaches from its centre (metres; 0: the generator's reach, from the room around it).
     pub boundary_reach: f32,
 
@@ -285,6 +289,7 @@ impl Default for TileSettings {
             create_recent: vec![],
             create_grid: false,
             prefab_grid: false,
+            scene_variations_width: 0.0,
             boundary_reach: 0.0,
             place_surface: SurfaceMode::default(),
             place_rotation: RotationMode::default(),
