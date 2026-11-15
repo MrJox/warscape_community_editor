@@ -1,6 +1,6 @@
 [package]
 name = "wce_updater"
-description = "The self-updater: finds a newer release of the editor on GitHub, downloads its zip with progress and installs it over the running build; and downloads rpfm's schemas."
+description = "The self-updater: finds a newer release of the editor on GitHub, downloads its zip with progress and installs it over the running build; downloads rpfm's schemas; and keeps the art resources' git repository up to date."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

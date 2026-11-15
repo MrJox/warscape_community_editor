@@ -4503,6 +4503,12 @@ impl Tool for TileTool {
         self.prefabs = None;
     }
 
+    fn art_updated(&mut self, _: &mut Editor) {
+        // The art resources brought prefabs and vegetation sets in (or took some away).
+        self.prefabs = None;
+        self.rescan_vegetation_sets();
+    }
+
     fn draw_settings(&mut self, draft: &mut Settings) {
         let mut s: TileSettings = draft.tool(SETTINGS_ID);
         let before = s.clone();

@@ -200,6 +200,15 @@ pub struct GameSettings {
     /// Loose folders read before every pack, after the project folder, highest priority first.
     pub overlay_folders: Vec<PathBuf>,
 
+    /// The art resources: a git repository's address (`https://...`, `git@...`) whose working tree is the projects' `raw_data/art`, shared by
+    /// a team (models, CS2 files, prefabs); empty: none. Kept up to date in Help > Update Manager (`wce_updater::art`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub art_repo: String,
+
+    /// The art resources' branch; empty: the repository's default.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub art_branch: String,
+
     /// The last destination of each File > Export entry (by its key: `exported_tile`, `ui_xml`, `terrain`...), where its dialog starts.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub export_dirs: BTreeMap<String, PathBuf>,
@@ -688,6 +697,11 @@ impl Settings {
         self.games.get(&self.game).cloned().unwrap_or_default()
     }
 
+    /// The current game's art resources: the repository's address and branch, trimmed (empty: none, the default branch).
+    pub fn art_repo(&self) -> (&str, &str) {
+        self.games.get(&self.game).map_or(("", ""), |g| (g.art_repo.trim(), g.art_branch.trim()))
+    }
+
     /// The game folder: `$WCE_GAME`, else the file's.
     pub fn game_dir(&self) -> Option<PathBuf> {
         env_value("WCE_GAME").map(PathBuf::from).or_else(|| self.games.get(&self.game)?.dir.clone())
@@ -756,6 +770,12 @@ impl Settings {
     /// The projects in the Assembly Kit's layout (`<this>/raw_data/terrain/tiles/...`).
     pub fn kit_projects_dir(&self) -> PathBuf {
         self.projects_dir().join("assembly_kit")
+    }
+
+    /// The projects' art folder (`raw_data/art`: the prefabs, the vegetation sets), the art resources' working tree when the game has a
+    /// repository for them.
+    pub fn art_dir(&self) -> PathBuf {
+        self.kit_projects_dir().join("raw_data").join("art")
     }
 
     /// TODO(pre-release): the current game's old output folder (the file's, else the old default: `<Documents>/AttilaWeatherEditor/out`

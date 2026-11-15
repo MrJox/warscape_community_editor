@@ -410,6 +410,11 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// The art resources brought new files into the projects' `raw_data/art` (an update, a setup): read what is kept from there again.
+    fn art_updated(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 

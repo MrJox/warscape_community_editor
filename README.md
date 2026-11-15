@@ -72,6 +72,15 @@ game's schema into the editor's own schemas folder (`<data folder>/schemas`, wit
 from `$WCE_RPFM_SCHEMA`, then Settings > General > DB schemas, then that folder, then rpfm's own. Without the current game's schema the
 window opens at start, even with the start check turned off.
 
+The art resources (Settings > Game > Art resources) are a git repository per game whose working tree is the projects'
+`assembly_kit/raw_data/art`: a team shares its models, CS2 files, prefabs and vegetation sets there. The installed `git` does the work (its
+credential manager or SSH keys sign in; Git LFS works when installed). The Update Manager sets the folder up (the files already there stay:
+those the repository has differently are backed up to `<projects>/art_backup/<date>` first, the others become local changes), says when the
+team pushed commits (looked for at start with the other updates, never pulled on its own) and brings them in. File > Publish art
+resources..., the status bar's `art:` badge or the Update Manager's Publish button commit the files picked and push them, after bringing the
+team's commits in. A file changed both locally and by the team is never merged: it asks Keep mine (the local file stays over theirs, to
+publish) or Take theirs, per file, before anything is done.
+
 ## Gates
 
 `scripts/gates.sh [out dir] [--corpus] [--render]` runs every gate with fixed inputs and writes one

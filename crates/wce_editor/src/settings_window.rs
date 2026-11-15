@@ -233,6 +233,7 @@ impl Editor {
         }
 
         let before = std::mem::replace(self.settings(), draft);
+        let before_art = (before.game == self.settings_ref().game).then(|| before.art_repo().0.to_owned());
         self.settings_ref().publish_db_schemas();
         crate::shortcuts::set_overrides(&self.settings_ref().shortcuts);
         self.save_settings();
@@ -277,6 +278,10 @@ impl Editor {
 
         if !game_changed {
             self.status(&format!("Settings saved to {}", self.settings_ref().file().display()), false);
+        }
+
+        if let Some(url) = before_art {
+            self.art_settings_applied(&url);
         }
 
         // The window goes on with what was applied.
@@ -542,6 +547,18 @@ impl Editor {
         help(
             "Where the editor saves: assembly_kit/ holds the tiles (tile.wce) in the kit's layout, loose/ the loose files read before every pack (the UI tool's skins, layouts and pictures).",
         );
+
+        gui::separator_text("Art resources");
+        label("Repository");
+        gui::set_next_item_width(-1.0);
+        gui::input_text("##art_repo", Some("https://github.com/team/art.git (none: not shared)"), &mut d.game_mut().art_repo, 1024, 0);
+        label("Branch");
+        gui::set_next_item_width(200.0);
+        gui::input_text("##art_branch", Some("the repository's default"), &mut d.game_mut().art_branch, 256, 0);
+        help(&format!(
+            "A git repository a team shares its art in: models, CS2 files, prefabs, vegetation sets. Its files are the projects' art folder ({}). Help > Update Manager sets it up and brings the team's changes in; File > Publish art resources... (or the status bar's badge) shares yours. Needs git installed; signing in is git's (its credential manager, SSH keys).",
+            d.art_dir().display()
+        ));
 
         gui::separator_text("Loose files");
         label("Other folders");
