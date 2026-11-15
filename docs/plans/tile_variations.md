@@ -7,7 +7,9 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-and 2 for the scene, step 3 for the terrain (`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below.
+and 2 for the scene (with sharing across regrouped and re-snapped levels, asked for by the user 2026-11-15), step 3 for the terrain
+(`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below. Step 4 started:
+`variations::View`, `TileProject::view_variation`.
 
 ## What the games and kits do
 
@@ -71,6 +73,15 @@ packs. Adding a variation to a combined project adds a row to the entry. The per
   same format with one variation and no tags. **There is one format and one code path, whatever the number of variations.**
 - An instance belongs to a variation whole, or not at all: what is inside it (a polygon's `point`s, a river's points, a spline's
   handles) never varies by itself.
+- **Groups of some variations only** (`wce_group_variations="minor"` on a `UserInstanceGroup` or `INSTANCE_GROUP`, never a layer):
+  the group is there in those variations. In the others it is not, and what its `children` holds takes its place, one level up
+  (`to_variation` takes its lines away and dedents the contents). This keeps once what each level of a settlement holds in other
+  groups (a level regrouped). In TEd a nested group's `position` is relative to its parent, so the contents keep their relative
+  places and move with whichever group holds them in each variation.
+- **Values of an instance per variation** (`<WceVariationValues wce_variations="small" position="..."/>`, right before the instance):
+  TEd puts a Landscape element on the terrain when it saves, so the same building in two levels whose terrain differs differs in
+  its `position`'s height. The merge matches elements that differ only there, and each variation whose value differs keeps it in
+  such a line, which `to_variation` puts into the element. A container keeps its own the same way, in its `WceVariationStart`.
 - The root's other parts (`modules`, `camera`) can differ between variations (their vegetation seeds, their camera): each variation's
   copy is kept in a `WceVariationFolder` there too.
 - **View state** (`WceVariationStart`): TEd's `flags` on a layer or group (whether it showed, was active) often differ between
@@ -187,6 +198,15 @@ is the one with the most shared elements by default. It gives the terrain base.
    depend on it in that variation are changed to the new id.
 4. A container's start tag is matched without its view state (`flags`); the root's without any attribute value. What differs goes in
    `WceVariationStart` lines (above).
+5. What the exact keys leave, in this order (found on the kit, 2026-11-15):
+   - **Near matches**: keys without the height of `position` (and without the indent, so that the same element one level deeper
+     matches). Most of `western_city_a` is this: its levels' terrains differ, and so does every Landscape element's y.
+   - **Groups by their contents**: unmatched groups with the same tag and attributes (values aside) and at least half of the
+     smaller one's children the same (near keys): a district whose pivot moved. Their values differ per variation (START).
+   - **Regrouped**: a group of either side whose contents are among the other side's items there holds them for both
+     (`wce_group_variations`), recursively.
+   - The anchors where the order differs are chosen by **size**, not count: in `western_city_c` the `fields` layer (most of the
+     tile) comes last in one level, and keeping more small layers in order had dropped it.
 
 **The terrain merge**:
 
@@ -236,7 +256,10 @@ variation has.
    "Variation base" layers, the terrain
    merge. The check above extended to the maps.
 4. **The document**: `TileDocument` over a combined project, the viewed variation, the chip, switching. Undo covers tag edits and
-   copies.
+   copies. `variations::View` says how a variation sees the scene (what is not there, the folders and groups it goes through, its
+   own values); the element index places and shows by it. `TileProject::view_variation` composes the viewed variation's terrain
+   from the layers (a combined project has no maps: blank fields in TEd's layout, `HeightField::flat`, `TiffFile::ted_header`), and
+   Save writes only `tile.wce` and `terrain_layers.wcl` for it.
 5. **The editor's tools**: the Scene panel column, the Inspector checkboxes, variation folders, *Move to a variation folder*, *Split
    for this variation*, Tidy, the ghosts, the Terrain layers section, Problems.
 6. **Exports**: For Assembly Kit, As exported tile, To mod pack, Launch in game. The per-variation height scale.
@@ -251,10 +274,13 @@ variation has.
 variation byte-identical** as tile.wce and, through `to_ted`, as the kit's tile.ted. 74 entries list variations the kit has no
 tile.ted for. About 6 s for a big settlement (three 50 MB files).
 
-- Most vanilla settlements share little as files. CA rebuilt or regrouped each level: in `western_city_a` minor's "Buildings" holds
-  338 groups at other places than small's 3,428, so the same buildings sit in different groups. Shares of each variation's instances
-  that another has too: `western_city_b` 49 to 56%, `sassanid_city_a` minor/small 50%, `western_port_a` minor/small 31%,
-  `western_city_rome` small/medium 45% / 28%, most others under 5%.
+- With exact matching only, most vanilla settlements shared little: `western_city_b` 49 to 56%, most others under 5%. What looked
+  like regrouping was mostly the terrain: every Landscape element's height differs between levels whose terrains differ, and so do
+  the groups' pivots. With near matches, groups by contents, regrouping and size-weighted anchors (2026-11-15), shares of each
+  variation's instances that another has too: `western_city_a` 36 to 59%, `western_city_b` 69 to 83%, `western_city_c` 65 to 73%,
+  `sassanid_city_a` 52 to 64%, `sassanid_city_c` 35 to 67%, `western_port_b` 1% to 41 to 58%. Over the kit's 154 tiles, 5.77M
+  instances become 4.21M (92% before) and 3,405 MB of scene files 2,643 MB (3,195 MB before); no tile shares less than before.
+  `western_city_a` is 115 MB instead of 159 MB.
 - Settlements made by copying one level into the next share a lot: TDD's `dunedain_city_cair_andros` 97 to 99%, `middle_men_city_edoras`
   95%, `orc_city_a` small/medium 88 to 94%, `middle_men_city_a` minor/small 70%. 31.8 MB of `orc_city_a` become 17.7 MB.
 - Random alternatives (`plains`, `town_greek_plains`) share nothing; their combined file is about the sum of theirs.
