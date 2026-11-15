@@ -558,6 +558,43 @@ export reads it (the pieces, the bridges' spans, the hints): on the kit's `river
 
 What fails comes back as a change to the plan.
 
+## Variety (user, 2026-11-15)
+
+The roads were too static and alike. Decided (grilled 2026-11-15; built on branch `small-fixes`):
+
+- **Role layers in the pieces.** Each road piece prefab holds top-level groups with a `road_role` (chosen in the Prefab tool's Inspector):
+  `surface` (ruts, mud), `edge` (borders), `verge` (banks, erosion), `fence`, `detail` (optional, thinned), `fixed` (a junction's middle).
+  The role attribute decides, not the group's name. The generated pieces are written that way; a part outside every role group (pieces from
+  before) is anchored by its place, as `road_pieces::read` does now.
+- **Variants of every piece, weighted.** `curve`, `corner`, `t_junction`, `x_junction`, `end`, `ford`, `fence` and the bridges' pieces get
+  `_2`, `_3`... as `straight` has; each variant may carry a weight (how often it is picked, default 1), picked by the road's seed and place.
+- **The detail layer.** The `detail` role group's parts are optional: each shows with the road's `road_detail_density` (0 to 1), by the seed
+  and the part's place, so it is stable from one making to the next. A part not shown is hidden by an override and left out of exports.
+- **Per-point fence type and damage.** A road point may set a fence piece of the road's type (`road_<type>_fence`, `road_<type>_fence_wood`,
+  ... or none: a gap) and a fence damage chance (0 to 1, as `road_fence_damage`). A point's values cover the fences around it, halfway to
+  each neighbouring point; elsewhere the road's own settings hold. `road_fences` keeps the sides.
+- **Irregularities**, one slider per road (`road_irregularity`, 0 to 1): decals and detail jittered (place, turn, size), the width wobbling
+  slowly along the road, the centre line wandering a little off the spline between points, and the texture's edge more ragged. More is more
+  misaligned. All by the road's seed.
+- **Road types blend at junctions.** Each arm of a junction is laid from its own road's type; the middle takes parts of both, by seed, and
+  the terrain texture cross-fades over the junction.
+- **Decals across bridges.** The road's straight pieces (surface and edge roles) are laid along a bridge's deck at its height, so the mud
+  runs on over it. First a check in game that decals draw on a bridge's planks; if they do not, back to the user.
+- **Destruction animations for generated bridges and walls**, in game and previewed in the editor: the generated pieces carry their base's
+  collapse animations, warped as their meshes are; the editor plays a piece's collapse as it plays a building's fire. Needs reverse
+  engineering of the skinned collapse (`_destructNN_destruction_weighted_anim`, docs/re/buildings.md).
+
+| Phase | Work |
+|---|---|
+| V1 | Role layers: `road_role` groups, the reader, the generated pieces rewritten with them, the Prefab tool's Inspector row |
+| V2 | Variants and weights for every piece |
+| V3 | The detail layer and `road_detail_density` |
+| V4 | Per-point fence type and damage |
+| V5 | Irregularities |
+| V6 | Road types blending at junctions |
+| V7 | Decals across bridges (game check first) |
+| V8 | Destruction animations of generated bridges and walls (RE first) |
+
 ## Save for Assembly Kit and the game
 
 As walls do: the pieces go down into a top layer *WCE procedural roads* (Import from Assembly Kit drops it and restores the road), the
