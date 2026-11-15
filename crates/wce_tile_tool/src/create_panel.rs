@@ -594,7 +594,7 @@ impl TileTool {
         // A street edge: its two Street boundaries fitted between the nodes it joins.
         let mut fit = false;
         let sc = d.tile().tscene();
-        if sc.type_of(holder) == "SiegeAIEdgeInstance" && sc.doc().get(holder, "type").is_none_or(|ty| ty == "SAET_STREET") {
+        if sc.type_of(holder) == "SiegeAIEdgeInstance" && sc.get(holder, "type").is_none_or(|ty| ty == "SAET_STREET") {
             let joins = d.street_nodes(holder);
             gui::begin_disabled(joins.is_none());
             fit = gui::button(&format!("{}  Fit the street boundaries to the nodes it joins", icons::SQUARE_DASHED));
@@ -686,7 +686,7 @@ impl TileTool {
         let colour = match kind {
             "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => {
                 let holder = primary(e).and_then(|s| d.holder_for(kind, s)).or(self.create.holder);
-                let alliance = holder.and_then(|h| d.tile().tscene().doc().get(h, "alliance_id"));
+                let alliance = holder.and_then(|h| d.tile().tscene().get(h, "alliance_id"));
 
                 let ty = draft.attrs.get("deployment_polygon_type").map_or("DZPT_ADDITIVE", String::as_str);
                 deployment_colour(deployment_variant(&alliance.unwrap_or_default(), ty))

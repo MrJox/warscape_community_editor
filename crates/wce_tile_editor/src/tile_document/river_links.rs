@@ -168,8 +168,7 @@ impl TileDocument {
             let point = sc.polygon_points(en.elem)[en.point];
             let (old, new) = (t.to_local(en.elem, en.at), t.to_local(en.elem, en.snapped));
             let d = new - old;
-            let handles =
-                ["controlIn", "controlOut"].map(|h| (h, sc.doc().get(point, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
+            let handles = ["controlIn", "controlOut"].map(|h| (h, sc.get(point, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
             let sc = self.tscene_mut();
             sc.set_attr(point, "position", &point_text(new));
 

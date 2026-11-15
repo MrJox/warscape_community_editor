@@ -31,7 +31,8 @@ pub struct WorldTransform {
     pub rotation: Double3x3,
 }
 
-/// Position / rotation of `elem` in scene space (all ancestors applied).
+/// Position / rotation of `elem` in scene space (all ancestors applied; of a combined scene, as its viewed variation places it: without
+/// the groups it goes through, with its own values).
 pub fn world_transform(scene: &TedScene, elem: usize) -> WorldTransform {
     let mut chain = vec![];
     let mut e = Some(elem);
@@ -42,6 +43,10 @@ pub fn world_transform(scene: &TedScene, elem: usize) -> WorldTransform {
 
     let mut w = WorldTransform::default();
     for &e in chain.iter().rev() {
+        if scene.goes_through(e) {
+            continue;
+        }
+
         if let Some(p) = scene.position(e) {
             w.position += w.rotation * p;
         }

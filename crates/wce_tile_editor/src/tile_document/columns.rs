@@ -398,8 +398,8 @@ impl Tile {
             }
 
             let Some(m) = self.model_of(e).filter(|m| m.ok).cloned() else { return (out, pieces) };
-            let Some(key) = self.tscene().doc().get(e, "key").map(|k| k.to_lowercase()) else { return (out, pieces) };
-            let burns = self.tscene().doc().get(e, "burn").is_some_and(|v| v.trim() == "true");
+            let Some(key) = self.tscene().get(e, "key").map(|k| k.to_lowercase()) else { return (out, pieces) };
+            let burns = self.tscene().get(e, "burn").is_some_and(|v| v.trim() == "true");
             let piece_burns = (0..m.pieces.len()).any(|k| self.piece_props(e, k).is_some_and(|p| p.burn));
             let preview = self.fire_look(e).map(|(_, stage)| stage);
             if !burns && !piece_burns && preview.is_none() && !self.relevant_building(&key) {

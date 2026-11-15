@@ -109,9 +109,8 @@ impl Tile {
         }
 
         let handles = wce_walls::scene::wall_handles(sc, elem);
-        let flip = sc.doc().get(elem, "wall_flip").is_some_and(|v| wce_tile::properties::parse_bool(&v));
-        let every =
-            |attr: &str, default: f64| sc.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
+        let flip = sc.get(elem, "wall_flip").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+        let every = |attr: &str, default: f64| sc.get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
         let (defence_every, access_every) = (every("wall_defence_every", 0.0), every("wall_access_every", wce_walls::pieces::DOOR_EVERY));
         let anchors = self.wall_anchors();
         let mut ends = [self.kit_end_joint(&anchors, points[0]), self.kit_end_joint(&anchors, points[points.len() - 1])];
@@ -158,7 +157,7 @@ impl Tile {
     pub(super) fn kit_stretch_plans(&self, elem: usize, layout: &KitLayout) -> Vec<Plan> {
         let sc = self.tscene();
         let Some(profile) = wce_walls::scene::wall_profile(sc, elem) else { return vec![] };
-        let tolerance = sc.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
+        let tolerance = sc.get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
         let key = self.wall_layer_key(elem);
         let ground = self.ground_below(key.as_deref());
         layout.stretches.iter().map(|st| wce_walls::solver::solve(&st.input(tolerance), profile, &ground)).collect()
@@ -313,8 +312,7 @@ impl Tile {
     /// An id for a new wall (`WALL_ID`): after the highest.
     pub(super) fn next_wall_id(&self) -> u32 {
         let sc = self.tscene();
-        wce_walls::scene::all_walls(sc).into_iter().filter_map(|e| sc.doc().get(e, WALL_ID)?.trim().parse::<u32>().ok()).max().unwrap_or(0)
-            + 1
+        wce_walls::scene::all_walls(sc).into_iter().filter_map(|e| sc.get(e, WALL_ID)?.trim().parse::<u32>().ok()).max().unwrap_or(0) + 1
     }
 
     /// What a kit wall's height layer is known by (`wce_walls::scene::wall_key`).

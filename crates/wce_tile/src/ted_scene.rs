@@ -158,6 +158,10 @@ pub type Snapshot = Arc<XmlDoc>;
 #[derive(Clone, Debug)]
 pub struct TedScene {
     doc: XmlDoc,
+
+    /// The variation viewed of a combined scene (`crate::variations`): attributes read as it has them (its own values first), the
+    /// transforms skip what it goes through, and an edit of a value it or another variation has of its own changes theirs too.
+    variation: Option<String>,
 }
 
 impl TedScene {
@@ -172,7 +176,7 @@ impl TedScene {
             return Err("not a tile.ted project".to_owned());
         }
 
-        Ok(Self { doc })
+        Ok(Self { doc, variation: None })
     }
 
     /// Another file of TEd's elements (a prefab's `INSTANCE_SELECTION`), read the same way.
@@ -181,7 +185,7 @@ impl TedScene {
     ///
     /// Not XML.
     pub fn parse_any(bytes: Vec<u8>) -> Result<Self> {
-        Ok(Self { doc: XmlDoc::parse(bytes).map_err(xml_error)? })
+        Ok(Self { doc: XmlDoc::parse(bytes).map_err(xml_error)?, variation: None })
     }
 
     pub fn save(&self) -> Vec<u8> {
@@ -190,6 +194,40 @@ impl TedScene {
 
     pub fn doc(&self) -> &XmlDoc {
         &self.doc
+    }
+
+    /// Views a variation of a combined scene (`None`: the scene as it is). See [`Self::get`].
+    pub fn set_variation(&mut self, variation: Option<String>) {
+        self.variation = variation;
+    }
+
+    /// The variation viewed, of a combined scene.
+    pub fn variation(&self) -> Option<&str> {
+        self.variation.as_deref()
+    }
+
+    /// An attribute's value as the viewed variation has it: its own (`WceVariationStart`, `WceVariationValues`), else the element's.
+    pub fn get(&self, elem: usize, name: &str) -> Option<String> {
+        if let Some(v) = self.variation.as_deref()
+            && let Some(own) = crate::variations::own_value(&self.doc, elem, v, name)
+        {
+            return Some(own);
+        }
+
+        self.doc.get(elem, name)
+    }
+
+    /// Whether the viewed variation has `elem` (always, without one): it belongs to it, and it is not bookkeeping. Folders and groups
+    /// it goes through count as there; see [`Self::goes_through`].
+    pub fn in_variation(&self, elem: usize) -> bool {
+        let Some(v) = self.variation.as_deref() else { return true };
+        let name = self.type_of(elem);
+        name != crate::variations::START && name != crate::variations::VALUES && crate::variations::belongs(&self.doc, elem, v)
+    }
+
+    /// Whether the viewed variation goes through `elem` (`crate::variations::goes_through`): no transform of its own.
+    pub fn goes_through(&self, elem: usize) -> bool {
+        self.variation.as_deref().is_some_and(|v| crate::variations::goes_through(&self.doc, elem, v))
     }
 
     /// `<project version="17">`.
@@ -228,22 +266,22 @@ impl TedScene {
     }
 
     pub fn position(&self, elem: usize) -> Option<Double3> {
-        parse_vec3(&self.doc.get(elem, "position")?, "vector")
+        parse_vec3(&self.get(elem, "position")?, "vector")
     }
 
     /// orientation="euler(x,y,z)" (radians).
     pub fn euler(&self, elem: usize) -> Option<Double3> {
-        parse_vec3(&self.doc.get(elem, "orientation")?, "euler")
+        parse_vec3(&self.get(elem, "orientation")?, "euler")
     }
 
     /// scale="vector(..)" or a plain number (uniform).
     pub fn scale(&self, elem: usize) -> Option<Double3> {
-        let v = self.doc.get(elem, "scale")?;
+        let v = self.get(elem, "scale")?;
         parse_vec3(&v, "vector").or_else(|| strtod_prefix(&v).map(|(d, _)| Double3::new(d, d, d)))
     }
 
     fn flags(&self, elem: usize) -> String {
-        self.doc.get(elem, "flags").unwrap_or_default()
+        self.get(elem, "flags").unwrap_or_default()
     }
 
     /// OIF_VISIBLE in flags.
@@ -274,8 +312,47 @@ impl TedScene {
         Ok(())
     }
 
+    /// Sets an attribute. Where variations have values of their own for it (`crate::variations::overrides`), an edit changes every
+    /// variation: a `position` moves by the same amount in each (each keeps its height on its own terrain), any other value becomes the
+    /// same in each.
     pub fn set_attr(&mut self, elem: usize, name: &str, value: &str) {
-        self.doc.set(elem, name, value);
+        let over = crate::variations::overrides(&self.doc, elem)
+            .into_iter()
+            .filter(|&o| self.doc.find_attr(o, name).is_some())
+            .collect::<Vec<_>>();
+        if over.is_empty() {
+            self.doc.set(elem, name, value);
+            return;
+        }
+
+        // The viewed variation's own value, or the element's.
+        let viewed = self
+            .variation
+            .as_deref()
+            .and_then(|v| {
+                over.iter().copied().find(|&o| {
+                    self.doc
+                        .get(o, crate::variations::VARIATIONS_ATTR)
+                        .is_some_and(|l| crate::variations::parse_list(&l).iter().any(|x| x == v))
+                })
+            })
+            .unwrap_or(elem);
+        let vector = |e: usize| self.doc.get(e, name).and_then(|t| parse_vec3(&t, "vector"));
+        let delta = (name == "position").then(|| Some(parse_vec3(value, "vector")? - vector(viewed)?)).flatten();
+        let values = std::iter::once(elem)
+            .chain(over)
+            .map(|e| match delta.zip(vector(e)).filter(|_| e != viewed) {
+                Some((d, p)) => {
+                    let q = p + d;
+                    (e, format!("vector({},{},{})", format_number(q.x), format_number(q.y), format_number(q.z)))
+                }
+
+                None => (e, value.to_owned()),
+            })
+            .collect::<Vec<_>>();
+        for (e, v) in values {
+            self.doc.set(e, name, &v);
+        }
     }
 
     pub fn modified(&self) -> bool {
@@ -287,14 +364,14 @@ impl TedScene {
     }
 
     fn set_vector(&mut self, elem: usize, attr: &str, prefix: &str, v: Double3) {
-        if let Some(old) = self.doc.get(elem, attr).and_then(|cur| parse_vec3(&cur, prefix))
+        if let Some(old) = self.get(elem, attr).and_then(|cur| parse_vec3(&cur, prefix))
             && (0..3).all(|i| old[i] == v[i])
         {
             return;
         }
 
         let text = format!("{prefix}({},{},{})", format_number(v.x), format_number(v.y), format_number(v.z));
-        self.doc.set(elem, attr, &text);
+        self.set_attr(elem, attr, &text);
     }
 
     /// Sets or clears a flag. TEd writes the flags as " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE" (a leading space, always in that order; " " when
@@ -318,7 +395,7 @@ impl TedScene {
 
         let rank = |x: &String| ["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"].iter().position(|o| o == x).unwrap_or(3);
         tokens.sort_by_key(rank);
-        self.doc.set(elem, "flags", &format!(" {}", tokens.join("|")));
+        self.set_attr(elem, "flags", &format!(" {}", tokens.join("|")));
     }
 
     /// Structural edits are done in place on the XmlDoc (no re-parse of the file) and recorded as text splices. A caller that wants an undo
@@ -374,11 +451,26 @@ impl TedScene {
         self.doc.duplicate_element_inplace(elem).map_err(xml_error)
     }
 
+    /// Removes the element with its values per variation (the `WceVariationValues` lines before it).
+    ///
     /// # Errors
     ///
     /// The element can't be removed.
     pub fn remove(&mut self, elem: usize) -> Result<()> {
-        self.doc.remove_element_inplace(elem).map_err(xml_error)
+        let values = crate::variations::values_before(&self.doc, elem);
+        self.doc.remove_element_inplace(elem).map_err(xml_error)?;
+        // Nearest first: each is before the ones still to go, so their indices stay.
+        for v in values {
+            self.doc.remove_element_inplace(v).map_err(xml_error)?;
+        }
+
+        Ok(())
+    }
+
+    /// The first line of `elem`'s block: its first `WceVariationValues`, or itself. A move takes the block whole, and puts what it
+    /// moves in front of it.
+    fn lead(&self, elem: usize) -> usize {
+        crate::variations::values_before(&self.doc, elem).last().copied().unwrap_or(elem)
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -664,28 +756,33 @@ impl TedScene {
         }
 
         self.doc.bake_pending().map_err(xml_error)?;
+        // The element's block: its values per variation go with it (m lines before it).
+        let lead = self.lead(elem);
+        let m = elem - lead;
         let t = self.doc.original_text();
         let e = &self.doc.elements()[elem];
-        let sub = self.doc.subtree_size(elem);
-        let (cut_a, cut_b) = (line_start(t, e.start_off), line_end(t, e.end_off - 1));
+        let sub = self.doc.subtree_size(elem) + m;
+        let (cut_a, cut_b) = (line_start(t, self.doc.elements()[lead].start_off), line_end(t, e.end_off - 1));
         let piece = t[cut_a..cut_b].to_vec();
         let wrapper = self.children_wrapper(layer).ok_or("target layer has no children element")?;
         let w = &self.doc.elements()[wrapper];
 
-        // Where it goes: in front of `before` (the start of its line), or in front of </children>; k = its position among the target's
-        // children afterwards.
+        // Where it goes: in front of `before`'s block (the start of its line), or in front of </children>; k = its position among the
+        // target's children afterwards.
         let kids = &w.children;
-        let pos_elem = kids.iter().position(|&c| c == elem).unwrap_or(kids.len());
+        let pos_lead = kids.iter().position(|&c| c == lead).unwrap_or(kids.len());
+        let gone = |pos: usize| if pos_lead < pos { m + 1 } else { 0 };
         let (at, ref_off, k) = match before {
             Some(b) => {
+                let b = self.lead(b);
                 let pos_before = kids.iter().position(|&c| c == b).ok_or("the element to put it in front of is not in that layer")?;
                 let off = self.doc.elements()[b].start_off;
-                (line_start(t, off), off, pos_before - usize::from(pos_elem < pos_before))
+                (line_start(t, off), off, pos_before - gone(pos_before) + m)
             }
 
             None => {
                 let close = rfind_at(t, b"</children>", w.end_off).ok_or("target layer has no children element")?;
-                (line_start(t, close), close, kids.len() - usize::from(pos_elem < kids.len()))
+                (line_start(t, close), close, kids.len() - gone(kids.len()) + m)
             }
         };
 
@@ -713,7 +810,7 @@ impl TedScene {
         }
 
         // The layer's own index shifts down when the cut was before it.
-        let new_layer = layer - if elem < layer { sub } else { 0 };
+        let new_layer = layer - if lead < layer { sub } else { 0 };
         let w2 = self.children_wrapper(new_layer).ok_or("target layer has no children element")?;
         Ok(self.doc.elements()[w2].children[k])
     }
@@ -771,6 +868,9 @@ impl TedScene {
         let t = self.doc.original_text();
         let wrapper = self.children_wrapper(layer).ok_or("target layer has no children element")?;
         let w = &self.doc.elements()[wrapper];
+        // Each element's block: its values per variation go with it, and what goes in front of `before` goes in front of its block.
+        let leads = elems.iter().map(|&e| self.lead(e)).collect::<Vec<_>>();
+        let before = before.map(|b| self.lead(b));
         let (at, ref_off) = match before {
             Some(b) => {
                 if !w.children.contains(&b) {
@@ -795,22 +895,29 @@ impl TedScene {
         let mut edits = vec![];
         let mut inserted = vec![];
         let mut cut_before_target = 0;
-        for &e in &elems {
+        let mut moved = vec![];
+        let mut offsets = vec![];
+        for (&e, &lead) in elems.iter().zip(&leads) {
             let el = &self.doc.elements()[e];
-            let (a, b) = (line_start(t, el.start_off), line_end(t, el.end_off - 1));
+            let (a, b) = (line_start(t, self.doc.elements()[lead].start_off), line_end(t, el.end_off - 1));
             reindent(&t[a..b], &indent_of(t, el.start_off), &new_ind, &mut inserted);
             if at > a && at < b {
                 return Err("the target position is inside a moved element".to_owned());
             }
 
             edits.push((a, b - a, vec![]));
-            if e < layer {
-                cut_before_target += self.doc.subtree_size(e);
+            if lead < layer {
+                cut_before_target += self.doc.subtree_size(e) + (e - lead);
             }
+
+            offsets.push(moved.len() + (e - lead));
+            moved.extend(lead..=e);
         }
 
-        // Position of the moved block among the target's children afterwards.
-        let k = w.children.iter().take_while(|&&c| Some(c) != before).filter(|c| elems.binary_search(c).is_err()).count();
+        moved.sort_unstable();
+
+        // Position of the moved blocks among the target's children afterwards.
+        let k = w.children.iter().take_while(|&&c| Some(c) != before).filter(|c| moved.binary_search(c).is_err()).count();
         edits.push((at, 0, inserted));
 
         // Highest offset first; a stable sort keeps the insertion after a cut that starts at the same offset.
@@ -821,7 +928,7 @@ impl TedScene {
 
         let w2 = self.children_wrapper(layer - cut_before_target).ok_or("target layer has no children element")?;
         let kids = &self.doc.elements()[w2].children;
-        Ok((0..elems.len()).map(|i| kids[k + i]).collect())
+        Ok(offsets.iter().map(|&i| kids[k + i]).collect())
     }
 
     /// The `<point>` children of a polygon (instances with a `<points>` child: AI hints, no-go / go zones, vegetation exclusion, siege AI,
@@ -1071,9 +1178,10 @@ impl TedScene {
         Ok(self.last_child(layer))
     }
 
-    /// All instances (depth first) of a given element name, e.g. "BUILDING_INSTANCE".
+    /// All instances (depth first) of a given element name, e.g. "BUILDING_INSTANCE"; of a combined scene, the viewed variation's
+    /// ([`Self::in_variation`]).
     pub fn find_all(&self, kind: &str) -> Vec<usize> {
-        (0..self.doc.elements().len()).filter(|&i| self.doc.elements()[i].name == kind).collect()
+        (0..self.doc.elements().len()).filter(|&i| self.doc.elements()[i].name == kind && self.in_variation(i)).collect()
     }
 
     /// Layer path "Logic/Go Zones" of an element.
@@ -1091,5 +1199,85 @@ impl TedScene {
 
         names.reverse();
         names.join("/")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world_transform::world_transform;
+
+    const COMBINED: &str = "<project version=\"17\" wce_variations=\"a,b\">
+    <scene>
+        <SCENE_GRAPH>
+            <children>
+                <LayerInstance name=\"one\">
+                    <children>
+                        <UserInstanceGroup name=\"g\" position=\"vector(10,0,0)\" wce_group_variations=\"a\">
+                            <children>
+                                <WceVariationValues wce_variations=\"b\" position=\"vector(1,5,1)\"/>
+                                <BUILDING_INSTANCE name=\"x\" position=\"vector(1,2,1)\"/>
+                            </children>
+                        </UserInstanceGroup>
+                    </children>
+                </LayerInstance>
+                <LayerInstance name=\"two\" wce_variations=\"a\">
+                    <children>
+                        <BUILDING_INSTANCE name=\"y\" position=\"vector(0,0,0)\"/>
+                    </children>
+                </LayerInstance>
+            </children>
+        </SCENE_GRAPH>
+    </scene>
+</project>
+";
+
+    fn viewing(v: &str) -> TedScene {
+        let mut sc = TedScene::parse(COMBINED.as_bytes().to_vec()).unwrap();
+        sc.set_variation(Some(v.to_owned()));
+        sc
+    }
+
+    fn named(sc: &TedScene, name: &str) -> usize {
+        (0..sc.doc().elements().len()).find(|&e| sc.doc().get(e, "name").as_deref() == Some(name)).unwrap()
+    }
+
+    #[test]
+    fn a_viewed_variation_reads_and_places_as_its_own_file() {
+        let (a, b) = (viewing("a"), viewing("b"));
+        assert_eq!(world_transform(&a, named(&a, "x")).position, Double3::new(11.0, 2.0, 1.0));
+        assert_eq!(b.position(named(&b, "x")), Some(Double3::new(1.0, 5.0, 1.0)), "its own height");
+        assert_eq!(world_transform(&b, named(&b, "x")).position, Double3::new(1.0, 5.0, 1.0), "not in the group in b");
+        assert_eq!(a.find_all("BUILDING_INSTANCE").len(), 2);
+        assert_eq!(b.find_all("BUILDING_INSTANCE"), vec![named(&b, "x")]);
+    }
+
+    #[test]
+    fn an_edit_moves_every_variation_by_the_same_amount() {
+        let mut b = viewing("b");
+        let x = named(&b, "x");
+        b.set_position(x, Double3::new(2.0, 5.0, 1.0));
+        assert_eq!(b.doc().get(x, "position").as_deref(), Some("vector(2,2,1)"), "the others keep their height");
+        assert_eq!(b.position(x), Some(Double3::new(2.0, 5.0, 1.0)));
+        assert_eq!(b.doc().get(x - 1, "position").as_deref(), Some("vector(2,5,1)"));
+    }
+
+    #[test]
+    fn the_values_of_a_variation_go_with_their_element() {
+        let mut b = viewing("b");
+        let x = b.move_element(named(&b, "x"), named(&b, "one"), None).unwrap();
+        assert_eq!(b.doc().get(x, "name").as_deref(), Some("x"));
+        assert_eq!(b.position(x), Some(Double3::new(1.0, 5.0, 1.0)));
+        let text = String::from_utf8(b.save()).unwrap();
+        assert!(text.contains(
+            "<WceVariationValues wce_variations=\"b\" position=\"vector(1,5,1)\"/>\n                        <BUILDING_INSTANCE name=\"x\""
+        ));
+
+        let x = b.move_elements(vec![x], named(&b, "g"), None).unwrap()[0];
+        assert_eq!(b.position(x), Some(Double3::new(1.0, 5.0, 1.0)));
+        assert_eq!(b.save(), COMBINED.as_bytes(), "back where it was");
+
+        b.remove(x).unwrap();
+        assert!(!String::from_utf8(b.save()).unwrap().contains(crate::variations::VALUES));
     }
 }

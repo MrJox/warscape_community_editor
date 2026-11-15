@@ -48,10 +48,10 @@ impl TileTool {
         let Some(p) = primary(e) else { return };
         let Some(d) = document(e) else { return };
         let sc = d.tile().tscene();
-        let (ty, key) = (sc.type_of(p).to_owned(), sc.doc().get(p, "key"));
+        let (ty, key) = (sc.type_of(p).to_owned(), sc.get(p, "key"));
         let found = Self::instances_where(e, |d, el| {
             let sc = d.tile().tscene();
-            sc.type_of(el) == ty && (!same_key || sc.doc().get(el, "key") == key)
+            sc.type_of(el) == ty && (!same_key || sc.get(el, "key") == key)
         });
         set_selection(e, &found);
         self.status = format!("{} selected", found.len());

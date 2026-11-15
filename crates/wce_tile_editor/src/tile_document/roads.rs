@@ -250,7 +250,7 @@ impl Tile {
         let marked = sc
             .polygon_points(elem)
             .iter()
-            .map(|&p| sc.doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v)))
+            .map(|&p| sc.get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v)))
             .collect::<Vec<_>>();
         // A point turned by its handles is no corner unless marked one, however sharp the turn between its neighbours.
         let handles = self.road_handles(elem);
@@ -290,11 +290,10 @@ impl Tile {
         let sc = self.tscene();
         let wet = |e: usize| {
             sc.type_of(e) == "SplineRiverInstance"
-                || (sc.type_of(e) == "SIMPLE_MESH_INSTANCE"
-                    && sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
+                || (sc.type_of(e) == "SIMPLE_MESH_INSTANCE" && sc.get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
         };
         let water = (0..sc.doc().elements().len())
-            .filter(|&e| wet(e))
+            .filter(|&e| wet(e) && sc.in_variation(e))
             .fold(0u64, |h, e| h.rotate_left(5) ^ hash_text(&String::from_utf8_lossy(&sc.element_text(e))));
         elems
             .into_iter()
@@ -449,7 +448,7 @@ impl Tile {
         let planes = sc
             .find_all("SIMPLE_MESH_INSTANCE")
             .into_iter()
-            .filter(|&e| sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
+            .filter(|&e| sc.get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
             .filter_map(|e| {
                 let m = self.model_of(e).filter(|m| m.ok && m.resolved)?;
                 let w = self.world_matrix(e);
@@ -727,7 +726,7 @@ impl Tile {
     }
 
     fn road_elems(&self) -> Vec<usize> {
-        (0..self.tscene().doc().elements().len()).filter(|&e| self.is_road(e)).collect()
+        (0..self.tscene().doc().elements().len()).filter(|&e| self.is_road(e) && self.tscene().in_variation(e)).collect()
     }
 
     /// A road type's pieces (`roads_proc/<type>`), each its type's or, missing there, the base's (`none`: none).

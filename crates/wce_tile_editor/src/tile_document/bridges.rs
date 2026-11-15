@@ -189,7 +189,7 @@ impl Gathered {
     fn add(&mut self, t: &mut Tile, e: usize, bridge: bool, snap: f32, all_ground: bool, split: bool) {
         let surfaces = t.walk_surfaces(e);
         if surfaces.is_empty() && bridge {
-            self.unread.push(t.tscene().doc().get(e, "key").unwrap_or_default());
+            self.unread.push(t.tscene().get(e, "key").unwrap_or_default());
         }
 
         for (n, s) in surfaces.into_iter().enumerate() {
@@ -272,7 +272,7 @@ impl Tile {
         // The bridges: buildings of the category, and the roads' generated bridges.
         let buildings = self.instances.iter().copied().filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE").collect::<Vec<_>>();
         let category =
-            |t: &Self, e: usize| t.tscene().doc().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
+            |t: &Self, e: usize| t.tscene().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
         let bridges = buildings.iter().copied().filter(|&e| category(self, e) == "bridge").collect::<Vec<_>>();
         let roads = self.roads_with_buildings();
         let mut g = Gathered::default();
@@ -475,7 +475,7 @@ impl Tile {
         let buildings = self.instances.iter().copied().filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE").collect::<Vec<_>>();
         let mut g = Gathered::default();
         for e in buildings {
-            let c = self.tscene().doc().get(e, "key").and_then(|k| self.building_category(&k.to_lowercase())).unwrap_or_default();
+            let c = self.tscene().get(e, "key").and_then(|k| self.building_category(&k.to_lowercase())).unwrap_or_default();
             if fort(&c) {
                 g.add(self, e, false, SNAP_BRIDGE, false, false);
                 report.walls += 1;
@@ -572,7 +572,7 @@ impl Tile {
             .collect();
         let key = |k: usize| {
             let p = &platforms[k];
-            match self.tscene().doc().get(p.elem, "key") {
+            match self.tscene().get(p.elem, "key") {
                 Some(key) => key,
                 None if !wce_walls::scene::is_procedural(self.tscene(), p.elem) => {
                     format!("{} (kit wall {})", p.key, self.tscene().name(p.elem))
@@ -643,7 +643,7 @@ impl Tile {
     pub fn things_on_walks(&mut self, x: f32, z: f32, r: f32) -> Vec<String> {
         let fort = |c: &str| c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower");
         let category =
-            |t: &Self, e: usize| t.tscene().doc().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
+            |t: &Self, e: usize| t.tscene().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
         let near = |t: &Self, e: usize| {
             let p = t.world_position(e);
             (p.x - x).hypot(p.z - z) <= r

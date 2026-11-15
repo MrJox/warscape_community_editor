@@ -122,7 +122,7 @@ impl TedMoveCommand {
             let local = t.local_for_world_y(e, f64::from(t.landscape_y(e, x, z)));
             let Some(old) = t.tscene().position(e) else { continue };
             if !self.grounded.iter().any(|g| g.0 == e) {
-                self.grounded.push((e, t.tscene().doc().get(e, "position"), old));
+                self.grounded.push((e, t.tscene().get(e, "position"), old));
             }
 
             t.project.scene.set_position(e, local);

@@ -44,12 +44,12 @@ impl Tile {
     }
 
     fn building_spline_elems(&self) -> Vec<usize> {
-        (0..self.tscene().doc().elements().len()).filter(|&e| self.is_building_spline(e)).collect()
+        (0..self.tscene().doc().elements().len()).filter(|&e| self.is_building_spline(e) && self.tscene().in_variation(e)).collect()
     }
 
     /// Whether a building spline closes back to its first point.
     pub(crate) fn building_spline_closed(&self, elem: usize) -> bool {
-        self.tscene().doc().get(elem, "bspline_closed").is_some_and(|v| wce_tile::properties::parse_bool(&v))
+        self.tscene().get(elem, "bspline_closed").is_some_and(|v| wce_tile::properties::parse_bool(&v))
     }
 
     /// A building spline's settings, from its attributes.

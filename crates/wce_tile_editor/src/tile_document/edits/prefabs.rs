@@ -20,19 +20,19 @@ impl TileDocument {
             return None;
         }
 
-        sc.doc().get(group, wce_tile::project_files::PREFAB_ATTR).filter(|k| !k.is_empty())
+        sc.get(group, wce_tile::project_files::PREFAB_ATTR).filter(|k| !k.is_empty())
     }
 
     /// Whether an instance group is a reference to a prefab (placed by the editor), not a copy TEd made.
     pub fn is_prefab_reference(&self, group: usize) -> bool {
-        self.tile().tscene().doc().get(group, wce_tile::project_files::PREFAB_ATTR).is_some_and(|k| !k.is_empty())
+        self.tile().tscene().get(group, wce_tile::project_files::PREFAB_ATTR).is_some_and(|k| !k.is_empty())
     }
 
     /// Makes a copy a plain group: its reference goes (an empty `wce_prefab`, which tile.wce and TEd's file leave out), and its name.
     pub fn unpack_prefab_copy(&mut self, group: usize, name: &str) -> bool {
         let key = self.prefab_key(group);
         let place = self.prefab_ground_place(group);
-        if self.tile().tscene().doc().get(group, wce_tile::project_files::PREFAB_ATTR).is_some() {
+        if self.tile().tscene().get(group, wce_tile::project_files::PREFAB_ATTR).is_some() {
             self.set_attribute(group, wce_tile::project_files::PREFAB_ATTR, "");
         }
 
@@ -83,7 +83,7 @@ impl TileDocument {
             return &[];
         }
 
-        wce_tile::parents::roles(sc.type_of(holder), &sc.doc().get(holder, "type").unwrap_or_default())
+        wce_tile::parents::roles(sc.type_of(holder), &sc.get(holder, "type").unwrap_or_default())
     }
 
     /// A holder's shapes of each of its roles.
@@ -168,7 +168,7 @@ impl TileDocument {
         let pts = t.polygon_world_points(boundary);
         let at = world_transform(sc, boundary).position;
         let position = Float3::new((at.x / f64::from(u)) as f32, (at.y / f64::from(u)) as f32, (at.z / f64::from(u)) as f32);
-        let radius = || sc.doc().get(boundary, "radius").and_then(|r| r.trim().parse::<f32>().ok()).map(|r| r / u);
+        let radius = || sc.get(boundary, "radius").and_then(|r| r.trim().parse::<f32>().ok()).map(|r| r / u);
         let mean = || {
             let n = pts.len().max(1) as f32;
             pts.iter().fold(Float3::default(), |a, &p| a + p) * (1.0 / n)
@@ -176,7 +176,7 @@ impl TileDocument {
 
         // The angle of a direction on the ground (x = sin, z = cos: 0 is +z, 90 is +x).
         let angle = |dx: f32, dz: f32| dx.atan2(dz).to_degrees();
-        Some(match sc.doc().get(boundary, "polygon_shape").as_deref() {
+        Some(match sc.get(boundary, "polygon_shape").as_deref() {
             Some("PS_CIRCLE") => BoundaryShape { kind: BoundaryKind::Circle, centre: position, size: radius().unwrap_or(20.0), turn: 0.0 },
             Some("PS_SEMICIRCLE") => {
                 let mid = pts.get(pts.len() / 2).copied().unwrap_or(position);
@@ -255,7 +255,7 @@ impl TileDocument {
         for a in &sc.doc().elements()[boundary].attrs {
             if !SHAPED.contains(&a.name.as_str())
                 && !n.attrs.contains_key(&a.name)
-                && let Some(v) = sc.doc().get(boundary, &a.name)
+                && let Some(v) = sc.get(boundary, &a.name)
             {
                 n.attrs.insert(a.name.clone(), v);
             }
@@ -283,7 +283,7 @@ impl TileDocument {
         if kind.turns() && !shape.kind.turns() {
             let sc = self.tile().tscene();
             let location = self.holder_for("CaptureLocationPolygonInstance", boundary);
-            let facing = location.and_then(|l| sc.doc().get(l, "flag_facing")).and_then(|f| f.trim().parse::<f32>().ok());
+            let facing = location.and_then(|l| sc.get(l, "flag_facing")).and_then(|f| f.trim().parse::<f32>().ok());
             shape.turn = facing.map_or(0.0, f32::to_degrees);
         }
 

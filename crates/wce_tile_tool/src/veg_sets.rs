@@ -51,7 +51,7 @@ impl TileTool {
             .instances_below(&sel)
             .into_iter()
             .filter(|&el| sc.type_of(el) == "VEGETATION_INSTANCE")
-            .filter_map(|el| sc.doc().get(el, "key"))
+            .filter_map(|el| sc.get(el, "key"))
             .collect()
     }
 

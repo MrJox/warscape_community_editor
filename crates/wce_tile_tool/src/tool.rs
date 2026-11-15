@@ -2249,7 +2249,7 @@ impl TileTool {
             }
 
             // An item that follows its surface is tilted to the one it is moved onto.
-            if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
+            if d.tile().tscene().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
                 let n = match (self.modes.unwrap_or_default().0, self.surface_hit) {
                     (crate::settings::SurfaceMode::Entity, Some(h)) => {
                         wce_foundation::math::Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z))
@@ -2980,7 +2980,7 @@ impl TileTool {
         for &el in trees.iter().take(200) {
             let p = d.tile().world_position(el);
             if gui::selectable(
-                &format!("{}  {}  ({:.0}, {:.0})##problem{el}", icons::TREE_PINE, sc.doc().get(el, "key").unwrap_or_default(), p.x, p.z),
+                &format!("{}  {}  ({:.0}, {:.0})##problem{el}", icons::TREE_PINE, sc.get(el, "key").unwrap_or_default(), p.x, p.z),
                 false,
                 0,
             ) {
@@ -3685,7 +3685,7 @@ impl TileTool {
                 && let Some(&p) = d.tile().tscene().polygon_points(s).get(pt)
             {
                 // A point turned at by 90 degrees or more is a corner whatever its mark.
-                let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+                let mut sharp = d.tile().tscene().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
                 if gui::checkbox("sharp corner (a corner piece instead of a bend)", &mut sharp) {
                     d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
                 }
@@ -3713,7 +3713,7 @@ impl TileTool {
         let Some(pt) = self.poly_point else { return };
         let points = d.tile().tscene().polygon_points(wall);
         let Some(&p) = points.get(pt) else { return };
-        let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+        let mut sharp = d.tile().tscene().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
         if gui::checkbox("sharp corner (a mitre instead of a curve)", &mut sharp) {
             d.set_point_attribute(wall, pt, "sharp", wce_tile::properties::format_bool(sharp));
         }
@@ -3771,7 +3771,7 @@ impl TileTool {
         let Some(t) = wce_tile::instance_templates::template(&kind) else { return };
         for &(attr, _) in t.point_attrs.iter().filter(|(a, _)| !matches!(*a, "position" | "controlIn" | "controlOut")) {
             let sc = d.tile().tscene();
-            let mut v = sc.doc().get(points[shown], attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+            let mut v = sc.get(points[shown], attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
             let speed = if matches!(attr, "width" | "terrain_offset") { 0.1 } else { 0.01 };
             let changed = gui::drag_float(attr, &mut v, speed, 0.0, 0.0, "%g");
             if gui::is_item_activated() {
@@ -4071,9 +4071,9 @@ impl TileTool {
 
         if ev.shift && self.terrain_hit {
             let closed = if spline {
-                d.tile().tscene().doc().get(sel, "closed").is_some_and(|v| v == "1")
+                d.tile().tscene().get(sel, "closed").is_some_and(|v| v == "1")
             } else {
-                d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0")
+                d.tile().tscene().get(sel, "polygon_closed").is_none_or(|v| v != "0")
             };
 
             let mut at = 0;

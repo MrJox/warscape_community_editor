@@ -189,7 +189,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 let name = |n: Option<usize>| n.map_or_else(|| "-".to_owned(), |n| n.to_string());
                 for &ed in &edges {
                     if let Some(en) = t.siege_edge_ends_among(ed, &nodes) {
-                        wce_foundation::log::info(format!("siege edge {ed} ({}): start {} end {}", t.tscene().doc().get(ed, "type").unwrap_or_default(), name(en.nodes[0]), name(en.nodes[1])));
+                        wce_foundation::log::info(format!("siege edge {ed} ({}): start {} end {}", t.tscene().get(ed, "type").unwrap_or_default(), name(en.nodes[0]), name(en.nodes[1])));
                     }
                 }
 
@@ -285,7 +285,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
         // The fort buildings there that meet nothing.
         let met = report.wall_pairs.iter().flat_map(|p| [p.a, p.b]).collect::<std::collections::HashSet<_>>();
-        for el in (0..doc.elements().len()).filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE" && near(t, el)) {
+        for el in (0..doc.elements().len()).filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE" && t.tscene().in_variation(el) && near(t, el)) {
             let key = doc.get(el, "key").unwrap_or_default();
             let c = t.building_category(&key.to_lowercase()).unwrap_or_default();
             if (c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower")) && !met.contains(&el) {
@@ -296,9 +296,9 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
         // With `detail`: each fort building's walks against the terrain.
         if a.get(3).is_some_and(|w| w == "detail") {
-            let els = (0..t.tscene().doc().elements().len()).filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE" && near(t, el)).collect::<Vec<_>>();
+            let els = (0..t.tscene().doc().elements().len()).filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE" && t.tscene().in_variation(el) && near(t, el)).collect::<Vec<_>>();
             for el in els {
-                let key = t.tscene().doc().get(el, "key").unwrap_or_default();
+                let key = t.tscene().get(el, "key").unwrap_or_default();
                 let c = t.building_category(&key.to_lowercase()).unwrap_or_default();
                 if c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower") {
                     let p = t.world_position(el);
@@ -365,7 +365,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let Some(el) = element_arg(d, a.first().map_or("selected", String::as_str), primary_of(&sel, d)) else {
                 return fail("no such element");
             };
-            let Some(key) = d.tile().tscene().doc().get(el, "key") else { return fail("not a building") };
+            let Some(key) = d.tile().tscene().get(el, "key") else { return fail("not a building") };
             let ends = d.tile().piece_ends(&key);
             ok(format!("{} end(s): ", ends.len())
                 + &ends

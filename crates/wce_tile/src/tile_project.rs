@@ -513,6 +513,7 @@ impl TileProject {
         self.variation = Some(row);
         self.warning.clear();
         self.view = Some(crate::variations::View::new(self.scene.doc(), name));
+        self.scene.set_variation(Some(name.to_owned()));
 
         let layers = self
             .layers

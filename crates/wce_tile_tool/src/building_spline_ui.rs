@@ -114,7 +114,7 @@ impl TileTool {
             return;
         }
 
-        let get = |attr: &str| parse_keys(&t.tscene().doc().get(elem, attr).unwrap_or_default());
+        let get = |attr: &str| parse_keys(&t.tscene().get(elem, attr).unwrap_or_default());
         let (mut keys, mut joiners) = (get(KEYS), get(JOINERS));
         let laid = t.building_spline_count(Some(elem));
 
@@ -122,7 +122,7 @@ impl TileTool {
         let mut picked = selected(e)
             .into_iter()
             .filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE")
-            .filter_map(|el| t.tscene().doc().get(el, "key"))
+            .filter_map(|el| t.tscene().get(el, "key"))
             .filter(|k| !k.is_empty())
             .collect::<Vec<_>>();
         picked.sort();

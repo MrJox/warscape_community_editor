@@ -237,8 +237,7 @@ impl Tile {
 
     /// Whether the building of `elem` (or the piece) burns.
     fn burning(&self, elem: usize, piece: usize) -> bool {
-        self.tscene().doc().get(elem, "burn").is_some_and(|v| v.trim() == "true")
-            || self.piece_props.get(&(elem, piece)).is_some_and(|p| p.burn)
+        self.tscene().get(elem, "burn").is_some_and(|v| v.trim() == "true") || self.piece_props.get(&(elem, piece)).is_some_and(|p| p.burn)
     }
 
     /// The step from `level`: its animation and its effects (it starts playing once its bones' models are loaded).

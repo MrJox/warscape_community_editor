@@ -269,7 +269,7 @@ impl TileDocument {
         let sc = self.tile().tscene();
         if sc.type_of(g) == "CivilianShelter"
             && let (Some(before), Some(after)) = (before, sc.position(g))
-            && let Some(target) = sc.doc().get(g, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
+            && let Some(target) = sc.get(g, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
         {
             let v = target + (after - before);
             let text = format!(

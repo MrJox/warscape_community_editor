@@ -150,7 +150,7 @@ impl TileDocument {
                     vec![]
                 };
 
-                let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
+                let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
 
                 let points = if spline.is_empty() {
                     sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| lifted(at(p), rise(at(p)))).collect()
@@ -174,7 +174,7 @@ impl TileDocument {
                     position.y = ground(position);
                 }
 
-                let keeps_heights = river && t.rivers_keep_heights() && sc.doc().get(e, RIVER_HEIGHT_ATTR).is_none();
+                let keeps_heights = river && t.rivers_keep_heights() && sc.get(e, RIVER_HEIGHT_ATTR).is_none();
                 Target { elem: e, position, rotation, points, spline, target, wall_flip, keeps_heights }
             })
             .collect()
@@ -194,7 +194,7 @@ impl TileDocument {
 
             for (&elem, p) in sc.polygon_points(t.elem).iter().zip(&t.spline) {
                 for (name, v) in ["position", "controlIn", "controlOut"].into_iter().zip(p) {
-                    if let Some(v) = v.filter(|_| sc.doc().get(elem, name).is_some()) {
+                    if let Some(v) = v.filter(|_| sc.get(elem, name).is_some()) {
                         sc.set_attr(elem, name, &TedScene::point_text(local(v)));
                     }
                 }
@@ -405,7 +405,7 @@ impl TileDocument {
         let sc = self.tscene_mut();
         let root = sc.doc().roots()[0];
         let attr = super::vegetation::LIST_FLIP_ATTR;
-        let now = sc.doc().get(root, attr).unwrap_or_default();
+        let now = sc.get(root, attr).unwrap_or_default();
         let (mut fx, mut fz) = (now.contains('x'), now.contains('z'));
         if axis == TileFlipAxis::X {
             fx = !fx

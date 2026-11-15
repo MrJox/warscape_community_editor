@@ -181,7 +181,7 @@ pub fn exported(scene: &TedScene, elem: usize) -> bool {
     let els = scene.doc().elements();
     let mut p = Some(elem);
     while let Some(e) = p {
-        if els[e].name == "LayerInstance" && scene.doc().get(e, "export_type").as_deref() == Some(OFF) {
+        if els[e].name == "LayerInstance" && scene.get(e, "export_type").as_deref() == Some(OFF) {
             return false;
         }
 
@@ -195,8 +195,8 @@ pub fn exported(scene: &TedScene, elem: usize) -> bool {
 fn layout_item(scene: &TedScene, e: usize) -> bool {
     match scene.type_of(e) {
         "SiegeAINodeInstance" | "SiegeAIEdgeInstance" | "DeploymentZonePolygonInstanceGroup" => true,
-        "AI_HINT_POLYGON_INSTANCE" => scene.doc().get(e, "hint_type").is_some_and(|h| LAYOUT_HINTS.contains(&h.as_str())),
-        "AISeparatorInstance" => scene.doc().get(e, "type").as_deref() == Some("PALT_FORT"),
+        "AI_HINT_POLYGON_INSTANCE" => scene.get(e, "hint_type").is_some_and(|h| LAYOUT_HINTS.contains(&h.as_str())),
+        "AISeparatorInstance" => scene.get(e, "type").as_deref() == Some("PALT_FORT"),
         _ => false,
     }
 }
@@ -288,7 +288,7 @@ impl Tile {
 
         // The siege barricades stand across the streets (they are broken through, the graph runs over them); an encampment's
         // (`siege_barricade_wall_1_encampment`) are its palisade, on its line at their origin.
-        let key = sc.doc().get(e, "key").unwrap_or_default();
+        let key = sc.get(e, "key").unwrap_or_default();
         let lower = key.to_lowercase();
         if lower.contains("barricade") {
             if lower.contains("encampment") {
@@ -504,7 +504,7 @@ impl Tile {
             }
 
             let p = world_transform(sc, e).position;
-            input.captures.push(Capture { at: [p.x, p.z], major: sc.doc().get(e, "type").as_deref() == Some("CLT_MAJOR") });
+            input.captures.push(Capture { at: [p.x, p.z], major: sc.get(e, "type").as_deref() == Some("CLT_MAJOR") });
         }
 
         // The walls' towers' capture locations: made with them (wce_walls::towers), not elements until an export or a conversion.
@@ -588,7 +588,7 @@ impl Tile {
         sc.find_all("SiegeAINodeInstance")
             .into_iter()
             .filter(|&n| exported(sc, n))
-            .filter_map(|n| Some((n, sc.doc().get(n, "type").as_deref() == Some("SANT_WALL_AREA"), self.siege_node_rect(n)?)))
+            .filter_map(|n| Some((n, sc.get(n, "type").as_deref() == Some("SANT_WALL_AREA"), self.siege_node_rect(n)?)))
             .collect()
     }
 
@@ -606,7 +606,7 @@ impl Tile {
 
         let line = self.siege_polygon(edge, "Street").filter(|l| l.len() >= 2)?;
         let at = [line[0], line[line.len() - 1]];
-        let walls = matches!(sc.doc().get(edge, "type").as_deref(), Some("SAET_WALL" | "SAET_PALISADE"));
+        let walls = matches!(sc.get(edge, "type").as_deref(), Some("SAET_WALL" | "SAET_PALISADE"));
         let inside = |r: &[wce_foundation::math::Float3; 4], p: wce_foundation::math::Float3| {
             // In the quad when on the same side of its four edges (it is a rectangle, its points in order).
             let side =
@@ -643,7 +643,7 @@ impl Tile {
             let ty = sc.type_of(e);
             if self.is_polygon(e) && !wce_tile::splines::is_spline(ty) && !self.is_wall(e) {
                 // The polygon (or line) clipped to the tile's area: what is left of it there.
-                let closed = sc.doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+                let closed = sc.get(e, "polygon_closed").is_none_or(|v| v != "0");
                 let pts = self.polygon_world_points(e);
                 let inside = clip_to_rect(&pts, closed, w, h);
                 if inside.is_empty() {
@@ -688,7 +688,7 @@ impl Tile {
                         .into_iter()
                         .filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary")
                         .count();
-                    if sc.doc().get(e, "type").as_deref() == Some("SAET_STREET") && sides != 2 {
+                    if sc.get(e, "type").as_deref() == Some("SAET_STREET") && sides != 2 {
                         out.push((e, format!("Street Edge needs to have two boundary splines (it has {sides})")));
                     }
                 }
@@ -716,7 +716,7 @@ impl Tile {
         l.nodes.extend(sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| exported(sc, e)).filter_map(|e| node_of(sc, e)));
 
         for e in sc.find_all("SiegeAIEdgeInstance").into_iter().filter(|&e| exported(sc, e)) {
-            let kind = match sc.doc().get(e, "type").as_deref() {
+            let kind = match sc.get(e, "type").as_deref() {
                 Some("SAET_STREET") => wce_siege::EdgeKind::Street,
                 Some("SAET_AREA_CONNECTION") => wce_siege::EdgeKind::AreaConnection,
                 Some("SAET_PALISADE") => wce_siege::EdgeKind::Palisade,
@@ -731,7 +731,7 @@ impl Tile {
         for e in sc.find_all("AI_HINT_POLYGON_INSTANCE").into_iter().filter(|&e| exported(sc, e)) {
             let p = world_points(e);
             let two = || (p.len() >= 2).then(|| [p[0], p[p.len() - 1]]);
-            match sc.doc().get(e, "hint_type").as_deref() {
+            match sc.get(e, "hint_type").as_deref() {
                 Some("AIH_FORT_PERIMETER") => l.perimeter = p.clone(),
                 Some("AIH_FORT_APPROACH") => l.approaches.extend(two()),
                 Some("AIH_DEFAULT_DEPLOYMENT_LINE") => l.deployment_lines.extend(two()),
@@ -772,7 +772,7 @@ impl Tile {
             .filter(|&e| exported(sc, e))
             .map(|e| {
                 let d = wce_siege::Deployment { polygons: polys(sc, e).into_iter().map(|(t, p)| (zone(&t), p)).collect() };
-                (sc.doc().get(e, "alliance_id").unwrap_or_default(), d)
+                (sc.get(e, "alliance_id").unwrap_or_default(), d)
             })
             .collect()
     }
@@ -794,7 +794,7 @@ fn world_points(sc: &TedScene, e: usize) -> Vec<P> {
 /// A siege AI node as the generator reads it: its type, its Bounding Box (its first 4 points) and its Boundary. None without a Bounding
 /// Box of 4 points.
 fn node_of(sc: &TedScene, e: usize) -> Option<wce_siege::Node> {
-    let kind = match sc.doc().get(e, "type").as_deref() {
+    let kind = match sc.get(e, "type").as_deref() {
         Some("SANT_INTERSECTION") => wce_siege::NodeKind::Intersection,
         Some("SANT_ENTRY") => wce_siege::NodeKind::Entry,
         _ => wce_siege::NodeKind::Area,
@@ -817,7 +817,7 @@ fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
         match els[c].name.as_str() {
             "SIEGE_AI_POLYGON_INSTANCE" => siege.push((sc.name(c), world_points(sc, c))),
             "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => {
-                zones.push((sc.doc().get(c, "deployment_polygon_type").unwrap_or_default(), world_points(sc, c)))
+                zones.push((sc.get(c, "deployment_polygon_type").unwrap_or_default(), world_points(sc, c)))
             }
             _ => {}
         }
@@ -867,7 +867,7 @@ impl TileDocument {
             return Err("not a siege AI edge".to_owned());
         }
 
-        if sc.doc().get(edge, "type").is_some_and(|ty| ty != "SAET_STREET") {
+        if sc.get(edge, "type").is_some_and(|ty| ty != "SAET_STREET") {
             return Err("only a street edge has boundaries (an area connection, a wall or a palisade edge has none)".to_owned());
         }
 
@@ -1174,7 +1174,7 @@ impl TileDocument {
         let mut layers: BTreeMap<usize, (Vec<usize>, bool)> = BTreeMap::new();
         for e in 0..els.len() {
             let kind = els[e].name.as_str();
-            if kind == "point" || is_container(kind) || sc.doc().get(e, "position").is_none() || !sc.is_descendant(e, root) {
+            if kind == "point" || is_container(kind) || sc.get(e, "position").is_none() || !sc.is_descendant(e, root) {
                 continue;
             }
 

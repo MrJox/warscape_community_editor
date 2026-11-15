@@ -393,7 +393,7 @@ impl Tile {
     /// The model a VEGETATION_INSTANCE is drawn with: its key's, converted for the shown list's climate (the instance's own model when the
     /// converted key has none).
     pub(crate) fn vegetation_instance_model(&self, elem: usize) -> Option<String> {
-        let key = self.tscene().doc().get(elem, "key")?;
+        let key = self.tscene().get(elem, "key")?;
         let converted = self.converted_vegetation_key(&key);
         vegetation_model(self.files.as_deref(), &converted)
             .or_else(|| self.model_of(elem).filter(|m| m.ok).and_then(|m| m.pieces.first().cloned()))
@@ -486,7 +486,7 @@ impl Tile {
             return self.idx.key[elem].and_then(|k| self.models.get(&self.idx.keys[k as usize]));
         }
 
-        self.building_model(&self.tscene().doc().get(elem, "key").unwrap_or_default())
+        self.building_model(&self.tscene().get(elem, "key").unwrap_or_default())
     }
 
     /// What a click ray tests against.
@@ -565,7 +565,7 @@ impl Tile {
             return Placement::None;
         }
 
-        match self.tscene().doc().get(elem, "surface_mode").as_deref() {
+        match self.tscene().get(elem, "surface_mode").as_deref() {
             Some("MSM_LANDSCAPE") => Placement::Landscape,
             Some("MSM_FREEFORM") => Placement::Freeform,
             _ => Placement::None,
@@ -584,7 +584,7 @@ impl Tile {
 
     /// This element's own flags attribute (true when it has none).
     pub fn own_flag(&self, elem: usize, flag: &str) -> bool {
-        self.tscene().doc().get(elem, "flags").is_none_or(|f| f.contains(flag))
+        self.tscene().get(elem, "flags").is_none_or(|f| f.contains(flag))
     }
 
     /// Draggable (TEd's OIF_DRAGGABLE on the item itself): the gizmo and the grab move it. Off, it can be selected without the risk of
@@ -608,8 +608,7 @@ impl Tile {
     fn staged(&self, elem: usize) -> bool {
         let els = self.elements();
         std::iter::successors(Some(elem), |&e| els[e].parent).any(|e| {
-            els[e].name == "UserInstanceGroup"
-                && self.tscene().doc().get(e, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true")
+            els[e].name == "UserInstanceGroup" && self.tscene().get(e, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true")
         })
     }
 
@@ -631,7 +630,7 @@ impl Tile {
 
             if bit == 1
                 && let Some(mask) = self.display.game_layers
-                && let Some(t) = self.tscene().doc().get(q, "export_type")
+                && let Some(t) = self.tscene().get(q, "export_type")
                 && !in_game(&t, mask)
             {
                 return false;

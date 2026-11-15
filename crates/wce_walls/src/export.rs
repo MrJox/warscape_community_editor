@@ -117,7 +117,7 @@ pub fn lower_walls(
 
     let mut extents: HashMap<String, Option<(f64, f64)>> = HashMap::new();
     let mut extent_of = |k: &str| *extents.entry(k.to_owned()).or_insert_with(|| extent(files, k));
-    let keys = scene.find_all("BUILDING_INSTANCE").into_iter().map(|e| scene.doc().get(e, "key").unwrap_or_default()).collect::<Vec<_>>();
+    let keys = scene.find_all("BUILDING_INSTANCE").into_iter().map(|e| scene.get(e, "key").unwrap_or_default()).collect::<Vec<_>>();
     let known = keys.iter().map(|k| (k.clone(), extent_of(k))).collect::<HashMap<_, _>>();
     let anchors = scene::anchors(scene, &|k| known.get(k).copied().flatten());
     let radius = |k: &str| known.get(k).copied().flatten().map_or(4.0, |(a, b)| (b - a) / 2.0);

@@ -286,7 +286,7 @@ impl Tile {
 
     /// Whether a VFXInstance plays in the terrain look's season (`seasons`, all when missing).
     fn in_season(&self, elem: usize) -> bool {
-        let Some(text) = self.tscene().doc().get(elem, "seasons") else { return true };
+        let Some(text) = self.tscene().get(elem, "seasons") else { return true };
         let on = wce_tile::properties::parse_seasons(&text);
         match self.look.season.as_str() {
             "wi" => on[0],
@@ -711,14 +711,14 @@ impl Tile {
             let ted = pts.is_empty();
             for &c in els[e].children.iter().filter(|&&c| ted && els[c].name == "points") {
                 for &p in els[c].children.iter().filter(|&&p| els[p].name == "point") {
-                    let vec = |name: &str| sc.doc().get(p, name).and_then(|v| parse_vec3(&v, ""));
+                    let vec = |name: &str| sc.get(p, name).and_then(|v| parse_vec3(&v, ""));
                     let Some(pos) = vec("position") else { continue };
                     let world = |q: Double3| {
                         let p = w.position + w.rotation * q;
                         [p.x / across, p.y / vertical / u, p.z / across]
                     };
 
-                    let num = |n: &str, d: f64| sc.doc().get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
+                    let num = |n: &str, d: f64| sc.get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
                     let wp = world(pos);
                     pts.push(RiverPoint {
                         x: wp[0],
@@ -1291,10 +1291,10 @@ impl Tile {
 
         // A projected decal paints the ground (and anything else) inside its box; its key is the decal's model.
         if self.tscene().type_of(elem) == "ProjectedDecalInstance"
-            && let Some(model) = self.tscene().doc().get(elem, "key").filter(|k| !k.is_empty())
+            && let Some(model) = self.tscene().get(elem, "key").filter(|k| !k.is_empty())
         {
-            let tiled = self.tscene().doc().get(elem, "tiled").is_some_and(|v| v == "true");
-            let parallax = self.tscene().doc().get(elem, "parallax_scale").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+            let tiled = self.tscene().get(elem, "tiled").is_some_and(|v| v == "true");
+            let parallax = self.tscene().get(elem, "parallax_scale").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
             let decal = Decal { model: model.replace('\\', "/"), tiled, opacity: 1.0, parallax };
             let e = scene.add(layer, self.drawn_matrix(elem), Payload::Decal(decal), self.source(item_of(elem)));
             self.first_entity[elem] = e;
@@ -1364,7 +1364,7 @@ impl Tile {
     pub fn polygon_outline(&self, e: usize) -> (Vec<Float3>, bool) {
         let ty = self.tscene().type_of(e);
         let spline = wce_tile::splines::is_spline(ty);
-        let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+        let closed = !spline && self.tscene().get(e, "polygon_closed").is_none_or(|v| v != "0");
         // A building spline's curve is closed already when it is (it ends on its first point).
         let closed = closed && !self.is_building_spline(e);
         let points = if spline {
@@ -1394,8 +1394,7 @@ impl Tile {
             let ty = self.tscene().type_of(e);
             if self.is_polygon(e) {
                 let spline = wce_tile::splines::is_spline(ty);
-                let closed =
-                    !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0") && !self.is_building_spline(e);
+                let closed = !spline && self.tscene().get(e, "polygon_closed").is_none_or(|v| v != "0") && !self.is_building_spline(e);
                 let points = if spline {
                     self.spline_world_curve(e)
                 } else if self.is_road(e) {
@@ -1432,8 +1431,8 @@ impl Tile {
         }
 
         let els = sc.doc().elements();
-        let alliance = els[elem].parent.and_then(|w| els[w].parent).and_then(|g| sc.doc().get(g, "alliance_id")).unwrap_or_default();
-        let v = super::index::deployment_variant(&alliance, &sc.doc().get(elem, "deployment_polygon_type").unwrap_or_default());
+        let alliance = els[elem].parent.and_then(|w| els[w].parent).and_then(|g| sc.get(g, "alliance_id")).unwrap_or_default();
+        let v = super::index::deployment_variant(&alliance, &sc.get(elem, "deployment_polygon_type").unwrap_or_default());
         (super::index::deployment_colour(v), super::index::deployment_slots(v))
     }
 
@@ -1446,7 +1445,7 @@ impl Tile {
             return Some(vec![]);
         }
 
-        let kind = |e: usize| sc.doc().get(e, "deployment_polygon_type").unwrap_or_default();
+        let kind = |e: usize| sc.get(e, "deployment_polygon_type").unwrap_or_default();
         if kind(elem) != "DZPT_ADDITIVE" {
             return None;
         }
@@ -1468,7 +1467,7 @@ impl Tile {
         let mut o = Overlay { pickable: false, ..Default::default() };
         let ty = self.tscene().type_of(elem).to_owned();
         let spline = wce_tile::splines::is_spline(&ty);
-        let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0") && !self.is_building_spline(elem);
+        let closed = !spline && self.tscene().get(elem, "polygon_closed").is_none_or(|v| v != "0") && !self.is_building_spline(elem);
         let points = if spline {
             self.spline_world_curve(elem)
         } else if self.is_road(elem) {
@@ -1778,7 +1777,7 @@ impl Tile {
     /// diffuse alpha by floor(w) * 0.001 before the test. TEd files a building below 1 apart (render flag 0x2000), for the blended forward
     /// shaders (`ps30_alpha_blend_40` multiplies the alpha the same way); the renderer has no such pass yet, so opaque materials show no fade.
     fn opacity_w(&self, elem: usize) -> f32 {
-        opacity_w(self.tscene().doc().get(elem, "opacity").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0))
+        opacity_w(self.tscene().get(elem, "opacity").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0))
     }
 
     /// The entities of an element's model pieces (consecutive ids; empty when it has none on the scene).
@@ -1867,7 +1866,7 @@ impl Tile {
             return 0;
         }
 
-        self.tscene().doc().get(elem, "destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0)
+        self.tscene().get(elem, "destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0)
     }
 
     /// How many destruction levels piece `k` of a building has (its own files; the building's when not known).
@@ -2145,7 +2144,7 @@ impl Tile {
             return None;
         }
 
-        let v = t.tscene().doc().get(elem, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))?;
+        let v = t.tscene().get(elem, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))?;
         let pw = super::edits::parent_transform(t.tscene(), elem);
         let w = pw.position + pw.rotation * v;
         let u = t.unit();
@@ -2228,7 +2227,7 @@ impl Tile {
             return None;
         }
 
-        let r = self.tscene().doc().get(elem, "radius").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0).max(0.0);
+        let r = self.tscene().get(elem, "radius").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0).max(0.0);
         let p = self.world_position(elem);
         Some((Float3::new(p.x + r, p.y, p.z), r))
     }
@@ -2286,7 +2285,7 @@ impl Tile {
             if let Some(to) = self.shelter_target(e) {
                 let from = self.world_position(e);
                 let colour =
-                    |k: &str, d: [f32; 4]| self.tscene().doc().get(e, k).and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or(d);
+                    |k: &str, d: [f32; 4]| self.tscene().get(e, k).and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or(d);
                 let (c1, c2) = (colour("colour_1", [0.0, 1.0, 0.0, 0.8]), colour("colour_2", [1.0, 0.0, 0.0, 0.8]));
                 let landscape = self.placement(e) == super::Placement::Landscape;
                 let at = |f: f32| {
@@ -2414,7 +2413,7 @@ impl Tile {
     /// A spline's curve in the world (metres), sampled.
     pub fn spline_world_curve(&self, elem: usize) -> Vec<Float3> {
         let pts = wce_tile::splines::read(self.tscene(), elem);
-        let closed = self.tscene().doc().get(elem, "closed").is_some_and(|v| v == "1");
+        let closed = self.tscene().get(elem, "closed").is_some_and(|v| v == "1");
         self.local_to_world(elem, &wce_tile::splines::curve(&pts, closed, 16))
     }
 
@@ -2424,7 +2423,7 @@ impl Tile {
         let sc = self.tscene();
         if wce_tile::splines::has_handles(sc.type_of(elem)) {
             let pts = wce_tile::splines::read(sc, elem);
-            let closed = wce_tile::splines::is_spline(sc.type_of(elem)) && sc.doc().get(elem, "closed").is_some_and(|v| v == "1");
+            let closed = wce_tile::splines::is_spline(sc.type_of(elem)) && sc.get(elem, "closed").is_some_and(|v| v == "1");
             let n = pts.len();
             let count = if closed && n > 2 { n } else { n.saturating_sub(1) };
             return (0..count)
@@ -2439,7 +2438,7 @@ impl Tile {
         }
 
         let pts = self.polygon_world_points(elem);
-        let closed = sc.doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
+        let closed = sc.get(elem, "polygon_closed").is_none_or(|v| v != "0");
         let n = pts.len();
         let count = if closed && n > 2 { n } else { n.saturating_sub(1) };
         (0..count).map(|i| vec![pts[i], pts[(i + 1) % n]]).collect()

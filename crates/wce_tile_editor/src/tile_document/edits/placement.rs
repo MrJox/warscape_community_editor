@@ -16,7 +16,7 @@ impl TileDocument {
         let text = if mode == Placement::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" };
         let mut items = vec![];
         for e in t.instances_below(elems) {
-            if t.tscene().doc().get(e, "surface_mode").is_none() {
+            if t.tscene().get(e, "surface_mode").is_none() {
                 continue;
             }
 
@@ -38,7 +38,7 @@ impl TileDocument {
                 pos_old_text: None,
             };
             if cur != mode {
-                it.mode_old = t.tscene().doc().get(e, "surface_mode");
+                it.mode_old = t.tscene().get(e, "surface_mode");
                 it.mode_new = Some(text.to_owned());
             }
 
@@ -49,7 +49,7 @@ impl TileDocument {
                 let y = t.landscape_y(e, p.x, p.z);
                 if cur != mode || (y - file_y).abs() > 1e-5 {
                     it.pos_old = t.tscene().position(e);
-                    it.pos_old_text = t.tscene().doc().get(e, "position");
+                    it.pos_old_text = t.tscene().get(e, "position");
                     it.pos_new = Some(t.local_for_world_y(e, f64::from(y)));
                 }
             } else if cur == Placement::Landscape {
@@ -57,7 +57,7 @@ impl TileDocument {
                 let y = t.world_position(e).y;
                 if (y - file_y).abs() > 1e-5 {
                     it.pos_old = t.tscene().position(e);
-                    it.pos_old_text = t.tscene().doc().get(e, "position");
+                    it.pos_old_text = t.tscene().get(e, "position");
                     it.pos_new = Some(t.local_for_world_y(e, f64::from(y)));
                 }
             }
@@ -108,7 +108,7 @@ impl TileDocument {
                 pos_new: Some(t.local_for_world_y(e, f64::from(y))),
                 idx_old: code,
                 idx_new: code,
-                pos_old_text: t.tscene().doc().get(e, "position"),
+                pos_old_text: t.tscene().get(e, "position"),
             });
         }
 
@@ -155,7 +155,7 @@ impl TileDocument {
                 pos_new: Some(lp),
                 idx_old: code,
                 idx_new: code,
-                pos_old_text: t.tscene().doc().get(e, "position"),
+                pos_old_text: t.tscene().get(e, "position"),
             });
         }
 

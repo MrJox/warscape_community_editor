@@ -189,7 +189,7 @@ impl Tile {
     /// the world rotation; `None` when no end is near or `elem` is no fort piece.
     pub fn snap_piece(&self, elem: usize, at: Float3, reach: f32) -> Option<WorldTransform> {
         let sc = self.tscene();
-        let key = sc.doc().get(elem, "key")?;
+        let key = sc.get(elem, "key")?;
         if !key.to_lowercase().contains("_fort_") {
             return None;
         }
@@ -202,7 +202,7 @@ impl Tile {
         let mut best: Option<(f64, WorldTransform)> = None;
         for other in sc.find_all("BUILDING_INSTANCE").into_iter().filter(|&o| o != elem && self.shown(o)) {
             let Some(other_key) =
-                sc.doc().get(other, "key").filter(|k| k.to_lowercase().contains("_fort_") && !k.to_lowercase().starts_with("wce_"))
+                sc.get(other, "key").filter(|k| k.to_lowercase().contains("_fort_") && !k.to_lowercase().starts_with("wce_"))
             else {
                 continue;
             };
@@ -440,7 +440,8 @@ impl Tile {
 
     /// Every wall's preview is made again (the layer was cleared, or the ground changed).
     pub(crate) fn walls_changed(&mut self) {
-        let walls = (0..self.tscene().doc().elements().len()).filter(|&e| self.is_wall(e)).collect::<Vec<_>>();
+        let walls =
+            (0..self.tscene().doc().elements().len()).filter(|&e| self.is_wall(e) && self.tscene().in_variation(e)).collect::<Vec<_>>();
         let now = Instant::now();
         for e in walls {
             self.wall_preview.pending.insert(e, now);
