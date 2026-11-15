@@ -472,6 +472,16 @@ Steps:
   the layers so far give it: a block where it differs goes into a layer of every variation whose map has that block the same (so
   `small`'s changes are one layer of `small, medium`, `medium`'s own one of `medium` over it), instead of one "Variation base" per
   variation. The user does the same by hand: a terrain layer of `small, medium` under one of `medium`.
+  Done (2026-11-15): `Stack::combine_by` makes the patches ("Variation patch: <variations>", replacing, per 64 x 64 block), heights
+  compared as each variation stores them (`TerrainLayers::combine_in` with the rows' ranges: the same 16-bit values in its range);
+  Combine lists the reference first. The Terrain layers section: a variations button on every layer (its checkboxes in a popup),
+  *New layer for...* (the variations ticked), a layer in no shown variation dimmed, the warning when the working layer is in none;
+  the minimap follows the variations shown (`Tile::view_version`). `gui_close_header` for captures of a panel's lower sections.
+  Checked: kit tiles chain (`orc_city_a`: a height patch of `small, medium` and one of each's own; `western_city_b` alike for heights
+  and blend); every variation still comes back byte for byte (the port: all files of the three original projects). The port's
+  `medium` does not chain its heights: over 60 % of the map its 16-bit values are `small`'s but stored with another range (min
+  -20.66 against -20, scale 134.49 against 134.27), so it stands 0.6 m lower there; Combine keeps it as it is (one patch of
+  `medium` over most of the map). Shots: the Terrain layers section with everything shown and with `minor` alone.
 - **R3. The tools.** *Split for a variation* as a submenu; the roads, walls, vegetation and siege of the display variation; Launch
   in game's choice; the Tile panel's chooser.
 - **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the
