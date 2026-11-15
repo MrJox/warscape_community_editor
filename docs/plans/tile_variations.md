@@ -9,7 +9,8 @@ catchment layers.
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
 to 9 (see "Steps" and "Results" below): done 2026-11-15. Not written: the Gates' scripted run (`scripts/tile_variations.txt`);
 its parts were checked one by one (each step's "Checked"). **Revised 2026-11-15** after the user tried it: no viewed variation, the
-user works on the tile itself ("Revision 1: one tile" below, decisions 7 to 10); steps R1 to R4 to do.
+user works on the tile itself ("Revision 1: one tile" below, decisions 7 to 10); steps R1 to R4 done 2026-11-15, to be tested by the
+user.
 
 ## What the games and kits do
 
@@ -507,6 +508,12 @@ Steps:
   launch dry run of `small` exports `small`.
 - **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the
   Scene panel, the Inspector, the Terrain layers section and the Combine dialog, looked at before it is called done.
+  Done (2026-11-15): docs/editor.md's Tile variations section rewritten (one tile, the Show filter, patches on patches, Align heights,
+  the tools, what is made per variation, Launch in game's choice), the Terrain layers and Tile menu notes. Shots looked at: the Scene
+  panel with its Show checkboxes, Variations column and header (everything shown; `minor` alone), the Inspector's variation
+  checkboxes of a layer (the raw `wce_variations` no longer listed under Other attributes), the Terrain layers section (variations
+  buttons, New layer for..., dimmed layers with `minor` alone), the Combine dialog (`tile_combine_dialog [tick <list>]`: sources,
+  shares, reference, Align heights). Not seen: the context menu's submenus and Launch in game's (a script does not open menus).
 
 ## Decisions (the user, 2026-11-15)
 

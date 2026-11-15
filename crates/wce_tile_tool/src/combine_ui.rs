@@ -53,6 +53,9 @@ pub(crate) struct CombineUi {
 
     /// *Align heights*: a level whose height map is another's stored with another range takes that one's heights.
     pub align: bool,
+
+    /// Variations a script asked ticked once they are read (`tile_combine_dialog tick ...`).
+    pub tick_when_read: Vec<String>,
     job: Option<Receiver<Msg>>,
     pub busy: String,
     pub error: String,
@@ -170,6 +173,7 @@ impl TileTool {
             stats_rows: vec![],
             view,
             align: false,
+            tick_when_read: vec![],
             job: Some(rx),
             busy: "Reading the variations and what they share...".to_owned(),
             error: String::new(),
@@ -305,6 +309,10 @@ impl TileTool {
                     }
 
                     ui.reference = ui.stats_rows.get(stats.reference()).copied().unwrap_or(0);
+                    for row in ui.rows.iter_mut().filter(|r| r.dir.is_some()) {
+                        row.ticked |= ui.tick_when_read.iter().any(|v| v.eq_ignore_ascii_case(&row.variation));
+                    }
+
                     ui.stats = Some(stats);
                 }
 

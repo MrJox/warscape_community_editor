@@ -81,7 +81,7 @@ per layer:
     text owner              empty: the user's; "road:<id>[@<variation>]#<signature>", "wall:<key>[@<variation>]#<signature>": made by a feature, made again when what it is made from changes
     text depends            (version 3+) the scene layer it exports with (its wce_layer_id); empty: always
     text variations         (version 4+) the combined project's variations it belongs to, comma separated; empty: all
-    u8   replace            (version 4+) 1: where it holds a block, it is what shows (a "Variation base" layer)
+    u8   replace            (version 4+) 1: where it holds a block, it is what shows (a "Variation patch" layer)
     u8   visible
     f32  opacity
     blocks                  its samples
@@ -92,6 +92,8 @@ type's samples: height `f32` metres (the base the ground, a layer what it adds t
 `u16` (TEd's channels); ground type 4 x `u8` (RGBA). A block a layer lacks is nothing there.
 
 In a combined project a layer belongs to its own variations, narrowed by its `depends` layer's (a layer exporting with a scene layer some
-variations lack is not in theirs). The merge keeps the reference variation's base; each other group of variations whose base differs gets a
-replacing layer "Variation base: small, medium" right above it, holding its base whole in each block where it differs. A procedural road's
-and a kit wall's layers are made per variation, over that variation's ground (their owners carry `@<variation>`).
+variations lack is not in theirs). The merge keeps the reference variation's base; the others' become **patches that build on each other**,
+replacing layers right above it ("Variation patch: small, medium"): each variation in turn, against what the patches so far give it, a
+block it differs in goes into a layer of it and of every later variation whose base has that block the same (heights compared as each
+stores them). A procedural road's and a kit wall's layers are made per variation, over that variation's ground (their owners carry
+`@<variation>`); a prefab reference's ground layer has the reference's variations.
