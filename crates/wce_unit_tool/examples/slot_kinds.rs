@@ -1,7 +1,9 @@
 //! What the game's definitions put in their slots: per slot name, the folders of the models and definitions its alternatives name. A report
 //! for the Unit tool's pickers (what a slot expects).
 //!
-//!   cargo run --release -p wce_unit_tool --example slot_kinds      (the game folder: the settings or WCE_GAME; WCE_MODS: mod packs)
+//!   cargo run --release -p wce_unit_tool --example slot_kinds [names]      (the game folder: the settings or WCE_GAME; WCE_MODS: mod packs)
+//!
+//! `names`: every slot name, with how many slots have it and in how many files, instead of the folders.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,6 +14,17 @@ use wce_vfs::{Config, GameProfile, Vfs, normalize};
 fn folder(path: &str) -> String {
     let p = normalize(path);
     p.rsplit_once('/').map_or(p.clone(), |(f, _)| f.to_owned())
+}
+
+fn names(mesh: &VariantMesh, out: &mut BTreeMap<String, usize>) {
+    for slot in &mesh.slots {
+        *out.entry(slot.name.clone()).or_default() += 1;
+        for a in &slot.alternatives {
+            if let Alternative::Mesh(m) = a {
+                names(m, out);
+            }
+        }
+    }
 }
 
 fn walk(mesh: &VariantMesh, out: &mut BTreeMap<String, BTreeMap<String, usize>>) {
@@ -38,6 +51,28 @@ fn main() {
     config.use_mods = std::env::var("WCE_MODS").is_ok();
     config.mod_packs = std::env::var("WCE_MODS").ok().map(|m| m.split(',').map(str::to_owned).collect());
     let vfs = Vfs::mount(&config).expect("mounts");
+    if std::env::args().nth(1).as_deref() == Some("names") {
+        // Each name as written (case kept), its slots and files.
+        let (mut slots, mut files) = (BTreeMap::<String, usize>::new(), BTreeMap::<String, usize>::new());
+        for p in vfs.list("variantmeshes/", ".variantmeshdefinition") {
+            if let Some(f) = vfs.read(p).ok().and_then(|b| VariantMeshFile::parse(b).ok()) {
+                let mut here = BTreeMap::new();
+                names(&f.root, &mut here);
+                for (n, k) in here {
+                    *slots.entry(n.clone()).or_default() += k;
+                    *files.entry(n).or_default() += 1;
+                }
+            }
+        }
+
+        println!("{} names", slots.len());
+        for (n, k) in &slots {
+            println!("{n}\t{k}\t{}", files[n]);
+        }
+
+        return;
+    }
+
     let mut out = BTreeMap::new();
     for p in vfs.list("variantmeshes/", ".variantmeshdefinition") {
         if let Some(f) = vfs.read(p).ok().and_then(|b| VariantMeshFile::parse(b).ok()) {
