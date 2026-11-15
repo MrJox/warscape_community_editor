@@ -76,7 +76,12 @@ impl TileDocument {
         // The rows of TEd's Property Editor, in its order.
         ins.section("Properties");
         // The reference's key is the prefab row above.
-        let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR, wce_tile::road_pieces::PART_ROLE_ATTR];
+        let mut shown = vec![
+            "name",
+            wce_tile::project_files::PREFAB_ATTR,
+            wce_tile::road_pieces::PART_ROLE_ATTR,
+            wce_tile::road_pieces::PIECE_WEIGHT_ATTR,
+        ];
 
         // A reference's ground has its own rows, above.
         shown.extend([
@@ -173,7 +178,28 @@ impl TileDocument {
         use wce_tile::road_pieces::{PART_ROLE_ATTR, PartRole};
         let t = self.tile();
         let sc = t.tscene();
-        let Some(stage) = self.stage_group().filter(|&g| g != e && sc.type_of(e) == "UserInstanceGroup") else { return };
+        let Some(stage) = self.stage_group().filter(|_| sc.type_of(e) == "UserInstanceGroup") else { return };
+
+        // The piece itself: how often it is picked against the other variants of its piece.
+        if stage == e {
+            use wce_tile::road_pieces::PIECE_WEIGHT_ATTR;
+            if !sc.name(e).starts_with("road_") {
+                return;
+            }
+
+            let before = sc.get(e, PIECE_WEIGHT_ATTR).and_then(|w| w.trim().parse::<f32>().ok()).unwrap_or(1.0);
+            let mut w = before;
+            ins.hint(
+                "How often this piece is laid against its other variants (straight, straight_2, ...): 2 is twice as often as 1, 0 never.",
+            );
+            if ins.edit_float("road_weight", "road weight", &mut w, 0.05, 0.0, 20.0) && (w - before).abs() > 1e-6 {
+                let text = if (w - 1.0).abs() < 1e-6 { String::new() } else { wce_tile::ted_scene::format_number(f64::from(w)) };
+                self.set_attribute(e, PIECE_WEIGHT_ATTR, &text);
+            }
+
+            return;
+        }
+
         let els = sc.doc().elements();
         if !sc.name(stage).starts_with("road_") || !std::iter::successors(els[e].parent, |&p| els[p].parent).any(|p| p == stage) {
             return;

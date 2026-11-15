@@ -15,10 +15,20 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, PartRole, UNIT, VARIANTS, VERGE, WIDTH, base_guides};
+use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, PartRole, UNIT, VERGE, WIDTH, base_guides};
 
 /// The road type's folder and name.
 pub const TYPE: &str = "dirt";
+
+/// Dirt's variants of its pieces (`road_pieces::varies`): straights with the kit's banks, patches, puddles and erosion.
+pub const VARIANTS: [&str; 4] = ["straight_2", "straight_3", "straight_4", "straight_5"];
+
+/// How often each dirt piece is picked against the others of its piece (`road_pieces::PIECE_WEIGHT_ATTR`): the straights with a bank
+/// three times as often as the rest (user 2026-11-08: more of them).
+#[must_use]
+pub fn weight(piece: &str) -> f64 {
+    if matches!(piece, "straight_2" | "straight_3" | "straight_4") { 3.0 } else { 1.0 }
+}
 
 /// The kit's decals the pieces are made of (`rigidmodels\decals\battle\<name>.rigid_model_v2`).
 pub const DECALS: [&str; 9] = [
@@ -59,7 +69,7 @@ pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
 /// Whether every dirt piece is in a prefab folder as this generation makes it, or as the user made it.
 #[must_use]
 pub fn all_written(prefab_root: &Path) -> bool {
-    !road_pieces::generated_stale(prefab_root, TYPE, &pieces())
+    !road_pieces::generated_stale_weighted(prefab_root, TYPE, &pieces(), &weight)
 }
 
 /// The kit's fence the dirt road's fence piece is (`lowfence_3`, about 5 m long along its x: the kit's road prefabs space them so).
@@ -205,7 +215,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             }
         }
 
-        // The straight's variants (`road_pieces::VARIANTS`), the kit's other things along its roads in each: its banks of ground on one side,
+        // The straight's variants ([`VARIANTS`]), the kit's other things along its roads in each: its banks of ground on one side,
         // the other or both, its worn patch (`path_04`), a puddle, erosion beside the road, rocks. Laid one or another along a road.
         "straight_2" => {
             out.extend(ruts(-s, s));
@@ -363,7 +373,7 @@ pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
     PIECES
         .iter()
         .copied()
-        .chain(VARIANTS.iter().map(|v| v.0))
+        .chain(VARIANTS.iter().copied())
         .map(|p| {
             let mut children = base_guides(p);
             let parts = parts(p);
@@ -385,7 +395,7 @@ pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
 ///
 /// A file can't be written.
 pub fn write(prefab_root: &Path) -> Result<Vec<PathBuf>, String> {
-    road_pieces::write_generated(prefab_root, TYPE, &pieces())
+    road_pieces::write_generated_weighted(prefab_root, TYPE, &pieces(), &weight)
 }
 
 #[cfg(test)]
@@ -436,7 +446,7 @@ mod tests {
 
     #[test]
     fn every_dirt_piece_reads_and_its_parts_fit() {
-        for piece in PIECES.into_iter().chain(VARIANTS.iter().map(|v| v.0)).filter(|&p| p != "fence") {
+        for piece in PIECES.into_iter().chain(VARIANTS.iter().copied()).filter(|&p| p != "fence") {
             let mut children = base_guides(piece);
             children.extend(parts(piece));
             let p = read(&group_text(&key(TYPE, piece), &children)).unwrap();

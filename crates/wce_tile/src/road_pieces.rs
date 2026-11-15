@@ -52,16 +52,28 @@ const PORT_SNAP: f64 = 0.5;
 /// `fence` is not laid on the road but beside it, along a line just past its edge (`road_layout::fence_runs`): a road that asks for fences.
 pub const PIECES: [&str; 8] = ["straight", "curve", "corner", "t_junction", "x_junction", "end", "ford", "fence"];
 
-/// Variants a road type may have of a piece besides the piece itself (variant, piece): each laid in the piece's place, one or another by
-/// the road's seed (user 2026-11-08: the same straight every 8 m was monotonous). A variant is read as the piece it varies (its guides);
-/// the base has none, and a type without one lays the piece alone.
-pub const VARIANTS: [(&str, &str); 4] =
-    [("straight_2", "straight"), ("straight_3", "straight"), ("straight_4", "straight"), ("straight_5", "straight")];
+/// Variants a road type may have of any of its pieces besides the piece itself: `<piece>_2` to `<piece>_<MAX_VARIANT>` (`straight_2`,
+/// `fence_3`, `t_junction_2`...), each laid in the piece's place, one or another by the road's seed and their weights (user 2026-11-08:
+/// the same straight every 8 m was monotonous; 2026-11-15: every piece). A variant is read as the piece it varies (its guides); the base
+/// has none, and a type without one lays the piece alone.
+pub const MAX_VARIANT: u32 = 9;
+
+/// How often a piece or variant is picked against the others of its piece: its group's `road_weight` (default 1).
+pub const PIECE_WEIGHT_ATTR: &str = "road_weight";
+
+/// A variant's name.
+#[must_use]
+pub fn variant(piece: &str, n: u32) -> String {
+    format!("{piece}_{n}")
+}
 
 /// The piece a variant varies.
 #[must_use]
 pub fn varies(name: &str) -> Option<&'static str> {
-    VARIANTS.iter().find(|v| v.0 == name).map(|v| v.1)
+    // `t_junction` splits into `t` and `junction`: no number, no variant.
+    let (piece, n) = name.rsplit_once('_')?;
+    n.parse::<u32>().ok().filter(|n| (2..=MAX_VARIANT).contains(n))?;
+    PIECES.iter().copied().find(|&p| p == piece)
 }
 
 /// A prefab's key for a road type's piece: keys are one list across every folder, so the type is in it.
@@ -249,6 +261,9 @@ pub struct Piece {
 
     /// What did not read as it should: a building on the road, a part far from every arm.
     pub notes: Vec<String>,
+
+    /// How often it is picked against the other variants of its piece ([`PIECE_WEIGHT_ATTR`]).
+    pub weight: f64,
 }
 
 /// The instances of a piece that are laid with it.
@@ -480,7 +495,13 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
         });
     }
 
-    Ok(Piece { arms, ports, width, verge, parts, notes })
+    let weight = scene
+        .doc()
+        .get(root, PIECE_WEIGHT_ATTR)
+        .and_then(|w| w.trim().parse::<f64>().ok())
+        .filter(|w| w.is_finite())
+        .map_or(1.0, |w| w.max(0.0));
+    Ok(Piece { arms, ports, width, verge, parts, notes, weight })
 }
 
 /// A guide's text, its points in the piece's frame (metres).
@@ -676,18 +697,30 @@ const UNMARKED_GENERATIONS: [&str; 13] = [
 /// Whether a generated piece (`children`, its contents) is to be written at `path`: it is missing, or it is an older generation that
 /// nobody edited since (its contents still hash to its mark, or, written before the mark, to [`UNMARKED_GENERATIONS`]). A piece without
 /// the mark otherwise, or edited, is the user's.
-fn to_write(path: &Path, key: &str, children: &[Vec<u8>]) -> Option<Vec<u8>> {
+fn to_write(path: &Path, key: &str, children: &[Vec<u8>], weight: f64) -> Option<Vec<u8>> {
+    // The mark covers the weight too (when it is not 1, as the pieces before weights were written): a weight changed by hand is an edit.
+    let marked_hash = |contents: &[u8], w: f64| {
+        if (w - 1.0).abs() < 1e-12 {
+            hash(contents)
+        } else {
+            let mut v = contents.to_vec();
+            v.extend_from_slice(format!("{PIECE_WEIGHT_ATTR}={}", crate::ted_scene::format_number(w)).as_bytes());
+            hash(&v)
+        }
+    };
+
     let fresh = contents_of(&group_text(key, children))?;
     if path.exists() {
         let on_disk = crate::prefabs::load(path).ok()?;
         let scene = TedScene::parse_any(on_disk.group_text).ok()?;
-        let now = hash(&on_disk.children_text);
+        let disk_weight = scene.doc().get(0, PIECE_WEIGHT_ATTR).and_then(|w| w.trim().parse::<f64>().ok()).unwrap_or(1.0);
+        let now = marked_hash(&on_disk.children_text, disk_weight);
         let unedited = match scene.doc().get(0, GENERATED_ATTR) {
             Some(mark) => mark == now,
             None => UNMARKED_GENERATIONS.contains(&now.as_str()),
         };
 
-        if !unedited || on_disk.children_text == fresh {
+        if !unedited || (on_disk.children_text == fresh && (disk_weight - weight).abs() < 1e-12) {
             return None;
         }
     }
@@ -695,7 +728,11 @@ fn to_write(path: &Path, key: &str, children: &[Vec<u8>]) -> Option<Vec<u8>> {
     let text = group_text(key, children);
     let at = text.iter().position(|&c| c == b' ')?;
     let mut marked = text[..at].to_vec();
-    marked.extend_from_slice(format!(" {GENERATED_ATTR}=\"{}\"", hash(&fresh)).as_bytes());
+    marked.extend_from_slice(format!(" {GENERATED_ATTR}=\"{}\"", marked_hash(&fresh, weight)).as_bytes());
+    if (weight - 1.0).abs() >= 1e-12 {
+        marked.extend_from_slice(format!(" {PIECE_WEIGHT_ATTR}=\"{}\"", crate::ted_scene::format_number(weight)).as_bytes());
+    }
+
     marked.extend_from_slice(&text[at..]);
     Some(marked)
 }
@@ -707,12 +744,26 @@ fn to_write(path: &Path, key: &str, children: &[Vec<u8>]) -> Option<Vec<u8>> {
 ///
 /// A file can't be written.
 pub fn write_generated(prefab_root: &Path, road_type: &str, pieces: &[(&str, Vec<Vec<u8>>)]) -> Result<Vec<PathBuf>, String> {
+    write_generated_weighted(prefab_root, road_type, pieces, &|_| 1.0)
+}
+
+/// [`write_generated`], each piece with its weight ([`PIECE_WEIGHT_ATTR`]).
+///
+/// # Errors
+///
+/// A file can't be written.
+pub fn write_generated_weighted(
+    prefab_root: &Path,
+    road_type: &str,
+    pieces: &[(&str, Vec<Vec<u8>>)],
+    weight: &dyn Fn(&str) -> f64,
+) -> Result<Vec<PathBuf>, String> {
     let dir = prefab_root.join(FOLDER).join(road_type);
     let mut written = vec![];
     for (piece, children) in pieces {
         let key = key(road_type, piece);
         let path = dir.join(format!("{key}.wce"));
-        if let Some(text) = to_write(&path, &key, children) {
+        if let Some(text) = to_write(&path, &key, children, weight(piece)) {
             crate::prefabs::write(&path, &text, None)?;
             written.push(path);
         }
@@ -724,10 +775,21 @@ pub fn write_generated(prefab_root: &Path, road_type: &str, pieces: &[(&str, Vec
 /// Whether [`write_generated`] would write any of these pieces.
 #[must_use]
 pub fn generated_stale(prefab_root: &Path, road_type: &str, pieces: &[(&str, Vec<Vec<u8>>)]) -> bool {
+    generated_stale_weighted(prefab_root, road_type, pieces, &|_| 1.0)
+}
+
+/// [`generated_stale`] with each piece's weight.
+#[must_use]
+pub fn generated_stale_weighted(
+    prefab_root: &Path,
+    road_type: &str,
+    pieces: &[(&str, Vec<Vec<u8>>)],
+    weight: &dyn Fn(&str) -> f64,
+) -> bool {
     let dir = prefab_root.join(FOLDER).join(road_type);
     pieces.iter().any(|(piece, children)| {
         let key = key(road_type, piece);
-        to_write(&dir.join(format!("{key}.wce")), &key, children).is_some()
+        to_write(&dir.join(format!("{key}.wce")), &key, children, weight(piece)).is_some()
     })
 }
 
@@ -753,6 +815,55 @@ mod tests {
 
     fn base(piece: &str) -> Piece {
         read(&group_text(&key(BASE, piece), &base_guides(piece))).unwrap()
+    }
+
+    #[test]
+    fn every_piece_may_have_variants_and_weights() {
+        for p in PIECES {
+            assert_eq!(varies(p), None, "{p} is no variant");
+            assert_eq!(varies(&variant(p, 2)), Some(p));
+            assert_eq!(varies(&variant(p, MAX_VARIANT)), Some(p));
+            assert_eq!(varies(&variant(p, MAX_VARIANT + 1)), None);
+            assert_eq!(varies(&format!("{p}_1")), None, "the piece itself is not its _1");
+        }
+
+        assert_eq!(varies("t_junction"), None);
+        assert_eq!(varies("t_junction_3"), Some("t_junction"));
+        assert_eq!(varies("bridge_2"), None, "not a piece");
+
+        // A variant reads as its piece, its weight from its group.
+        assert!(near(base("straight").weight, 1.0));
+        let text = String::from_utf8(group_text(&key(BASE, "curve_2"), &base_guides("curve_2"))).unwrap();
+        let weighted = text.replacen(" position=", &format!(" {PIECE_WEIGHT_ATTR}=\"2.5\" position="), 1);
+        let p = read(weighted.as_bytes()).unwrap();
+        assert!(near(p.weight, 2.5));
+        assert_eq!(p.arms.len(), base("curve").arms.len());
+    }
+
+    #[test]
+    fn a_generated_weight_is_written_and_a_hand_changed_one_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let pieces = vec![("straight_2", base_guides("straight_2"))];
+        let w3 = |_: &str| 3.0;
+        assert_eq!(write_generated_weighted(dir.path(), "t", &pieces, &w3).unwrap().len(), 1);
+        let path = dir.path().join(FOLDER).join("t").join(format!("{}.wce", key("t", "straight_2")));
+        let read_weight = || read(&crate::prefabs::load(&path).unwrap().group_text).unwrap().weight;
+        assert!(near(read_weight(), 3.0));
+        assert!(!generated_stale_weighted(dir.path(), "t", &pieces, &w3), "written: up to date");
+
+        // A newer generation with another weight replaces it while nobody edited it.
+        let w2 = |_: &str| 2.0;
+        assert!(generated_stale_weighted(dir.path(), "t", &pieces, &w2));
+        write_generated_weighted(dir.path(), "t", &pieces, &w2).unwrap();
+        assert!(near(read_weight(), 2.0));
+
+        // Edited by hand (the weight alone): the user's, kept.
+        let text =
+            std::fs::read_to_string(&path).unwrap().replace(&format!("{PIECE_WEIGHT_ATTR}=\"2\""), &format!("{PIECE_WEIGHT_ATTR}=\"7\""));
+        std::fs::write(&path, text).unwrap();
+        assert!(near(read_weight(), 7.0));
+        assert!(write_generated_weighted(dir.path(), "t", &pieces, &w3).unwrap().is_empty(), "a weight changed by hand is kept");
+        assert!(near(read_weight(), 7.0));
     }
 
     fn near(a: f64, b: f64) -> bool {

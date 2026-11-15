@@ -12,7 +12,7 @@ use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit_dressed, junctions, layout, snap_ends};
-use wce_tile::road_pieces::{BASE, PIECES, Piece, VARIANTS, key, read};
+use wce_tile::road_pieces::{BASE, MAX_VARIANT, PIECES, Piece, key, read, variant};
 use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_handled, sharp_points};
 use wce_tile::ted_scene::TedScene;
 
@@ -79,9 +79,36 @@ fn parse_owner(owner: &str) -> Option<Owner> {
     Some(Owner { id: id.parse().ok()?, variation, signature: u64::from_str_radix(signature, 16).ok()? })
 }
 
-/// The piece laid for `laid[k]`: it or one of its variants (`road_pieces::VARIANTS`) the road's type has, by the road's seed. A variant
-/// with buildings (a bank 18.6 m long) only between pieces running on along the road (straights, curves), not over a junction, a corner
-/// or an end, nor a bridge or a ford next to it.
+/// One of `options` by their weights (`Piece::weight`), from a hash: the first when they weigh nothing.
+fn weighted<'a, T>(options: &[&'a T], weight: impl Fn(&T) -> f64, h: u64) -> Option<&'a T> {
+    let total = options.iter().map(|o| weight(o).max(0.0)).sum::<f64>();
+    if total <= 0.0 {
+        return options.first().copied();
+    }
+
+    let mut r = (h >> 11) as f64 / (1u64 << 53) as f64 * total;
+    for o in options {
+        r -= weight(o).max(0.0);
+        if r < 0.0 {
+            return Some(o);
+        }
+    }
+
+    options.last().copied()
+}
+
+/// A hash of a road's seed, its id and a number (a piece's or a fence's place), mixed.
+fn road_hash(seed: u32, id: u32, n: u64) -> u64 {
+    let mut h = u64::from(seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(id).rotate_left(23) ^ n.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h ^= h >> 31;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 29;
+    h
+}
+
+/// The piece laid for `laid[k]`: it or one of its variants (`road_pieces::varies`) the road's type has, by their weights and the road's
+/// seed. A straight's or curve's variant with buildings (a bank 18.6 m long) only between pieces running on along the road (straights,
+/// curves), not over a junction, a corner or an end, nor a bridge or a ford next to it.
 fn pick<'a>(
     laid: &[wce_tile::road_layout::Laid],
     k: usize,
@@ -102,20 +129,14 @@ fn pick<'a>(
         })
     };
     let between = span(l).is_some_and(|(a, b)| runs_on(k.checked_sub(1), a) && runs_on(Some(k + 1), b));
-    // Those with buildings (the banks) three times as often as the rest (user 2026-11-08: more of them).
-    let options = std::iter::once(own)
-        .chain(pieces.iter().filter(|p| wce_tile::road_pieces::varies(p.0) == Some(l.piece)))
-        .filter(|p| between || p.1.parts.iter().all(|q| !q.solid))
-        .flat_map(|p| std::iter::repeat_n(p, if p.1.parts.iter().any(|q| q.solid) { 3 } else { 1 }))
-        .collect::<Vec<_>>();
+    let along = matches!(l.piece, "straight" | "curve");
+    let options =
+        pieces.iter().filter(|p| p.0 == l.piece).filter(|p| !along || between || p.1.parts.iter().all(|q| !q.solid)).collect::<Vec<_>>();
+    if options.is_empty() {
+        return Some(own);
+    }
 
-    let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ u64::from(road.id).rotate_left(23)
-        ^ (k as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    h ^= h >> 31;
-    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 29;
-    Some(options[(h % options.len() as u64) as usize])
+    weighted(&options, |p| p.1.weight, road_hash(road.settings.seed, road.id, k as u64))
 }
 
 /// The roads in the order they are made: a road that ends on another after it (each is laid on the ground with the earlier ones on it, and
@@ -788,11 +809,12 @@ impl Tile {
             return vec![];
         }
 
-        // The type's variants of its pieces, those it has (the base has none).
-        let variants = VARIANTS
+        // The type's variants of its pieces, those it has (the base has none), each under the piece it varies.
+        let variants = PIECES
             .iter()
-            .filter_map(|&(name, _)| {
-                let k = key(road_type, name);
+            .flat_map(|&name| (2..=MAX_VARIANT).map(move |n| (name, variant(name, n))))
+            .filter_map(|(name, v)| {
+                let k = key(road_type, &v);
                 lib.get(&k)?;
                 let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
                 let piece =
@@ -1323,13 +1345,19 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         vec![("destruction_level".to_owned(), level.to_string())]
                     };
 
+                    // This fence: the fence piece or one of its variants, by their weights (laid at the piece's length: a variant
+                    // keeps it).
+                    let fence_options = pieces.iter().filter(|q| q.0 == "fence").collect::<Vec<_>>();
+                    let (fp, fkey, fchildren) =
+                        weighted(&fence_options, |q| q.1.weight, road_hash(road.settings.seed, road.id, n ^ 0xFE4C_E000))
+                            .map_or((p, key, children), |q| (&q.1, &q.2, &q.3));
                     let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::FENCE_TILT), attrs: Some(&damage) };
                     match wce_tile::road_layout::fit_dressed(
-                        p,
-                        children,
-                        key,
+                        fp,
+                        fchildren,
+                        fkey,
                         l,
-                        &Site { line: fence_line, width: p.width, unit, ground: &terrain },
+                        &Site { line: fence_line, width: fp.width, unit, ground: &terrain },
                         &dress,
                     ) {
                         Ok(f) => items.push(RoadItem {
@@ -1340,7 +1368,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                             export: None,
                             building: None,
                         }),
-                        Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
+                        Err(why) => wce_foundation::log::warn(format!("road {}: {fkey}: {why}", road.id)),
                     }
                 }
             }

@@ -587,7 +587,7 @@ The roads were too static and alike. Decided (grilled 2026-11-15; built on branc
 | Phase | Work |
 |---|---|
 | V1 | Role layers: `road_role` groups, the reader, the generated pieces rewritten with them, the Prefab tool's Inspector row: done (2026-11-15; `road_pieces::PartRole`, `role_group`; dirt's pieces grouped, every part's anchor and place unchanged: `the_role_groups_change_no_parts_anchor_or_place`) |
-| V2 | Variants and weights for every piece |
+| V2 | Variants and weights for every piece: done (2026-11-15) for the prefab pieces: `<piece>_2` to `_9` of any piece (`road_pieces::varies`, `MAX_VARIANT`), `road_weight` on a piece's group (default 1; the Prefab tool's Inspector row on the piece), picked by weight and the road's seed (`roads::weighted`); fences pick theirs per fence; dirt's banked straights weigh 3 (in place of the hard-coded three times). A weight is in the generation mark, so one changed by hand is kept. **Bridges**: not yet; they are made from the kit's bridge buildings, and only `bridge_wood_2` makes one (`bridge_stone_1` is not offered): their variants wait for more bases |
 | V3 | The detail layer and `road_detail_density` |
 | V4 | Per-point fence type and damage |
 | V5 | Irregularities |
