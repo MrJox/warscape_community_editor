@@ -10,6 +10,7 @@
 //! project that was made from variations gives each of them back byte for byte ([`merge`]).
 
 pub mod edit;
+pub mod materialize;
 pub mod merge;
 
 use wce_formats::xml_doc::XmlDoc;

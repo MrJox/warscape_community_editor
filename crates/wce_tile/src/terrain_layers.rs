@@ -1141,6 +1141,36 @@ impl TerrainLayers {
         ]
     }
 
+    /// A variation's layers as a project of that variation alone has them (docs/plans/tile_variations.md, the exports): those that
+    /// belong to it, and export with a scene layer it has (`scene_has`), their variations cleared. The bases stay.
+    #[must_use]
+    pub fn for_variation(&self, variation: &str, scene_has: &dyn Fn(&str) -> bool) -> Self {
+        fn only<K: Kind>(s: &Stack<K>, v: &str, scene_has: &dyn Fn(&str) -> bool) -> Stack<K> {
+            let mut s = s.clone();
+            s.layers.retain(|l| l.in_variation(v) && (l.depends.is_empty() || scene_has(&l.depends)));
+            for l in &mut s.layers {
+                l.variations.clear();
+            }
+
+            if s.working.is_some_and(|id| s.index_of(id).is_none()) {
+                s.working = None;
+            }
+
+            s.view_hidden.clear();
+            s.states.clear();
+            s
+        }
+
+        Self {
+            height: self.height.as_ref().map(|s| only(s, variation, scene_has)),
+            blend: self.blend.as_ref().map(|s| only(s, variation, scene_has)),
+            ground: self.ground.as_ref().map(|s| only(s, variation, scene_has)),
+            dirty: true,
+            pending: None,
+            next_id: self.next_id,
+        }
+    }
+
     /// One project's layers of several variations' ([`Stack::combine`] for each type). A type is in all of them or in none: a variation
     /// without layers of a type has to be given a stack over its map (`Stack::new`).
     ///
@@ -1407,6 +1437,52 @@ mod tests {
         s.absorb(&mut f, [0, 0, 130, 2]);
         assert!((f.metres(5, 1) - 3.0).abs() < 1e-5);
         assert_eq!(s.composite(&|l| l.in_variation("ab")), before, "ab never sees it");
+    }
+
+    #[test]
+    fn a_variation_alone_keeps_its_layers_and_composes_the_same() {
+        let field = |m: f64| {
+            let mut f = HeightField::flat(130, 2, 0.0);
+            f.set_range(0.0, 30.0);
+            f.begin_edit().unwrap();
+            for x in 0..130 {
+                f.set_metres(x, 0, m + f64::from(x) * 1e-2).unwrap();
+            }
+
+            f.end_edit();
+            f
+        };
+        let (low, high) = (field(1.0), field(20.0));
+        let (a, b) = (Stack::<Height>::new(&low), Stack::<Height>::new(&high));
+        let mut next = 0;
+        let mut combined = TerrainLayers {
+            height: Some(
+                Stack::combine(&[("aa", &a), ("ab", &b)], 1, &mut || {
+                    next += 1;
+                    next
+                })
+                .unwrap(),
+            ),
+            ..TerrainLayers::default()
+        };
+
+        // A layer that exports with a scene layer ab does not have, and one of every variation.
+        let s = combined.height.as_mut().unwrap();
+        let id = s.add(50, "with the keep", "");
+        let at = s.user_index(id).unwrap();
+        s.layers[at].depends = "keep".to_owned();
+        s.put(id, 3, 1, &[7.0]);
+        s.add(51, "everywhere", "");
+        for (v, layers) in [("aa", vec!["everywhere", "with the keep"]), ("ab", vec!["everywhere"])] {
+            let one = combined.for_variation(v, &|k| k != "keep" || v == "aa");
+            let s = one.height.as_ref().unwrap();
+            let mut names = s.layers.iter().filter(|l| l.name != "Variation base: aa").map(|l| l.name.as_str()).collect::<Vec<_>>();
+            names.sort_unstable();
+            assert_eq!(names, layers, "{v}");
+            assert!(s.layers.iter().all(|l| l.variations.is_empty()), "{v}: no variations of its own");
+            let theirs = combined.height.as_ref().unwrap().composite(&|l| l.in_variation(v) && (l.depends != "keep" || v == "aa"));
+            assert_eq!(s.composite(&|_| true), theirs, "{v}");
+        }
     }
 
     fn stack() -> (HeightField, Stack<Height>) {

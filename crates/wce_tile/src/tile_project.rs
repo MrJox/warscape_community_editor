@@ -895,16 +895,7 @@ impl TileProject {
             && let Some(stack) = self.layers.as_ref().and_then(|l| l.ground.as_ref()).filter(|_| self.is_combined())
         {
             let (w, h) = stack.size();
-            let png = PngFile {
-                width: w,
-                height: h,
-                bit_depth: 8,
-                color_type: 6,
-                pixels: [0, 0, 0, 255].repeat(w as usize * h as usize),
-                pixels_edited: true,
-                ..Default::default()
-            };
-            let mut field = GroundTypeField::from_png(png)?;
+            let mut field = crate::variations::materialize::blank_ground(w, h)?;
             stack.apply_all(&mut field);
             self.ground = Some(field);
             self.ground_file = "ground_type_map.png".to_owned();
@@ -934,10 +925,7 @@ impl TileProject {
             && let Some(stack) = self.layers.as_ref().and_then(|l| l.blend.as_ref()).filter(|_| self.is_combined())
         {
             let (w, h) = stack.size();
-            let mut bytes = wce_formats::image_containers::TiffFile::ted_header(w, h);
-            bytes.resize(bytes.len() + w as usize * h as usize * 32, 0);
-            let tif = wce_formats::image_containers::TiffFile::parse(&bytes).map_err(|e| format!("a blank blend map: {e}"))?;
-            let mut field = BlendField::from_tiff(tif)?;
+            let mut field = crate::variations::materialize::blank_blend(w, h)?;
             stack.apply_all(&mut field);
             self.blend = Some(field);
         }

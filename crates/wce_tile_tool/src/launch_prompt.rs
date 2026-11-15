@@ -108,6 +108,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     progress(Msg::Step(COMPILE));
     let walls = plan.inputs.has_walls();
     let (exported, _) = plan.inputs.run(&plan.staging)?;
+    let exported = exported.into_iter().next().ok_or("nothing was exported")?;
     let folder = wce_tile_io::attila::workflow::tile_folder(&exported.dir)
         .ok_or_else(|| format!("{} is not under terrain/tiles/", exported.dir.display()))?;
     let mut files = match &exported.pack {
@@ -442,9 +443,11 @@ impl TileTool {
                 })
                 .collect()
         };
+        let viewed = e.docs.find_as::<TileDocument>(id).and_then(|d| d.tile().viewed_variation().map(|v| vec![v.to_owned()]));
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
-            inputs: self.export_inputs(e)?,
+            // A combined project: the viewed variation.
+            inputs: self.export_inputs(e, viewed.as_deref())?,
             staging: staging.clone(),
             cells: (info.cells_x, info.cells_y),
             weather: BattleWeather::from_tile(self.weather.choice()),

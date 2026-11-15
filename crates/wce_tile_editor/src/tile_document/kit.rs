@@ -348,6 +348,10 @@ impl TileDocument {
     ///
     /// The tile is not in a kit's layout, it has walls and no `walls` sources, a wall can't be made, or a file can't be written.
     pub fn save_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>) -> Result<String, String> {
+        if self.project().is_combined() {
+            return self.save_variations_for_kit(kit_raw, walls, &[]);
+        }
+
         self.end_stroke();
         let folder =
             tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
@@ -412,6 +416,151 @@ impl TileDocument {
                     msg +=
                         &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
                 }
+            }
+        }
+
+        Ok(msg)
+    }
+
+    /// Where a combined project's variations are written as projects of their own for the exports (`TileProject::materialize`):
+    /// `<projects>/build/variations/raw_data`, beside the projects' kit layout; without a projects folder, the temporary folder's.
+    #[must_use]
+    pub fn variations_build_root(&self) -> PathBuf {
+        match self.projects_root() {
+            Some(root) => root.parent().unwrap_or(root).join("build").join("variations").join("raw_data"),
+            None => std::env::temp_dir().join("wce_variations").join("raw_data"),
+        }
+    }
+
+    /// A combined project's variations (`list`, empty: all) written as projects of their own under [`Self::variations_build_root`], from
+    /// the scene as an export reads it ([`Self::text_for_export`]); that text too.
+    ///
+    /// # Errors
+    ///
+    /// Not a combined project, a variation it does not have, or what `materialize` refuses.
+    pub fn materialize_variations(
+        &mut self,
+        list: &[String],
+        for_kit: bool,
+    ) -> Result<(Vec<u8>, Vec<wce_tile::variations::materialize::Materialized>), String> {
+        if !self.project().is_combined() {
+            return Err("the tile has one variation: it is not a combined project".to_owned());
+        }
+
+        self.end_stroke();
+        let text = self.text_for_export(for_kit)?;
+        let raw = self.variations_build_root();
+        let list = if list.is_empty() { self.project().variations.clone() } else { list.to_vec() };
+        let made = list.iter().map(|v| self.project().materialize(v, &text, &raw)).collect::<Result<Vec<_>, _>>()?;
+        for m in made.iter().filter(|m| m.refit) {
+            wce_foundation::log::info(format!(
+                "{}: the heights left the row's range; exported with min_height {:.3}, scale {:.3}",
+                m.variation, m.range.0, m.range.1
+            ));
+        }
+
+        // What the editor makes for the viewed variation only goes into every one (docs/plans/tile_variations.md, step 6's "Left").
+        let viewed = self.tile().viewed_variation().unwrap_or_default().to_owned();
+        let others = list.iter().any(|v| *v != viewed);
+        if others && !self.tile().road_items.is_empty() {
+            wce_foundation::log::warn(format!(
+                "the procedural roads' pieces are made for the variation viewed ({viewed}): every variation exported gets those"
+            ));
+        }
+
+        if others && self.tile().has_generated_buildings() {
+            wce_foundation::log::warn(format!(
+                "the procedural walls are laid for the variation viewed ({viewed}): every variation exported gets them laid so"
+            ));
+        }
+
+        Ok((text, made))
+    }
+
+    /// [`Self::save_for_kit`] of a combined project: each variation of `list` (empty: all) as TEd reads it, in its folder of the kit
+    /// (each written as a project of its own first, `materialize_variations`), and the entry with every row.
+    ///
+    /// # Errors
+    ///
+    /// As `save_for_kit`.
+    pub fn save_variations_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>, list: &[String]) -> Result<String, String> {
+        let generated = self.tile().has_generated_buildings();
+        if generated && walls.is_none() {
+            return Err(format!(
+                "the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})",
+                wce_walls::pack::PROC_PACK
+            ));
+        }
+
+        let (_, made) = self.materialize_variations(list, true)?;
+        let kit_walls = if generated { self.tile_mut().kit_walls_for_export() } else { vec![] };
+        let mut said = vec![];
+        for m in &made {
+            let folder = tile_folder(&m.dir).ok_or_else(|| format!("{} is not under terrain/tiles/", m.dir.display()))?;
+            let target = kit_raw.join(&folder);
+            let mut p = wce_tile::tile_project::TileProject::open(&m.dir)?;
+            let scene = std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE)).map_err(|e| format!("{}: {e}", m.dir.display()))?;
+            let maps = p.export_maps()?;
+            let (msg, report) = match &walls {
+                Some(w) if generated => {
+                    let (scene, n, notes) = wce_walls::export::walls_for_kit(&p, scene, w.files, w.schema, &folder, w.data, &kit_walls)?;
+                    for line in &notes {
+                        wce_foundation::log::info(format!("Save for Assembly Kit, {}: {line}", m.variation));
+                    }
+
+                    let polyfill = format!(
+                        "{n} wall(s) written as their pieces in the layer '{}' ({})",
+                        wce_walls::export::KIT_LAYER,
+                        wce_walls::pack::PROC_PACK
+                    );
+                    p.save_for_kit_scene(&target, scene, vec![polyfill], &maps)?
+                }
+
+                w => {
+                    if let Some(w) = w {
+                        let prefix = wce_walls::export::key_prefix(&folder);
+                        let game = w.files.game().map_or("attila", |g| g.key);
+                        wce_walls::pack::replace_in_proc_pack(&w.data.join(wce_walls::pack::PROC_PACK), game, &prefix, vec![], vec![])?;
+                    }
+
+                    p.save_for_kit_scene(&target, scene, vec![], &maps)?
+                }
+            };
+
+            for line in report.polyfilled.iter().chain(&report.dropped) {
+                wce_foundation::log::info(format!("Save for Assembly Kit, {}: {line}", m.variation));
+            }
+
+            wce_foundation::log::info(format!("Save for Assembly Kit, {}: {msg}", m.variation));
+            said.push(format!("{} ({})", m.variation, report.summary()));
+        }
+
+        // The entry with each row's height range as its variation was written (`materialize`), and the tile sets it uses.
+        let (Some(entry), Some(from_raw)) = (self.project().entry.as_ref(), self.project().raw_root.clone()) else {
+            return Err("a combined project needs its tile database entry".to_owned());
+        };
+
+        let folder = tile_folder(&self.project().dir).unwrap_or_default();
+        let kind = kind_of(&folder);
+        let name = entry.file().file_name().map(|n| n.to_owned()).unwrap_or_default();
+        let built = self.variations_build_root().join("terrain/tiles").join(&kind).join("_tile_database/TILES").join(name);
+        copy_entry(&built, &from_raw, kit_raw, &kind)?;
+        let mut msg = format!(
+            "saved for the Assembly Kit: {} variation(s) of {folder} in {} ({}; see the log)",
+            made.len(),
+            kit_raw.display(),
+            said.join(", ")
+        );
+        let mut names = vec![entry.tile_set()];
+        names.extend(entry.link_targets().into_iter().map(|t| t.tile_set));
+        names.extend(entry.links().into_iter().map(|l| l.link_set));
+        names.sort();
+        names.dedup();
+        let (ours, kits) = (wce_tile::tile_sets::settings_file(&from_raw), wce_tile::tile_sets::settings_file(kit_raw));
+        if ours != kits && ours.is_file() && kits.is_file() {
+            let added = wce_tile::tile_sets::merge_into(&ours, &kits, &names)?;
+            if !added.is_empty() {
+                msg += &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
             }
         }
 
