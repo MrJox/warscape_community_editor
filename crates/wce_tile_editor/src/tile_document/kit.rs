@@ -432,8 +432,10 @@ impl TileDocument {
         }
     }
 
-    /// A combined project's variations (`list`, empty: all) written as projects of their own under [`Self::variations_build_root`], from
-    /// the scene as an export reads it ([`Self::text_for_export`]); that text too.
+    /// A combined project's variations (`list`, empty: all) written as projects of their own under [`Self::variations_build_root`], each
+    /// from the scene as an export reads it ([`Self::text_for_export`]) with that variation viewed (`Tile::export_view`): what the editor
+    /// makes over the terrain (the procedural roads' layers and pieces, the building splines' items) is made for each on its own ground.
+    /// The variation viewed is viewed again after.
     ///
     /// # Errors
     ///
@@ -442,16 +444,46 @@ impl TileDocument {
         &mut self,
         list: &[String],
         for_kit: bool,
-    ) -> Result<(Vec<u8>, Vec<wce_tile::variations::materialize::Materialized>), String> {
+    ) -> Result<Vec<wce_tile::variations::materialize::Materialized>, String> {
         if !self.project().is_combined() {
             return Err("the tile has one variation: it is not a combined project".to_owned());
         }
 
         self.end_stroke();
-        let text = self.text_for_export(for_kit)?;
         let raw = self.variations_build_root();
-        let list = if list.is_empty() { self.project().variations.clone() } else { list.to_vec() };
-        let made = list.iter().map(|v| self.project().materialize(v, &text, &raw)).collect::<Result<Vec<_>, _>>()?;
+        let viewed = self.tile().viewed_variation().unwrap_or_default().to_owned();
+        let mut list = if list.is_empty() { self.project().variations.clone() } else { list.to_vec() };
+        // The viewed one first, while it is viewed: the others then switch once each.
+        if let Some(k) = list.iter().position(|v| *v == viewed) {
+            let v = list.remove(k);
+            list.insert(0, v);
+        }
+
+        let mut made = vec![];
+        let mut result = Ok(());
+        for v in &list {
+            let step = (|| {
+                if *v != viewed {
+                    self.tile_mut().export_view(v)?;
+                }
+
+                let text = self.text_for_export(for_kit)?;
+                self.project().materialize(v, &text, &raw)
+            })();
+            match step {
+                Ok(m) => made.push(m),
+                Err(e) => {
+                    result = Err(format!("{v}: {e}"));
+                    break;
+                }
+            }
+        }
+
+        if self.tile().viewed_variation() != Some(viewed.as_str()) {
+            self.tile_mut().end_export_view(&viewed)?;
+        }
+
+        result?;
         for m in made.iter().filter(|m| m.refit) {
             wce_foundation::log::info(format!(
                 "{}: the heights left the row's range; exported with min_height {:.3}, scale {:.3}",
@@ -459,22 +491,15 @@ impl TileDocument {
             ));
         }
 
-        // What the editor makes for the viewed variation only goes into every one (docs/plans/tile_variations.md, step 6's "Left").
-        let viewed = self.tile().viewed_variation().unwrap_or_default().to_owned();
+        // What the editor lays for the viewed variation only goes into every one (docs/plans/tile_variations.md, step 6's "Left").
         let others = list.iter().any(|v| *v != viewed);
-        if others && !self.tile().road_items.is_empty() {
-            wce_foundation::log::warn(format!(
-                "the procedural roads' pieces are made for the variation viewed ({viewed}): every variation exported gets those"
-            ));
-        }
-
         if others && self.tile().has_generated_buildings() {
             wce_foundation::log::warn(format!(
                 "the procedural walls are laid for the variation viewed ({viewed}): every variation exported gets them laid so"
             ));
         }
 
-        Ok((text, made))
+        Ok(made)
     }
 
     /// [`Self::save_for_kit`] of a combined project: each variation of `list` (empty: all) as TEd reads it, in its folder of the kit
@@ -492,7 +517,7 @@ impl TileDocument {
             ));
         }
 
-        let (_, made) = self.materialize_variations(list, true)?;
+        let made = self.materialize_variations(list, true)?;
         let kit_walls = if generated { self.tile_mut().kit_walls_for_export() } else { vec![] };
         let mut said = vec![];
         for m in &made {

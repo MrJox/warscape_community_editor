@@ -928,6 +928,36 @@ impl Tile {
         Ok(())
     }
 
+    /// Views a variation of a combined project for an export only: its scene and terrain in the project (`TileProject::view_variation`),
+    /// its procedural roads' pieces to be made for it; the element index and the entities stay the viewed one's. [`Self::end_export_view`]
+    /// goes back.
+    ///
+    /// # Errors
+    ///
+    /// What `TileProject::view_variation` refuses.
+    pub(crate) fn export_view(&mut self, name: &str) -> Result<(), String> {
+        self.project.view_variation(name)?;
+        self.road_items_stale = true;
+        Ok(())
+    }
+
+    /// Back to the variation viewed after [`Self::export_view`]: its terrain composed and shown again, its roads' pieces, the grass and the
+    /// trees made again (what the export's roads changed was the other variation's).
+    ///
+    /// # Errors
+    ///
+    /// What `TileProject::view_variation` refuses.
+    pub(crate) fn end_export_view(&mut self, name: &str) -> Result<(), String> {
+        self.project.view_variation(name)?;
+        self.material_base = None;
+        self.skin = None;
+        self.layers_shown = true;
+        self.road_items_stale = true;
+        self.reload_tree_list();
+        self.reload_grass();
+        Ok(())
+    }
+
     /// An attribute of one element changed that the index keeps (its scale) or that changes how it is shown.
     pub(crate) fn index_attr_edited(&mut self, elem: usize) {
         self.columns_element_changed(elem);
