@@ -24,8 +24,9 @@ Three places in the DLL ask a model for a slot **by name** through the same call
 - **A ship's damage states**: at 0x1023da3b the name of a piece's state is made from `%S_dm%d` (the piece, then its state number:
   `bow_01_dm2`), the folder `VariantMeshes/VariantMeshDefinitions/` next to it. The editor's assembler already shows a ship intact by these
   (`_dm1`; `_dm2` and higher are damaged: `unit_assembly::damaged`).
-- **Two ship slots by their own names**: `misc_99_dm1` (0x1023df55) and `night_lights_dm1` (0x1023e02e). What they are for is not traced
-  (night lights: by the name, shown at night, **ASSUMPTION**).
+- **Two ship slots by their own names**: `misc_99_dm1` (0x1023df55) and `night_lights_dm1` (0x1023e02e). `misc_99_dm1`'s models are a
+  single `WaterDisplaceVolume` block (the dromonarion's: 888 vertices, the hull's shape, 38 m long): the volume that keeps the sea out of
+  the hull, never drawn. The night lights' use is not traced (by the name, shown at night, **ASSUMPTION**).
 
 Not known: whether the lookup tells case apart (every vanilla spelling is lower case) and what happens with two slots of one name. TDD has
 `shield 1`, `weapon`, `weapon_01`, `weapon_02` and `weapon_5`: if the lookup is exact, the battle doesn't find those as a shield or a weapon.

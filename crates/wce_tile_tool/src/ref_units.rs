@@ -153,6 +153,9 @@ struct ShipShown {
 
     /// A sail model's simulated ropes this frame (instead of its `#ropes` strips).
     ropes: Option<Ropes>,
+
+    /// A decal or weighted part (the shields along the sides), drawn by the skinned path at rest.
+    rest_part: Option<SkinnedPart>,
 }
 
 /// The bones of a ship's sails' palette at rest: more than all the sails of any of Attila's sail models have, one after another.
@@ -721,7 +724,20 @@ impl RefUnits {
             for (k, p) in ship.parts.iter().enumerate() {
                 let world = *place * ShipModel::part_at(p, time, *rowing);
                 if p.what.solid {
-                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: None, palette: None, ropes: None });
+                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: None, palette: None, ropes: None, rest_part: None });
+                }
+
+                if p.what.skinned {
+                    let rest_part = Some(ShipModel::rest_part(p));
+                    want.push(ShipShown {
+                        model: format!("{}#rest", p.model),
+                        elem,
+                        world,
+                        sail: Some((p.masks, faction)),
+                        palette: None,
+                        ropes: None,
+                        rest_part,
+                    });
                 }
 
                 // A sail model's ropes move with its cloth; elsewhere they stand as the file has them.
@@ -730,7 +746,15 @@ impl RefUnits {
                     let lines = sim.ropes().into_iter().map(|(nodes, v, radius)| RopeLine { nodes, v, radius }).collect();
                     let [diffuse, normal] = rig.rope_textures.clone();
                     let ropes = Some(Ropes { lines, diffuse, normal });
-                    want.push(ShipShown { model: format!("{}#moving_ropes", p.model), elem, world, sail: None, palette: None, ropes });
+                    want.push(ShipShown {
+                        model: format!("{}#moving_ropes", p.model),
+                        elem,
+                        world,
+                        sail: None,
+                        palette: None,
+                        ropes,
+                        rest_part: None,
+                    });
                 } else if p.what.ropes {
                     want.push(ShipShown {
                         model: format!("{}{MODEL_ROPES_SUFFIX}", p.model),
@@ -739,12 +763,21 @@ impl RefUnits {
                         sail: None,
                         palette: None,
                         ropes: None,
+                        rest_part: None,
                     });
                 }
 
                 if p.what.cloth {
                     let palette = sim.map(|s| Arc::new(s.palette()));
-                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: Some((p.masks, faction)), palette, ropes: None });
+                    want.push(ShipShown {
+                        model: p.model.clone(),
+                        elem,
+                        world,
+                        sail: Some((p.masks, faction)),
+                        palette,
+                        ropes: None,
+                        rest_part: None,
+                    });
                 }
             }
         }
@@ -762,6 +795,15 @@ impl RefUnits {
                         _ if w.ropes.is_some() => Payload::Ropes(w.ropes.clone().unwrap_or_default()),
 
                         // Its cloth's bones, or at rest: every cloth bone where the file has it.
+                        Some((_, faction_colours)) if w.rest_part.is_some() => Payload::SkinnedInstance(SkinnedInstance {
+                            parts: w.rest_part.clone().into_iter().collect(),
+                            palette: rest.clone(),
+                            bones: rest.clone(),
+                            casts_shadow: true,
+                            faction_colours,
+                            faction_scale: 0.0,
+                        }),
+
                         Some((masks, faction_colours)) => {
                             let part = SkinnedPart {
                                 model: w.model.clone(),

@@ -361,6 +361,16 @@ pub fn assemble_with(read: &Reader, file: &VariantMeshFile, seed: u64, pins: &Pi
     a.out
 }
 
+/// A ship of a definition already read (an editor's), its pieces intact and a part on every point of a list, as [`assemble_ship`], with
+/// `pins` as [`assemble_with`] (a file the ship references, its sails, shown with its edits where it is referenced: `pins.focus`).
+pub fn assemble_ship_with(read: &Reader, file: &VariantMeshFile, seed: u64, pins: &Pins) -> AssembledUnit {
+    let mut a = Assembler { read, seed, pins, files: HashMap::new(), leads: HashMap::new(), out: AssembledUnit::default(), ship: true };
+    let root =
+        if pins.focus.is_none() { At { key: 0, path: Some(vec![]), pinned: true } } else { At { key: 0, path: None, pinned: false } };
+    a.mesh(&file.root, &root, None, &Attach::None, 0);
+    a.out
+}
+
 /// A ship of a definition (`unit_variants_ships.variant`): its pieces intact (the `_dm2` slots are their damaged states), a part on every point
 /// of a list (the shields along its sides).
 pub fn assemble_ship(read: &Reader, definition: &str, seed: u64) -> Option<AssembledUnit> {
