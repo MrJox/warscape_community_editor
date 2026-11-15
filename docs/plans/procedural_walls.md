@@ -121,13 +121,14 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **A free end gets the culture's cap** (8 m endcaps, 15 m tower ends), the game's piece as it is, joined at the wall's end.
 - **Vertices are smooth or sharp**; an internal angle of 90 degrees or less is always sharp.
 - **Pieces have variable lengths** (about the base's, one base each).
-- **Destruction levels are generated; collapse animations are not** (a piece swaps to its next level). Revisit later.
+- **Destruction levels are generated, and their collapse animations** (2026-11-15, docs/plans/procedural_roads.md V8): each piece carries
+  its base's collapses, warped as its meshes are (`mesh::warp_collapse`).
 - **The spline is a custom element (`WceWallSpline`) of the tile model**, not editable piece by piece; its pieces are regenerated.
 - **TEd sees the pieces** (2026-10-25, option A of three): Save for Assembly Kit lowers the walls into a top layer *WCE procedural walls*,
   their files and rows into the movie pack `@wce_proc_data.pack`; Import from Assembly Kit drops that layer and restores the walls.
 - **Live preview while editing; generated files only on export**, one pack per tile (configurable later).
 - **Families:** 8 m and 15 m now; TDD's Rohan and cliff walls later.
-- **Not in this iteration:** terrain shaping, collapse animations.
+- **Not in this iteration:** terrain shaping.
 
 ## Design (as built)
 
@@ -192,4 +193,4 @@ polyfill. Checks:
 - [ ] **In game (user), Rome 2:** the pieces' frames and walkways are Attila's measures of the same models; a Rome 2 wall checked in game.
 - [ ] A thin dark sliver at the bottom edge of one 8 m stair (desert hills render).
 - [ ] A cache sharing pieces between walls that fit, for pack size (a bent piece is 1.6-3.7 times its base).
-- Deferred by decision: collapse animations, terrain shaping.
+- Deferred by decision: terrain shaping.

@@ -464,6 +464,205 @@ pub fn round_trips(bytes: &[u8]) -> Result<bool, String> {
     Ok(encode(&mut decode(bytes)?)? == bytes)
 }
 
+/// A quaternion (x y z w) turning a vector.
+fn qrot(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let (u, w) = ([q[0], q[1], q[2]], q[3]);
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let t = cross(u, v).map(|c| 2.0 * c);
+    let ut = cross(u, t);
+    [v[0] + w * t[0] + ut[0], v[1] + w * t[1] + ut[1], v[2] + w * t[2] + ut[2]]
+}
+
+fn qmul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
+}
+
+fn qconj(q: [f32; 4]) -> [f32; 4] {
+    [-q[0], -q[1], -q[2], q[3]]
+}
+
+/// A direction turned by a quaternion.
+fn rotated(d: &mut Vector4<f32>, q: [f32; 4]) {
+    let r = qrot(q, [d.x, d.y, d.z]);
+    (d.x, d.y, d.z) = (r[0], r[1], r[2]);
+}
+
+/// A rigid frame: a translation and a rotation (x y z w), a point `p` going to `q p + t`.
+type Frame = ([f32; 3], [f32; 4]);
+
+/// `a` after `b`: `p` to `a (b p)`.
+fn compose((ta, qa): Frame, (tb, qb): Frame) -> Frame {
+    let r = qrot(qa, tb);
+    ([r[0] + ta[0], r[1] + ta[1], r[2] + ta[2]], qmul(qa, qb))
+}
+
+fn inverse((t, q): Frame) -> Frame {
+    let c = qconj(q);
+    let r = qrot(c, t);
+    ([-r[0], -r[1], -r[2]], c)
+}
+
+/// The quaternion of [`turn3`]'s turn about the vertical axis (+x towards +z by `a`: a right-handed turn about y by -a).
+fn qyaw(a: f32) -> [f32; 4] {
+    let (s, c) = (-a * 0.5).sin_cos();
+    [0.0, s, 0.0, c]
+}
+
+/// A piece's collapse (`<piece>_destructNN_anim.rigid_model_v2` and its `.anim`, docs/re/buildings.md "Collapses between levels") under
+/// the warp its standing mesh goes through. Each block of the collapse's mesh follows one bone (its material's `i_matrix_index`), its
+/// vertices in that bone's frame (in the piece's frame: its parents' frames times its own); the animation's first frame is the standing
+/// piece. Each fragment (a bone's blocks) is
+/// put in the piece's frame by its first frame, warped and cut as the standing mesh is ([`warp_block`]), and given a new frame: its old
+/// one carried by the warp's rigid motion at its middle (`A`: the yaw there, and where its middle goes). The animation's every frame of
+/// that bone is `A` times what it was, so each fragment falls as it did, from where it now stands (a child's local frame recomputed from
+/// its parent's new one). Returns the mesh and the animation.
+///
+/// # Errors
+///
+/// A file doesn't read or write back, the animation is not version 5, or a bone's parent comes after it.
+pub fn warp_collapse(mesh_bytes: &[u8], anim_bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let mut anim = wce_formats::anim::RawAnim::decode(anim_bytes).ok_or("the collapse's animation is not a version 5 .anim")?;
+    let n = anim.bones.len();
+    if anim.translations.is_empty() || n == 0 {
+        return Err("a collapse with no frames or no bones".to_owned());
+    }
+
+    // Each bone's parent, before it (as the playback composes them: the piece-space frame is the parent's times the local one).
+    let parents = anim.parents.iter().enumerate().map(|(k, &p)| usize::try_from(p).ok().map(|p| (p < k).then_some(p))).collect::<Vec<_>>();
+    if parents.iter().any(|p| p == &Some(None)) {
+        return Err("a collapse with a bone whose parent comes after it".to_owned());
+    }
+
+    let parents = parents.into_iter().map(Option::flatten).collect::<Vec<_>>();
+    let frames = anim.translations.len();
+    let worlds = (0..frames)
+        .map(|f| {
+            let mut out: Vec<Frame> = Vec::with_capacity(n);
+            for k in 0..n {
+                let local = anim.local(f, k);
+                out.push(match parents[k] {
+                    Some(p) => compose(out[p], local),
+                    None => local,
+                });
+            }
+
+            out
+        })
+        .collect::<Vec<_>>();
+    let rest = worlds[0].clone();
+    let to_piece = |k: usize, v: [f32; 3]| {
+        let (t, q) = rest[k];
+        let r = qrot(q, v);
+        [r[0] + t[0], r[1] + t[1], r[2] + t[2]]
+    };
+
+    let mut model = decode(mesh_bytes)?;
+    let bone_of =
+        |b: &rpfm_lib::files::rigidmodel::MeshBlock| usize::try_from(*b.material().i_matrix_index()).ok().filter(|&k| k < n).unwrap_or(0);
+
+    // Each fragment's middle in the piece's frame (the first level of detail's vertices), and its rigid motion under the warp there.
+    let mut sums = vec![([0.0f64; 3], 0usize); n];
+    if let Some(lod) = model.lods().first() {
+        for block in lod.mesh_blocks() {
+            let k = bone_of(block);
+            let pv = block.material().v_pivot();
+            for v in block.mesh().vertices() {
+                let p = to_piece(k, [v.position().x + pv.x, v.position().y + pv.y, v.position().z + pv.z]);
+                for c in 0..3 {
+                    sums[k].0[c] += f64::from(p[c]);
+                }
+
+                sums[k].1 += 1;
+            }
+        }
+    }
+
+    let motions = sums
+        .iter()
+        .map(|(s, count)| {
+            if *count == 0 {
+                return (0.0, [0.0; 3]);
+            }
+
+            let c = s.map(|v| (v / *count as f64) as f32);
+            let yaw = warp.yaw(c);
+            let (w, r) = (warp.point(c), turn3(c, yaw));
+            (yaw, [w[0] - r[0], w[1] - r[1], w[2] - r[2]])
+        })
+        .collect::<Vec<_>>();
+
+    for lod in model.lods_mut() {
+        for block in lod.mesh_blocks_mut() {
+            let k = bone_of(block);
+            let pv = block.material().v_pivot();
+            let pivot = [pv.x, pv.y, pv.z];
+
+            // Into the piece's frame (vertex + pivot), as the standing mesh is.
+            for v in block.mesh_mut().vertices_mut() {
+                let p = to_piece(k, [v.position().x + pivot[0], v.position().y + pivot[1], v.position().z + pivot[2]]);
+                let pos = v.position_mut();
+                (pos.x, pos.y, pos.z) = (p[0] - pivot[0], p[1] - pivot[1], p[2] - pivot[2]);
+                rotated(v.normal_mut(), rest[k].1);
+                rotated(v.tangent_mut(), rest[k].1);
+                rotated(v.bitangent_mut(), rest[k].1);
+            }
+
+            warp_block(block, warp, cuts, &|_| true)?;
+
+            // Back into the bone's new frame: A times its old one.
+            let (yaw, shift) = motions[k];
+            let (t0, q0) = rest[k];
+            let back = qconj(qmul(qyaw(yaw), q0));
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for v in block.mesh_mut().vertices_mut() {
+                let p = [v.position().x + pivot[0], v.position().y + pivot[1], v.position().z + pivot[2]];
+                let u = turn3([p[0] - shift[0], p[1] - shift[1], p[2] - shift[2]], -yaw);
+                let l = qrot(qconj(q0), [u[0] - t0[0], u[1] - t0[1], u[2] - t0[2]]);
+                let pos = v.position_mut();
+                (pos.x, pos.y, pos.z) = (l[0] - pivot[0], l[1] - pivot[1], l[2] - pivot[2]);
+                for c in 0..3 {
+                    lo[c] = lo[c].min(l[c]);
+                    hi[c] = hi[c].max(l[c]);
+                }
+
+                rotated(v.normal_mut(), back);
+                rotated(v.tangent_mut(), back);
+                rotated(v.bitangent_mut(), back);
+            }
+
+            if lo[0] <= hi[0] {
+                let mesh = block.mesh_mut();
+                let min = mesh.min_bb_mut();
+                (min.x, min.y, min.z) = (lo[0], lo[1], lo[2]);
+                let max = mesh.max_bb_mut();
+                (max.x, max.y, max.z) = (hi[0], hi[1], hi[2]);
+            }
+        }
+    }
+
+    // The animation: every bone's every frame (in the piece's frame) carried by its fragment's motion; a child's local frame then the
+    // one that puts it there from its parent's new frame.
+    anim.track_every_bone();
+    let motions = motions.iter().map(|&(yaw, shift)| (shift, qyaw(yaw))).collect::<Vec<Frame>>();
+    for (f, world) in worlds.iter().enumerate() {
+        let moved = world.iter().zip(&motions).map(|(&w, &m)| compose(m, w)).collect::<Vec<_>>();
+        for k in 0..n {
+            let local = match parents[k] {
+                Some(p) => compose(inverse(moved[p]), moved[k]),
+                None => moved[k],
+            };
+            anim.set_local(f, k, local);
+        }
+    }
+
+    Ok((encode(&mut model)?, anim.encode()))
+}
+
 fn decode(bytes: &[u8]) -> Result<RigidModel, String> {
     RigidModel::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())).map_err(|e| format!("rmv2: {e}"))
 }

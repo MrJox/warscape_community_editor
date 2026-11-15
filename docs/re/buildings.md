@@ -189,8 +189,12 @@ instant. From level L to L + 1 the collapse is `..._destruct{L+1}_anim` (`.rigid
 
 - The mesh ("building" skeleton) has one bone per fragment; each block follows the bone of its material's `i_matrix_index`, with its
   vertices in that bone's frame (`roman_fort_straight_piece01_destruct01_anim`: 36 blocks, 16 bones, all roots; bone 0 holds the base
-  that stays, at the identity throughout). **ASSUMPTION**: its first frame is the standing piece and its last the next level's rubble (on that
-  wall the end meets the rubble by eye; the start was not compared closely).
+  that stays, at the identity throughout). The towers' collapses have bones with parents (`roman_fort_tower_end_right_piece01_destruct01_anim`:
+  86 bones), each after its parent: a bone's frame in the piece is its parent's times its own. **ASSUMPTION**: its first frame is the
+  standing piece and its last the next level's rubble (on that wall the end meets the rubble by eye). Compared by their bounds
+  (`wce_walls` example `collapse_check`): a `destruct01_anim`'s first frame is within 0.1 to 2 m of its `destruct01` piece; a
+  `destruct02_anim`'s reaches 9 to 11 m past its `destruct02` piece (fragments lying out in front of the wall and below it from the start;
+  not looked into).
 - The animation runs at its frame rate to its end time (that wall: 20 fps, 10 s; its battlements' pieces 9.9 and 5 s). The editor
   interpolates between frames (translations linearly, rotations nlerp) and draws each bone's blocks as an entity (the model cache's
   `<file>#bone=K`). A step starts once its fragments' models are loaded (the tool queues them), and the standing piece hides the frame

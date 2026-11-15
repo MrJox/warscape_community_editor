@@ -2694,6 +2694,7 @@ dependencies = [
  "nalgebra",
  "rpfm_lib",
  "serde_json",
+ "wce_formats",
  "wce_foundation",
  "wce_tile",
  "wce_tile_io",

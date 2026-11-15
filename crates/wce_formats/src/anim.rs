@@ -175,9 +175,159 @@ impl Animation {
     }
 }
 
+/// A version 5 `.anim` as stored, to be changed and written back ([`RawAnim::encode`] gives a file back byte for byte): the header, the
+/// bones, the track tables and each frame's translations and rotations (x y z w, i16 over 32767), and whatever follows the frames.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawAnim {
+    /// The second header word (the bone table's version).
+    pub table_version: u32,
+    pub fps: f32,
+    pub skeleton: String,
+    pub end: f32,
+    pub bones: Vec<String>,
+    pub parents: Vec<i32>,
+
+    /// Per bone, its translation track and its rotation track (-1: none).
+    pub translation_track: Vec<i32>,
+    pub rotation_track: Vec<i32>,
+
+    /// Per frame, the translation tracks and the rotation tracks.
+    pub translations: Vec<Vec<[f32; 3]>>,
+    pub rotations: Vec<Vec<[i16; 4]>>,
+    pub tail: Vec<u8>,
+}
+
+impl RawAnim {
+    /// Reads a version 5 file; `None` for anything else.
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let mut r = Reader(ByteReader::new(bytes));
+        if r.u32().ok()? != 5 {
+            return None;
+        }
+
+        let table_version = r.u32().ok()?;
+        let fps = r.f32().ok()?;
+        let skeleton = r.string(false)?;
+        let end = r.f32().ok()?;
+        let n = r.u32().ok()? as usize;
+        let (mut bones, mut parents) = (Vec::with_capacity(n.min(4096)), Vec::with_capacity(n.min(4096)));
+        for _ in 0..n {
+            bones.push(r.string(false)?);
+            parents.push(r.i32().ok()?);
+        }
+
+        let translation_track = (0..n).map(|_| r.i32().ok()).collect::<Option<Vec<_>>>()?;
+        let rotation_track = (0..n).map(|_| r.i32().ok()).collect::<Option<Vec<_>>>()?;
+        let (nt, nr, count) = (r.u32().ok()? as usize, r.u32().ok()? as usize, r.u32().ok()? as usize);
+        if r.left() < count.checked_mul(nt.checked_mul(12)?.checked_add(nr.checked_mul(8)?)?)? {
+            return None;
+        }
+
+        let (mut translations, mut rotations) = (Vec::with_capacity(count), Vec::with_capacity(count));
+        for _ in 0..count {
+            translations.push((0..nt).map(|_| Some([r.f32().ok()?, r.f32().ok()?, r.f32().ok()?])).collect::<Option<Vec<_>>>()?);
+            rotations
+                .push((0..nr).map(|_| Some([r.i16().ok()?, r.i16().ok()?, r.i16().ok()?, r.i16().ok()?])).collect::<Option<Vec<_>>>()?);
+        }
+
+        let left = r.left();
+        let tail = r.take(left).ok()?.to_vec();
+        Some(Self { table_version, fps, skeleton, end, bones, parents, translation_track, rotation_track, translations, rotations, tail })
+    }
+
+    /// The file.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = vec![];
+        let string = |b: &mut Vec<u8>, s: &str| {
+            b.extend((s.len() as u16).to_le_bytes());
+            b.extend(s.as_bytes());
+        };
+        b.extend(5u32.to_le_bytes());
+        b.extend(self.table_version.to_le_bytes());
+        b.extend(self.fps.to_le_bytes());
+        string(&mut b, &self.skeleton);
+        b.extend(self.end.to_le_bytes());
+        b.extend((self.bones.len() as u32).to_le_bytes());
+        for (name, parent) in self.bones.iter().zip(&self.parents) {
+            string(&mut b, name);
+            b.extend(parent.to_le_bytes());
+        }
+
+        self.translation_track.iter().chain(&self.rotation_track).for_each(|t| b.extend(t.to_le_bytes()));
+        let nt = self.translations.first().map_or(0, Vec::len);
+        let nr = self.rotations.first().map_or(0, Vec::len);
+        b.extend((nt as u32).to_le_bytes());
+        b.extend((nr as u32).to_le_bytes());
+        b.extend((self.translations.len() as u32).to_le_bytes());
+        for (ts, qs) in self.translations.iter().zip(&self.rotations) {
+            ts.iter().flatten().for_each(|v| b.extend(v.to_le_bytes()));
+            qs.iter().flatten().for_each(|v| b.extend(v.to_le_bytes()));
+        }
+
+        b.extend(&self.tail);
+        b
+    }
+
+    /// A bone's local transform at a frame: its tracks' values, the identity for a track it has none of.
+    #[must_use]
+    pub fn local(&self, frame: usize, bone: usize) -> BoneLocal {
+        let t =
+            usize::try_from(self.translation_track[bone]).ok().and_then(|k| self.translations[frame].get(k)).copied().unwrap_or([0.0; 3]);
+        let q = usize::try_from(self.rotation_track[bone])
+            .ok()
+            .and_then(|k| self.rotations[frame].get(k))
+            .map_or([0.0, 0.0, 0.0, 1.0], |q| normalised(q.map(|v| f32::from(v) / 32767.0)));
+        (t, q)
+    }
+
+    /// Gives every bone a translation and a rotation track of its own (bone k: track k), each frame's values as they were (the identity
+    /// for a bone that had no track), so that any bone can be moved.
+    pub fn track_every_bone(&mut self) {
+        let n = self.bones.len();
+        let frames = (0..self.translations.len()).map(|f| (0..n).map(|k| self.local(f, k)).collect::<Vec<_>>()).collect::<Vec<_>>();
+        self.translation_track = (0..n as i32).collect();
+        self.rotation_track = (0..n as i32).collect();
+        self.translations = frames.iter().map(|fr| fr.iter().map(|l| l.0).collect()).collect();
+        self.rotations = frames.iter().map(|fr| fr.iter().map(|l| quantised(l.1)).collect()).collect();
+    }
+
+    /// Sets a bone's local transform at a frame (its tracks must be its own: [`Self::track_every_bone`]).
+    pub fn set_local(&mut self, frame: usize, bone: usize, (t, q): BoneLocal) {
+        if let Ok(k) = usize::try_from(self.translation_track[bone]) {
+            self.translations[frame][k] = t;
+        }
+
+        if let Ok(k) = usize::try_from(self.rotation_track[bone]) {
+            self.rotations[frame][k] = quantised(q);
+        }
+    }
+}
+
+/// A rotation as a file stores it: x y z w over 32767, rounded.
+fn quantised(q: [f32; 4]) -> [i16; 4] {
+    normalised(q).map(|v| (v * 32767.0).round().clamp(-32767.0, 32767.0) as i16)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Animation;
+
+    #[test]
+    fn a_raw_file_writes_back_byte_for_byte_and_moves_a_bone() {
+        let b = two_frames();
+        let raw = super::RawAnim::decode(&b).expect("decodes");
+        assert_eq!(raw.encode(), b);
+        assert_eq!(raw.local(1, 0).0, [2.0, 4.0, 0.0]);
+
+        let mut moved = raw.clone();
+        moved.track_every_bone();
+        assert_eq!(moved.encode(), b, "one bone with both tracks already: the same file");
+        moved.set_local(0, 0, ([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0]));
+        let back = Animation::decode(&moved.encode(), usize::MAX).expect("decodes");
+        assert_eq!(back.frames[0][0].0, [1.0, 2.0, 3.0]);
+        assert_eq!(back.frames[1][0].0, [2.0, 4.0, 0.0]);
+    }
 
     /// A one-bone animation: two frames, translation (0, 0, 0) -> (2, 4, 0), rotation identity -> 180 degrees about y.
     fn two_frames() -> Vec<u8> {

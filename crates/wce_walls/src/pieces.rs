@@ -860,7 +860,8 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>, across: Option<
     out
 }
 
-/// A piece made from the base's files under a new key: the standing meshes of every level warped, the collapses left out; with
+/// A piece made from the base's files under a new key: the standing meshes of every level warped, and the collapses with them
+/// (`BuildingFiles::warp_collapses`; none for a piece of one level, `only_level`); with
 /// `logic`, the logic and zone files warped too (the preview needs only the meshes). A step section goes into the levels its step piece
 /// has (the same level); a level it lacks keeps the base whole there: the step pieces have no rubble, and a stair standing in the
 /// rubble of a destroyed piece left a hole on each side of it.
@@ -902,7 +903,12 @@ pub fn make_piece(
         .collect::<Vec<_>>();
     let shifted = warp.overhangs().into_iter().map(|dx| Shifted { inner: warp, dx }).collect::<Vec<_>>();
     let base_x = (warp.profile.x.0 as f32, warp.profile.x.1 as f32);
-    let mut b = base.clone().renamed(key).without_collapses();
+    // Its collapses go with it, warped as its meshes are (`BuildingFiles::warp_collapses`); a piece made for one level alone has none.
+    let mut b = base.clone().renamed(key);
+    if only_level.is_some() {
+        b = b.without_collapses();
+    }
+
     let (logic_name, zones_name) = (b.logic_name(), b.zones_name());
     let mut drop = vec![];
     for (name, bytes) in &mut b.files {
@@ -985,13 +991,17 @@ pub fn make_piece(
                 None => text,
             };
             *bytes = zones::warp_zones(&text, warp, cuts.step)?.into_bytes();
-        } else if !name.ends_with(".meta") {
+        } else if !name.ends_with(".meta") && !crate::building::is_collapse(name) {
             drop.push(name.clone());
         }
     }
 
     for n in drop {
         b.files.remove(&n);
+    }
+
+    for why in b.warp_collapses(warp, &cuts) {
+        wce_foundation::log::warn(format!("walls: {key}: a collapse left out: {why}"));
     }
 
     Ok(b)
