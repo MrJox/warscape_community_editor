@@ -90,7 +90,10 @@ impl AloneClimate {
             (format!("{climate}_procedural_bmd_data.bin"), "default_procedural_bmd_data.bin"),
             (format!("{climate}_procedural_bmd_data.xml"), "default_procedural_bmd_data.xml"),
         ] {
-            if let Some((_, bytes)) = files.iter().find(|(p, _)| *p == format!("{folder}/{from}")) {
+            // In any case: a carried list is named as the packs have it (`rome_continental`), a generated one as the climate is
+            // (`ROME_Continental`); the game's paths are not case-sensitive.
+            let path = format!("{folder}/{from}");
+            if let Some((_, bytes)) = files.iter().find(|(p, _)| p.eq_ignore_ascii_case(&path)) {
                 let bytes = bytes.clone();
                 put(files, format!("{folder}/{to}"), bytes);
                 lists.push(from);
