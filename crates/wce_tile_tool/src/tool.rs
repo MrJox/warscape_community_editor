@@ -1782,7 +1782,7 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let parts = if d.project().is_combined() {
             // A combined project's variations, each written as a project of its own (docs/plans/tile_variations.md).
-            let (_, made) = d.materialize_variations(only.unwrap_or_default(), false)?;
+            let made = d.materialize_variations(only.unwrap_or_default(), false)?;
             made.iter()
                 .map(|m| {
                     std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE))
@@ -1821,7 +1821,7 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let parts = if d.project().is_combined() {
             // A combined project's variations, each written as a project of its own, each into its folder of the pack.
-            let (_, made) = d.materialize_variations(only.as_deref().unwrap_or_default(), false)?;
+            let made = d.materialize_variations(only.as_deref().unwrap_or_default(), false)?;
             made.iter()
                 .map(|m| {
                     std::fs::read(m.dir.join(wce_tile::project_files::WCE_FILE))

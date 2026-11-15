@@ -2,6 +2,10 @@
 //! `wce_tile::roads` over what lies below them. They are derived data: a road changing, or the ground under it, makes them again, so undoing an
 //! edit of the road needs nothing of its own. What a road was made from is in its layers' owner (`road:<id>#<signature>`), so that opening a
 //! tile does not make its roads again.
+//!
+//! In a combined project (docs/plans/tile_variations.md) each variation a road is in has its own layers, made over that variation's
+//! ground and belonging to it alone (`road:<id>@<variation>#<signature>`): the levels of a settlement differ in their terrain, and a
+//! road is laid on each as it is there. The variation viewed makes its own; an export makes those of each variation it writes.
 
 use std::collections::HashMap;
 use wce_foundation::math::{Double3, Double3x3, Float3};
@@ -48,14 +52,31 @@ struct Road {
 /// A road type's pieces, read: each one's name, what it reads as, its prefab's key and contents.
 type Pieces = Vec<(&'static str, Piece, String, Vec<u8>)>;
 
-fn owner_of(id: u32, signature: u64) -> String {
-    format!("road:{id}#{signature:x}")
+/// The owner of a road's layers: of a variation of a combined project (`variation`), or of the project's one.
+fn owner_of(id: u32, variation: Option<&str>, signature: u64) -> String {
+    match variation {
+        Some(v) => format!("road:{id}@{v}#{signature:x}"),
+        None => format!("road:{id}#{signature:x}"),
+    }
 }
 
-/// The road id and signature in a layer's owner.
-fn parse_owner(owner: &str) -> Option<(u32, u64)> {
-    let (id, signature) = owner.strip_prefix("road:")?.split_once('#')?;
-    Some((id.parse().ok()?, u64::from_str_radix(signature, 16).ok()?))
+/// A road layer's owner read: the road's id, the variation it was made for (a combined project's), its signature.
+#[derive(Clone, Debug, PartialEq)]
+struct Owner {
+    id: u32,
+    variation: Option<String>,
+    signature: u64,
+}
+
+/// The road id, variation and signature in a layer's owner.
+fn parse_owner(owner: &str) -> Option<Owner> {
+    let (head, signature) = owner.strip_prefix("road:")?.split_once('#')?;
+    let (id, variation) = match head.split_once('@') {
+        Some((id, v)) => (id, Some(v.to_owned())),
+        None => (head, None),
+    };
+
+    Some(Owner { id: id.parse().ok()?, variation, signature: u64::from_str_radix(signature, 16).ok()? })
 }
 
 /// The piece laid for `laid[k]`: it or one of its variants (`road_pieces::VARIANTS`) the road's type has, by the road's seed. A variant
@@ -363,7 +384,8 @@ impl Tile {
 
         self.take_road_terrain(wait);
 
-        let any = self.idx.valid && self.idx.type_names.iter().any(|t| t == ROAD_SPLINE);
+        // An export's variation (`export_view`) is not the index's: its roads are looked for in the scene.
+        let any = (self.idx.valid && self.idx.type_names.iter().any(|t| t == ROAD_SPLINE)) || (wait && !self.road_elems().is_empty());
         let owned = |p: &wce_tile::tile_project::TileProject| {
             p.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| l.owner.starts_with("road:")))
         };
@@ -374,8 +396,12 @@ impl Tile {
         let roads = made_order(self.roads(), |r| r);
         let stacks = self.project.layers.as_ref().and_then(|l| l.height.as_ref());
 
-        // Each road against what its layers were made from.
-        let made = |id: u32| stacks.and_then(|s| s.layers.iter().find_map(|l| parse_owner(&l.owner).filter(|o| o.0 == id).map(|o| o.1)));
+        // Each road against what its layers were made from: those of the variation viewed (a combined project's).
+        let cur = self.road_variation();
+        let mine = |o: &Owner| o.variation == cur;
+        let made = |id: u32| {
+            stacks.and_then(|s| s.layers.iter().find_map(|l| parse_owner(&l.owner).filter(|o| o.id == id && mine(o)).map(|o| o.signature)))
+        };
         let on_top = self.project.layers.as_ref().is_none_or(|l| {
             l.height.as_ref().is_none_or(Stack::owned_on_top)
                 && l.blend.as_ref().is_none_or(Stack::owned_on_top)
@@ -388,12 +414,19 @@ impl Tile {
                 .layers
                 .iter()
                 .filter_map(|l| parse_owner(&l.owner))
-                .filter_map(|o| roads.iter().position(|r| r.id == o.0))
+                .filter(mine)
+                .filter_map(|o| roads.iter().position(|r| r.id == o.id))
                 .collect::<Vec<_>>();
             ranks.windows(2).all(|w| w[0] < w[1])
         });
         let stale = self.roads_stale || !on_top || !in_order || roads.iter().any(|r| made(r.id) != Some(r.signature));
-        let gone = stacks.is_some_and(|s| s.layers.iter().filter_map(|l| parse_owner(&l.owner)).any(|o| roads.iter().all(|r| r.id != o.0)));
+        // Gone: a road's of this variation that it no longer has; in a combined project, any made for no variation (before it was one).
+        let gone = stacks.is_some_and(|s| {
+            s.layers
+                .iter()
+                .filter_map(|l| parse_owner(&l.owner))
+                .any(|o| (mine(&o) && roads.iter().all(|r| r.id != o.id)) || (cur.is_some() && o.variation.is_none()))
+        });
         // The instances wait for the terrain: made before it, they were made again right after.
         self.roads_due = stale || gone;
         if !stale && !gone {
@@ -486,8 +519,18 @@ impl Tile {
         let blend = layers.blend.get_or_insert_with(|| Stack::new(bf)).clone();
         let ground = layers.ground.get_or_insert_with(|| Stack::new(gf)).clone();
         let before = (height.clone(), blend.clone(), ground.clone());
-        let input =
-            TerrainInput { roads: roads.to_vec(), water, new_ids, height, blend, ground, dims, frame: (unit, border, ex, ez, mx, mz) };
+        let variation = self.road_variation();
+        let input = TerrainInput {
+            roads: roads.to_vec(),
+            variation,
+            water,
+            new_ids,
+            height,
+            blend,
+            ground,
+            dims,
+            frame: (unit, border, ex, ez, mx, mz),
+        };
         let job = super::jobs::Job::spawn("road terrain", move || road_terrain(input));
         self.road_terrain_job = Some(RoadTerrainJob { job, all, before });
         Ok(())
@@ -615,7 +658,8 @@ impl Tile {
             }
         }
 
-        let input = ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, levels, making: self.road_making };
+        let variation = self.road_variation();
+        let input = ItemsInput { roads, variation, water, height, hdims, frame, ground, pieces, bases, levels, making: self.road_making };
         self.road_items_job = Some(super::jobs::Job::spawn("road items", move || road_items(input)));
     }
 
@@ -723,6 +767,11 @@ impl Tile {
         self.road_items
             .iter()
             .any(|i| i.export.as_ref().is_some_and(|t| t.starts_with(format!("<{}", wce_walls::bridge::BRIDGE_SPAN).as_bytes())))
+    }
+
+    /// The variation whose road layers are made and read: the one viewed in a combined project, none in a project of one.
+    fn road_variation(&self) -> Option<String> {
+        self.project.is_combined().then(|| self.viewed_variation().map(str::to_owned)).flatten()
     }
 
     fn road_elems(&self) -> Vec<usize> {
@@ -853,6 +902,9 @@ pub(crate) struct RoadTerrainJob {
 /// ground) and how they lie (unit, border, extent x and z, metres a height pixel across and down).
 struct TerrainInput {
     roads: Vec<Road>,
+
+    /// The variation they are made for (a combined project's): its layers are made, the others' left as they are.
+    variation: Option<String>,
     water: WaterMap,
     new_ids: Vec<[u64; 3]>,
     height: Stack<Height>,
@@ -866,10 +918,17 @@ struct TerrainInput {
 /// below them (an earlier road is ground to a later one), and takes out those of roads that went. Off the editor's thread.
 fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainGround>) {
     wce_foundation::wce_prof!("tile.make_roads");
-    let TerrainInput { roads, water, new_ids, mut height, mut blend, mut ground, dims, frame } = i;
+    let TerrainInput { roads, variation, water, new_ids, mut height, mut blend, mut ground, dims, frame } = i;
     let (unit, border, ex, ez, mx, mz) = frame;
     let [(hw, hh), (bw, bh), (gw, gh)] = dims;
-    let alive = |o: &str| parse_owner(o).is_none_or(|(id, _)| roads.iter().any(|r| r.id == id));
+    // Another variation's layers stay; this one's go with their road; in a combined project, those made for no variation go.
+    let alive = |o: &str| {
+        parse_owner(o).is_none_or(|o| match (&o.variation, &variation) {
+            (Some(a), Some(b)) if a != b => true,
+            (None, Some(_)) => false,
+            _ => roads.iter().any(|r| r.id == o.id),
+        })
+    };
     height.layers.retain(|l| alive(&l.owner));
     blend.layers.retain(|l| alive(&l.owner));
     ground.layers.retain(|l| alive(&l.owner));
@@ -878,7 +937,7 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
         if o.starts_with(super::kit_walls::OWNER) {
             usize::MAX
         } else {
-            parse_owner(o).and_then(|(id, _)| roads.iter().position(|r| r.id == id)).unwrap_or(0)
+            parse_owner(o).filter(|o| o.variation == variation).and_then(|o| roads.iter().position(|r| r.id == o.id)).unwrap_or(0)
         }
     };
     height.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
@@ -893,11 +952,15 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
             continue;
         }
 
-        let owner = owner_of(road.id, road.signature);
-        let name = format!("Road {}", road.id);
-        let height_id = road_layer(&mut height, road.id, &owner, &name, ids[0]);
-        let blend_id = road_layer(&mut blend, road.id, &owner, &name, ids[1]);
-        let ground_id = road_layer(&mut ground, road.id, &owner, &name, ids[2]);
+        let owner = owner_of(road.id, variation.as_deref(), road.signature);
+        let name = match &variation {
+            Some(v) => format!("Road {} ({v})", road.id),
+            None => format!("Road {}", road.id),
+        };
+        let only = variation.as_deref();
+        let height_id = road_layer(&mut height, road.id, only, &owner, &name, ids[0]);
+        let blend_id = road_layer(&mut blend, road.id, only, &owner, &name, ids[1]);
+        let ground_id = road_layer(&mut ground, road.id, only, &owner, &name, ids[2]);
 
         // What lies below the road, in world units.
         let under = |x: u32, y: u32| {
@@ -970,6 +1033,9 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
 /// type's pieces, the bridge bases (by key), and the making's number (in the generated keys).
 struct ItemsInput {
     roads: Vec<(usize, Road)>,
+
+    /// The variation they are laid for (a combined project's): on its road layers.
+    variation: Option<String>,
     water: WaterMap,
     height: Option<Stack<Height>>,
     hdims: (u32, u32),
@@ -993,7 +1059,7 @@ pub(crate) struct ItemsMade {
 /// their bases (their files given back, to go among the generated ones). Off the editor's thread.
 fn road_items(i: ItemsInput) -> ItemsMade {
     wce_foundation::wce_prof!("tile.make_road_items");
-    let ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, levels, making } = i;
+    let ItemsInput { roads, variation, water, height, hdims, frame, ground, pieces, bases, levels, making } = i;
     let (unit, border, ex, ez, mx, mz) = frame;
     let mut items = vec![];
     let mut made = ItemsMade::default();
@@ -1010,9 +1076,9 @@ fn road_items(i: ItemsInput) -> ItemsMade {
         // Laid as the terrain pass lays it (`make_roads`): on what lies below its layer, sampled the same way, the earlier roads taken
         // for ground with no bump. Laid another way, a bridge's deck and the road it lands on were not at the same height (user
         // 2026-11-08: its ends stood off the ground).
-        let below = height
-            .as_ref()
-            .and_then(|s| s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road.id)).map(|l| (s, l.id)));
+        let below = height.as_ref().and_then(|s| {
+            s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.id == road.id && o.variation == variation)).map(|l| (s, l.id))
+        });
         let (w, h) = hdims;
         let under = |x: u32, y: u32| match below {
             Some((s, id)) => {
@@ -1446,13 +1512,35 @@ fn bilinear(under: &dyn Fn(u32, u32) -> f64, x: f64, z: f64, (border, mx, mz): (
 }
 
 /// A road's layer in a stack, emptied: the one it has, else a new one.
-fn road_layer<K: Kind>(s: &mut Stack<K>, road: u32, owner: &str, name: &str, id: u64) -> u64 {
-    if let Some(l) = s.layers.iter_mut().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road)) {
+fn road_layer<K: Kind>(s: &mut Stack<K>, road: u32, variation: Option<&str>, owner: &str, name: &str, id: u64) -> u64 {
+    if let Some(l) =
+        s.layers.iter_mut().find(|l| parse_owner(&l.owner).is_some_and(|o| o.id == road && o.variation.as_deref() == variation))
+    {
         l.owner = owner.to_owned();
         let id = l.id;
         s.clear_layer(id);
         return id;
     }
 
-    s.add(id, name, owner)
+    let id = s.add(id, name, owner);
+    if let (Some(v), Some(i)) = (variation, s.index_of(id)) {
+        s.layers[i].variations = vec![v.to_owned()];
+    }
+
+    id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_road_layers_owner_says_its_variation() {
+        assert_eq!(parse_owner(&owner_of(7, None, 0xab)), Some(Owner { id: 7, variation: None, signature: 0xab }));
+        assert_eq!(
+            parse_owner(&owner_of(7, Some("small"), 0xab)),
+            Some(Owner { id: 7, variation: Some("small".to_owned()), signature: 0xab })
+        );
+        assert_eq!(parse_owner("kitwall:x#1"), None);
+    }
 }

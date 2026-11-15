@@ -693,7 +693,8 @@ impl Tile {
         let sc = self.tscene();
         let els = sc.doc().elements();
         for e in 0..els.len() {
-            if els[e].name != "SplineRiverInstance" {
+            // The viewed variation's rivers, counted as its file has them (a combined project's).
+            if els[e].name != "SplineRiverInstance" || !sc.in_variation(e) {
                 continue;
             }
 

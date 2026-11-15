@@ -318,9 +318,16 @@ variation has.
      is the kit's as the editor reads and writes it back (TEd's `parallax_scale="-0"` aside, as for any kit tile), its height, blend and
      ground type maps and the entry the kit's byte for byte; `small` compiled from the combined project is the kit's `small`
      compiled, all 57 files byte for byte, once its `protection_map.dds` is in `variations/small/` (where Combine will put it).
-   Left: what the editor makes for the viewed variation goes into every variation exported (a warning in the log for now): the
-   walls it lays (`kit_walls_for_export`, the procedural walls' layout) and the procedural roads' pieces (`with_road_items`, in a
-   layer every variation has). Import from Assembly Kit does not know a combined project.
+   - The procedural roads: in a combined project each variation a road is in has its own layers of it, made over its own ground and
+     belonging to it alone (owner `road:<id>@<variation>#<signature>`, layer "Road <id> (<variation>)"); the variation viewed makes
+     its own, the others' stay. An export views each variation it writes in turn (`Tile::export_view`: the project's view only, not
+     the index or the entities), so that its roads' layers and pieces, and its building splines' items, are made on its ground; the
+     variation viewed is viewed again after. The water a road crosses is the viewed variation's rivers (`river_ribbons`).
+     Checked: a road drawn across `orc_city_a` where `minor`'s ground differs: after For Assembly Kit, three layers of each type,
+     `minor`'s pieces on its ground (0.4 m lower), `small` and `medium` the same where theirs is.
+   Left: the walls the editor lays (`kit_walls_for_export`, the procedural walls' layout) are the viewed variation's for every
+   variation exported (a warning in the log for now). Combined projects are the editor's only: Import from Assembly Kit does not
+   make one (the user, 2026-11-15).
 7. **Loaders**: materialization in `sources::find_tile`, `build/variations/`, the stamp.
 8. **Combine and Separate**: the dialog, the backup, the commands.
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`
