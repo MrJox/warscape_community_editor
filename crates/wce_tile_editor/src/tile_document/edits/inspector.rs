@@ -141,7 +141,17 @@ impl TileDocument {
 
         // What the file has and the grid does not show.
         let sc = self.tile().tscene();
-        let rest = sc.doc().elements()[e].attrs.iter().enumerate().filter(|(_, a)| !shown.contains(&a.name.as_str())).collect::<Vec<_>>();
+        // A combined project's variations are the checkboxes above (`variation_rows`), not text here.
+        let rest = sc.doc().elements()[e]
+            .attrs
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| {
+                !shown.contains(&a.name.as_str())
+                    && a.name != wce_tile::variations::VARIATIONS_ATTR
+                    && a.name != wce_tile::variations::GROUP_ATTR
+            })
+            .collect::<Vec<_>>();
         if !rest.is_empty() {
             ins.section("Other attributes");
             for (i, a) in rest {

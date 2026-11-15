@@ -123,6 +123,25 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "tile_combine_dialog",
+        "tile_combine_dialog [tick <variation,...>]",
+        "Tile > Variations > Combine...: the dialog for the open tile (for captures of it); tick: those variations ticked once it has read them",
+        move |e, a| {
+            let ticks = if a.first().is_some_and(|x| x == "tick") { list(&a[1..]) } else { vec![] };
+            with_tile(e, |t, e| {
+                t.open_combine(e);
+                match t.combine.as_mut() {
+                    Some(ui) => {
+                        ui.tick_when_read = ticks;
+                        ok("the Combine dialog is open")
+                    }
+                    None => fail("no Combine dialog (see the status)"),
+                }
+            })
+        },
+    );
+
+    c.add(
         "tile_separate",
         "tile_separate <variation>",
         "Tile > Variations > Separate: a variation of the open combined project made a project of its own again, the others left combined (the tile saved first, opened again)",
