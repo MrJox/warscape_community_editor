@@ -433,6 +433,24 @@ impl TileDocument {
         }
     }
 
+    /// `f` of the tile with a combined project's variation shown alone (its scene, its terrain), the variations shown again after: what
+    /// reads one variation's tile from the document (Launch in game's deployment zones).
+    ///
+    /// # Errors
+    ///
+    /// Not a variation of the project.
+    pub fn with_variation_alone<R>(&mut self, variation: &str, f: impl FnOnce(&super::Tile) -> R) -> Result<R, String> {
+        let shown = self.project().shown_variations().to_vec();
+        if shown == [variation.to_owned()] {
+            return Ok(f(self.tile()));
+        }
+
+        self.tile_mut().export_view(variation)?;
+        let out = f(self.tile());
+        self.tile_mut().end_export_view(&shown)?;
+        Ok(out)
+    }
+
     /// A combined project's variations (`list`, empty: all) written as projects of their own under [`Self::variations_build_root`], each
     /// from the scene as an export reads it ([`Self::text_for_export`]) with that variation viewed (`Tile::export_view`): what the editor
     /// makes over the terrain (the procedural roads' layers and pieces, the building splines' items, the kit walls' height layers and

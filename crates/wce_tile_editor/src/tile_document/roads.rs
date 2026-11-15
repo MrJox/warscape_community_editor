@@ -314,7 +314,7 @@ impl Tile {
                 || (sc.type_of(e) == "SIMPLE_MESH_INSTANCE" && sc.get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
         };
         let water = (0..sc.doc().elements().len())
-            .filter(|&e| wet(e) && sc.in_variation(e))
+            .filter(|&e| wet(e) && sc.in_variation(e) && self.of_tile_variation(e))
             .fold(0u64, |h, e| h.rotate_left(5) ^ hash_text(&String::from_utf8_lossy(&sc.element_text(e))));
         elems
             .into_iter()
@@ -775,7 +775,10 @@ impl Tile {
     }
 
     fn road_elems(&self) -> Vec<usize> {
-        (0..self.tscene().doc().elements().len()).filter(|&e| self.is_road(e) && self.tscene().in_variation(e)).collect()
+        // The tile's variation's (the first shown): its layers are made over its ground (`road_variation`).
+        (0..self.tscene().doc().elements().len())
+            .filter(|&e| self.is_road(e) && self.tscene().in_variation(e) && self.of_tile_variation(e))
+            .collect()
     }
 
     /// A road type's pieces (`roads_proc/<type>`), each its type's or, missing there, the base's (`none`: none).

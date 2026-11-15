@@ -748,6 +748,9 @@ pub(crate) struct Launch {
     pub(crate) job: Option<crate::launch_prompt::LaunchJob>,
     pub(crate) worker: Option<std::thread::JoinHandle<()>>,
     pub(crate) progress_open: bool,
+
+    /// A combined project's variation to launch (Tile > Launch in game's choice; none: the first shown).
+    pub(crate) variation: Option<String>,
 }
 
 /// The Scene panel's tree: its rows, what is open, the filter, the renaming and the scroll.
@@ -1388,10 +1391,11 @@ impl TileTool {
             ted = tile.join(wce_tile::project_files::WCE_FILE);
             let open =
                 e.docs.of_tool(TILE_TOOL_ID).filter(|&id| e.docs.find(id).is_some_and(|d| d.opened_from(&ted.display().to_string())));
-            if let Some(id) = open {
-                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                d.tile_mut().view_variation(&mut e.scene, &vars[v].location)?;
-                return Ok(format!("viewing the variation {} of {}", vars[v].location, tile.display()));
+            if open.is_some() {
+                return Ok(format!(
+                    "{} is a variation of the open combined project: the Scene panel's Show shows it or hides it",
+                    vars[v].location
+                ));
             }
         }
 
@@ -4878,9 +4882,25 @@ impl Tool for TileTool {
         } else {
             "Launch in game"
         };
-        if gui::menu_item(label, None, false, document(e).is_some() && self.launch.launched.is_none() && self.launch.job.is_none()) {
-            let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
-            e.status(&msg, false);
+        // A combined project's: which variation (its own export, its zones).
+        let can_launch = document(e).is_some() && self.launch.launched.is_none() && self.launch.job.is_none();
+        let launch_vars = document(e).map(|d| d.tile().variations().to_vec()).unwrap_or_default();
+        if launch_vars.is_empty() {
+            if gui::menu_item(label, None, false, can_launch) {
+                self.launch.variation = None;
+                let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
+                e.status(&msg, false);
+            }
+        } else if gui::begin_menu_enabled(label, can_launch) {
+            for v in &launch_vars {
+                if gui::menu_item(v, None, false, true) {
+                    self.launch.variation = Some(v.clone());
+                    let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
+                    e.status(&msg, false);
+                }
+            }
+
+            gui::end_menu();
         }
 
         if gui::is_item_hovered() {

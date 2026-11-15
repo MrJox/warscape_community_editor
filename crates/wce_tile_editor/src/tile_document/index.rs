@@ -855,6 +855,15 @@ impl Tile {
         self.project.view.as_ref().map(|v| v.variation.as_str())
     }
 
+    /// Whether an element belongs to the tile's variation (the first shown) of a combined project; always of a project of one. What the
+    /// editor makes over the terrain (the roads, the kit walls' ground) is made for that variation's elements only: their layers are its.
+    pub(crate) fn of_tile_variation(&self, elem: usize) -> bool {
+        match self.viewed_variation().filter(|_| self.project.is_combined()) {
+            Some(v) => wce_tile::variations::belongs(self.tscene().doc(), elem, v),
+            None => true,
+        }
+    }
+
     /// The variations shown of a combined project, in its order.
     pub fn shown_variations(&self) -> &[String] {
         self.project.shown_variations()

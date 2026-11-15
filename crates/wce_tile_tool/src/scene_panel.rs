@@ -840,7 +840,7 @@ enum RowAction {
     ExportType(usize, String),
     SetVariations(Vec<usize>, Option<Vec<String>>),
     VariationFolder(Vec<usize>, Vec<String>),
-    SplitVariation(Vec<usize>),
+    SplitVariation(Vec<usize>, String),
     CommitRename(usize, String),
     ToggleOpen(String, bool),
 }
@@ -885,7 +885,6 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         let t = d.tile();
         let sc = t.tscene();
         let all = t.variations().to_vec();
-        let viewed = t.viewed_variation().unwrap_or_default().to_owned();
         let var_w = variations_width(e, &all);
         let right = ICON_COLUMNS * ICON_WIDTH + var_w;
         let rows = tool.tree.rows.clone();
@@ -1083,7 +1082,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     }
                 }
 
-                // A combined project's: the selection into a folder of some variations, or split for the viewed one.
+                // A combined project's: the selection into a folder of some variations, or split for one.
                 if !all.is_empty() && !sel.is_empty() && !is_graph {
                     if gui::begin_menu("Move to a variation folder") {
                         for v in &all {
@@ -1092,22 +1091,33 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                             }
                         }
 
-                        let others = all.iter().filter(|v| **v != viewed).cloned().collect::<Vec<_>>();
-                        if others.len() > 1 && gui::menu_item(&format!("In all but {viewed}"), None, false, true) {
-                            actions.push(RowAction::VariationFolder(sel.clone(), others));
+                        if all.len() > 2 {
+                            gui::separator();
+                            for v in &all {
+                                if gui::menu_item(&format!("In all but {v}"), None, false, true) {
+                                    let others = all.iter().filter(|x| *x != v).cloned().collect::<Vec<_>>();
+                                    actions.push(RowAction::VariationFolder(sel.clone(), others));
+                                }
+                            }
                         }
 
                         gui::end_menu();
                     }
 
-                    if gui::menu_item(&format!("Split for {viewed}"), None, false, true) {
-                        actions.push(RowAction::SplitVariation(sel.clone()));
-                    }
+                    if gui::begin_menu("Split for a variation") {
+                        for v in &all {
+                            if gui::menu_item(v, None, false, true) {
+                                actions.push(RowAction::SplitVariation(sel.clone(), v.clone()));
+                            }
 
-                    if gui::is_item_hovered() {
-                        gui::set_tooltip(&format!(
-                            "Copies the selection into a folder for {viewed} and puts the originals in one for the other variations:\nwhat you change then is {viewed}'s only."
-                        ));
+                            if gui::is_item_hovered() {
+                                gui::set_tooltip(&format!(
+                                    "Copies the selection into a folder for {v} and puts the originals in one for the other variations:\nwhat you change in the copies then is {v}'s only."
+                                ));
+                            }
+                        }
+
+                        gui::end_menu();
                     }
                 }
 
@@ -1465,8 +1475,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     d.to_variation_folder(&sel, &list).map_or_else(|err| err, |_| format!("moved into a folder for {}", list.join(", ")));
             }
 
-            RowAction::SplitVariation(sel) => {
-                tool.status = d.split_for_variation(&sel).map_or_else(|err| err, |c| format!("split: {} copies, selected", c.len()));
+            RowAction::SplitVariation(sel, v) => {
+                tool.status =
+                    d.split_for_variation(&sel, &v).map_or_else(|err| err, |c| format!("split for {v}: {} copies, selected", c.len()));
             }
 
             RowAction::CommitRename(el, name) => {

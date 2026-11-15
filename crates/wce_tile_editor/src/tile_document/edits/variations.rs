@@ -98,8 +98,13 @@ impl TileDocument {
     /// # Errors
     ///
     /// Not a combined project, a selection that is not side by side, not in the viewed variation, or only in it already.
-    pub fn split_for_variation(&mut self, elems: &[usize]) -> Result<Vec<usize>, String> {
-        let (all, v) = self.combined()?;
+    pub fn split_for_variation(&mut self, elems: &[usize], variation: &str) -> Result<Vec<usize>, String> {
+        let (all, _) = self.combined()?;
+        let v = all
+            .iter()
+            .find(|x| x.eq_ignore_ascii_case(variation))
+            .cloned()
+            .ok_or_else(|| format!("the project has no variation '{variation}' (it has {})", all.join(", ")))?;
         let (top, sel_before) = self.variation_selection(elems)?;
         let mark = self.begin()?;
         let copies = match edit::split_for(self.tscene_mut(), &top, &v, &all) {

@@ -495,6 +495,16 @@ Steps:
   byte.
 - **R3. The tools.** *Split for a variation* as a submenu; the roads, walls, vegetation and siege of the display variation; Launch
   in game's choice; the Tile panel's chooser.
+  Done (2026-11-15): *Split for a variation* is a submenu of the variations (`tile_split_variation <v>`), *Move to a variation folder*
+  has *In all but <v>* for each. What the editor makes over the terrain is the tile's variation's (the first shown;
+  `Tile::of_tile_variation`): the roads made are its roads, the kit walls' ground layers its walls' (the others' show, laid, without
+  one). The prefab references' ground: every reference's, whatever is shown, its layer tagged with its variations (a normalized one
+  levelled on the ground as shown: approximate where the variations' ground differs under it). Generate SiegeAI needs one variation
+  shown alone: its layout in a layer of it alone, an earlier generated one of it replaced, the layouts in shared layers left (said in
+  the log). Tile > Launch in game is a submenu of the variations (`tile_launch_game --variation <v>`): its export and its deployment
+  zones (`TileDocument::with_variation_alone`). The Tile panel's variations of the open combined project no longer switch anything.
+  Checked in the editor (the port, aligned): a building split for `medium`; SiegeAI refused with all shown, made for `medium` alone; a
+  launch dry run of `small` exports `small`.
 - **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the
   Scene panel, the Inspector, the Terrain layers section and the Combine dialog, looked at before it is called done.
 
