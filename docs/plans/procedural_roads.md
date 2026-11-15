@@ -586,7 +586,7 @@ The roads were too static and alike. Decided (grilled 2026-11-15; built on branc
 
 | Phase | Work |
 |---|---|
-| V1 | Role layers: `road_role` groups, the reader, the generated pieces rewritten with them, the Prefab tool's Inspector row |
+| V1 | Role layers: `road_role` groups, the reader, the generated pieces rewritten with them, the Prefab tool's Inspector row: done (2026-11-15; `road_pieces::PartRole`, `role_group`; dirt's pieces grouped, every part's anchor and place unchanged: `the_role_groups_change_no_parts_anchor_or_place`) |
 | V2 | Variants and weights for every piece |
 | V3 | The detail layer and `road_detail_density` |
 | V4 | Per-point fence type and damage |

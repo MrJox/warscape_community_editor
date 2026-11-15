@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, UNIT, VARIANTS, VERGE, WIDTH, base_guides};
+use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, PartRole, UNIT, VARIANTS, VERGE, WIDTH, base_guides};
 
 /// The road type's folder and name.
 pub const TYPE: &str = "dirt";
@@ -341,7 +341,23 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
     out
 }
 
-/// The dirt pieces' contents: the base's guides and the decals.
+/// The role group a dirt part goes in (`road_pieces::PartRole`): the ruts are the road's surface, the borders its edges, the banks its
+/// verges, the fence its fence, a junction's worn middle stays where it is, and the rocks, puddles, patches and erosion are optional
+/// detail. Each part keeps its own anchor, so a road is laid as before the groups.
+fn role_of(part: &[u8]) -> PartRole {
+    let text = String::from_utf8_lossy(part);
+    let attr = |name: &str| text.split(&format!(" {name}=\"")).nth(1).and_then(|r| r.split('"').next()).unwrap_or_default().to_owned();
+    match (attr("name").as_str(), attr(ANCHOR_ATTR).as_str()) {
+        (FENCE_KEY, _) => PartRole::Fence,
+        (BANK_KEY, _) => PartRole::Verge,
+        ("path_1", "fixed") => PartRole::Fixed,
+        ("path_1", _) => PartRole::Surface,
+        ("border_1" | "border_2", _) => PartRole::Edge,
+        _ => PartRole::Detail,
+    }
+}
+
+/// The dirt pieces' contents: the base's guides and the parts, in their role groups (`road_pieces::role_group`).
 #[must_use]
 pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
     PIECES
@@ -350,7 +366,13 @@ pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
         .chain(VARIANTS.iter().map(|v| v.0))
         .map(|p| {
             let mut children = base_guides(p);
-            children.extend(parts(p));
+            let parts = parts(p);
+            for role in PartRole::ALL {
+                let mine = parts.iter().filter(|q| role_of(q) == role).cloned().collect::<Vec<_>>();
+                children.push(road_pieces::role_group(role, &mine));
+            }
+
+            children.retain(|c| !c.is_empty());
             (p, children)
         })
         .collect()
@@ -370,6 +392,47 @@ pub fn write(prefab_root: &Path) -> Result<Vec<PathBuf>, String> {
 mod tests {
     use super::*;
     use crate::road_pieces::{Anchor, group_text, key, read};
+
+    #[test]
+    fn the_role_groups_change_no_parts_anchor_or_place() {
+        for (piece, children) in pieces() {
+            if piece == "fence" {
+                continue;
+            }
+
+            let grouped = read(&group_text(&key(TYPE, piece), &children)).unwrap();
+            let mut flat_children = base_guides(piece);
+            flat_children.extend(parts(piece));
+            let flat = read(&group_text(&key(TYPE, piece), &flat_children)).unwrap();
+            assert_eq!(grouped.parts.len(), flat.parts.len(), "{piece}");
+            assert!(grouped.parts.iter().all(|p| p.role.is_some()), "{piece}: a part outside every role group");
+
+            // Same parts (by key and place), same anchors and places: a road is laid as before.
+            for g in &grouped.parts {
+                let f = flat.parts.iter().find(|f| f.key == g.key && (f.at[0] - g.at[0]).abs() < 1e-9 && (f.at[1] - g.at[1]).abs() < 1e-9);
+                let f = f.unwrap_or_else(|| panic!("{piece}: {} at {:?} not in the flat piece", g.key, g.at));
+                assert_eq!((g.anchor, g.arm), (f.anchor, f.arm), "{piece}: {}", g.key);
+                assert!((g.along - f.along).abs() < 1e-9 && (g.across - f.across).abs() < 1e-9, "{piece}: {}", g.key);
+            }
+
+            // The rocks, puddles, patches and erosion are detail; the ruts surface or fixed; the borders edge.
+            for p in &grouped.parts {
+                let want = if p.key.contains("rocks") || p.key.contains("puddle") || p.key.contains("erossion") || p.key.contains("path_04")
+                {
+                    Some(PartRole::Detail)
+                } else if p.key == BANK_KEY {
+                    Some(PartRole::Verge)
+                } else if p.key.contains("border") {
+                    Some(PartRole::Edge)
+                } else {
+                    None
+                };
+                if let Some(w) = want {
+                    assert_eq!(p.role, Some(w), "{piece}: {}", p.key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn every_dirt_piece_reads_and_its_parts_fit() {

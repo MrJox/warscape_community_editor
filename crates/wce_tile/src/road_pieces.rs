@@ -22,6 +22,9 @@ pub const BASE: &str = "base";
 pub const ROLE_ATTR: &str = "guide_role";
 pub const ANCHOR_ATTR: &str = "road_anchor";
 
+/// A group's role in a piece (docs/plans/procedural_roads.md, "Variety"): what its parts are, whatever its name.
+pub const PART_ROLE_ATTR: &str = "road_role";
+
 /// The file's units a metre, in a battle tile.
 pub const UNIT: f64 = 2.0;
 
@@ -122,6 +125,51 @@ impl Anchor {
     }
 }
 
+/// What a group of a piece holds ([`PART_ROLE_ATTR`]): the road's surface (ruts, mud), its edges (borders), its verges (banks, erosion),
+/// a fence, optional detail (thinned by the road's detail density) or what stays where it is in the piece's frame (a junction's middle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartRole {
+    Surface,
+    Edge,
+    Verge,
+    Fence,
+    Detail,
+    Fixed,
+}
+
+impl PartRole {
+    pub const ALL: [Self; 6] = [Self::Surface, Self::Edge, Self::Verge, Self::Fence, Self::Detail, Self::Fixed];
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Surface => "surface",
+            Self::Edge => "edge",
+            Self::Verge => "verge",
+            Self::Fence => "fence",
+            Self::Detail => "detail",
+            Self::Fixed => "fixed",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.name() == s)
+    }
+
+    /// The anchor its parts take, unless they say their own: a fence's and detail's are where each stands.
+    #[must_use]
+    pub fn anchor(self) -> Option<Anchor> {
+        match self {
+            Self::Surface => Some(Anchor::Surface),
+            Self::Edge => Some(Anchor::Edge),
+            Self::Verge => Some(Anchor::Verge),
+            Self::Fixed => Some(Anchor::Fixed),
+            Self::Fence | Self::Detail => None,
+        }
+    }
+}
+
 /// Where a piece joins the next: its middle on the centre line, the way out of the piece, and the road's width there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Port {
@@ -161,6 +209,9 @@ pub struct Part {
     /// Over the ground.
     pub up: f64,
     pub anchor: Anchor,
+
+    /// The role of the group it is in (the nearest with one), if any.
+    pub role: Option<PartRole>,
 
     /// It stands (a building or a mesh), so it never goes on the road.
     pub solid: bool,
@@ -374,8 +425,12 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
             Anchor::Verge
         };
 
+        // Its group's role: the nearest group up to the piece's with one.
+        let role = std::iter::successors(el.parent, |&a| els[a].parent)
+            .take_while(|&a| a != root)
+            .find_map(|a| scene.doc().get(a, PART_ROLE_ATTR).and_then(|r| PartRole::parse(&r)));
         let own = scene.doc().get(e, ANCHOR_ATTR).and_then(|a| Anchor::parse(&a));
-        let mut anchor = own.unwrap_or(stood);
+        let mut anchor = own.or_else(|| role.and_then(PartRole::anchor)).unwrap_or(stood);
         if solid && anchor == Anchor::Surface {
             notes.push(format!("{key} stands on the road: laid on the verge"));
             anchor = Anchor::Verge;
@@ -414,6 +469,7 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
             across,
             up: p.y / UNIT,
             anchor,
+            role,
             solid,
             size,
             turn,
@@ -547,6 +603,26 @@ pub fn base_guides(piece: &str) -> Vec<Vec<u8>> {
 
         _ => vec![],
     }
+}
+
+/// A role group of a piece ([`PartRole`]): `children` its parts' texts (at column 0); nothing when there are none.
+#[must_use]
+pub fn role_group(role: PartRole, children: &[Vec<u8>]) -> Vec<u8> {
+    if children.is_empty() {
+        return vec![];
+    }
+
+    let name = role.name();
+    let mut out = format!("<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE\" position=\"vector(0,0,0)\" name=\"{name}\" orientation=\"euler(0,0,0)\" {PART_ROLE_ATTR}=\"{name}\">\n    <children>\n").into_bytes();
+    for child in children {
+        for line in child.split_inclusive(|&c| c == b'\n') {
+            out.extend_from_slice(b"        ");
+            out.extend_from_slice(line);
+        }
+    }
+
+    out.extend_from_slice(b"    </children>\n</UserInstanceGroup>\n");
+    out
 }
 
 /// A piece's group: `children` its contents' texts (at column 0).

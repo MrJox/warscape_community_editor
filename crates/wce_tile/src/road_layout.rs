@@ -580,6 +580,7 @@ pub fn ports_at(piece: &Piece, laid: &Laid, line: &[[f64; 2]], width: f64) -> Ve
                 across: 0.0,
                 up: 0.0,
                 anchor: Anchor::Surface,
+                role: None,
                 solid: false,
                 size: [0.0; 2],
                 turn: 0.0,
