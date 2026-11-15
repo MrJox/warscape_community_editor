@@ -553,6 +553,23 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   a `path_1` over a `western_villa_house01` (a thatched house with the mods) left its pitched roof clean; the ground about it showed the
   puddle only faintly. So buildings take decals in the game (a near-level deck at least); a steep roof did not (the facing fade, or its
   material: not told apart). How a building's pixels reach the decal pass's stencil 0x81 is still not found.
+- **Corrected by RenderDoc (2026-11-16): the deck is not painted.** The "two darker, scuffed lanes" above are the bridge's own texture
+  (the user, looking again). Captures `decals_frame5533.rdc` (the bridge) and `decals_frame7803.rdc` (the house), Attila at terrain
+  quality 2, textures 0, 1280 x 720:
+  - With decals drawn, buildings do write stencil 129 (`ALWAYS / REPLACE`: the bridge, event 408; the house, 412 and 415), so the decals'
+    `EQUAL 129` passes on them: at the decal draw the stencil is 0x81 everywhere but the grass (0x41). (coast.rdc's models at 1 were at
+    the lowest settings, which draw no decals.) The stencil is not what keeps buildings clean.
+  - What does: the decal's box. Its vertex shader draws a unit cube (-0.5 .. 0.5) by the instance's rows (POSITION1..3), and the
+    instance's y row is (0, 0.75, 0) for every decal on the tile (`path_1` of scale (60, 40, -5) and the puddle of (32, 40, -32) alike),
+    its origin at y 30.0884, the ground's height there: a box 0.75 m tall about the ground. The file's `scale.y` (40) is not used for it.
+    The deck, 0.89 m over the ground, is above the box's top: every deck pixel along the ruts' lanes fails the box's depth test (pixel
+    history, events 448), and the pixel shader's own test (the pixel's world position from the depth copy taken after the buildings,
+    event 425, against the half sizes) limits x and z only: y's bound is scale.y squared / 2 against 0.75 y, never reached.
+  - So decals paint what lies within about 0.375 m of the ground under them, buildings included (a doorstep, a low deck, a plinth), and
+    nothing higher. Not traced: where 0.75 and the origin's height come from (a constant, or fitted to the terrain under the footprint;
+    this tile is flat), and whether TEd's house roof (painted in TEd) means TEd builds its boxes from `scale.y` while the game does not.
+  - The editor keeps its rule (decals on the ground and TerrainBlend meshes only, boxes from `scale.y`) until that is traced: marking
+    buildings with boxes from `scale.y` smears road and camp decals over tents and walls (2026-10-31), which the game does not.
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
