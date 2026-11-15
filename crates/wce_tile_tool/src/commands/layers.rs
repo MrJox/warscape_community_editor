@@ -134,12 +134,13 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "tile_split_variation",
-        "tile_split_variation",
-        "Split for this variation: the selection copied into a folder for the viewed variation, the originals into one for the others; the copies selected",
-        |e, _| {
+        "tile_split_variation <variation>",
+        "Split for a variation: the selection copied into a folder for it, the originals into one for the others; the copies selected",
+        |e, a| {
             let sel = selected(e);
+            let Some(v) = a.first() else { return fail("usage: tile_split_variation <variation>") };
             let Some(d) = document(e) else { return no_tile() };
-            d.split_for_variation(&sel).map_or_else(fail, |c| ok(format!("{} copies", c.len())))
+            d.split_for_variation(&sel, v).map_or_else(fail, |c| ok(format!("{} copies", c.len())))
         },
     );
 

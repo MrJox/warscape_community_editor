@@ -982,6 +982,19 @@ impl TileDocument {
     ///
     /// A tile without a scene graph, or an edit the text does not allow.
     pub fn generate_siege_ai(&mut self) -> Result<Layout, String> {
+        // A combined project's: one variation's, shown alone (its walls, buildings and ground); its layer is its.
+        let only = if self.project().is_combined() {
+            match self.project().shown_variations() {
+                [v] => Some(v.clone()),
+                _ => {
+                    return Err("a combined project's SiegeAI is a variation's: show it alone (the Scene panel's Show) and generate again"
+                        .to_owned());
+                }
+            }
+        } else {
+            None
+        };
+
         // The kit walls laid now where their previews have not been yet (a republish clears them until they are made again).
         self.tile_mut().ensure_kit_layouts();
         let input = self.tile().siege_input();
@@ -998,7 +1011,10 @@ impl TileDocument {
 
         let root = self.tile().tscene().scene_graph().ok_or("this tile has no SCENE_GRAPH")?;
         let mark = self.begin()?;
-        let result = self.write_layout(root, &layout);
+        let result = match &only {
+            Some(v) => self.write_variation_layout(root, &layout, v),
+            None => self.write_layout(root, &layout),
+        };
         match result {
             Ok(layer) => {
                 self.push_splice("Generate SiegeAI".to_owned(), mark, vec![], vec![item_of(layer)]);
@@ -1008,6 +1024,28 @@ impl TileDocument {
         }
     }
 
+    /// [`Self::write_layout`] of a combined project's variation: its layer belongs to it alone, the one an earlier generation of it made
+    /// goes; the layouts in layers other variations have too are left as they are (said in the log: take them out of its export by hand).
+    fn write_variation_layout(&mut self, root: usize, layout: &Layout, variation: &str) -> Result<usize, String> {
+        let sc = self.tile().tscene();
+        let doc = sc.doc();
+        let old = sc.children(root).into_iter().chain(sc.children(root).into_iter().flat_map(|c| sc.children(c))).find(|&c| {
+            sc.type_of(c) == "LayerInstance"
+                && sc.name(c) == AUTOGEN_LAYER
+                && wce_tile::variations::own_variations(doc, c).is_some_and(|l| l == [variation.to_owned()])
+        });
+        if let Some(l) = old {
+            self.tscene_mut().remove(l)?;
+        }
+
+        wce_foundation::log::info(format!(
+            "Generate SiegeAI: {variation}'s layout in a layer of {variation} alone; the layouts in layers other variations have too stay"
+        ));
+        let layer = self.write_layout_only(root, layout)?;
+        wce_tile::variations::edit::set_variations(self.tscene_mut(), layer, Some(&[variation.to_owned()]))?;
+        Ok(layer)
+    }
+
     fn write_layout(&mut self, root: usize, layout: &Layout) -> Result<usize, String> {
         // The old layout out of the export (what the previous generation made is replaced).
         if let Some(l) = top_layer(self.tile().tscene(), AUTOGEN_LAYER) {
@@ -1015,7 +1053,11 @@ impl TileDocument {
         }
 
         self.retire_old_layout(root)?;
+        self.write_layout_only(root, layout)
+    }
 
+    /// The layout's layer written under the root, as it is (what was there before is the caller's).
+    fn write_layout_only(&mut self, root: usize, layout: &Layout) -> Result<usize, String> {
         let u = self.tile().unit();
         let tile = self.tile();
         let height = |p: P| tile.project.height_at(p[0] / u, p[1] / u);

@@ -420,15 +420,30 @@ impl TileTool {
         let mods: Vec<String> = e.selected_mod_packs().into_iter().filter(|m| data.join(m).is_file()).collect();
         let before = STEPS.map(|(k, _)| settings.step_seconds.get(k).copied());
 
-        // The tile's deployment zones, from its centre (a tile alone; at a map position the map has its own).
+        // A combined project's variation launched: the one chosen, else the first shown.
+        let variation = {
+            let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+            let all = d.tile().variations().to_vec();
+            self.launch
+                .variation
+                .clone()
+                .filter(|v| all.contains(v))
+                .or_else(|| d.tile().viewed_variation().map(str::to_owned))
+                .filter(|_| !all.is_empty())
+        };
+
+        // The tile's deployment zones, from its centre (a tile alone; at a map position the map has its own); a combined project's, its
+        // variation's.
         let zones = if position.is_some() {
             vec![]
         } else {
-            let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+            let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
             let centre = (f64::from(info.cells_x) * launch::CELL_UNITS / 2.0, f64::from(info.cells_y) * launch::CELL_UNITS / 2.0);
-            d.tile()
-                .deployment_zones()
-                .into_iter()
+            let all = match &variation {
+                Some(v) => d.with_variation_alone(v, |t| t.deployment_zones())?,
+                None => d.tile().deployment_zones(),
+            };
+            all.into_iter()
                 .filter_map(|(alliance, z)| {
                     Some(launch::Zone {
                         alliance: alliance.parse().ok()?,
@@ -443,10 +458,10 @@ impl TileTool {
                 })
                 .collect()
         };
-        let viewed = e.docs.find_as::<TileDocument>(id).and_then(|d| d.tile().viewed_variation().map(|v| vec![v.to_owned()]));
+        let viewed = variation.map(|v| vec![v]);
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
-            // A combined project: the viewed variation.
+            // A combined project: the variation launched.
             inputs: self.export_inputs(e, viewed.as_deref())?,
             staging: staging.clone(),
             cells: (info.cells_x, info.cells_y),

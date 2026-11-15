@@ -188,7 +188,8 @@ impl Tile {
 
         // Its height layer: the ground to its pieces' levels (made again only when it or the ground below it changed); the other walls
         // stand on what it changed.
-        if self.kit_wall_ground(elem, &layout) {
+        // Its ground layer is the tile's variation's (the first shown): another variation's wall shows, laid, without making one.
+        if self.of_tile_variation(elem) && self.kit_wall_ground(elem, &layout) {
             self.walls_changed();
         }
 
@@ -601,7 +602,7 @@ impl Tile {
         let sc = self.tscene();
         let live = wce_walls::scene::all_walls(sc)
             .into_iter()
-            .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && self.shown(e))
+            .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && self.shown(e) && self.of_tile_variation(e))
             .filter_map(|e| self.wall_layer_key(e))
             .map(|k| self.wall_owner_key(&k))
             .collect::<Vec<_>>();

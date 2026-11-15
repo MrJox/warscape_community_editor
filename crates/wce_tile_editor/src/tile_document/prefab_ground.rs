@@ -15,7 +15,6 @@ use std::sync::Arc;
 use wce_tile::prefab_terrain::{Grid, Placement, PrefabTerrain};
 use wce_tile::project_files::PREFAB_ATTR;
 use wce_tile::terrain_layers::{Stack, TerrainLayers};
-use wce_tile::world_transform::world_transform;
 
 use super::Tile;
 
@@ -35,6 +34,9 @@ pub(crate) struct Ground {
     at: Placement,
     pub(crate) opacity: f32,
     pub(crate) feather: Option<f64>,
+
+    /// A combined project's variations the reference belongs to (empty: all): its layer's.
+    variations: Vec<String>,
 }
 
 /// What some words hash to (the same in every run: it is saved).
@@ -87,9 +89,17 @@ impl Tile {
                 .or_else(|| number(doc, g, attr))
         };
 
+        // Every variation's references, whatever is shown (an export of each takes its own): each placed as the first shown variation
+        // it belongs to has it, else the first it belongs to.
+        let all = &self.project.variations;
         let mut out = vec![];
-        for e in sc.find_all("UserInstanceGroup") {
+        for e in (0..els.len()).filter(|&e| els[e].name == "UserInstanceGroup") {
             if !is_ref(e) {
+                continue;
+            }
+
+            let variations = if all.is_empty() { vec![] } else { wce_tile::variations::effective(doc, e, all) };
+            if !all.is_empty() && variations.is_empty() {
                 continue;
             }
 
@@ -111,7 +121,9 @@ impl Tile {
 
             let key = doc.get(e, PREFAB_ATTR).unwrap_or_default();
             let Some((hash, terrain)) = (source.0)(&key) else { continue };
-            let w = world_transform(sc, e);
+            let placed = sc.display_variation(e).or_else(|| variations.first().map(String::as_str));
+            let w = wce_tile::world_transform::world_transform_as(sc, e, placed);
+            let variations = if variations.len() == all.len() { vec![] } else { variations };
             let feather = value(e, TERRAIN_FEATHER_ATTR).map(|f| f.max(0.0));
             out.push(Ground {
                 elem: e,
@@ -121,6 +133,7 @@ impl Tile {
                 at: Placement::from_transform(w.position, &w.rotation),
                 opacity: opacity as f32,
                 feather,
+                variations,
             });
         }
 
@@ -154,6 +167,7 @@ impl Tile {
             ],
         );
         h = fnv(h, &g.key.to_lowercase().bytes().map(u64::from).collect::<Vec<_>>());
+        h = fnv(h, &g.variations.join(",").bytes().map(u64::from).collect::<Vec<_>>());
         if !g.terrain.normalize {
             return h;
         }
@@ -276,6 +290,7 @@ impl Tile {
 
             if let Some(l) = height.layers.iter_mut().find(|l| l.id == id) {
                 l.opacity = g.opacity;
+                l.variations.clone_from(&g.variations);
             }
 
             owners.push((n, id));
