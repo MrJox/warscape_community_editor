@@ -137,7 +137,7 @@ fn read_lf(bytes: &[u8]) -> std::result::Result<PagedU16, String> {
 ///
 /// A file could not be read.
 pub fn read(name: &str, kind: MapKind, files: &MapFiles) -> Result<MapModel> {
-    let mut m = MapModel { name: name.to_owned(), kind, ..Default::default() };
+    let mut m = MapModel { name: name.to_owned(), kind, disk_source: files.disk_source.clone(), ..Default::default() };
     for (path, blob) in &files.folder {
         let lower = path.to_ascii_lowercase();
         let top = !path.contains('/');
@@ -256,7 +256,7 @@ pub fn write(m: &MapModel) -> Result<MapFiles> {
         folder.insert(x.path.clone(), if x.edited() { bytes_blob(x.get().save()) } else { x.origin.clone() });
     }
 
-    Ok(MapFiles { folder })
+    Ok(MapFiles { folder, ..Default::default() })
 }
 
 #[cfg(test)]
@@ -295,7 +295,7 @@ mod tests {
         folder.insert("explicit_tiles.txt".to_owned(), bytes_blob(b"1,1,terrain\\tiles\\battle\\a\\b,90\r\n".to_vec()));
         folder.insert("m.terry".to_owned(), bytes_blob(b"<project version=\"3\">\n    <scene version=\"10\"/>\n</project>".to_vec()));
         folder.insert("normal.dds".to_owned(), bytes_blob(b"DDS anything".to_vec()));
-        MapFiles { folder }
+        MapFiles { folder, ..Default::default() }
     }
 
     #[test]

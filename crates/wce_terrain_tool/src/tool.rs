@@ -923,9 +923,31 @@ impl TerrainTool {
         })
     }
 
+    /// Reuse the current map before upstream's replacement/unsaved prompt clears it.
+    fn reuse_open_map(&mut self, e: &mut Editor, name: &str) -> Result<Option<String>, String> {
+        let Some(d) = e.docs.of_tool(TERRAIN_TOOL_ID).and_then(|id| e.docs.find_as::<MapDocument>(id)) else { return Ok(None) };
+        if !d.name.eq_ignore_ascii_case(name) {
+            return Ok(None);
+        }
+        let Some(path) = save_dir(e, d) else { return Ok(None) };
+        if e.docs.destination_owner(&path, None)?.is_none() {
+            return Ok(None);
+        }
+        self.status = format!("already open: {}", d.name);
+        Ok(Some(self.status.clone()))
+    }
+
     /// Starts reading a map (the open map gives way: asked about first when it has unsaved changes, the read starts after the prompt's Save
     /// or Discard).
     fn start_open(&mut self, e: &mut Editor, name: &str) {
+        match self.reuse_open_map(e, name) {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(err) => {
+                self.status = err;
+                return;
+            }
+        }
         let again = name.to_owned();
         let retry = Box::new(move |e: &mut Editor| {
             e.with_tool::<Self, _>(|t, e| {
@@ -1040,6 +1062,24 @@ impl TerrainTool {
     /// started; changes made to it during the read are asked about again.
     fn adopt(&mut self, e: &mut Editor, d: Box<MapDocument>) {
         let mut d = d;
+        d.save_dir = save_dir(e, &d);
+        if let Err(err) = d.observe_save_destination() {
+            self.status = err;
+            return;
+        }
+        if let Some(path) = &d.save_dir {
+            match e.docs.destination_owner(path, None) {
+                Ok(Some(id)) => {
+                    self.status = format!("already open: {}", e.docs.find(id).map(|d| d.title()).unwrap_or_default());
+                    return;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    self.status = err;
+                    return;
+                }
+            }
+        }
         if e.docs.of_tool(TERRAIN_TOOL_ID).and_then(|id| e.docs.find(id)).is_some_and(|old| old.modified()) {
             // The read map waits in the prompt's open; it comes back here when the open can go on at once.
             let held = std::rc::Rc::new(std::cell::RefCell::new(Some(d)));
@@ -1432,6 +1472,9 @@ impl TerrainTool {
 
     /// Opens a map and waits for its view (scripts).
     fn open_now(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
+        if let Some(message) = self.reuse_open_map(e, name)? {
+            return Ok(message);
+        }
         let again = name.to_owned();
         let retry = Box::new(move |e: &mut Editor| {
             e.with_tool::<Self, _>(|t, e| t.open_now(e, &again)).unwrap_or_else(|| Err("the Terrain tool is busy".to_owned()))
@@ -1444,6 +1487,7 @@ impl TerrainTool {
         let i = self.inputs(e, name)?;
         let mut d = open_map(&i)?.document();
         d.save_dir = save_dir(e, &d);
+        d.observe_save_destination()?;
         self.take_start_season(&d);
         let summary = format!("{}: {}", d.name, d.summary());
         let rq = self.request(e, &d).ok_or("no kit with a tile database")?;
