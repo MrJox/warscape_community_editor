@@ -41,6 +41,8 @@ Keep the document open, release Busy/permission conflicts, review genuine extern
 
 Copies retain the active folder's observations and outstanding overwrite choice. A copy cannot approve an unrelated populated active folder. Repeat Save and Undo/Redo remain relative to the owned Save generation.
 
+Restoring an autosave reads from its recovery copy. If the owned project folder already contains files, review the Overwrite/Cancel choice before saving there. Save As can write a separate copy while that choice remains pending; it neither approves the project overwrite nor clears the restored document's unsaved status.
+
 ## Focused tests
 
 Use the [README](../../README.md#build), checked-out lockfile and existing caches. Synthetic tests need no game assets. Before integration tests, set `P004_SCRATCH` to a fresh writable disposable output directory; for example in PowerShell:
