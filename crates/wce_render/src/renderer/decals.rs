@@ -13,8 +13,7 @@
 //! alpha over the G-buffer's colour channels; the alpha channels (gloss, mask, material id) are kept.
 //!
 //! The boxes are drawn where they are behind the scene (depth test greater or equal, no write), both sides (the camera may be inside one).
-//! Only the pixels with stencil bit `DECAL_RECEIVER` take them: the ground, the TerrainBlend meshes and the buildings and props, as the
-//! game marks them with decals on (not the grass; trees and ropes not captured, left out).
+//! Only the pixels with stencil bit `DECAL_RECEIVER` take them: the ground and the TerrainBlend meshes, as the game marks them (its models are 1).
 //!
 //! Parallax (ps30_parallax_bugged): the same shader plus three steps of parallax mapping. The `_parallax.dds` maps hold the normal in .w / .y like the
 //! `_normal.dds` ones and a height in .z; the uv moves by (height - 0.5) / 2 along the view direction in the box's frame, times POSITION4.w,
@@ -155,7 +154,7 @@ impl Renderer {
             ..Default::default()
         };
         d.rs = dev.create_rasterizer_state(&rd).ok();
-        // Only the pixels that take decals (the ground, the TerrainBlend meshes, the buildings and props: stencil bit `DECAL_RECEIVER`), as the game.
+        // Only the pixels that take decals (the ground and the TerrainBlend meshes: stencil bit `DECAL_RECEIVER`), as the game.
         let receiver = D3D11_DEPTH_STENCILOP_DESC {
             StencilFailOp: D3D11_STENCIL_OP_KEEP,
             StencilDepthFailOp: D3D11_STENCIL_OP_KEEP,

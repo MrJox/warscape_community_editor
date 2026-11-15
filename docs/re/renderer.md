@@ -553,19 +553,6 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   a `path_1` over a `western_villa_house01` (a thatched house with the mods) left its pitched roof clean; the ground about it showed the
   puddle only faintly. So buildings take decals in the game (a near-level deck at least); a steep roof did not (the facing fade, or its
   material: not told apart). How a building's pixels reach the decal pass's stencil 0x81 is still not found.
-- **RenderDoc, in game (2026-11-15, the same tile; terrain quality 2, textures 0, buildings 0, 1280 x 720; `decals_frame5533.rdc` the
-  bridge, `decals_frame7803.rdc` the house).** With decals drawn, buildings are written with stencil 129 like the ground: the bridge
-  (event 408, 4716 indices) and the house (412, 415) draw with `ALWAYS / REPLACE`, reference 129, through the same vertex shader
-  (resource 982). The ground is not a mesh in that pass: a full-screen draw (326) fills the G-buffer where the stencil is still 129
-  (depth `GREATER`, no depth write). Grass writes 0x41 (356 .. 360, a depth-only pass), and a few 6-index quads write 1 (428, 433). The decals
-  (457 and 462, or 448 with 2 instances; 72 indices: a box each) test `EQUAL 129`, mask 0xFF, no depth write. The stencil buffer read at
-  the decal draw on a 40-pixel grid is 0x81 everywhere but the grass blades (0x41), the house's walls and roof and the bridge's planks
-  included. So the building models' reference 1 found in the code (and seen in coast.rdc, at the lowest settings, which draw no decals)
-  is not what a frame with decals uses: which setting switches it was not traced. The house roof's staying clean is then the decals' own
-  doing (their box, or a fade on steep faces), not the stencil. The editor follows: its G-buffer pass writes `DECAL_RECEIVER` for every
-  rigid model but the trees and ropes (not in these frames). How to capture Attila: it is a 32-bit process, and a capture at ultra
-  textures ran out of address space (RenderDoc: "Allocation for 8388608 bytes failed"); at textures 0, 1280 x 720 and
-  `--opt-soft-memory-limit 1024` it worked. Its draws are few (about 75 in these frames): no command lists to record.
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
