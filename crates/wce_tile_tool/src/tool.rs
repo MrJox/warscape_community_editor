@@ -467,6 +467,11 @@ pub struct TileTool {
     /// Tile > Variations > Combine...'s dialog, while it is open.
     pub(crate) combine: Option<crate::combine_ui::CombineUi>,
 
+    /// A combined project's variations to show, asked for (the Scene panel's Show): shown once the viewport has drawn "Updating..." over
+    /// itself (the switch takes seconds on a big tile: the polygons and the vegetation are made again), and the frames the overlay stays.
+    pub(crate) shown_pending: Option<(Vec<String>, u8)>,
+    pub(crate) shown_overlay: u8,
+
     /// The Tile database window.
     pub(crate) tile_db: Option<crate::tile_database::DbUi>,
 
@@ -897,6 +902,8 @@ impl Default for TileTool {
             save_as: None,
             resize: None,
             combine: None,
+            shown_pending: None,
+            shown_overlay: 0,
             tile_db: None,
             link_candidates: None,
             clipboard: vec![],
@@ -5198,6 +5205,24 @@ impl Tool for TileTool {
 
         // The reference image under everything else drawn over the image.
         self.reference.draw_overlay(e, origin, size);
+
+        // The variations shown being changed: "Updating..." over the image, drawn (and on screen) before the switch blocks a frame.
+        self.apply_shown_pending(e);
+        if self.shown_pending.is_some() || self.shown_overlay > 0 {
+            let dl = gui::window_draw_list();
+            let hi = gui::v2(origin.x + size.x, origin.y + size.y);
+            dl.rect_filled(origin, hi, 0x9918_1614, 0.0);
+            let text = "Updating the variations shown...";
+            let w = gui::calc_text_width(text);
+            let at = gui::v2(origin.x + (size.x - w) * 0.5, origin.y + size.y * 0.5 - gui::text_line_height() * 0.5);
+            dl.rect_filled(
+                gui::v2(at.x - 14.0, at.y - 9.0),
+                gui::v2(at.x + w + 14.0, at.y + gui::text_line_height() + 9.0),
+                0xE620_1D1A,
+                6.0,
+            );
+            dl.text(at, wce_editor::theme::u32(wce_editor::theme::text()), text);
+        }
 
         // The weather chips at the top left of the image, beside the compass (under it when the image is too narrow for both).
         let compass_left = origin.x + size.x * 0.5 - (size.x - 16.0).min(360.0) * 0.5;

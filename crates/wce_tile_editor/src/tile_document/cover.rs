@@ -638,8 +638,9 @@ impl Tile {
     pub(crate) fn cover_for(&mut self, lo: [f32; 2], hi: [f32; 2], solids: &[Solid]) -> Cover {
         let (elo, ehi) = Cover::extent(lo, hi);
         let near = solids.iter().filter(|s| Cover::touches(s, elo, ehi)).collect::<Vec<_>>();
-        // The heights: the whole map's, hashed once for the rebuild of every polygon (`spare_covers`).
-        let ground = self.cover_ground;
+        // The heights under it (its extent's, as `terrain_height` reads them): a cover over ground that did not change is kept when the
+        // terrain changes elsewhere (a combined project's variations shown: most covers stand where the levels are the same).
+        let ground = self.project.height_region_hash([f64::from(elo[0]), f64::from(elo[1])], [f64::from(ehi[0]), f64::from(ehi[1])]);
         let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
         let mut key = [lo[0], lo[1], hi[0], hi[1]].iter().fold(mix(0xcbf2_9ce4_8422_2325, ground), |h, v| mix(h, u64::from(v.to_bits())));
         for s in &near {
@@ -661,7 +662,6 @@ impl Tile {
     /// Keeps the covers for `cover_for` before every polygon is rebuilt (`end_spare_covers` drops the ones not used again), with the hash
     /// of the heights they were built on.
     pub(crate) fn spare_covers(&mut self) {
-        self.cover_ground = self.project.height_region_hash([f64::MIN, f64::MIN], [f64::MAX, f64::MAX]);
         let covers = std::mem::take(&mut self.covers);
         self.cover_spare.extend(covers.into_values().filter(|c| c.key != 0).map(|c| (c.key, c)));
     }
@@ -669,7 +669,6 @@ impl Tile {
     /// After the rebuild of every polygon: the covers not used again go (a single polygon's rebuild builds its own).
     pub(crate) fn end_spare_covers(&mut self) {
         self.cover_spare.clear();
-        self.cover_ground = 0;
     }
 
     /// The elements were renumbered: the covers follow, and what stood on a removed building is made again.
