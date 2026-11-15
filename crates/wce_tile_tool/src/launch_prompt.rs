@@ -70,6 +70,9 @@ struct Plan {
     /// The battle map when it is a position in a map; `None`: the tile alone (its folder is known after the export).
     position: Option<BattleMap>,
 
+    /// The tile alone in another climate than `default` (`LaunchMap::Climate`).
+    climate: Option<crate::launch_climate::AloneClimate>,
+
     /// The tile's deployment zones in the battle's frame (a tile alone).
     zones: Vec<launch::Zone>,
 
@@ -116,6 +119,15 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
         None => wce_walls::export::exported_pack_files(&plan.staging, &folder)?,
     };
 
+    // The tile alone in the editor's climate: the launch's files give the default climate its look.
+    let mut notes = vec![];
+    if let (Some(c), None, Some(vfs)) = (&plan.climate, &plan.position, plan.vfs.as_ref()) {
+        let _a = activity::start(format!("The {} climate's ground, grass and trees as the default climate's", c.climate));
+        let did = c.apply(&mut files, vfs, &folder)?;
+        log::info(format!("launch in game: {did}"));
+        notes.push(did);
+    }
+
     let map = plan.position.take().unwrap_or_else(|| BattleMap::Tile(folder.clone()));
     let xml = launch::battle_xml(&Battle {
         map,
@@ -129,7 +141,6 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     files.push((launch::BATTLE_XML.to_owned(), xml.as_bytes().to_vec()));
 
     // Loose files, with the mod packs their assets need; the pack when loose files would lose to one of them.
-    let mut notes = vec![];
     let mut loose = plan.settings.delivery == LaunchDelivery::Loose;
     let mut mods = plan.mods.clone();
     let mut overlay = vec![];
@@ -349,7 +360,15 @@ impl TileTool {
         // A combined project's variation launched (Tile > Launch in game's choice), else the tile's.
         let launched =
             self.launch.variation.clone().filter(|v| d.tile().variations().contains(v)).unwrap_or_else(|| info.variation.clone());
-        let climate = d.tile().terrain_look().climate.clone();
+        let look = d.tile().terrain_look().clone();
+        let climate = look.climate.clone();
+        let groups = d.project().entry.as_ref().map(|en| {
+            let g = en.texture_group();
+            let mut v = vec![g.red, g.green, g.blue, g.alpha];
+            v.retain(|s| !s.is_empty());
+            v.dedup();
+            v
+        });
         if self.weather.tile() != d.source_key() {
             // A tile opened this frame (a script): its weather is taken up now, not on the next update.
             self.weather.tile_changed(e, id);
@@ -410,11 +429,22 @@ impl TileTool {
 
         let tile_settings = e.tool_settings::<TileSettings>(SETTINGS_ID);
         let proton = tile_settings.launch.proton.clone();
-        let (settings, army) = (tile_settings.launch, tile_settings.launch_army.resolved(&profile.launch));
+        let (mut settings, army) = (tile_settings.launch, tile_settings.launch_army.resolved(&profile.launch));
+        if let Some(map) = self.launch.map.take() {
+            settings.map = map;
+        }
+
         let (position, mut note) = self.launch_position(profile, &location, (info.cells_x, info.cells_y), settings.map);
-        if position.is_none() && !climate.is_empty() && !climate.eq_ignore_ascii_case(launch::ALONE_CLIMATE) {
+        let in_climate = settings.map == LaunchMap::Climate;
+        if position.is_none() && !in_climate && !climate.is_empty() && !climate.eq_ignore_ascii_case(launch::ALONE_CLIMATE) {
             note.push_str(&launch::climate_alone_note(&climate));
         }
+
+        let alone_climate = (in_climate && position.is_none() && !climate.is_empty()).then(|| crate::launch_climate::AloneClimate {
+            climate: climate.clone(),
+            season: look.season.clone(),
+            groups: groups.clone().unwrap_or_default(),
+        });
 
         let sea_surface = e.renderer().and_then(|r| {
             let wind = if tile_settings.sea_state.is_empty() { r.settings.sea_state.clone() } else { tile_settings.sea_state.clone() };
@@ -474,6 +504,7 @@ impl TileTool {
             game: profile,
             army,
             position,
+            climate: alone_climate,
             zones,
             vfs: e.vfs().cloned(),
             mods,
@@ -589,7 +620,7 @@ impl TileTool {
     }
 
     fn launch_map_position(&self, game: &GameProfile, location: &str, cells: (u32, u32), mode: LaunchMap) -> (Option<BattleMap>, String) {
-        if mode == LaunchMap::Tile {
+        if mode != LaunchMap::MapContext {
             return (None, String::new());
         }
 

@@ -765,6 +765,9 @@ pub(crate) struct Launch {
 
     /// A combined project's variation to launch (Tile > Launch in game's choice; none: the first shown).
     pub(crate) variation: Option<String>,
+
+    /// The map of the next launch instead of the settings' (`tile_launch_game --map`).
+    pub(crate) map: Option<crate::settings::LaunchMap>,
 }
 
 /// The Scene panel's tree: its rows, what is open, the filter, the renaming and the scroll.
@@ -4591,8 +4594,20 @@ impl Tool for TileTool {
             gui::set_tooltip("The battle map is the tile where the Map context places it in its map, with its neighbours.");
         }
 
+        gui::same_line();
+        if gui::radio_button("The tile alone, in the editor's climate", s.launch.map == crate::settings::LaunchMap::Climate) {
+            s.launch.map = crate::settings::LaunchMap::Climate;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The tile on its own, drawn in the climate and season the editor draws its ground with: the game draws a tile alone in the \
+                 default climate, so the launch gives that climate's ground textures, grass and trees to it.",
+            );
+        }
+
         settings_window::help(
-            "The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.",
+            "The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used. The tile alone is in the default climate unless it is launched in the editor's climate (the Tile panel's climate and season).",
         );
         if !cfg!(windows) {
             settings_window::folder_field("Proton", &mut s.launch.proton, "the one Steam runs the game with");
