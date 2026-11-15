@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wce_tile::variations::combine::{Input, Origin, combine, separate};
+use wce_tile::variations::combine::{Input, Origin, separate};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -31,7 +31,8 @@ fn main() {
         std::process::exit(2);
     };
 
-    let rest = &args[2..];
+    let align = args.iter().any(|a| a == "--align");
+    let rest = &args[2..].iter().filter(|a| *a != "--align").cloned().collect::<Vec<_>>();
     let reference = rest.iter().position(|a| a == "--ref").and_then(|i| rest.get(i + 1)).cloned();
     let names = rest.iter().enumerate().filter(|(i, a)| *a != "--ref" && (*i == 0 || rest[i - 1] != "--ref")).map(|(_, a)| a.clone());
     let entry = wce_formats::tile_entry::TileEntry::load(Path::new(entry)).unwrap_or_else(|e| panic!("{entry}: {e}"));
@@ -50,7 +51,7 @@ fn main() {
         .collect::<Vec<_>>();
     let reference = reference.and_then(|r| inputs.iter().position(|i| i.variation == r)).unwrap_or(0);
     let t = std::time::Instant::now();
-    match combine(&inputs, reference, &entry, &projects) {
+    match wce_tile::variations::combine::combine_with(&inputs, reference, &entry, &projects, align) {
         Ok(r) => {
             println!("{} ({:.1} s)", r.message, t.elapsed().as_secs_f64());
             // The terrain layers it made: each type's, with their variations and how many 64 x 64 blocks they hold.

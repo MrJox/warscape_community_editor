@@ -482,6 +482,17 @@ Steps:
   `medium` does not chain its heights: over 60 % of the map its 16-bit values are `small`'s but stored with another range (min
   -20.66 against -20, scale 134.49 against 134.27), so it stands 0.6 m lower there; Combine keeps it as it is (one patch of
   `medium` over most of the map). Shots: the Terrain layers section with everything shown and with `minor` alone.
+  **Align heights** (the user, 2026-11-15: `medium` was mostly a copy of `small`): Combine's option (the dialog's checkbox,
+  `tile_combine --align`, `combine::combine_with`). A level aligns to the earlier one whose stored samples it shares the most of
+  (their ranges differing): per 64 x 64 block it is read the way that agrees with that one for most of the block (its samples in that
+  one's range: copied, then saved with another range; or its own heights: saved again, rounded otherwise), a sample either way within
+  a centimetre of that one's height takes it exactly, and the level takes that one's range (or what holds its heights). Its instances'
+  own heights that only followed the shift (the terrain's move under them, within 5 cm) go. The check: the other levels byte for byte;
+  the aligned one's heights as aligned (a step of rounding allowed where it shares a patch, said). Its export changes: the report says
+  how many samples took the other's heights and how many own heights went. The port: `medium` aligned to `small` (its range -20 /
+  134.27 now), 1,380,620 of its 1,638,400 height samples `small`'s, 14,690 of its 14,758 own heights gone; the patches `small`, `small,
+  medium` and `medium` (its own changes: 16 % of its samples, within 0.3 m, its larger town's ground); `minor` and `small` byte for
+  byte.
 - **R3. The tools.** *Split for a variation* as a submenu; the roads, walls, vegetation and siege of the display variation; Launch
   in game's choice; the Tile panel's chooser.
 - **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the
