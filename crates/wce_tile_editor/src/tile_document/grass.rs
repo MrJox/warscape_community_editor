@@ -125,7 +125,7 @@ impl Tile {
     fn start_grass_job(&self) -> Result<super::vegetation::Job<Vec<(String, Vec<(f32, f32)>)>>, String> {
         let path = vegetation::grass_params_path(&self.project).ok_or("no Assembly Kit max_grass.xml")?;
         let params = GrassParams::load(&path)?;
-        let seed = vegetation::grass_seed(self.tscene()).ok_or("tile.ted has no <Grass> seed")?;
+        let seed = vegetation::grass_seed(&*self.project.variation_scene()?).ok_or("tile.ted has no <Grass> seed")?;
         let inputs = vegetation::tile_inputs(&self.project)?;
         Ok(super::vegetation::Job::start("grass".to_owned(), move || {
             let start = std::time::Instant::now();

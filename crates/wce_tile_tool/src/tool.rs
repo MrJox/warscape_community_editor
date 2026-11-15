@@ -513,6 +513,9 @@ pub struct TileTool {
 
     /// The Areas chip: its width, and the polygons' look, read from the settings at first use.
     pub(crate) areas_chip_width: f32,
+
+    /// The Variation chip's (a combined project's), 0 without one.
+    pub(crate) variation_chip_width: f32,
     pub(crate) areas: Option<wce_tile_editor::tile_document::PolygonLook>,
 
     /// The buildings' categories in the packs, and what they were read from.
@@ -884,6 +887,7 @@ impl Default for TileTool {
             flip_asked: false,
             ground_chip_width: 0.0,
             areas_chip_width: 0.0,
+            variation_chip_width: 0.0,
             pack_categories: None,
             areas: None,
             tech_chip_width: 0.0,
@@ -1341,7 +1345,25 @@ impl TileTool {
         let mut entry_xml = entry_xml;
         let mut ted = entry.ted_path(&root, v);
         let projects = Self::workspace_dir(e).join("raw_data");
-        if !wce_tile::tile_project::has_tile(&entry.variation_folder(&root, v)) && root == projects {
+
+        // A variation of a combined project (docs/plans/tile_variations.md): the project's tile.wce, viewing it.
+        let combined = if wce_tile::tile_project::has_tile(&entry.variation_folder(&root, v)) {
+            None
+        } else {
+            wce_tile::variations::combined_for(&entry.variation_folder(&root, v))
+        };
+        if let Some(tile) = &combined {
+            ted = tile.join(wce_tile::project_files::WCE_FILE);
+            let open =
+                e.docs.of_tool(TILE_TOOL_ID).filter(|&id| e.docs.find(id).is_some_and(|d| d.opened_from(&ted.display().to_string())));
+            if let Some(id) = open {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                d.tile_mut().view_variation(&mut e.scene, &vars[v].location)?;
+                return Ok(format!("viewing the variation {} of {}", vars[v].location, tile.display()));
+            }
+        }
+
+        if combined.is_none() && !wce_tile::tile_project::has_tile(&entry.variation_folder(&root, v)) && root == projects {
             let folder = wce_tile_editor::tile_document::kit::tile_folder(&entry.variation_folder(&root, v)).unwrap_or_default();
             if (0..vars.len()).any(|i| wce_tile::project_files::is_extracted_dir(&entry.variation_folder(&root, i))) {
                 return self.open_exported(e, &folder, None, false);
@@ -5015,6 +5037,7 @@ impl Tool for TileTool {
         e.viewport.tool_chips_width = self.ground_chip_width
             + self.tech_chip_width
             + self.areas_chip_width
+            + if self.variation_chip_width > 0.0 { self.variation_chip_width + 4.0 } else { 0.0 }
             + 8.0
             + if placing { 4.0 + self.place_chips_width } else { 0.0 };
         let top = e.viewport.chips_top;
@@ -5023,10 +5046,13 @@ impl Tool for TileTool {
         self.draw_tech_chip(e, origin, size, top);
         self.sync_polygon_look(e);
         self.draw_areas_chip(e, origin, size, top);
+        let right = self.ground_chip_width + self.tech_chip_width + self.areas_chip_width + 16.0;
+        self.draw_variation_chip(e, origin, size, top, right);
+        let variation = if self.variation_chip_width > 0.0 { self.variation_chip_width + 4.0 } else { 0.0 };
         self.draw_placement_chips(
             e,
             origin,
-            gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 12.0, size.y),
+            gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - variation - 12.0, size.y),
             top,
         );
         self.draw_measure_labels(e, origin);

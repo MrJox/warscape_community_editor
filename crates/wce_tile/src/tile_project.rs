@@ -254,6 +254,12 @@ pub struct TileProject {
     /// they come from it when the tile's own kit has none (the projects' kit layout, where new tiles are, holds raw_data only), as the
     /// exports take theirs.
     pub game_kit: Option<PathBuf>,
+
+    /// A combined project's variations (its scene root's `wce_variations`; docs/plans/tile_variations.md), empty for a project of one.
+    /// `variation` is then the viewed one's row in the entry, `view` how it sees the scene, and the fields hold its terrain, composed
+    /// from the layers: a combined project has no maps of its own, an export makes them.
+    pub variations: Vec<String>,
+    pub view: Option<crate::variations::View>,
 }
 
 /// A key's prefab contents, as a copy holds them (`PrefabLibrary::contents`).
@@ -300,6 +306,14 @@ impl TileProject {
         } else {
             path.to_path_buf()
         };
+
+        // A variation of a combined project: the project, viewing it.
+        if !has_tile(&dir)
+            && let Some(tile) = crate::variations::combined_for(&dir)
+        {
+            return Self::open_dir(tile, Some(find_tile_info(&dir)));
+        }
+
         if !has_tile(&dir) {
             // A tile folder that holds its variations: the first one (the entry lists them in order).
             if let Some(root) = kit_raw_root(&dir) {
@@ -344,7 +358,13 @@ impl TileProject {
 
         let mut info = TileInfo::default();
         fill_info(&entry, Some(v), &mut info);
-        let dir = entry.variation_folder(&root, v);
+        let mut dir = entry.variation_folder(&root, v);
+        if !has_tile(&dir)
+            && let Some(tile) = crate::variations::combined_for(&dir)
+        {
+            dir = tile;
+        }
+
         let found = FoundTile { info, entry: Some(entry), variation: Some(v), raw_root: Some(root) };
         Self::open_dir(dir, Some(found))
     }
@@ -432,6 +452,8 @@ impl TileProject {
             prefab_ground: None,
             prefab_notes: vec![],
             game_kit: None,
+            variations: vec![],
+            view: None,
         };
 
         let layers_file = project.dir.join(crate::terrain_layers::FILE);
@@ -445,12 +467,91 @@ impl TileProject {
 
         project.river_texts = project.current_river_texts();
 
+        // A combined project: the variation it was opened for, else its first; its terrain from the layers (no maps to calibrate).
+        project.variations = crate::variations::project_variations(project.scene.doc());
+        if let Some(first) = project.variations.first().cloned() {
+            let asked = project.info.variation.clone();
+            let name = project.variations.iter().find(|v| v.eq_ignore_ascii_case(&asked)).cloned().unwrap_or(first);
+            project.view_variation(&name)?;
+            return Ok(project);
+        }
+
         project.calibrate_from_final_heights();
         if project.height_calibration.is_empty() {
             project.calibrate_from_instances();
         }
 
         Ok(project)
+    }
+
+    /// Whether it holds several variations (or one, listed on its root): a combined project.
+    #[must_use]
+    pub fn is_combined(&self) -> bool {
+        !self.variations.is_empty()
+    }
+
+    /// Views another variation of a combined project: its row's numbers (`info`, `variation`), what of the scene is its ([`Self::view`]),
+    /// and its terrain in the fields (the layers of other variations hidden). The fields' undo records stay: they go by the stacks'
+    /// states, which hold every variation's layers.
+    ///
+    /// # Errors
+    ///
+    /// Not a variation of the project, no entry with a row for it, or no terrain layers.
+    pub fn view_variation(&mut self, name: &str) -> Result<()> {
+        if !self.variations.iter().any(|v| v == name) {
+            return Err(format!("the project has no variation '{name}' (it has {})", self.variations.join(", ")));
+        }
+
+        let entry =
+            self.entry.as_ref().ok_or_else(|| format!("{}: a combined project needs its tile database entry", self.dir.display()))?;
+        let row = entry
+            .variations()
+            .iter()
+            .position(|v| v.location == name)
+            .ok_or_else(|| format!("{} has no variation '{name}'", entry.file().display()))?;
+        fill_info(entry, Some(row), &mut self.info);
+        self.variation = Some(row);
+        self.warning.clear();
+        self.view = Some(crate::variations::View::new(self.scene.doc(), name));
+
+        let layers = self
+            .layers
+            .as_mut()
+            .ok_or_else(|| format!("{}: a combined project has no {}", self.dir.display(), crate::terrain_layers::FILE))?;
+        let keys = crate::variations::layer_key_variations(self.scene.doc(), &self.variations);
+        layers.set_view(Some(name), &|k| keys.get(k).is_none_or(|l| l.iter().any(|v| v == name)));
+        if let Some(stack) = &layers.height {
+            let (w, h) = stack.size();
+            let field = self.height.get_or_insert_with(|| HeightField::flat(w, h, 0.0));
+            field.set_range(self.info.min_height, self.info.scale);
+            stack.apply_all(field);
+            if self.height_png.is_none() {
+                self.height_png = Some(field.blank_png());
+            }
+        }
+
+        if let (Some(stack), Some(field)) = (&layers.blend, &mut self.blend) {
+            stack.apply_all(field);
+        }
+
+        if let (Some(stack), Some(field)) = (&layers.ground, &mut self.ground) {
+            stack.apply_all(field);
+        }
+
+        Ok(())
+    }
+
+    /// The scene as the viewed variation has it, for what reads the whole scene rather than elements the editor shows (the vegetation
+    /// generator's exclusion polygons, seeds and static trees): of a combined project, the viewed variation's own tile.wce
+    /// ([`crate::variations::to_variation`], made on each call); else the scene itself.
+    ///
+    /// # Errors
+    ///
+    /// The combined text does not give that variation back.
+    pub fn variation_scene(&self) -> Result<std::borrow::Cow<'_, TedScene>> {
+        let Some(view) = self.view.as_ref().filter(|_| self.is_combined()) else { return Ok(std::borrow::Cow::Borrowed(&self.scene)) };
+        let text = crate::variations::to_variation(&self.scene.save(), &view.variation)?;
+        TedScene::parse(text).map(std::borrow::Cow::Owned)
     }
 
     /// A tile without a usable `final_heights.dds` (or whose bake does not fit): the landscape instances say what the terrain was when they were
@@ -628,7 +729,8 @@ impl TileProject {
         // file TEd left (see `river_files`). The files past the last river become empty: BOB reads up to the first missing one.
         // Saved elsewhere ("Save as"): every river's file, with the factors of the tile's own files.
         let rivers = self.current_river_texts();
-        if rivers != self.river_texts || elsewhere {
+        let combined = self.is_combined();
+        if !combined && (rivers != self.river_texts || elsewhere) {
             let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign")
                 || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
             let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
@@ -656,6 +758,7 @@ impl TileProject {
         // it, and no entry is written (the tile's own entry stays right for its own folder).
         let home = self.range_home(out_dir);
         if let (Some(field), Some(base)) = (&mut self.height, &self.height_png)
+            && !combined
             && (self.height_dirty || force_height || (elsewhere && !out_dir.join("height_map_0.png").exists()))
         {
             let (min, scale) = if home.is_some() || !field.holds_range() { field.fit_range() } else { (field.min_height(), field.scale()) };
@@ -691,6 +794,7 @@ impl TileProject {
             msg += &part;
         }
         if let Some(blend) = &self.blend
+            && !combined
             && (self.blend_dirty || elsewhere)
         {
             let target = out_dir.join("blend_map.tif");
@@ -705,6 +809,7 @@ impl TileProject {
         }
 
         if let Some(ground) = &self.ground
+            && !combined
             && (self.ground_dirty || elsewhere)
         {
             let target = out_dir.join(&self.ground_file);
@@ -719,7 +824,8 @@ impl TileProject {
             wrote = true;
         }
 
-        // A kit save goes by the maps above, which hold the composite: TEd gets the terrain, the layers stay here.
+        // A kit save goes by the maps above, which hold the composite: TEd gets the terrain, the layers stay here. A combined project's
+        // terrain is only its layers.
         let layers_file = out_dir.join(crate::terrain_layers::FILE);
         match &mut self.layers {
             Some(layers) if !layers.is_empty() && (layers.dirty || elsewhere) => {
@@ -762,6 +868,25 @@ impl TileProject {
     ///
     /// The tile has no ground_type_map.png, or it does not read.
     pub fn load_ground(&mut self) -> Result<&mut GroundTypeField> {
+        if self.ground.is_none()
+            && let Some(stack) = self.layers.as_ref().and_then(|l| l.ground.as_ref()).filter(|_| self.is_combined())
+        {
+            let (w, h) = stack.size();
+            let png = PngFile {
+                width: w,
+                height: h,
+                bit_depth: 8,
+                color_type: 6,
+                pixels: [0, 0, 0, 255].repeat(w as usize * h as usize),
+                pixels_edited: true,
+                ..Default::default()
+            };
+            let mut field = GroundTypeField::from_png(png)?;
+            stack.apply_all(&mut field);
+            self.ground = Some(field);
+            self.ground_file = "ground_type_map.png".to_owned();
+        }
+
         if self.ground.is_none() {
             let name = self.ground_file_name();
             let path = self.dir.join(&name);
@@ -782,6 +907,18 @@ impl TileProject {
     ///
     /// The tile has no blend_map.tif, or it does not read.
     pub fn load_blend(&mut self) -> Result<&mut BlendField> {
+        if self.blend.is_none()
+            && let Some(stack) = self.layers.as_ref().and_then(|l| l.blend.as_ref()).filter(|_| self.is_combined())
+        {
+            let (w, h) = stack.size();
+            let mut bytes = wce_formats::image_containers::TiffFile::ted_header(w, h);
+            bytes.resize(bytes.len() + w as usize * h as usize * 32, 0);
+            let tif = wce_formats::image_containers::TiffFile::parse(&bytes).map_err(|e| format!("a blank blend map: {e}"))?;
+            let mut field = BlendField::from_tiff(tif)?;
+            stack.apply_all(&mut field);
+            self.blend = Some(field);
+        }
+
         if self.blend.is_none() {
             let path = self.dir.join("blend_map.tif");
             if !path.exists() {

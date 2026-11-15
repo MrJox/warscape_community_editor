@@ -512,6 +512,12 @@ impl<K: Kind> Stack<K> {
         s
     }
 
+    /// Its width and height in pixels.
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        (self.w, self.h)
+    }
+
     /// The layers hidden because they belong to other variations than the one viewed (by id; the scene's say for a layer that depends
     /// on one). Whether that changed; the caller then composes the field again ([`Self::apply_all`]).
     pub fn set_view_hidden(&mut self, ids: std::collections::HashSet<u64>) -> bool {

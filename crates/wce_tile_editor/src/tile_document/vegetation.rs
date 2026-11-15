@@ -339,9 +339,11 @@ impl Tile {
     fn start_tree_job(&self, name: &str) -> Result<Job<Vec<ListTree>>, String> {
         let params = self.generation_params().ok_or("no Assembly Kit vegetation parameters")?;
         let category = params.category(name).ok_or_else(|| format!("no vegetation category {name}"))?;
-        let seeds = vegetation::seeds(self.tscene()).ok_or("tile.ted has no <Vegetation> seeds")?;
+        // A combined project's variation as its own scene (the others' polygons and trees are not its).
+        let scene = self.project.variation_scene()?;
+        let seeds = vegetation::seeds(&scene).ok_or("tile.ted has no <Vegetation> seeds")?;
         let inputs = vegetation::tile_inputs(&self.project)?;
-        let statics = vegetation::static_trees(self.tscene(), &inputs);
+        let statics = vegetation::static_trees(&scene, &inputs);
         let files = self.files.clone();
         let label = name.to_owned();
         Ok(Job::start(name.to_owned(), move || {

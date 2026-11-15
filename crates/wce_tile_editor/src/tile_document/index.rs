@@ -250,6 +250,9 @@ struct Local {
 
     /// A layer the game view leaves out ([`TileDisplay::game_layers`](super::TileDisplay::game_layers)).
     not_in_game: bool,
+
+    /// Not in the viewed variation of a combined project (`wce_tile::variations::View`): not shown, not picked.
+    gone: bool,
     kind: u8,
     mode: u8,
     scale: Option<[f32; 3]>,
@@ -644,6 +647,13 @@ impl Tile {
 
     pub(crate) fn build_index(&mut self) {
         wce_prof!("tile.index");
+
+        // A combined project's view, of the elements as they are now.
+        if let Some(name) = self.project.view.as_ref().map(|v| v.variation.clone()) {
+            self.project.view = Some(wce_tile::variations::View::new(self.project.scene.doc(), &name));
+        }
+
+        let view = self.project.view.as_ref();
         let doc = self.project.scene.doc();
         let els = doc.elements();
         let n = els.len();
@@ -688,12 +698,26 @@ impl Tile {
                 let t = types[i] as usize;
                 let mut kind = if layer_type[t] { LAYER_BIT } else { 0 };
 
+                // Of a combined project: what the viewed variation does not have, and what it goes through (a variation folder, a group
+                // of other variations: no transform, no flags of its own).
+                if let Some(v) = view
+                    && (v.is_gone(i) || v.is_through(i))
+                {
+                    l.gone = v.is_gone(i);
+                    l.kind = kind;
+                    return l;
+                }
+
                 // Points, wrappers: nothing to parse (a point's position is a plain triple, not a vector).
                 if plain_type[t] && kind == 0 {
                     return l;
                 }
 
-                let raw = |name: &str| doc.find_attr(i, name).map(|k| doc.attr_raw(i, k));
+                // The viewed variation's own values where it has them (a group's pivot, an instance's height on its terrain).
+                let raw = |name: &str| match view {
+                    Some(v) => v.raw(doc, i, name),
+                    None => doc.find_attr(i, name).map(|k| doc.attr_raw(i, k)),
+                };
                 if let Some(fv) = raw("flags") {
                     let fv = text(fv);
                     l.flagbits = 1 | if fv.contains("OIF_VISIBLE") { 2 } else { 0 } | if fv.contains("OIF_ACTIVE") { 4 } else { 0 };
@@ -766,6 +790,10 @@ impl Tile {
                 ix.state[i] &= !1;
             }
 
+            if local[i].gone {
+                ix.state[i] = 0;
+            }
+
             staged[i] = p.is_some_and(|p| staged[p])
                 || (els[i].name == "UserInstanceGroup" && doc.get(i, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true"));
             if els[i].name == wce_tile::new_instances::ROAD_GUIDE && !staged[i] {
@@ -812,6 +840,83 @@ impl Tile {
         ix.valid = true;
         self.idx = ix;
         self.grid_dirty.set(true);
+    }
+
+    /// A combined project's variations (docs/plans/tile_variations.md); empty for a project of one.
+    pub fn variations(&self) -> &[String] {
+        &self.project.variations
+    }
+
+    /// The variation of a combined project in view.
+    pub fn viewed_variation(&self) -> Option<&str> {
+        self.project.view.as_ref().map(|v| v.variation.as_str())
+    }
+
+    /// A layer's or group's children as the viewed variation has them (`TedScene::children` of a project of one): without what other
+    /// variations have, with the contents of a variation folder or of a group of other variations in its place.
+    pub fn tree_children(&self, elem: usize) -> Vec<usize> {
+        let sc = self.tscene();
+        let Some(view) = self.project.view.as_ref() else { return sc.children(elem) };
+        let els = sc.doc().elements();
+        let mut out = vec![];
+        let mut stack = sc.children(elem).into_iter().rev().collect::<Vec<_>>();
+        while let Some(k) = stack.pop() {
+            if view.is_gone(k) {
+                continue;
+            }
+
+            if view.is_through(k) {
+                let inner = if els[k].name == wce_tile::variations::FOLDER { els[k].children.clone() } else { sc.children(k) };
+                stack.extend(inner.into_iter().rev());
+                continue;
+            }
+
+            out.push(k);
+        }
+
+        out
+    }
+
+    /// The element above `elem` as the viewed variation has it (past variation folders and groups of other variations).
+    pub fn tree_parent(&self, elem: usize) -> Option<usize> {
+        let doc = self.tscene().doc();
+        match self.project.view.as_ref() {
+            Some(view) => view.parent(doc, elem),
+            None => doc.elements()[elem].parent,
+        }
+    }
+
+    /// Views another variation of a combined project: its scene (what it has, where it has it) and its terrain. Nothing is edited, there
+    /// is nothing to undo; the scene's entities are made again.
+    ///
+    /// # Errors
+    ///
+    /// Not a combined project, or what `TileProject::view_variation` refuses.
+    pub fn view_variation(&mut self, scene: &mut wce_scene::render_scene::RenderScene, name: &str) -> Result<(), String> {
+        if !self.project.is_combined() {
+            return Err("the tile has one variation: it is not a combined project".to_owned());
+        }
+
+        if self.viewed_variation() == Some(name) {
+            return Ok(());
+        }
+
+        self.project.view_variation(name)?;
+        self.material_base = None;
+        self.skin = None;
+        self.roads_stale = true;
+        self.prefab_ground_stale = true;
+        self.links_dirty = true;
+        self.reload_tree_list();
+        self.reload_grass();
+        self.structure_version += 1;
+        self.rebuild_items(true);
+        if self.scene_key == super::scene_key(scene) && self.terrain_entity != 0 {
+            let layer = self.layer;
+            self.publish_items(scene, layer, false);
+        }
+
+        Ok(())
     }
 
     /// An attribute of one element changed that the index keeps (its scale) or that changes how it is shown.

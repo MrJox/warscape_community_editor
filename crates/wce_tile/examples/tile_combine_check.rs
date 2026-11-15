@@ -36,7 +36,8 @@ struct Row {
 }
 
 /// The maps of a tile's variations combined and each given back; a line of what they take, or what differs.
-fn maps(dir: &Path, rows: &[&Row], reference: usize) -> Result<String, String> {
+/// `out`: the folder to write the combined `terrain_layers.wcl` into when every variation comes back.
+fn maps(dir: &Path, rows: &[&Row], reference: usize, out: Option<&Path>) -> Result<String, String> {
     struct Var {
         height: HeightField,
         raw: Vec<u16>,
@@ -105,7 +106,13 @@ fn maps(dir: &Path, rows: &[&Row], reference: usize) -> Result<String, String> {
         return Err(bad.join("; "));
     }
 
-    let wcl = combined.to_bytes()?.len();
+    let bytes = combined.to_bytes()?;
+    if let Some(out) = out {
+        std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+        std::fs::write(out.join(wce_tile::terrain_layers::FILE), &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    }
+
+    let wcl = bytes.len();
     let counts = [
         combined.height.as_ref().map(|s| s.layers.len()),
         combined.blend.as_ref().map(|s| s.layers.len()),
@@ -226,9 +233,26 @@ fn main() {
             let _ = std::fs::write(Path::new(&out).join(format!("{name}.wce")), &combined.text);
         }
 
+        // `WCE_COMBINE_PROJECT=<raw_data>`: the tile written there as a combined project (its tile.wce, its terrain_layers.wcl and its
+        // entry), to open in the editor. Only a tile whose variations all come back.
+        let project = std::env::var("WCE_COMBINE_PROJECT")
+            .ok()
+            .filter(|_| bad.is_none())
+            .map(|raw_out| location.split(['\\', '/']).filter(|s| !s.is_empty()).fold(PathBuf::from(&raw_out), |p, s| p.join(s)));
+        if let (Some(out), Ok(raw_out)) = (&project, std::env::var("WCE_COMBINE_PROJECT")) {
+            let tiles_db = PathBuf::from(raw_out).join("terrain/tiles/battle/_tile_database/TILES");
+            let written = std::fs::create_dir_all(out)
+                .and_then(|()| std::fs::write(out.join(wce_tile::project_files::WCE_FILE), &combined.text))
+                .and_then(|()| std::fs::create_dir_all(&tiles_db))
+                .and_then(|()| std::fs::copy(&file, tiles_db.join(file.file_name().unwrap_or_default())).map(|_| ()));
+            if let Err(e) = written {
+                println!("{location}: the project was not written: {e}");
+            }
+        }
+
         let s = &combined.stats;
         let map_line = if bad.is_none() && std::env::var("WCE_COMBINE_MAPS").as_deref() != Ok("0") {
-            match maps(&dir, &rows, s.reference()) {
+            match maps(&dir, &rows, s.reference(), project.as_deref()) {
                 Ok(line) => line,
                 Err(e) => {
                     bad = Some(format!("maps: {e}"));

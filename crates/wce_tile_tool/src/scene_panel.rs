@@ -148,7 +148,7 @@ impl TileTool {
         let mut opened = HashSet::new();
         let keep = (!filter.is_empty()).then(|| {
             let mut keep = HashSet::new();
-            mark_matches(sc, g, &filter, &mut keep, &mut opened);
+            mark_matches(d, g, &filter, &mut keep, &mut opened);
             keep.insert(g);
             keep
         });
@@ -160,7 +160,7 @@ impl TileTool {
             // A copy of a prefab opens like a group: a click on one of its items opens the copy for overrides (`select_whole_prefabs`).
             let layer = sc.is_layer(e);
             let branch = opens(sc, e);
-            let mut kids = if branch { sc.children(e) } else { vec![] };
+            let mut kids = if branch { d.tile().tree_children(e) } else { vec![] };
             let all_kids = kids.clone();
             if let Some(keep) = &keep {
                 kids.retain(|k| keep.contains(k));
@@ -230,10 +230,8 @@ impl TileTool {
         // The layers above (nearest first; the file nests a `children` element between a layer and its contents, so the tree's parent of an
         // element is the nearest layer above it), and the row: the element itself, or the ancestor that is a child of the nearest layer.
         // (A holder opens too: a shape picked in the viewport is shown in it.)
-        let up = |e: usize| {
-            let els = sc.doc().elements();
-            std::iter::successors(els[e].parent, |&q| els[q].parent).find(|&q| opens(sc, q))
-        };
+        let tile = d.tile();
+        let up = |e: usize| std::iter::successors(tile.tree_parent(e), |&q| tile.tree_parent(q)).find(|&q| opens(sc, q));
 
         let mut layers = vec![];
         let mut p = up(elem);
@@ -243,10 +241,10 @@ impl TileTool {
         }
 
         let Some(&nearest) = layers.first() else { return };
-        let kids = sc.children(nearest);
+        let kids = tile.tree_children(nearest);
         let mut row = elem;
         while !kids.contains(&row) {
-            let Some(up) = sc.doc().elements()[row].parent else { return };
+            let Some(up) = tile.tree_parent(row) else { return };
             row = up;
         }
 
@@ -258,7 +256,7 @@ impl TileTool {
         for w in layers[first..].windows(2) {
             let (layer, child) = (w[0], w[1]);
             let nm = label_of(sc, child);
-            let ordinal = sc.children(layer).into_iter().take_while(|&k| k != child).filter(|&k| label_of(sc, k) == nm).count();
+            let ordinal = tile.tree_children(layer).into_iter().take_while(|&k| k != child).filter(|&k| label_of(sc, k) == nm).count();
             key = format!("{key}/{nm}#{ordinal}");
             self.tree.open.insert(key.clone());
         }
@@ -276,13 +274,14 @@ impl TileTool {
 /// Marks the elements under `e` that match the filter (name or type, lower-cased) or hold one; true when `e` is marked.
 /// The rows a filter keeps: the elements that match, everything below them (`keep`), and the layers above them, which open (`open`; a
 /// match opens too, to show what it holds; below it, rows open as the user left them).
-fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>, open: &mut HashSet<usize>) -> bool {
+fn mark_matches(d: &TileDocument, e: usize, filter: &str, keep: &mut HashSet<usize>, open: &mut HashSet<usize>) -> bool {
+    let sc = d.tile().tscene();
     if label_of(sc, e).to_lowercase().contains(filter) || sc.type_of(e).to_lowercase().contains(filter) {
         let mut stack = vec![e];
         while let Some(x) = stack.pop() {
             keep.insert(x);
             if opens(sc, x) {
-                stack.extend(sc.children(x));
+                stack.extend(d.tile().tree_children(x));
             }
         }
 
@@ -292,8 +291,8 @@ fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>
 
     let mut any = false;
     if opens(sc, e) {
-        for k in sc.children(e) {
-            any |= mark_matches(sc, k, filter, keep, open);
+        for k in d.tile().tree_children(e) {
+            any |= mark_matches(d, k, filter, keep, open);
         }
     }
 
