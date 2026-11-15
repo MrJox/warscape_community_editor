@@ -18,6 +18,10 @@
 //! A layer can depend on a scene layer (`depends`, the scene layer's `wce_layer_id`): an export leaves it out unless that layer is exported
 //! (`TileProject::export_maps`). The editor shows it whatever.
 //!
+//! A layer can belong to some of a combined project's variations (`variations`, empty: all; docs/plans/tile_variations.md). The stack
+//! shows the variation being viewed: a layer of other variations counts as hidden there ([`Stack::set_view_hidden`]), for showing and for
+//! painting alike. [`Stack::combine`] makes one stack of the variations' stacks.
+//!
 //! A stack lives in `terrain_layers.wcl` beside the tile: TEd never sees it, and a tile without layers has no such file.
 
 use std::collections::HashMap;
@@ -33,7 +37,7 @@ use crate::height_field::HeightField;
 pub const FILE: &str = "terrain_layers.wcl";
 
 const MAGIC: &[u8; 4] = b"WCTL";
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// Pixels a side of a block of samples.
 const BLOCK: u32 = 64;
@@ -394,10 +398,23 @@ pub struct Layer<T> {
 
     /// The scene layer it exports with (its `wce_layer_id`), empty: always.
     pub depends: String,
+
+    /// The variations of a combined project it belongs to, empty: all (narrowed further by its `depends` layer's).
+    pub variations: Vec<String>,
+
+    /// Where it holds a block, it is what shows there, whatever is below (a combined project's "Variation base" layer: those variations'
+    /// own base, by the 64 x 64 blocks it differs in). Exact for every type: no difference to add, no rounding.
+    pub replace: bool,
     samples: Blocks<T>,
 }
 
 impl<T: Copy + Default> Layer<T> {
+    /// Whether it belongs to a variation by its own list (its `depends` layer's is the scene's to say).
+    #[must_use]
+    pub fn in_variation(&self, variation: &str) -> bool {
+        self.variations.is_empty() || self.variations.iter().any(|v| v == variation)
+    }
+
     /// The bytes in memory of its samples.
     #[must_use]
     pub fn bytes(&self) -> usize {
@@ -433,6 +450,10 @@ pub struct Stack<K: Kind> {
     /// The state after each edit, by the serial of its record in the field, and the serial last seen.
     states: HashMap<u64, State<K::Sample>>,
     seen: u64,
+
+    /// The layers of other variations than the one viewed: hidden while it is ([`Self::set_view_hidden`]). Not kept in the file or the
+    /// states: it is the view's, not the stack's.
+    view_hidden: std::collections::HashSet<u64>,
 }
 
 // Cheap: the samples are shared blocks (a job works on a copy, `tile_document::jobs`).
@@ -446,6 +467,7 @@ impl<K: Kind> Clone for Stack<K> {
             working: self.working,
             states: self.states.clone(),
             seen: self.seen,
+            view_hidden: self.view_hidden.clone(),
         }
     }
 }
@@ -466,6 +488,8 @@ impl<K: Kind> Stack<K> {
                     && a.opacity == b.opacity
                     && a.owner == b.owner
                     && a.depends == b.depends
+                    && a.variations == b.variations
+                    && a.replace == b.replace
                     && a.samples.same(&b.samples)
             })
     }
@@ -483,9 +507,28 @@ impl<K: Kind> Stack<K> {
         }
 
         let seen = K::top_id(field);
-        let mut s = Self { w, h, base, layers: vec![], working: None, states: HashMap::new(), seen };
+        let mut s = Self { w, h, base, layers: vec![], working: None, states: HashMap::new(), seen, view_hidden: Default::default() };
         s.states.insert(seen, s.state());
         s
+    }
+
+    /// The layers hidden because they belong to other variations than the one viewed (by id; the scene's say for a layer that depends
+    /// on one). Whether that changed; the caller then composes the field again ([`Self::apply_all`]).
+    pub fn set_view_hidden(&mut self, ids: std::collections::HashSet<u64>) -> bool {
+        let changed = ids != self.view_hidden;
+        self.view_hidden = ids;
+        changed
+    }
+
+    /// Whether a layer shows in the view: visible, not transparent, of the variation viewed.
+    fn shows(&self, l: &Layer<K::Sample>) -> bool {
+        l.visible && l.opacity > 0.0 && !self.view_hidden.contains(&l.id)
+    }
+
+    /// Whether a layer is hidden because it belongs to other variations than the one viewed.
+    #[must_use]
+    pub fn hidden_by_view(&self, id: u64) -> bool {
+        self.view_hidden.contains(&id)
     }
 
     /// A new layer; its id. A layer of the user's goes on top of theirs, under what procedural features own: those apply last.
@@ -498,7 +541,17 @@ impl<K: Kind> Stack<K> {
         };
         self.layers.insert(
             at,
-            Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), depends: String::new(), samples },
+            Layer {
+                id,
+                name: name.to_owned(),
+                visible: true,
+                opacity: 1.0,
+                owner: owner.to_owned(),
+                depends: String::new(),
+                variations: vec![],
+                replace: false,
+                samples,
+            },
         );
         id
     }
@@ -590,7 +643,7 @@ impl<K: Kind> Stack<K> {
             && self
                 .layers
                 .iter()
-                .any(|l| l.visible && l.owner.starts_with(owner) && l.samples.pixel(x, y, K::CHANNELS).is_some_and(|p| !empty(p)))
+                .any(|l| self.shows(l) && l.owner.starts_with(owner) && l.samples.pixel(x, y, K::CHANNELS).is_some_and(|p| !empty(p)))
     }
 
     /// Empties a layer, for a procedural feature to fill.
@@ -630,9 +683,25 @@ impl<K: Kind> Stack<K> {
         }
     }
 
-    /// The composite at a pixel from the base up to, not including, layer `end`.
+    /// The whole composite an export gets with the layers `keep` lets through, pixel after pixel, row after row (`CHANNELS` samples
+    /// each): what [`Self::export_into`] writes, without a field.
+    #[must_use]
+    pub fn composite(&self, keep: &dyn Fn(&Layer<K::Sample>) -> bool) -> Vec<K::Sample> {
+        let mut all = Vec::with_capacity(self.w as usize * self.h as usize * K::CHANNELS);
+        let mut out = vec![K::Sample::default(); K::CHANNELS];
+        for y in 0..self.h {
+            for x in 0..self.w {
+                self.compose_with(x, y, self.layers.len(), &mut out, keep);
+                all.extend_from_slice(&out);
+            }
+        }
+
+        all
+    }
+
+    /// The composite at a pixel from the base up to, not including, layer `end`, as the view shows it.
     fn compose(&self, x: u32, y: u32, end: usize, out: &mut [K::Sample]) {
-        self.compose_with(x, y, end, out, &|_| true);
+        self.compose_with(x, y, end, out, &|l| !self.view_hidden.contains(&l.id));
     }
 
     fn compose_with(&self, x: u32, y: u32, end: usize, out: &mut [K::Sample], keep: &dyn Fn(&Layer<K::Sample>) -> bool) {
@@ -643,7 +712,11 @@ impl<K: Kind> Stack<K> {
 
         for layer in self.layers[..end].iter().filter(|l| l.visible && l.opacity > 0.0 && keep(l)) {
             if let Some(px) = layer.samples.pixel(x, y, K::CHANNELS) {
-                K::over(out, px, layer.opacity);
+                if layer.replace {
+                    out.copy_from_slice(px);
+                } else {
+                    K::over(out, px, layer.opacity);
+                }
             }
         }
     }
@@ -682,7 +755,13 @@ impl<K: Kind> Stack<K> {
                 }
 
                 bounds = Some(bounds.map_or([x, y, x + 1, y + 1], |b| [b[0].min(x), b[1].min(y), b[2].max(x + 1), b[3].max(y + 1)]));
-                let shows = |l: &Layer<K::Sample>| l.visible && l.opacity > 0.0;
+                let shows = |l: &Layer<K::Sample>| self.shows(l);
+                if let Some(k) = target.filter(|&k| self.layers[k].replace) {
+                    self.fill_block(k, x, y);
+                    K::onto(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &shown, &new, 1.0);
+                    continue;
+                }
+
                 match target {
                     Some(k) if shows(&self.layers[k]) && self.layers[k + 1..].iter().any(shows) => {
                         let opacity = self.layers[k].opacity;
@@ -705,6 +784,23 @@ impl<K: Kind> Stack<K> {
         let Some(bounds) = bounds else { return false };
         self.apply(field, bounds);
         true
+    }
+
+    /// Makes the block of a replace layer at a pixel, where it has none, from what shows below it there: it then changes nothing until
+    /// painted.
+    fn fill_block(&mut self, k: usize, x: u32, y: u32) {
+        if self.layers[k].samples.pixel(x, y, K::CHANNELS).is_some() {
+            return;
+        }
+
+        let (x0, y0) = (x / BLOCK * BLOCK, y / BLOCK * BLOCK);
+        let mut px = vec![K::Sample::default(); K::CHANNELS];
+        for by in y0..(y0 + BLOCK).min(self.h) {
+            for bx in x0..(x0 + BLOCK).min(self.w) {
+                self.compose(bx, by, k, &mut px);
+                self.layers[k].samples.pixel_mut(bx, by, K::CHANNELS).copy_from_slice(&px);
+            }
+        }
     }
 
     /// Merges a layer into the one below it, or into the base. A merged layer applies its opacity for good; a hidden one goes.
@@ -732,9 +828,143 @@ impl<K: Kind> Stack<K> {
                     None => &mut self.base,
                 };
 
-                K::over(target.pixel_mut(x, y, K::CHANNELS), &px, top.opacity);
+                if top.replace {
+                    target.pixel_mut(x, y, K::CHANNELS).copy_from_slice(&px);
+                } else {
+                    K::over(target.pixel_mut(x, y, K::CHANNELS), &px, top.opacity);
+                }
             }
         }
+    }
+
+    /// One stack of several variations' (docs/plans/tile_variations.md, "The terrain merge"): the base is the reference's; each group of
+    /// other variations whose base differs gets a "Variation base" layer of theirs right above it, which replaces the base by the blocks
+    /// their base differs in; then every variation's layers, in each variation's order, a layer that several have the same (id, settings and samples)
+    /// once. A layer belongs to the variations that had it (none listed: all). What a variation's export composes is then its own
+    /// composite, sample for sample ([`Self::composite`]). Layer ids that two different layers had are made new by `new_id`.
+    ///
+    /// # Errors
+    ///
+    /// No sources, no such reference, or maps of different sizes.
+    pub fn combine(sources: &[(&str, &Self)], reference: usize, new_id: &mut dyn FnMut() -> u64) -> Result<Self, String> {
+        let Some(&(_, r)) = sources.get(reference) else { return Err(format!("no variation {reference} of {}", sources.len())) };
+        if let Some((name, s)) = sources.iter().find(|(_, s)| (s.w, s.h) != (r.w, r.h)) {
+            return Err(format!("{name}'s map is {} x {}, the reference's {} x {}", s.w, s.h, r.w, r.h));
+        }
+
+        let names = |set: &[usize]| -> Vec<String> {
+            if set.len() == sources.len() { vec![] } else { set.iter().map(|&i| sources[i].0.to_owned()).collect() }
+        };
+
+        // The groups of variations whose base is the same, but for the reference's.
+        let mut groups: Vec<Vec<usize>> = vec![];
+        for (i, (_, s)) in sources.iter().enumerate() {
+            if i == reference || s.base == r.base {
+                continue;
+            }
+
+            match groups.iter_mut().find(|g| sources[g[0]].1.base == s.base) {
+                Some(g) => g.push(i),
+                None => groups.push(vec![i]),
+            }
+        }
+
+        let mut layers = vec![];
+        for g in &groups {
+            let base = &sources[g[0]].1.base;
+            let mut samples = Blocks::new(r.w, r.h);
+            for (i, block) in base.blocks.iter().enumerate() {
+                if *block != r.base.blocks[i] {
+                    samples.blocks[i] =
+                        block.clone().or_else(|| Some(Arc::new(vec![K::Sample::default(); (BLOCK * BLOCK) as usize * K::CHANNELS])));
+                }
+            }
+
+            let variations = names(g);
+            layers.push(Layer {
+                id: new_id(),
+                name: format!("Variation base: {}", variations.join(", ")),
+                visible: true,
+                opacity: 1.0,
+                owner: String::new(),
+                depends: String::new(),
+                variations,
+                replace: true,
+                samples,
+            });
+        }
+
+        // Every variation's layers: each sequence merged into what the ones before made, so that each keeps its order.
+        let same = |a: &Layer<K::Sample>, b: &Layer<K::Sample>| {
+            a.id == b.id
+                && a.name == b.name
+                && a.visible == b.visible
+                && a.opacity == b.opacity
+                && a.owner == b.owner
+                && a.depends == b.depends
+                && a.replace == b.replace
+                && a.samples == b.samples
+        };
+        let mut merged: Vec<(Layer<K::Sample>, Vec<usize>)> = vec![];
+        for (i, (_, s)) in sources.iter().enumerate() {
+            let (n, m) = (merged.len(), s.layers.len());
+            let w = m + 1;
+            let mut t = vec![0u32; (n + 1) * w];
+            for a in (0..n).rev() {
+                for b in (0..m).rev() {
+                    t[a * w + b] = if same(&merged[a].0, &s.layers[b]) {
+                        t[(a + 1) * w + b + 1] + 1
+                    } else {
+                        t[(a + 1) * w + b].max(t[a * w + b + 1])
+                    };
+                }
+            }
+
+            let mut next = Vec::with_capacity(n + m);
+            let mut old = std::mem::take(&mut merged).into_iter();
+            let (mut a, mut b) = (0, 0);
+            while a < n || b < m {
+                if a < n && b < m && t[a * w + b] == t[(a + 1) * w + b + 1] + 1 && same(&old.as_slice()[0].0, &s.layers[b]) {
+                    let mut item = old.next().expect("a < n");
+                    item.1.push(i);
+                    next.push(item);
+                    a += 1;
+                    b += 1;
+                } else if a < n && (b == m || t[(a + 1) * w + b] >= t[a * w + b + 1]) {
+                    next.push(old.next().expect("a < n"));
+                    a += 1;
+                } else {
+                    next.push((s.layers[b].clone(), vec![i]));
+                    b += 1;
+                }
+            }
+
+            merged = next;
+        }
+
+        let mut used = layers.iter().map(|l| l.id).collect::<std::collections::HashSet<_>>();
+        for (mut l, set) in merged {
+            if !used.insert(l.id) {
+                l.id = new_id();
+                used.insert(l.id);
+            }
+
+            l.variations = names(&set);
+            layers.push(l);
+        }
+
+        let mut out = Self {
+            w: r.w,
+            h: r.h,
+            base: r.base.clone(),
+            layers,
+            working: None,
+            states: HashMap::new(),
+            seen: 0,
+            view_hidden: Default::default(),
+        };
+        out.put_owned_on_top();
+        Ok(out)
     }
 
     fn write(&self, out: &mut Vec<u8>) {
@@ -749,6 +979,8 @@ impl<K: Kind> Stack<K> {
             put_text(out, &l.name);
             put_text(out, &l.owner);
             put_text(out, &l.depends);
+            put_text(out, &l.variations.join(","));
+            out.push(u8::from(l.replace));
             out.push(u8::from(l.visible));
             out.extend(l.opacity.to_le_bytes());
             write_blocks::<K>(out, &l.samples);
@@ -763,12 +995,17 @@ impl<K: Kind> Stack<K> {
         for _ in 0..n {
             let (id, name, owner) = (r.u64()?, r.text()?, r.text()?);
             let depends = if version >= 3 { r.text()? } else { String::new() };
+            let (variations, replace) = if version >= 4 {
+                (r.text()?.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect(), r.take(1)?[0] != 0)
+            } else {
+                (vec![], false)
+            };
             let (visible, opacity) = (r.take(1)?[0] != 0, r.f32()?);
             let samples = read_blocks::<K>(r, w, h)?;
-            layers.push(Layer { id, name, visible, opacity, owner, depends, samples });
+            layers.push(Layer { id, name, visible, opacity, owner, depends, variations, replace, samples });
         }
 
-        Ok(Self { w, h, base, layers, working, states: HashMap::new(), seen: 0 })
+        Ok(Self { w, h, base, layers, working, states: HashMap::new(), seen: 0, view_hidden: Default::default() })
     }
 }
 
@@ -882,6 +1119,63 @@ impl TerrainLayers {
             && self.ground.as_ref().is_none_or(|s| s.layers.is_empty())
     }
 
+    /// Shows a variation of a combined project (`None`: every layer, as a project of one variation): a layer that does not belong to it
+    /// counts as hidden in every stack. `scene_has` says whether a scene layer (by `wce_layer_id`) belongs to it, for the layers that
+    /// export with one. Which types changed: their fields need composing again ([`Stack::apply_all`]).
+    pub fn set_view(&mut self, variation: Option<&str>, scene_has: &dyn Fn(&str) -> bool) -> [bool; 3] {
+        fn hidden<K: Kind>(s: &Stack<K>, variation: Option<&str>, scene_has: &dyn Fn(&str) -> bool) -> std::collections::HashSet<u64> {
+            let Some(v) = variation else { return Default::default() };
+            s.layers.iter().filter(|l| !l.in_variation(v) || (!l.depends.is_empty() && !scene_has(&l.depends))).map(|l| l.id).collect()
+        }
+
+        [
+            self.height.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, variation, scene_has))),
+            self.blend.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, variation, scene_has))),
+            self.ground.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, variation, scene_has))),
+        ]
+    }
+
+    /// One project's layers of several variations' ([`Stack::combine`] for each type). A type is in all of them or in none: a variation
+    /// without layers of a type has to be given a stack over its map (`Stack::new`).
+    ///
+    /// # Errors
+    ///
+    /// A type some variations have and others not, or what [`Stack::combine`] refuses.
+    pub fn combine(sources: &[(&str, &Self)], reference: usize) -> Result<Self, String> {
+        let mut out = Self { next_id: sources.iter().map(|(_, s)| s.next_id).max().unwrap_or(0), ..Self::default() };
+        let mut next_id = out.next_id;
+        let mut new_id = || {
+            next_id += 1;
+            next_id
+        };
+
+        fn kind<K: Kind>(
+            what: &str,
+            sources: &[(&str, &TerrainLayers)],
+            get: impl Fn(&TerrainLayers) -> Option<&Stack<K>>,
+            reference: usize,
+            new_id: &mut dyn FnMut() -> u64,
+        ) -> Result<Option<Stack<K>>, String> {
+            let stacks = sources.iter().filter_map(|(n, s)| get(s).map(|st| (*n, st))).collect::<Vec<_>>();
+            if stacks.is_empty() {
+                return Ok(None);
+            }
+
+            if stacks.len() != sources.len() {
+                return Err(format!("{what} layers: some variations have them, others not"));
+            }
+
+            Stack::combine(&stacks, reference, new_id).map(Some)
+        }
+
+        out.height = kind("height", sources, |s| s.height.as_ref(), reference, &mut new_id)?;
+        out.blend = kind("blend", sources, |s| s.blend.as_ref(), reference, &mut new_id)?;
+        out.ground = kind("ground type", sources, |s| s.ground.as_ref(), reference, &mut new_id)?;
+        out.next_id = next_id;
+        out.dirty = true;
+        Ok(out)
+    }
+
     /// The file's bytes.
     ///
     /// # Errors
@@ -956,8 +1250,16 @@ mod tests {
 
     #[test]
     fn a_copy_is_unchanged_until_one_is_written() {
-        let mut s =
-            Stack::<Height> { w: 128, h: 128, base: Blocks::new(128, 128), layers: vec![], working: None, states: HashMap::new(), seen: 0 };
+        let mut s = Stack::<Height> {
+            w: 128,
+            h: 128,
+            base: Blocks::new(128, 128),
+            layers: vec![],
+            working: None,
+            states: HashMap::new(),
+            seen: 0,
+            view_hidden: Default::default(),
+        };
         let id = s.add(7, "a", "");
         s.put(id, 3, 3, &[1.0]);
         let copy = s.clone();
@@ -978,12 +1280,127 @@ mod tests {
             opacity: 1.0,
             owner: String::new(),
             depends: String::new(),
+            variations: vec![],
+            replace: false,
             samples: Blocks::new(300, 200),
         };
         assert_eq!(l.extent(), None);
         *l.samples.pixel_mut(70, 10, 1).first_mut().unwrap() = 1.0;
         *l.samples.pixel_mut(130, 140, 1).first_mut().unwrap() = 1.0;
         assert_eq!(l.extent(), Some([64, 0, 192, 192]));
+    }
+
+    #[test]
+    fn combined_variations_each_compose_as_they_did() {
+        // Three variations: a and b share their base and a layer, c's base differs; b and c have a layer of their own each, c's of
+        // the same id as a's shared one.
+        let base = |h: f32| {
+            let mut s = Stack::<Height> {
+                w: 70,
+                h: 3,
+                base: Blocks::new(70, 3),
+                layers: vec![],
+                working: None,
+                states: HashMap::new(),
+                seen: 0,
+                view_hidden: Default::default(),
+            };
+            for x in 0..70 {
+                for y in 0..3 {
+                    s.base.pixel_mut(x, y, 1)[0] = 10.0 + x as f32 * 0.25;
+                }
+            }
+
+            s.base.pixel_mut(65, 1, 1)[0] = h;
+            s
+        };
+        let mut a = base(11.0);
+        let hills = a.add(1, "hills", "");
+        a.put(hills, 5, 1, &[2.5]);
+        let mut b = a.clone();
+        let walls = b.add(2, "walls", "");
+        b.put(walls, 6, 2, &[-1.0]);
+        let mut c = base(37.5);
+        let own = c.add(1, "moat", "");
+        c.put(own, 7, 0, &[-3.0]);
+        let sources = [("a", &a), ("b", &b), ("c", &c)];
+        let mut next = 100;
+        let combined = Stack::combine(&sources, 0, &mut || {
+            next += 1;
+            next
+        })
+        .unwrap();
+
+        let names = combined.layers.iter().map(|l| (l.name.as_str(), l.variations.join(","))).collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [("Variation base: c", "c".to_owned()), ("hills", "a,b".to_owned()), ("walls", "b".to_owned()), ("moat", "c".to_owned())]
+        );
+        let ids = combined.layers.iter().map(|l| l.id).collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), 4, "the moat got an id of its own");
+        for (v, s) in sources {
+            assert_eq!(combined.composite(&|l| l.in_variation(v)), s.composite(&|_| true), "{v}");
+        }
+
+        // Viewing b: c's layers count as hidden.
+        let mut view = combined.clone();
+        view.set_view_hidden(view.layers.iter().filter(|l| !l.in_variation("b")).map(|l| l.id).collect());
+        let mut out = [0.0];
+        view.compose(65, 1, view.layers.len(), &mut out);
+        assert_eq!(out[0], 11.0);
+
+        // A layer that exports with a scene layer follows that layer's variations too.
+        let mut layers = TerrainLayers { height: Some(combined), ..TerrainLayers::default() };
+        let walls = layers.height.as_ref().unwrap().layers.iter().position(|l| l.name == "walls").unwrap();
+        layers.height.as_mut().unwrap().layers[walls].depends = "7".to_owned();
+        let changed = layers.set_view(Some("b"), &|key| key != "7");
+        let s = layers.height.as_ref().unwrap();
+        assert!(changed[0] && s.hidden_by_view(s.layers[walls].id), "walls' scene layer is not in b");
+        assert!(!s.hidden_by_view(s.layers.iter().find(|l| l.name == "hills").unwrap().id));
+        layers.set_view(None, &|_| false);
+        assert!(!layers.height.as_ref().unwrap().layers.iter().any(|l| layers.height.as_ref().unwrap().hidden_by_view(l.id)), "no view");
+    }
+
+    #[test]
+    fn a_variation_base_gives_back_heights_a_difference_could_not() {
+        // A tile 9 cm high against one of 20 m: 20 + (0.0123457 - 20) is not 0.0123457 in f32; the replacing block is.
+        let field = |m: f64| {
+            let mut f = HeightField::flat(130, 2, 0.0);
+            f.set_range(0.0, 30.0);
+            f.begin_edit().unwrap();
+            for x in 0..130 {
+                f.set_metres(x, 0, m + f64::from(x) * 1e-4).unwrap();
+            }
+
+            f.end_edit();
+            f
+        };
+        let (low, high) = (field(0.0123457), field(20.0));
+        let (a, b) = (Stack::<Height>::new(&low), Stack::<Height>::new(&high));
+        let mut next = 0;
+        let combined = Stack::combine(&[("aa", &a), ("ab", &b)], 1, &mut || {
+            next += 1;
+            next
+        })
+        .unwrap();
+        assert!(combined.layers[0].replace && combined.layers[0].variations == ["aa"]);
+        assert_eq!(combined.layers[0].samples.blocks.iter().flatten().count(), 3, "the blocks that differ, whole");
+        assert_eq!(combined.composite(&|l| l.in_variation("aa")), a.composite(&|_| true));
+        assert_eq!(combined.composite(&|l| l.in_variation("ab")), b.composite(&|_| true));
+
+        // Painted while it is the working layer: what it covers changes for aa only, a block it lacked is made from what showed.
+        let mut s = combined;
+        let mut f = low.clone();
+        s.set_view_hidden(s.layers.iter().filter(|l| !l.in_variation("aa")).map(|l| l.id).collect());
+        s.apply_all(&mut f);
+        s.working = Some(s.layers[0].id);
+        let before = s.composite(&|l| l.in_variation("ab"));
+        f.begin_edit().unwrap();
+        f.set_metres(5, 1, 3.0).unwrap();
+        f.end_edit();
+        s.absorb(&mut f, [0, 0, 130, 2]);
+        assert!((f.metres(5, 1) - 3.0).abs() < 1e-5);
+        assert_eq!(s.composite(&|l| l.in_variation("ab")), before, "ab never sees it");
     }
 
     fn stack() -> (HeightField, Stack<Height>) {
