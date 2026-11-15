@@ -56,6 +56,12 @@ pub struct LayerRow {
 
     /// The scene layer it exports with (`wce_layer_id`), empty: always.
     pub depends: String,
+
+    /// A combined project's variations it belongs to, empty: all.
+    pub variations: Vec<String>,
+
+    /// It shows in the viewed variation (else it belongs to others only).
+    pub in_view: bool,
 }
 
 /// What a terrain layer's dependency comes to, for the panel.
@@ -110,6 +116,8 @@ fn rows<K: wce_tile::terrain_layers::Kind>(s: &Stack<K>) -> (Vec<LayerRow>, Opti
             opacity: l.opacity,
             bytes: l.bytes(),
             depends: l.depends.clone(),
+            variations: l.variations.clone(),
+            in_view: !s.hidden_by_view(l.id),
         })
         .collect();
     (list, s.working)
@@ -206,6 +214,9 @@ impl Tile {
         l.dirty = true;
         self.layers_shown = true;
 
+        // A layer's variations may have changed: what the viewed one shows.
+        self.project.refresh_view();
+
         // A layer shown, hidden or moved changes what the grass stands on.
         self.reload_grass();
     }
@@ -285,6 +296,15 @@ impl TileDocument {
     ///
     /// The tile has no such map.
     pub fn add_terrain_layer(&mut self, kind: LayerType, name: &str) -> Result<u64, String> {
+        self.add_terrain_layer_for(kind, name, &[])
+    }
+
+    /// [`Self::add_terrain_layer`] of some variations of a combined project only (empty: all): *New layer for this variation*.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no such map.
+    pub fn add_terrain_layer_for(&mut self, kind: LayerType, name: &str, variations: &[String]) -> Result<u64, String> {
         let t = self.tile_mut();
         t.sync_terrain_layers();
         let p = &mut t.project;
@@ -322,7 +342,14 @@ impl TileDocument {
 
         let id = layers.new_id();
         self.change_stack(&format!("New layer {name}"), kind, |p| {
-            with_stack!(p, kind, |s, _f| s.working = Some(s.add(id, name, "")));
+            with_stack!(p, kind, |s, _f| {
+                let id = s.add(id, name, "");
+                if let Some(i) = s.user_index(id) {
+                    s.layers[i].variations = variations.to_vec();
+                }
+
+                s.working = Some(id);
+            });
         });
 
         Ok(id)
@@ -335,6 +362,19 @@ impl TileDocument {
         with_stack!(&mut t.project, kind, |s, _f| {
             s.working = id.filter(|&i| s.user_index(i).is_some());
             s.remember();
+        });
+    }
+
+    /// The variations of a combined project a layer belongs to (empty: all). One undo entry; the viewed variation's terrain follows.
+    pub fn set_terrain_layer_variations(&mut self, kind: LayerType, id: u64, variations: &[String]) {
+        let name =
+            if variations.is_empty() { "Layer in every variation".to_owned() } else { format!("Layer in {}", variations.join(", ")) };
+        self.change_stack(&name, kind, |p| {
+            with_stack!(p, kind, |s, _f| {
+                if let Some(i) = s.user_index(id) {
+                    s.layers[i].variations = variations.to_vec();
+                }
+            });
         });
     }
 

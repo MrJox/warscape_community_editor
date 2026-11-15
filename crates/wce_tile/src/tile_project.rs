@@ -542,6 +542,28 @@ impl TileProject {
         Ok(())
     }
 
+    /// The viewed variation's terrain composed again where what it has changed: a terrain layer's variations, or the scene layers' that
+    /// layers export with (`TerrainLayers::set_view`). Whether any field changed.
+    pub fn refresh_view(&mut self) -> bool {
+        let (Some(view), Some(layers)) = (self.view.as_ref().filter(|_| self.is_combined()), self.layers.as_mut()) else { return false };
+        let name = view.variation.clone();
+        let keys = crate::variations::layer_key_variations(self.scene.doc(), &self.variations);
+        let [h, b, g] = layers.set_view(Some(&name), &|k| keys.get(k).is_none_or(|l| l.contains(&name)));
+        if let (true, Some(s), Some(f)) = (h, &layers.height, &mut self.height) {
+            s.apply_all(f);
+        }
+
+        if let (true, Some(s), Some(f)) = (b, &layers.blend, &mut self.blend) {
+            s.apply_all(f);
+        }
+
+        if let (true, Some(s), Some(f)) = (g, &layers.ground, &mut self.ground) {
+            s.apply_all(f);
+        }
+
+        h || b || g
+    }
+
     /// The scene as the viewed variation has it, for what reads the whole scene rather than elements the editor shows (the vegetation
     /// generator's exclusion polygons, seeds and static trees): of a combined project, the viewed variation's own tile.wce
     /// ([`crate::variations::to_variation`], made on each call); else the scene itself.

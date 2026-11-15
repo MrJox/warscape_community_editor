@@ -48,14 +48,26 @@ impl TileTool {
 
     fn draw_layer_list(&mut self, d: &mut TileDocument, kind: LayerType) {
         let (rows, working) = d.terrain_layers(kind);
+        let all = d.tile().variations().to_vec();
+        let viewed = d.tile().viewed_variation().unwrap_or_default().to_owned();
         let can_add = gui::button(&format!("{} New layer", icons::PLUS));
         if gui::is_item_hovered() {
             gui::set_tooltip("Adds an empty layer of this type on top; it becomes the working layer.");
         }
 
-        if can_add {
+        let mut for_viewed = false;
+        if !all.is_empty() {
+            gui::same_line();
+            for_viewed = gui::button(&format!("{} New layer for {viewed}", icons::PLUS));
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("Adds an empty layer that only {viewed} has; it becomes the working layer."));
+            }
+        }
+
+        if can_add || for_viewed {
             let name = format!("Layer {}", rows.len() + 1);
-            if let Err(why) = d.add_terrain_layer(kind, &name) {
+            let only = if for_viewed { vec![viewed.clone()] } else { vec![] };
+            if let Err(why) = d.add_terrain_layer_for(kind, &name, &only) {
                 self.status = why;
             }
 
@@ -80,12 +92,25 @@ impl TileTool {
             }
 
             gui::same_line();
-            if gui::selectable(&row.name, working == Some(row.id), 0) {
+            let label = if row.variations.is_empty() { row.name.clone() } else { format!("{}  ({})", row.name, row.variations.join(", ")) };
+            if !row.in_view {
+                gui::push_style_color(gui::COL_TEXT, theme::v4(theme::dim()));
+            }
+
+            if gui::selectable(&label, working == Some(row.id), 0) {
                 d.set_working_layer(kind, Some(row.id));
             }
 
+            if !row.in_view {
+                gui::pop_style_color(1);
+            }
+
             if gui::is_item_hovered() {
-                gui::set_tooltip("Makes it the working layer: brushes of this type paint into it.");
+                gui::set_tooltip(if row.in_view {
+                    "Makes it the working layer: brushes of this type paint into it."
+                } else {
+                    "Not in the variation viewed (it belongs to others, or exports with a scene layer this one does not have): it does not show. A click makes it the working layer."
+                });
             }
 
             gui::pop_id();
@@ -111,6 +136,14 @@ impl TileTool {
             Some(row) if !row.visible => {
                 gui::push_style_color(gui::COL_TEXT, theme::v4(theme::warning()));
                 gui::text_wrapped("The working layer is hidden: what you paint goes into it, but won't show until you show it.");
+                gui::pop_style_color(1);
+            }
+
+            Some(row) if !row.in_view => {
+                gui::push_style_color(gui::COL_TEXT, theme::v4(theme::warning()));
+                gui::text_wrapped(&format!(
+                    "The working layer is not in {viewed}: what you paint goes into it, but won't show in this variation."
+                ));
                 gui::pop_style_color(1);
             }
 
@@ -143,6 +176,24 @@ impl TileTool {
 
         if gui::is_item_deactivated() {
             d.commit_terrain_layer("Layer opacity", kind);
+        }
+
+        // A combined project's variations it belongs to (none ticked: all).
+        let all = d.tile().variations().to_vec();
+        if !all.is_empty() {
+            gui::row_tip("Variations", "The variations this layer belongs to; none ticked: all of them.");
+            for (i, v) in all.iter().enumerate() {
+                if i > 0 {
+                    gui::same_line();
+                }
+
+                let mut on = row.variations.contains(v);
+                if gui::checkbox(&format!("{v}##layer_var"), &mut on) {
+                    let list = all.iter().filter(|x| if *x == v { on } else { row.variations.contains(x) }).cloned().collect::<Vec<_>>();
+                    let list = if list.len() == all.len() { vec![] } else { list };
+                    d.set_terrain_layer_variations(kind, row.id, &list);
+                }
+            }
         }
 
         // The scene layer it exports with.

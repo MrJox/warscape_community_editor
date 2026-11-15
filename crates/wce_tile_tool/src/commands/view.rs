@@ -346,6 +346,26 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "tile_variation_ghosts", "tile_variation_ghosts [on|off]",
+        "a combined project's: what only the other variations have, drawn as tinted outlines where they have it (not picked); no argument logs it",
+        |e, a| {
+            let Some(id) = crate::tool::document_id(e) else { return fail("no tile") };
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            if d.tile().variations().is_empty() {
+                return fail("the tile has one variation: it is not a combined project");
+            }
+
+            match a.first().map(String::as_str) {
+                None => {}
+                Some(w @ ("on" | "off")) => d.tile_mut().set_variation_ghosts(w == "on"),
+                Some(_) => return fail("usage: tile_variation_ghosts [on|off]"),
+            }
+
+            ok(format!("ghosts of the other variations {}", if d.tile().display().variation_ghosts { "shown" } else { "hidden" }))
+        },
+    );
+
+    c.add(
         "tile_tech", "tile_tech [all | none | on|off <kind>... | scope all|selected | range <m> | xray|highest|detect on|off | fill <0..1>]",
         "the building technology overlays (the chip at the viewport's top right): kinds are collision gates outlines soft footprints platforms pipes formation docking arrows actionfx attached emitters bounds flag; no argument logs the settings", |e, a| {
             use wce_tile_editor::tile_document::{KINDS, TechKind, TechScope};

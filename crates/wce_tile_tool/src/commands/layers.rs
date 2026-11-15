@@ -80,6 +80,54 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         d.group_items(&sel, &a[0]).map_or_else(fail, |_| ok(""))
     });
 
+    // ---- a combined project's variations (docs/plans/tile_variations.md): lists are comma or space separated.
+    let list =
+        |a: &[String]| a.iter().flat_map(|s| s.split(',')).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect::<Vec<_>>();
+    c.add(
+        "tile_variations",
+        "tile_variations <variation,...> | all",
+        "the variations the selected layers, groups and variation folders belong to (all: as their parent's); an instance has its folder's",
+        move |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_variations <variation,...> | all") };
+            let l = list(a);
+            let l = (l != ["all"]).then_some(l);
+            d.set_variations(&sel, l.as_deref()).map_or_else(fail, |()| ok(""))
+        },
+    );
+
+    c.add(
+        "tile_to_variation_folder",
+        "tile_to_variation_folder <variation,...>",
+        "Move to a variation folder: the selection (side by side in one layer, group or folder) into a new folder for those variations",
+        move |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_to_variation_folder <variation,...>") };
+            d.to_variation_folder(&sel, &list(a)).map_or_else(fail, |f| ok(format!("#{f}")))
+        },
+    );
+
+    c.add(
+        "tile_split_variation",
+        "tile_split_variation",
+        "Split for this variation: the selection copied into a folder for the viewed variation, the originals into one for the others; the copies selected",
+        |e, _| {
+            let sel = selected(e);
+            let Some(d) = document(e) else { return no_tile() };
+            d.split_for_variation(&sel).map_or_else(fail, |c| ok(format!("{} copies", c.len())))
+        },
+    );
+
+    c.add(
+        "tile_variation_tidy",
+        "tile_variation_tidy",
+        "Tidy: folders of every or no variation taken away, same ones joined; no variation changes",
+        |e, _| {
+            let Some(d) = document(e) else { return no_tile() };
+            d.tidy_variations().map_or_else(fail, |n| ok(format!("{n} edits")))
+        },
+    );
+
     c.add(
         "tile_working_layer",
         "tile_working_layer [layer path | #elem | none]",

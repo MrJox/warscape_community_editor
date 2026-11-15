@@ -4631,8 +4631,14 @@ impl Tool for TileTool {
 
         if let Some(r) = e.renderer.as_mut() {
             let models = r.models();
+            // The other variations' ghosts are outlines: nothing draws their buildings, so their models are asked for here.
+            let ghosts = d.tile().display().variation_ghosts;
             d.tile_mut().poll_models(&|piece: &str| {
                 let (m, st) = models.peek(piece);
+                if ghosts && st == ModelState::Absent {
+                    models.try_get(piece, 1e6);
+                }
+
                 match m {
                     Some(m) => PieceState { status: PieceStatus::Ready, bmin: m.bmin, bmax: m.bmax },
                     None if st == ModelState::Failed => PieceState { status: PieceStatus::Failed, ..Default::default() },
@@ -4790,6 +4796,35 @@ impl Tool for TileTool {
             gui::set_tooltip(
                 "Exports the tile into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into a battle on it, with the mod packs chosen in the editor; used_mods.txt is not touched. The map and the armies: Settings > Tile.",
             );
+        }
+
+        // A combined project's variations (docs/plans/tile_variations.md).
+        let combined = document(e).is_some_and(|d| !d.tile().variations().is_empty());
+        if gui::begin_menu_enabled("Variations", combined) {
+            if gui::menu_item("Tidy", None, false, true) {
+                let msg = document(e).map_or_else(String::new, |d| match d.tidy_variations() {
+                    Ok(0) => "tidy: nothing to do".to_owned(),
+                    Ok(n) => format!("tidy: {n} edits (no variation changed)"),
+                    Err(m) => m,
+                });
+                e.status(&msg, false);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Variation folders that hold every variation of their parent are taken away (their contents in their place), empty ones and those of no variation too, and folders side by side with the same contents become one. No variation's export changes. One undo step.",
+                );
+            }
+
+            let mut ghosts = document(e).is_some_and(|d| d.tile().display().variation_ghosts);
+            if gui::menu_item("Show the other variations", None, ghosts, true) {
+                ghosts = !ghosts;
+                if let Some(d) = document(e) {
+                    d.tile_mut().set_variation_ghosts(ghosts);
+                }
+            }
+
+            gui::end_menu();
         }
 
         gui::separator();
