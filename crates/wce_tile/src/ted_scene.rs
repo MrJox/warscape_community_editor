@@ -159,9 +159,11 @@ pub type Snapshot = Arc<XmlDoc>;
 pub struct TedScene {
     doc: XmlDoc,
 
-    /// The variation viewed of a combined scene (`crate::variations`): attributes read as it has them (its own values first), the
-    /// transforms skip what it goes through, and an edit of a value it or another variation has of its own changes theirs too.
-    variation: Option<String>,
+    /// The variations shown of a combined scene (`crate::variations`; docs/plans/tile_variations.md, Revision 1), in the project's
+    /// order: an element is there when it belongs to one of them, and reads as its display variation has it (the first of them it
+    /// belongs to: its own values first, the transforms skip what it goes through); an edit of a value variations have of their own
+    /// changes each.
+    shown: Option<Vec<String>>,
 }
 
 impl TedScene {
@@ -176,7 +178,7 @@ impl TedScene {
             return Err("not a tile.ted project".to_owned());
         }
 
-        Ok(Self { doc, variation: None })
+        Ok(Self { doc, shown: None })
     }
 
     /// Another file of TEd's elements (a prefab's `INSTANCE_SELECTION`), read the same way.
@@ -185,7 +187,7 @@ impl TedScene {
     ///
     /// Not XML.
     pub fn parse_any(bytes: Vec<u8>) -> Result<Self> {
-        Ok(Self { doc: XmlDoc::parse(bytes).map_err(xml_error)?, variation: None })
+        Ok(Self { doc: XmlDoc::parse(bytes).map_err(xml_error)?, shown: None })
     }
 
     pub fn save(&self) -> Vec<u8> {
@@ -201,19 +203,36 @@ impl TedScene {
         &mut self.doc
     }
 
-    /// Views a variation of a combined scene (`None`: the scene as it is). See [`Self::get`].
+    /// Shows variations of a combined scene (`None`: the scene as it is), in the project's order. See [`Self::get`].
+    pub fn set_shown(&mut self, shown: Option<Vec<String>>) {
+        self.shown = shown;
+    }
+
+    /// The variations shown, of a combined scene.
+    pub fn shown(&self) -> Option<&[String]> {
+        self.shown.as_deref()
+    }
+
+    /// Shows one variation of a combined scene alone (`None`: the scene as it is): it reads and places as its own file.
     pub fn set_variation(&mut self, variation: Option<String>) {
-        self.variation = variation;
+        self.shown = variation.map(|v| vec![v]);
     }
 
-    /// The variation viewed, of a combined scene.
+    /// The variation of the whole tile, of a combined scene: the first shown.
     pub fn variation(&self) -> Option<&str> {
-        self.variation.as_deref()
+        self.shown.as_ref().and_then(|s| s.first()).map(String::as_str)
     }
 
-    /// An attribute's value as the viewed variation has it: its own (`WceVariationStart`, `WceVariationValues`), else the element's.
+    /// The variation an element reads as: the first shown it belongs to (`crate::variations::display_variation`); none without a
+    /// lens, or when it belongs to none shown.
+    pub fn display_variation(&self, elem: usize) -> Option<&str> {
+        crate::variations::display_variation(&self.doc, elem, self.shown.as_deref()?)
+    }
+
+    /// An attribute's value as the element's display variation has it: its own (`WceVariationStart`, `WceVariationValues`), else the
+    /// element's.
     pub fn get(&self, elem: usize, name: &str) -> Option<String> {
-        if let Some(v) = self.variation.as_deref()
+        if let Some(v) = self.display_variation(elem)
             && let Some(own) = crate::variations::own_value(&self.doc, elem, v, name)
         {
             return Some(own);
@@ -222,17 +241,20 @@ impl TedScene {
         self.doc.get(elem, name)
     }
 
-    /// Whether the viewed variation has `elem` (always, without one): it belongs to it, and it is not bookkeeping. Folders and groups
-    /// it goes through count as there; see [`Self::goes_through`].
+    /// Whether `elem` is there (always, without a lens): it belongs to a shown variation, and it is not bookkeeping. Folders and groups
+    /// gone through count as there; see [`Self::goes_through`].
     pub fn in_variation(&self, elem: usize) -> bool {
-        let Some(v) = self.variation.as_deref() else { return true };
+        if self.shown.is_none() {
+            return true;
+        }
+
         let name = self.type_of(elem);
-        name != crate::variations::START && name != crate::variations::VALUES && crate::variations::belongs(&self.doc, elem, v)
+        name != crate::variations::START && name != crate::variations::VALUES && self.display_variation(elem).is_some()
     }
 
-    /// Whether the viewed variation goes through `elem` (`crate::variations::goes_through`): no transform of its own.
+    /// Whether `elem`'s display variation goes through it (`crate::variations::goes_through`): no transform of its own.
     pub fn goes_through(&self, elem: usize) -> bool {
-        self.variation.as_deref().is_some_and(|v| crate::variations::goes_through(&self.doc, elem, v))
+        self.display_variation(elem).is_some_and(|v| crate::variations::goes_through(&self.doc, elem, v))
     }
 
     /// `<project version="17">`.
@@ -331,10 +353,9 @@ impl TedScene {
             return;
         }
 
-        // The viewed variation's own value, or the element's.
+        // The display variation's own value, or the element's.
         let viewed = self
-            .variation
-            .as_deref()
+            .display_variation(elem)
             .and_then(|v| {
                 over.iter().copied().find(|&o| {
                     self.doc

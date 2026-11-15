@@ -1065,58 +1065,6 @@ impl Tile {
         self.auto_nogos.as_deref().map(Vec::as_slice)
     }
 
-    /// The other variations' ghosts (`TileDisplay::variation_ghosts`): each instance that the viewed variation does not have and another
-    /// does, as the first such variation places it, outlined (its model's bounds once they are known, else a two-metre box) in one
-    /// overlay that is not picked.
-    fn rebuild_ghosts(&mut self, scene: &mut RenderScene, layer: LayerId) {
-        if self.ghost_entity != 0 {
-            scene.remove(self.ghost_entity);
-        }
-
-        self.ghost_entity = 0;
-        self.ghost_dirty = false;
-        let Some(view) = self.project.view.as_ref().filter(|_| self.display.variation_ghosts) else { return };
-        let others = self.project.variations.iter().filter(|v| **v != view.variation).collect::<Vec<_>>();
-        let sc = self.tscene();
-        let doc = sc.doc();
-        let els = doc.elements();
-        let mut o = Overlay { pickable: false, ..Default::default() };
-        let tint = overlay_colour(0.35, 0.8, 1.0, 0.9);
-
-        // Inside another instance (a polygon's points, a holder's items): that one shows.
-        let inside = |e: usize| {
-            std::iter::successors(els[e].parent, |&p| els[p].parent)
-                .take_while(|&p| !sc.is_layer(p) && els[p].name != wce_tile::variations::FOLDER)
-                .any(|p| doc.find_attr(p, "position").is_some())
-        };
-        for e in 0..els.len() {
-            let name = els[e].name.as_str();
-            if !view.is_gone(e)
-                || sc.is_layer(e)
-                || matches!(name, "point" | "points" | "children" | "camera")
-                || name.starts_with("Wce")
-                || doc.find_attr(e, "position").is_none()
-                || inside(e)
-            {
-                continue;
-            }
-
-            let Some(w) = others.iter().find(|v| wce_tile::variations::belongs(doc, e, v)) else { continue };
-            let world = wce_tile::world_transform::world_transform_as(sc, e, Some(w));
-            let (lo, hi) = match doc.get(e, "key").and_then(|k| self.building_model(&k.to_lowercase()).or_else(|| self.building_model(&k)))
-            {
-                Some(m) if m.ok && m.resolved => (m.bmin, m.bmax),
-                _ => (Float3::new(-1.0, 0.0, -1.0), Float3::new(1.0, 2.0, 1.0)),
-            };
-
-            o.box_wire_transformed(&super::index::matrix_of(&world, self.unit(), None), lo, hi, tint);
-        }
-
-        if !o.lines.is_empty() {
-            self.ghost_entity = scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(o), self.source(TERRAIN));
-        }
-    }
-
     /// The automatic no-go areas' outlines draped over the ground (red, as the NOGO polygons), while they show.
     fn rebuild_auto_nogos(&mut self, scene: &mut RenderScene, layer: LayerId) {
         if self.nogo_entity != 0 {
@@ -1671,8 +1619,6 @@ impl Tile {
         self.links_dirty = true;
         self.nogo_entity = 0;
         self.nogo_dirty = true;
-        self.ghost_entity = 0;
-        self.ghost_dirty = true;
         let n = self.idx.type_.len();
         self.first_entity = vec![0; n];
         self.entity_count = vec![0; n];
@@ -1998,7 +1944,6 @@ impl Tile {
         self.water_dirty = true;
         self.links_dirty = true;
         self.nogo_dirty = true;
-        self.ghost_dirty = true;
     }
 
     pub fn display(&self) -> &super::TileDisplay {
@@ -2007,14 +1952,6 @@ impl Tile {
 
     pub fn display_mut(&mut self) -> &mut super::TileDisplay {
         &mut self.display
-    }
-
-    /// Shows or hides the other variations' ghosts (`TileDisplay::variation_ghosts`); while they show, their buildings' models load.
-    pub fn set_variation_ghosts(&mut self, on: bool) {
-        if self.display.variation_ghosts != on {
-            self.display.variation_ghosts = on;
-            self.rebuild_items(true);
-        }
     }
 
     /// The game view's layers ([`TileDisplay::game_layers`](super::TileDisplay::game_layers)); a change republishes the scene, as a layer's eye does.
@@ -2066,10 +2003,6 @@ impl Tile {
 
         if self.nogo_dirty && !self.stroke_open {
             self.rebuild_auto_nogos(scene, layer);
-        }
-
-        if self.ghost_dirty && !self.stroke_open {
-            self.rebuild_ghosts(scene, layer);
         }
 
         if !self.stroke_open {

@@ -456,8 +456,22 @@ Steps:
   are its display variation's (`variations::own_value`, `world_transform_as` per element). The element index, picking, the Scene
   panel's tree and the readers of the whole scene go by it. The chip and the ghosts go; the header's toggles and
   `tile_variations_shown` come.
+  Done (2026-11-15): `variations::display_variation`, `View::of_shown` (each element's display variation, its values, the groups
+  it goes through), `TedScene::set_shown` (`get`, `in_variation`, `goes_through`, `set_attr` by the element's display variation),
+  `world_transform` by it, `TileProject::show_variations` (a combined project opens with every variation shown; the first shown is
+  the tile's: its row's range, its roads and walls), `TerrainLayers::set_view` of the shown set (a layer shows when it belongs to a
+  shown variation that has its scene layer). The chip and the ghosts are gone; the Scene panel has "Show:" checkboxes over its header
+  (the last one shown can't be unticked), Tile > Variations > Show the same; `tile_variations_shown [<list> | all]`. An export views
+  each variation alone in turn and the shown ones again after. Checked: whole-window shots of the port (everything; `minor` alone:
+  the escalation layers of `small, medium` gone, `minor`'s buildings and terrain); For Assembly Kit of `orc_city_a` from the editor
+  still the kit's (but TEd's `-0`).
 - **R2. The terrain.** `TerrainLayers::set_view` with the shown set; the Terrain layers section's checkboxes on every layer, *New
   layer for...*, the warning by the shown set. Combine lists the reference first.
+  **Patches build on patches** (the user, 2026-11-15): a level is often the one below it changed (`medium` is `minor`'s terrain
+  with `small`'s changes and its own). Combine's terrain merge goes through the variations in the root's order, each against what
+  the layers so far give it: a block where it differs goes into a layer of every variation whose map has that block the same (so
+  `small`'s changes are one layer of `small, medium`, `medium`'s own one of `medium` over it), instead of one "Variation base" per
+  variation. The user does the same by hand: a terrain layer of `small, medium` under one of `medium`.
 - **R3. The tools.** *Split for a variation* as a submenu; the roads, walls, vegetation and siege of the display variation; Launch
   in game's choice; the Tile panel's chooser.
 - **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the

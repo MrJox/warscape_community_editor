@@ -1125,19 +1125,28 @@ impl TerrainLayers {
             && self.ground.as_ref().is_none_or(|s| s.layers.is_empty())
     }
 
-    /// Shows a variation of a combined project (`None`: every layer, as a project of one variation): a layer that does not belong to it
-    /// counts as hidden in every stack. `scene_has` says whether a scene layer (by `wce_layer_id`) belongs to it, for the layers that
-    /// export with one. Which types changed: their fields need composing again ([`Stack::apply_all`]).
-    pub fn set_view(&mut self, variation: Option<&str>, scene_has: &dyn Fn(&str) -> bool) -> [bool; 3] {
-        fn hidden<K: Kind>(s: &Stack<K>, variation: Option<&str>, scene_has: &dyn Fn(&str) -> bool) -> std::collections::HashSet<u64> {
-            let Some(v) = variation else { return Default::default() };
-            s.layers.iter().filter(|l| !l.in_variation(v) || (!l.depends.is_empty() && !scene_has(&l.depends))).map(|l| l.id).collect()
+    /// Shows variations of a combined project (`None`: every layer, as a project of one variation): a layer shows when it belongs to a
+    /// shown variation that has its scene layer (`scene_has(key, variation)`, by `wce_layer_id`, for the layers that export with one);
+    /// the others count as hidden in every stack. One shown: exactly its terrain; several: the patches of each together. Which types
+    /// changed: their fields need composing again ([`Stack::apply_all`]).
+    pub fn set_view(&mut self, shown: Option<&[String]>, scene_has: &dyn Fn(&str, &str) -> bool) -> [bool; 3] {
+        fn hidden<K: Kind>(
+            s: &Stack<K>,
+            shown: Option<&[String]>,
+            scene_has: &dyn Fn(&str, &str) -> bool,
+        ) -> std::collections::HashSet<u64> {
+            let Some(shown) = shown else { return Default::default() };
+            s.layers
+                .iter()
+                .filter(|l| !shown.iter().any(|v| l.in_variation(v) && (l.depends.is_empty() || scene_has(&l.depends, v))))
+                .map(|l| l.id)
+                .collect()
         }
 
         [
-            self.height.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, variation, scene_has))),
-            self.blend.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, variation, scene_has))),
-            self.ground.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, variation, scene_has))),
+            self.height.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, shown, scene_has))),
+            self.blend.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, shown, scene_has))),
+            self.ground.as_mut().is_some_and(|s| s.set_view_hidden(hidden(s, shown, scene_has))),
         ]
     }
 
@@ -1389,11 +1398,11 @@ mod tests {
         let mut layers = TerrainLayers { height: Some(combined), ..TerrainLayers::default() };
         let walls = layers.height.as_ref().unwrap().layers.iter().position(|l| l.name == "walls").unwrap();
         layers.height.as_mut().unwrap().layers[walls].depends = "7".to_owned();
-        let changed = layers.set_view(Some("b"), &|key| key != "7");
+        let changed = layers.set_view(Some(&["b".to_owned()]), &|key, _| key != "7");
         let s = layers.height.as_ref().unwrap();
         assert!(changed[0] && s.hidden_by_view(s.layers[walls].id), "walls' scene layer is not in b");
         assert!(!s.hidden_by_view(s.layers.iter().find(|l| l.name == "hills").unwrap().id));
-        layers.set_view(None, &|_| false);
+        layers.set_view(None, &|_, _| false);
         assert!(!layers.height.as_ref().unwrap().layers.iter().any(|l| layers.height.as_ref().unwrap().hidden_by_view(l.id)), "no view");
     }
 

@@ -647,9 +647,9 @@ impl Tile {
     pub(crate) fn build_index(&mut self) {
         wce_prof!("tile.index");
 
-        // A combined project's view, of the elements as they are now.
-        if let Some(name) = self.project.view.as_ref().map(|v| v.variation.clone()) {
-            self.project.view = Some(wce_tile::variations::View::new(self.project.scene.doc(), &name));
+        // A combined project's view of the variations shown, of the elements as they are now.
+        if let Some(shown) = self.project.view.as_ref().map(|v| v.shown.clone()) {
+            self.project.view = Some(wce_tile::variations::View::of_shown(self.project.scene.doc(), &shown));
 
             // A scene layer's variations decide those of the terrain layers that export with it.
             self.layers_shown |= self.project.refresh_view();
@@ -691,9 +691,6 @@ impl Tile {
 
         let game_layers = self.display.game_layers;
 
-        // Their ghosts show: the other variations' buildings get their models too.
-        let ghosts = self.display.variation_ghosts && view.is_some();
-
         // Parse the local transforms in parallel (each element reads only its own attributes).
         let types = &ix.type_;
         let local = (0..n)
@@ -703,8 +700,8 @@ impl Tile {
                 let t = types[i] as usize;
                 let mut kind = if layer_type[t] { LAYER_BIT } else { 0 };
 
-                // Of a combined project: what the viewed variation does not have, and what it goes through (a variation folder, a group
-                // of other variations: no transform, no flags of its own).
+                // Of a combined project: what no shown variation has, and what is gone through (a variation folder, a group of other
+                // variations: no transform, no flags of its own).
                 if let Some(v) = view
                     && (v.is_gone(i) || v.is_through(i))
                 {
@@ -826,7 +823,7 @@ impl Tile {
 
             ix.slot[i] = slot;
             if key_types.contains(&Some(ix.type_[i] as usize))
-                && (ix.kind[i] & INSTANCE_BIT != 0 || (local[i].gone && ghosts))
+                && ix.kind[i] & INSTANCE_BIT != 0
                 && let Some(k) = doc.find_attr(i, "key")
             {
                 let key = text(doc.attr_raw(i, k)).into_owned();
@@ -852,9 +849,15 @@ impl Tile {
         &self.project.variations
     }
 
-    /// The variation of a combined project in view.
+    /// The variation of the whole tile, of a combined project: the first shown (its height range, what the editor makes over the
+    /// terrain: the roads, the kit walls).
     pub fn viewed_variation(&self) -> Option<&str> {
         self.project.view.as_ref().map(|v| v.variation.as_str())
+    }
+
+    /// The variations shown of a combined project, in its order.
+    pub fn shown_variations(&self) -> &[String] {
+        self.project.shown_variations()
     }
 
     /// A layer's, group's or variation folder's children as the viewed variation has them (`TedScene::children` of a project of one):
@@ -895,22 +898,32 @@ impl Tile {
         }
     }
 
-    /// Views another variation of a combined project: its scene (what it has, where it has it) and its terrain. Nothing is edited, there
-    /// is nothing to undo; the scene's entities are made again.
+    /// Shows one variation of a combined project alone ([`Self::show_variations`]).
     ///
     /// # Errors
     ///
-    /// Not a combined project, or what `TileProject::view_variation` refuses.
+    /// As `show_variations`.
     pub fn view_variation(&mut self, scene: &mut wce_scene::render_scene::RenderScene, name: &str) -> Result<(), String> {
+        self.show_variations(scene, &[name.to_owned()])
+    }
+
+    /// Shows variations of a combined project (the Scene panel's header; docs/plans/tile_variations.md, Revision 1): what belongs to one
+    /// of them shows, each element as the first of them it belongs to has it, the terrain with their layers. A view, not an edit: nothing
+    /// to undo; the scene's entities are made again.
+    ///
+    /// # Errors
+    ///
+    /// Not a combined project, none of them is its, or what `TileProject::show_variations` refuses.
+    pub fn show_variations(&mut self, scene: &mut wce_scene::render_scene::RenderScene, list: &[String]) -> Result<(), String> {
         if !self.project.is_combined() {
             return Err("the tile has one variation: it is not a combined project".to_owned());
         }
 
-        if self.viewed_variation() == Some(name) {
+        if self.shown_variations().iter().eq(self.project.variations.iter().filter(|v| list.contains(v))) {
             return Ok(());
         }
 
-        self.project.view_variation(name)?;
+        self.project.show_variations(list)?;
         self.material_base = None;
         self.skin = None;
         self.roads_stale = true;
@@ -941,14 +954,14 @@ impl Tile {
         Ok(())
     }
 
-    /// Back to the variation viewed after [`Self::export_view`]: its terrain composed and shown again, its roads' pieces, the grass and the
-    /// trees made again (what the export's roads changed was the other variation's).
+    /// Back to the variations shown after [`Self::export_view`]: their terrain composed and shown again, the roads' pieces, the grass and
+    /// the trees made again (what the export's roads changed was another variation's).
     ///
     /// # Errors
     ///
-    /// What `TileProject::view_variation` refuses.
-    pub(crate) fn end_export_view(&mut self, name: &str) -> Result<(), String> {
-        self.project.view_variation(name)?;
+    /// What `TileProject::show_variations` refuses.
+    pub(crate) fn end_export_view(&mut self, shown: &[String]) -> Result<(), String> {
+        self.project.show_variations(shown)?;
         self.material_base = None;
         self.skin = None;
         self.layers_shown = true;
@@ -1212,7 +1225,6 @@ impl Tile {
 
         self.unresolved = still;
         if any {
-            self.ghost_dirty = true;
             self.grid_dirty.set(true);
             self.columns_changed();
             self.tech.dirty = true;
@@ -1240,7 +1252,6 @@ impl Tile {
         self.rebuild_tables(reindex);
         self.markers_dirty = true;
         self.polygons_dirty = true;
-        self.ghost_dirty = true;
     }
 
     /// `rebuild_items` without asking for what is built from the tables to be built again.

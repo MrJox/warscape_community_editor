@@ -321,8 +321,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "tile_variation", "tile_variation [<variation>]",
-        "the variation of a combined project in view (the Variation chip): its scene and its terrain; no argument logs the project's variations",
+        "tile_variations_shown", "tile_variations_shown [<variation,...> | all]",
+        "the variations of a combined project shown (the Scene panel's header: a filter of the view, docs/plans/tile_variations.md); no argument logs them",
         |e, a| {
             let Some(id) = crate::tool::document_id(e) else { return fail("no tile") };
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
@@ -331,37 +331,27 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 return fail("the tile has one variation: it is not a combined project");
             }
 
-            if let Some(name) = a.first() {
-                let Some(name) = vars.iter().find(|v| v.eq_ignore_ascii_case(name)) else {
-                    return fail(format!("no variation '{name}' (the project has {})", vars.join(", ")));
+            if !a.is_empty() {
+                let list = a.iter().flat_map(|s| s.split(',')).map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+                let list = if list == ["all"] {
+                    vars.clone()
+                } else {
+                    let mut out = vec![];
+                    for n in list {
+                        let Some(v) = vars.iter().find(|v| v.eq_ignore_ascii_case(n)) else {
+                            return fail(format!("no variation '{n}' (the project has {})", vars.join(", ")));
+                        };
+                        out.push(v.clone());
+                    }
+                    out
                 };
 
-                if let Err(m) = d.tile_mut().view_variation(&mut e.scene, name) {
+                if let Err(m) = d.tile_mut().show_variations(&mut e.scene, &list) {
                     return fail(m);
                 }
             }
 
-            ok(format!("viewing {} of {}", d.tile().viewed_variation().unwrap_or_default(), vars.join(", ")))
-        },
-    );
-
-    c.add(
-        "tile_variation_ghosts", "tile_variation_ghosts [on|off]",
-        "a combined project's: what only the other variations have, drawn as tinted outlines where they have it (not picked); no argument logs it",
-        |e, a| {
-            let Some(id) = crate::tool::document_id(e) else { return fail("no tile") };
-            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-            if d.tile().variations().is_empty() {
-                return fail("the tile has one variation: it is not a combined project");
-            }
-
-            match a.first().map(String::as_str) {
-                None => {}
-                Some(w @ ("on" | "off")) => d.tile_mut().set_variation_ghosts(w == "on"),
-                Some(_) => return fail("usage: tile_variation_ghosts [on|off]"),
-            }
-
-            ok(format!("ghosts of the other variations {}", if d.tile().display().variation_ghosts { "shown" } else { "hidden" }))
+            ok(format!("showing {} of {}", d.tile().shown_variations().join(", "), vars.join(", ")))
         },
     );
 

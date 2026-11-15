@@ -34,7 +34,7 @@ pub struct WorldTransform {
 /// Position / rotation of `elem` in scene space (all ancestors applied; of a combined scene, as its viewed variation places it: without
 /// the groups it goes through, with its own values).
 pub fn world_transform(scene: &TedScene, elem: usize) -> WorldTransform {
-    world_transform_as(scene, elem, scene.variation())
+    world_transform_as(scene, elem, scene.display_variation(elem))
 }
 
 /// [`world_transform`] as a given variation of a combined scene places `elem` (`None`: the scene as it is), whichever is viewed: what

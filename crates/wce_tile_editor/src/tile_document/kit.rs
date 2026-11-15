@@ -449,20 +449,16 @@ impl TileDocument {
 
         self.end_stroke();
         let raw = self.variations_build_root();
-        let viewed = self.tile().viewed_variation().unwrap_or_default().to_owned();
-        let mut list = if list.is_empty() { self.project().variations.clone() } else { list.to_vec() };
-        // The viewed one first, while it is viewed: the others then switch once each.
-        if let Some(k) = list.iter().position(|v| *v == viewed) {
-            let v = list.remove(k);
-            list.insert(0, v);
-        }
+        let shown = self.project().shown_variations().to_vec();
+        let list = if list.is_empty() { self.project().variations.clone() } else { list.to_vec() };
 
         let mut made = vec![];
         let mut result = Ok(());
         let writing = wce_tile::variations::materialize::writing();
         for v in &list {
             let step = (|| {
-                if *v != viewed {
+                // Each alone (its roads, walls and terrain are its own), unless it is the only one shown already.
+                if shown != [v.clone()] {
                     self.tile_mut().export_view(v)?;
                 }
 
@@ -482,8 +478,8 @@ impl TileDocument {
         }
 
         drop(writing);
-        if self.tile().viewed_variation() != Some(viewed.as_str()) {
-            self.tile_mut().end_export_view(&viewed)?;
+        if self.project().shown_variations() != shown.as_slice() {
+            self.tile_mut().end_export_view(&shown)?;
         }
 
         result?;

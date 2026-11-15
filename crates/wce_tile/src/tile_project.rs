@@ -467,12 +467,12 @@ impl TileProject {
 
         project.river_texts = project.current_river_texts();
 
-        // A combined project: the variation it was opened for, else its first; its terrain from the layers (no maps to calibrate).
+        // A combined project: every variation shown (the user works on the tile itself; docs/plans/tile_variations.md, Revision 1); its
+        // terrain from the layers (no maps to calibrate).
         project.variations = crate::variations::project_variations(project.scene.doc());
-        if let Some(first) = project.variations.first().cloned() {
-            let asked = project.info.variation.clone();
-            let name = project.variations.iter().find(|v| v.eq_ignore_ascii_case(&asked)).cloned().unwrap_or(first);
-            project.view_variation(&name)?;
+        if !project.variations.is_empty() {
+            let all = project.variations.clone();
+            project.show_variations(&all)?;
             return Ok(project);
         }
 
@@ -501,6 +501,12 @@ impl TileProject {
         if own.exists() { own } else { self.dir.join(name) }
     }
 
+    /// The variations shown of a combined project, in its order (empty for a project of one).
+    #[must_use]
+    pub fn shown_variations(&self) -> &[String] {
+        self.view.as_ref().filter(|_| self.is_combined()).map_or(&[], |v| v.shown.as_slice())
+    }
+
     /// Whether it holds several variations (or one, listed on its root): a combined project.
     #[must_use]
     pub fn is_combined(&self) -> bool {
@@ -515,9 +521,23 @@ impl TileProject {
     ///
     /// Not a variation of the project, no entry with a row for it, or no terrain layers.
     pub fn view_variation(&mut self, name: &str) -> Result<()> {
-        if !self.variations.iter().any(|v| v == name) {
-            return Err(format!("the project has no variation '{name}' (it has {})", self.variations.join(", ")));
-        }
+        self.show_variations(&[name.to_owned()])
+    }
+
+    /// Shows variations of a combined project at once (Revision 1 of docs/plans/tile_variations.md: the user works on the tile, the
+    /// variations shown are a filter): what belongs to one of them shows, each element as its display variation has it (the first of
+    /// them it belongs to), the terrain with the layers of the shown variations. The first shown, in the project's order, is the tile's:
+    /// its row's numbers (`info`, `variation`), what the editor makes over the terrain.
+    ///
+    /// # Errors
+    ///
+    /// None of them is the project's, no entry with a row for the first, or no terrain layers.
+    pub fn show_variations(&mut self, list: &[String]) -> Result<()> {
+        let shown = self.variations.iter().filter(|v| list.contains(v)).cloned().collect::<Vec<_>>();
+        let Some(name) = shown.first().cloned() else {
+            return Err(format!("the project has none of {} (it has {})", list.join(", "), self.variations.join(", ")));
+        };
+        let name = name.as_str();
 
         let entry =
             self.entry.as_ref().ok_or_else(|| format!("{}: a combined project needs its tile database entry", self.dir.display()))?;
@@ -529,15 +549,15 @@ impl TileProject {
         fill_info(entry, Some(row), &mut self.info);
         self.variation = Some(row);
         self.warning.clear();
-        self.view = Some(crate::variations::View::new(self.scene.doc(), name));
-        self.scene.set_variation(Some(name.to_owned()));
+        self.view = Some(crate::variations::View::of_shown(self.scene.doc(), &shown));
+        self.scene.set_shown(Some(shown.clone()));
 
         let layers = self
             .layers
             .as_mut()
             .ok_or_else(|| format!("{}: a combined project has no {}", self.dir.display(), crate::terrain_layers::FILE))?;
         let keys = crate::variations::layer_key_variations(self.scene.doc(), &self.variations);
-        layers.set_view(Some(name), &|k| keys.get(k).is_none_or(|l| l.iter().any(|v| v == name)));
+        layers.set_view(Some(&shown), &|k, v| keys.get(k).is_none_or(|l| l.iter().any(|x| x == v)));
         if let Some(stack) = &layers.height {
             let (w, h) = stack.size();
             let field = self.height.get_or_insert_with(|| HeightField::flat(w, h, 0.0));
@@ -563,9 +583,9 @@ impl TileProject {
     /// layers export with (`TerrainLayers::set_view`). Whether any field changed.
     pub fn refresh_view(&mut self) -> bool {
         let (Some(view), Some(layers)) = (self.view.as_ref().filter(|_| self.is_combined()), self.layers.as_mut()) else { return false };
-        let name = view.variation.clone();
+        let shown = view.shown.clone();
         let keys = crate::variations::layer_key_variations(self.scene.doc(), &self.variations);
-        let [h, b, g] = layers.set_view(Some(&name), &|k| keys.get(k).is_none_or(|l| l.contains(&name)));
+        let [h, b, g] = layers.set_view(Some(&shown), &|k, v| keys.get(k).is_none_or(|l| l.iter().any(|x| x == v)));
         if let (true, Some(s), Some(f)) = (h, &layers.height, &mut self.height) {
             s.apply_all(f);
         }

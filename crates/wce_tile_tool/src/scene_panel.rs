@@ -36,6 +36,50 @@ fn variations_width(e: &Editor, all: &[String]) -> f32 {
     if set > 0.0 { set.max(VARIATIONS_MIN_WIDTH) } else { (gui::calc_text_width(&all.join(", ")) + 12.0).max(VARIATIONS_MIN_WIDTH) }
 }
 
+impl TileTool {
+    /// A checkbox per variation of the open combined project: whether it shows (docs/plans/tile_variations.md, Revision 1: the user
+    /// works on the tile, the variations shown are a filter of the view). The last one shown can't be unticked. Side by side
+    /// (`inline`: the Scene panel's header) or one under the other (a menu).
+    pub(crate) fn shown_variation_items(&mut self, e: &mut Editor) {
+        self.shown_variation_checkboxes(e, false);
+    }
+
+    fn shown_variation_checkboxes(&mut self, e: &mut Editor, inline: bool) {
+        let Some(id) = document_id(e) else { return };
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let all = d.tile().variations().to_vec();
+        let shown = d.tile().shown_variations().to_vec();
+        let mut want = None;
+        for (i, v) in all.iter().enumerate() {
+            if inline && i > 0 {
+                gui::same_line();
+            }
+
+            let mut on = shown.contains(v);
+            let last = on && shown.len() == 1;
+            gui::begin_disabled(last);
+            if gui::checkbox(&format!("{v}##shown_variation"), &mut on) {
+                want = Some(all.iter().filter(|x| if *x == v { on } else { shown.contains(x) }).cloned().collect::<Vec<_>>());
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(&format!(
+                    "Show what {v} has. A filter of the view, not of the tile: what belongs to no variation shown is hidden, and an element several have is drawn as the first shown has it.{}",
+                    if last { "\nThe last one shown: tick another first." } else { "" }
+                ));
+            }
+        }
+
+        if let Some(list) = want {
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            if let Err(m) = d.tile_mut().show_variations(&mut e.scene, &list) {
+                e.status(&m, false);
+            }
+        }
+    }
+}
+
 /// The tree's header: Name, the variations (a combined project's; its left edge dragged resizes it) and the icon columns, as the rows
 /// lay them out (the scrollbar's width left for at the right).
 fn draw_tree_header(e: &mut Editor, all: &[String]) {
@@ -604,8 +648,14 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     gui::same_line();
     draw_type_filter(e, id, &types_label, hidden_n);
 
-    // ---- the tree, under its header
+    // ---- the tree, under its header; a combined project's variations shown above it
     let all = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().variations().to_vec()).unwrap_or_default();
+    if !all.is_empty() {
+        gui::text_disabled("Show:");
+        gui::same_line();
+        tool.shown_variation_checkboxes(e, true);
+    }
+
     draw_tree_header(e, &all);
     let footer = gui::frame_height_with_spacing() * 1.2;
     if gui::begin_child("scenetree", v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
