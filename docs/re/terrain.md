@@ -80,7 +80,7 @@ have none).
 `attila_cliff_mud_03`, its sides showing its own cliff texture). That model is one TerrainBlend mesh with its own textures
 (`cliffmud_diffuse` / `_normal` / `_gloss_map`), all its vertex colours 0 as rpfm reads them. `rigidterrainblend`'s techniques are
 registered with stencil 0x81, the value the decal pass tests for (docs/re/renderer.md, "Which pixels take projected decals"), so decals
-paint a TerrainBlend mesh wherever they face up; a building of any other material writes 1 and takes none. The game's GLSL copies
+paint a TerrainBlend mesh wherever they face up (ordinary buildings take them too, in TEd at least: docs/re/renderer.md, "From the code, and contradicted"). The game's GLSL copies
 (`fxc/glsl_sm_3_0_rigidterrainblend.hlsl_ps_*.glsl`) show three pixel shaders: `ps30_gbuffer`, the mesh's own textures as a rigid
 model's; `ps_terrain_material`, its own diffuse written into the terrain's blend weighted by its vertex colour's alpha (x 10); and
 `ps30_null_gbuffer`, the terrain's composite. **Not settled**: which of them the game uses for which TerrainBlend mesh (this one shows its own

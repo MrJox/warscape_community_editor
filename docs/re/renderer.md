@@ -538,15 +538,16 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   `decal_list`): outside the escalation layers, 15 313 of its decals pair with the game's records by position and all but one have the
   same axes, so the boxes themselves were right (the tilted ones, rock clumps and some `path_1`, are tilted in the game too).
 - Not marked: the legacy terrain patches (a scene whose ground has no material) draw as models, so decals skip them.
-- **Settled from the code (2026-11-15, empire.retail.dll).** `RigidProjectedDecal`'s techniques (fn 0x116d3fe0: `main`, `main_z`,
-  `main_bugged(_z)`, `main_ms(_z)`, `main_bugged_ms(_z)`, `main_far`) are registered with stencil reference 0x81, and its depth-stencil
-  states (base constructor fn 0x116e7430, fields +0x440 / +0x478 as a D3D11_DEPTH_STENCIL_DESC) have the stencil test on, read and write
-  masks 0xFF, both faces KEEP / KEEP and comparison EQUAL. Of every technique registration (89 shader classes, through fn 0x118c8440), only
-  `rigidterrain`, `rigidterrainblend` and `resolve_depth_buffer` pass 0x81 as well; the buildings' rigid shaders (fn 0x116e80f0, for
-  `rigidstandard`, `rigidwithdirtmesh`, `rigidwithdecalmesh`, ...) register `gbuffer` and `gbuffer_alpha_test` with 1 and `gbuffer_unlit`
-  with 2. So in the game a projected decal paints only the ground and TerrainBlend meshes, never a building, prop or tent; the editor
-  painted tents only before the fix above. A TerrainBlend mesh both takes the ground's textures (docs/re/terrain.md) and receives decals:
-  the way to carry a road's look over a building (a bridge's deck).
+- **From the code, and contradicted (2026-11-15).** `RigidProjectedDecal`'s techniques (empire.retail.dll fn 0x116d3fe0: `main`, `main_z`,
+  `main_bugged(_z)`, `main_ms(_z)`, `main_bugged_ms(_z)`, `main_far`) are registered with stencil reference 0x81, and their depth-stencil
+  states' defaults (base constructor fn 0x116e7430, as a D3D11_DEPTH_STENCIL_DESC) have the stencil test on, masks 0xFF, KEEP / KEEP and
+  EQUAL. Of every technique registration (89 shader classes, through fn 0x118c8440) only `rigidterrain`, `rigidterrainblend` and
+  `resolve_depth_buffer` pass 0x81 too; the buildings' rigid shaders (fn 0x116e80f0) register `gbuffer` and `gbuffer_alpha_test` with 1.
+  TEd's engine (`Warscape.AssemblyKit.dll`, fn 0x101820f0) registers the decal techniques the same way. **Yet TEd paints ordinary projected
+  decals (the kit's `rocky_04` prefab: `global_terrain_rocks_04`, `dirt_1`...) over an ordinary house's roof** (the user's screenshot,
+  2026-11-15). So a building's pixels do reach 0x81 at run time by a way not found yet (a guess: the reference or the state changes with the
+  decal setting; the capture above that gave models 1 was at the lowest settings, which draw no decals). The editor's rule (only the ground
+  and TerrainBlend meshes take decals) is therefore not the game's: to be settled by a capture at high settings or a test in game.
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
