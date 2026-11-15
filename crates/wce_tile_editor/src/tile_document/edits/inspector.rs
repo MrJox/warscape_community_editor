@@ -629,18 +629,30 @@ impl TileDocument {
         }
 
         // The values they do not share.
+        const DIFFERS: &str = "differs between the selected items: the first one's is shown";
         let mut marks = vec![];
         for (p, _) in &common {
             let first = doc.get(elems[0], p.attr);
             if elems[1..].iter().any(|&e| doc.get(e, p.attr) != first) {
-                marks.push((p.attr.to_owned(), "differs between the selected items: the first one's is shown".to_owned()));
+                marks.push((p.attr.to_owned(), DIFFERS.to_owned()));
+            }
+
+            // The rotation mode is a row of the placement's.
+            let rotation = |e: usize| doc.get(e, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface");
+            if p.kind == Kind::Placement && elems[1..].iter().any(|&e| rotation(e) != rotation(elems[0])) {
+                marks.push(("rotation_mode".to_owned(), DIFFERS.to_owned()));
             }
         }
 
+        self.common_variation_rows(&elems, ins);
         ins.section("Common properties");
         ins.mark_fields(marks);
+        let buildings = elems.iter().all(|&e| self.tile().tscene().type_of(e) == "BUILDING_INSTANCE");
         for (prop, editable) in common {
             self.common_row(&elems, &prop, editable, ins);
+            if prop.attr == "burn" && buildings {
+                self.common_fire_controls(&elems, ins);
+            }
         }
 
         true
@@ -686,6 +698,7 @@ impl TileDocument {
                     self.set_attribute_all(elems, SURFACE_ATTR, if idx == 2 { "entity" } else { "" });
                 }
 
+                self.common_rotation_row(elems, editable, base, ins);
                 return;
             }
 
@@ -766,6 +779,68 @@ impl TileDocument {
 
         if ins.gesture_ended() {
             self.history.break_merge();
+        }
+    }
+
+    /// The rotation mode of several instances (as [`Self::property_row`]'s): following the surface tilts each of them to the terrain under it,
+    /// one undo entry, then marks them.
+    fn common_rotation_row(&mut self, elems: &[usize], editable: bool, base: u64, ins: &mut dyn Inspector) {
+        use wce_tile::project_files::ROTATION_ATTR;
+        let follow = self.tile().tscene().get(elems[0], ROTATION_ATTR).is_some_and(|v| v == "surface");
+
+        let rotations = ["Free", "Follow surface"].map(str::to_owned);
+        let mut r = i32::from(follow);
+        let tips = ["Turned as given.", "Tilted to the surface under it, now and again after each grab."].map(str::to_owned);
+        if !(ins.edit_choice_tips("rotation_mode", "rotation", &mut r, &rotations, &tips) && editable) {
+            return;
+        }
+
+        if r == 1 {
+            // Every tilt in one entry, as the gizmo's moves of a selection.
+            self.move_batch = Some(vec![]);
+            for &e in elems {
+                let p = self.tile().world_position(e);
+                let n = self.tile().terrain_normal(p.x, p.z);
+                self.tilt_to_surface(e, n, base + 5);
+            }
+
+            let moves = self.move_batch.take().unwrap_or_default();
+            if !moves.is_empty() {
+                self.history.push(Box::new(super::super::commands::TedMovesCommand { gesture: 0, moves }));
+            }
+
+            self.history.break_merge();
+            self.set_attribute_all(elems, ROTATION_ATTR, "surface");
+        } else {
+            self.set_attribute_all(elems, ROTATION_ATTR, "");
+        }
+    }
+
+    /// The burning preview of several buildings (as [`Self::fire_controls`]): play starts all of them together, stop stops them.
+    fn common_fire_controls(&mut self, elems: &[usize], ins: &mut dyn Inspector) {
+        let burning = elems.iter().filter(|&&e| self.tile().fire_time(e).is_some()).count();
+        let state = if burning == 0 { "not burning".to_owned() } else { format!("{burning} of {} burning", elems.len()) };
+        match ins.row_buttons(
+            &[
+                ("fire_play", "\u{e13c}", "Play the fire of every selected building", true),
+                ("fire_stop", "\u{e167}", "Stop their fire", burning > 0),
+            ],
+            &state,
+        ) {
+            Some(0) => {
+                let now = self.tile().fire_now();
+                for &e in elems {
+                    self.tile_mut().fire_start(e, now);
+                }
+            }
+
+            Some(_) => {
+                for &e in elems {
+                    self.tile_mut().fire_stop(Some(e));
+                }
+            }
+
+            None => {}
         }
     }
 

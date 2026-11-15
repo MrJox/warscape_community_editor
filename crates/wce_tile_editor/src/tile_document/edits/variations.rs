@@ -172,4 +172,64 @@ impl TileDocument {
             }
         }
     }
+
+    /// [`Self::variation_rows`] of several elements: a tick changes that variation only, on each of them that carries variations (one undo
+    /// entry); instances show what they are in, read-only. Marked when they differ.
+    pub(super) fn common_variation_rows(&mut self, elems: &[usize], ins: &mut dyn Inspector) {
+        let t = self.tile();
+        let all = t.variations().to_vec();
+        if all.is_empty() {
+            return;
+        }
+
+        let sc = t.tscene();
+        let sets = elems.iter().map(|&e| wce_tile::variations::effective(sc.doc(), e, &all)).collect::<Vec<_>>();
+        let carriers = elems.iter().copied().zip(&sets).filter(|(e, _)| edit::can_carry(sc, *e)).collect::<Vec<_>>();
+        ins.section("Variations");
+        if sets[1..].iter().any(|s| *s != sets[0]) {
+            ins.mark_fields(vec![("variations".to_owned(), "differs between the selected items: the first one's is shown".to_owned())]);
+        }
+
+        if carriers.is_empty() {
+            ins.hint("The variations they are in: an instance belongs where its layer, group or variation folder does.");
+            ins.text("variations", "variations", &sets[0].join(", "));
+            return;
+        }
+
+        let names = all.iter().map(String::as_str).collect::<Vec<_>>();
+        let before = all.iter().map(|v| sets[0].contains(v)).collect::<Vec<_>>();
+        let mut on = before.clone();
+        ins.hint("A tick changes only that variation, on each selected layer, group or variation folder; instances keep their folder's.");
+        if !ins.edit_checks("variations", "variations", &names, &mut on) {
+            return;
+        }
+
+        // Each one keeps its own list but for the ticked variation: one undo entry for them all.
+        let lists = carriers
+            .into_iter()
+            .map(|(e, set)| {
+                let list = all
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, v)| if on[*i] == before[*i] { set.contains(v) } else { on[*i] })
+                    .map(|(_, v)| v.clone())
+                    .collect::<Vec<_>>();
+                (e, list)
+            })
+            .collect::<Vec<_>>();
+        let mark = match self.begin() {
+            Ok(m) => m,
+            Err(err) => return wce_foundation::log::warn(err),
+        };
+
+        for (e, list) in &lists {
+            if let Err(err) = edit::set_variations(self.tscene_mut(), *e, Some(list)) {
+                let _ = self.rolled_back::<()>(mark, &err);
+                return wce_foundation::log::warn(err);
+            }
+        }
+
+        let items = lists.iter().map(|(e, _)| item_of(*e)).collect::<Vec<_>>();
+        self.push_splice(format!("Variations of {} items", items.len()), mark, items.clone(), items);
+    }
 }
