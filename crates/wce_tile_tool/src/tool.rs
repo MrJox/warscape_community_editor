@@ -604,6 +604,11 @@ pub struct TileTool {
     /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
     pub(crate) open_kit_copy: bool,
 
+    /// A kit's tile with a project too, the kit's copy chosen (`kit_copy_prompt.rs`): its folder opens as itself, not as the project.
+    pub(crate) kit_choice: Option<PathBuf>,
+    pub(crate) copy_prompt: Option<crate::kit_copy_prompt::CopyPrompt>,
+    pub(crate) copy_prompt_open: bool,
+
     /// A document is being made from an autosave copy (`restore`): its groups are the tile's as saved, not a kit's to recognise.
     restoring: bool,
 
@@ -979,6 +984,9 @@ impl Default for TileTool {
             bridge_check: None,
             bridge_overlay: true,
             open_kit_copy: false,
+            kit_choice: None,
+            copy_prompt: None,
+            copy_prompt_open: false,
             restoring: false,
             chips_width: 0.0,
             right_used: false,
@@ -1455,6 +1463,11 @@ impl TileTool {
         let wce = ted.with_file_name(wce_tile::project_files::WCE_FILE);
         if !ted.exists() && wce.exists() {
             ted = wce;
+        }
+
+        // A kit's tile the projects have a copy of too (saved before): which one is asked (`kit_copy_prompt.rs`); a script gets the project's.
+        if let Some(msg) = self.kit_or_project(e, &ted, target, variation)? {
+            return Ok(msg);
         }
 
         // The open tile gives way to another (asked about first when it has unsaved changes: the open goes on after the prompt's Save or
@@ -4949,6 +4962,7 @@ impl Tool for TileTool {
         self.draw_falloff_window(e);
         self.draw_extract_prompt(e);
         self.draw_kit_prompt(e);
+        self.draw_copy_prompt(e);
         self.draw_flip_tile_busy(e);
         self.draw_import_prompt(e);
         self.draw_share_notice();
@@ -5636,7 +5650,8 @@ impl Tool for TileTool {
 
         // A kit's tile with a project (saved before) opens as the project, unless the kit's copy is asked for (Import from Assembly Kit).
         let projects = Self::workspace_dir(e);
-        let kit_copy = std::mem::take(&mut self.open_kit_copy);
+        let chosen = self.kit_choice.take_if(|k| crate::kit_copy_prompt::same_folder(k, &project.dir)).is_some();
+        let kit_copy = std::mem::take(&mut self.open_kit_copy) || chosen;
         if !kit_copy
             && !project.dir.starts_with(&projects)
             && let Some(folder) = wce_tile_editor::tile_document::kit::tile_folder(&project.dir)

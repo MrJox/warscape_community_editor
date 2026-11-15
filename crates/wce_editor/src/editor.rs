@@ -1265,6 +1265,11 @@ impl Editor {
         self.remember_tool
     }
 
+    /// A script's line is running (a question to the user would wait for nobody).
+    pub fn in_script(&self) -> bool {
+        self.in_script
+    }
+
     /// Scripted (fixed-step) runs ignore the real mouse; the `mouse` commands drive the same Dear ImGui events.
     pub fn scripted_input(&self) -> bool {
         self.clock.fixed_step()
