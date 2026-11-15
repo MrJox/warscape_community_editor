@@ -34,6 +34,39 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "road_point_fence",
+        "road_point_fence <point index> road|none|<fence piece> [damage 0..1 | road]",
+        "a point of the selected procedural road: its own fence (road: the road's; none: a gap; fence, fence_wood...: road_<type>_<piece>) and fence damage, for the fences around it",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let (Some(i), Some(fence)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1)) else {
+                return fail("usage: road_point_fence <point index> road|none|<fence piece> [damage 0..1 | road]");
+            };
+            let Some(el) = el.filter(|&el| d.tile().is_road(el)) else { return fail("no road selected") };
+            let fence = if fence == "road" { "" } else { fence.as_str() };
+            if !d.set_point_attribute(el, i, "road_fence", fence) {
+                return fail("no such point");
+            }
+
+            match a.get(2).map(String::as_str) {
+                None => ok(""),
+                Some("road") => {
+                    d.set_point_attribute(el, i, "road_fence_damage", "");
+                    ok("")
+                }
+                Some(v) => match v.parse::<f64>() {
+                    Ok(x) if (0.0..=1.0).contains(&x) => {
+                        d.set_point_attribute(el, i, "road_fence_damage", &wce_tile::ted_scene::format_number(x));
+                        ok("")
+                    }
+                    _ => fail("damage: 0 to 1, or road"),
+                },
+            }
+        },
+    );
+
+    c.add(
         "ground_profile",
         "ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>",
         "log the terrain's height (as it shows) at n + 1 points from (x0, z0) to (x1, z1), metres",
