@@ -400,7 +400,12 @@ impl Document for VmdDocument {
     }
 
     fn describe(&self, item: SourceRef) -> String {
-        if item.item == 0 { "Ground".to_owned() } else { self.xml().path_of(item.item as usize) }
+        // The tool's scene items aren't elements: the ground, the outlines' masks, a ship's parts (`SHIP_ITEM` and up).
+        match item.item {
+            0 => "Ground".to_owned(),
+            1 | 2 => "The selected parts".to_owned(),
+            _ => "A ship part".to_owned(),
+        }
     }
 
     fn source_key(&self) -> String {

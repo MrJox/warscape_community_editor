@@ -178,6 +178,11 @@ impl UnitTool {
         self.ship.outlined = None;
     }
 
+    /// The editor's selection was taken away: the outline is set again when the tool next updates.
+    pub(super) fn ship_selection_lost(&mut self) {
+        self.ship.outlined = None;
+    }
+
     /// The ship's node of a part entity's item.
     pub(super) fn ship_node_of(&self, item: u64) -> Option<NodePath> {
         let k = usize::try_from(item.checked_sub(SHIP_ITEM)?).ok()?;
