@@ -76,6 +76,11 @@ pub trait Document: Any {
         false
     }
 
+    /// A map's active Save folder, for duplicate opening and Save As ownership checks.
+    fn save_destination(&self) -> Option<PathBuf> {
+        None
+    }
+
     /// What the last save said beyond "saved" (what it wrote, a warning), shown with it; none by default.
     fn save_message(&self) -> Option<String> {
         None
@@ -139,6 +144,16 @@ pub trait Document: Any {
     fn autosave(&mut self, dir: &std::path::Path) -> Result<(), String> {
         let _ = dir;
         Err(format!("{} is not autosaved", self.title()))
+    }
+
+    /// External disk changes requiring the user's overwrite-or-cancel choice.
+    fn save_changes(&self, _target: &SaveTarget) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    /// Explicit overwrite still performs native validation and destination ownership checks.
+    fn save_overwrite(&mut self, target: &SaveTarget) -> Result<(), String> {
+        self.save(target)
     }
 
     /// Puts everything the document shows into `layer` (called on open and when the whole document changed).

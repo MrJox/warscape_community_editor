@@ -2,7 +2,8 @@
 //! `.terry` project and XML settings, decoded, and every other file of its folder carried as it is. Each decoded file keeps the bytes it
 //! was read from: a file not edited is written back as those bytes, an edited one is made again from the model (wce_terrain_io).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use wce_formats::xml_doc::XmlDoc;
 use wce_tile_model::Blob;
@@ -83,6 +84,8 @@ impl<T> Item<T> {
 pub struct MapModel {
     pub name: String,
     pub kind: MapKind,
+    /// Size/mtime observed at native enumeration, independent of immutable format provenance.
+    pub disk_source: Option<Arc<wce_foundation::disk_changes::Folder>>,
 
     pub layers: Vec<(LayerRole, Item<CellLayer>)>,
     pub lf: Vec<(LfRole, Item<PagedU16>)>,
@@ -92,6 +95,8 @@ pub struct MapModel {
     /// Existing campaign props in a native marker file; Terry projects retain their own representation.
     pub native_props: Option<Item<crate::campaign_props::CampaignProps>>,
 
+    /// A native built scene's original content and source associations. No record-edit bindings.
+    pub built_scene: Option<Arc<BuiltSceneSource>>,
     /// The XML settings read losslessly (`config.xml`, `masks.xml`, `map_info.xml`, ...).
     pub xml: Vec<Item<XmlDoc>>,
 
@@ -131,5 +136,42 @@ impl MapModel {
     pub fn decoded_bytes(&self) -> usize {
         self.lf.iter().map(|(_, f)| f.get().bytes()).sum::<usize>()
             + self.layers.iter().map(|(_, l)| l.get().cells().len() * 2).sum::<usize>()
+    }
+}
+
+/// A built scene's load-time content, separate from the original Blob's filesystem provenance.
+/// IO retains File entries in `MapModel::carried` for the publisher; snapshots never grant write ownership.
+#[derive(Clone)]
+pub struct SceneResource {
+    pub original: Blob,
+    pub bytes: Arc<[u8]>,
+}
+
+impl std::fmt::Debug for SceneResource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SceneResource").field("bytes", &self.bytes.len()).finish_non_exhaustive()
+    }
+}
+
+/// Immutable semantic authority for the built v7 scene adapter. Shared by history snapshots, never
+/// refreshed from a published pathname. It does not establish document freshness or write ownership,
+/// and is not a new project file format.
+#[derive(Clone)]
+pub struct BuiltSceneSource {
+    pub locations_key: String,
+    pub resources: BTreeMap<String, SceneResource>,
+    pub scene: Arc<[u8]>,
+    pub deployments: BTreeMap<u32, Vec<String>>,
+    pub required: BTreeSet<u32>,
+    pub ambiguous_locations: bool,
+}
+
+impl std::fmt::Debug for BuiltSceneSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltSceneSource")
+            .field("locations_key", &self.locations_key)
+            .field("resources", &self.resources.len())
+            .field("scene_bytes", &self.scene.len())
+            .finish_non_exhaustive()
     }
 }

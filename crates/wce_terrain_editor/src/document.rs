@@ -29,6 +29,13 @@ pub enum MapSource {
 pub struct MapDocument {
     core: DocumentCore,
     history: CommandStack<Option<MapModel>>,
+    // Only live source bytes, never prepared outputs: a partially published normal cannot
+    // become the input of the same LF adjustment twice. Released when its LF publishes.
+    normal_source_bytes: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Arc<[u8]>>>>,
+    io_gate: wce_foundation::operation::Gate,
+    pub io_changes: Arc<std::sync::Mutex<wce_foundation::disk_changes::Changes>>,
+    #[cfg(test)]
+    pub(crate) publication_failure_after: Option<usize>,
 
     /// The map's name as the map list shows it.
     pub name: String,
@@ -179,7 +186,15 @@ impl MapDocument {
         locations: Option<BattleLocations>,
         db: Arc<TileDatabase>,
     ) -> Self {
+        let io_changes = Arc::new(std::sync::Mutex::new(wce_foundation::disk_changes::Changes::new(
+            model.as_ref().and_then(|m| m.disk_source.as_deref()),
+        )));
         Self {
+            io_changes,
+            io_gate: Default::default(),
+            normal_source_bytes: Default::default(),
+            #[cfg(test)]
+            publication_failure_after: None,
             core: DocumentCore::new(),
             history: CommandStack::new(model),
             name,
@@ -467,70 +482,27 @@ impl Document for MapDocument {
         self.autosave_to(dir)
     }
 
+    fn save_destination(&self) -> Option<PathBuf> {
+        self.save_dir.clone()
+    }
+
     fn save_message(&self) -> Option<String> {
         self.message.clone()
     }
 
-    /// The map's folder into the projects' kit layout: the files made again from the model where they were edited (the others as they
-    /// were: copied the first time, then left while the folder's copy has the same size and is not older than the file it came from).
+    /// Stage the complete native output before per-file publication; exact content is retained.
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
-        let dir = if target.path.as_os_str().is_empty() {
-            self.save_dir.clone().ok_or("no projects folder to save into")?
-        } else {
-            target.path.clone()
-        };
-        let model = self.model().ok_or("a map of the game's packs is read-only")?;
-        let files = if model.built { wce_terrain_io::built::write(model, Some(&self.db)) } else { wce_terrain_io::attila::write(model) }
-            .map_err(|e| e.to_string())?;
-        let (mut written, mut kept) = (0, 0);
-        for (rel, blob) in &files.folder {
-            let to = dir.join(rel);
-            if let wce_tile_model::Blob::File(src) = blob {
-                // The same size is not the same file (an LF is always as large): one changed since (in TEd) is newer than the copy.
-                let current = std::fs::metadata(src).ok().zip(std::fs::metadata(&to).ok()).is_some_and(|(a, b)| {
-                    a.len() == b.len() && a.modified().ok().zip(b.modified().ok()).is_some_and(|(from, copy)| from <= copy)
-                });
-                if *src == to || current {
-                    kept += 1;
-                    continue;
-                }
-            }
-
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-            }
-
-            // An LF whose samples are a view of this very file (a map opened from the projects folder, saved back): its samples into
-            // memory first (a file with a view of it can't be rewritten on Windows; on Unix the write would reach the view).
-            for (_, item) in &model.lf {
-                if matches!(&item.origin, wce_tile_model::Blob::File(src) if *src == to) {
-                    item.get().grid().detach();
-                }
-            }
-
-            // Renamed over the file, never written in place: another document's view of it (the map opened twice) keeps the old file on Unix,
-            // where truncating it would kill the process when that document reads its LF. Windows refuses, as it refuses a write.
-            let temp = to.with_added_extension("wce_tmp");
-            match blob {
-                wce_tile_model::Blob::File(src) => std::fs::copy(src, &temp).map(|_| ()),
-                wce_tile_model::Blob::Bytes(b) => std::fs::write(&temp, b),
-            }
-            .and_then(|()| std::fs::rename(&temp, &to))
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&temp);
-                format!("{}: {e}", to.display())
-            })?;
-            written += 1;
+        self.save_native(target, false)
+    }
+    fn save_overwrite(&mut self, target: &SaveTarget) -> Result<(), String> {
+        self.save_native(target, true)
+    }
+    fn save_changes(&self, target: &SaveTarget) -> Result<Option<String>, String> {
+        if self.io_gate.busy() {
+            return Err("Busy: this document is already saving or exporting".into());
         }
-
-        // A copy elsewhere (Save as) leaves the projects' folder without the edits: the map stays unsaved.
-        if self.save_dir.as_deref().is_some_and(|own| wce_editor_core::document::same_path(own, &dir)) {
-            self.history.mark_saved();
-            self.restored_from = None;
-        }
-
-        self.message = Some(format!("{}: {written} files written, {kept} already there", dir.display()));
-        Ok(())
+        let dir = if target.path.as_os_str().is_empty() { self.save_dir.as_ref().ok_or("no save destination")? } else { &target.path };
+        self.io_changes.lock().map_err(|e| e.to_string())?.reason(dir)
     }
 
     fn source_key(&self) -> String {
@@ -843,5 +815,132 @@ mod tests {
         assert!((cx - 1058.7).abs() < 0.1 && (cy - 732.5).abs() < 0.1, "{cx} {cy}");
         // Without bounds: 0.32 a cell.
         assert!((TerryFrame::campaign(2032, 1441, None).cell - 0.32).abs() < 1e-12);
+    }
+}
+
+impl MapDocument {
+    pub fn begin_io(&self) -> Result<wce_foundation::operation::Lease, String> {
+        self.io_gate.acquire()
+    }
+    pub fn normal_inputs(&self) -> Arc<std::sync::Mutex<std::collections::BTreeMap<String, Arc<[u8]>>>> {
+        self.normal_source_bytes.clone()
+    }
+    pub fn publication_model(&self) -> Result<MapModel, String> {
+        let mut model = self.model().ok_or("a map of the game's packs is read-only")?.clone();
+        for (key, bytes) in &*self.normal_source_bytes.lock().map_err(|e| e.to_string())? {
+            model.carried.insert(key.clone(), wce_tile_model::Blob::Bytes(bytes.clone()));
+        }
+        Ok(model)
+    }
+    pub fn observe_save_destination(&self) -> Result<(), String> {
+        if let Some(dir) = &self.save_dir {
+            self.io_changes.lock().map_err(|e| e.to_string())?.set_destination(dir)?;
+        }
+        Ok(())
+    }
+    fn save_native(&mut self, target: &SaveTarget, overwrite: bool) -> Result<(), String> {
+        let _lease = self.begin_io()?;
+        let dir = if target.path.as_os_str().is_empty() {
+            self.save_dir.clone().ok_or("no projects folder to save into")?
+        } else {
+            target.path.clone()
+        };
+        let model = self.model().ok_or("a map of the game's packs is read-only")?;
+        let writing = self.publication_model()?;
+        let files = if writing.built {
+            wce_terrain_io::built::write_project(&writing, Some(&self.db))
+        } else {
+            wce_terrain_io::attila::write(&writing)
+        }
+        .map_err(|e| e.to_string())?;
+        let retained = crate::save_validation::preflight(model, &files, &dir)?;
+        let attempt = std::cell::RefCell::new(self.io_changes.lock().map_err(|e| e.to_string())?.begin(&dir, overwrite)?);
+        let outputs = files
+            .folder
+            .iter()
+            .filter(|(name, _)| !retained.contains(*name))
+            .map(|(name, blob)| {
+                let source = match blob {
+                    wce_tile_model::Blob::File(p) => wce_foundation::publication::Source::File(p.clone()),
+                    wce_tile_model::Blob::Bytes(b) => wce_foundation::publication::Source::Bytes(b.clone()),
+                };
+                let mut output = wce_foundation::publication::Output::new(dir.join(name), source);
+                output.priority = wce_terrain_io::publication_priority(name);
+                output
+            })
+            .collect();
+        let staged = wce_foundation::publication::Staged::prepare(outputs).map_err(|e| e.to_string())?;
+        let mut normal_sources = vec![];
+        for (key, blob) in &files.folder {
+            if key.to_ascii_lowercase().starts_with("normals/") && matches!(blob,wce_tile_model::Blob::Bytes(_)) && !self.normal_source_bytes.lock().map_err(|e|e.to_string())?.contains_key(key)
+                && let Some(source)=model.carried.get(key).filter(|b|matches!(b,wce_tile_model::Blob::File(p) if wce_foundation::save_path::key(p).ok()==wce_foundation::save_path::key(&dir.join(key)).ok())) {
+                normal_sources.push((key.clone(),source.bytes().map_err(|e|e.to_string())?));
+            }
+        }
+        attempt.borrow().recheck()?;
+        // Preflight rejection leaves active/history/dirty state untouched. A successful save publishes a completed stroke only.
+        self.normal_source_bytes.lock().map_err(|e| e.to_string())?.extend(normal_sources);
+        let model = self.model().ok_or("no map model")?;
+        // Detach this document's mapped LF before replacement on Windows. Publication uses
+        // rename exclusively; it never falls back to truncating a mapped backing file.
+        for (_, item) in &model.lf {
+            if !retained.contains(&item.path)
+                && matches!(&item.origin,wce_tile_model::Blob::File(p)if wce_foundation::save_path::key(p)?==wce_foundation::save_path::key(&dir.join(&item.path))?)
+            {
+                item.get().grid().detach();
+            }
+        }
+        let lf_source = model.lf(wce_terrain::LfRole::Land).and_then(|i| match &i.origin {
+            wce_tile_model::Blob::File(p) => wce_foundation::save_path::key(p).ok(),
+            _ => None,
+        });
+        #[cfg(test)]
+        let mut failure_after = self.publication_failure_after.take();
+        let result = staged.publish_checked(
+            |path| {
+                #[cfg(test)]
+                if let Some(n) = failure_after.as_mut() {
+                    if *n == 0 {
+                        return Err("injected publication failure".into());
+                    }
+                    *n -= 1;
+                }
+                attempt.borrow().check_target(path)
+            },
+            |path| {
+                attempt.borrow_mut().published(path)?;
+                self.io_changes.lock().map_err(|e| e.to_string())?.published(&attempt.borrow(), path)?;
+                if lf_source.as_ref().is_some_and(|source| wce_foundation::save_path::key(path).as_ref() == Ok(source)) {
+                    self.normal_source_bytes.lock().map_err(|e| e.to_string())?.clear();
+                }
+                Ok(())
+            },
+        );
+        let report = match result {
+            Ok(report) => report,
+            Err(error) => {
+                self.message = Some(error.to_string());
+                return Err(error.to_string());
+            }
+        };
+        let written = report.published.len();
+        let kept = retained.len() + report.retained.len();
+
+        let owned = self.save_dir.as_ref().map(|own| wce_foundation::save_path::key(own)).transpose()?
+            == Some(wce_foundation::save_path::key(&dir)?);
+        {
+            let mut changes = self.io_changes.lock().map_err(|e| e.to_string())?;
+            if owned {
+                changes.finish(attempt.into_inner());
+            } else {
+                changes.finish_copy(attempt.into_inner());
+            }
+        }
+        if owned {
+            self.history.mark_saved();
+            self.restored_from = None;
+        }
+        self.message = Some(format!("{}: {written} files written, {kept} already there", dir.display()));
+        Ok(())
     }
 }

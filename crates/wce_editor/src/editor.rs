@@ -1053,6 +1053,9 @@ impl Editor {
     /// its tool's folder, with its title as the name.
     pub fn save_as_start(&self, id: DocumentId) -> PathBuf {
         let Some(d) = self.docs.find(id) else { return self.projects_dir() };
+        if let Some(dir) = d.save_destination() {
+            return dir;
+        }
         // A file of the game's files (packs or loose), at its place in the project's loose folder; not a tile's or a map's folder.
         let key = d.source_key();
         if let Some(key) = self.game_path(&key).filter(|k| self.vfs.as_ref().is_some_and(|v| v.owner(k).is_some())) {
@@ -1746,6 +1749,28 @@ impl Editor {
         Ok(message)
     }
 
+    fn draw_changed_save_prompt(&mut self) {
+        let Some(pending) = self.docs.pending_changed_save().cloned() else { return };
+        gui::open_popup("Files changed on disk");
+        let mut open = true;
+        if !gui::begin_popup_modal("Files changed on disk", Some(&mut open), gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            return;
+        }
+        gui::text(&pending.reason);
+        let answer = if gui::button("Overwrite") { Some(true) } else { None };
+        gui::same_line();
+        let answer = if gui::button("Cancel") || !open || gui::is_key_pressed(gui::KEY_ESCAPE, false) { Some(false) } else { answer };
+        if let Some(overwrite) = answer {
+            let result = self.docs.answer_changed_save(overwrite);
+            self.status = match result {
+                Ok(s) => s,
+                Err(e) => e,
+            };
+            gui::close_current_popup();
+        }
+        gui::end_popup();
+    }
+
     fn draw_prompt(&mut self) {
         if self.prompt == PromptKind::None {
             return;
@@ -1998,6 +2023,7 @@ impl Editor {
         }
 
         self.draw_prompt();
+        self.draw_changed_save_prompt();
     }
 
     /// When what the Inspector shows changes (the selection, the active tool's part of it: a mode, what it places, a brush's settings) to
@@ -2276,17 +2302,14 @@ impl Editor {
             let blocked = self.docs.active().and_then(|d| d.save_as_blocked());
             if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save && blocked.is_none()) {
                 let start = self.save_as_start(active);
-                if let Some(p) = file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
-                    && let Some(d) = self.docs.find_mut(active)
-                {
-                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p.clone() });
-                    let msg = match result {
-                        Ok(()) if d.modified() => {
-                            format!("a copy saved to {}; the document's own file does not have the edits yet (Save)", p.display())
-                        }
-                        Ok(()) => "saved".to_owned(),
-                        Err(e) => e,
-                    };
+                let path = if self.docs.find(active).is_some_and(|d| d.save_destination().is_some()) {
+                    crate::steam_detect::pick_folder_at("Save map copy", &start)
+                } else {
+                    file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
+                };
+                if let Some(p) = path {
+                    let result = self.docs.save_to(active, &wce_editor_core::document::SaveTarget { path: p });
+                    let msg = result.unwrap_or_else(|e| e);
                     self.status(&msg, false);
                 }
             }
