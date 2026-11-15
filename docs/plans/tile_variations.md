@@ -7,7 +7,8 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-to 8 (see "Steps" and "Results" below). Not done: step 9 (docs).
+to 9 (see "Steps" and "Results" below): done 2026-11-15, to be tested by the user. Not written: the Gates' scripted run
+(`scripts/tile_variations.txt`); its parts were checked one by one (each step's "Checked").
 
 ## What the games and kits do
 
@@ -379,6 +380,10 @@ variation has.
    dialog itself was not seen (the script captures show the viewport only).
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`
    version 4), this plan's state.
+   Done (2026-11-15): docs/editor.md's **Tile variations** (Combine, the chip, editing, what is made per variation, exports,
+   Separate), notes in Where tiles are saved and Terrain layers, the Tile menu, the export table, the build and backup folders;
+   [formats/tile_wce.md](../formats/tile_wce.md) (new): tile.wce, a combined project's marks and folder, terrain_layers.wcl version 4.
+   "tile.wce version 2" is the root's `wce_variations`: `wce_version` stays 1.
 
 ## Results
 
