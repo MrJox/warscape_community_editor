@@ -77,7 +77,7 @@ pub fn parse_vec3(text: &str, prefix: &str) -> Option<Double3> {
 }
 
 /// The first byte of the line that holds `pos` (start of its indentation).
-fn line_start(t: &[u8], mut pos: usize) -> usize {
+pub(crate) fn line_start(t: &[u8], mut pos: usize) -> usize {
     while pos > 0 && t[pos - 1] != b'\n' {
         pos -= 1;
     }
@@ -86,11 +86,11 @@ fn line_start(t: &[u8], mut pos: usize) -> usize {
 }
 
 /// Just after the newline that ends the line containing `pos`.
-fn line_end(t: &[u8], pos: usize) -> usize {
+pub(crate) fn line_end(t: &[u8], pos: usize) -> usize {
     t[pos..].iter().position(|&c| c == b'\n').map_or(t.len(), |e| pos + e + 1)
 }
 
-fn indent_of(t: &[u8], pos: usize) -> Vec<u8> {
+pub(crate) fn indent_of(t: &[u8], pos: usize) -> Vec<u8> {
     let a = line_start(t, pos);
     let b = a + t[a..].iter().take_while(|&&c| c == b' ' || c == b'\t').count();
     t[a..b].to_vec()
@@ -107,7 +107,7 @@ fn find(t: &[u8], pat: &[u8]) -> bool {
 }
 
 /// Re-indents the lines of a cut piece from `old` to `new` indentation.
-fn reindent(piece: &[u8], old: &[u8], new: &[u8], out: &mut Vec<u8>) {
+pub(crate) fn reindent(piece: &[u8], old: &[u8], new: &[u8], out: &mut Vec<u8>) {
     for line in piece.split_inclusive(|&c| c == b'\n') {
         if line.starts_with(old) {
             out.extend_from_slice(new);
@@ -194,6 +194,11 @@ impl TedScene {
 
     pub fn doc(&self) -> &XmlDoc {
         &self.doc
+    }
+
+    /// The document, for the edits of other modules of the crate (`crate::variations::edit`).
+    pub(crate) fn doc_mut(&mut self) -> &mut XmlDoc {
+        &mut self.doc
     }
 
     /// Views a variation of a combined scene (`None`: the scene as it is). See [`Self::get`].
@@ -312,9 +317,10 @@ impl TedScene {
         Ok(())
     }
 
-    /// Sets an attribute. Where variations have values of their own for it (`crate::variations::overrides`), an edit changes every
-    /// variation: a `position` moves by the same amount in each (each keeps its height on its own terrain), any other value becomes the
-    /// same in each.
+    /// Sets an attribute. Where variations have values of their own for it (`crate::variations::overrides`), the edit is the viewed
+    /// variation's (its own value, else the element's) and changes the others with it: a `position` moves by the same amount in each
+    /// (each keeps its height on its own terrain; a component equal to the viewed one's takes the new one exactly), any other value
+    /// changes where it was the viewed one's (a view state that differs stays). Setting the old value back undoes it.
     pub fn set_attr(&mut self, elem: usize, name: &str, value: &str) {
         let over = crate::variations::overrides(&self.doc, elem)
             .into_iter()
@@ -337,17 +343,26 @@ impl TedScene {
                 })
             })
             .unwrap_or(elem);
+        let old = self.doc.get(viewed, name);
         let vector = |e: usize| self.doc.get(e, name).and_then(|t| parse_vec3(&t, "vector"));
-        let delta = (name == "position").then(|| Some(parse_vec3(value, "vector")? - vector(viewed)?)).flatten();
+        let moved = (name == "position").then(|| Some((vector(viewed)?, parse_vec3(value, "vector")?))).flatten();
         let values = std::iter::once(elem)
             .chain(over)
-            .map(|e| match delta.zip(vector(e)).filter(|_| e != viewed) {
-                Some((d, p)) => {
-                    let q = p + d;
-                    (e, format!("vector({},{},{})", format_number(q.x), format_number(q.y), format_number(q.z)))
+            .filter_map(|e| {
+                if e == viewed {
+                    return Some((e, value.to_owned()));
                 }
 
-                None => (e, value.to_owned()),
+                if let Some(((o, n), p)) = moved.zip(vector(e)) {
+                    let q = Double3::new(
+                        if p.x == o.x { n.x } else { p.x + (n.x - o.x) },
+                        if p.y == o.y { n.y } else { p.y + (n.y - o.y) },
+                        if p.z == o.z { n.z } else { p.z + (n.z - o.z) },
+                    );
+                    return Some((e, format!("vector({},{},{})", format_number(q.x), format_number(q.y), format_number(q.z))));
+                }
+
+                (self.doc.get(e, name) == old).then(|| (e, value.to_owned()))
             })
             .collect::<Vec<_>>();
         for (e, v) in values {
@@ -469,7 +484,7 @@ impl TedScene {
 
     /// The first line of `elem`'s block: its first `WceVariationValues`, or itself. A move takes the block whole, and puts what it
     /// moves in front of it.
-    fn lead(&self, elem: usize) -> usize {
+    pub(crate) fn lead(&self, elem: usize) -> usize {
         crate::variations::values_before(&self.doc, elem).last().copied().unwrap_or(elem)
     }
 
@@ -505,7 +520,7 @@ impl TedScene {
         els[layer].children.iter().copied().rev().find(|&c| els[c].name == "children")
     }
 
-    fn newline(&self) -> &'static [u8] {
+    pub(crate) fn newline(&self) -> &'static [u8] {
         if find(self.doc.original_text(), b"\r\n") { b"\r\n" } else { b"\n" }
     }
 
@@ -1260,6 +1275,8 @@ mod tests {
         assert_eq!(b.doc().get(x, "position").as_deref(), Some("vector(2,2,1)"), "the others keep their height");
         assert_eq!(b.position(x), Some(Double3::new(2.0, 5.0, 1.0)));
         assert_eq!(b.doc().get(x - 1, "position").as_deref(), Some("vector(2,5,1)"));
+        b.set_attr(x, "position", "vector(1,5,1)");
+        assert_eq!(b.save(), COMBINED.as_bytes(), "the old value back undoes it");
     }
 
     #[test]

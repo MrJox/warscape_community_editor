@@ -282,6 +282,26 @@ variation has.
    Undo of tag edits and copies comes with step 5's tools.
 5. **The editor's tools**: the Scene panel column, the Inspector checkboxes, variation folders, *Move to a variation folder*, *Split
    for this variation*, Tidy, the ghosts, the Terrain layers section, Problems.
+   Done (2026-11-15):
+   - `variations::edit`: `set_variations`, `wrap_in_folder` / `unwrap_folder`, `split_for` (the copies as the variation has them:
+     `to_variation` of their lines), `tidy`; `variations::problems`. Each is one undo entry in the editor (`TileDocument::
+     set_variations`, `to_variation_folder`, `split_for_variation`, `tidy_variations`), and a command: `tile_variations`,
+     `tile_to_variation_folder`, `tile_split_variation`, `tile_variation_tidy`.
+   - The Scene panel: a variations column (the element's, its own bright, inherited dimmed; a click on a layer's, group's or folder's
+     ticks them), variation folders as rows of their own ("Only in small"), the context menu's *Move to a variation folder* and
+     *Split for <viewed>*. The Inspector: a checkbox per variation for a layer, a group or a folder; an instance's, read-only.
+   - Tile > Variations: Tidy, *Show the other variations*. The chip: the same checkbox, and a warning when the working layer is not
+     in the viewed variation.
+   - Ghosts (`tile_variation_ghosts`): each instance only other variations have, outlined (its model's bounds, its models loaded
+     for it) where the first of them places it (`world_transform_as`), in one overlay that is not picked.
+   - The Terrain layers section: a layer's variations after its name, dimmed when not in view; checkboxes for the working layer;
+     *New layer for <viewed>*; a warning when the working layer is not in view. A change of a layer's variations, or of a scene
+     layer's that terrain layers export with, composes the viewed terrain again (`TileProject::refresh_view`), undo too.
+   - Problems: tags that name a variation the project does not have or the parent excludes, and a folder of no variation.
+   - Checked: the kit's 154 tiles need no Tidy and have no Problems after the merge; on `orc_city_a` in the editor, a building split
+     for `small` and moved changes `small` only; split then Tidy gives every variation back as it was; undo of a split leaves nothing
+     to save.
+   Left: the ghosts are outlines, not tinted models; the variations column is text, not icons.
 6. **Exports**: For Assembly Kit, As exported tile, To mod pack, Launch in game. The per-variation height scale.
 7. **Loaders**: materialization in `sources::find_tile`, `build/variations/`, the stamp.
 8. **Combine and Separate**: the dialog, the backup, the commands.

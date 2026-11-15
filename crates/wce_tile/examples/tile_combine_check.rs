@@ -226,6 +226,29 @@ fn main() {
             }
         }
 
+        // `WCE_COMBINE_TIDY=1`: Tidy on the combined scene changes no variation (`variations::edit::tidy`).
+        if bad.is_none() && std::env::var("WCE_COMBINE_TIDY").as_deref() == Ok("1") {
+            let all = sources.iter().map(|s| s.variation.clone()).collect::<Vec<_>>();
+            let tidied = wce_tile::ted_scene::TedScene::parse(combined.text.clone())
+                .and_then(|mut sc| wce_tile::variations::edit::tidy(&mut sc, &all).map(|n| (n, sc.save())));
+            match tidied {
+                Ok((n, text)) => match check(&text, &sources) {
+                    Ok(()) => {
+                        let doc = wce_formats::xml_doc::XmlDoc::parse(combined.text.clone()).expect("it read");
+                        let problems = wce_tile::variations::problems(&doc, &all);
+                        if let Some((e, p)) = problems.first() {
+                            bad = Some(format!("{} problems, the first: {} {p}", problems.len(), doc.elements()[*e].name));
+                        }
+
+                        println!("  tidy: {n} edits, {} -> {} bytes", combined.text.len(), text.len());
+                    }
+
+                    Err(e) => bad = Some(format!("after tidy ({n} edits): {e}")),
+                },
+                Err(e) => bad = Some(format!("tidy: {e}")),
+            }
+        }
+
         // `WCE_COMBINE_OUT=<folder>`: the combined files written there, to look at.
         if let Ok(out) = std::env::var("WCE_COMBINE_OUT") {
             let name = location.replace(['\\', '/'], "_");

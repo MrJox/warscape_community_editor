@@ -9,6 +9,7 @@
 //! place to its children (one indent less), and the attributes go. A file of one variation has no trace of the others, so a combined
 //! project that was made from variations gives each of them back byte for byte ([`merge`]).
 
+pub mod edit;
 pub mod merge;
 
 use wce_formats::xml_doc::XmlDoc;
@@ -336,6 +337,39 @@ pub fn goes_through(doc: &XmlDoc, elem: usize, variation: &str) -> bool {
     els[elem].name == FOLDER || wrapped(elem) || (els[elem].name == "children" && els[elem].parent.is_some_and(wrapped))
 }
 
+/// What is wrong with a combined scene's variations (the Problems): an element that names a variation the project does not have (one
+/// removed), or one its parent excludes (it can only narrow its parent's set: that variation does not have it), and one that belongs
+/// to no variation at all (no export has it).
+#[must_use]
+pub fn problems(doc: &XmlDoc, all: &[String]) -> Vec<(usize, String)> {
+    let mut out = vec![];
+    if all.is_empty() {
+        return out;
+    }
+
+    let els = doc.elements();
+    for e in 0..els.len() {
+        let Some(parent) = els[e].parent else { continue };
+        let lists = [(VARIATIONS_ATTR, own_variations(doc, e)), (GROUP_ATTR, doc.get(e, GROUP_ATTR).map(|l| parse_list(&l)))];
+        for (attr, list) in lists {
+            let Some(list) = list else { continue };
+            if let Some(v) = list.iter().find(|v| !all.contains(v)) {
+                out.push((e, format!("{attr} names '{v}', which the project does not have ({})", list_text(all))));
+                continue;
+            }
+
+            let set = effective(doc, parent, all);
+            if let Some(v) = list.iter().find(|v| !set.contains(v)) {
+                out.push((e, format!("{attr} names '{v}', which its parent is not in: {v} does not have it")));
+            } else if attr == VARIATIONS_ATTR && list.is_empty() {
+                out.push((e, "it belongs to no variation: no export has it".to_owned()));
+            }
+        }
+    }
+
+    out
+}
+
 /// The attribute that names a scene layer for the terrain layers that export with it.
 pub const LAYER_ID_ATTR: &str = "wce_layer_id";
 
@@ -540,6 +574,15 @@ mod tests {
         assert_eq!(b.parent(&doc, x), Some(root), "the group is not there in b");
         assert_eq!(b.parent(&doc, y), Some(root));
         assert!(b.is_gone(find(START)) && b.is_gone(find(VALUES)));
+    }
+
+    #[test]
+    fn tags_their_parent_excludes_and_unknown_ones_are_problems() {
+        let text = "<project wce_variations=\"a,b\">\n    <L wce_variations=\"a\">\n        <M wce_variations=\"a,b\"/>\n        <N wce_variations=\"c\"/>\n    </L>\n    <G wce_group_variations=\"b\"/>\n</project>\n";
+        let doc = XmlDoc::parse(text.as_bytes().to_vec()).unwrap();
+        let all = ["a".to_owned(), "b".to_owned()];
+        let found = problems(&doc, &all).into_iter().map(|(e, _)| doc.elements()[e].name.clone()).collect::<Vec<_>>();
+        assert_eq!(found, ["M", "N"]);
     }
 
     #[test]

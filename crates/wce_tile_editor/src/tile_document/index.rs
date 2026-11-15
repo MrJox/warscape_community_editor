@@ -650,6 +650,9 @@ impl Tile {
         // A combined project's view, of the elements as they are now.
         if let Some(name) = self.project.view.as_ref().map(|v| v.variation.clone()) {
             self.project.view = Some(wce_tile::variations::View::new(self.project.scene.doc(), &name));
+
+            // A scene layer's variations decide those of the terrain layers that export with it.
+            self.layers_shown |= self.project.refresh_view();
         }
 
         let view = self.project.view.as_ref();
@@ -687,6 +690,9 @@ impl Tile {
         ];
 
         let game_layers = self.display.game_layers;
+
+        // Their ghosts show: the other variations' buildings get their models too.
+        let ghosts = self.display.variation_ghosts && view.is_some();
 
         // Parse the local transforms in parallel (each element reads only its own attributes).
         let types = &ix.type_;
@@ -820,7 +826,7 @@ impl Tile {
 
             ix.slot[i] = slot;
             if key_types.contains(&Some(ix.type_[i] as usize))
-                && ix.kind[i] & INSTANCE_BIT != 0
+                && (ix.kind[i] & INSTANCE_BIT != 0 || (local[i].gone && ghosts))
                 && let Some(k) = doc.find_attr(i, "key")
             {
                 let key = text(doc.attr_raw(i, k)).into_owned();
@@ -851,22 +857,24 @@ impl Tile {
         self.project.view.as_ref().map(|v| v.variation.as_str())
     }
 
-    /// A layer's or group's children as the viewed variation has them (`TedScene::children` of a project of one): without what other
-    /// variations have, with the contents of a variation folder or of a group of other variations in its place.
+    /// A layer's, group's or variation folder's children as the viewed variation has them (`TedScene::children` of a project of one):
+    /// without what other variations have, with the contents of a group of other variations in its place. A variation folder of the
+    /// viewed variation is a row of its own (what it holds is below it), so that it can be seen, retagged and taken away.
     pub fn tree_children(&self, elem: usize) -> Vec<usize> {
         let sc = self.tscene();
-        let Some(view) = self.project.view.as_ref() else { return sc.children(elem) };
         let els = sc.doc().elements();
+        let folder = |e: usize| els[e].name == wce_tile::variations::FOLDER;
+        let first = if folder(elem) { els[elem].children.clone() } else { sc.children(elem) };
+        let Some(view) = self.project.view.as_ref() else { return first };
         let mut out = vec![];
-        let mut stack = sc.children(elem).into_iter().rev().collect::<Vec<_>>();
+        let mut stack = first.into_iter().rev().collect::<Vec<_>>();
         while let Some(k) = stack.pop() {
             if view.is_gone(k) {
                 continue;
             }
 
-            if view.is_through(k) {
-                let inner = if els[k].name == wce_tile::variations::FOLDER { els[k].children.clone() } else { sc.children(k) };
-                stack.extend(inner.into_iter().rev());
+            if view.is_through(k) && !folder(k) {
+                stack.extend(sc.children(k).into_iter().rev());
                 continue;
             }
 
@@ -876,12 +884,14 @@ impl Tile {
         out
     }
 
-    /// The element above `elem` as the viewed variation has it (past variation folders and groups of other variations).
+    /// The element above `elem` as the viewed variation has it (past groups of other variations; a variation folder is a row).
     pub fn tree_parent(&self, elem: usize) -> Option<usize> {
         let doc = self.tscene().doc();
+        let els = doc.elements();
         match self.project.view.as_ref() {
-            Some(view) => view.parent(doc, elem),
-            None => doc.elements()[elem].parent,
+            Some(view) => std::iter::successors(els[elem].parent, |&p| els[p].parent)
+                .find(|&p| !view.is_through(p) || els[p].name == wce_tile::variations::FOLDER),
+            None => els[elem].parent,
         }
     }
 
@@ -1172,6 +1182,7 @@ impl Tile {
 
         self.unresolved = still;
         if any {
+            self.ghost_dirty = true;
             self.grid_dirty.set(true);
             self.columns_changed();
             self.tech.dirty = true;
@@ -1199,6 +1210,7 @@ impl Tile {
         self.rebuild_tables(reindex);
         self.markers_dirty = true;
         self.polygons_dirty = true;
+        self.ghost_dirty = true;
     }
 
     /// `rebuild_items` without asking for what is built from the tables to be built again.

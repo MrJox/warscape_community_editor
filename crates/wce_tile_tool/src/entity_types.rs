@@ -7,6 +7,7 @@ use wce_tile::ted_scene::TedScene;
 /// The icon of an element type; a type not listed gets a question mark.
 pub fn type_icon(ty: &str) -> &'static str {
     match ty {
+        wce_tile::variations::FOLDER => icons::FOLDER,
         "BUILDING_INSTANCE" => icons::BUILDING_2,
         "VEGETATION_INSTANCE" => icons::TREE_PINE,
         "ProjectedDecalInstance" => icons::STICKER,

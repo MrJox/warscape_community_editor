@@ -22,6 +22,26 @@ const ICON_WIDTH: f32 = 22.0;
 /// The icon columns at the right edge: the type, the export, the eye and the cursor arrow.
 const ICON_COLUMNS: f32 = 4.0;
 
+/// The variations column of a combined project.
+const VARIATIONS_WIDTH: f32 = 84.0;
+
+/// The variations popup of a layer's, group's or folder's row: one checkbox per variation, and "as its parent's".
+fn variations_menu(all: &[String], set: &[String], own: bool, targets: &[usize], actions: &mut Vec<RowAction>) {
+    for v in all {
+        let mut on = set.contains(v);
+        if gui::checkbox(v, &mut on) {
+            let list = all.iter().filter(|x| if *x == v { on } else { set.contains(x) }).cloned().collect::<Vec<_>>();
+            if !list.is_empty() {
+                actions.push(RowAction::SetVariations(targets.to_vec(), Some(list)));
+            }
+        }
+    }
+
+    if own && gui::menu_item("As its parent's", None, false, true) {
+        actions.push(RowAction::SetVariations(targets.to_vec(), None));
+    }
+}
+
 /// Elements below a deleted layer: ask first.
 const CONFIRM_DELETE_ABOVE: usize = 200;
 
@@ -124,11 +144,15 @@ pub(crate) fn layer_by_key(sc: &TedScene, key: &str) -> Option<usize> {
 /// Whether an element opens in the tree to show what it holds: a layer (or a group), or a holder (`wce_tile::parents`), whose shapes are
 /// items of their own.
 fn opens(sc: &TedScene, e: usize) -> bool {
-    sc.is_layer(e) || wce_tile::parents::child_kind(sc.type_of(e)).is_some()
+    sc.is_layer(e) || sc.type_of(e) == wce_tile::variations::FOLDER || wce_tile::parents::child_kind(sc.type_of(e)).is_some()
 }
 
-/// The name shown for an element: its name, else its type.
+/// The name shown for an element: its name, else its type; a variation folder by its variations.
 fn label_of(sc: &TedScene, e: usize) -> String {
+    if sc.type_of(e) == wce_tile::variations::FOLDER {
+        return format!("Only in {}", sc.doc().get(e, wce_tile::variations::VARIATIONS_ATTR).unwrap_or_default().replace(',', ", "));
+    }
+
     let n = sc.name(e);
     if n.is_empty() { sc.type_of(e).to_owned() } else { n }
 }
@@ -681,6 +705,9 @@ enum RowAction {
     DuplicateLayer(usize),
     Delete,
     ExportType(usize, String),
+    SetVariations(Vec<usize>, Option<Vec<String>>),
+    VariationFolder(Vec<usize>, Vec<String>),
+    SplitVariation(Vec<usize>),
     CommitRename(usize, String),
     ToggleOpen(String, bool),
 }
@@ -724,6 +751,10 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             |el: usize| -> Option<String> { d.prefab_key(el).and_then(|k| lib.as_ref().and_then(|l| l.get(&k).map(|p| p.key.clone()))) };
         let t = d.tile();
         let sc = t.tscene();
+        let all = t.variations().to_vec();
+        let viewed = t.viewed_variation().unwrap_or_default().to_owned();
+        let var_w = if all.is_empty() { 0.0 } else { VARIATIONS_WIDTH };
+        let right = ICON_COLUMNS * ICON_WIDTH + var_w;
         let rows = tool.tree.rows.clone();
         let selection = &mut e.selection;
         let tool_ref = &mut *tool;
@@ -745,14 +776,10 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             let spacing = gui::item_spacing().y;
             gui::set_cursor_screen_pos(v2(p0.x, p0.y + spacing * 0.5));
             gui::set_next_item_allow_overlap();
-            let clicked = gui::selectable_sized(
-                "##row",
-                is_sel,
-                gui::SELECTABLE_ALLOW_DOUBLE_CLICK,
-                v2(avail - ICON_COLUMNS * ICON_WIDTH, (row_h - spacing).max(1.0)),
-            );
+            let clicked =
+                gui::selectable_sized("##row", is_sel, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, v2(avail - right, (row_h - spacing).max(1.0)));
             let row_hovered = gui::is_item_hovered();
-            let (rmin, rmax) = (p0, v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH, p0.y + row_h));
+            let (rmin, rmax) = (p0, v2(p0.x + avail - right, p0.y + row_h));
             if clicked && tool_ref.tree.rename_elem != Some(el) {
                 let io = gui::io();
                 if io.KeyCtrl {
@@ -923,6 +950,34 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     }
                 }
 
+                // A combined project's: the selection into a folder of some variations, or split for the viewed one.
+                if !all.is_empty() && !sel.is_empty() && !is_graph {
+                    if gui::begin_menu("Move to a variation folder") {
+                        for v in &all {
+                            if gui::menu_item(&format!("Only in {v}"), None, false, true) {
+                                actions.push(RowAction::VariationFolder(sel.clone(), vec![v.clone()]));
+                            }
+                        }
+
+                        let others = all.iter().filter(|v| **v != viewed).cloned().collect::<Vec<_>>();
+                        if others.len() > 1 && gui::menu_item(&format!("In all but {viewed}"), None, false, true) {
+                            actions.push(RowAction::VariationFolder(sel.clone(), others));
+                        }
+
+                        gui::end_menu();
+                    }
+
+                    if gui::menu_item(&format!("Split for {viewed}"), None, false, true) {
+                        actions.push(RowAction::SplitVariation(sel.clone()));
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(&format!(
+                            "Copies the selection into a folder for {viewed} and puts the originals in one for the other variations:\nwhat you change then is {viewed}'s only."
+                        ));
+                    }
+                }
+
                 // Into a layer, or a holder (`wce_tile::parents`): what goes only inside a holder goes into one alone.
                 let holder = wce_tile::parents::child_kind(sc.type_of(el)).is_some();
                 let fits = sel.iter().all(|&s| wce_tile::parents::fits(sc.type_of(s), sc.type_of(el)).is_ok());
@@ -1033,7 +1088,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
             if tool_ref.tree.rename_elem == Some(el) {
                 gui::set_cursor_screen_pos(v2(tx, p0.y));
-                gui::set_next_item_width((avail - ICON_COLUMNS * ICON_WIDTH - (tx - p0.x) - 4.0).max(60.0));
+                gui::set_next_item_width((avail - right - (tx - p0.x) - 4.0).max(60.0));
                 if tool_ref.tree.rename_focus {
                     gui::set_keyboard_focus_here(0);
                     tool_ref.tree.rename_focus = false;
@@ -1067,7 +1122,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     label = format!("{} {label}  (override)", wce_editor::icons::TRIANGLE_ALERT);
                 }
 
-                dl.push_clip_rect(v2(tx, p0.y), v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH - 2.0, p0.y + row_h));
+                dl.push_clip_rect(v2(tx, p0.y), v2(p0.x + avail - right - 2.0, p0.y + row_h));
                 let ty = p0.y + (row_h - gui::text_line_height()) * 0.5;
                 dl.text(v2(tx, ty), text_col, &label);
                 if holds != 0 {
@@ -1079,6 +1134,37 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             }
 
             // The type (a prefab copy's is Prefab) and where it is exported.
+            // A combined project's variations: the element's (its own bright, inherited dimmed); a click on a layer's, a group's or a
+            // folder's changes them.
+            if !all.is_empty() {
+                let x0 = p0.x + avail - 4.0 * ICON_WIDTH - var_w;
+                let doc = sc.doc();
+                let set = wce_tile::variations::effective(doc, el, &all);
+                let own = wce_tile::variations::own_variations(doc, el).is_some();
+                let carries = wce_tile::variations::edit::can_carry(sc, el);
+                gui::set_cursor_screen_pos(v2(x0, p0.y));
+                if gui::invisible_button("##vars", v2(var_w, row_h), gui::BUTTON_LEFT) && carries {
+                    gui::open_popup("varmenu");
+                }
+
+                let text = if set.len() == all.len() { "all".to_owned() } else { set.join(", ") };
+                if gui::is_item_hovered() {
+                    let whose = if own { "its own" } else { "as its parent's" };
+                    let click = if carries { "\nClick to change them" } else { "\nAn instance belongs where its folder does" };
+                    gui::set_tooltip(&format!("Variations: {} ({whose}){click}", set.join(", ")));
+                }
+
+                let col = if own { theme::text() } else { theme::mix(theme::text(), theme::palette_background(), 0.5) };
+                dl.push_clip_rect(v2(x0 + 2.0, p0.y), v2(x0 + var_w - 4.0, p0.y + row_h));
+                dl.text(v2(x0 + 4.0, cy - gui::text_line_height() * 0.5), theme::u32(col), &text);
+                dl.pop_clip_rect();
+                if gui::begin_popup("varmenu") {
+                    let targets = if is_sel { sel_all.clone() } else { vec![el] };
+                    variations_menu(&all, &set, own, &targets, &mut actions);
+                    gui::end_popup();
+                }
+            }
+
             let ty = sc.type_of(el);
             let prefab = prefab_of(el);
             gui::set_cursor_screen_pos(v2(p0.x + avail - 4.0 * ICON_WIDTH, p0.y));
@@ -1235,6 +1321,19 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             RowAction::Delete => tool.request_delete(e),
             RowAction::ExportType(el, value) => {
                 d.set_attribute(el, "export_type", &value);
+            }
+
+            RowAction::SetVariations(targets, list) => {
+                tool.status = d.set_variations(&targets, list.as_deref()).map_or_else(|err| err, |()| "variations set".to_owned());
+            }
+
+            RowAction::VariationFolder(sel, list) => {
+                tool.status =
+                    d.to_variation_folder(&sel, &list).map_or_else(|err| err, |_| format!("moved into a folder for {}", list.join(", ")));
+            }
+
+            RowAction::SplitVariation(sel) => {
+                tool.status = d.split_for_variation(&sel).map_or_else(|err| err, |c| format!("split: {} copies, selected", c.len()));
             }
 
             RowAction::CommitRename(el, name) => {

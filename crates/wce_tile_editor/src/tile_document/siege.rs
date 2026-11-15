@@ -703,6 +703,8 @@ impl Tile {
             }
         }
 
+        // A combined project's variations: tags that name what the project or the parent does not have.
+        out.extend(wce_tile::variations::problems(sc.doc(), &self.project.variations));
         out
     }
 

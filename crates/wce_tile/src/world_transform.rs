@@ -34,24 +34,35 @@ pub struct WorldTransform {
 /// Position / rotation of `elem` in scene space (all ancestors applied; of a combined scene, as its viewed variation places it: without
 /// the groups it goes through, with its own values).
 pub fn world_transform(scene: &TedScene, elem: usize) -> WorldTransform {
+    world_transform_as(scene, elem, scene.variation())
+}
+
+/// [`world_transform`] as a given variation of a combined scene places `elem` (`None`: the scene as it is), whichever is viewed: what
+/// shows another variation's elements.
+pub fn world_transform_as(scene: &TedScene, elem: usize, variation: Option<&str>) -> WorldTransform {
+    let doc = scene.doc();
     let mut chain = vec![];
     let mut e = Some(elem);
     while let Some(x) = e {
         chain.push(x);
-        e = scene.doc().elements()[x].parent;
+        e = doc.elements()[x].parent;
     }
 
+    let get = |e: usize, name: &str| match variation {
+        Some(v) => crate::variations::own_value(doc, e, v, name).or_else(|| doc.get(e, name)),
+        None => doc.get(e, name),
+    };
     let mut w = WorldTransform::default();
     for &e in chain.iter().rev() {
-        if scene.goes_through(e) {
+        if variation.is_some_and(|v| crate::variations::goes_through(doc, e, v)) {
             continue;
         }
 
-        if let Some(p) = scene.position(e) {
+        if let Some(p) = get(e, "position").and_then(|t| crate::ted_scene::parse_vec3(&t, "vector")) {
             w.position += w.rotation * p;
         }
 
-        if let Some(o) = scene.euler(e) {
+        if let Some(o) = get(e, "orientation").and_then(|t| crate::ted_scene::parse_vec3(&t, "euler")) {
             w.rotation = w.rotation * euler_matrix(o);
         }
     }

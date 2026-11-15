@@ -42,6 +42,7 @@ mod save;
 mod splines;
 mod strokes;
 mod structure;
+mod variations;
 
 fn degrees(r: f64) -> f32 {
     (r * 180.0 / std::f64::consts::PI) as f32

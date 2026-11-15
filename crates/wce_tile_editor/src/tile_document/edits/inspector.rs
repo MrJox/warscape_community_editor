@@ -46,6 +46,7 @@ impl TileDocument {
             ins.text("name", "name", &before);
         }
 
+        self.variation_rows(e, ins);
         let t = self.tile();
         let sc = t.tscene();
         if let Some(k) = sc.get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
