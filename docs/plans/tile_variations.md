@@ -7,7 +7,7 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-and 2 for the scene (`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below.
+and 2 for the scene, step 3 for the terrain (`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below.
 
 ## What the games and kits do
 
@@ -192,12 +192,14 @@ is the one with the most shared elements by default. It gives the terrain base.
 
 - Each variation's stacks are read (its `.wcl`, or a base made from its maps, in metres, with its row's scale).
 - The merged base is the reference's base. Variations whose base is the same pixel for pixel form one group. For each group other
-  than the reference's, a layer **"Variation base: small, medium"** goes right above the base, tagged with that group. For heights it
-  holds the difference in metres (0 where equal). For blend and ground type it holds that group's base pixels where they differ and
-  nothing elsewhere. A blend pixel of the base sums to 65535, so a full-cover layer pixel gives it back exactly. A ground type pixel
-  with alpha 255 replaces.
-- Each variation's own layers follow, merged by id and samples: a layer with the same id and samples in several variations is
-  kept once, with their set.
+  than the reference's, a layer **"Variation base: small, medium"** goes right above the base, tagged with that group. It is a
+  **replacing** layer (`Layer::replace`): it holds that group's base whole in each 64 x 64 block where it differs from the reference's,
+  and where it holds a block that block is what shows. A difference to add did not do (found by the check, 2026-11-15): heights in f32
+  metres lose the steps of a flat tile (`dense_forest_plains/1x1/aa`: a range of 0.09 m, a step of 1.4 micrometres) against another of
+  20 m, and TEd's blend pixels sum to 65529..65535, not the 65535 a covering layer pixel needs. Replacing is exact for every type.
+  Painting into such a layer first makes the block it lacks from what shows below, then takes the edit.
+- Each variation's own layers follow, merged in each variation's order by id, settings and samples: a layer that several variations
+  have the same is kept once, with their set; an id two different layers had is made new.
 
 **The check, before anything is written**: every ticked variation is exported back from the merged project in memory and compared
 with
@@ -229,7 +231,9 @@ variation has.
    small scenes. tile.wce version 2. Version 1 files read as one variation.
 2. **The scene merge** and `tile_combine_check -- <kit tile folder>`: merges the kit's variations and checks each one comes back
    byte-identical. Run on every multi-variation tile of the Attila kit (228 entries). Also reports the space saved.
-3. **Terrain tags**: `Layer::variations`, `.wcl` version 4, the compose and absorb filter, the "Variation base" layers, the terrain
+3. **Terrain tags** (done 2026-11-15): `Layer::variations` and `Layer::replace`, `.wcl` version 4, the view filter
+   (`Stack::set_view_hidden`, `TerrainLayers::set_view` with the scene layers' sets from `variations::layer_key_variations`), the
+   "Variation base" layers, the terrain
    merge. The check above extended to the maps.
 4. **The document**: `TileDocument` over a combined project, the viewed variation, the chip, switching. Undo covers tag edits and
    copies.
@@ -254,6 +258,10 @@ tile.ted for. About 6 s for a big settlement (three 50 MB files).
 - Settlements made by copying one level into the next share a lot: TDD's `dunedain_city_cair_andros` 97 to 99%, `middle_men_city_edoras`
   95%, `orc_city_a` small/medium 88 to 94%, `middle_men_city_a` minor/small 70%. 31.8 MB of `orc_city_a` become 17.7 MB.
 - Random alternatives (`plains`, `town_greek_plains`) share nothing; their combined file is about the sum of theirs.
+- **Maps** (the same run, 2026-11-15): every variation's height map (its 16-bit values in its own range), blend map and ground type
+  map come back from the combined stacks byte for byte, for all 154 tiles. The 13.3 GB of maps become 3.3 GB of
+  `terrain_layers.wcl` (deflated; the blend maps are 52 MB of raw TIFF each): `orc_city_a` 161.9 MB in 9.9 MB, `western_city_b`
+  158.2 MB in 17.3 MB.
 - Found on the way, not part of this plan: `to_ted(to_wce(tile.ted))` is not the kit's file for `orc_city_a`'s three variations:
   TEd wrote `parallax_scale="-0"` and `ted_number_text` shortens it to `0`.
 

@@ -129,6 +129,18 @@ pub(crate) fn attr_span(text: &[u8], doc: &XmlDoc, elem: usize, name: &str) -> O
     Some((start, a.value_off + a.value_len + 1))
 }
 
+/// The variations each scene layer with a `wce_layer_id` belongs to (of the project's `all`), by that id: what a terrain layer that
+/// exports with it belongs to as well (`TerrainLayers::set_view`, the exports).
+#[must_use]
+pub fn layer_key_variations(doc: &XmlDoc, all: &[String]) -> std::collections::HashMap<String, Vec<String>> {
+    (0..doc.elements().len())
+        .filter_map(|e| doc.get(e, LAYER_ID_ATTR).filter(|k| !k.is_empty()).map(|k| (k, effective(doc, e, all))))
+        .collect()
+}
+
+/// The attribute that names a scene layer for the terrain layers that export with it.
+pub const LAYER_ID_ATTR: &str = "wce_layer_id";
+
 /// One variation's tile.wce out of a combined one: what does not belong to it removed (whole lines), each variation folder's tags taken
 /// away and its contents one indent less, the `wce_variations` attributes gone (the root's too). A text without any of it comes back as
 /// it is.
