@@ -15,7 +15,7 @@ impl TileDocument {
         let todo = elems
             .iter()
             .copied()
-            .filter(|&e| e < t.tscene().doc().elements().len() && t.tscene().doc().get(e, "flags").is_some() && t.own_flag(e, flag) != on)
+            .filter(|&e| e < t.tscene().doc().elements().len() && t.tscene().get(e, "flags").is_some() && t.own_flag(e, flag) != on)
             .collect::<Vec<_>>();
         if todo.is_empty() {
             return false;
@@ -41,9 +41,9 @@ impl TileDocument {
         let sc = self.tscene_mut();
         let (mut old, mut new) = (vec![], vec![]);
         for &e in &todo {
-            let before = sc.doc().get(e, "flags");
+            let before = sc.get(e, "flags");
             sc.set_flag(e, flag, on);
-            new.push(sc.doc().get(e, "flags"));
+            new.push(sc.get(e, "flags"));
             sc.set_attr(e, "flags", before.as_deref().unwrap_or(""));
             old.push(before);
         }

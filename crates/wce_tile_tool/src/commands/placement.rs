@@ -103,7 +103,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 return fail("usage: assert_attr <element | selected> <attribute> <value | ->");
             };
             let want = a[2..].join(" ");
-            let got = d.tile().tscene().doc().get(el, attr);
+            let got = d.tile().tscene().get(el, attr);
             match got {
                 Some(v) if v == want => ok(""),
                 None if want == "-" => ok(""),
@@ -138,7 +138,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let (Some(d), Some(el), Some((want, tol))) = (document(e), el, parsed) else {
                 return fail("usage: assert_attr_near <element | selected> <attribute> <number> <tolerance>");
             };
-            match d.tile().tscene().doc().get(el, &a[1]).and_then(|v| v.trim().parse::<f32>().ok()) {
+            match d.tile().tscene().get(el, &a[1]).and_then(|v| v.trim().parse::<f32>().ok()) {
                 Some(v) if (v - want).abs() <= tol => ok(""),
                 Some(v) => fail(format!("{} is {v}, expected {want}", a[1])),
                 None => fail(format!("{} is not a number", a[1])),

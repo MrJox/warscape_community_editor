@@ -112,7 +112,7 @@ pub fn export_label(kind: &str) -> &'static str {
 
 /// A layer's own export type (`Normal` when it has none).
 pub fn own_export(sc: &TedScene, layer: usize) -> String {
-    let t = sc.doc().get(layer, "export_type").unwrap_or_default();
+    let t = sc.get(layer, "export_type").unwrap_or_default();
     t.strip_prefix("LayerExportType_").map_or_else(|| "Normal".to_owned(), str::to_owned)
 }
 

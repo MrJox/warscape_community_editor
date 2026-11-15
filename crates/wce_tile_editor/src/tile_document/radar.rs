@@ -125,7 +125,7 @@ impl Tile {
         }
         let sc = self.tscene();
         for e in sc.find_all("VEGETATION_INSTANCE") {
-            if self.shown(e) && is_tree(&sc.doc().get(e, "key").unwrap_or_default()) {
+            if self.shown(e) && is_tree(&sc.get(e, "key").unwrap_or_default()) {
                 let p = self.world_position(e);
                 input.trees.push([f64::from(p.x), f64::from(p.z)]);
             }
@@ -188,7 +188,7 @@ impl Tile {
         let u = self.unit();
         let mut out = vec![];
         for e in sc.find_all("BUILDING_INSTANCE") {
-            let key = sc.doc().get(e, "key").unwrap_or_default();
+            let key = sc.get(e, "key").unwrap_or_default();
             if !super::siege::exported(sc, e) {
                 continue;
             }
@@ -236,7 +236,7 @@ impl Tile {
         sc.find_all("SIMPLE_MESH_INSTANCE")
             .into_iter()
             .filter_map(|e| {
-                let key = sc.doc().get(e, "key")?;
+                let key = sc.get(e, "key")?;
                 if !key.to_lowercase().contains("water_plane") {
                     return None;
                 }
@@ -279,7 +279,7 @@ impl Tile {
             if !self.shown(e) || !super::siege::exported(sc, e) {
                 continue;
             }
-            let key = sc.doc().get(e, "key").unwrap_or_default().to_lowercase();
+            let key = sc.get(e, "key").unwrap_or_default().to_lowercase();
             let name = key.rsplit(['\\', '/']).next().unwrap_or_default();
             if !ROAD_DECALS.iter().any(|k| name.starts_with(k) || name.contains(&format!("_{k}"))) {
                 continue;

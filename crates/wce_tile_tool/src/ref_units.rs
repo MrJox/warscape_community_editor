@@ -429,7 +429,7 @@ impl RefUnits {
 
             let Some(kind) = Kind::of(tag) else { continue };
             for elem in t.tscene().find_all(tag).into_iter().filter(|&elem| t.shown(elem)) {
-                let attr = |name: &str| t.tscene().doc().get(elem, name).unwrap_or_default();
+                let attr = |name: &str| t.tscene().get(elem, name).unwrap_or_default();
                 let Some((wanted, ship)) =
                     self.wanted(e, &attr("unit"), &attr("faction"), attr("seed").trim().parse().unwrap_or(0), &attr("slot"), kind)
                 else {
@@ -852,7 +852,7 @@ impl RefUnits {
 
         let Some(catalog) = self.catalog.clone() else { return };
         let Some(kind) = Kind::of(d.tile().tscene().type_of(first)) else { return };
-        let attr = |name: &str| d.tile().tscene().doc().get(first, name).unwrap_or_default();
+        let attr = |name: &str| d.tile().tscene().get(first, name).unwrap_or_default();
         let seed: u64 = attr("seed").trim().parse().unwrap_or(0);
         let Some((wanted, ship)) = self.wanted(e, &attr("unit"), &attr("faction"), seed, &attr("slot"), kind) else { return };
         let stored = parse_colours(&attr("colours"));

@@ -1153,7 +1153,7 @@ impl Tile {
         }
 
         let Some(placed) = self.tech_placed(e, false) else { return vec![] };
-        let key = self.tscene().doc().get(e, "key").unwrap_or_default().to_lowercase();
+        let key = self.tscene().get(e, "key").unwrap_or_default().to_lowercase();
         let mut s = WalkSurfaces { key, ..Default::default() };
         for &(w, i, want) in &placed.pieces {
             let piece = &placed.model.pieces[i];
@@ -1291,7 +1291,7 @@ impl Tile {
 
     /// What a building shows of its technology: the pieces it has, at the states it shows.
     fn tech_placed(&mut self, e: usize, highest: bool) -> Option<Placed> {
-        let key = self.tscene().doc().get(e, "key")?.to_lowercase();
+        let key = self.tscene().get(e, "key")?.to_lowercase();
         let tech = self.tech_model(&key)?;
         let world = self.world_matrix(e);
         let model: Option<BuildingModel> = self.model_of(e).filter(|m| m.ok).cloned();

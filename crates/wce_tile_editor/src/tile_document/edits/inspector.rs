@@ -27,7 +27,7 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         let before = sc.name(e);
-        if sc.doc().get(e, "name").is_some() {
+        if sc.get(e, "name").is_some() {
             // TEd renames in the Scene tab; the name is not one of the properties.
             let drafts_key = (e, "name".to_owned());
             let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| before.clone());
@@ -48,7 +48,7 @@ impl TileDocument {
 
         let t = self.tile();
         let sc = t.tscene();
-        if let Some(k) = sc.doc().get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
+        if let Some(k) = sc.get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
             let model = match t.building_model(&k) {
                 Some(m) if m.ok => format!("{} pieces, {} destruction levels", m.pieces.len(), m.levels.max(1)),
                 Some(_) => "no model: box".to_owned(),
@@ -144,7 +144,7 @@ impl TileDocument {
         if !rest.is_empty() {
             ins.section("Other attributes");
             for (i, a) in rest {
-                ins.text(&format!("attr_{}", a.name), &a.name, &String::from_utf8_lossy(sc.doc().attr_raw(e, i)));
+                ins.text(&format!("attr_{}", a.name), &a.name, &shown_raw(sc, e, i));
             }
         }
 
@@ -260,7 +260,7 @@ impl TileDocument {
         ins.section("Attributes");
         let sc = self.tile().tscene();
         for (i, a) in sc.doc().elements()[e].attrs.iter().enumerate() {
-            ins.text(&format!("attr_{}", a.name), &a.name, &String::from_utf8_lossy(sc.doc().attr_raw(e, i)));
+            ins.text(&format!("attr_{}", a.name), &a.name, &shown_raw(sc, e, i));
         }
     }
 
@@ -337,13 +337,13 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         let tag = sc.type_of(e).to_owned();
-        let text = sc.doc().get(e, prop.attr);
+        let text = sc.get(e, prop.attr);
 
         // The rules that need to know more than the property: a building's category, a polygon's shape.
-        let key = sc.doc().get(e, "key").unwrap_or_default();
+        let key = sc.get(e, "key").unwrap_or_default();
         let category = if tag == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
-        let shape = sc.doc().get(e, "polygon_shape");
-        let capture_location = wce_tile::export_as_prop::capture_location_set(sc.doc().get(e, "capture_location").as_deref());
+        let shape = sc.get(e, "polygon_shape");
+        let capture_location = wce_tile::export_as_prop::capture_location_set(sc.get(e, "capture_location").as_deref());
         let ctx = RuleContext {
             category: category.as_deref(),
             shape: shape.as_deref(),
@@ -384,7 +384,7 @@ impl TileDocument {
                     self.tile().own_flag(e, "OIF_ACTIVE"),
                     self.tile().own_flag(e, "OIF_DRAGGABLE"),
                 );
-                if self.tile().tscene().doc().get(e, "flags").is_none() {
+                if self.tile().tscene().get(e, "flags").is_none() {
                     return;
                 }
 
@@ -422,7 +422,7 @@ impl TileDocument {
             }
 
             Kind::Placement => {
-                if self.tile().is_instance(e) && self.tile().tscene().doc().get(e, "surface_mode").is_some() {
+                if self.tile().is_instance(e) && self.tile().tscene().get(e, "surface_mode").is_some() {
                     // TEd's two modes and the editor's Entity: Above (freeform, marked: `project_files::SURFACE_ATTR`).
                     use wce_tile::project_files::{ROTATION_ATTR, SURFACE_ATTR};
                     let doc = self.tile().tscene().doc();
@@ -445,7 +445,7 @@ impl TileDocument {
                     }
 
                     // The rotation: free (as given), or following the surface under it (tilted to it now; a grab tilts it again).
-                    let follow = self.tile().tscene().doc().get(e, ROTATION_ATTR).is_some_and(|v| v == "surface");
+                    let follow = self.tile().tscene().get(e, ROTATION_ATTR).is_some_and(|v| v == "surface");
                     let rotations = ["Free", "Follow surface"].map(str::to_owned);
                     let mut r = i32::from(follow);
                     let tips = ["Turned as given.", "Tilted to the surface under it, now and again after each grab."].map(str::to_owned);
@@ -639,7 +639,7 @@ impl TileDocument {
     pub(super) fn common_row(&mut self, elems: &[usize], prop: &Prop, editable: bool, ins: &mut dyn Inspector) {
         let first = elems[0];
         let base = (u64::from(self.id()) << 40) ^ 0x5151_0000 ^ elems.len() as u64;
-        let text = self.tile().tscene().doc().get(first, prop.attr);
+        let text = self.tile().tscene().get(first, prop.attr);
         let cur = text.clone().unwrap_or_default();
         match prop.kind {
             Kind::Flags => {
@@ -728,7 +728,7 @@ impl TileDocument {
         let levels = elems
             .iter()
             .map(|&e| {
-                let key = self.tile().tscene().doc().get(e, "key").unwrap_or_default();
+                let key = self.tile().tscene().get(e, "key").unwrap_or_default();
                 i64::from(self.tile().destruction_levels(&key))
             })
             .min()
@@ -786,11 +786,8 @@ impl TileDocument {
     /// Sets an attribute of several elements, one undo entry (a text splice; empty: as [`Self::set_attribute`] does with it).
     pub fn set_attribute_all(&mut self, elems: &[usize], attr: &str, value: &str) -> bool {
         let n = self.tile().tscene().doc().elements().len();
-        let todo = elems
-            .iter()
-            .copied()
-            .filter(|&e| e < n && self.tile().tscene().doc().get(e, attr).as_deref() != Some(value))
-            .collect::<Vec<_>>();
+        let todo =
+            elems.iter().copied().filter(|&e| e < n && self.tile().tscene().get(e, attr).as_deref() != Some(value)).collect::<Vec<_>>();
         if todo.is_empty() {
             return true;
         }
@@ -919,7 +916,7 @@ impl TileDocument {
         let mut steps = vec![];
         let mut missing = vec![];
         for attr in std::iter::once(prop.attr).chain(prop.twin) {
-            match sc.doc().get(elem, attr) {
+            match sc.get(elem, attr) {
                 Some(old) if old == value => {}
                 Some(old) => steps.push((attr.to_owned(), old, value.to_owned())),
                 None => missing.push(attr),
@@ -1077,4 +1074,13 @@ impl TileDocument {
             self.history.push(Box::new(super::super::commands::TedMovesCommand { gesture, moves }));
         }
     }
+}
+
+/// An attribute's text as the Inspector shows it: the file's (still entity-encoded), or the viewed variation's own value of a combined
+/// scene.
+fn shown_raw(sc: &wce_tile::ted_scene::TedScene, e: usize, i: usize) -> String {
+    let name = &sc.doc().elements()[e].attrs[i].name;
+    sc.variation()
+        .and_then(|v| wce_tile::variations::own_value(sc.doc(), e, v, name))
+        .unwrap_or_else(|| String::from_utf8_lossy(sc.doc().attr_raw(e, i)).into_owned())
 }

@@ -402,7 +402,7 @@ impl TileDocument {
     pub fn set_terrain_layer_dependency(&mut self, kind: LayerType, id: u64, scene_layer: Option<usize>) {
         let key = match scene_layer {
             None => String::new(),
-            Some(elem) => match self.tile().tscene().doc().get(elem, "wce_layer_id").filter(|k| !k.is_empty()) {
+            Some(elem) => match self.tile().tscene().get(elem, "wce_layer_id").filter(|k| !k.is_empty()) {
                 Some(k) => k,
                 None => {
                     let next = self
@@ -410,7 +410,7 @@ impl TileDocument {
                         .tscene()
                         .find_all("LayerInstance")
                         .into_iter()
-                        .filter_map(|e| self.tile().tscene().doc().get(e, "wce_layer_id")?.parse::<u64>().ok())
+                        .filter_map(|e| self.tile().tscene().get(e, "wce_layer_id")?.parse::<u64>().ok())
                         .max()
                         .unwrap_or(0)
                         + 1;
@@ -442,11 +442,9 @@ impl TileDocument {
         let p = self.project();
         match p.layer_by_key(depends) {
             None => Dependency::Gone,
-            Some(elem) => Dependency::On {
-                elem,
-                name: self.tile().tscene().doc().get(elem, "name").unwrap_or_default(),
-                export: p.layer_export(elem),
-            },
+            Some(elem) => {
+                Dependency::On { elem, name: self.tile().tscene().get(elem, "name").unwrap_or_default(), export: p.layer_export(elem) }
+            }
         }
     }
 
@@ -454,7 +452,7 @@ impl TileDocument {
     #[must_use]
     pub fn scene_layers(&self) -> Vec<(usize, String)> {
         let sc = self.tile().tscene();
-        sc.find_all("LayerInstance").into_iter().map(|e| (e, sc.doc().get(e, "name").unwrap_or_default())).collect()
+        sc.find_all("LayerInstance").into_iter().map(|e| (e, sc.get(e, "name").unwrap_or_default())).collect()
     }
 
     /// Removes a layer and what it did.

@@ -54,8 +54,7 @@ pub fn all_walls(scene: &TedScene) -> Vec<usize> {
 /// What a kit wall is known by (its height layer, its export): its `wall_id`, the n-th wall of an id after the first `<id>.<n>` in the
 /// document's order (a copied wall keeps its id). `None` without an id.
 pub fn wall_key(scene: &TedScene, elem: usize) -> Option<String> {
-    let id_of =
-        |e: usize| scene.doc().get(e, wce_tile::new_instances::WALL_ID).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&i| i > 0);
+    let id_of = |e: usize| scene.get(e, wce_tile::new_instances::WALL_ID).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&i| i > 0);
     let id = id_of(elem)?;
     let n = all_walls(scene).into_iter().take_while(|&e| e != elem).filter(|&e| id_of(e) == Some(id)).count();
     Some(if n == 0 { id.to_string() } else { format!("{id}.{n}") })
@@ -63,7 +62,7 @@ pub fn wall_key(scene: &TedScene, elem: usize) -> Option<String> {
 
 /// Whether a wall is procedural: its *Procedural* checkbox (`wall_procedural`), on when it does not say (a wall from before it).
 pub fn is_procedural(scene: &TedScene, elem: usize) -> bool {
-    wce_tile::new_instances::wall_procedural(scene.doc().get(elem, wce_tile::new_instances::WALL_PROCEDURAL).as_deref())
+    wce_tile::new_instances::wall_procedural(scene.get(elem, wce_tile::new_instances::WALL_PROCEDURAL).as_deref())
 }
 
 /// The ends of the fort buildings (`*_fort_*` keys, not generated ones): their frame's x extent (`extent(key)`: the logic file's box)
@@ -71,7 +70,7 @@ pub fn is_procedural(scene: &TedScene, elem: usize) -> bool {
 pub fn anchors(scene: &TedScene, extent: &dyn Fn(&str) -> Option<(f64, f64)>) -> Vec<Anchor> {
     let mut out = vec![];
     for e in scene.find_all("BUILDING_INSTANCE") {
-        let key = scene.doc().get(e, "key").unwrap_or_default();
+        let key = scene.get(e, "key").unwrap_or_default();
         let lower = key.to_lowercase();
         if !lower.contains("_fort_") || lower.starts_with("wce_") {
             continue;
@@ -108,7 +107,7 @@ pub fn wall_points(scene: &TedScene, elem: usize) -> (Vec<[f64; 2]>, Vec<bool>) 
             [p.x, p.z]
         })
         .collect();
-    let sharp = pts.iter().map(|&p| scene.doc().get(p, "sharp").is_some_and(|v| parse_bool(&v))).collect();
+    let sharp = pts.iter().map(|&p| scene.get(p, "sharp").is_some_and(|v| parse_bool(&v))).collect();
     (points, sharp)
 }
 
@@ -130,7 +129,7 @@ pub fn wall_handles(scene: &TedScene, elem: usize) -> Vec<[Option<[f64; 2]>; 2]>
 
 /// A wall's base (its `wall_base`, else the default).
 pub fn wall_profile(scene: &TedScene, elem: usize) -> Option<&'static Profile> {
-    let base = scene.doc().get(elem, "wall_base").unwrap_or_default();
+    let base = scene.get(elem, "wall_base").unwrap_or_default();
     profile(&base).or_else(|| profile(DEFAULT_BASE))
 }
 
@@ -141,10 +140,9 @@ pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn
     }
 
     let profile = wall_profile(scene, elem)?;
-    let tolerance = scene.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
-    let flip = scene.doc().get(elem, "wall_flip").is_some_and(|v| parse_bool(&v));
-    let every =
-        |attr: &str, default: f64| scene.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
+    let tolerance = scene.get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
+    let flip = scene.get(elem, "wall_flip").is_some_and(|v| parse_bool(&v));
+    let every = |attr: &str, default: f64| scene.get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
     let (points, sharp) = wall_points(scene, elem);
     if points.len() < 2 {
         return None;
@@ -228,7 +226,7 @@ pub fn doors(
         .filter(|&e| shown(e))
         .map(|e| {
             let p = world_transform(scene, e).position;
-            ([p.x, p.z], radius(&scene.doc().get(e, "key").unwrap_or_default()))
+            ([p.x, p.z], radius(&scene.get(e, "key").unwrap_or_default()))
         })
         .collect::<Vec<_>>();
 
@@ -357,7 +355,7 @@ pub fn exported(scene: &TedScene, elem: usize) -> bool {
     let els = scene.doc().elements();
     let mut p = els[elem].parent;
     while let Some(q) = p {
-        if scene.doc().get(q, "export_type").as_deref() == Some(EXPORT_OFF) {
+        if scene.get(q, "export_type").as_deref() == Some(EXPORT_OFF) {
             return false;
         }
 

@@ -307,16 +307,13 @@ impl TileDocument {
 
         let spline = self.is_spline(elem);
         let sc = t.tscene();
-        let closed = if spline {
-            sc.doc().get(elem, "closed").is_some_and(|v| v == "1")
-        } else {
-            sc.doc().get(elem, "polygon_closed").is_none_or(|v| v != "0")
-        };
+        let closed =
+            if spline { sc.get(elem, "closed").is_some_and(|v| v == "1") } else { sc.get(elem, "polygon_closed").is_none_or(|v| v != "0") };
         let mut path = if spline { t.spline_world_curve(elem) } else { t.polygon_world_points(elem) };
 
         // The points' widths (metres), when they have them, at every sample of the curve.
         let points = sc.polygon_points(elem);
-        let widths = points.iter().map(|&p| sc.doc().get(p, "width").and_then(|v| wce_formats::c_num::strtod(&v))).collect::<Vec<_>>();
+        let widths = points.iter().map(|&p| sc.get(p, "width").and_then(|v| wce_formats::c_num::strtod(&v))).collect::<Vec<_>>();
         let mut radii = if spline && widths.iter().any(Option::is_some) && widths.len() >= 2 {
             let w = widths.iter().map(|w| w.unwrap_or(0.0) * 0.5).collect::<Vec<_>>();
             let n = w.len();

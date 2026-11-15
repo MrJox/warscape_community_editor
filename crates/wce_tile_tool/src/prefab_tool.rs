@@ -175,7 +175,7 @@ impl PrefabTool {
             .scene
             .find_all("UserInstanceGroup")
             .into_iter()
-            .find(|&g| project.scene.doc().get(g, STAGE_ATTR).is_some())
+            .find(|&g| project.scene.get(g, STAGE_ATTR).is_some())
             .ok_or("the stage lost its group")?;
         let (normalize, feather) = terrain.as_ref().map_or((false, DEFAULT_FEATHER), |t| (t.normalize, t.feather));
         project.scene.set_attr(group, NORMALIZE_ATTR, if normalize { "true" } else { "false" });

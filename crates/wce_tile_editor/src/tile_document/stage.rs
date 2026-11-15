@@ -29,7 +29,7 @@ impl TileDocument {
     #[must_use]
     pub fn stage_group(&self) -> Option<usize> {
         let sc = self.tile().tscene();
-        sc.find_all("UserInstanceGroup").into_iter().find(|&g| sc.doc().get(g, STAGE_ATTR).is_some_and(|v| v == "true"))
+        sc.find_all("UserInstanceGroup").into_iter().find(|&g| sc.get(g, STAGE_ATTR).is_some_and(|v| v == "true"))
     }
 
     /// The stage's layer of the prefab's heights.
@@ -118,9 +118,9 @@ impl TileDocument {
             let w = world_transform(t.tscene(), e).position;
             let (x, z) = ((w.x / unit) as f32, (w.z / unit) as f32);
             let local = t.local_for_world_y(e, f64::from(t.landscape_y(e, x, z)));
-            let before = t.tscene().doc().get(e, "position").unwrap_or_default();
+            let before = t.tscene().get(e, "position").unwrap_or_default();
             t.project.scene.set_position(e, local);
-            let after = t.tscene().doc().get(e, "position").unwrap_or_default();
+            let after = t.tscene().get(e, "position").unwrap_or_default();
             if after != before {
                 t.index_edited(e);
                 snapped.push((e, before, after));
@@ -140,7 +140,7 @@ impl TileDocument {
         let back = t
             .stage_snapped
             .iter()
-            .filter(|(e, _, now)| *e < n && t.tscene().doc().get(*e, "position").as_deref() == Some(now.as_str()))
+            .filter(|(e, _, now)| *e < n && t.tscene().get(*e, "position").as_deref() == Some(now.as_str()))
             .collect::<Vec<_>>();
         if back.is_empty() {
             return t.tscene().children_text(group);

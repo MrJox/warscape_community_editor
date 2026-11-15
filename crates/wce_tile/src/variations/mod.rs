@@ -289,6 +289,53 @@ impl View {
     }
 }
 
+/// The [`VALUES`] lines right before `elem` (its values per variation; leaves, so each is the element just before the next in document
+/// order), nearest first.
+#[must_use]
+pub fn values_before(doc: &XmlDoc, elem: usize) -> Vec<usize> {
+    let els = doc.elements();
+    let parent = els[elem].parent;
+    let mut out = vec![];
+    let mut k = elem;
+    while parent.is_some() && k > 0 && els[k - 1].name == VALUES && els[k - 1].parent == parent {
+        k -= 1;
+        out.push(k);
+    }
+
+    out
+}
+
+/// The elements that hold `elem`'s values per variation: its [`VALUES`] lines and its [`START`]s.
+#[must_use]
+pub fn overrides(doc: &XmlDoc, elem: usize) -> Vec<usize> {
+    let els = doc.elements();
+    if els[elem].name == VALUES || els[elem].name == START {
+        return vec![];
+    }
+
+    let mut out = values_before(doc, elem);
+    out.extend(els[elem].children.iter().copied().filter(|&c| els[c].name == START));
+    out
+}
+
+/// An attribute's value as `variation` has it of its own ([`START`], [`VALUES`]); `None`: the element's own value is the variation's.
+#[must_use]
+pub fn own_value(doc: &XmlDoc, elem: usize, variation: &str, name: &str) -> Option<String> {
+    overrides(doc, elem)
+        .into_iter()
+        .filter(|&o| doc.get(o, VARIATIONS_ATTR).is_some_and(|l| parse_list(&l).iter().any(|v| v == variation)))
+        .find_map(|o| doc.get(o, name))
+}
+
+/// Whether `variation` goes through `elem`: a [`FOLDER`], a group of other variations only ([`GROUP_ATTR`]) or that group's
+/// `children`. Their contents are there in their place; they add no transform.
+#[must_use]
+pub fn goes_through(doc: &XmlDoc, elem: usize, variation: &str) -> bool {
+    let els = doc.elements();
+    let wrapped = |e: usize| doc.get(e, GROUP_ATTR).is_some_and(|l| !parse_list(&l).iter().any(|v| v == variation));
+    els[elem].name == FOLDER || wrapped(elem) || (els[elem].name == "children" && els[elem].parent.is_some_and(wrapped))
+}
+
 /// The attribute that names a scene layer for the terrain layers that export with it.
 pub const LAYER_ID_ATTR: &str = "wce_layer_id";
 

@@ -624,7 +624,7 @@ pub fn convert_whole_tile_exclusion(project: &mut TileProject) -> Result<Option<
 
     // The static trees (metres), and the carried lists' trees that are none of them: their generated ones.
     let statics = (0..doc.elements().len())
-        .filter(|&e| doc.elements()[e].name == "VEGETATION_INSTANCE")
+        .filter(|&e| doc.elements()[e].name == "VEGETATION_INSTANCE" && scene.in_variation(e))
         .map(|e| {
             let p = world_transform(scene, e).position;
             (p.x / unit, p.z / unit)
@@ -674,7 +674,9 @@ pub fn convert_whole_tile_exclusion(project: &mut TileProject) -> Result<Option<
         edited.add_polygon(Some(layer), "VegetationExclusionPolygonInstance", "Static trees", pts, &BTreeMap::new())?;
     }
 
+    let lens = project.scene.variation().map(str::to_owned);
     project.scene = TedScene::parse(edited.save())?;
+    project.scene.set_variation(lens);
     Ok(Some(cover.len()))
 }
 

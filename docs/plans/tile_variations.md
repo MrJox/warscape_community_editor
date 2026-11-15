@@ -273,10 +273,13 @@ variation has.
      per call): the tree and grass generators' exclusion polygons, seeds and static trees.
    - Checked on `orc_city_a` combined from the kit: `small` viewed in the combined project renders the same as the kit's `small`
      opened by itself (top-down: identical pixels; low: the same but for a fire's animation).
-   Left: the other readers of the whole scene (rivers and their files, roads, the siege and wall tools, the minimap's layers) see
-   every variation's elements; `world_transform` (used where the index is stale) ignores the view; the Inspector shows an element's
-   shared values, not the viewed variation's own (`WceVariationStart` / `WceVariationValues`); undo of tag edits and copies comes
-   with step 5's tools.
+   - The scene itself views the variation (`TedScene::set_variation`): `get`, `position`, `euler`, `flags` read its own values
+     (`variations::own_value`), `world_transform` skips the groups it goes through, `find_all` lists only its elements
+     (`in_variation`), so the readers of the whole scene (rivers, roads, walls, siege, the minimap, the Inspector) see what it has.
+     An edit of a value that variations have of their own changes every variation: a `position` moves each by the same amount (each
+     keeps its height on its own terrain), anything else becomes the same in each. `remove` and the moves take an element's
+     `WceVariationValues` lines with it.
+   Undo of tag edits and copies comes with step 5's tools.
 5. **The editor's tools**: the Scene panel column, the Inspector checkboxes, variation folders, *Move to a variation folder*, *Split
    for this variation*, Tidy, the ghosts, the Terrain layers section, Problems.
 6. **Exports**: For Assembly Kit, As exported tile, To mod pack, Launch in game. The per-variation height scale.

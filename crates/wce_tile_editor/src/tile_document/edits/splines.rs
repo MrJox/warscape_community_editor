@@ -53,7 +53,7 @@ impl TileDocument {
         let local = t.to_local(elem, world);
         // An attribute not written (a procedural spline's handle made from the points) is as it is drawn now.
         let text = |i: usize, attr: &str| {
-            sc.doc().get(elems[i], attr).filter(|v| !v.is_empty()).unwrap_or_else(|| match attr {
+            sc.get(elems[i], attr).filter(|v| !v.is_empty()).unwrap_or_else(|| match attr {
                 "controlIn" => point_text(pts[i].control_in),
                 "controlOut" => point_text(pts[i].control_out),
                 _ => String::new(),
@@ -106,7 +106,7 @@ impl TileDocument {
             // again, which setting it back cannot), then edited as the others.
             let missing = steps
                 .iter()
-                .filter(|s| self.tile().tscene().doc().get(elems[s.0], &s.1).is_none_or(|v| v.is_empty()))
+                .filter(|s| self.tile().tscene().get(elems[s.0], &s.1).is_none_or(|v| v.is_empty()))
                 .cloned()
                 .collect::<Vec<_>>();
             if !missing.is_empty() {
@@ -245,7 +245,7 @@ impl TileDocument {
         let sc = self.tscene_mut();
         for (i, &dst) in elems.iter().enumerate() {
             for (k, v) in &texts[n - 1 - i] {
-                if sc.doc().get(dst, k).as_deref() != Some(v.as_str()) {
+                if sc.get(dst, k).as_deref() != Some(v.as_str()) {
                     sc.set_attr(dst, k, v);
                 }
             }
@@ -267,7 +267,7 @@ impl TileDocument {
         let steps = points
             .iter()
             .filter_map(|&i| {
-                let before = sc.doc().get(*elems.get(i)?, attr).unwrap_or_default();
+                let before = sc.get(*elems.get(i)?, attr).unwrap_or_default();
                 Some((i, attr.to_owned(), before, value.to_owned()))
             })
             .collect::<Vec<_>>();
@@ -334,7 +334,7 @@ impl TileDocument {
     /// Sets an attribute of a polygon's point (a wall's `sharp`), the polygon staying selected.
     pub fn set_point_attribute(&mut self, elem: usize, index: usize, attr: &str, value: &str) -> bool {
         let Some(&p) = self.tile().tscene().polygon_points(elem).get(index) else { return false };
-        if self.tile().tscene().doc().get(p, attr).as_deref() == Some(value) {
+        if self.tile().tscene().get(p, attr).as_deref() == Some(value) {
             return true;
         }
 
@@ -353,7 +353,7 @@ impl TileDocument {
             return false;
         }
 
-        if self.tile().tscene().doc().get(elem, attr).as_deref() == Some(value) {
+        if self.tile().tscene().get(elem, attr).as_deref() == Some(value) {
             return true;
         }
 

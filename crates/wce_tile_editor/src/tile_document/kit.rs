@@ -422,7 +422,7 @@ impl TileDocument {
     /// [`Self::restore_walls`]).
     pub fn wall_texts(&self) -> Vec<(String, Vec<u8>)> {
         let sc = self.tile().tscene();
-        let splines = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == super::BUILDING_SPLINE);
+        let splines = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == super::BUILDING_SPLINE && sc.in_variation(e));
         wce_walls::scene::all_walls(sc).into_iter().chain(splines).map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
     }
 

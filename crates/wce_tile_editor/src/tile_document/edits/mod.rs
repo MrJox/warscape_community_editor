@@ -216,7 +216,7 @@ impl Tile {
 
     /// LayerExportType_Normal | Escalation1..3, without the prefix.
     pub fn export_type(&self, layer: usize) -> String {
-        let t = self.tscene().doc().get(layer, "export_type").unwrap_or_else(|| "LayerExportType_Normal".to_owned());
+        let t = self.tscene().get(layer, "export_type").unwrap_or_else(|| "LayerExportType_Normal".to_owned());
         t.strip_prefix("LayerExportType_").map(str::to_owned).unwrap_or(t)
     }
 
@@ -472,7 +472,7 @@ impl Tile {
 
             let Some(old) = self.tscene().position(e) else { continue };
             let after = self.local_for_world_y(e, f64::from(self.world_position(e).y) + f64::from(dh));
-            let before_text = self.tscene().doc().get(e, "position");
+            let before_text = self.tscene().get(e, "position");
             self.project.scene.set_position(e, after);
             moved.push(Follow { elem: e, before: old, after, before_text });
         }
@@ -512,7 +512,7 @@ impl Tile {
 
             let Some(before) = self.tscene().position(e) else { continue };
             let after = self.local_for_world_y(e, f64::from(self.world_position(e).y) + f64::from(dh));
-            let before_text = self.tscene().doc().get(e, "position");
+            let before_text = self.tscene().get(e, "position");
             self.project.scene.set_position(e, after);
             moved.push(Follow { elem: e, before, after, before_text });
         }
@@ -712,8 +712,8 @@ impl TileDocument {
 
         let n = sc.name(elem);
         let name = format!("Move {}", if n.is_empty() { sc.type_of(elem).to_owned() } else { n });
-        let old_pos_text = old_pos.and_then(|_| sc.doc().get(elem, "position"));
-        let old_euler_text = old_euler.and_then(|_| sc.doc().get(elem, "orientation"));
+        let old_pos_text = old_pos.and_then(|_| sc.get(elem, "position"));
+        let old_euler_text = old_euler.and_then(|_| sc.get(elem, "orientation"));
         let cmd = TedMoveCommand {
             name,
             elem,
@@ -785,7 +785,7 @@ impl TileDocument {
 
         let sc = self.tscene_mut();
         let Some(old_euler) = sc.euler(elem) else { return false };
-        let old_text = sc.doc().get(elem, "orientation");
+        let old_text = sc.get(elem, "orientation");
         rotate_world_yaw(sc, elem, radians(deg));
         let new_euler = sc.euler(elem).unwrap_or(old_euler);
 
@@ -981,7 +981,7 @@ impl TileDocument {
         let sc = self.tscene_mut();
         sc.set_attr(copy, "key", key);
         sc.set_attr(copy, "name", key);
-        if mode != Placement::None && sc.doc().get(copy, "surface_mode").is_some() {
+        if mode != Placement::None && sc.get(copy, "surface_mode").is_some() {
             sc.set_attr(copy, "surface_mode", if mode == Placement::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" });
         }
 
@@ -1134,7 +1134,7 @@ impl TileDocument {
 
             let before = t.tscene().point_position(p).unwrap_or_default();
             let after = t.to_local(elem, world);
-            let (before_text, area_text) = (t.tscene().doc().get(p, "position"), t.tscene().doc().get(elem, "area"));
+            let (before_text, area_text) = (t.tscene().get(p, "position"), t.tscene().get(elem, "area"));
             self.history.push(Box::new(TedPointCommand { elem, index, before, after, before_text, area_text, gesture }));
             return Ok(());
         }
@@ -1156,7 +1156,7 @@ impl TileDocument {
                 // The new point is a copy of the one before it: not its handles (made from its neighbours) nor its corner mark.
                 if own && let Some(&p) = sc.polygon_points(elem).get(index + 1) {
                     for attr in ["controlIn", "controlOut", "sharp"] {
-                        if sc.doc().get(p, attr).is_some_and(|v| !v.is_empty()) {
+                        if sc.get(p, attr).is_some_and(|v| !v.is_empty()) {
                             sc.set_attr(p, attr, "");
                         }
                     }
