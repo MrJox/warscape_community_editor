@@ -316,6 +316,13 @@ impl SurfaceGrid {
 }
 
 /// The editor passes' GPU objects, created on first use.
+impl EditorGpu {
+    /// The input layout of the id / mask / tint passes for a mesh of this vertex stride: a tree's reads its untilted matrix.
+    fn pick_layout(&self, stride: u32) -> Option<&ID3D11InputLayout> {
+        if stride == crate::model_cache::TREE_STRIDE { self.pick_tree_il.as_ref().or(self.pick_il.as_ref()) } else { self.pick_il.as_ref() }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct EditorGpu {
     ready: bool,
@@ -325,6 +332,11 @@ pub(crate) struct EditorGpu {
     pick_ps: Option<ID3D11PixelShader>,
     ovl_il: Option<ID3D11InputLayout>,
     pick_il: Option<ID3D11InputLayout>,
+
+    /// [`Self::pick_il`] for a tree's branches and leaves: the world rows from the instance's POSITION5..7, the untilted matrix the game's
+    /// tree shaders apply to the LOD position drawn at LOD 0 (weights 0, 1; docs/re/vegetation.md). With the tilted rows a tree on a slope
+    /// was outlined, tinted and picked leaning along it while it is drawn upright.
+    pick_tree_il: Option<ID3D11InputLayout>,
     ovl_cb: Option<ID3D11Buffer>,
     ovl_slots_cb: Option<ID3D11Buffer>,
     pick_cb: Option<ID3D11Buffer>,
@@ -460,11 +472,17 @@ impl Renderer {
 
         // The entity id of every instance.
         pel.push(element(c"TEXCOORD", 0, DXGI_FORMAT_R32_UINT, 2, 0, true));
+        let mut tree_pel = pel.clone();
+        for i in 1..=3 {
+            tree_pel[i] = element(c"POSITION", i as u32, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i as u32 + 3) * 16, true);
+        }
+
         e.ovl_vs = dev.create_vertex_shader(&vs).ok();
         e.ovl_il = dev.create_input_layout(&oel, &vs).ok();
         e.ovl_ps = dev.create_pixel_shader(&ps).ok();
         e.pick_vs = dev.create_vertex_shader(&pvs).ok();
         e.pick_il = dev.create_input_layout(&pel, &pvs).ok();
+        e.pick_tree_il = dev.create_input_layout(&tree_pel, &pvs).ok();
         let pick_failed = e.pick_il.is_none();
         e.pick_ps = dev.create_pixel_shader(&pps).ok();
         e.mask_ps = dev.create_pixel_shader(&mps).ok();
@@ -950,6 +968,7 @@ impl Renderer {
         for &b in &vis.active {
             let m = draws.batch_mesh(b);
             let offset = if m.stride == crate::model_cache::TREE_STRIDE { 8 } else { 0 };
+            self.ctx.set_input_layout(e.pick_layout(m.stride));
             self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[offset]);
             self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
             self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, vis.start[b as usize]);
@@ -1218,6 +1237,7 @@ impl Renderer {
                     for &b in &vis.active {
                         let m = set.batch_mesh(b);
                         let offset = if m.stride == crate::model_cache::TREE_STRIDE { 8 } else { 0 };
+                        self.ctx.set_input_layout(e.pick_layout(m.stride));
                         self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[offset]);
                         self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
                         self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, first + vis.start[b as usize]);
@@ -1436,6 +1456,7 @@ impl Renderer {
 
                 // A tree's LOD position (bytes 8..16) is the one drawn at LOD 0 (its weights are 0, 1): picked as POSITION0.
                 let offset = if m.stride == crate::model_cache::TREE_STRIDE { 8 } else { 0 };
+                self.ctx.set_input_layout(self.editor.pick_layout(m.stride));
                 self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[offset]);
                 self.ctx.set_index_buffer(m.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
                 self.ctx.draw_indexed_instanced(m.index_count, vis.count[b as usize], 0, 0, vis.start[b as usize]);
