@@ -1398,7 +1398,9 @@ fn a_group_keeps_its_items_in_the_world_and_ungroups_into_a_layer() {
     let near = |a: Float3, b: Float3| (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3;
     assert!(near(d.tile().world_position(kids[0]), before[0]) && near(d.tile().world_position(kids[1]), before[1]));
     let gp = d.tile().world_position(g);
-    assert!(near(gp, (before[0] + before[1]) * 0.5), "the group sits at the centre of its items: {gp:?}");
+    // Across: the centre of its items. Its height is their files' (a landscape item is shown on the terrain whatever its file's y).
+    let centre = (before[0] + before[1]) * 0.5;
+    assert!((gp.x - centre.x).abs() < 1e-3 && (gp.z - centre.z).abs() < 1e-3, "the group sits at the centre of its items: {gp:?}");
 
     // Ungrouped into the layer: the items are its last children, in the same places; the group is gone.
     let layer_now = d.tile().tscene().find_all("LayerInstance")[0];

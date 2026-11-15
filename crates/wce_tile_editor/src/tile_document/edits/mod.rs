@@ -177,8 +177,9 @@ impl Tile {
             .copied()
             .filter(|&e| self.on_the_terrain(e))
             .filter_map(|e| {
+                // The file's height: a landscape item is shown on the terrain whatever its file says.
                 let p = self.world_position(e);
-                let dy = p.y - self.landscape_y(e, p.x, p.z);
+                let dy = self.file_world_y(e) - self.landscape_y(e, p.x, p.z);
                 (dy.abs() > tolerance).then_some(OffTerrain { elem: e, dy })
             })
             .collect::<Vec<_>>();

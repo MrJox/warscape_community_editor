@@ -346,12 +346,29 @@ impl Tile {
         Float3::new((w.position.x / self.unit()) as f32, (w.position.y / self.unit()) as f32, (w.position.z / self.unit()) as f32)
     }
 
+    /// The world height its file gives an element (metres), before a landscape item is put on the terrain (`snap_landscape_world`).
+    pub fn file_world_y(&self, elem: usize) -> f32 {
+        (world_transform(self.tscene(), elem).position.y / self.unit()) as f32
+    }
+
     pub fn world_position(&self, elem: usize) -> Float3 {
         if self.idx.valid && elem < self.idx.slot.len() {
             return self.metres(&self.idx.world[self.idx.slot[elem] as usize]);
         }
 
-        self.metres(&world_transform(self.tscene(), elem))
+        // The index is being rebuilt (a structural edit): the same snap, from the element's own attributes.
+        let mut w = world_transform(self.tscene(), elem);
+        let leaf = self.elements().get(elem).is_some_and(|el| el.children.is_empty());
+        if leaf
+            && self.placement_of_attr(elem) == Placement::Landscape
+            && self.is_instance_slow(elem)
+            && !self.is_polygon(elem)
+            && self.project.height.is_some()
+        {
+            w.position.y = self.project.height_at(w.position.x / self.unit(), w.position.z / self.unit());
+        }
+
+        self.metres(&w)
     }
 
     /// Whether a building exports as a prop (`wce_tile::export_as_prop`).
@@ -572,10 +589,11 @@ impl Tile {
         }
     }
 
-    /// The trees and decals of a Landscape layer stand on the terrain whatever y their file has (BOB generates them onto the terrain from the
-    /// tile's seeds: the file's y is a leftover, 0 in every lothlorien tree). The element index holds the snapped height of those leaf
-    /// instances. Everything else keeps the y of the file: the game's building list has exactly that (checked on the shipped
-    /// dunedain_city_a: 29,680 of 29,680 buildings), TEd loads it as it is and only snaps an instance when the terrain under it is edited.
+    /// A Landscape: Above leaf instance stands on the terrain whatever y its file has, as TEd draws it (2026-11-15, dunedain_port_a/medium:
+    /// a farm's fences saved 1.6 units under the ground, which was raised after they were placed, stand on it in TEd, its grid showing the
+    /// file's y; the trees and decals are BOB's from the tile's seeds anyway, their file y a leftover). The element index holds the snapped
+    /// height; the file keeps its y until the item is edited (`file_world_y`, the off-terrain report and Snap to terrain read it). The game's
+    /// building list has the file's y (dunedain_city_a: 29,680 of 29,680 buildings): a stale one shows in the report.
     pub(crate) fn snap_landscape_world(&self, elem: usize, w: &mut WorldTransform) {
         snap(self, &self.idx.mode, &self.idx.kind, elem, w);
     }
@@ -1428,13 +1446,6 @@ fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform)
     let k = kind[elem];
     let el = &t.tscene().doc().elements()[elem];
     if k & INSTANCE_BIT == 0 || k & (POLYGON_BIT | LAYER_BIT) != 0 || !el.children.is_empty() {
-        return;
-    }
-
-    // Only what the game generates onto the terrain: BOB makes the trees and decals from the tile's seeds and the height map, so their y in the
-    // file means nothing (lothlorien: every tree at y 0). A building stands where the file says, as in TEd and in the game's building list.
-    // A civilian shelter has no height for the game at all: `civilian_shelter.bin` keeps x and z, so an extracted one is at y 0.
-    if !matches!(el.name.as_str(), "VEGETATION_INSTANCE" | "ProjectedDecalInstance" | "CivilianShelter") {
         return;
     }
 
