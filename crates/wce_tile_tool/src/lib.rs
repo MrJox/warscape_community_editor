@@ -42,7 +42,7 @@ mod selection_tools;
 pub mod settings;
 mod share_prompt;
 mod tech_chip;
-mod thumbnails;
+pub(crate) use wce_editor::thumbnails;
 mod tile_database;
 mod tile_properties;
 mod tile_stats;

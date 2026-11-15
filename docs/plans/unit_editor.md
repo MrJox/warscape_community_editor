@@ -167,7 +167,9 @@ Each step ends with something visible and a test or a gate.
 
 ## Left
 
-- The selection outline for skinned parts, and clicking a part to select its node (skinned meshes aren't in the id pass).
+- Done 2026-11-15 (user's request): clicking a part selects its node, the selection is outlined; pictures for the file fields, the
+  slots' alternatives, Unit files and Units. Clicks are found on the CPU, not by the id pass; a part of a referenced file selects the
+  reference.
 - In game: a pack from Export > To mod pack, to see that `!wce_unit_tool` rows win and the unit wears the edited file.
 - New `unit_variants` rows for a faction that has none; undo for the DB edits; officers', standard bearers' and musicians' colours.
 - Referenced definitions edited live in the same preview (only the open file is live); Launch in game with the unit; Rome 2 (packs not on

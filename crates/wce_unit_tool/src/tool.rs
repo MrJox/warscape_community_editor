@@ -14,7 +14,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use rpfm_lib::schema::Schema;
 use serde::{Deserialize, Serialize};
 use wce_editor::editor::Editor;
-use wce_editor::gui;
+use wce_editor::gui::{self, v2};
 use wce_editor::pickers::{pick_button, search_combo};
 use wce_editor::theme;
 use wce_editor::tool::Tool;
@@ -36,6 +36,8 @@ use wce_vfs::normalize;
 
 #[path = "structure.rs"]
 mod structure;
+#[path = "thumbs.rs"]
+mod thumbs;
 
 use crate::db::{LooksTables, Row, project_path};
 use crate::document::{Source, Structural, VmdDocument};
@@ -221,6 +223,9 @@ pub struct UnitTool {
     tree: structure::TreeState,
     dragging_file: Option<String>,
 
+    /// The pictures of models, definitions, textures and alternatives.
+    pics: thumbs::ThumbState,
+
     // The filters of the lists and pickers.
     file_filter: String,
     unit_filter: String,
@@ -282,6 +287,7 @@ impl Default for UnitTool {
             pending_preview: None,
             tree: structure::TreeState::default(),
             dragging_file: None,
+            pics: thumbs::ThumbState::new(),
             file_filter: String::new(),
             unit_filter: String::new(),
             combo_filters: BTreeMap::new(),
@@ -1077,13 +1083,35 @@ impl UnitTool {
             return actions;
         }
 
-        gui::set_next_item_width(-1.0);
+        gui::set_next_item_width(-gui::frame_height_with_spacing() - 4.0);
         gui::input_text("##vmd_filter", Some("filter the definitions"), &mut self.file_filter, 128, 0);
+        gui::same_line();
+        thumbs::grid_toggle("files_grid", &mut self.pics.files_grid);
         let words: Vec<String> = self.file_filter.split_whitespace().map(str::to_lowercase).collect();
         let open = e.docs.of_tool(UNIT_TOOL_ID).and_then(|id| e.docs.find_as::<VmdDocument>(id)).map(|d| d.source().vfs_path.clone());
         let shown: Vec<String> = self.listings(e).definitions.iter().filter(|p| wce_editor::pickers::matches(p, &words)).cloned().collect();
         gui::text_colored(theme::dim(), &format!("{} definitions; drag one onto a slot for a reference to it", shown.len()));
         let mut dragged = None;
+        if self.pics.files_grid {
+            if gui::begin_child("##vmd_grid", gui::v2(0.0, 0.0), 0, 0) {
+                let cells: Vec<(thumbs::Thing, String, bool)> = shown
+                    .iter()
+                    .map(|p| {
+                        let name = file_name(p);
+                        let name = name.strip_suffix(".variantmeshdefinition").unwrap_or(name);
+                        (thumbs::Thing::Definition(p.clone()), name.to_owned(), open.as_deref() == Some(p.as_str()))
+                    })
+                    .collect();
+                if let Some(k) = self.grid(e, &cells, "files") {
+                    actions.push(Action::Open(shown[k].clone()));
+                }
+            }
+
+            gui::end_child();
+            gui::end();
+            return actions;
+        }
+
         if gui::begin_child("##vmd_list", gui::v2(0.0, 0.0), 0, 0) {
             gui::clipped(shown.len(), |k| {
                 let p = &shown[k];
@@ -1112,7 +1140,7 @@ impl UnitTool {
         actions
     }
 
-    fn draw_units(&mut self) -> Vec<Action> {
+    fn draw_units(&mut self, e: &mut Editor) -> Vec<Action> {
         let mut actions = vec![];
         if !gui::begin("Units", None, 0) {
             gui::end();
@@ -1125,8 +1153,10 @@ impl UnitTool {
             return actions;
         };
 
-        gui::set_next_item_width(-1.0);
+        gui::set_next_item_width(-gui::frame_height_with_spacing() - 4.0);
         gui::input_text("##unit_filter", Some("filter: unit, faction or definition"), &mut self.unit_filter, 128, 0);
+        gui::same_line();
+        thumbs::grid_toggle("units_grid", &mut self.pics.units_grid);
         let words: Vec<String> = self.unit_filter.split_whitespace().map(str::to_lowercase).collect();
         let rows: Vec<&wce_render::unit_catalog::UnitEntry> =
             c.entries.iter().filter(|u| wce_editor::pickers::matches(&format!("{} {} {}", u.unit, u.faction, u.variant), &words)).collect();
@@ -1134,6 +1164,25 @@ impl UnitTool {
             theme::dim(),
             &format!("{} unit_variants rows; a click opens the row's definition, worn by its unit", rows.len()),
         );
+        if self.pics.units_grid {
+            if gui::begin_child("##units_grid", gui::v2(0.0, 0.0), 0, 0) {
+                let cells: Vec<(thumbs::Thing, String, bool)> = rows
+                    .iter()
+                    .map(|u| {
+                        let label = if u.faction.is_empty() { u.unit.clone() } else { format!("{} ({})", u.unit, u.faction) };
+                        (thumbs::Thing::Definition(variant_path(&u.variant)), label, u.unit == self.unit && u.faction == self.faction)
+                    })
+                    .collect();
+                if let Some(k) = self.grid(e, &cells, "units") {
+                    actions.push(Action::OpenUnit(rows[k].unit.clone(), rows[k].faction.clone()));
+                }
+            }
+
+            gui::end_child();
+            gui::end();
+            return actions;
+        }
+
         if gui::begin_table("##units", 3, gui::TABLE_ROW_BG | gui::TABLE_SCROLL_Y | gui::TABLE_RESIZABLE, gui::v2(0.0, 0.0)) {
             gui::table_setup_scroll_freeze(0, 1);
             gui::table_setup_column("Unit", 0, 0.0);
@@ -1668,20 +1717,50 @@ impl UnitTool {
     // ---- the Inspector
 
     /// A file's path: its name above, the text, and a button listing the packs' files.
-    fn path_field(&mut self, d: &mut VmdDocument, elem: usize, name: &str, tip: &str, items: &[String], strip: &str) {
-        let value = d.xml().get(elem, name).unwrap_or_default();
+    /// A file's path: a picture of what it names, its name, the text, and a button browsing the packs' files with pictures.
+    fn path_field(&mut self, e: &mut Editor, elem: usize, name: &str, tip: &str, items: &[String], kind: thumbs::Browse) {
+        let Some(value) = document(e).map(|d| d.xml().get(elem, name).unwrap_or_default()) else { return };
+        let side = 2.0 * gui::frame_height_with_spacing() + gui::text_line_height_with_spacing() - gui::item_spacing().y;
+        let thing = match kind {
+            thumbs::Browse::Model => thumbs::Thing::Model(normalize(&value)),
+            thumbs::Browse::Definition => thumbs::Thing::Definition(normalize(&value)),
+            thumbs::Browse::Texture => thumbs::Thing::Texture(normalize(&value)),
+        };
+        let at = gui::cursor_screen_pos();
+        gui::dummy(v2(side, side));
+        let dl = gui::window_draw_list();
+        match (!value.trim().is_empty()).then(|| self.picture(e, &thing, false)).flatten() {
+            Some(img) => dl.image(img.id, at, v2(at.x + side, at.y + side), v2(0.0, 0.0), v2(1.0, 1.0), 0xFFFF_FFFF),
+            None => dl.rect_filled(
+                at,
+                v2(at.x + side, at.y + side),
+                theme::u32(theme::mix(theme::palette_background(), theme::text(), 0.07)),
+                4.0,
+            ),
+        }
+
+        if gui::is_item_hovered() && !value.is_empty() {
+            gui::set_tooltip(&value);
+        }
+
+        gui::same_line();
+        gui::begin_group();
         gui::text_colored(theme::dim(), name);
         if gui::is_item_hovered() {
             gui::set_tooltip(tip);
         }
 
         let mut text = value.clone();
-        gui::set_next_item_width(-gui::button_width("...") - 8.0);
-        if gui::input_text(&format!("##{name}{elem}"), None, &mut text, 512, 0) {
+        gui::set_next_item_width(-gui::button_width(wce_editor::icons::IMAGE) - 8.0);
+        if gui::input_text(&format!("##{name}{elem}"), None, &mut text, 512, 0)
+            && let Some(d) = document(e)
+        {
             d.set_value(elem, name, &text, gesture(elem, name));
         }
 
-        if gui::is_item_deactivated_after_edit() {
+        if gui::is_item_deactivated_after_edit()
+            && let Some(d) = document(e)
+        {
             d.break_merge();
         }
 
@@ -1690,10 +1769,13 @@ impl UnitTool {
         }
 
         gui::same_line();
-        let filter = self.combo_filters.entry(format!("{name}#pick")).or_default();
-        if let Some(p) = pick_button(&format!("{name}{elem}"), "Pick a file of the packs.", filter, &value, items) {
-            d.set_value(elem, name, p.trim_end_matches(strip), 0);
+        if let Some(p) = self.browse(e, &format!("{name}{elem}"), &normalize(&value), items, kind)
+            && let Some(d) = document(e)
+        {
+            d.set_value(elem, name, &p, 0);
         }
+
+        gui::end_group();
     }
 
     fn inspect_mesh(&mut self, e: &mut Editor, path: &NodePath) {
@@ -1702,22 +1784,29 @@ impl UnitTool {
             (l.models.clone(), l.textures.clone())
         };
         let vfs = e.vfs().cloned();
-        let Some(d) = document(e) else { return };
-        let tree = d.tree();
+        let Some(tree) = document(e).map(|d| d.tree()) else { return };
         let Some(Node::Mesh(mesh)) = tree.node(path) else { return };
         let elem = mesh.element;
         gui::separator_text(if path.is_empty() { "The file's root" } else { "Mesh" });
-        self.path_field(d, elem, "model", "The part's model (RMV2).", &listings.0, "");
+        self.path_field(e, elem, "model", "The part's model (RMV2).", &listings.0, thumbs::Browse::Model);
         self.path_field(
-            d,
+            e,
             elem,
             "decal_diffuse",
             "A decal's colours: a texture, or a .texture_array of them (one picked per soldier).",
             &listings.1,
-            "",
+            thumbs::Browse::Texture,
         );
-        self.path_field(d, elem, "decal_normal", "The decal's normals: a texture, or a .texture_array.", &listings.1, "");
-        self.path_field(d, elem, "imposter_model", "The model drawn far away.", &listings.0, "");
+        self.path_field(
+            e,
+            elem,
+            "decal_normal",
+            "The decal's normals: a texture, or a .texture_array.",
+            &listings.1,
+            thumbs::Browse::Texture,
+        );
+        self.path_field(e, elem, "imposter_model", "The model drawn far away.", &listings.0, thumbs::Browse::Model);
+        let Some(d) = document(e) else { return };
 
         gui::separator_text("Colour mask");
         for k in 0..3 {
@@ -1802,27 +1891,6 @@ impl UnitTool {
             let _ = d.structural(&Structural::AddTint, elem);
         }
 
-        // The decals of a texture array, to show one.
-        if let (Some(vfs), Some(name)) = (vfs, mesh.decal_diffuse.as_deref().filter(|n| !n.trim().is_empty())) {
-            let read = |p: &str| vfs.read(p).ok();
-            let all = decals(&read, name);
-            if all.len() > 1 {
-                gui::separator_text("Decal shown");
-                let mut current = self.pins.decals.get(path).map_or(0, |k| *k as i32 + 1);
-                let mut labels = vec!["the seed's".to_owned()];
-                labels.extend(all.iter().map(|t| file_name(t).to_owned()));
-                let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-                gui::set_next_item_width(-1.0);
-                if gui::combo("##decal_shown", &mut current, &labels) {
-                    if current == 0 {
-                        self.pins.decals.remove(path);
-                    } else {
-                        self.pins.decals.insert(path.clone(), current as usize - 1);
-                    }
-                }
-            }
-        }
-
         if !mesh.meta_data.is_empty() {
             gui::separator_text("Meta data");
             for m in &mesh.meta_data {
@@ -1831,6 +1899,32 @@ impl UnitTool {
         }
 
         other_attributes(d, elem, &["model", "decal_diffuse", "decal_normal", "imposter_model", "mask0", "mask1", "mask2"]);
+
+        // The decals of a texture array: one shown, whatever the seed picks.
+        if let (Some(vfs), Some(name)) = (vfs, mesh.decal_diffuse.as_deref().filter(|n| !n.trim().is_empty())) {
+            let read = |p: &str| vfs.read(p).ok();
+            let all = decals(&read, name);
+            if all.len() > 1 {
+                gui::separator_text("Decal shown");
+                let pinned = self.pins.decals.get(path).copied();
+                if gui::radio_button("The seed's", pinned.is_none()) {
+                    self.pins.decals.remove(path);
+                }
+
+                let cells: Vec<(thumbs::Thing, String, bool)> = all
+                    .iter()
+                    .enumerate()
+                    .map(|(k, t)| (thumbs::Thing::Texture(t.clone()), file_name(t).to_owned(), pinned == Some(k)))
+                    .collect();
+                if let Some(k) = self.grid(e, &cells, "decal") {
+                    if pinned == Some(k) {
+                        self.pins.decals.remove(path);
+                    } else {
+                        self.pins.decals.insert(path.clone(), k);
+                    }
+                }
+            }
+        }
     }
 
     fn inspect_slot(&mut self, e: &mut Editor, path: &NodePath) {
@@ -1915,45 +2009,46 @@ impl UnitTool {
             }
         }
 
-        gui::separator_text("Shown in the preview");
-        let labels: Vec<String> = ["the seed's".to_owned(), "nothing".to_owned()]
-            .into_iter()
-            .chain(slot.alternatives.iter().enumerate().map(|(k, a)| format!("{}: {}", k + 1, alternative_label(a))))
-            .collect();
-        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let mut current = match self.pins.slots.get(path) {
-            None => 0,
-            Some(SlotPin::Off) => 1,
-            Some(SlotPin::Alternative(k)) => *k as i32 + 2,
-        };
-        gui::set_next_item_width(-1.0);
-        if gui::combo("##slot_shown", &mut current, &labels) {
-            match current {
-                0 => {
-                    self.pins.slots.remove(path);
-                }
+        other_attributes(d, elem, &["name", "attach_point", "probability"]);
 
-                1 => {
-                    self.pins.slots.insert(path.clone(), SlotPin::Off);
-                }
-
-                k => {
-                    self.pins.slots.insert(path.clone(), SlotPin::Alternative(k as usize - 2));
-                }
-            }
+        // The alternatives, pictured: a click shows one whatever the seed picks, a second click lets the seed pick again.
+        gui::separator_text("Alternatives");
+        let pin = self.pins.slots.get(path).copied();
+        if gui::radio_button("The seed's", pin.is_none()) {
+            self.pins.slots.remove(path);
         }
 
-        other_attributes(d, elem, &["name", "attach_point", "probability"]);
+        gui::same_line();
+        if gui::radio_button("Nothing", pin == Some(SlotPin::Off)) {
+            self.pins.slots.insert(path.clone(), SlotPin::Off);
+        }
+
+        let cells: Vec<(thumbs::Thing, String, bool)> = slot
+            .alternatives
+            .iter()
+            .enumerate()
+            .map(|(k, a)| {
+                let mut at = path.clone();
+                at.push(k);
+                (thumbs::Thing::Alternative(at), alternative_label(a), pin == Some(SlotPin::Alternative(k)))
+            })
+            .collect();
+        if let Some(k) = self.grid(e, &cells, "alternative") {
+            if pin == Some(SlotPin::Alternative(k)) {
+                self.pins.slots.remove(path);
+            } else {
+                self.pins.slots.insert(path.clone(), SlotPin::Alternative(k));
+            }
+        }
     }
 
     fn inspect_reference(&mut self, e: &mut Editor, path: &NodePath) -> Option<String> {
         let definitions = self.listings(e).definitions.clone();
-        let d = document(e)?;
-        let tree = d.tree();
+        let tree = document(e)?.tree();
         let Some(Node::Reference { element, definition }) = tree.node(path) else { return None };
         gui::separator_text("Reference");
         gui::text_wrapped("Another definition file, used whole as this alternative.");
-        self.path_field(d, element, "definition", "The definition file.", &definitions, "");
+        self.path_field(e, element, "definition", "The definition file.", &definitions, thumbs::Browse::Definition);
         let file = normalize(definition);
         (!file.is_empty() && gui::button("Open it")).then_some(file)
     }
@@ -2126,12 +2221,13 @@ impl Tool for UnitTool {
 
         self.dress(e);
         self.pose(e);
+        self.update_thumbs(e);
     }
 
     fn draw_panels(&mut self, e: &mut Editor) {
         let mut actions = self.draw_structure(e);
         actions.extend(self.draw_files(e));
-        actions.extend(self.draw_units());
+        actions.extend(self.draw_units(e));
         actions.extend(self.draw_preview(e));
         actions.extend(self.draw_problems());
         self.apply(e, actions);
@@ -2455,6 +2551,24 @@ fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("unit_grid", "unit_grid <files|units> <on|off>", "the Unit files or Units panel as pictures or a list", |e, a| {
+        let on = a.get(1).is_some_and(|v| v == "on");
+        let which = a.first().cloned().unwrap_or_default();
+        with_unit(e, |t, _| match which.as_str() {
+            "files" => {
+                t.pics.files_grid = on;
+                ok("")
+            }
+
+            "units" => {
+                t.pics.units_grid = on;
+                ok("")
+            }
+
+            _ => fail("files or units"),
+        })
+    });
+
     c.add("unit_isolate", "unit_isolate <0|1>", "only the selected node's parts", |e, a| {
         let on = a.first().is_some_and(|v| v == "1");
         with_unit(e, |t, _| {
@@ -2468,6 +2582,8 @@ fn register(c: &mut CommandRegistry<Editor>) {
             let version = document(e).map(|d| d.version());
             if t.loading.is_none()
                 && t.catalog_rx.is_none()
+                && t.wearer_rx.is_none()
+                && !t.pics_busy()
                 && !t.models.is_empty()
                 && t.worn == version
                 && t.models_for == Some(t.wanted())

@@ -21,6 +21,7 @@ pub mod settings_window;
 pub mod shortcuts;
 pub use wce_vfs::steam_detect;
 pub mod theme;
+pub mod thumbnails;
 pub mod tool;
 pub mod updates;
 pub mod viewport;
