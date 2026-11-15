@@ -9,6 +9,7 @@ mod bridge_check;
 mod building_effects_fix;
 mod building_spline_ui;
 mod camera_views;
+mod combine_ui;
 pub mod commands;
 pub mod context_panel;
 pub mod create_panel;

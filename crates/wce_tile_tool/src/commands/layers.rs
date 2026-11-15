@@ -108,6 +108,29 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "tile_combine",
+        "tile_combine [--ref <variation>] <variation> <variation>...",
+        "Tile > Variations > Combine: the open tile's variations named made one combined project in the projects (each from its project, else the kit, else the packs; checked before anything is written; the projects that went in moved to the backup), opened",
+        move |e, a| {
+            let at = a.iter().position(|x| x == "--ref");
+            let reference = at.and_then(|i| a.get(i + 1)).cloned();
+            let names = a.iter().enumerate().filter(|(i, _)| at.is_none_or(|r| *i != r && *i != r + 1)).map(|(_, x)| x.clone()).collect::<Vec<_>>();
+            let names = list(&names);
+            with_tile(e, |t, e| t.combine_now(e, &names, reference.as_deref()).map_or_else(fail, ok))
+        },
+    );
+
+    c.add(
+        "tile_separate",
+        "tile_separate <variation>",
+        "Tile > Variations > Separate: a variation of the open combined project made a project of its own again, the others left combined (the tile saved first, opened again)",
+        |e, a| {
+            let Some(v) = a.first().cloned() else { return fail("usage: tile_separate <variation>") };
+            with_tile(e, |t, e| t.separate_variation(e, &v).map_or_else(fail, ok))
+        },
+    );
+
+    c.add(
         "tile_split_variation",
         "tile_split_variation",
         "Split for this variation: the selection copied into a folder for the viewed variation, the originals into one for the others; the copies selected",
