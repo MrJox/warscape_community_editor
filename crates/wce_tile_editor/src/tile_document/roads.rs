@@ -46,7 +46,21 @@ struct Road {
     /// Its fences: on its left, on its right (as it runs); and how many of them are destroyed (0 to 1: the chance each one is).
     fences: [bool; 2],
     fence_damage: f64,
+
+    /// The share of its pieces' detail parts laid (0 to 1; `road_pieces::PartRole::Detail`), by its seed.
+    detail_density: f64,
     signature: u64,
+}
+
+/// Whether a detail part is laid: by the road's density, its seed, the piece's number (`n`) and the part's index in the piece; any other
+/// part always.
+fn detail_kept(road: &Road, n: u64, index: usize, part: &wce_tile::road_pieces::Part) -> bool {
+    if part.role != Some(wce_tile::road_pieces::PartRole::Detail) {
+        return true;
+    }
+
+    let h = road_hash(road.settings.seed, road.id, n.wrapping_mul(131).wrapping_add(index as u64) ^ 0xDE7A_1100);
+    ((h >> 11) as f64 / (1u64 << 53) as f64) < road.detail_density
 }
 
 /// A road type's pieces, read: each one's name, what it reads as, its prefab's key and contents.
@@ -372,8 +386,9 @@ impl Tile {
                 };
 
                 let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
+                let detail_density = number(e, "road_detail_density", 0.5).clamp(0.0, 1.0);
                 let signature = hash_text(&format!(
-                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"
+                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {water:x}"
                 ));
                 Road {
                     id: number(e, "road_id", 0.0) as u32,
@@ -385,6 +400,7 @@ impl Tile {
                     bridge,
                     fences,
                     fence_damage,
+                    detail_density,
                     signature,
                 }
             })
@@ -1259,7 +1275,8 @@ fn road_items(i: ItemsInput) -> ItemsMade {
         for (k, l) in laid.laid.iter().enumerate() {
             let Some((_, p, key, children)) = pick(&laid.laid, k, &pieces[..], road) else { continue };
             // Their buildings (the banks) tilted to the ground under them.
-            let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::PIECE_TILT), attrs: None };
+            let keep = |index: usize, part: &wce_tile::road_pieces::Part| detail_kept(road, k as u64, index, part);
+            let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::PIECE_TILT), attrs: None, keep: Some(&keep) };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => {
                     items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None })
@@ -1351,7 +1368,12 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                     let (fp, fkey, fchildren) =
                         weighted(&fence_options, |q| q.1.weight, road_hash(road.settings.seed, road.id, n ^ 0xFE4C_E000))
                             .map_or((p, key, children), |q| (&q.1, &q.2, &q.3));
-                    let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::FENCE_TILT), attrs: Some(&damage) };
+                    let keep = |index: usize, part: &wce_tile::road_pieces::Part| detail_kept(road, n ^ 0xFE4C_E000, index, part);
+                    let dress = wce_tile::road_layout::Dress {
+                        tilt: Some(wce_tile::road_layout::FENCE_TILT),
+                        attrs: Some(&damage),
+                        keep: Some(&keep),
+                    };
                     match wce_tile::road_layout::fit_dressed(
                         fp,
                         fchildren,
