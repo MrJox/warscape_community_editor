@@ -258,12 +258,17 @@ fn autosave_round_trip_retains_owned_target_until_successful_project_save() {
     restored.observe_save_destination().unwrap();
     assert_eq!(restored.lf_field(LfRole::Land).unwrap().to_le_rows(), before.5);
     let restored_before = state(&restored);
+    assert!(restored.save_changes(&SaveTarget::default()).unwrap().is_some());
     restored.save(&SaveTarget { path: root.0.join("copy") }).unwrap();
     assert_eq!(state(&restored), restored_before);
     assert_eq!(restored.restored_from.as_ref(), Some(&recovery));
     assert_eq!(disk(&owned), original);
 
-    restored.save(&SaveTarget::default()).unwrap();
+    assert!(restored.save_changes(&SaveTarget::default()).unwrap().is_some());
+    assert!(restored.save(&SaveTarget::default()).is_err());
+    assert_eq!(state(&restored), restored_before);
+    assert_eq!(disk(&owned), original);
+    restored.save_overwrite(&SaveTarget::default()).unwrap();
     assert_eq!(restored.restored_from, None);
     assert!(!restored.modified());
     let reopened = built::read("test", &MapFiles::from_dir(&owned).unwrap()).unwrap();
