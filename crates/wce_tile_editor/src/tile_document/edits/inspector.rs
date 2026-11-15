@@ -47,6 +47,7 @@ impl TileDocument {
         }
 
         self.variation_rows(e, ins);
+        self.road_role_row(e, ins);
         let t = self.tile();
         let sc = t.tscene();
         if let Some(k) = sc.get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
@@ -75,7 +76,7 @@ impl TileDocument {
         // The rows of TEd's Property Editor, in its order.
         ins.section("Properties");
         // The reference's key is the prefab row above.
-        let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR];
+        let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR, wce_tile::road_pieces::PART_ROLE_ATTR];
 
         // A reference's ground has its own rows, above.
         shown.extend([
@@ -163,6 +164,39 @@ impl TileDocument {
         if self.tile().is_polygon(e) {
             let sc = self.tile().tscene();
             ins.text("points", "points", &sc.polygon_points(e).len().to_string());
+        }
+    }
+
+    /// A group inside a road piece on the Prefab tool's stage (its prefab's key `road_...`): its role in the piece (`road_pieces::PartRole`),
+    /// what decides how its parts follow the road, whatever the group's name.
+    fn road_role_row(&mut self, e: usize, ins: &mut dyn Inspector) {
+        use wce_tile::road_pieces::{PART_ROLE_ATTR, PartRole};
+        let t = self.tile();
+        let sc = t.tscene();
+        let Some(stage) = self.stage_group().filter(|&g| g != e && sc.type_of(e) == "UserInstanceGroup") else { return };
+        let els = sc.doc().elements();
+        if !sc.name(stage).starts_with("road_") || !std::iter::successors(els[e].parent, |&p| els[p].parent).any(|p| p == stage) {
+            return;
+        }
+
+        let current = sc.get(e, PART_ROLE_ATTR).and_then(|r| PartRole::parse(&r));
+        let names = std::iter::once("none").chain(PartRole::ALL.iter().map(|r| r.name())).map(str::to_owned).collect::<Vec<_>>();
+        let tips = [
+            "Its parts are anchored by where they stand: on the road, by an edge or on the verge.",
+            "The road's surface (ruts, mud): widened with the road.",
+            "The road's edges (borders): each keeps its distance from its edge.",
+            "The verges (banks, erosion): each keeps its distance from the verge.",
+            "A fence: its parts take the road's fence settings.",
+            "Optional detail (rocks, puddles, patches): each shows by the road's detail density and seed.",
+            "Stays where it is in the piece (a junction's middle).",
+        ]
+        .map(str::to_owned);
+        let mut idx = current.map_or(0, |r| PartRole::ALL.iter().position(|&x| x == r).map_or(0, |i| i as i32 + 1));
+        let before = idx;
+        ins.hint("What this group's parts are in the road piece; a part's own road_anchor still wins.");
+        if ins.edit_choice_tips("road_role", "road role", &mut idx, &names, &tips) && idx != before {
+            let value = usize::try_from(idx - 1).ok().and_then(|i| PartRole::ALL.get(i)).map_or("", |r| r.name());
+            self.set_attribute(e, PART_ROLE_ATTR, value);
         }
     }
 
