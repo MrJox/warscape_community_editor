@@ -548,6 +548,11 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   2026-11-15). So a building's pixels do reach 0x81 at run time by a way not found yet (a guess: the reference or the state changes with the
   decal setting; the capture above that gave models 1 was at the lowest settings, which draw no decals). The editor's rule (only the ground
   and TerrainBlend meshes take decals) is therefore not the game's: to be settled by a capture at high settings or a test in game.
+- **In game (2026-11-15, test tile `wce_decal_test`, TDD mods, launched from the editor):** `path_1` ruts laid along a `bridge_wood_2`
+  (their boxes 40 units tall about the ground) paint its planks: two darker, scuffed lanes along the deck. A `global_terrain_puddle_02` and
+  a `path_1` over a `western_villa_house01` (a thatched house with the mods) left its pitched roof clean; the ground about it showed the
+  puddle only faintly. So buildings take decals in the game (a near-level deck at least); a steep roof did not (the facing fade, or its
+  material: not told apart). How a building's pixels reach the decal pass's stencil 0x81 is still not found.
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
