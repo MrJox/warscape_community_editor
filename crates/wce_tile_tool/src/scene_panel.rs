@@ -22,8 +22,89 @@ const ICON_WIDTH: f32 = 22.0;
 /// The icon columns at the right edge: the type, the export, the eye and the cursor arrow.
 const ICON_COLUMNS: f32 = 4.0;
 
-/// The variations column of a combined project.
-const VARIATIONS_WIDTH: f32 = 84.0;
+/// The variations column of a combined project: the narrowest it can be dragged to.
+const VARIATIONS_MIN_WIDTH: f32 = 40.0;
+
+/// The variations column's width: the one dragged to (`TileSettings::scene_variations_width`), else as wide as the variations' names
+/// side by side; none without variations.
+fn variations_width(e: &Editor, all: &[String]) -> f32 {
+    if all.is_empty() {
+        return 0.0;
+    }
+
+    let set = e.tool_settings::<crate::settings::TileSettings>(crate::settings::SETTINGS_ID).scene_variations_width;
+    if set > 0.0 { set.max(VARIATIONS_MIN_WIDTH) } else { (gui::calc_text_width(&all.join(", ")) + 12.0).max(VARIATIONS_MIN_WIDTH) }
+}
+
+/// The tree's header: Name, the variations (a combined project's; its left edge dragged resizes it) and the icon columns, as the rows
+/// lay them out (the scrollbar's width left for at the right).
+fn draw_tree_header(e: &mut Editor, all: &[String]) {
+    let dl = gui::window_draw_list();
+    let p0 = gui::cursor_screen_pos();
+    let h = gui::text_line_height_with_spacing() + 2.0;
+    let pad = gui::style_scrollbar_size() + gui::style_frame_padding().x;
+    let avail = gui::content_region_avail().x - pad;
+    let var_w = variations_width(e, all);
+    let dim = theme::u32(theme::mix(theme::text(), theme::palette_background(), 0.35));
+    let ty = p0.y + (h - gui::text_line_height()) * 0.5;
+    let cy = p0.y + h * 0.5;
+    dl.text(v2(p0.x + 6.0, ty), dim, "Name");
+
+    if var_w > 0.0 {
+        let x0 = p0.x + avail - ICON_COLUMNS * ICON_WIDTH - var_w;
+        dl.push_clip_rect(v2(x0 + 2.0, p0.y), v2(x0 + var_w - 2.0, p0.y + h));
+        dl.text(v2(x0 + 4.0, ty), dim, "Variations");
+        dl.pop_clip_rect();
+        dl.line(v2(x0, p0.y + 3.0), v2(x0, p0.y + h - 3.0), dim, 1.0);
+
+        // The column's left edge: dragged left widens it, right narrows it; a double click fits it to the names again.
+        gui::set_cursor_screen_pos(v2(x0 - 4.0, p0.y));
+        gui::invisible_button("##varsedge", v2(8.0, h), gui::BUTTON_LEFT);
+        if gui::is_item_hovered() || gui::is_item_active() {
+            gui::set_mouse_cursor_resize_ew();
+            gui::set_tooltip("Drag to resize the variations column; double click: as wide as the names");
+        }
+
+        if gui::is_item_hovered() && gui::is_mouse_double_clicked(0) {
+            e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| s.scene_variations_width = 0.0);
+        } else if gui::is_item_active() {
+            let dx = gui::io().MouseDelta.x;
+            if dx != 0.0 {
+                let max = (avail - ICON_COLUMNS * ICON_WIDTH - 80.0).max(VARIATIONS_MIN_WIDTH);
+                let w = (var_w - dx).clamp(VARIATIONS_MIN_WIDTH, max);
+                e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| s.scene_variations_width = w);
+            }
+        }
+    }
+
+    // The icon columns, each with its rows' icon and what it is.
+    let cols: [(&str, &str); 4] = [
+        ("##h_type", "Type (a prefab's copy: Prefab)"),
+        ("##h_export", "Export: how the layer is exported (click a layer's to change it)"),
+        ("##h_eye", "Visible: click a row's to hide or show it"),
+        ("##h_act", "Selectable: click a row's to lock it or make it selectable"),
+    ];
+    for (k, (id, tip)) in cols.iter().enumerate() {
+        let x = p0.x + avail - (4 - k) as f32 * ICON_WIDTH;
+        gui::set_cursor_screen_pos(v2(x, p0.y));
+        gui::invisible_button(id, v2(ICON_WIDTH, h), gui::BUTTON_LEFT);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(tip);
+        }
+
+        let c = v2(x + ICON_WIDTH * 0.5, cy);
+        match k {
+            0 => draw_icon(dl, c, type_icon("LayerInstance"), dim),
+            1 => draw_icon(dl, c, export_icon("Normal"), dim),
+            2 => draw_eye(dl, c, true, false),
+            _ => draw_cursor(dl, c, true, false),
+        }
+    }
+
+    gui::set_cursor_screen_pos(p0);
+    gui::dummy(v2(avail + pad, h));
+    dl.line(v2(p0.x, p0.y + h), v2(p0.x + avail + pad, p0.y + h), dim, 1.0);
+}
 
 /// The variations popup of a layer's, group's or folder's row: one checkbox per variation, and "as its parent's".
 fn variations_menu(all: &[String], set: &[String], own: bool, targets: &[usize], actions: &mut Vec<RowAction>) {
@@ -523,7 +604,9 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
     gui::same_line();
     draw_type_filter(e, id, &types_label, hidden_n);
 
-    // ---- the tree
+    // ---- the tree, under its header
+    let all = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().variations().to_vec()).unwrap_or_default();
+    draw_tree_header(e, &all);
     let footer = gui::frame_height_with_spacing() * 1.2;
     if gui::begin_child("scenetree", v2(0.0, -footer), gui::CHILD_BORDERS, 0) {
         draw_tree(tool, e, id);
@@ -753,7 +836,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         let sc = t.tscene();
         let all = t.variations().to_vec();
         let viewed = t.viewed_variation().unwrap_or_default().to_owned();
-        let var_w = if all.is_empty() { 0.0 } else { VARIATIONS_WIDTH };
+        let var_w = variations_width(e, &all);
         let right = ICON_COLUMNS * ICON_WIDTH + var_w;
         let rows = tool.tree.rows.clone();
         let selection = &mut e.selection;

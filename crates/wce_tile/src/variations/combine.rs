@@ -75,6 +75,9 @@ struct Read {
 
     /// Its other files (name, bytes), and its rivers' files (kept for their factors, `river_files`).
     files: Vec<(String, Vec<u8>)>,
+
+    /// The files in its folders (by their path from its folder: a decompiled tile's `decompiled_terrain/...`), always its own.
+    below: Vec<(String, Vec<u8>)>,
     rivers: Vec<(String, Vec<u8>)>,
 }
 
@@ -159,8 +162,15 @@ fn read_input(input: &Input, entry: &TileEntry) -> Result<Read, String> {
         }
     }
 
+    // Its folders' files (a decompiled tile's carried terrain and vegetation, what the export writes back while it is unchanged).
+    let below = super::materialize::files_below(dir)
+        .into_iter()
+        .filter(|n| n.contains('/') && !n.ends_with(".bak"))
+        .map(|n| read(&dir.join(&n)).map(|b| (n, b)))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Read {
         text,
+        below,
         layers,
         height,
         blend: blend.as_deref().map(read).transpose()?,
@@ -319,6 +329,7 @@ pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_r
 
     for (k, r) in reads.iter().enumerate() {
         own[k].extend(r.rivers.iter().cloned());
+        own[k].extend(r.below.iter().cloned());
     }
 
     // Staged: the combined project as it will be, in a kit layout of its own (with the entry), to read back.
@@ -381,7 +392,7 @@ pub fn combine(inputs: &[Input], reference: usize, entry: &TileEntry, projects_r
                 bad.push(format!("{v}: its ground type map"));
             }
 
-            for (name, b) in &read.files {
+            for (name, b) in read.files.iter().chain(&read.below) {
                 if file(name).as_ref() != Some(b) {
                     bad.push(format!("{v}: {name}"));
                 }

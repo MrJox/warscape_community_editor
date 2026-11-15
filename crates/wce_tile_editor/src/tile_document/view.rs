@@ -874,7 +874,7 @@ impl Tile {
         let mut baked = false;
         if rivers == 0
             && self.display.show_water
-            && let Some(wt) = super::baked_river::baked_rivers(&self.project.dir, self.extent_z(), u)
+            && let Some(wt) = super::baked_river::baked_rivers(&self.project.own_dir(), self.extent_z(), u)
         {
             baked = true;
             ribbons += wt.verts.len();
@@ -1156,7 +1156,7 @@ impl Tile {
         // draw it: a step to the neighbours' faded edges cast a long shadow line. Not a tile decompiled from the packs: its heights are
         // the game's final ones already (faded, and blended to its links: Rome 2's Carthage keeps -20 m along its sea edges, which the
         // fade to 0 lifted out of the sea), and faded again they dipped along every edge.
-        let decompiled = self.project.dir.join(TERRAIN_CARRIED_DIR).is_dir();
+        let decompiled = self.project.own_dir().join(TERRAIN_CARRIED_DIR).is_dir();
         let faded = self.clip_to_tile && self.context_lf.is_some() && !decompiled;
         let heights = (self.project.height.as_ref().map(HeightField::version), self.clip_to_tile, faded);
         let same_heights = !first && self.terrain_entity != 0 && self.terrain_grid.as_ref().is_some_and(|(k, _, _)| *k == heights);

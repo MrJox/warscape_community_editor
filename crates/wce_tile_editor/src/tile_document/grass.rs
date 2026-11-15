@@ -85,9 +85,9 @@ impl Tile {
     /// The packed `default.grass_list.bin` (or the older list): in the tile's folder, the game files, then carried by a decompiled project;
     /// mirrored as the tile was flipped since. None without one.
     fn read_grass_list(&self) -> Option<Vec<(String, Vec<(f32, f32)>)>> {
-        let carried = Some(self.project.dir.join(super::vegetation::CARRIED_DIR));
+        let carried = Some(self.project.own_dir().join(super::vegetation::CARRIED_DIR));
         let read = |file: &str| {
-            std::fs::read(self.project.dir.join(file))
+            std::fs::read(self.project.own_file(file))
                 .ok()
                 .or_else(|| self.packed_folder().and_then(|folder| self.files.as_deref()?.read(&format!("{folder}{file}")).ok()))
                 .or_else(|| std::fs::read(carried.as_ref()?.join(file)).ok())

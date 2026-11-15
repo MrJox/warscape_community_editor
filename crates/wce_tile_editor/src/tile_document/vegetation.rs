@@ -181,7 +181,8 @@ impl Tile {
                 }
             }
 
-            for dir in [self.project.dir.clone(), self.project.dir.join(CARRIED_DIR)].into_iter().filter_map(|d| std::fs::read_dir(d).ok())
+            let own = self.project.own_dir();
+            for dir in [self.project.dir.clone(), own.clone(), own.join(CARRIED_DIR)].into_iter().filter_map(|d| std::fs::read_dir(d).ok())
             {
                 for entry in dir.flatten() {
                     let file = entry.file_name().to_string_lossy().to_lowercase();
@@ -202,10 +203,10 @@ impl Tile {
     fn read_tree_list(&self, name: &str) -> Option<(Vec<u8>, bool)> {
         [(TREE_LIST_EXTENSION, false), (OLD_TREE_LIST_EXTENSION, true)].into_iter().find_map(|(extension, old)| {
             let file = format!("{name}{extension}");
-            let bytes = std::fs::read(self.project.dir.join(&file))
+            let bytes = std::fs::read(self.project.own_file(&file))
                 .ok()
                 .or_else(|| self.files.as_deref()?.read(&format!("{}{file}", self.packed_folder()?)).ok())
-                .or_else(|| std::fs::read(self.project.dir.join(CARRIED_DIR).join(&file)).ok())?;
+                .or_else(|| std::fs::read(self.project.own_dir().join(CARRIED_DIR).join(&file)).ok())?;
             Some((bytes, old))
         })
     }
@@ -595,7 +596,7 @@ impl Tile {
 ///
 /// The scene's edit failed or does not read again.
 pub fn convert_whole_tile_exclusion(project: &mut TileProject) -> Result<Option<usize>, String> {
-    let dir = project.dir.join(CARRIED_DIR);
+    let dir = project.own_dir().join(CARRIED_DIR);
     if !dir.is_dir() {
         return Ok(None);
     }
