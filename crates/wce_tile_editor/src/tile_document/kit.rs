@@ -423,11 +423,12 @@ impl TileDocument {
     }
 
     /// Where a combined project's variations are written as projects of their own for the exports (`TileProject::materialize`):
-    /// `<projects>/build/variations/raw_data`, beside the projects' kit layout; without a projects folder, the temporary folder's.
+    /// beside its kit layout, where the loaders write them too (`variations::materialize::build_root`: `<projects>/build/variations/
+    /// raw_data`); without a kit layout, the temporary folder's.
     #[must_use]
     pub fn variations_build_root(&self) -> PathBuf {
-        match self.projects_root() {
-            Some(root) => root.parent().unwrap_or(root).join("build").join("variations").join("raw_data"),
+        match &self.project().raw_root {
+            Some(raw) => wce_tile::variations::materialize::build_root(raw),
             None => std::env::temp_dir().join("wce_variations").join("raw_data"),
         }
     }
@@ -458,6 +459,7 @@ impl TileDocument {
 
         let mut made = vec![];
         let mut result = Ok(());
+        let writing = wce_tile::variations::materialize::writing();
         for v in &list {
             let step = (|| {
                 if *v != viewed {
@@ -479,6 +481,7 @@ impl TileDocument {
             }
         }
 
+        drop(writing);
         if self.tile().viewed_variation() != Some(viewed.as_str()) {
             self.tile_mut().end_export_view(&viewed)?;
         }

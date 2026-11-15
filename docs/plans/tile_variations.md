@@ -7,8 +7,8 @@ An export makes the variation it is asked for: everything that belongs to it, an
 catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-to 6 (see "Steps" and "Results" below). Not done: step 7 (loaders), step 8 (Combine and Separate: until then a combined project
-is only made outside the editor, by `tile_combine_check`), step 9 (docs).
+to 7 (see "Steps" and "Results" below). Not done: step 8 (Combine and Separate: until then a combined project is only made
+outside the editor, by `tile_combine_check`), step 9 (docs).
 
 ## What the games and kits do
 
@@ -335,6 +335,21 @@ variation has.
      piece later in `minor`), each packed with its walls.
    Combined projects are the editor's only: Import from Assembly Kit does not make one (the user, 2026-11-15).
 7. **Loaders**: materialization in `sources::find_tile`, `build/variations/`, the stamp.
+   Done (2026-11-15):
+   - `sources::find_tile`: a variation folder without a tile whose tile folder's combined project lists it is that project's
+     variation written as a project of its own (`variations::materialize::served`) under the root's build folder
+     (`materialize::build_root`: `<projects>/build/variations/raw_data` for `<projects>/assembly_kit/raw_data`, the exports' too).
+     A stamp (`wce_variation.stamp`: the scene's, the layers', the entry's, the shared and own files' names, sizes and times) says what
+     it was written from; it is written again when that changed. An export's write has no stamp (it is made from the editor's scene,
+     roads and walls laid), so a loader writes it again. One write at a time (`materialize::writing`): the map context asks from
+     several threads, an export from the editor's.
+   - `sources::find_tile_folder` (no write: whether a tile is a custom-mesh one) and `sources::serves` (whether a root has it: the
+     Terrain tool's check of the tiles a map places).
+   - The map context's tiles come through `find_tile`. The linking tiles stage B blends with are read from their own folders' BOB
+     files (`final_heights.dds`), which a combined project has none of: a linking tile is not one to combine.
+   - Checked (`examples/tile_find_check.rs`): `orc_city_a`'s `medium` written in 1.7 s, taken as it is the next time, written again
+     after its layers' file changed; it opens as a project of one variation with its row's numbers and its `protection_map.dds`.
+     Not checked in the editor's map context: no kit map places a combined tile.
 8. **Combine and Separate**: the dialog, the backup, the commands.
 9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`
    version 4), this plan's state.

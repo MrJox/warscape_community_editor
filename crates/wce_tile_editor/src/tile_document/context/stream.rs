@@ -152,7 +152,9 @@ impl Shared {
 
         let roots: Vec<PathBuf> =
             self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
-        let custom = wce_tile::sources::find_tile(&roots, &key.0, &key.1).is_some_and(|d| wce_tile::sources::custom_mesh(&d).is_some());
+        // A combined project's variation is a scene tile: not written for this.
+        let custom =
+            wce_tile::sources::find_tile_folder(&roots, &key.0, &key.1).is_some_and(|d| wce_tile::sources::custom_mesh(&d).is_some());
         lock(&self.custom_tiles).insert(key, custom);
         custom
     }

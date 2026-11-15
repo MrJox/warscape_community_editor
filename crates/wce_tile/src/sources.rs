@@ -50,9 +50,31 @@ pub fn is_tile_folder(dir: &Path) -> bool {
     has_tile(dir) || custom_mesh(dir).is_some()
 }
 
-/// The folder of a placement's tile in the first of `roots` (`raw_data` folders in the order above) that has it.
+/// The folder of a placement's tile in the first of `roots` (`raw_data` folders in the order above) that has it. A variation a combined
+/// project serves (docs/plans/tile_variations.md) is a project of its own written for it under the root's build folder
+/// (`variations::materialize::served`), written again when the project changed: what reads a tile's folder reads it as any other.
 pub fn find_tile(roots: &[PathBuf], location: &str, variation: &str) -> Option<PathBuf> {
+    roots.iter().find_map(|r| {
+        let d = tile_dir(r, location, variation);
+        if is_tile_folder(&d) {
+            return Some(d);
+        }
+
+        let tile = crate::variations::combined_for(&d)?;
+        crate::variations::materialize::served(&tile, variation, r)
+            .map_err(|e| wce_foundation::log::warn(format!("{location}\\{variation}: {e}")))
+            .ok()
+    })
+}
+
+/// [`find_tile`] of folders that hold a tile themselves only: a combined project's variation is not written for it.
+pub fn find_tile_folder(roots: &[PathBuf], location: &str, variation: &str) -> Option<PathBuf> {
     roots.iter().map(|r| tile_dir(r, location, variation)).find(|d| is_tile_folder(d))
+}
+
+/// Whether one of `roots` has a placement's tile: a folder of its own, or a combined project's variation (nothing written).
+pub fn serves(roots: &[PathBuf], location: &str, variation: &str) -> bool {
+    roots.iter().map(|r| tile_dir(r, location, variation)).any(|d| is_tile_folder(&d) || crate::variations::combined_for(&d).is_some())
 }
 
 /// The `raw_data` folders kit-layout data is looked for in, in the order above: the projects' kit layout, then every Assembly Kit in the
