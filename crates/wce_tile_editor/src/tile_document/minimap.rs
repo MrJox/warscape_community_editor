@@ -84,13 +84,19 @@ impl Tile {
         [-b, -b, self.extent_x() + 2.0 * b, self.extent_z() + 2.0 * b]
     }
 
+    /// Whether the game draws a sea over the tile's low ground: a tile of a coastal set's (`tile_sets::coastal_set`); another's ground
+    /// under 0 m is dry ground, which the minimap and the radar draw as such.
+    pub fn has_sea(&self) -> bool {
+        wce_tile::tile_sets::coastal_set(wce_tile::tile_sets::set_of_location(&self.project.info.location))
+    }
+
     /// Changes whenever the terrain is published again (a height stroke, a new look).
     pub fn terrain_version(&self) -> u64 {
         self.terrain_version
     }
 
     /// The heights from above, at most `max_dim` pixels a side: a colour ramp from the lowest ground to the highest, shaded by a light from
-    /// the north-west, the ground under the sea (0 m) blue. `None` without a height map.
+    /// the north-west, the ground under the sea (0 m) blue when the tile has a sea (`has_sea`). `None` without a height map.
     pub fn minimap_heights(&self, max_dim: u32) -> Option<MinimapImage> {
         if !self.project.has_height() {
             return None;
@@ -110,7 +116,8 @@ impl Tile {
             .collect();
 
         let (lo, hi) = heights.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
-        let land_lo = lo.max(0.0);
+        let sea = self.has_sea();
+        let land_lo = if sea { lo.max(0.0) } else { lo };
         let span = (hi - land_lo).max(1.0);
         let at = |i: i64, j: i64| heights[(j.clamp(0, i64::from(h) - 1) * i64::from(w) + i.clamp(0, i64::from(w) - 1)) as usize];
 
@@ -129,7 +136,7 @@ impl Tile {
                 let (dx, dz) = ((at(i + 1, j) - at(i - 1, j)) / (2.0 * cx), (at(i, j + 1) - at(i, j - 1)) / (2.0 * cz));
                 let n = (dx * dx + dz * dz + 1.0).sqrt();
                 let shade = ((-dx * light[0] - dz * light[1] + light[2]) / n).clamp(0.0, 1.0);
-                let c = if v < 0.0 { sea_colour(-v) } else { land_colour((v - land_lo) / span) };
+                let c = if sea && v < 0.0 { sea_colour(-v) } else { land_colour((v - land_lo) / span) };
                 let k = 0.45 + 0.75 * shade;
                 [(c[0] * k).min(255.0) as u8, (c[1] * k).min(255.0) as u8, (c[2] * k).min(255.0) as u8, 255]
             })
@@ -172,8 +179,13 @@ impl Tile {
         Ok(GroundBake { request, blend, ground, water, climates: self.climates().clone(), files })
     }
 
-    /// A picture of the ground (`BakedColour`'s layout) with the sea over it: the ground under 0 m blue, darker the deeper.
+    /// A picture of the ground (`BakedColour`'s layout) with the sea over it: the ground under 0 m blue, darker the deeper. The picture as
+    /// it is when the tile has no sea (`has_sea`).
     pub fn minimap_sea_over(&self, img: &BakedColour) -> Vec<u8> {
+        if !self.has_sea() {
+            return img.rgba.clone();
+        }
+
         let (w, h) = (img.w, img.h);
         let (cx, cz) = (img.w_m / f64::from(w), img.h_m / f64::from(h));
         let project = &self.project;

@@ -730,7 +730,16 @@ impl MinimapUi {
         let id = document_id(e).ok_or("no tile")?;
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let (water, nogo) = (d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some());
-        let path = path.map_or_else(|| d.project().dir.join(RADAR_FILE), std::path::PathBuf::from);
+        // A combined project's: the viewed variation's own folder (its export takes it over the files the variations share).
+        let own = match d.tile().viewed_variation().filter(|_| d.project().is_combined()) {
+            Some(v) => d.project().dir.join(wce_tile::variations::materialize::OWN_DIR).join(v),
+            None => d.project().dir.clone(),
+        };
+        let path = path.map_or_else(|| own.join(RADAR_FILE), std::path::PathBuf::from);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+
         let png = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("png"));
         if !force
             && !png
@@ -867,6 +876,54 @@ impl MinimapUi {
             wheel_owned: self.wheel_owned,
             ..Self::default()
         };
+    }
+}
+
+/// What an export's radar is drawn with (`TileTool::export_parts`): the raw_data folders stage B reads the linked tiles from and the packs
+/// its water planes' models are read from, as the editor has them (the game's tile data may still be being read: not waited for).
+pub(crate) struct ExportRadar {
+    kits: Vec<std::path::PathBuf>,
+    files: Option<std::sync::Arc<dyn wce_vfs::files::Files>>,
+}
+
+impl ExportRadar {
+    pub(crate) fn of(e: &Editor) -> Self {
+        Self { kits: crate::tool::kit_raws(e), files: e.files() }
+    }
+
+    /// Writes the radar of `tile` as the project folder `dir` has it (written for the export: its scene, its maps) into `dir`, which the
+    /// export carries (`compile::carried_into_export`): its rivers and lakes and its cliffs from stage B of the folder. A radar the
+    /// editor did not write (a hand-made one, CA's in a decompiled tile) stays. What goes wrong is logged: the export goes on without.
+    pub(crate) fn put(&self, tile: &mut wce_tile_editor::tile_document::Tile, dir: &std::path::Path) {
+        let path = dir.join(RADAR_FILE);
+        if let Ok(old) = std::fs::read(&path)
+            && !radar_is_generated(&old)
+        {
+            log::info(format!("{}: a hand-made radar, exported as it is", path.display()));
+            return;
+        }
+
+        let started = std::time::Instant::now();
+        let raw = wce_tile::tile_project::kit_raw_root(dir);
+        let roots: Vec<std::path::PathBuf> = raw.into_iter().chain(self.kits.iter().cloned()).collect();
+        let packs = |k: &str| self.files.as_ref().and_then(|f| f.read(k).ok());
+        let stage_b = crate::water_view::project_files_for_stage_b(dir)
+            .and_then(|files| crate::water_view::stage_b_of_files(&files, &roots, &packs, true, (tile.extent_x(), tile.extent_z())));
+        let (water, nogos) = match stage_b {
+            Ok((w, n)) => (Some(w), n),
+            Err(why) => {
+                log::warn(format!("{}: the radar without its rivers and cliffs (stage B: {why})", dir.display()));
+                (None, None)
+            }
+        };
+
+        let input = tile.radar_input_with(water.as_ref(), nogos.as_deref());
+        let img = wce_tile_editor::radar::render(&input, &wce_tile_editor::radar::RadarStyle::default());
+        let written = radar_jpeg(img.size, &img.rgba).and_then(|b| std::fs::write(&path, b).map_err(|e| e.to_string()));
+        match written {
+            Ok(()) => log::info(format!("{}: radar drawn for the export in {:.2} s", path.display(), started.elapsed().as_secs_f64())),
+            Err(why) => log::warn(format!("{}: the radar was not written: {why}", path.display())),
+        }
     }
 }
 

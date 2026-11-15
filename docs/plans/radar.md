@@ -25,7 +25,8 @@ of tuning with the user.
 - `wce_tile_editor::radar` (pure): `RadarInput` (rasters and outlines in the tile's metres) -> `render(input, RadarStyle)` -> 512 x 512
   RGBA. Drawn at 1024 and averaged down. No assets: the paper is procedural noise (user's choice, 2026-11-11).
 - `Tile::radar_input(water)` (`tile_document/radar.rs`) gathers:
-  - heights (the height map, every 2 m), the sea (ground under -0.5 m), rivers and lakes: stage B's water depth and the tile's own
+  - heights (the height map, every 2 m), the sea (ground under -0.5 m, on a coastal set's tile only: `tile_sets::coastal_set`, the
+    sets the game draws a sea on; another's low ground is dry ground), rivers and lakes: stage B's water depth and the tile's own
     water planes (their footprints from the model file's mesh headers when the viewport has not loaded the model: hidden
     layers, far from the camera) and river ribbons (`Tile::water_map`; its heights are the scene's, metres / unit), still water: no ripples or
     streaks. Any water from 1 cm deep shows (a plane barely over mud, a marsh's puddles: middle_men_port_a's town and stream),
@@ -58,9 +59,17 @@ of tuning with the user.
   `<tile>_radar.png` (and `<tile>_radar.jpg`, what the game gets) and copies CA's radar beside it (`<tile>_ca.jpg`). `RADAR_TREES=<list>` picks the tree list (the editor shows the
   climate's; the example's default is `default`), `RADAR_TREE_DUMP=1` / `RADAR_SLOPE_DUMP=1` write the trees / the slopes at 1 m a pixel.
 
+- Export (2026-11-15): every export, pack save and launch draws the radar into the folder it compiles (`TileTool::export_parts`,
+  `minimap_panel::ExportRadar`), which the compile carries: the project's folder, or each variation of a combined project in its own
+  written folder, while that variation is viewed alone. Its rivers, lakes and cliffs come from stage B of that folder (the kits and
+  the packs as the editor has them; about 2.5 s a variation on middle_men_port_a). A radar without the `wce radar generator` mark (a
+  hand-made one, CA's in a decompiled tile) is exported as it is.
+
 ## Open
 
-- Save next to the export: a button and the export carrying the generated file, never overwriting a hand-made one without asking.
+- Asked (2026-11-15): the user sees the saved radar with the wrong rotation / mirroring and wants it over the playable area only. Our
+  middle_men_port_b medium matches TDD's hand-made one there in both (north up, the whole tile without its border): what they compared
+  it with is to be found out.
 - Tuning with the user: colours, the paper, forest density, road widths, which decals are roads, hachure density, red roofs (now 30 %
   at random; CA's red may mean something: important buildings?).
 - `radar_save` works out the water depth and the no-go areas itself when the tile has none yet.

@@ -23,8 +23,15 @@ const WATER_CELL_M: f64 = 1.0;
 const RED_ROOFS: f64 = 0.3;
 
 impl Tile {
-    /// What the radar draws of the tile as it is in memory: `water` is stage B's water depth when the tool has it (the rivers and lakes).
+    /// What the radar draws of the tile as it is in memory: `water` is stage B's water depth when the tool has it (the rivers and lakes),
+    /// the cliffs the automatic no-go areas the tool has worked out.
     pub fn radar_input(&mut self, water: Option<&WaterDepth>) -> RadarInput {
+        let nogos = self.auto_nogos.clone();
+        self.radar_input_with(water, nogos.as_deref().map(Vec::as_slice))
+    }
+
+    /// [`Self::radar_input`] with the cliffs of `nogos` (the automatic no-go areas, metres), none without.
+    pub fn radar_input_with(&mut self, water: Option<&WaterDepth>, nogos: Option<&[Vec<[f32; 2]>]>) -> RadarInput {
         // The image is the tile (as the hand-made radars: the border is left out); what is sampled covers the border too.
         let bordered = self.minimap_area();
         let [x0, z0, w_m, h_m] = bordered;
@@ -39,7 +46,8 @@ impl Tile {
                 .into_par_iter()
                 .map(|k| project.height_at(x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz) as f32)
                 .collect();
-            input.sea = v.iter().any(|&h| h < wce_siege::Sea::WATER as f32);
+            // The sea only where the game draws one (a coastal set's tile): another's low ground is dry.
+            input.sea = self.has_sea() && v.iter().any(|&h| h < wce_siege::Sea::WATER as f32);
             input.height = Field { x0, z0, w_m, h_m, w, h, v };
         }
 
@@ -172,7 +180,7 @@ impl Tile {
         input.plazas =
             layout.nodes.iter().filter(|n| n.kind == NodeKind::Area && n.boundary.len() > 2).map(|n| to_m(&n.boundary)).collect();
 
-        if let Some(nogos) = &self.auto_nogos {
+        if let Some(nogos) = nogos {
             input.cliffs = nogos.iter().map(|o| o.iter().map(|p| [f64::from(p[0]), f64::from(p[1])]).collect()).collect();
         }
 

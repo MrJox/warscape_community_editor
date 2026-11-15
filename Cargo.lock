@@ -2430,6 +2430,7 @@ dependencies = [
  "tempfile",
  "wce_foundation",
  "wce_siege",
+ "wce_tile",
  "wce_tile_editor",
  "wce_vfs",
  "wce_walls",

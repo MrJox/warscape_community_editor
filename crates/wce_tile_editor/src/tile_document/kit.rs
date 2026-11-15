@@ -461,6 +461,21 @@ impl TileDocument {
     ///
     /// Not a combined project, a variation it does not have, or what `materialize` refuses.
     pub fn materialize_variations(&mut self, list: &[String], for_kit: bool) -> Result<Vec<VariationExport>, String> {
+        self.materialize_variations_with(list, for_kit, &mut |_, _| Ok(()))
+    }
+
+    /// [`Self::materialize_variations`], `each` called with the tile and the folder of each variation once it is written, while that
+    /// variation is viewed alone (what an export adds to it from the tile as it is: its radar).
+    ///
+    /// # Errors
+    ///
+    /// As `materialize_variations`, or what `each` returns.
+    pub fn materialize_variations_with(
+        &mut self,
+        list: &[String],
+        for_kit: bool,
+        each: &mut dyn FnMut(&mut super::Tile, &Path) -> Result<(), String>,
+    ) -> Result<Vec<VariationExport>, String> {
         if !self.project().is_combined() {
             return Err("the tile has one variation: it is not a combined project".to_owned());
         }
@@ -484,7 +499,9 @@ impl TileDocument {
                 // Its kit walls' height layers made on its ground (over its roads') before its maps are composed.
                 let kit_walls = self.tile_mut().kit_walls_laid_for_export();
                 let generated = self.tile().has_generated_buildings();
-                Ok::<_, String>(VariationExport { made: self.project().materialize(v, &text, &raw)?, kit_walls, generated })
+                let made = self.project().materialize(v, &text, &raw)?;
+                each(self.tile_mut(), &made.dir)?;
+                Ok::<_, String>(VariationExport { made, kit_walls, generated })
             })();
             match step {
                 Ok(m) => made.push(m),
