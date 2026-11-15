@@ -195,7 +195,7 @@ pub fn tile_inputs(project: &TileProject) -> Result<TileInputs, String> {
 
     // The tile database's `_settings.xml`, next to the entry's TILES folder.
     let settings = entry.file().parent().and_then(Path::parent).map(|d| d.join("_settings.xml"));
-    tile_inputs_from(entry, variation, &raw, (map_w, map_h), blend, exclusions(&project.scene), settings.as_deref())
+    tile_inputs_from(entry, variation, &raw, (map_w, map_h), blend, exclusions(&*project.variation_scene()?), settings.as_deref())
 }
 
 /// The generator's inputs from a raw tile's parts: its entry and variation, `height_map_0`'s samples (`size` = width, height), the blend

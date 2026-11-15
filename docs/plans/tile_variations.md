@@ -8,8 +8,8 @@ catchment layers.
 
 State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
 and 2 for the scene (with sharing across regrouped and re-snapped levels, asked for by the user 2026-11-15), step 3 for the terrain
-(`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below. Step 4 started:
-`variations::View`, `TileProject::view_variation`.
+(`wce_tile::variations`, `to_variation`, `merge`, `check`, `examples/tile_combine_check.rs`); see "Results" below. Step 4 mostly
+done (below: what it does, what is left).
 
 ## What the games and kits do
 
@@ -260,6 +260,23 @@ variation has.
    own values); the element index places and shows by it. `TileProject::view_variation` composes the viewed variation's terrain
    from the layers (a combined project has no maps: blank fields in TEd's layout, `HeightField::flat`, `TiffFile::ted_header`), and
    Save writes only `tile.wce` and `terrain_layers.wcl` for it.
+   Done (2026-11-15):
+   - Opening: a variation whose folder has no tile while its tile folder's `tile.wce` lists it (`variations::combined_for`) opens
+     the combined project viewing it: by the entry, by the folder, from the Tile panel's variations and the browser. Another
+     variation of the open project is viewed, not opened.
+   - The Variation chip (top right of the viewport, left of the Areas chip; only for a combined project) and
+     `tile_variation [<v>]`. Switching composes the terrain again, rebuilds the element index and the scene's entities, and
+     makes the trees and the grass again. It is not an edit: nothing to undo.
+   - The element index shows, picks and places by `View`; the Scene panel lists the viewed variation's tree
+     (`Tile::tree_children`: a variation folder's contents in its place, other variations' elements left out).
+   - What reads the whole scene rather than the index takes `TileProject::variation_scene()` (`to_variation` of the scene, made
+     per call): the tree and grass generators' exclusion polygons, seeds and static trees.
+   - Checked on `orc_city_a` combined from the kit: `small` viewed in the combined project renders the same as the kit's `small`
+     opened by itself (top-down: identical pixels; low: the same but for a fire's animation).
+   Left: the other readers of the whole scene (rivers and their files, roads, the siege and wall tools, the minimap's layers) see
+   every variation's elements; `world_transform` (used where the index is stale) ignores the view; the Inspector shows an element's
+   shared values, not the viewed variation's own (`WceVariationStart` / `WceVariationValues`); undo of tag edits and copies comes
+   with step 5's tools.
 5. **The editor's tools**: the Scene panel column, the Inspector checkboxes, variation folders, *Move to a variation folder*, *Split
    for this variation*, Tidy, the ghosts, the Terrain layers section, Problems.
 6. **Exports**: For Assembly Kit, As exported tile, To mod pack, Launch in game. The per-variation height scale.

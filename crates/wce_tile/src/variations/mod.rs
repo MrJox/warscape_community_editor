@@ -64,6 +64,43 @@ pub fn project_variations(doc: &XmlDoc) -> Vec<String> {
     root(doc).and_then(|r| doc.get(r, VARIATIONS_ATTR)).map(|v| parse_list(&v)).unwrap_or_default()
 }
 
+/// The variations a tile.wce lists on its root, read from its start only (empty: a project of one variation, or no such file).
+#[must_use]
+pub fn listed_in_file(path: &std::path::Path) -> Vec<String> {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else { return vec![] };
+    let mut head = Vec::with_capacity(4096);
+    if file.take(64 * 1024).read_to_end(&mut head).is_err() {
+        return vec![];
+    }
+
+    // The first start tag that is not the prolog or a comment: the root.
+    let text = String::from_utf8_lossy(&head);
+    let mut at = 0;
+    while let Some(i) = text[at..].find('<') {
+        let tag = &text[at + i..];
+        if tag.starts_with("<?") || tag.starts_with("<!") {
+            at += i + 2;
+            continue;
+        }
+
+        let Some(end) = tag.find('>') else { return vec![] };
+        let needle = format!(" {VARIATIONS_ATTR}=\"");
+        return tag[..end].find(&needle).and_then(|k| tag[k + needle.len()..end].split('"').next()).map(parse_list).unwrap_or_default();
+    }
+
+    vec![]
+}
+
+/// The tile folder whose combined project has the variation a folder is for (`<tile>/<variation>`, which then holds no tile of its
+/// own), if it has one.
+#[must_use]
+pub fn combined_for(variation_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let name = variation_dir.file_name()?.to_string_lossy().to_lowercase();
+    let tile = variation_dir.parent()?;
+    listed_in_file(&tile.join(crate::project_files::WCE_FILE)).iter().any(|v| v.to_lowercase() == name).then(|| tile.to_path_buf())
+}
+
 /// The variations an element's own attribute names; `None`: it has none (it belongs where its parent does). The root's is the project's
 /// list, not a restriction, and is not read here.
 #[must_use]
