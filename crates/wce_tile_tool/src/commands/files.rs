@@ -52,12 +52,12 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "tile_launch_game", "tile_launch_game [--variation <v>] [--map tile|context|climate] [--dry-run] [--ignore-movie-packs] [--async]",
+        "tile_launch_game", "tile_launch_game [--variation <v>] [--map tile|context] [--dry-run] [--ignore-movie-packs] [--async]",
         "Launch in game (docs/plans/launch_in_game.md): export the open tile into data\\wce_launch.pack with a battle on it and start the game \
          straight into that battle, with the editor's mod packs (used_mods.txt untouched; the pack is removed when the game exits). --dry-run: \
          the pack and the battle's XML into <output>/launch, the command line in the log, no game. --async: as the menu, on a thread with the \
          progress window (the command returns at once). --variation: a combined project's variation (else the first shown). --map: the \
-         battle map instead of Settings > Tile's (the tile alone, the Map context's placement, the tile alone in the editor's climate)",
+         battle map instead of Settings > Tile's (the tile alone in the editor's climate, the Map context's placement)",
         |e, a| {
             // A combined project's variation: `--variation <v>` (else the first shown).
             let variation = a.iter().position(|x| x == "--variation").and_then(|i| a.get(i + 1)).cloned();
@@ -66,10 +66,9 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let menu = a.iter().any(|x| x == "--async");
             let map = match a.iter().position(|x| x == "--map").and_then(|i| a.get(i + 1)).map(String::as_str) {
                 None => None,
-                Some("tile") => Some(crate::settings::LaunchMap::Tile),
+                Some("tile" | "climate") => Some(crate::settings::LaunchMap::Tile),
                 Some("context") => Some(crate::settings::LaunchMap::MapContext),
-                Some("climate") => Some(crate::settings::LaunchMap::Climate),
-                Some(other) => return fail(format!("--map {other}: tile, context or climate")),
+                Some(other) => return fail(format!("--map {other}: tile or context")),
             };
             with_tile(e, |t, e| {
                 t.launch.variation = variation;

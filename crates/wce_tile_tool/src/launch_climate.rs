@@ -1,4 +1,4 @@
-//! Launch in game's *the tile alone, in the editor's climate* (`LaunchMap::Climate`): a tile launched alone is drawn in the `default`
+//! Launch in game's *the tile alone, in the editor's climate* (`LaunchMap::Tile`): a tile launched alone is drawn in the `default`
 //! climate whatever the battle asks (climate index 0, summer; docs/re/game_command_line.md), so the launch's files give the `default`
 //! climate the chosen climate's look for what the tile uses: its texture groups' ground textures (the chosen season's, as the game falls
 //! back: the season's, then summer, then `default`'s) under `default`'s summer names, its grass keys' models under `default`'s names
@@ -35,7 +35,7 @@ impl AloneClimate {
     /// A pack file or the grass list does not read.
     pub(crate) fn apply(&self, files: &mut Vec<(String, Vec<u8>)>, vfs: &Vfs, folder: &str) -> Result<String, String> {
         let climate = self.climate.to_ascii_lowercase();
-        if climate == "default" {
+        if climate.eq_ignore_ascii_case(crate::launch::ALONE_CLIMATE) {
             return Ok("the tile alone in the default climate".to_owned());
         }
 

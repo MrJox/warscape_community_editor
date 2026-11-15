@@ -99,14 +99,6 @@ pub const ROME_2_ALONE_NOTE: &str = " (Rome 2 loads a battle on a battle map: th
 /// database's climates; checked in game, 2026-10-30). The game reads no `<Climate>` in the battle XML.
 pub const ALONE_CLIMATE: &str = "default";
 
-/// The note of a tile launched alone whose look in the editor is another climate's.
-pub fn climate_alone_note(climate: &str) -> String {
-    format!(
-        " (the tile alone has the `{ALONE_CLIMATE}` climate's ground in game (summer textures), not {climate}'s: a battle's ground climate is \
-         its map's; launch it at a placement for the map's climate: Settings > Tile, The Map context's placement)"
-    )
-}
-
 pub use wce_tile::tile_sets::coastal_set;
 
 /// What the battle XML is made from.
