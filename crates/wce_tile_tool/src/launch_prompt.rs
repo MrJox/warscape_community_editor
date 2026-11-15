@@ -346,6 +346,9 @@ impl TileTool {
         let id = document_id(e).ok_or("no tile is open")?;
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let info = d.project().info.clone();
+        // A combined project's variation launched (Tile > Launch in game's choice), else the tile's.
+        let launched =
+            self.launch.variation.clone().filter(|v| d.tile().variations().contains(v)).unwrap_or_else(|| info.variation.clone());
         let climate = d.tile().terrain_look().climate.clone();
         if self.weather.tile() != d.source_key() {
             // A tile opened this frame (a script): its weather is taken up now, not on the next update.
@@ -355,7 +358,7 @@ impl TileTool {
         let location = info.location.replace('\\', "/").to_lowercase();
         const BATTLE: &str = "terrain/tiles/battle/";
         let Some(at) = location.find(BATTLE) else { return Err("only a battle tile can be launched in a battle".to_owned()) };
-        let tile = format!("{}/{}", &location[at + BATTLE.len()..], info.variation);
+        let tile = format!("{}/{}", &location[at + BATTLE.len()..], launched);
 
         if !dry_run {
             if self.launch.launched.is_some() {

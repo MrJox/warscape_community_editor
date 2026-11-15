@@ -363,6 +363,7 @@ pub fn save_exported_with(
         let _a = wce_foundation::activity::start("Reading the project (tile.ted, maps, entry)");
         TedProject.read(&files).map_err(|e| e.to_string())?
     };
+    let raw = entry_as_carried(game, raw, &folder);
 
     let project_raw =
         project_dir.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("raw_data"))).unwrap_or(project_dir);
@@ -480,6 +481,70 @@ pub fn save_exported_with(
     }
 
     Ok((dir, notes))
+}
+
+/// How many of a decompiled project's carried groups (stage B's and stage C's) still have the fingerprints they were stored with.
+fn carried_matches(raw: &wce_tile_model::Tile) -> usize {
+    let (_, b) = super::carry::carried(raw, super::stage_b::CARRIED_DIR);
+    let in_b = if b.is_empty() {
+        0
+    } else {
+        let now = super::stage_b::fingerprints(raw);
+        b.iter().filter(|(k, v)| now.get(k.as_str()) == Some(v)).count()
+    };
+
+    let (_, c) = super::carry::carried(raw, super::stage_c::CARRIED_DIR);
+    let in_c = match (c.is_empty(), super::stage_c::Fingerprints::of(raw)) {
+        (false, Ok(now)) => [("trees", now.trees), ("procedural", now.procedural), ("grass", now.grass)]
+            .iter()
+            .filter(|(k, v)| c.get(*k) == Some(v))
+            .count(),
+        _ => 0,
+    };
+
+    in_b + in_c
+}
+
+/// A decompiled project's entry as its carried files were fingerprinted with (`stage_b::fingerprints`, `stage_c::Fingerprints` hash the
+/// whole entry): when they do not hold with the entry as it is, the other variations' rows as the game's tile database has them (the
+/// first variation extracted saw those; extracting another then changed its row, and every other variation lost its carried terrain and
+/// vegetation, made again from the kit's rules: a mod's grass drawn as triangles). Only the variation's own row and the tile's settings
+/// make its compiled files: the other rows change nothing of them (the tile database written is the entry file's, not this one).
+fn entry_as_carried(game: &Game, raw: wce_tile_model::Tile, folder: &str) -> wce_tile_model::Tile {
+    use wce_tile_model::Value;
+    let carries =
+        raw.files.iter().any(|f| f.path.starts_with(super::stage_b::CARRIED_DIR) || f.path.starts_with(super::stage_c::CARRIED_DIR));
+    let (Some(own), true) = (raw.variation.clone(), carries) else { return raw };
+    let now = carried_matches(&raw);
+    let (Some((location, _)), Some(db)) = (folder.rsplit_once('/'), game.data.database(&kind_of(folder))) else { return raw };
+    let location = location.replace('/', "\\").to_lowercase();
+    let Some(tile) = db.tiles().iter().find(|t| t.location().to_lowercase() == location) else { return raw };
+    let mut alt = raw.clone();
+    let Some(entry) = alt.entry.as_mut() else { return raw };
+    let mut changed = false;
+    for node in entry.root.wrapped_mut("VARIATIONS") {
+        let name = node.get("location").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+        if name.eq_ignore_ascii_case(&own) {
+            continue;
+        }
+
+        let Some(theirs) = tile.variations().iter().find(|v| v.location().eq_ignore_ascii_case(&name)) else { continue };
+        let mut put = |key: &str, x: f64| {
+            let value = match node.get(key) {
+                Some(Value::Int(_)) => Value::Int(x as i64),
+                _ => Value::Float(x),
+            };
+            if node.get(key) != Some(&value) {
+                node.set(key, value);
+                changed = true;
+            }
+        };
+        put("min_height", f64::from(*theirs.min_height()));
+        put("scale", f64::from(*theirs.scale()));
+        put("raw_data_tri_density", f64::from(*theirs.raw_data_tri_density()));
+    }
+
+    if changed && carried_matches(&alt) > now { alt } else { raw }
 }
 
 /// For a game without a kit (Rome 2; BOB's inputs are the workspace's `raw_data`), the linking tiles the project's links blend with: each

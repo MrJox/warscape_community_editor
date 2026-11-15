@@ -525,7 +525,10 @@ pub fn combine_with(inputs: &[Input], reference: usize, entry: &TileEntry, proje
         inputs.iter().map(|i| read_input(i, entry).map_err(|e| format!("{}: {e}", i.variation))).collect::<Result<Vec<_>, _>>()?;
     let aligned = if align { align_heights(&mut reads)? } else { reads.iter().map(|_| None).collect() };
 
-    // The entry: an aligned level's row with its new range.
+    // The entry: an aligned level's row with its new range, for the check (the staged project's). The projects keep theirs as it was:
+    // an extracted tile's carried files hold while its entry is the one it was extracted with (`stage_b::fingerprints`), and an aligned
+    // level's export writes its own range (`materialize`).
+    let original = entry.clone();
     let mut entry = entry.clone();
     for (k, a) in aligned.iter().enumerate() {
         if let (Some(a), Some(row)) = (a, entry.find_variation(&names[k])) {
@@ -681,9 +684,9 @@ pub fn combine_with(inputs: &[Input], reference: usize, entry: &TileEntry, proje
             move_path(&f.path(), &tile_dir.join(f.file_name()))?;
         }
 
-        // The entry into the projects when they have none, or when a level's range changed (aligned).
-        if !entry_file(entry, projects_raw)?.is_file() || aligned.iter().any(Option::is_some) {
-            put_entry(entry, projects_raw)?;
+        // The entry into the projects when they have none, as it was (an aligned level's range is its exports').
+        if !entry_file(&original, projects_raw)?.is_file() {
+            put_entry(&original, projects_raw)?;
         }
 
         wce_formats::tile_index::TileIndex::forget_shared();
