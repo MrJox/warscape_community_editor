@@ -94,6 +94,11 @@ impl Updates {
         }
     }
 
+    /// Shows the window (something to do was found), or hides it (another window takes over).
+    pub(crate) fn show(&mut self, open: bool) {
+        self.open = open;
+    }
+
     fn busy(&self) -> bool {
         matches!(self.state, State::Checking { .. } | State::Downloading { .. })
             || matches!(self.schemas, SchemaState::Checking { .. } | SchemaState::Downloading { .. })
@@ -161,6 +166,9 @@ impl Editor {
         self.updates.manual = manual;
         self.check_app(manual || !cfg!(debug_assertions));
         self.check_schemas();
+        if manual {
+            self.art_check();
+        }
     }
 
     /// Looks for a newer release (unless an update is installed already and waits for the restart); `really` false leaves it alone (a
@@ -201,6 +209,7 @@ impl Editor {
 
         if self.settings_ref().updates.check_on_start {
             self.check_for_updates(false);
+            self.art_at_start();
         } else if rpfm_schema_path(self.game()).is_none() {
             self.check_schemas();
         }
@@ -360,6 +369,7 @@ impl Editor {
 
     pub(crate) fn draw_updates(&mut self) {
         self.poll_updates();
+        self.poll_art();
         if !self.updates.open {
             return;
         }
@@ -379,6 +389,9 @@ impl Editor {
         gui::spacing();
         gui::separator_text("rpfm's schemas");
         self.draw_schema_updates();
+        gui::spacing();
+        gui::separator_text("Art resources");
+        self.draw_art_updates();
 
         gui::spacing();
         gui::separator();

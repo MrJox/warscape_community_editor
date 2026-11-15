@@ -3,8 +3,10 @@
 //! when the settings ask for them. [`check`] finds the newest release above the running version, [`download`] fetches its zip with progress,
 //! and [`install`] puts the zip's files over the running build: each file in use is renamed aside (Windows lets a running exe or a loaded DLL
 //! be renamed, not overwritten) and [`remove_leftovers`] deletes those on the next start (only the files listed, so a development build's
-//! folder is not searched). [`schemas`] does the same for rpfm's schemas. Nothing here draws: the editor runs these on a thread.
+//! folder is not searched). [`schemas`] does the same for rpfm's schemas, and [`art`] keeps a game's art resources (a git repository) up to
+//! date and publishes their changes. Nothing here draws: the editor runs these on a thread.
 
+pub mod art;
 pub mod schemas;
 
 use std::fs::File;

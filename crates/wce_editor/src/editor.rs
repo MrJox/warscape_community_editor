@@ -207,6 +207,7 @@ pub struct Editor {
 
     pub(crate) settings_window: crate::settings_window::SettingsWindow,
     pub(crate) updates: crate::updates::Updates,
+    pub(crate) art: crate::art_repo::ArtRepo,
 
     /// Quit was asked while something was being written (`writes_in_progress`): it goes on once that is done.
     quit_waiting: bool,
@@ -310,6 +311,7 @@ impl Editor {
             panel_data: PanelData::default(),
             settings_window: Default::default(),
             updates: Default::default(),
+            art: Default::default(),
             quit_waiting: false,
             remember_tool: false,
             display_scale: 1.0,
@@ -1601,6 +1603,7 @@ impl Editor {
     pub fn writes_in_progress(&self) -> Vec<String> {
         let mut w = vec![];
         w.extend(self.updates.writing().map(str::to_owned));
+        w.extend(self.art.writing().map(str::to_owned));
         w.extend(self.fix_writing());
         w.extend(self.tools.iter().flatten().filter_map(|t| t.writing()));
         w
@@ -1922,6 +1925,7 @@ impl Editor {
         self.draw_fix_window();
         self.draw_settings_window();
         self.draw_updates();
+        self.draw_art_publish();
         if self.quit_waiting && self.writes_in_progress().is_empty() {
             self.ask_quit();
         }
@@ -2150,6 +2154,10 @@ impl Editor {
         let label = self.document_label();
         let label_w = if label.is_empty() { 0.0 } else { gui::calc_text_width(&label) + 16.0 };
 
+        // The art resources' badge (local changes, the team's new commits), left of the document.
+        let badge = self.art_badge().unwrap_or_default();
+        let badge_w = if badge.is_empty() { 0.0 } else { gui::calc_text_width(&badge) + 24.0 };
+
         // The message in what the two leave of the bar, its first line, cut short with "..." (the whole of it in the tooltip and the Log): a
         // long one was drawn under them.
         const GAP: f32 = 24.0;
@@ -2159,7 +2167,7 @@ impl Editor {
         let colour = if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) };
         gui::push_style_color(gui::COL_TEXT, colour);
         let status = if self.status.is_empty() { " ".to_owned() } else { self.status.clone() };
-        let room = gui::window_width() - left - label_w - fps_w - GAP;
+        let room = gui::window_width() - left - label_w - fps_w - badge_w - GAP;
         gui::text(&fit_text(status.lines().next().unwrap_or(" "), room));
         gui::pop_style_color(1);
         if gui::is_item_hovered() {
@@ -2169,6 +2177,21 @@ impl Editor {
         if gui::is_item_clicked() {
             self.panels.log = true;
             self.pending_focus = Some("Log".to_owned());
+        }
+
+        if !badge.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - fps_w - label_w - badge_w + 8.0);
+            gui::text_colored(crate::theme::warning(), &badge);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "The art resources (Settings > Game): click to publish your changes, or to bring the team's in (Help > Update Manager)",
+                );
+            }
+
+            if gui::is_item_clicked() {
+                self.art_badge_clicked();
+            }
         }
 
         if !label.is_empty() {
@@ -2325,6 +2348,18 @@ impl Editor {
             }
 
             let _ = self.with_tool_at(self.active_tool, |t, e| t.share_menu(e));
+            if gui::menu_item(&format!("{}  Publish art resources...", icons::ARROW_UP), None, false, self.art_publishable()) {
+                self.open_art_publish();
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(if self.art_set_up() {
+                    "Shares your changes in the art folder (prefabs, models, CS2 files) with the team: committed and pushed to the art resources' repository."
+                } else {
+                    "Settings > Game > Art resources: a git repository a team shares its models, CS2 files and prefabs in."
+                });
+            }
+
             gui::separator();
             if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
                 self.ask_close(active);
