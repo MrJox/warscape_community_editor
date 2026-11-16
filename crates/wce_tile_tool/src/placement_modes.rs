@@ -116,6 +116,11 @@ impl TileTool {
             text = with_root_attr(&tilted(&text, normal), "wce_rotation", "surface");
         }
 
+        // Upright on its slope: marked here, stood on the slope where a click puts it (`place_at`, `Tile::slope_tilted_text`).
+        if rotation == RotationMode::Slope {
+            text = with_root_attr(&text, "wce_rotation", "slope");
+        }
+
         text
     }
 
@@ -159,6 +164,11 @@ impl TileTool {
             let rotations = [
                 (RotationMode::None, icons::ARROW_BIG_UP, "Free: as you turn it (R / Shift+R; the Inspector's orientation); not tilted"),
                 (RotationMode::Surface, icons::ROTATE_3D, "Follow surface: tilted to the surface under it (the turn of R / Shift+R kept)"),
+                (
+                    RotationMode::Slope,
+                    icons::MOUNTAIN,
+                    "Follow slope: upright, pitched to the slope along its length only (a fence on a hillside); the preview stays level",
+                ),
             ];
             for (mode, icon, tip) in rotations {
                 if chip(rotation == mode, icon, &format!("rotation{mode:?}"), tip) {

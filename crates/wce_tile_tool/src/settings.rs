@@ -174,6 +174,9 @@ pub enum RotationMode {
     #[default]
     None,
     Surface,
+
+    /// Upright on the slope: pitched along its length only (`wce_rotation="slope"`, `Tile::slope_rotation`).
+    Slope,
 }
 
 /// The vegetation brush (`veg_brush.rs`): how big, how dense, how far from what is there, how varied.

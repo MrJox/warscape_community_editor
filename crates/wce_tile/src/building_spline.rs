@@ -312,13 +312,7 @@ fn stand(
     let mut rotation = euler_matrix(Double3::new(heading(dir) + quarter, 0.0, 0.0));
     let axis = if along_z { Double3::new(0.0, 0.0, 1.0) } else { Double3::new(1.0, 0.0, 0.0) };
     let position = if settings.align {
-        // Level across unless asked: the ground read on its own line only.
-        let along_only = |x: f64, z: f64| {
-            let d = (x - mid[0]) * dir[0] + (z - mid[1]) * dir[1];
-            ground(mid[0] + dir[0] * d, mid[1] + dir[1] * d)
-        };
-        let tilt_ground: &dyn Fn(f64, f64) -> f64 = if settings.tilt_across { ground } else { &along_only };
-        rotation = ground_tilt(dir, mid, [half, TILT_ACROSS], tilt_ground) * rotation;
+        rotation = slope_tilt(dir, mid, half, settings.tilt_across, ground) * rotation;
         let back = rotation * (axis * -centre);
         [mid[0] + back.x, ground(mid[0], mid[1]) + back.y, mid[1] + back.z]
     } else {
@@ -334,6 +328,21 @@ fn stand(
     };
 
     (Laid { key, position, rotation, level }, ends)
+}
+
+/// The turn that tilts a building standing with its middle at `mid` and its long axis along `dir` (a unit direction on the ground), `half`
+/// its half length, onto the ground under it: its slope end to end, and across it only when `across` (else it stays level across, leaning
+/// only along its length: upright, a fence on a hillside). Applied before its own turn. The building spline's *Align to ground* and its
+/// *Tilt across slope*, and the instances' *Follow slope* rotation mode.
+#[must_use]
+pub fn slope_tilt(dir: [f64; 2], mid: [f64; 2], half: f64, across: bool, ground: &dyn Fn(f64, f64) -> f64) -> Double3x3 {
+    // Level across unless asked: the ground read on its own line only.
+    let along_only = |x: f64, z: f64| {
+        let d = (x - mid[0]) * dir[0] + (z - mid[1]) * dir[1];
+        ground(mid[0] + dir[0] * d, mid[1] + dir[1] * d)
+    };
+    let tilt_ground: &dyn Fn(f64, f64) -> f64 = if across { ground } else { &along_only };
+    ground_tilt(dir, mid, [half, TILT_ACROSS], tilt_ground)
 }
 
 /// A building laid as an instance's text (`BUILDING_INSTANCE`, freeform at its height as the kit's tiles keep one, the height again in
@@ -542,6 +551,17 @@ mod tests {
         }
 
         assert!(fences.iter().any(|f| f.position[2].abs() > 0.1), "jittered across");
+    }
+
+    #[test]
+    fn a_slope_tilt_without_across_leans_only_along_its_length() {
+        // Ground rising 1 in 5 along x and 1 in 2 across (z); a thing 10 m long along x at the origin.
+        let ground = |x: f64, z: f64| x * 0.2 + z * 0.5;
+        let up = slope_tilt([1.0, 0.0], [0.0, 0.0], 5.0, false, &ground) * Double3::new(0.0, 1.0, 0.0);
+        assert!(up.z.abs() < 1e-9, "upright across: {up:?}");
+        assert!((up.x / up.y + 0.2).abs() < 1e-9, "its up leans back down the slope along it: {up:?}");
+        let both = slope_tilt([1.0, 0.0], [0.0, 0.0], 5.0, true, &ground) * Double3::new(0.0, 1.0, 0.0);
+        assert!(both.z.abs() > 0.1, "across too when asked: {both:?}");
     }
 
     #[test]

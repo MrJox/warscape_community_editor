@@ -1101,6 +1101,34 @@ impl TileDocument {
         self.set_local(elem, None, Some(local), gesture)
     }
 
+    /// Stands an instance upright on the slope under it (the *Follow slope* rotation mode, `Tile::slope_rotation`): its heading kept, pitched
+    /// along its long axis only, as the building spline lays a building that does not tilt across. The steps of one gesture merge.
+    pub fn tilt_along_slope(&mut self, elem: usize, gesture: u64) -> bool {
+        if elem >= self.tile().tscene().doc().elements().len() {
+            return false;
+        }
+
+        let sc = self.tile().tscene();
+        let Some(euler) = sc.euler(elem) else { return false };
+        let world = world_transform(sc, elem).rotation;
+        let parent = world * wce_tile::world_transform::euler_matrix(euler).transpose();
+        let key = (sc.type_of(elem) == "BUILDING_INSTANCE").then(|| sc.get(elem, "key")).flatten();
+        let p = self.tile().world_position(elem);
+        let turned = self.tile().slope_rotation(world, [f64::from(p.x), f64::from(p.z)], key.as_deref());
+        let local = euler_from_matrix(&(parent.transpose() * turned));
+        self.set_local(elem, None, Some(local), gesture)
+    }
+
+    /// An instance that follows the ground under it (`wce_rotation`: `surface`, tilted to `normal`; `slope`, upright on the terrain's slope)
+    /// tilted again as its mode says; false for one that does not follow it.
+    pub fn follow_ground(&mut self, elem: usize, normal: Double3, gesture: u64) -> bool {
+        match self.tile().tscene().get(elem, wce_tile::project_files::ROTATION_ATTR).as_deref() {
+            Some("surface") => self.tilt_to_surface(elem, normal, gesture),
+            Some("slope") => self.tilt_along_slope(elem, gesture),
+            _ => false,
+        }
+    }
+
     /// move | insert | remove a point of a polygon.
     ///
     /// # Errors
