@@ -450,6 +450,10 @@ pub struct Dress<'a> {
     /// The detail parts (`PartRole::Detail`) turned by the seed (`jitter_seed`), each its own way ([`detail_turn`]): the same rock or puddle
     /// does not lie the same way on every piece.
     pub detail_turns: bool,
+
+    /// Buildings stood upright (`tilt` on): pitched along their stretch's chord only, the ground read on that line alone, never leaned
+    /// across (`building_spline::slope_tilt`, the placement's *Follow slope* mode; user 2026-11-16: road fences stay vertical on slopes).
+    pub upright: bool,
 }
 
 /// How a detail part is turned on a piece (radians about up), by the piece's seed and the part's index: a thing whose footprint is about
@@ -573,7 +577,22 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
 
         // A building tilted to the ground under it: its slope along it (end to end) and across.
         if let Some(reach) = dress.tilt.filter(|_| part.solid) {
-            world_rot = ground_tilt(x, tilt_at, reach, ground) * world_rot;
+            let tilt = match &frame {
+                // Upright: pitched end to end along the stretch it spans (a fence's 5 m), level across.
+                Frame::Along { from, to } if dress.upright => {
+                    let (a, b) = (st.at(*from).0, st.at(*to).0);
+                    let chord = [b[0] - a[0], b[1] - a[1]];
+                    let l = chord[0].hypot(chord[1]);
+                    if l > 1e-9 {
+                        crate::building_spline::slope_tilt([chord[0] / l, chord[1] / l], tilt_at, l * 0.5, false, ground)
+                    } else {
+                        ground_tilt(x, tilt_at, reach, ground)
+                    }
+                }
+
+                _ => ground_tilt(x, tilt_at, reach, ground),
+            };
+            world_rot = tilt * world_rot;
         }
 
         // A decal on a sloped deck, its thin box along the slope.
@@ -1570,6 +1589,7 @@ mod tests {
             decal_depth: None,
             decal_tilt: None,
             detail_turns: false,
+            upright: false,
         };
         let orientation = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &dress).unwrap();
@@ -1581,6 +1601,20 @@ mod tests {
         assert!(flat.y.abs() < 1e-9 && flat.z.abs() < 1e-9, "{flat:?}");
         let sloped = orientation(&|_, z| z * 0.2);
         assert!(sloped.y.abs() > 0.1 || sloped.z.abs() > 0.1, "{sloped:?}");
+
+        // Upright: the same pitch along it, and a slope across it (the line runs along z) leaves it standing as on level ground.
+        let upright = Dress { upright: true, ..dress };
+        let stood = |ground: &dyn Fn(f64, f64) -> f64| {
+            let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &upright).unwrap();
+            let s = TedScene::parse_any(f.text).unwrap();
+            s.euler(s.find_all("BUILDING_INSTANCE")[0]).unwrap()
+        };
+        let across = stood(&|x, _| x * 0.3);
+        assert!((across.x - flat.x).abs() < 1e-6 && (across.y - flat.y).abs() < 1e-6 && (across.z - flat.z).abs() < 1e-6, "{across:?}");
+        let along = stood(&|_, z| z * 0.2);
+        assert!(along.y.abs() > 0.1 || along.z.abs() > 0.1, "pitched along: {along:?}");
+        let leaned = orientation(&|x, _| x * 0.3);
+        assert!((leaned.y - flat.y).abs() > 0.1 || (leaned.z - flat.z).abs() > 0.1, "the old tilt leaned it: {leaned:?}");
     }
 
     #[test]
@@ -1605,6 +1639,7 @@ mod tests {
                 decal_depth: None,
                 decal_tilt: None,
                 detail_turns: false,
+                upright: false,
             };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
                 .unwrap();
@@ -1643,6 +1678,7 @@ mod tests {
                 decal_depth: None,
                 decal_tilt: None,
                 detail_turns: false,
+                upright: false,
             };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
                 .unwrap();
@@ -1720,6 +1756,7 @@ mod tests {
                 decal_depth,
                 decal_tilt: None,
                 detail_turns: false,
+                upright: false,
             };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 3.0 }, &dress)
                 .unwrap();
@@ -1754,6 +1791,7 @@ mod tests {
             decal_depth: Some(0.35),
             decal_tilt: Some([2.0, 0.5]),
             detail_turns: false,
+            upright: false,
         };
         let f = fit_dressed(&piece, &contents, "d", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &deck }, &dress).unwrap();
         let s = TedScene::parse_any(f.text).unwrap();
@@ -1790,6 +1828,7 @@ mod tests {
             decal_depth: None,
             decal_tilt: None,
             detail_turns: false,
+            upright: false,
         };
         let up = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "b", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground }, &dress).unwrap();
