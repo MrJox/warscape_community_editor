@@ -1485,6 +1485,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         decal_depth: None,
                         decal_tilt: None,
                         detail_turns: true,
+                        upright: false,
                     };
                     match fit_dressed(&tp.1, &tp.3, &tp.2, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                         Ok(f) => items.push(RoadItem {
@@ -1513,6 +1514,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 decal_depth: None,
                 decal_tilt: None,
                 detail_turns: true,
+                upright: false,
             };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => {
@@ -1553,6 +1555,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                     decal_depth: Some(DECK_DECAL_BOX / unit),
                     decal_tilt: Some(DECK_DECAL_TILT),
                     detail_turns: true,
+                    upright: false,
                 };
                 match fit_dressed(&q.1, &q.3, &q.2, &laid, &Site { line: &plan.line, width, unit, ground: &deck_height }, &dress) {
                     Ok(f) => items.push(RoadItem {
@@ -1672,6 +1675,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                     let keep = |index: usize, part: &wce_tile::road_pieces::Part| detail_kept(road, n ^ 0xFE4C_E000, index, part);
                     let dress = wce_tile::road_layout::Dress {
                         tilt: Some(wce_tile::road_layout::FENCE_TILT),
+                        // Fences stand upright on a slope, pitched along their length only (the placement's Follow slope).
                         attrs: Some(&damage),
                         keep: Some(&keep),
                         jitter: 0.0,
@@ -1679,6 +1683,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         decal_depth: None,
                         decal_tilt: None,
                         detail_turns: true,
+                        upright: true,
                     };
                     match wce_tile::road_layout::fit_dressed(
                         fp,
