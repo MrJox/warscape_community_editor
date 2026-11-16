@@ -181,12 +181,14 @@ impl TileTool {
 
         let mut lib = PrefabLibrary::scan_folders(&folders);
 
-        // The first road type, from the kit's road decals, where its pieces are missing and the kit has them.
-        // Its fences from the fences file in the settings folder (written there where missing: the user's to edit).
+        // The dirt road types (`road_types.toml`), from the kit's road decals, where their pieces are missing and the game has the decals;
+        // their fences from the fences table.
         crate::tool::load_tables(e);
         let fences = wce_tile::road_fences::fences();
+        // The decals in the kit's road prefabs, or in the game's packs (Thrones of Britannia's kit has no prefabs).
+        let in_packs = e.files().is_some_and(|f| wce_tile::road_dirt::game_has_decals(&|p| f.exists(p)));
         if !wce_tile::road_dirt::all_written(&folders[0], fences) {
-            if wce_tile::road_dirt::kit_has_decals(&lib) {
+            if wce_tile::road_dirt::kit_has_decals(&lib) || in_packs {
                 match wce_tile::road_dirt::write(&folders[0], fences) {
                     Ok(written) => {
                         wce_foundation::log::info(format!("road pieces: {} {} piece(s) written", written.len(), wce_tile::road_dirt::TYPE));
@@ -197,7 +199,7 @@ impl TileTool {
                 }
             } else {
                 wce_foundation::log::info(format!(
-                    "road pieces: no {} pieces, the kit's {}* prefabs lack their decals",
+                    "road pieces: no {} pieces, neither the kit's {}* prefabs nor the game's packs have their decals",
                     wce_tile::road_dirt::TYPE,
                     wce_tile::road_dirt::KIT_PREFABS
                 ));
