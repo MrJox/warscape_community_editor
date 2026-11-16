@@ -376,6 +376,9 @@ impl Renderer {
         self.draw_stats.draw_calls += 1;
         null_ps_srvs(&ctx, 16);
 
+        // ---- 3b. The cliffs' own material (custom-mesh tiles) over the ground the resolve gave them.
+        self.draw_custom_gbuffer_rome2(ents);
+
         // ---- 4. The terrain-blend meshes (the settlements' cliff faces) over the ground the resolve gave them. Rome 2's
         // rigidterrainblend has no terrain-material entry: ps30_null_gbuffer draws a mesh with the terrain's virtual texture, and
         // ps30_gbuffer writes its own material with the vertex alpha in the normal's and the albedo's alpha (0 on the plateau, 1 on the

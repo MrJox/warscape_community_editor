@@ -23,11 +23,13 @@ pub(crate) const CUSTOM_GEOM_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_c
 pub(crate) const CUSTOM_MAT_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_custom_geom_mat";
 pub(crate) const CUSTOM_MAT_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_custom_geom_mat";
 
+/// The normal map beside a custom mesh's albedo (`…_diffuse.dds` -> `…_normal.dds`).
+fn normal_map_of(albedo: &str) -> Option<String> {
+    albedo.strip_suffix("_diffuse.dds").map(|stem| format!("{stem}_normal.dds"))
+}
+
 /// Bytes of a vertex in the buffer.
 const STRIDE: u32 = 32;
-
-/// N1 and N2: a flat unit vector (+z) with weight 0.
-const FLAT: [u8; 4] = [255, 127, 127, 0];
 
 /// The vertex (slot 0) and the instance's three world rows (slot 1).
 pub(crate) fn custom_layout() -> [InputElement; 8] {
@@ -75,8 +77,7 @@ fn lod_buffers(dev: &ID3D11Device, l: &wce_scene::render_scene::CustomTerrainLod
     for v in l.vertices.iter() {
         bytes.extend(f32_bytes(&v.position));
         bytes.extend(v.normal);
-        bytes.extend(FLAT);
-        bytes.extend(FLAT);
+        bytes.extend(v.frame);
         bytes.extend(f32_bytes(&v.uv));
     }
 
@@ -208,6 +209,11 @@ impl Renderer {
             {
                 let albedo = self.textures.get(&g.albedo, true).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
                 bind_srv(&self.ctx, &ps, "s_albedo_map", albedo.as_ref());
+                // Rome 2's shader turns the cliff's own normal map by the vertex's tangent frame (Attila's has no such input). The
+                // packs ship it beside the albedo: `<name>_<climate>_normal.dds`.
+                let normal = normal_map_of(&g.albedo).and_then(|n| self.textures.get(&n, false));
+                let normal = normal.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+                bind_srv(&self.ctx, &ps, "s_custom_normal_map", normal.as_ref());
             }
 
             self.ctx.set_vertex_buffers(0, &[l.vb.clone(), Some(inst_vb.clone())], &[STRIDE, 48], &[0, 0]);
@@ -225,6 +231,36 @@ impl Renderer {
         }
 
         triangles
+    }
+
+    /// Rome 2's cliffs' own material, after the terrain resolve: `vs30_custom_geom_mat` + `ps30_custom_geom_mat` write the G-buffer
+    /// (the normal from the cliff's normal map turned by the vertex's tangent frame, sqrt of its albedo; both with the vertex weight `N0.w`
+    /// as alpha: 0 on the plateau, 1 on the faces), blended over the resolved ground by that alpha into channels 0 and 1, as the
+    /// settlements' terrain-blend meshes are (`terrain_rome2`, step 4). Its other two outputs (specular 1, z / w) are not bound: the
+    /// resolve wrote them. ASSUMPTION (no capture of the game): the game blends the pass so, as its outputs' alphas mean.
+    pub(crate) fn draw_custom_gbuffer_rome2(&mut self, ents: &[&Entity]) {
+        if !ents.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some())) {
+            return;
+        }
+
+        let (Some(vs), Some(ps)) = (self.shader(CUSTOM_MAT_VS), self.shader(CUSTOM_MAT_PS)) else { return };
+        let targets = self.gbuffer.channels[..2].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
+        self.ctx.set_render_targets(&targets, self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.terrain.ds_lequal.as_ref(), 0);
+        self.ctx.set_blend_state(self.terrain.bs_r2_overlay.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+        self.upload();
+        null_ps_srvs(&self.ctx, 16);
+        self.bind(&ps);
+        bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
+        bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
+        let (cull, clip) = (self.camera.main_view_proj, self.camera.cb_view_proj);
+        let triangles = self.draw_terrain_patches_with(ents, &vs, &ps, &cull, &clip, CustomDraw::Material);
+        self.draw_stats.triangles += triangles;
+        null_ps_srvs(&self.ctx, 16);
     }
 
     /// The meshes' own material, after the blend boxes: added to the accumulation targets where their depth is the surface's.
