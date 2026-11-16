@@ -197,6 +197,13 @@ fn a_rejected_push_leaves_the_files_as_local_changes() {
     // The remote refuses every push.
     let hook = remote.join("hooks").join("pre-receive");
     std::fs::write(&hook, "#!/bin/sh\necho refused >&2\nexit 1\n").unwrap();
+    // Git runs a hook only when it is executable (on Windows any file is): without the bit the push went through on Linux.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     write(&art_dir, "b.txt", "b");
     assert!(art::publish(&art_dir, &["b.txt".to_owned()], "Add b", &BTreeMap::new(), &no_progress).is_err());
     let info = art::info(&art_dir, false, &no_progress).unwrap();
