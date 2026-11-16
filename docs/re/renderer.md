@@ -570,6 +570,25 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
     this tile is flat), and whether TEd's house roof (painted in TEd) means TEd builds its boxes from `scale.y` while the game does not.
   - The editor keeps its rule (decals on the ground and TerrainBlend meshes only, boxes from `scale.y`) until that is traced: marking
     buildings with boxes from `scale.y` smears road and camp decals over tents and walls (2026-10-31), which the game does not.
+- **Traced (2026-11-16, empire.retail.dll): the game refits battle prop decals to the terrain.** Three tweakables (static initialisers at
+  RVA 0x51b00 .. 0x51bc0): `rescale_battle_prop_decals` (bool, default on; global 0x122b41f8), `rescale_battle_prop_decals_lower_safety_margin`
+  (0.25; 0x122b6900) and `..._upper_safety_margin` (0.5; 0x122af650). After the prop markers are read (fn 0x104c1590, which calls the
+  refit when the bool is on), fn 0x104c4250 goes through every decal marker (record +0x70 == 1) whose footprint is inside the map:
+  - its model's bounding box (y from `ymin` to `ymax`; the decal models are the unit box, -0.5 .. 0.5) and its vertical axis (the matrix's
+    y column, normalised; its length L is the box's height);
+  - fn 0x1043b0c0: the lowest and highest terrain under the footprint's map-aligned bounds (the height map's cells over them and one
+    beyond, each height measured along that axis from the decal's origin), widened by the objects of type 0x100 overlapping it (planes:
+    a plane's height at its points; to the lowest when the axis points down, else to the highest; not identified, none on the test tile);
+  - H = (highest + upper margin) - (lowest - lower margin), the new scale H / (ymax - ymin); **only when that is no more than L** the y
+    column becomes the axis times it and the origin moves along the axis so that the box runs from lowest - 0.25 to highest + 0.5
+    (constants 0.5 at RVA 0x1afbd68, 1.0 at 0x1afbd74). A shorter box is kept as it is.
+  - So on flat ground every tall decal becomes 0.75 tall (0.25 under, 0.5 over: the capture's 0.75 and its origin 0.125 over the ground),
+    on a slope it spans the slope; and what stands higher than 0.5 over the highest ground under a decal is never painted, a building or not.
+    A decal whose own box is under 0.75 (scene units, the game's) is never refitted and paints what its box holds, at any height.
+  - The rendering: fn 0x117f5b00 (the queue of a decal mesh) copies the decal's world matrix into its instance (fn 0x117c8400, 0x17
+    floats: the three rows, the size and parallax from the decal, ...), so the refitted matrix is what the box is drawn with.
+  - The editor does not refit yet (it draws the file's boxes, and only the ground and TerrainBlend meshes take decals). Doing what the game
+    does: the refit when a decal is placed, then every model marked for decals (`DECAL_RECEIVER`) as the game marks them with decals on.
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
