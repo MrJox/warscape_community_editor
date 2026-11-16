@@ -1,6 +1,6 @@
-//! The fences of the generated road types (`road_dirt`), from the app's `tables/road_fences.toml` and the user's
-//! `road_fences_custom.toml` beside it (`user_files`; user 2026-11-16: buildings added without a rebuild): each fence's building, which
-//! way its model runs and its joiners. Read on each scan of the prefab library.
+//! The fences of the generated road types (`road_dirt`), from the app's `tables/<game>/road_fences.toml` and the mods' and the user's
+//! `road_fences_*.toml` over it (`user_files`; user 2026-11-16: buildings added without a rebuild): each fence's building, which way its
+//! model runs and its joiners. Read on each tile opening and scan of the prefab library.
 
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +66,7 @@ impl Default for Fences {
     }
 }
 
-/// A custom file: the fence in place of the shipped one, named fences in place of the shipped ones of their names or added.
+/// A file over the vanilla one: its fence in place of the vanilla one, its named fences in place of those of their names or added.
 #[derive(Debug, Default, Deserialize)]
 struct Custom {
     fence: Option<Fence>,
@@ -74,26 +74,24 @@ struct Custom {
     named: Vec<Fence>,
 }
 
-/// Reads a fences file (no custom one).
+/// Reads a fences file (nothing over it).
 ///
 /// # Errors
 ///
 /// As [`parse_with`].
 pub fn parse(text: &str) -> Result<Fences, String> {
-    parse_with(text, None)
+    parse_with(text, &[])
 }
 
-/// Reads the shipped fences file and the custom one over it.
+/// Reads the vanilla fences file and the files over it (`user_files::extra_files`), in order.
 ///
 /// # Errors
 ///
-/// Either is not TOML of its shape, or a name is not one a piece can have (empty, a number alone, other than `a-z 0-9 _`, twice), or a
-/// key is empty.
-pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Fences, String> {
-    let mut f: Fences = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
-    if let Some(text) = custom {
-        let name = crate::user_files::custom_name(FILE_NAME);
-        let c: Custom = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+/// One is not TOML of its shape, or a name is not one a piece can have (empty, a number alone, other than `a-z 0-9 _`, twice), or a key
+/// is empty.
+pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<Fences, String> {
+    let mut f: Fences = toml::from_str(vanilla).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    for c in crate::user_files::read_extras::<Custom>(extras)? {
         if let Some(fence) = c.fence {
             f.fence = fence;
         }
@@ -120,9 +118,10 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Fences, String>
     Ok(f)
 }
 
-/// Reads a game's fences files in the tables folder (`user_files::tables_dir`): the fences from then on.
-pub fn load(tables: &std::path::Path, game: &str) {
-    FENCES.load(tables, game);
+/// Reads a game's fences files in the tables folder (`user_files::tables_dir`), those of the mods loaded (`mods`) too: the fences from
+/// then on.
+pub fn load(tables: &std::path::Path, game: &str, mods: &[String]) {
+    FENCES.load(tables, game, mods);
 }
 
 /// The fences: the files' last read, else the built-in ones.
@@ -156,9 +155,9 @@ mod tests {
     }
 
     #[test]
-    fn a_custom_file_replaces_by_name_and_adds() {
+    fn a_file_over_it_replaces_by_name_and_adds() {
         let custom = "[fence]\nkey = \"mine\"\n[[named]]\nname = \"greek\"\nkey = \"my_greek\"\nalong = \"z\"\n[[named]]\nname = \"new\"\nkey = \"n\"\n";
-        let f = parse_with(DEFAULT_TEXT, Some(custom)).unwrap();
+        let f = parse_with(DEFAULT_TEXT, &[("road_fences_mine.toml".to_owned(), custom.to_owned())]).unwrap();
         let shipped = Fences::default();
         assert_eq!(f.fence.key, "mine");
         assert_eq!(f.named.len(), shipped.named.len() + 1);
@@ -166,7 +165,8 @@ mod tests {
         assert_eq!((greek, f.named[greek].key.as_str()), (shipped.named.iter().position(|n| n.name == "greek").unwrap(), "my_greek"));
         assert!(f.named[greek].joiners.is_empty(), "replaced whole");
         assert_eq!(f.named.last().unwrap().name, "new");
-        assert!(parse_with(DEFAULT_TEXT, Some("[[named]]\nname = \"Bad\"\nkey = \"k\"\n")).is_err());
-        assert!(parse_with(DEFAULT_TEXT, Some("not toml [")).unwrap_err().starts_with("road_fences_custom.toml"));
+        let x = |t: &str| [("road_fences_x.toml".to_owned(), t.to_owned())];
+        assert!(parse_with(DEFAULT_TEXT, &x("[[named]]\nname = \"Bad\"\nkey = \"k\"\n")).is_err());
+        assert!(parse_with(DEFAULT_TEXT, &x("not toml [")).unwrap_err().starts_with("road_fences_x.toml"));
     }
 }

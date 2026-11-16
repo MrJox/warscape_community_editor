@@ -33,7 +33,7 @@ pub struct BridgeBase {
     pub end: Option<&'static str>,
 }
 
-/// The bridge bases' file in the app's tables folder, with the user's `bridges_custom.toml` beside it (`wce_tile::user_files`; user
+/// The bridge bases' file in the app's `tables/<game>` folder, the mods' and the user's `bridges_*.toml` over it (`wce_tile::user_files`; user
 /// 2026-11-16: buildings added without a rebuild). Built in as [`DEFAULT_TEXT`]. A road asking for one they do not have gets the first.
 pub const FILE_NAME: &str = "bridges.toml";
 pub const BUILT_IN: wce_tile::user_files::BuiltIn = &[
@@ -68,26 +68,24 @@ struct BridgesFile {
     bases: Vec<BridgeDef>,
 }
 
-/// Reads a bridges file (no custom one).
+/// Reads a bridges file (nothing over it).
 ///
 /// # Errors
 ///
 /// As [`parse_with`].
 pub fn parse(text: &str) -> Result<Bridges, String> {
-    parse_with(text, None)
+    parse_with(text, &[])
 }
 
-/// Reads the shipped bridges file and the custom one over it: a custom base in place of the shipped one of its name, or after them.
+/// Reads the vanilla bridges file and the files over it, in order: a base over it in place of the one of its name, or after them.
 ///
 /// # Errors
 ///
-/// Either is not TOML of its shape, there is no base, or a name is there twice.
-pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Bridges, String> {
+/// One is not TOML of its shape, there is no base, or a name is there twice.
+pub fn parse_with(vanilla: &str, extras: &[wce_tile::user_files::Extra]) -> Result<Bridges, String> {
     use wce_tile::user_files::keep;
-    let mut file: BridgesFile = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
-    if let Some(text) = custom {
-        let name = wce_tile::user_files::custom_name(FILE_NAME);
-        let c: BridgesFile = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+    let mut file: BridgesFile = toml::from_str(vanilla).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    for c in wce_tile::user_files::read_extras::<BridgesFile>(extras)? {
         wce_tile::user_files::replace_or_add(&mut file.bases, c.bases, |a, b| a.name == b.name);
     }
 
@@ -114,8 +112,8 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Bridges, String
 }
 
 /// Reads the bridges files in the tables folder (`wce_tile::user_files::tables_dir`): the bases from then on.
-pub fn load(tables: &std::path::Path, game: &str) {
-    BRIDGES.load(tables, game);
+pub fn load(tables: &std::path::Path, game: &str, mods: &[String]) {
+    BRIDGES.load(tables, game, mods);
 }
 
 /// The bases, in the editor's order.

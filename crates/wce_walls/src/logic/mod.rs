@@ -782,10 +782,9 @@ mod tests {
     #[test]
     fn a_corners_two_sides_share_their_edges() {
         use crate::pieces::{PieceWarp, cuts_of, pieces};
-        use crate::profile::profile;
         use crate::solver::{WallInput, solve};
         let ground = |_: f64, _: f64| 0.0;
-        let p = profile("gondor_fort_straight").unwrap();
+        let p = crate::profile::test_profile("gondor_fort_straight").unwrap();
         let quad = |pts: &[[f32; 3]]| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": pts.iter().map(|&q| point3(q)).collect::<Vec<_>>() } });
         // gondor_fort_straight's walkway platforms (piece01, intact).
         let base = vec![

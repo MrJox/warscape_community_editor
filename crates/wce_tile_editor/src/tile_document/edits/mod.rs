@@ -1437,6 +1437,7 @@ impl Tile {
             ("road_bridge", Kind::Enum(_), _) => Prop { kind: Kind::Enum(wce_walls::bridge::choices()), ..*prop },
             ("road_type", Kind::Enum(_), _) => Prop { kind: Kind::Enum(self.road_types()), ..*prop },
             ("road_fence_type", Kind::Enum(_), _) => Prop { kind: Kind::Enum(self.road_fence_types(None)), ..*prop },
+            ("road_fence_joiners", Kind::Enum(_), _) => Prop { kind: Kind::Enum(self.road_fence_joiner_choices()), ..*prop },
             _ => *prop,
         }
     }

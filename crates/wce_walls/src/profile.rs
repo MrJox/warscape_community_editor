@@ -100,7 +100,7 @@ impl Profile {
     }
 }
 
-/// The wall bases' file in the app's tables folder, with the user's `walls_custom.toml` beside it (`wce_tile::user_files`; user
+/// The wall bases' file in the app's `tables/<game>` folder, the mods' and the user's `walls_*.toml` over it (`wce_tile::user_files`; user
 /// 2026-11-16: buildings added without a rebuild): their families' numbers and each base's pieces. Built in as [`DEFAULT_TEXT`].
 pub const FILE_NAME: &str = "walls.toml";
 pub const BUILT_IN: wce_tile::user_files::BuiltIn = &[
@@ -209,28 +209,26 @@ impl Params {
     }
 }
 
-/// Reads a walls file (no custom one).
+/// Reads a walls file (nothing over it).
 ///
 /// # Errors
 ///
 /// As [`parse_with`].
 pub fn parse(text: &str) -> Result<Walls, String> {
-    parse_with(text, None)
+    parse_with(text, &[])
 }
 
-/// Reads the shipped walls file and the custom one over it: a custom family's numbers over the shipped one's of its name (or a new
-/// family), a custom base in place of the shipped one of its key (whole) or after them.
+/// Reads the vanilla walls file and the files over it (`wce_tile::user_files::extra_files`, a mod's bases: TDD's), in order: a
+/// family's numbers over those of the family of its name (or a new family), a base in place of the one of its key (whole) or after them.
 ///
 /// # Errors
 ///
-/// Either is not TOML of its shape, there is no base, a base's family is not one of the families, a number is missing from both a base
-/// and its family, or a key is listed twice.
-pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Walls, String> {
+/// One is not TOML of its shape, there is no base, a base's family is not one of the families, a number is missing from both a base and
+/// its family, or a key is listed twice.
+pub fn parse_with(vanilla: &str, extras: &[wce_tile::user_files::Extra]) -> Result<Walls, String> {
     use wce_tile::user_files::keep;
-    let mut file: WallsFile = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
-    if let Some(text) = custom {
-        let name = wce_tile::user_files::custom_name(FILE_NAME);
-        let c: WallsFile = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+    let mut file: WallsFile = toml::from_str(vanilla).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    for c in wce_tile::user_files::read_extras::<WallsFile>(extras)? {
         for (fam, p) in c.families {
             let under = file.families.get(&fam).copied().unwrap_or_default();
             file.families.insert(fam, p.over(under));
@@ -295,8 +293,21 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Walls, String> 
 }
 
 /// Reads the walls files in the tables folder (`wce_tile::user_files::tables_dir`): the bases from then on.
-pub fn load(tables: &std::path::Path, game: &str) {
-    WALLS.load(tables, game);
+pub fn load(tables: &std::path::Path, game: &str, mods: &[String]) {
+    WALLS.load(tables, game, mods);
+}
+
+/// Attila's bases with The Dawnless Days' over them (`tables/attila/walls_tdd.toml` as built), as the editor has them with TDD loaded:
+/// what the tests measure TDD's pieces with.
+#[cfg(test)]
+pub(crate) fn test_profile(key: &str) -> Option<&'static Profile> {
+    static WITH_TDD: std::sync::OnceLock<Walls> = std::sync::OnceLock::new();
+    let tdd = ("walls_tdd.toml".to_owned(), include_str!("../../../tables/attila/walls_tdd.toml").to_owned());
+    WITH_TDD
+        .get_or_init(|| parse_with(DEFAULT_TEXT, &[tdd]).expect("Attila's walls with TDD's"))
+        .bases
+        .iter()
+        .find(|p| p.key.eq_ignore_ascii_case(key))
 }
 
 /// The bases, in the editor's order.
@@ -356,16 +367,19 @@ mod tests {
     #[test]
     fn the_shipped_file_has_the_bases_and_their_families_numbers() {
         let w = WALLS.shipped();
-        assert_eq!(w.bases.len(), 15);
-        assert_eq!(w.choices.len(), 15);
+        // Attila's ten; TDD's five are its own file's, over these while its packs are loaded.
+        assert_eq!(w.bases.len(), 10);
+        assert_eq!(w.choices.len(), 10);
+        assert!(profile("gondor_fort_straight").is_none());
         let b = w.bases.iter().find(|p| p.key == "barbarian_fort_straight").unwrap();
         assert_eq!((b.family, b.label, b.x, b.walkway), ("eight", "8 m: barbarian", (0.0, 20.0), 8.0));
         assert!((b.max_slope - 2.5 / 3.0).abs() < 1e-15 && b.slab_band.is_none() && b.step_replaces);
         assert_eq!(b.defences, ["barbarian_fort_curved_bastion"]);
         let r = w.bases.iter().find(|p| p.key == "roman_fort_straight").unwrap();
         assert_eq!((r.walkway, r.slab_band, r.door), (15.0, Some(0.9), "roman_fort_straight_with_doors_a"));
-        // Gondor's own frame over its family's.
-        let g = w.bases.iter().find(|p| p.key == "gondor_fort_straight").unwrap();
+        // Gondor's own frame over its family's (TDD's file over Attila's).
+        let g = test_profile("gondor_fort_straight").unwrap();
+        assert_eq!((g.label, g.family), ("15 m: gondor (TDD)", "fifteen"));
         assert_eq!((g.x, g.cap_join, g.walkway), ((-10.5, 10.5), (10.5, -10.5), 15.0));
         assert_eq!(g.slab_zy, Some(((3.74, 8.09), (14.0, 26.5))));
     }
@@ -384,10 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn a_custom_walls_file_changes_a_family_replaces_a_base_and_adds_one() {
+    fn a_walls_file_over_it_changes_a_family_replaces_a_base_and_adds_one() {
         let custom = "[families.fifteen]\nwalkway = 16.0\n\n[[bases]]\nkey = \"roman_fort_straight\"\nlabel = \"mine\"\nfamily = \"eight\"\n\n[[bases]]\nkey = \"my_fort_straight\"\nfamily = \"fifteen\"\n";
-        let w = parse_with(DEFAULT_TEXT, Some(custom)).unwrap();
-        assert_eq!(w.bases.len(), 16);
+        let w = parse_with(DEFAULT_TEXT, &[("walls_mine.toml".to_owned(), custom.to_owned())]).unwrap();
+        assert_eq!(w.bases.len(), WALLS.shipped().bases.len() + 1);
         let roman = w.bases.iter().position(|p| p.key == "roman_fort_straight").unwrap();
         assert_eq!(roman, WALLS.shipped().bases.iter().position(|p| p.key == "roman_fort_straight").unwrap(), "in its place");
         assert_eq!((w.bases[roman].label, w.bases[roman].walkway, w.bases[roman].door), ("mine", 8.0, ""), "replaced whole");
@@ -395,7 +409,7 @@ mod tests {
         assert_eq!((greek.walkway, greek.depth), (16.0, (-6.0, 16.0)), "the family's walkway changed, its other numbers kept");
         assert_eq!(w.bases.last().unwrap().key, "my_fort_straight");
         assert_eq!(w.choices.last().unwrap(), &("my_fort_straight", "my_fort_straight"));
-        assert!(parse_with(DEFAULT_TEXT, Some("x = [")).unwrap_err().starts_with("walls_custom.toml"));
+        assert!(parse_with(DEFAULT_TEXT, &[("walls_x.toml".to_owned(), "x = [".to_owned())]).unwrap_err().starts_with("walls_x.toml"));
     }
 
     #[test]

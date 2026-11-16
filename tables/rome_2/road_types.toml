@@ -1,19 +1,15 @@
-# The road types made from the kit's dirt decals (their pieces written to roads_proc/<name> in the projects' prefabs), in the order the
+# Rome II: the road types made from the kit's dirt decals (their pieces written to roads_proc/<name> in the projects' prefabs), in the order the
 # editor lists them; a road's Road type row lists these and any other road type the prefab library has (roads_proc/<type>).
 #
-# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in road_types_custom.toml
-# beside it (the editor never writes it, an update leaves it alone): a [[types]] entry there replaces the type of its name or is added
-# after these. The editor reads both each time a tile is opened.
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put changes in a file beside it named
+# road_types_<anything>.toml that starts with a mod_key: the start of a mod pack's name, the file then read only while such a pack is loaded
+# in the editor (mod_key = "tdd_pack1_main_" for The Dawnless Days), or empty (mod_key = "") to read it always, for your own changes.
+# The editor never writes those, and an update leaves them alone (but those it ships). They are read after this one, in their names'
+# order; an entry in one replaces the one of the same key or name before it (whole), or is added after them. The editor reads them each
+# time a tile is opened.
 #   name    the type's name and folder: lowercase letters, digits and _ (not base, not none)
 #   width   the road's width its pieces are drawn at (metres); choosing the type puts a road at it
 #   lanes   1: one rut (path_1) down the middle; 2: two side by side, a quarter of the width less 0.2 m out from the middle
-
-[[types]]
-name = "dirt"
-width = 6.0
-lanes = 2
-
-[[types]]
-name = "dirt_track"
-width = 3.0
-lanes = 1
+#
+# None: Rome II's packs have none of the decals the dirt road types are made of (path_1, border_1, border_2, the rocks, puddles and
+# erosion; its paths are global_path_* and global_pathborder_*).
