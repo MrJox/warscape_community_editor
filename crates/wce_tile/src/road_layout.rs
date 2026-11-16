@@ -1632,8 +1632,15 @@ mod tests {
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
         let deck = |_: f64, z: f64| 3.0 + z * 0.1;
-        let dress =
-            Dress { tilt: None, attrs: None, keep: None, jitter: 0.0, jitter_seed: 0, decal_depth: Some(0.35), decal_tilt: Some([2.0, 0.5]) };
+        let dress = Dress {
+            tilt: None,
+            attrs: None,
+            keep: None,
+            jitter: 0.0,
+            jitter_seed: 0,
+            decal_depth: Some(0.35),
+            decal_tilt: Some([2.0, 0.5]),
+        };
         let f = fit_dressed(&piece, &contents, "d", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &deck }, &dress).unwrap();
         let s = TedScene::parse_any(f.text).unwrap();
         let decals = s.find_all("ProjectedDecalInstance");

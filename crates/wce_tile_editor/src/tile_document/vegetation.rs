@@ -126,12 +126,40 @@ impl Tile {
     /// The matrix an instance's model is drawn with: [`Tile::world_matrix`], tilted to the terrain for a tree.
     pub fn drawn_matrix(&self, elem: usize) -> Float4x4 {
         let w = self.world_matrix(elem);
+        if self.tscene().type_of(elem) == "ProjectedDecalInstance" {
+            return self.refit_decal(w);
+        }
+
         if self.tscene().type_of(elem) != "VEGETATION_INSTANCE" {
             return w;
         }
 
         let p = Float3::new(w.m[0][3], w.m[1][3], w.m[2][3]);
         translation(p) * self.terrain_tilt(p.x, p.z) * translation(Float3::new(-p.x, -p.y, -p.z)) * w
+    }
+
+    /// A projected decal's box as the game draws it: refitted to the terrain under it when that is shorter (`wce_tile::decal_refit`; the game's
+    /// `rescale_battle_prop_decals`, docs/re/renderer.md), so that it paints the ground and what stands within half a unit of it, not
+    /// what stands higher. Read when the decal's entity is made or refreshed, as a landscape item's height is.
+    pub(crate) fn refit_decal(&self, w: Float4x4) -> Float4x4 {
+        if !self.project.has_height() {
+            return w;
+        }
+
+        let u = self.unit();
+        let rows: [[f64; 4]; 3] = std::array::from_fn(|r| std::array::from_fn(|c| f64::from(w.m[r][c])));
+        let ground = |x: f64, z: f64| self.project.height_at(x, z) / u;
+        let step = self.project.mpp_x().min(self.project.mpp_z());
+        let margins = [wce_tile::decal_refit::LOWER_MARGIN / u, wce_tile::decal_refit::UPPER_MARGIN / u];
+        let Some(fit) = wce_tile::decal_refit::refit(rows, &ground, step, margins) else { return w };
+        let mut out = w;
+        for (r, row) in fit.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                out.m[r][c] = *v as f32;
+            }
+        }
+
+        out
     }
 
     /// A placed tree's piece without the tilt, as its instance's POSITION5..7 ([`untilted_rows`]).

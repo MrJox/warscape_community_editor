@@ -183,6 +183,17 @@ impl Renderer {
                 let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::Rope);
                 self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
 
+                // Buildings and props take projected decals, as the ground does: with decals drawn, the game's G-buffer writes 0x81 for
+                // them too (RenderDoc 2026-11-15, Attila, wce_decal_test: a bridge and a house `REPLACE` 129, and at the decals' `EQUAL`
+                // 129 every pixel but the grass's 0x41 passes; docs/re/renderer.md). What keeps their upper parts clean is the decals'
+                // boxes, refitted to the ground (`wce_tile::decal_refit`). Trees and ropes were not in those frames: 1, as before.
+                let decals =
+                    !matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::TreeBillboard | MeshKind::Rope);
+                self.ctx.set_depth_stencil_state(
+                    self.states.ds_gbuffer.as_ref(),
+                    if decals { 1 | u32::from(super::DECAL_RECEIVER) } else { 1 },
+                );
+
                 let slots = self.slots_of(&ps);
                 let mut bound = false;
                 let fire = GBUFFER_PASSES[pass].2;
