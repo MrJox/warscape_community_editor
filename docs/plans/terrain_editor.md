@@ -452,6 +452,11 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
      model (`custom_mesh::from_model`; they were left out for want of a material). The settlements, forests and props no longer need a
      `.terry`: props from the packs' `prop_marker.markers` (9 614 on `main_rome_map`). Lighting: a folder without
      `environment_collection.xml` takes `environment/<season>.lighting` (ASSUMPTION; `default.environment` hazed the view).
+     Since 2026-11-16 every game lists its packs' campaign maps (a mod's in a game with kit maps: TDD's `rom_third_age_map`, 2032 x
+     1441 cells, 534 972 placements, opens as Rome 2's do: the packs' tile database and settings, saved copies in the projects' layout),
+     and the map list shows where each map is read from: `[game files]`, `[project]` (the projects' kit layout) or `[kit: <game
+     folder>]` (an Assembly Kit; a map in several is read from the first, as `inputs` does). The names stay the maps' keys
+     (`terrain_open`, saving); `terrain_maps [text]` prints the list as shown.
    Left for Rome 2: `tile_map.png` after an edit (the packs' stays); a launch. Its campaign maps: the sprawl pieces (the db names
    `testdata/campaigntestdata/models/...` models no pack has: the game's real ones not looked up), the sky under the season lighting
    (black), the other campaigns' folders checked one by one (`main_emperor`, `main_greek`, `main_punic`, `main_invasion`,

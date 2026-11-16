@@ -307,6 +307,24 @@ mod campaign_metadata_tests {
 #[path = "campaign_metadata_native_tests.rs"]
 mod campaign_metadata_native_tests;
 
+/// How the map list shows a map: its name (a map of the packs without its ` (game files)`) and, in brackets, where it is read from (the
+/// packs: `game files`; the projects' kit layout: `project`; an Assembly Kit: `kit: <its folder>`). The name stays the map's key.
+fn map_label(name: &str, source: Option<String>) -> String {
+    let shown = name.strip_suffix(wce_map_view::maps::GAME_FILES).unwrap_or(name);
+    match source {
+        Some(s) => format!("{shown}  [{s}]"),
+        None => shown.to_owned(),
+    }
+}
+
+/// An Assembly Kit as the map list names it: the folder holding it (`Total War Attila` for `<game>/assembly_kit/raw_data`), else its own.
+fn kit_name(raw: &std::path::Path) -> String {
+    let kit = raw.parent().unwrap_or(raw);
+    let named =
+        if kit.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("assembly_kit")) { kit.parent() } else { Some(kit) };
+    named.and_then(|p| p.file_name()).map_or_else(|| raw.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
 /// A kit's campaign maps (folders with a `tile_map.png`), as the map list names them.
 fn kit_campaign_maps(raw: &std::path::Path) -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_dir(raw.join("terrain/campaigns"))
@@ -349,6 +367,9 @@ pub const TERRAIN_TOOL_ID: &str = "terrain";
 
 pub struct TerrainTool {
     maps: Vec<String>,
+
+    /// How the map list shows each of `maps`: its name and where it is read from (`map_label`).
+    map_labels: Vec<String>,
     map: i32,
     maps_for: Vec<PathBuf>,
     rings: Rings,
@@ -425,6 +446,7 @@ impl Default for TerrainTool {
     fn default() -> Self {
         Self {
             maps: vec![],
+            map_labels: vec![],
             map: 0,
             maps_for: vec![],
             rings: Rings::default(),
@@ -705,17 +727,21 @@ impl TerrainTool {
         }
 
         self.maps.clear();
+        self.map_labels.clear();
         if let Some(f) = e.files() {
             self.maps.extend(game_maps(f.as_ref(), e.game().campaign_battle_map, !e.game().features.kit_tiles));
-            // A game without kit maps: its packs' campaign maps too (Rome 2's `terrain/campaigns/<map>/terrain.tile_list`).
-            if !e.game().features.kit_tiles {
-                self.maps.extend(wce_map_view::maps::game_campaign_maps(f.as_ref()));
-            }
+            // The packs' campaign maps too (Rome 2's `terrain/campaigns/<map>/terrain.tile_list`; a mod's of a game with kit maps, TDD's).
+            self.maps.extend(wce_map_view::maps::game_campaign_maps(f.as_ref()));
+            self.map_labels.extend(self.maps.iter().map(|m| map_label(m, Some("game files".to_owned()))));
         }
 
+        let projects = e.settings_ref().kit_projects_dir().join("raw_data");
         for r in &roots {
             for m in kit_maps(r).into_iter().chain(kit_campaign_maps(r)) {
                 if !self.maps.contains(&m) {
+                    // Read from the first root that has it (`inputs`): the projects' kit layout, else an Assembly Kit.
+                    let source = if *r == projects { "project".to_owned() } else { format!("kit: {}", kit_name(r)) };
+                    self.map_labels.push(map_label(&m, Some(source)));
                     self.maps.push(m);
                 }
             }
@@ -728,8 +754,10 @@ impl TerrainTool {
     /// What opening `name` needs.
     fn inputs(&mut self, e: &Editor, name: &str) -> Result<OpenInputs, String> {
         self.prepare_packs(e);
-        // A game without kit maps (Rome 2): the maps of its packs, with the packs' tile database (`PacksTree::raw`).
-        if !e.game().features.kit_tiles {
+        // A game without kit maps (Rome 2): the maps of its packs, with the packs' tile database (`PacksTree::raw`). So is a campaign
+        // map of the packs in a game with kit maps (a mod's: TDD's): its tiles and its database settings are the packs'.
+        let packs_campaign = name.starts_with(wce_map_view::maps::GAME_CAMPAIGN) && name.ends_with(wce_map_view::maps::GAME_FILES);
+        if !e.game().features.kit_tiles || packs_campaign {
             if game_map_folder(name, e.game().campaign_battle_map).is_none() {
                 return Err(format!("{}: no kit maps; open one of the packs' (game files)", e.game().display_name));
             }
@@ -1203,7 +1231,7 @@ impl TerrainTool {
         }
 
         self.refresh_maps(e);
-        let names: Vec<&str> = self.maps.iter().map(String::as_str).collect();
+        let names: Vec<&str> = self.map_labels.iter().map(String::as_str).collect();
         gui::combo("map", &mut self.map, &names);
         let can = self.rx.is_none() && !names.is_empty();
         if gui::button("Open") && can {
@@ -2229,6 +2257,15 @@ impl Tool for TerrainTool {
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
+        c.add("terrain_maps", "terrain_maps [text]", "the Terrain tool: the map list as it shows it (the name and, in brackets, where the map is read from), those containing the text", |e, a| {
+            let filter = a.first().map(|f| f.to_lowercase()).unwrap_or_default();
+            with_terrain(e, |t, e| {
+                t.refresh_maps(e);
+                let shown: Vec<&str> = t.map_labels.iter().map(String::as_str).filter(|l| l.to_lowercase().contains(&filter)).collect();
+                CommandResult::success(format!("{} maps: {}", shown.len(), shown.join("; ")))
+            })
+        });
+
         c.add(
             "terrain_open",
             "terrain_open <map | campaign>",
