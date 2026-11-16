@@ -20,7 +20,8 @@ const MAGIC: &[u8; 6] = b"WCECTX";
 // 9: a decompiled tile's rivers, baked into its terrain mesh (`baked_river`), drawn.
 // 10: the overlap ring of a tile with no heights past its edge (final heights, decompiled) slopes down instead of holding the edge.
 // 11: a masked tile's ground over the cells its mask leaves out slopes down out of the way (BOB's mesh has no squares there).
-const VERSION: u16 = 11;
+// 12: a campaign tile in its database's unit (0.2): its objects at TEd's x 5, where BOB puts them (they were at TEd's / 2, x 10 up).
+const VERSION: u16 = 12;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {

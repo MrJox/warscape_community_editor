@@ -601,9 +601,8 @@ pub fn load_template(
     let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
     // The heights the game draws: BOB's final_heights.dds (the tile's own faded to 0 over the last 64 m of a land edge, so neighbours
     // meet on the LF; docs/re/battle_maps.md, tile seams) when it is not older than the tile, else the editing heights.
-    // A campaign tile's heights are in other units (`tile_project::height_unit`): its ground and objects stretched up to match.
-    let (project, unit) = (&t.project, wce_tile::tile_project::height_unit(&t.project.dir));
-    let stretch = (t.unit() / unit) as f32;
+    // In the tile's units (`TileProject::unit_scale`: a campaign tile's 0.2, as its objects').
+    let (project, unit) = (&t.project, t.unit());
     let baked = project.final_heights();
     let height = |x: f64, z: f64| (baked.as_ref().map_or_else(|| project.height_at(x, z), |f| f.at(x, z)) / unit) as f32;
     // The ring past the edge where the tile has no heights there of its own: BOB's final heights end at the edge, and a tile decompiled
@@ -650,19 +649,6 @@ pub fn load_template(
         .filter(|e| !matches!(&e.payload, Payload::Water(w) if !w.river))
         .map(|e| (e.world, e.payload.clone()))
         .collect();
-
-    if stretch != 1.0 {
-        for (w, p) in &mut entities {
-            w.m[1][3] *= stretch;
-            // A river's surface follows the tile's ground: its heights in the same units, stretched as the ground is (else it sinks under
-            // a campaign tile's ground and shows only in its dips).
-            if let Payload::Water(water) = p {
-                for v in &mut water.verts {
-                    v.y *= stretch;
-                }
-            }
-        }
-    }
 
     // The mid ring's first.
     entities.sort_by_key(|(_, p)| !is_mid(p));
