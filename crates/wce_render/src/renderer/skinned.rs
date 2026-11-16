@@ -689,6 +689,7 @@ mod tests {
                 tex,
                 diffuse_path: String::new(),
                 normal_path: String::new(),
+                unlit: false,
                 displacement: None,
                 bmin,
                 bmax,

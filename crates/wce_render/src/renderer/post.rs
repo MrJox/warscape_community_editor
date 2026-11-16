@@ -788,7 +788,7 @@ impl Renderer {
         dc[4..8].copy_from_slice(&1.0f32.to_le_bytes());
 
         // The SkyCube view shows the environment cube.
-        let cube = if self.env.valid { self.env.cube.srv.clone() } else { self.sky.cube.srv.clone() };
+        let cube = self.env_srv();
         self.ctx.set_render_targets(&[target.rtv().cloned()], None);
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
         if let Some(cb) = &self.res.display_cb {

@@ -10,6 +10,7 @@ mod map_panel;
 mod placements;
 mod prop_models;
 mod refill;
+mod skybox;
 mod terry_view;
 mod tool;
 mod validate;

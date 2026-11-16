@@ -308,6 +308,13 @@ impl Renderer {
     /// Binds a mesh's material for a rigid or tree pixel shader: its textures in the shader's slots, the dirt maps' names, the tiled dirt's
     /// repeats, a tree's tint and season.
     pub(crate) fn bind_mesh_material(&mut self, ps: &Rc<GameShader>, slots: &[Option<u32>; TEX_SLOTS], m: &GpuMesh) {
+        // The campaign skybox is unlit (`g_unlit` 1); every other mesh 0.
+        if m.unlit != self.unlit_bound {
+            self.unlit_bound = m.unlit;
+            self.cbs.set_f("rigid_config_PS", "g_unlit", &[if m.unlit { 1.0 } else { 0.0 }]);
+            self.upload();
+        }
+
         if m.dirt || matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
             self.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
             self.upload();
@@ -397,8 +404,9 @@ impl Renderer {
                     let snow = r.snow_normals_srv();
                     bind_srv(&r.ctx, &ps, "s_snow_normals", snow.as_ref());
                     bind_srv(&r.ctx, &ps, "s_dissolve_map", r.res.white_srv.as_ref());
-                    bind_srv(&r.ctx, &ps, "s_environment", if r.env.valid { r.env.cube.srv.as_ref() } else { r.sky.cube.srv.as_ref() });
-                    bind_srv(&r.ctx, &ps, "s_sky", r.sky.cube.srv.as_ref());
+                    let (env, sky) = (r.env_srv(), r.sky_srv());
+                    bind_srv(&r.ctx, &ps, "s_environment", env.as_ref());
+                    bind_srv(&r.ctx, &ps, "s_sky", sky.as_ref());
                     r.upload();
                     ps_samplers(&r.ctx, &ps, &r.states.s_wrap_aniso);
                     bind_sampler(&r.ctx, &ps, "s_environment", r.states.s_wrap_linear.as_ref());
@@ -447,12 +455,8 @@ impl Renderer {
 
         self.bind_gbuffer_ms(&ps);
         bind_srv(&self.ctx, &ps, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
-        bind_srv(
-            &self.ctx,
-            &ps,
-            "s_environment",
-            if self.env.active || !self.env.valid { self.sky.cube.srv.as_ref() } else { self.env.cube.srv.as_ref() },
-        );
+        let env = if self.env.active { self.sky.cube.srv.clone() } else { self.env_srv() };
+        bind_srv(&self.ctx, &ps, "s_environment", env.as_ref());
         bind_srv(&self.ctx, &ps, "s_overlay", self.res.overlay_none_srv.as_ref());
         bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
         bind_srv(&self.ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
@@ -551,7 +555,8 @@ impl Renderer {
             bind_srv(&self.ctx, &es, &format!("gbuffer_channel_{}_sampler", k + 1), self.gbuffer.channels[k].srv.as_ref());
         }
 
-        bind_srv(&self.ctx, &es, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
+        let env = self.env_srv();
+        bind_srv(&self.ctx, &es, "s_environment", env.as_ref());
         bind_srv(&self.ctx, &es, "s_terrain", self.res.ground_colour_srv.as_ref());
         bind_srv(&self.ctx, &es, "s_light_accumulation_buffer", self.gbuffer.hdr.srv.as_ref());
         bind_srv(&self.ctx, &es, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
@@ -973,6 +978,7 @@ impl Renderer {
         }
 
         self.cbs.set_f("shadowmap_PS", "g_split_distances", &dist);
+        self.camera.split_distances = dist;
         self.cbs.set_f("shadowmap_PS", "g_split_uv_texture_bounds", SHADOW_BOUNDS.as_flattened());
         self.cbs.set_f("shadowmap_PS", "g_fFadeRange", &[0.1, fade_y]);
         self.cbs.set_f("shadowmap_PS", "g_sample_bias", &[0.0]);
@@ -1005,7 +1011,8 @@ impl Renderer {
         self.bind(&ps);
         bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         self.bind_gbuffer_ms(&ps);
-        bind_srv(&self.ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
+        let sky = self.sky_srv();
+        bind_srv(&self.ctx, &ps, "s_sky", sky.as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);
         bind_sampler(&self.ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());
 

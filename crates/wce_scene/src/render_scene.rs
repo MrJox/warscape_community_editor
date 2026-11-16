@@ -1157,6 +1157,12 @@ pub struct RenderScene {
     /// world it gives the shaders by this; the scene and the editor stay in scene units. 1: the scene is in game units.
     pub game_units: f32,
 
+    /// Game units per scene unit of the tile content (the terrain and its resolve, the tiles' grass); 0: `game_units`. A campaign map's
+    /// tiles are drawn in their database's `unit_scale` (0.2: its texture repeats, 620, and detail distances, 1000, are in those), while
+    /// its models, sky, fog, shadows and the lighting spheres are in the campaign world's (a cell 0.33391: `campaign_props_max_distance`
+    /// 60, `campaign_sky_scale` 37.5 around a camera in that world).
+    pub terrain_units: f32,
+
     /// The height of the sea (scene units): 0 unless the scene is drawn relative to something else (a map context draws the map relative to
     /// the open tile, and puts this a little above its sea: Frame::bias_y). The shaders get heights relative to it, as the game's are to its
     /// sea at 0 (the terrain lifts land and lowers sea bed by the sign of that height).
@@ -1172,6 +1178,10 @@ pub struct RenderScene {
     /// The scene is a campaign map: the shaders' campaign switches (`g_is_campaign`: the decals skip the weather's snow, as the
     /// terrain does) and the campaign's shadow settings.
     pub campaign: bool,
+
+    /// A campaign map's sky inputs: no sky cube nor environment cube is made; `s_sky` is the engine's white cube and `s_environment`
+    /// the map's `cubemap.dds` (the skybox model itself is an entity of the tool's, kept at the camera).
+    pub campaign_sky: Option<CampaignSky>,
 
     /// A campaign map's sea colour (its `lf_sea_colour.dds`): the sea planes are drawn with the game's campaign water shader, which
     /// colours the water from it. None: the battle's ocean.
@@ -1201,6 +1211,13 @@ pub struct CampaignSnow {
 
     /// The group's `blend_pixel_scale` (the climate's texture list), as a material layer's.
     pub pixel_scale: f32,
+}
+
+/// A campaign map's sky (`campaign_maps/<map>/display/skybox/`, fn 0x10afd250).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampaignSky {
+    /// `cubemap.dds`: `s_environment`.
+    pub environment: String,
 }
 
 /// A campaign map's sea colour map: the texture (a packs path) and the frame rectangle it covers, from its south-west corner (x, z; scene
@@ -1288,10 +1305,12 @@ impl Default for RenderScene {
             climate: String::new(),
             world_yaw: 0.0,
             game_units: 1.0,
+            terrain_units: 0.0,
             sea_level: 0.0,
             overlay_slots: [[0.0; 4]; OVERLAY_SLOTS],
             battle_centre: [0.0, 0.0],
             campaign: false,
+            campaign_sky: None,
             campaign_sea: None,
             campaign_snow: None,
             snow: None,

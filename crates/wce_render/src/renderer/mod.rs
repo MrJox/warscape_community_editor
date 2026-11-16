@@ -490,6 +490,12 @@ pub(crate) fn viewport(x: f32, y: f32, w: f32, h: f32) -> D3D11_VIEWPORT {
 /// How far the game's battle camera sees (scene units).
 const GAME_VIEW_DISTANCE: f32 = 13_000.0;
 
+/// A campaign map's far plane (its world's units; RenderDoc, camp_attila 2026-11-16).
+const CAMPAIGN_FAR: f32 = 500.0;
+
+/// The engine's default white cube (resources +0x654, made in fn 0x11736040): `s_sky` on the campaign map.
+const WHITE_CUBE: &str = "commontextures/default_white_cubemap.dds";
+
 /// What one frame needs besides the scene: the camera and the time (from the clock).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ViewParams {
@@ -755,6 +761,15 @@ pub(crate) struct CameraState {
     /// see (the camera constants, instance matrices, terrain, decals, lights, particles) is scaled by this ([`game_view`] and the others).
     pub units: f32,
 
+    /// Game units per scene unit of the tile content (the terrain, its resolve, the tiles' grass): `RenderScene::terrain_units`, else
+    /// `units`. A campaign map's tiles are drawn in their database's units (0.2), its models, sky, fog and shadows in the campaign
+    /// world's ([`Self::units`]); the passes of the tile content take the camera's constants in theirs ([`Renderer::in_tile_units`]).
+    pub terrain_units: f32,
+
+    /// The last main camera given to `set_camera` (scene units: the view, the projection, the eye, the viewport, the time), for
+    /// [`Renderer::in_tile_units`].
+    pub last: Option<(Float4x4, Float4x4, Float3, u32, u32, f32)>,
+
     /// What `camera_VS_PS` was last given (game units): the view, the view-projection and the eye (the terrain moves them with its LF
     /// frame for its draws, then puts them back).
     pub cb_view: Float4x4,
@@ -763,6 +778,9 @@ pub(crate) struct CameraState {
 
     /// The shadow cascades' matrices as uploaded (`g_amHardSplit`, game units around the render origin).
     pub shadow_splits: [f32; 64],
+
+    /// The cascades' ends as uploaded (`g_split_distances`, game units, a 16-byte stride).
+    pub split_distances: [f32; 17],
 
     /// The render origin (scene units, y 0): what the shaders get (the camera, instances, terrain, decals, lights, the sea, the effects) is
     /// relative to it, the scene and culling stay absolute. Far from the scene's own origin (a map context, a whole campaign map away from
@@ -800,11 +818,14 @@ impl Default for CameraState {
             eye: Float3::default(),
             px_ratio: 0.001,
             units: 1.0,
+            terrain_units: 1.0,
+            last: None,
             cb_view: Float4x4::IDENTITY,
             cb_view_proj: Float4x4::IDENTITY,
             cb_eye: Float3::default(),
             origin: Float3::default(),
             shadow_splits: [0.0; 64],
+            split_distances: [0.0; 17],
         }
     }
 }
@@ -993,6 +1014,13 @@ pub struct Renderer {
 
     /// The scene's turn of the battle's frame (`RenderScene::world_yaw`, degrees), for the wind.
     pub(crate) world_yaw: f32,
+
+    /// A campaign map's sky inputs this frame (`RenderScene::campaign_sky`): `s_sky` (the engine's white cube) and `s_environment`
+    /// (the map's cubemap.dds). None: the sky and environment cubes the renderer makes.
+    pub(crate) campaign_cubes: Option<(Option<ID3D11ShaderResourceView>, Option<ID3D11ShaderResourceView>)>,
+
+    /// The `rigid_config_PS.g_unlit` last set (the campaign skybox draws unlit).
+    pub(crate) unlit_bound: bool,
     pub(crate) particles: ParticleSystem,
 
     /// Rome 2's effects (its own particle system and per-effect shaders).
@@ -1179,6 +1207,8 @@ impl Renderer {
             snow_region: None,
             snow_bound: 0.0,
             world_yaw: 0.0,
+            campaign_cubes: None,
+            unlit_bound: false,
             particles,
             vfx_rome2,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
@@ -1493,6 +1523,47 @@ impl Renderer {
         cbs.set_f("camera_VS_PS", "g_hide_foliage", &[1.0]);
     }
 
+    /// A texture repeat of the tile database (its `blend_pixel_scale`s, in its own units) in the scene's game units: the campaign's 620
+    /// is drawn at 620 * 0.013043 = 8.087 (RenderDoc, camp_attila: `g_blend_pixel_scale_array`; 0.013043 = 0.0026087 / 0.2, the world's
+    /// units a scene unit over the database's). 1 when the two are the same.
+    pub(crate) fn tile_scale(&self) -> f32 {
+        self.camera.units / self.camera.terrain_units.max(1e-9)
+    }
+
+    /// Runs a pass of the tile content with the camera's constants in the tile units (`CameraState::terrain_units`), then puts the
+    /// main camera's back. Nothing to do when the two are the same (every scene but a campaign map).
+    pub(crate) fn in_tile_units<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let (u, t) = (self.camera.units, self.camera.terrain_units);
+        let Some((view, proj, eye, w, h, time)) = self.camera.last.filter(|_| u != t) else { return f(self) };
+        let main_vp = self.camera.main_view_proj;
+        self.camera.units = t;
+        self.set_camera(&view, &proj, eye, w, h, time);
+        self.camera.main_view_proj = main_vp;
+        // The cascades take world positions in game units: the tile content's are t / u of the scene's.
+        let splits = self.camera.shadow_splits;
+        let mut scaled = splits;
+        for c in scaled.as_chunks_mut::<16>().0 {
+            for row in c.chunks_mut(4) {
+                for v in row.iter_mut().take(3) {
+                    *v *= u / t;
+                }
+            }
+        }
+
+        self.cbs.set_f("shadowmap_PS", "g_amHardSplit", &scaled);
+        let dist = self.camera.split_distances;
+        self.cbs.set_f("shadowmap_PS", "g_split_distances", &dist.map(|d| d * t / u));
+        self.upload();
+        let r = f(self);
+        self.camera.units = u;
+        self.set_camera(&view, &proj, eye, w, h, time);
+        self.camera.main_view_proj = main_vp;
+        self.cbs.set_f("shadowmap_PS", "g_amHardSplit", &splits);
+        self.cbs.set_f("shadowmap_PS", "g_split_distances", &dist);
+        self.upload();
+        r
+    }
+
     /// The camera's constants for positions relative to the render origin moved by `shift` (scene units); a zero shift puts the view's
     /// own back. For a pass whose shaders read positions in a frame of their own (the sea's, around the battle's centre).
     pub(crate) fn shift_camera_constants(&mut self, shift: Float3) {
@@ -1603,8 +1674,15 @@ impl Renderer {
             self.settings.season = k as i32;
         }
         self.camera.units = if scene.game_units > 0.0 { scene.game_units } else { 1.0 };
+        self.camera.terrain_units = if scene.terrain_units > 0.0 { scene.terrain_units } else { self.camera.units };
         wce_prof!("render.total");
         let mut cam = view_params.camera;
+        // A campaign map's far plane: the game's, 500 of its world's units (RenderDoc, camp_attila: near 1, far 500), whatever the view
+        // streams to: the skybox stands 460 units round the camera.
+        if scene.campaign {
+            cam.zfar = cam.zfar.max(CAMPAIGN_FAR / self.camera.units);
+        }
+
         let time_s = view_params.time_s;
         let (out_w, out_h) = (target.width(), target.height());
         if out_w < 8 || out_h < 8 {
@@ -1713,7 +1791,8 @@ impl Renderer {
         // grows): scaling the two scales the fog (the GLSL listing of ps30_main).
         // A view past the game's far plane (the map context's far views) thins it by as much: as the game has it, a view from high up was
         // all white. (Slowing the distance term instead left it white: 1 - exp(-d) still reaches its top well inside such a view.)
-        let far = (GAME_VIEW_DISTANCE / view_params.camera.zfar).min(1.0);
+        // Not on a campaign map: its far plane is the game's.
+        let far = if scene.campaign { 1.0 } else { (GAME_VIEW_DISTANCE / view_params.camera.zfar).min(1.0) };
         if !self.settings.game_view && (self.settings.fog_amount < 1.0 || far < 1.0) {
             let k = self.settings.fog_amount.clamp(0.0, 1.0) * far;
             self.cbs.set_f("fog_VS_PS", "g_fog_distance_scale", &[env.fog_distance_scale * k]);
@@ -1762,8 +1841,16 @@ impl Renderer {
         self.snow_region = scene.snow().map(|s| s.amount.max(env.snowing_intensity));
         self.set_snowing(self.snow_region.unwrap_or(self.snow_weather));
 
+        // A campaign map: no sky cube, no environment cube (EnvMapGen does not run there): the engine's white cube and the map's
+        // cubemap.dds.
+        self.campaign_cubes = scene.campaign_sky.as_ref().map(|c| {
+            let env = self.sky_texture(&c.environment, false);
+            (self.sky_texture(WHITE_CUBE, false), env)
+        });
         self.gpu_timer.mark("sky cube");
-        self.pass_sky_cube(&env, time_s);
+        if self.campaign_cubes.is_none() {
+            self.pass_sky_cube(&env, time_s);
+        }
         self.gpu_timer.mark("env cube");
 
         // The render origin follows the camera, on a grid; its height is the sea's (the shaders' heights are relative to
@@ -1777,12 +1864,14 @@ impl Renderer {
         self.camera.origin.y = scene.sea_level;
 
         // The XML ambient while it renders.
-        if self.clock.frame.is_multiple_of(4) || !self.env.valid {
-            wce_prof!("render.env_cube");
-            self.render_env_cube(&env, time_s, scene);
-        }
+        if self.campaign_cubes.is_none() {
+            if self.clock.frame.is_multiple_of(4) || !self.env.valid {
+                wce_prof!("render.env_cube");
+                self.render_env_cube(&env, time_s, scene);
+            }
 
-        self.apply_engine_ambient(&env);
+            self.apply_engine_ambient(&env);
+        }
 
         // Rome 2's water reflection (the mirrored sky), with the camera of this view; the main camera is set after.
         if !self.kinds.water.is_empty() {
@@ -1814,6 +1903,7 @@ impl Renderer {
 
         self.set_camera(&view_m, &proj, cam.eye, width, height, time_s);
         self.camera.main_view_proj = self.camera.view_proj;
+        self.camera.last = Some((view_m, proj, cam.eye, width, height, time_s));
         self.upload();
         let main_vp = viewport(0.0, 0.0, width as f32, height as f32);
         self.ctx.set_viewports(&[main_vp]);
@@ -1833,7 +1923,7 @@ impl Renderer {
         // The grass is G-buffer content like the rest; the decals are the first step of the game's "DEFERRED LIGHTING" stage (fn 0x118c2750:
         // DEFERRED DECAL, then POINTLIGHT, REFRACTION, FOG, the water views), so they paint over the grass inside their boxes too.
         self.gpu_timer.mark("grass");
-        self.pass_grass(scene);
+        self.in_tile_units(|r| r.pass_grass(scene));
         self.gpu_timer.mark("decals");
         self.pass_decals(scene);
         self.resolve_scene_depth();
@@ -1925,7 +2015,7 @@ impl Renderer {
             depth: self.gbuffer.scene_dsv(),
             depth_one_sample: self.gbuffer.depth.dsv_read_depth.clone(),
             depth_zw: self.gbuffer.depth_srv(),
-            sky: self.sky.cube.srv.clone(),
+            sky: self.sky_srv(),
             width,
             height,
         };

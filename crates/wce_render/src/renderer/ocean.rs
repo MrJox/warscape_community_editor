@@ -72,6 +72,9 @@ const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
 const OCEAN_ORIGIN_REACH: f32 = 8192.0;
 const TRANSPARENCY_EXPONENTIAL_SCALE: f32 = 4.0;
 
+/// A campaign map's lakes' `g_transparency_exponential_scale` (RenderDoc, camp_attila 2026-11-16: the instanced lake quads 30, the sea 35).
+pub(crate) const CAMPAIGN_LAKE_TRANSPARENCY: f32 = 30.0;
+
 /// The sea quadtree: its leaves are `CHUNK_CELLS` cells a side; a node is split while the camera is nearer than `SPLIT_DISTANCE`
 /// times its size (game units), down to `MIN_CHUNK` (0.5 m cells). The planes are laid out in `CHUNK_SIZE` squares first.
 const CHUNK_SIZE: f32 = 128.0;
@@ -854,8 +857,15 @@ impl Renderer {
             cbs.set_m("waterplane_VS", "g_world", world.data());
             cbs.set_m("waterplane_VS", "g_overlay_view_projection", Float4x4::IDENTITY.data());
             cbs.set_f("campaign_CB", "g_wp_world_size", &[c.size[0] * u, c.size[1] * u]);
-            cbs.set_f("campaign_ocean_cb", "g_sea_uv_scale", &[sea_uv]);
-            cbs.set_f("campaign_ocean_cb", "g_swell_uv_scale", &[swell_uv]);
+            // The game's campaign values (RenderDoc, camp_attila 2026-11-16, the sea draw; the campaign world's units): the surfaces'
+            // repeats, the refraction, the transparency (35; the lakes 30, `CAMPAIGN_LAKE_TRANSPARENCY`), the sea info.
+            cbs.set_f("campaign_CB", "g_wp_normal_scales", &[15.0, 15.0, 2.0, 2.0]);
+            cbs.set_f("campaign_CB", "g_refraction_offset", &[-0.2]);
+            cbs.set_f("campaign_CB", "g_refraction_scale", &[4.1]);
+            cbs.set_f("campaign_ocean_cb", "g_sea_uv_scale", &[0.1]);
+            cbs.set_f("campaign_ocean_cb", "g_swell_uv_scale", &[0.1]);
+            cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[35.0]);
+            cbs.set_f("OceanSharedConstants", "g_ps_sea_info", &[0.0, 0.0, -3.482, 6.983]);
             cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
             sea_shift = corner - self.camera.origin;
         }
@@ -900,7 +910,8 @@ impl Renderer {
         bind_srv(ctx, &ps, "sea_surface_sampler", sea_srv.as_ref());
         bind_srv(ctx, &ps, "swell_surface_sampler", swell_srv.as_ref());
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
-        bind_srv(ctx, &ps, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
+        let env_cube = self.env_srv();
+        bind_srv(ctx, &ps, "s_environment", env_cube.as_ref());
         bind_srv(ctx, &ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());
         bind_srv(ctx, &ps, "colour_overlay_texture_sampler", o.clear.as_ref());
         bind_srv(ctx, &ps, "ui_colour_overlay_texture_sampler", o.clear.as_ref());
@@ -908,8 +919,7 @@ impl Renderer {
         bind_srv(ctx, &ps, "g_static_foam_texture", foam.as_ref());
 
         // Rome 2's names: the sky cube, the foam texture; its planar reflection (the mirrored sky, `render_water_reflection`).
-        let sky = if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() };
-        bind_srv(ctx, &ps, "s_sky", sky);
+        bind_srv(ctx, &ps, "s_sky", env_cube.as_ref());
         bind_srv(ctx, &ps, "combined_foam_texture_sampler", foam.as_ref());
         let reflection = self.water_reflection_srv();
         bind_srv(ctx, &ps, "reflection_texture_sampler", reflection.as_ref());
