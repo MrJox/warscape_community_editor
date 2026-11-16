@@ -5014,12 +5014,23 @@ impl Tool for TileTool {
         // Structural edits move element indices: the command says what is selected afterwards.
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         if let Some(hint) = d.take_selection_hint() {
+            // An edit of the line whose point is picked (a value of the point in the Inspector, a mark) selects that line again: its point
+            // stays picked (user 2026-11-16: the Inspector went back to the line's rows mid edit). Anything else picks none.
+            let line = (hint.len() == 1).then(|| wce_tile_editor::tile_document::elem_of(hint[0])).flatten();
+            let still = line.filter(|&l| {
+                self.poly_point_line.is_some()
+                    && d.tile().is_polygon(l)
+                    && self.poly_point.is_some_and(|p| p < d.tile().tscene().polygon_points(l).len())
+            });
             e.selection.clear();
             for item in hint {
                 e.selection.add(SourceRef { doc: id, item });
             }
 
-            self.poly_point = None;
+            match still {
+                Some(l) => self.poly_point_line = Some(l),
+                None => self.poly_point = None,
+            }
         }
 
         if let Some(r) = e.renderer.as_mut() {
