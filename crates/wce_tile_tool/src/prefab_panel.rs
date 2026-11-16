@@ -183,13 +183,11 @@ impl TileTool {
 
         // The first road type, from the kit's road decals, where its pieces are missing and the kit has them.
         // Its fences from the fences file in the settings folder (written there where missing: the user's to edit).
-        let settings_dir = e.settings_ref().paths().config_dir().to_path_buf();
-        let fences = wce_tile::road_fences::load(&settings_dir);
-        wce_walls::profile::load(&settings_dir);
-        wce_walls::bridge::load(&settings_dir);
-        if !wce_tile::road_dirt::all_written(&folders[0], &fences) {
+        crate::tool::load_tables();
+        let fences = wce_tile::road_fences::fences();
+        if !wce_tile::road_dirt::all_written(&folders[0], fences) {
             if wce_tile::road_dirt::kit_has_decals(&lib) {
-                match wce_tile::road_dirt::write(&folders[0], &fences) {
+                match wce_tile::road_dirt::write(&folders[0], fences) {
                     Ok(written) => {
                         wce_foundation::log::info(format!("road pieces: {} {} piece(s) written", written.len(), wce_tile::road_dirt::TYPE));
                         lib = PrefabLibrary::scan_folders(&folders);

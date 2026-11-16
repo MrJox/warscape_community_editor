@@ -1,16 +1,17 @@
-//! The fences of the generated road types (`road_dirt`), from a file the user can edit (`road_fences.toml` in the settings folder; user
-//! 2026-11-16: buildings added without a rebuild): each fence's building, which way its model runs and its joiners. The file shipped is
-//! [`DEFAULT_TEXT`]; it is written where missing and read on each scan of the prefab library.
-
-use std::path::Path;
+//! The fences of the generated road types (`road_dirt`), from the app's `tables/road_fences.toml` and the user's
+//! `road_fences_custom.toml` beside it (`user_files`; user 2026-11-16: buildings added without a rebuild): each fence's building, which
+//! way its model runs and its joiners. Read on each scan of the prefab library.
 
 use serde::{Deserialize, Serialize};
 
-/// The file's name, in the settings folder.
+/// The shipped file's name, in the app's tables folder.
 pub const FILE_NAME: &str = "road_fences.toml";
 
-/// The file as shipped (and written where there is none).
-pub const DEFAULT_TEXT: &str = include_str!("road_fences.toml");
+/// The shipped file as built into the editor (used where the app's is missing).
+pub const DEFAULT_TEXT: &str = include_str!("../../../tables/road_fences.toml");
+
+/// The fences, from the files ([`load`]) or as built in.
+pub static FENCES: crate::user_files::Registry<Fences> = crate::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse_with);
 
 /// Which way a fence's model runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,19 +53,47 @@ pub struct Fences {
 }
 
 impl Default for Fences {
+    /// The built-in fences.
     fn default() -> Self {
-        parse(DEFAULT_TEXT).unwrap_or_else(|e| panic!("the shipped {FILE_NAME} reads: {e}"))
+        FENCES.shipped().clone()
     }
 }
 
-/// Reads a fences file.
+/// A custom file: the fence in place of the shipped one, named fences in place of the shipped ones of their names or added.
+#[derive(Debug, Default, Deserialize)]
+struct Custom {
+    fence: Option<Fence>,
+    #[serde(default)]
+    named: Vec<Fence>,
+}
+
+/// Reads a fences file (no custom one).
 ///
 /// # Errors
 ///
-/// It is not TOML of this shape, or a name is not one a piece can have (empty, a number alone, other than `a-z 0-9 _`, twice), or a key
-/// is empty.
+/// As [`parse_with`].
 pub fn parse(text: &str) -> Result<Fences, String> {
-    let f: Fences = toml::from_str(text).map_err(|e| e.to_string())?;
+    parse_with(text, None)
+}
+
+/// Reads the shipped fences file and the custom one over it.
+///
+/// # Errors
+///
+/// Either is not TOML of its shape, or a name is not one a piece can have (empty, a number alone, other than `a-z 0-9 _`, twice), or a
+/// key is empty.
+pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Fences, String> {
+    let mut f: Fences = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    if let Some(text) = custom {
+        let name = crate::user_files::custom_name(FILE_NAME);
+        let c: Custom = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+        if let Some(fence) = c.fence {
+            f.fence = fence;
+        }
+
+        crate::user_files::replace_or_add(&mut f.named, c.named, |a, b| a.name == b.name);
+    }
+
     let mut seen = std::collections::HashSet::new();
     for n in &f.named {
         let ok_chars = n.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
@@ -84,15 +113,15 @@ pub fn parse(text: &str) -> Result<Fences, String> {
     Ok(f)
 }
 
-/// The fences file in `dir` (the settings folder): written as shipped where missing; one that does not read is logged and the shipped
-/// one used (the file is left as it is, for the user to mend).
+/// Reads the fences files in the tables folder (`user_files::tables_dir`): the fences from then on.
+pub fn load(dir: &std::path::Path) {
+    FENCES.load(dir);
+}
+
+/// The fences: the files' last read, else the built-in ones.
 #[must_use]
-pub fn load(dir: &Path) -> Fences {
-    let text = crate::user_files::read_or_write(dir, FILE_NAME, DEFAULT_TEXT);
-    parse(&text).unwrap_or_else(|e| {
-        wce_foundation::log::warn(format!("{}: {e}: the shipped fences are used", dir.join(FILE_NAME).display()));
-        Fences::default()
-    })
+pub fn fences() -> &'static Fences {
+    FENCES.get()
 }
 
 #[cfg(test)]
@@ -112,14 +141,17 @@ mod tests {
     }
 
     #[test]
-    fn written_where_missing_kept_once_edited() {
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(load(dir.path()), Fences::default());
-        assert_eq!(std::fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(), DEFAULT_TEXT);
-        std::fs::write(dir.path().join(FILE_NAME), "[fence]\nkey = \"mine\"\n").unwrap();
-        assert_eq!(load(dir.path()).fence.key, "mine");
-        std::fs::write(dir.path().join(FILE_NAME), "not toml [").unwrap();
-        assert_eq!(load(dir.path()), Fences::default());
-        assert_eq!(std::fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(), "not toml [", "left for the user to mend");
+    fn a_custom_file_replaces_by_name_and_adds() {
+        let custom = "[fence]\nkey = \"mine\"\n[[named]]\nname = \"greek\"\nkey = \"my_greek\"\nalong = \"z\"\n[[named]]\nname = \"new\"\nkey = \"n\"\n";
+        let f = parse_with(DEFAULT_TEXT, Some(custom)).unwrap();
+        let shipped = Fences::default();
+        assert_eq!(f.fence.key, "mine");
+        assert_eq!(f.named.len(), shipped.named.len() + 1);
+        let greek = f.named.iter().position(|n| n.name == "greek").unwrap();
+        assert_eq!((greek, f.named[greek].key.as_str()), (shipped.named.iter().position(|n| n.name == "greek").unwrap(), "my_greek"));
+        assert!(f.named[greek].joiners.is_empty(), "replaced whole");
+        assert_eq!(f.named.last().unwrap().name, "new");
+        assert!(parse_with(DEFAULT_TEXT, Some("[[named]]\nname = \"Bad\"\nkey = \"k\"\n")).is_err());
+        assert!(parse_with(DEFAULT_TEXT, Some("not toml [")).unwrap_err().starts_with("road_fences_custom.toml"));
     }
 }

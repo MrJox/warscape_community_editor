@@ -33,13 +33,13 @@ pub struct BridgeBase {
     pub end: Option<&'static str>,
 }
 
-/// The bridge bases' file in the settings folder (user 2026-11-16: buildings added without a rebuild; `bridges.toml`, shipped as
-/// [`DEFAULT_TEXT`]). A road asking for one it does not have gets the first.
+/// The bridge bases' file in the app's tables folder, with the user's `bridges_custom.toml` beside it (`wce_tile::user_files`; user
+/// 2026-11-16: buildings added without a rebuild). Built in as [`DEFAULT_TEXT`]. A road asking for one they do not have gets the first.
 pub const FILE_NAME: &str = "bridges.toml";
-pub const DEFAULT_TEXT: &str = include_str!("bridges.toml");
+pub const DEFAULT_TEXT: &str = include_str!("../../../tables/bridges.toml");
 
 /// The bases, from the file ([`load`]) or as shipped.
-pub static BRIDGES: wce_tile::user_files::Registry<Bridges> = wce_tile::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse);
+pub static BRIDGES: wce_tile::user_files::Registry<Bridges> = wce_tile::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse_with);
 
 /// The bridge bases and the editor's list of them (name, label), in the file's order.
 #[derive(Debug)]
@@ -57,19 +57,35 @@ struct BridgeDef {
     end: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Default, serde::Deserialize)]
 struct BridgesFile {
+    #[serde(default)]
     bases: Vec<BridgeDef>,
 }
 
-/// Reads a bridges file.
+/// Reads a bridges file (no custom one).
 ///
 /// # Errors
 ///
-/// It is not TOML of this shape, it has no base, or a name is there twice.
+/// As [`parse_with`].
 pub fn parse(text: &str) -> Result<Bridges, String> {
+    parse_with(text, None)
+}
+
+/// Reads the shipped bridges file and the custom one over it: a custom base in place of the shipped one of its name, or after them.
+///
+/// # Errors
+///
+/// Either is not TOML of its shape, there is no base, or a name is there twice.
+pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Bridges, String> {
     use wce_tile::user_files::keep;
-    let file: BridgesFile = toml::from_str(text).map_err(|e| e.to_string())?;
+    let mut file: BridgesFile = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    if let Some(text) = custom {
+        let name = wce_tile::user_files::custom_name(FILE_NAME);
+        let c: BridgesFile = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+        wce_tile::user_files::replace_or_add(&mut file.bases, c.bases, |a, b| a.name == b.name);
+    }
+
     if file.bases.is_empty() {
         return Err("no [[bases]]".to_owned());
     }
@@ -92,7 +108,7 @@ pub fn parse(text: &str) -> Result<Bridges, String> {
     Ok(Bridges { bases, choices })
 }
 
-/// Reads the bridges file in the settings folder (written as shipped where missing): the bases from then on.
+/// Reads the bridges files in the tables folder (`wce_tile::user_files::tables_dir`): the bases from then on.
 pub fn load(dir: &std::path::Path) {
     BRIDGES.load(dir);
 }

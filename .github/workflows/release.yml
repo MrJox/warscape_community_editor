@@ -51,6 +51,8 @@ jobs:
           $dist = New-Item -ItemType Directory -Force dist
           Copy-Item "$env:CARGO_TARGET_DIR\release\wce.exe" $dist
           Copy-Item README.md, THIRD_PARTY.md $dist
+          # The editor's tables (wall and bridge bases, road fences), read from its folder; users add *_custom.toml beside them.
+          Copy-Item -Recurse tables $dist
           Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
 
       - name: Publish the release
