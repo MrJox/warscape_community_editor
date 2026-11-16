@@ -50,6 +50,44 @@ const WANDER_SPAN: f64 = 25.0;
 pub const WOBBLE: f64 = 0.25;
 const WOBBLE_SPAN: f64 = 12.0;
 
+/// The road's width at each sample of its line: each point's own (`road_width` on the point; none: the road's, `default`), from one point to
+/// the next in a straight ramp along the line, the ends' past the first and last point (user 2026-11-16: narrower in places). `at_point`:
+/// the sample of each point.
+#[must_use]
+pub fn sample_widths(line: &[[f64; 2]], at_point: &[usize], point_widths: &[Option<f64>], default: f64) -> Vec<f64> {
+    let n = line.len();
+    let knots = at_point
+        .iter()
+        .enumerate()
+        .filter(|&(_, &i)| i < n)
+        .map(|(k, &i)| (i, point_widths.get(k).copied().flatten().unwrap_or(default).max(0.5)))
+        .collect::<Vec<_>>();
+    if knots.is_empty() {
+        return vec![default; n];
+    }
+
+    // Distances along the line, the ramps by them (not by sample count: samples are closer on curves).
+    let mut along = vec![0.0; n];
+    for i in 1..n {
+        along[i] = along[i - 1] + (line[i][0] - line[i - 1][0]).hypot(line[i][1] - line[i - 1][1]);
+    }
+
+    (0..n)
+        .map(|i| {
+            let after = knots.iter().position(|&(k, _)| k >= i);
+            match after {
+                None => knots[knots.len() - 1].1,
+                Some(0) => knots[0].1,
+                Some(j) => {
+                    let ((a, wa), (b, wb)) = (knots[j - 1], knots[j]);
+                    let span = along[b] - along[a];
+                    if span <= 1e-9 { wb } else { wa + (wb - wa) * (along[i] - along[a]) / span }
+                }
+            }
+        })
+        .collect()
+}
+
 /// A road's centre line wandering off its spline by its irregularity: each sample moved across by a smooth noise along the road, nothing at
 /// its points (`at_point`, so it still goes through them, its corners and ends where they were) and most between them.
 #[must_use]
@@ -613,6 +651,9 @@ pub struct Strip {
 
     /// Under a bridge's deck: how much wider the road's flat is each side, and how far under the road's height (metres).
     deck: Vec<(f64, f64)>,
+
+    /// The road's width at each sample ([`sample_widths`]; the road's everywhere by default).
+    widths: Vec<f64>,
     origin: [f64; 2],
     across: usize,
     cells: Vec<Vec<u32>>,
@@ -620,7 +661,7 @@ pub struct Strip {
 }
 
 impl Strip {
-    /// Half the road's flat at a sample: its width's, wobbling along it by its irregularity.
+    /// Half the road's flat at a sample: its width's there, wobbling along it by its irregularity.
     fn half(&self, at: usize) -> f64 {
         let s = &self.settings;
         let wobble = if s.irregularity > 0.0 {
@@ -628,12 +669,20 @@ impl Strip {
         } else {
             0.0
         };
-        s.width * 0.5 * (1.0 + wobble)
+        self.widths.get(at).copied().unwrap_or(s.width) * 0.5 * (1.0 + wobble)
     }
 
     #[must_use]
     pub fn new(line: Vec<[f64; 2]>, heights: Vec<f64>, settings: RoadSettings) -> Self {
-        let reach = settings.width * 0.5 + MAX_BANK.max(settings.feather) + CELL;
+        let widths = vec![settings.width; line.len()];
+        Self::with_widths(line, heights, settings, widths)
+    }
+
+    /// [`Self::new`], the road's width at each sample its own (`widths`, [`sample_widths`]).
+    #[must_use]
+    pub fn with_widths(line: Vec<[f64; 2]>, heights: Vec<f64>, settings: RoadSettings, widths: Vec<f64>) -> Self {
+        let widest = widths.iter().copied().fold(settings.width, f64::max);
+        let reach = widest * 0.5 + MAX_BANK.max(settings.feather) + CELL;
         let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
         for p in &line {
             (lo[0], lo[1], hi[0], hi[1]) = (lo[0].min(p[0]), lo[1].min(p[1]), hi[0].max(p[0]), hi[1].max(p[1]));
@@ -657,7 +706,8 @@ impl Strip {
         }
 
         let (open, kept, deck) = (vec![false; line.len()], vec![false; line.len()], vec![(0.0, 0.0); line.len()]);
-        Self { line, heights, settings, open, kept, deck, origin, across, cells, reach }
+        let widths = if widths.len() == line.len() { widths } else { vec![settings.width; line.len()] };
+        Self { line, heights, settings, open, kept, deck, widths, origin, across, cells, reach }
     }
 
     /// Leaves the terrain alone over these stretches (first and last sample).
@@ -731,7 +781,7 @@ impl Strip {
         }
 
         // Near the road its exact height, for a surface with no ripple from the samples the cells left out; the jumps are further out.
-        let far = smooth((near - self.settings.width * 0.5) / NEAR);
+        let far = smooth((near - self.widths.get(at).copied().unwrap_or(self.settings.width) * 0.5) / NEAR);
         Some((near, own + (sum / weights - own) * far, open, kept, at))
     }
 
@@ -817,6 +867,19 @@ fn noise(x: f64, z: f64, seed: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn widths_ramp_between_points_by_distance() {
+        // Four points along x, 10 m apart, sampled every metre; the second 3 m wide, the others the road's 6.
+        let line = (0..=30).map(|i| [f64::from(i), 0.0]).collect::<Vec<_>>();
+        let w = sample_widths(&line, &[0, 10, 20, 30], &[None, Some(3.0), None, None], 6.0);
+        assert_eq!(w.len(), 31);
+        assert!((w[0] - 6.0).abs() < 1e-9 && (w[10] - 3.0).abs() < 1e-9 && (w[20] - 6.0).abs() < 1e-9);
+        assert!((w[5] - 4.5).abs() < 1e-9 && (w[15] - 4.5).abs() < 1e-9, "a ramp each way: {w:?}");
+        assert!(w[25..].iter().all(|&v| (v - 6.0).abs() < 1e-9));
+        // No point with its own: the road's everywhere.
+        assert!(sample_widths(&line, &[0, 30], &[None, None], 6.0).iter().all(|&v| (v - 6.0).abs() < 1e-9));
+    }
 
     fn settings() -> RoadSettings {
         RoadSettings {

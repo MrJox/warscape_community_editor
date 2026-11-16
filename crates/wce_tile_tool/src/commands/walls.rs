@@ -68,6 +68,29 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "road_point_width",
+        "road_point_width <point index> <metres> | road",
+        "a point of the selected procedural road: its own width (the road narrows or widens to it from its neighbouring points), or the road's",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let (Some(i), Some(w)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1)) else {
+                return fail("usage: road_point_width <point index> <metres> | road");
+            };
+            let Some(el) = el.filter(|&el| d.tile().is_road(el)) else { return fail("no road selected") };
+            let value = if w == "road" {
+                String::new()
+            } else {
+                match w.parse::<f64>() {
+                    Ok(v) if v >= 0.5 => wce_tile::ted_scene::format_number(v),
+                    _ => return fail("a width of 0.5 m or more, or road"),
+                }
+            };
+            if d.set_point_attribute(el, i, "road_width", &value) { ok("") } else { fail("no such point") }
+        },
+    );
+
+    c.add(
         "road_point_fence",
         "road_point_fence <point index> road|none|<fence piece> [damage 0..1 | road]",
         "a point of the selected procedural road: its own fence (road: the road's; none: a gap; fence, fence_wood...: road_<type>_<piece>) and fence damage, for the fences around it",

@@ -54,6 +54,10 @@ struct Road {
     /// `fence_wood`: `road_<type>_fence_wood`) and the damage chance. Each covers the fences nearest it, halfway to its neighbours.
     point_fences: Vec<Option<String>>,
     point_damage: Vec<Option<f64>>,
+
+    /// Its points' own widths (`road_width` on a point; none: the road's), the road's width ramping from one to the next
+    /// (`roads::sample_widths`).
+    point_widths: Vec<Option<f64>>,
     signature: u64,
 }
 
@@ -218,6 +222,33 @@ struct Plan {
 
     /// Its bridges over water: their stretches and the least height of their decks.
     decks: Vec<(usize, usize, f64)>,
+
+    /// The road's width at each sample (`roads::sample_widths`: its points' own, the road's between).
+    widths: Vec<f64>,
+}
+
+impl Plan {
+    /// The road's width at a distance along its line.
+    fn width_at(&self, s: f64) -> f64 {
+        let st = Stations::new(&self.line);
+        let n = self.line.len();
+        if n == 0 || self.widths.len() != n {
+            return self.widths.first().copied().unwrap_or(6.0);
+        }
+
+        let i = (1..n).find(|&i| st.of_sample(i) >= s).unwrap_or(n - 1).max(1);
+        let (a, b) = (st.of_sample(i - 1), st.of_sample(i));
+        let t = if b > a { ((s - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
+        self.widths[i - 1] + (self.widths[i] - self.widths[i - 1]) * t
+    }
+
+    /// The road's width where a piece is laid: at the middle of its stretch, or where a junction's middle is.
+    fn width_of(&self, frame: &wce_tile::road_layout::Frame) -> f64 {
+        match frame {
+            wce_tile::road_layout::Frame::Along { from, to } => self.width_at((from + to) * 0.5),
+            wce_tile::road_layout::Frame::Star { at, .. } => self.width_at(wce_tile::road_layout::nearest(&self.line, *at).0),
+        }
+    }
 }
 
 /// An instance generated along a road: a prefab's part or a bridge's piece.
@@ -415,8 +446,12 @@ impl Tile {
                     .iter()
                     .map(|&p| doc.get(p, "road_fence_damage").and_then(|v| wce_formats::c_num::strtod(&v)).map(|v| v.clamp(0.0, 1.0)))
                     .collect::<Vec<_>>();
+                let point_widths = points
+                    .iter()
+                    .map(|&p| doc.get(p, "road_width").and_then(|v| wce_formats::c_num::strtod(&v)).filter(|v| *v > 0.0).map(|v| v.max(0.5)))
+                    .collect::<Vec<_>>();
                 let signature = hash_text(&format!(
-                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {water:x}"
+                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {point_widths:?} {water:x}"
                 ));
                 Road {
                     id: number(e, "road_id", 0.0) as u32,
@@ -431,6 +466,7 @@ impl Tile {
                     detail_density,
                     point_fences,
                     point_damage,
+                    point_widths,
                     signature,
                 }
             })
@@ -532,7 +568,8 @@ impl Tile {
         let wet = line.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
         let p = wce_tile::roads::plan(&line, &raw, &wet, &road.settings, on_other);
         let heights = level_past_rims(&line, p.heights, &p.gaps, &road.settings);
-        Plan { line, at_point, heights, gaps: p.gaps, fords: p.fords, decks: p.decks }
+        let widths = wce_tile::roads::sample_widths(&line, &at_point, &road.point_widths, road.settings.width);
+        Plan { line, at_point, heights, gaps: p.gaps, fords: p.fords, decks: p.decks, widths }
     }
 
     /// The highest water surface over a point (world units), if any: a river, a lake's water plane, the sea in a tile of the sea's sets. It
@@ -1230,8 +1267,9 @@ fn road_items(i: ItemsInput) -> ItemsMade {
         let mut spans = vec![];
         // Each crossing's AI hint, as vanilla's bridges and fords have one (`road_layout::crossing_hint`), for an export.
         let width = road.settings.width;
-        let crossings = plan.gaps.iter().map(|&g| (g, width * 0.5 + wce_tile::road_layout::HINT_SIDE)).chain(
-            plan.fords.iter().map(|&g| (g, (width * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))),
+        let mid = |(a, b): (usize, usize)| plan.width_at((st.of_sample(a) + st.of_sample(b)) * 0.5);
+        let crossings = plan.gaps.iter().map(|&g| (g, mid(g) * 0.5 + wce_tile::road_layout::HINT_SIDE)).chain(
+            plan.fords.iter().map(|&g| (g, (mid(g) * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))),
         );
         for ((a, b), half) in crossings {
             let ends = wce_tile::road_layout::HINT_ENDS;
@@ -1284,7 +1322,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
             // (user 2026-11-08: lying on the road, units stepped onto it anywhere and the game would not path across).
             let path =
                 (a..=b).map(|i| [plan.line[i][0] * unit, (plan.heights[i] + DECK_LIFT) * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
-            decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
+            decks.push((elem, road.id, road.bridge.clone(), plan.width_at((st.of_sample(a) + st.of_sample(b)) * 0.5) * unit, path));
         }
 
         planned.push((elem, road, plan, spans));
@@ -1362,8 +1400,9 @@ fn road_items(i: ItemsInput) -> ItemsMade {
             wce_foundation::log::warn(format!("road {}: {note}", road.id));
         }
 
-        let width = road.settings.width;
         for (k, l) in laid.laid.iter().enumerate() {
+            // The road's width where the piece lies (its points' own, ramping between them).
+            let width = plan.width_of(&l.frame);
             let Some((_, p, key, children)) = pick(&laid.laid, k, &pieces[..], road) else { continue };
 
             // A junction where roads of other types meet (docs/plans/procedural_roads.md, "Variety"): each type lays its own junction
@@ -1462,6 +1501,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 let Some(q) = weighted(&options, |q| q.1.weight, road_hash(road.settings.seed, road.id, number)) else { continue };
                 let laid =
                     wce_tile::road_layout::Laid { piece: "straight", frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 } };
+                let width = plan.width_of(&laid.frame);
                 let keep = |index: usize, part: &wce_tile::road_pieces::Part| !part.solid && detail_kept(road, number, index, part);
                 let dress = wce_tile::road_layout::Dress {
                     tilt: None,
@@ -1492,11 +1532,11 @@ fn road_items(i: ItemsInput) -> ItemsMade {
         // and, by the road's damage, destroyed or not.
         if let Some((_, p, key, children)) = piece("fence").filter(|_| road.fences.iter().any(|&f| f)) {
             let length = p.arms.first().map_or(wce_tile::road_pieces::FENCE, |a| a.length);
-            let offset = width * 0.5 + wce_tile::road_layout::FENCE_OUT;
+            let offsets = plan.widths.iter().map(|w| w * 0.5 + wce_tile::road_layout::FENCE_OUT).collect::<Vec<_>>();
             let mut lines = vec![];
             for (side, on) in [(-1.0, road.fences[0]), (1.0, road.fences[1])] {
                 if on {
-                    let (fence_line, runs) = wce_tile::road_layout::fence_runs(&plan.line, &laid.held, side, offset, length);
+                    let (fence_line, runs) = wce_tile::road_layout::fence_runs_by(&plan.line, &laid.held, side, &offsets, length);
                     lines.push((fence_line, runs));
                 }
             }
@@ -1511,6 +1551,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 // The sector's side of the road as it runs through: from its first way (behind) to its second (ahead).
                 let t = [ways[1][0] - ways[0][0], ways[1][1] - ways[0][1]];
                 let fenced = |m: [f64; 2]| if m[0] * t[1] - m[1] * t[0] > 0.0 { road.fences[1] } else { road.fences[0] };
+                let offset = plan.width_of(&l.frame) * 0.5 + wce_tile::road_layout::FENCE_OUT;
                 for star in wce_tile::road_layout::star_fences(*at, ways, reach, offset, &fenced) {
                     // An arc much shorter than a fence, or whose ends are (a junction's inside corner), is left open: a fence
                     // across it stood diagonally into the road.
@@ -1529,7 +1570,9 @@ fn road_items(i: ItemsInput) -> ItemsMade {
             // the inside of a sharp corner's fences ran on across the road).
             let on_road = |p: [f64; 2]| {
                 planned.iter().any(|(_, other, op, _)| {
-                    wce_tile::road_layout::nearest(&op.line, p).1 < other.settings.width * 0.5 + wce_tile::road_layout::FENCE_OUT * 0.5
+                    let (s, d, _) = wce_tile::road_layout::nearest(&op.line, p);
+                    let _ = other;
+                    d < op.width_at(s) * 0.5 + wce_tile::road_layout::FENCE_OUT * 0.5
                 })
             };
             let mut k = 0u64;
@@ -1752,7 +1795,7 @@ const NOGO_FAR: f64 = 10.0;
 /// A road's strip as its terrain is made: the terrain left alone under its bridges but for their rims (the road comes up to the deck
 /// there, so the bridge's ends lie on it), its heights left alone on its fords.
 fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
-    let mut strip = Strip::new(plan.line.clone(), plan.heights.clone(), settings.clone());
+    let mut strip = Strip::with_widths(plan.line.clone(), plan.heights.clone(), settings.clone(), plan.widths.clone());
     let inner = plan.gaps.iter().filter(|&&(a, b)| b > a + 1).map(|&(a, b)| (a + 1, b - 1)).collect::<Vec<_>>();
     strip.open_gaps(&inner);
 
