@@ -1,9 +1,11 @@
 # Attila: the fences of the generated dirt road types (roads_proc/dirt and roads_proc/dirt_track).
 #
-# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own fences in
-# road_fences_custom.toml beside it (the editor never writes it, an update leaves it alone): a [fence] there replaces the one below, a
-# [[named]] fence replaces the one of its name or is added. The editor reads both each time it scans the prefab library (opening a tile),
-# then makes again every fence piece nobody edited: road_<type>_fence (the [fence]) and road_<type>_fence_<name> (each [[named]] one).
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put changes in a file beside it named
+# road_fences_<anything>.toml that starts with a mod_key: the start of a mod pack's name, the file then read only while such a pack is loaded
+# in the editor (mod_key = "tdd_pack1_main_" for The Dawnless Days), or empty (mod_key = "") to read it always, for your own changes.
+# The editor never writes those, and an update leaves them alone (but those it ships). They are read after this one, in their names'
+# order; an entry in one replaces the one of the same key or name before it (whole), or is added after them. The editor reads them each
+# time a tile is opened.
 #
 # A fence piece is 5 m long: use a building about that long.
 #   name     the piece's name (fence_<name>): lowercase letters, digits and _, not a number alone. [fence] has none.

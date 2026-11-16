@@ -875,10 +875,9 @@ fn mix(a: [f64; 2], b: [f64; 2], wa: f64, wb: f64) -> [f64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::profile;
 
     fn eight() -> &'static Profile {
-        profile("barbarian_fort_straight").unwrap()
+        crate::profile::test_profile("barbarian_fort_straight").unwrap()
     }
 
     fn wall(points: &[[f64; 2]]) -> WallInput {
@@ -938,7 +937,7 @@ mod tests {
 
     #[test]
     fn a_15_m_wall_slopes_gently_over_its_steps() {
-        let p = profile("roman_fort_straight").unwrap();
+        let p = crate::profile::test_profile("roman_fort_straight").unwrap();
         let plan = solve(&wall(&[[0.0, 0.0], [400.0, 0.0]]), p, &|x, _| x * 0.02);
         assert!(!plan.steps.is_empty());
         for st in &plan.steps {
@@ -952,7 +951,7 @@ mod tests {
 
     #[test]
     fn a_15_m_wall_takes_a_whole_bastion_for_a_10_m_climb_on_a_straight() {
-        let p = profile("roman_fort_straight").unwrap();
+        let p = crate::profile::test_profile("roman_fort_straight").unwrap();
         let ground = |x: f64, _: f64| if x < 150.0 { 0.0 } else { 10.0 };
         let plan = solve(&wall(&[[0.0, 0.0], [300.0, 0.0]]), p, &ground);
         let whole = plan.steps.iter().filter(|st| st.whole).collect::<Vec<_>>();
@@ -1002,7 +1001,7 @@ mod tests {
     #[test]
     fn neighbouring_steps_keep_flat_walkway_between_them() {
         // A dip: down then up; the walkway between the two steps stays flat for at least half a run.
-        let p = profile("roman_fort_straight").unwrap();
+        let p = crate::profile::test_profile("roman_fort_straight").unwrap();
         let ground = |x: f64, _: f64| if (100.0..130.0).contains(&x) { -4.0 } else { 0.0 };
         let plan = solve(&wall(&[[0.0, 0.0], [300.0, 0.0]]), p, &ground);
         for w in plan.steps.windows(2).filter(|w| w[0].chain != w[1].chain) {
@@ -1031,7 +1030,7 @@ mod tests {
 
     #[test]
     fn two_attached_ends_at_levels_within_the_tolerance_hold_both() {
-        let p = crate::profile::profile("barbarian_fort_straight").unwrap();
+        let p = crate::profile::test_profile("barbarian_fort_straight").unwrap();
         let input = WallInput {
             points: vec![[0.0, 0.0], [26.0, 0.0]],
             sharp: vec![false, false],

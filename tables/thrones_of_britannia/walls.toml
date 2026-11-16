@@ -1,10 +1,12 @@
 # Thrones of Britannia: the base walls procedural walls (WceWallSpline) are generated from, in the order the editor lists them.
 #
-# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in walls_custom.toml beside
-# it (the editor never writes it, an update leaves it alone): a [families.<name>] there sets those numbers of the family of its name (or
-# makes a new family), a [[bases]] entry replaces the base of its key (whole: give it all its pieces) or is added after these. The editor
-# reads both each time a tile is opened; the Inspector's Wall base row lists the bases whose pieces the game's files have.
-# Docs: docs/re/buildings.md ("The families", "The kit table"), docs/plans/procedural_walls.md.
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put changes in a file beside it named
+# walls_<anything>.toml that starts with a mod_key: the start of a mod pack's name, the file then read only while such a pack is loaded
+# in the editor (mod_key = "tdd_pack1_main_" for The Dawnless Days), or empty (mod_key = "") to read it always, for your own changes.
+# The editor never writes those, and an update leaves them alone (but those it ships). They are read after this one, in their names'
+# order; an entry in one replaces the one of the same key or name before it (whole), or is added after them. The editor reads them each
+# time a tile is opened.
+# A [families.<name>] in one sets only the numbers it gives of that family (or makes a new family).
 #
 # In a piece's frame, scene units (the models' units): x along the wall, -z the outer side, y = 0 the ground the piece stands on.
 #

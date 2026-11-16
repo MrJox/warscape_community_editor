@@ -179,6 +179,10 @@ pub const ROAD_TYPE: &[(&str, &str)] = &[];
 /// `road_fences.toml` in the app's tables, and the road type's other named fences in the prefab library), put in the row's place.
 pub const ROAD_FENCE_TYPE: &[(&str, &str)] = &[];
 
+/// Not TEd's: a `WceRoadSpline`'s fence joiners: the editor's list is `Tile::road_fence_joiner_choices` (the fences' own, none, and each
+/// joiner of `road_fences.toml` in the app's tables), put in the row's place.
+pub const ROAD_FENCE_JOINERS: &[(&str, &str)] = &[];
+
 /// Not TEd's: the bases a `WceRoadSpline`'s bridges are generated from: the editor's list is `wce_walls::bridge::choices` (`bridges.toml`
 /// in the settings folder, the user's to edit), put in the row's place (`Tile::game_choices`).
 pub const ROAD_BRIDGE: &[(&str, &str)] = &[];

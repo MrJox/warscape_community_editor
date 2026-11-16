@@ -1027,6 +1027,21 @@ impl Tile {
         leaked_choices(names)
     }
 
+    /// The joiners a road's fences may have (Inspector's fence joiners row): the fence pieces' own (empty), none, then every joiner of the
+    /// fences table, each alone.
+    #[must_use]
+    pub fn road_fence_joiner_choices(&self) -> &'static [(&'static str, &'static str)] {
+        let f = wce_tile::road_fences::fences();
+        let mut list = vec![(String::new(), "the fences' own".to_owned()), ("none".to_owned(), "none".to_owned())];
+        for j in std::iter::once(&f.fence).chain(&f.named).flat_map(|f| f.joiners.iter()) {
+            if !list.iter().any(|(v, _)| v == j) {
+                list.push((j.clone(), j.clone()));
+            }
+        }
+
+        leaked_pairs(list)
+    }
+
     /// A road type's own width: the tables' (`road_types.toml`), else its straight's (`road_<type>_straight`): what a road of it is made
     /// at when the type is chosen.
     #[must_use]
@@ -2042,25 +2057,22 @@ fn road_layer<K: Kind>(s: &mut Stack<K>, road: u32, variation: Option<&str>, own
 
 /// A choice list for a property row (value and label alike), leaked once per list seen: the rows hold it.
 fn leaked_choices(names: Vec<String>) -> &'static [(&'static str, &'static str)] {
+    leaked_pairs(names.into_iter().map(|n| (n.clone(), n)).collect())
+}
+
+/// A choice list for a property row (value, label), leaked once per list seen.
+fn leaked_pairs(pairs: Vec<(String, String)>) -> &'static [(&'static str, &'static str)] {
     use std::sync::{Mutex, OnceLock};
     type List = &'static [(&'static str, &'static str)];
-    static MADE: OnceLock<Mutex<Vec<(Vec<String>, List)>>> = OnceLock::new();
+    static MADE: OnceLock<Mutex<Vec<(Vec<(String, String)>, List)>>> = OnceLock::new();
     let mut made = MADE.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((_, list)) = made.iter().find(|(n, _)| *n == names) {
+    if let Some((_, list)) = made.iter().find(|(p, _)| *p == pairs) {
         return list;
     }
 
-    let list: List = Box::leak(
-        names
-            .iter()
-            .map(|n| {
-                let n: &'static str = Box::leak(n.clone().into_boxed_str());
-                (n, n)
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
-    made.push((names, list));
+    let keep = wce_tile::user_files::keep;
+    let list: List = Box::leak(pairs.iter().map(|(v, l)| (keep(v), keep(l))).collect::<Vec<_>>().into_boxed_slice());
+    made.push((pairs, list));
     list
 }
 

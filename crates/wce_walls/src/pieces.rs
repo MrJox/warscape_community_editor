@@ -1153,11 +1153,10 @@ pub fn level_of(name: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::profile;
     use crate::solver::{WallInput, solve, wall_level};
 
     fn plan_of(points: &[[f64; 2]], ground: &dyn Fn(f64, f64) -> f64) -> (Plan, &'static Profile) {
-        let p = profile("barbarian_fort_straight").unwrap();
+        let p = crate::profile::test_profile("barbarian_fort_straight").unwrap();
         let input = WallInput { points: points.to_vec(), sharp: vec![false; points.len()], tolerance: 0.5, ..Default::default() };
         (solve(&input, p, ground), p)
     }
@@ -1195,7 +1194,7 @@ mod tests {
     #[test]
     fn joints_with_the_games_pieces_are_exact() {
         let ground = |_: f64, _: f64| 0.0;
-        let p = profile("barbarian_fort_straight").unwrap();
+        let p = crate::profile::test_profile("barbarian_fort_straight").unwrap();
         let axis = [20f64.to_radians().cos(), 20f64.to_radians().sin()];
         let points = vec![[0.0, 0.0], [70.0, -10.0], [150.0, 15.0], [230.0, -5.0], [300.0, 10.0]];
         let input = WallInput {
@@ -1251,7 +1250,7 @@ mod tests {
     fn a_corner_keeps_each_side_on_its_own_side_of_the_bisector() {
         let ground = |_: f64, _: f64| 0.0;
         for key in ["gondor_fort_straight", "roman_fort_straight"] {
-            let p = profile(key).unwrap();
+            let p = crate::profile::test_profile(key).unwrap();
             let cases: [(Vec<[f64; 2]>, &str); 5] = [
                 (vec![[0.0, 0.0], [80.0, 40.0], [160.0, 0.0]], "acute"),
                 (vec![[0.0, 0.0], [90.0, 0.0], [160.0, 0.0]], "wide"),
@@ -1384,7 +1383,7 @@ mod tests {
     fn the_walkway_changes_height_only_on_its_steps() {
         let grounds: [&dyn Fn(f64, f64) -> f64; 3] =
             [&|x, _| x * 0.04, &|x, _| 6.0 * (-(x - 70.0) * (x - 70.0) / 900.0).exp(), &|x, _| (x / 23.0).sin() * 2.5];
-        let p = profile("gondorean_fort_straight").unwrap();
+        let p = crate::profile::test_profile("gondorean_fort_straight").unwrap();
         let mut steps = 0;
         for ground in grounds {
             for end in (0..12).map(|k| 120.0 + f64::from(k) * 6.1) {
@@ -1442,7 +1441,7 @@ mod tests {
     /// building with no room (Amon Calen's wall 1: 0.13 within its last metre, a near vertical riser).
     #[test]
     fn a_small_rise_to_an_attached_end_needs_no_step() {
-        let p = profile("gondorean_fort_straight").unwrap();
+        let p = crate::profile::test_profile("gondorean_fort_straight").unwrap();
         for len in [100.0, 120.5, 137.0] {
             let input = WallInput {
                 points: vec![[0.0, 0.0], [len, 0.0]],
@@ -1471,7 +1470,7 @@ mod tests {
     #[test]
     fn joints_keep_off_the_steps() {
         let ground = |x: f64, _: f64| x * 0.04;
-        let p = profile("gondor_fort_straight").unwrap();
+        let p = crate::profile::test_profile("gondor_fort_straight").unwrap();
         let mut steps = 0;
         for end in (0..30).map(|k| 120.0 + f64::from(k) * 3.7) {
             let input = WallInput { points: vec![[0.0, 0.0], [end, 0.0]], sharp: vec![false, false], tolerance: 0.5, ..Default::default() };
@@ -1499,7 +1498,7 @@ mod tests {
     #[test]
     fn a_right_angle_corner_is_mitred_on_its_bisector() {
         let ground = |_: f64, _: f64| 0.0;
-        let p = profile("barbarian_fort_straight").unwrap();
+        let p = crate::profile::test_profile("barbarian_fort_straight").unwrap();
         let input = WallInput {
             points: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0]],
             sharp: vec![false, true, false],
@@ -1553,7 +1552,7 @@ mod tests {
         // to the level both arms share there; one much farther back than the wall is deep keeps its own (user 2026-11-16: pulled to the
         // corner's level, the stairs and parapets there stretched into blades).
         let ground = |_: f64, _: f64| 0.0;
-        let p = profile("barbarian_fort_straight").unwrap();
+        let p = crate::profile::test_profile("barbarian_fort_straight").unwrap();
         let input = WallInput {
             points: vec![[0.0, 0.0], [60.0, 0.0], [8.0, 30.0]],
             sharp: vec![false, true, false],
@@ -1584,7 +1583,7 @@ mod tests {
 
     #[test]
     fn the_wall_beside_a_stepped_bastion_stays_level_up_to_it() {
-        let p = profile("roman_fort_straight").unwrap();
+        let p = crate::profile::test_profile("roman_fort_straight").unwrap();
         let ground = |x: f64, _: f64| if x < 150.0 { 10.0 } else { 0.0 };
         let input = WallInput { points: vec![[0.0, 0.0], [300.0, 0.0]], sharp: vec![false; 2], tolerance: 0.5, ..Default::default() };
         let plan = solve(&input, p, &ground);
@@ -1602,7 +1601,7 @@ mod tests {
 
     #[test]
     fn towers_and_bastions_take_whole_slots_in_turn_on_straight_level_ground() {
-        let p = profile("roman_fort_straight").unwrap();
+        let p = crate::profile::test_profile("roman_fort_straight").unwrap();
         let ground = |_: f64, _: f64| 0.0;
         let input = WallInput {
             points: vec![[0.0, 0.0], [400.0, 0.0]],

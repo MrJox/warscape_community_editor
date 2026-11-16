@@ -35,8 +35,8 @@ pub const DIRT: Style = Style { name: TYPE, width: WIDTH, lanes: 2 };
 /// A track: one lane (one `path_1` down the middle), 3 m wide (user 2026-11-16: a road one decal wide).
 pub const TRACK: Style = Style { name: "dirt_track", width: 3.0, lanes: 1 };
 
-/// The road types' file in the app's `tables/<game>` folder, with the user's `road_types_custom.toml` beside it (`user_files`; user
-/// 2026-11-16: the Road type row's values from the tables). Built in by game.
+/// The road types' file in the app's `tables/<game>` folder, the mods' and the user's `road_types_*.toml` over it (`user_files`; user
+/// 2026-11-16: the Road type row's values from the tables). Built in by game. Rome II has none: its packs have none of the decals.
 pub const FILE_NAME: &str = "road_types.toml";
 pub const BUILT_IN: crate::user_files::BuiltIn = &[
     ("attila", include_str!("../../../tables/attila/road_types.toml")),
@@ -60,22 +60,16 @@ struct TypesFile {
     types: Vec<TypeDef>,
 }
 
-/// Reads the shipped road types file and the custom one over it: a custom type in place of the shipped one of its name, or after them.
+/// Reads the vanilla road types file and the files over it, in order: a type over it in place of the one of its name, or after them.
 ///
 /// # Errors
 ///
-/// Either is not TOML of its shape, there is no type, or a type's name (lowercase letters, digits and _; not `base` nor `none`; once),
-/// width (over 0) or lanes (1 or 2) is not one.
-pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Vec<Style>, String> {
-    let mut file: TypesFile = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
-    if let Some(text) = custom {
-        let name = crate::user_files::custom_name(FILE_NAME);
-        let c: TypesFile = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+/// One is not TOML of its shape, or a type's name (lowercase letters, digits and _; not `base` nor `none`; once), width (over 0) or
+/// lanes (1 or 2) is not one.
+pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<Vec<Style>, String> {
+    let mut file: TypesFile = toml::from_str(vanilla).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    for c in crate::user_files::read_extras::<TypesFile>(extras)? {
         crate::user_files::replace_or_add(&mut file.types, c.types, |a, b| a.name == b.name);
-    }
-
-    if file.types.is_empty() {
-        return Err("no [[types]]".to_owned());
     }
 
     let mut out: Vec<Style> = vec![];
@@ -96,8 +90,8 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Vec<Style>, Str
 }
 
 /// Reads a game's road types files in the tables folder (`user_files::tables_dir`): the types from then on.
-pub fn load(tables: &Path, game: &str) {
-    ROAD_TYPES.load(tables, game);
+pub fn load(tables: &Path, game: &str, mods: &[String]) {
+    ROAD_TYPES.load(tables, game, mods);
 }
 
 /// The road types made here, in the editor's order.
@@ -626,17 +620,20 @@ mod tests {
 
     #[test]
     fn the_road_types_files_read_and_say_why_not() {
+        // Rome II's packs have none of the decals: no type.
         for (game, text) in BUILT_IN {
-            assert_eq!(parse_with(text, None).unwrap_or_else(|e| panic!("{game}: {e}")), [DIRT, TRACK], "{game}");
+            let want: &[Style] = if *game == "rome_2" { &[] } else { &[DIRT, TRACK] };
+            assert_eq!(parse_with(text, &[]).unwrap_or_else(|e| panic!("{game}: {e}")), want, "{game}");
         }
 
         let custom = "[[types]]\nname = \"dirt_track\"\nwidth = 2.5\nlanes = 1\n[[types]]\nname = \"lane\"\nwidth = 8.0\nlanes = 2\n";
-        let t = parse_with(BUILT_IN[0].1, Some(custom)).unwrap();
+        let over = |t: &str| [("road_types_mine.toml".to_owned(), t.to_owned())];
+        let t = parse_with(BUILT_IN[0].1, &over(custom)).unwrap();
         assert_eq!(t.iter().map(|s| (s.name, s.width)).collect::<Vec<_>>(), [("dirt", 6.0), ("dirt_track", 2.5), ("lane", 8.0)]);
         for bad in
             ["name = \"none\"\nwidth = 3.0\nlanes = 1", "name = \"x\"\nwidth = 3.0\nlanes = 3", "name = \"Big\"\nwidth = 3.0\nlanes = 1"]
         {
-            assert!(parse_with(BUILT_IN[0].1, Some(&format!("[[types]]\n{bad}\n"))).is_err(), "{bad}");
+            assert!(parse_with(BUILT_IN[0].1, &over(&format!("[[types]]\n{bad}\n"))).is_err(), "{bad}");
         }
     }
 
