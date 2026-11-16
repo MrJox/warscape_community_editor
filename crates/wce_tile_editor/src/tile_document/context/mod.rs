@@ -72,7 +72,7 @@ fn is_sea_set(location: &str) -> bool {
 }
 
 /// How far above the sea (metres) the land LF under a sea tile may be for the tile to go on the sea's LF (`Frame::on_sea_lf`): the cliff
-/// coasts' sea tiles' medians are -14 .. -20 m, TDD's Long Lake's 626 m.
+/// coasts' sea tiles' medians are -14 .. -20 m, TDD's Long Lake's 626 m (its lowest too); the lowest sample under the tile is compared.
 const SEA_LF_REACH: f64 = 10.0;
 
 /// How deep a custom-mesh tile's floor lies under the sea (metres): see `Frame::place`.
@@ -843,9 +843,11 @@ impl Frame {
         }
     }
 
-    /// Whether a placement is drawn on the sea's LF (`place`): a tile of the `sea` set whose land LF is at or under the sea (the median of
-    /// its cells' quarter-cell samples at most SEA_LF_REACH m above 0; the cliff coasts' are -14 .. -20 m). TDD builds the Long Lake (`rom_third_age_map`) of sea tiles on a flat 626 m LF, and
-    /// its battle sea LF is -20 m there: drawn on it, the lake's tiles sank 646 m into pits between their coast tiles.
+    /// Whether a placement is drawn on the sea's LF (`place`): a tile of the `sea` set whose land LF reaches the sea somewhere (the lowest
+    /// of its cells' quarter-cell samples at most SEA_LF_REACH m above 0; the cliff coasts' are -14 .. -20 m). TDD builds the Long Lake (`rom_third_age_map`) of sea tiles on a flat 626 m LF, and
+    /// its battle sea LF is -20 m there: drawn on it, the lake's tiles sank 646 m into pits between their coast tiles. Not the median:
+    /// Thrones' campaign has land LF ridges up to 38 m under sea tiles off its coast (`sea/1x1` at (377, 807) of `vik_attila_map`: lowest
+    /// -1 m, median 11.5 m), which the game draws as open sea; on the land's LF they rose out of it as sand banks (2026-11-16).
     fn on_sea_lf(&self, i: usize) -> bool {
         let p = &self.map.placements[i];
         if !is_sea_set(&p.location) {
@@ -858,12 +860,11 @@ impl Frame {
         }
 
         let r = p.rect();
-        let mut v: Vec<f64> = (r[1] * 4..r[3] * 4)
+        (r[1] * 4..r[3] * 4)
             .flat_map(|y| (r[0] * 4..r[2] * 4).map(move |x| (x, y)))
             .map(|(x, y)| self.map.lf_metres((f64::from(x) + 0.5) / 4.0, (f64::from(y) + 0.5) / 4.0))
-            .collect();
-        v.sort_by(f64::total_cmp);
-        v.get(v.len() / 2).is_none_or(|&m| m <= SEA_LF_REACH)
+            .min_by(f64::total_cmp)
+            .is_none_or(|m| m <= SEA_LF_REACH)
     }
 
     /// A placement's entities moved into the frame (`frame`) and lifted by the LF at their position.
