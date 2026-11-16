@@ -102,6 +102,9 @@ impl CampaignTrees {
 /// What the drawn models are of: document, `.terry` revision, the cell the camera's target was in.
 type Built = (DocumentId, u64, (i64, i64));
 
+/// How many tiles coming into memory build the models again (`PropModels::update`).
+const LOADED_STEP: usize = 16;
+
 /// A prop: its key (a `.terry` entity's id, else MARKER_KEY | its record), `.terry` position, model and transform (`campaign::matrix`'s
 /// layout), and the item a click selects (u64::MAX: none).
 struct Prop {
@@ -201,7 +204,9 @@ impl Default for PropModels {
 }
 
 impl PropModels {
-    pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<Arc<Frame>>) {
+    /// `ground`: the drawn ground at a frame point (the LF and the tiles' own heights, `MapView::ground_at`), which the props, trees and
+    /// buildings stand on; `loaded`: the view's tiles in memory, which build the models again as more come (each brings its ground).
+    pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<Arc<Frame>>, ground: &dyn Fn(f64, f64) -> f32, loaded: usize) {
         let Some(frame) = frame.filter(|_| self.on) else { return self.clear(e) };
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return self.clear(e) };
         // A map without a `.terry` (Rome 2's built campaign maps) still has its settlements and forests.
@@ -218,6 +223,8 @@ impl PropModels {
         // The settlements arriving (read on a thread) build the models again.
         let cities_ready = self.cities.as_ref().is_some_and(|(id, c)| *id == doc && c.get().is_some());
         let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed) * 2 + u64::from(cities_ready);
+        // Again as tiles come (in steps: each brings the ground its props stand on).
+        let revision = revision * 1_000_003 + (loaded / LOADED_STEP) as u64;
         let key = (doc, revision, ((tx / quarter).floor() as i64, (tz / quarter).floor() as i64));
         if self.built == Some(key) {
             return;
@@ -310,7 +317,7 @@ impl PropModels {
             }
 
             world.m[0][3] = fx as f32;
-            world.m[1][3] = frame.lift(fx, fz);
+            world.m[1][3] = ground(fx, fz);
             world.m[2][3] = fz as f32;
             let p16 = DEFAULT_INSTANCE_PARAMS;
             let mesh = MeshInstance {
@@ -347,7 +354,7 @@ impl PropModels {
                 let (s, c) = (f32::from(turn) * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [c * k, 0.0, s * k, fx as f32];
-                world.m[1] = [0.0, k, 0.0, frame.lift(fx, fz)];
+                world.m[1] = [0.0, k, 0.0, ground(fx, fz)];
                 world.m[2] = [-s * k, 0.0, c * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
@@ -385,7 +392,7 @@ impl PropModels {
                 let (fx, fz) = frame.from_map.apply(x, y);
                 let mut world = Float4x4::IDENTITY;
                 (world.m[0][0], world.m[1][1], world.m[2][2]) = (k, k, k);
-                (world.m[0][3], world.m[1][3], world.m[2][3]) = (fx as f32, frame.lift(fx, fz), fz as f32);
+                (world.m[0][3], world.m[1][3], world.m[2][3]) = (fx as f32, ground(fx, fz), fz as f32);
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
                     model: model.clone(),
@@ -412,7 +419,7 @@ impl PropModels {
                 let (s, co) = (aq.rotation as f32).sin_cos();
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [co * k, 0.0, s * k, fx as f32];
-                world.m[1] = [0.0, k, 0.0, frame.lift(fx, fz)];
+                world.m[1] = [0.0, k, 0.0, ground(fx, fz)];
                 world.m[2] = [-s * k, 0.0, co * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
@@ -442,7 +449,7 @@ impl PropModels {
                 let (s, co) = (sp.turn as f32 * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [co * k, 0.0, s * k, fx as f32];
-                world.m[1] = [0.0, k, 0.0, frame.lift(fx, fz)];
+                world.m[1] = [0.0, k, 0.0, ground(fx, fz)];
                 world.m[2] = [-s * k, 0.0, co * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {

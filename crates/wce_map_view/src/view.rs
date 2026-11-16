@@ -117,6 +117,16 @@ impl MapView {
         self.streamer.as_ref().map(|s| s.frame())
     }
 
+    /// The drawn ground at a frame point: the LF and the tiles in memory there (`Streamer::ground_at`); 0 without a map.
+    pub fn ground_at(&self, x: f64, z: f64) -> f32 {
+        self.streamer.as_ref().map_or(0.0, |s| s.ground_at(&s.frame(), x, z))
+    }
+
+    /// How many tiles the map's view has in memory so far (`Streamer::tiles_loaded`).
+    pub fn tiles_loaded(&self) -> usize {
+        self.streamer.as_ref().map_or(0, |s| s.tiles_loaded())
+    }
+
     /// A new streamer on the scene: the layer (emptied), the scene's sea level, the sea and what `extra` adds next to it (with the sea, so
     /// it stays when the chunks come and go; the tile's floor).
     pub fn begin(
