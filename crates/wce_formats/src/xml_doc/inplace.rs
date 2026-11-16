@@ -186,6 +186,39 @@ impl XmlDoc {
         Ok(true)
     }
 
+    /// Patches the table for a replacement that cuts through elements (one splice over many removals below different layers, or its
+    /// undo): the span widened to the whole children of the innermost element holding it, and that read again, as `patch_elements`.
+    /// False when no element holds it.
+    fn patch_widened(&mut self, pos: usize, remove_len: usize, insert: &[u8]) -> bool {
+        let end_pos = pos + remove_len;
+        let content_end = |el: &XmlElement| self.text[el.start_end..el.end_off].iter().rposition(|&c| c == b'<').map(|i| el.start_end + i);
+        let mut candidate = self.elems.partition_point(|el| el.start_off < pos).checked_sub(1);
+        let holder = loop {
+            let Some(c) = candidate else { return false };
+            let el = &self.elems[c];
+            if !el.self_closing && el.start_end <= pos && content_end(el).is_some_and(|ce| end_pos <= ce) {
+                break c;
+            }
+
+            candidate = el.parent;
+        };
+
+        // The children the span starts or ends inside.
+        let kids = &self.elems[holder].children;
+        let straddling = |at: usize| {
+            let i = kids.partition_point(|&k| self.elems[k].start_off < at);
+            i.checked_sub(1).map(|i| &self.elems[kids[i]]).filter(|k| at < k.end_off)
+        };
+        let lo = straddling(pos).map_or(pos, |k| k.start_off);
+        let hi = if end_pos > pos { straddling(end_pos).map_or(end_pos, |k| k.end_off) } else { end_pos };
+        if (lo, hi) == (pos, end_pos) {
+            return false;
+        }
+
+        let wide = [&self.text[lo..pos], insert, &self.text[end_pos..hi]].concat();
+        self.patch_elements(lo, hi - lo, &wide).unwrap_or(false)
+    }
+
     /// Replaces text and patches the table, reading the whole text again if the change is neither whole elements nor inside one tag.
     /// Returns if the table was patched.
     fn replace_text(&mut self, pos: usize, remove_len: usize, insert: &[u8], structural: bool) -> Result<bool> {
@@ -200,7 +233,7 @@ impl XmlDoc {
         // A fragment that can't be read is no patch: the whole text is read again, which gives the error if there is one.
         let patched = match self.patch_start_tag(pos, remove_len, insert) {
             Ok(true) => true,
-            Ok(false) => self.patch_elements(pos, remove_len, insert).unwrap_or(false),
+            Ok(false) => self.patch_elements(pos, remove_len, insert).unwrap_or(false) || self.patch_widened(pos, remove_len, insert),
             Err(_) => false,
         };
 
@@ -338,6 +371,41 @@ impl XmlDoc {
             self.splice(el.start_off, el.end_off - el.start_off, b"")?;
         }
 
+        Ok(())
+    }
+
+    /// Removes elements (none inside another): the text of removing them one by one from the last, in one splice. One by one, every
+    /// removal moves the text and the element table after it: deleting thousands of trees took seconds, and their undo as long.
+    ///
+    /// # Errors
+    ///
+    /// As [`XmlDoc::remove_element_inplace`].
+    pub fn remove_elements_inplace(&mut self, elems: &[usize]) -> Result<()> {
+        self.bake_pending()?;
+        let mut elems = elems.to_vec();
+        elems.sort_unstable();
+        elems.dedup();
+
+        // Whole lines that do not touch: else (an element sharing a line, at the end of the file) one by one, as before.
+        let cuts = elems.iter().map(|&e| block_of(&self.text, &self.elems[e])).collect::<Vec<_>>();
+        let apart = cuts.windows(2).all(|w| w[0].le <= w[1].ls);
+        if elems.len() < 2 || !apart || cuts.iter().any(|k| !k.aligned) {
+            for &e in elems.iter().rev() {
+                self.remove_element_inplace(e)?;
+            }
+
+            return Ok(());
+        }
+
+        let (lo, hi) = (cuts[0].ls, cuts[cuts.len() - 1].le);
+        let mut kept = Vec::with_capacity(hi - lo - cuts.iter().map(|k| k.le - k.ls).sum::<usize>());
+        let mut at = lo;
+        for k in &cuts {
+            kept.extend_from_slice(&self.text[at..k.ls]);
+            at = k.le;
+        }
+
+        self.splice(lo, hi - lo, &kept)?;
         Ok(())
     }
 

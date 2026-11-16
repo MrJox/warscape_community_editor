@@ -228,3 +228,52 @@ fn a_text_read_over_its_file_is_modified_and_saves_as_read() {
     assert_eq!(text(&d), copy);
     assert_eq!(d.origin_bytes(), SAMPLE.as_bytes(), "going back to the file reads the file");
 }
+
+#[test]
+fn many_removals_across_containers_are_one_splice_that_undoes_and_redoes() {
+    let mut text = String::from("<?xml version='1.0'?>\r\n<root>\r\n");
+    for l in 0..4 {
+        text += &format!("  <layer n='{l}'>\r\n    <children>\r\n");
+        for i in 0..30 {
+            if i % 7 == 3 {
+                text += &format!("      <group n='{l}.{i}'>\r\n        <tree k='{i}'/>\r\n      </group>\r\n");
+            } else {
+                text += &format!("      <tree k='{l}.{i}' a=\"x\"/>\r\n");
+            }
+        }
+        text += "    </children>\r\n  </layer>\r\n";
+    }
+    text += "</root>\r\n";
+    let original = doc(&text);
+
+    // Every third element below the layers that is no `children`, groups among them (with what they hold), none inside another.
+    let els = original.elements();
+    let picked = (0..els.len())
+        .filter(|&e| matches!(els[e].name.as_str(), "tree" | "group"))
+        .filter(|&e| els[e].parent.is_some_and(|p| els[p].name == "children"))
+        .step_by(3)
+        .collect::<Vec<_>>();
+    assert!(picked.len() > 20);
+
+    let mut one_by_one = original.clone();
+    for &e in picked.iter().rev() {
+        one_by_one.remove_element_inplace(e).unwrap();
+    }
+
+    let mut fast = original.clone();
+    let mark = fast.journal_mark();
+    fast.remove_elements_inplace(&picked).unwrap();
+    let record = fast.journal_since(mark);
+    fast.journal_forget(mark);
+    assert_eq!(record.len(), 1, "one splice");
+    assert_eq!(fast.original_text(), one_by_one.original_text());
+    let reread = XmlDoc::parse(fast.save()).unwrap();
+    assert_eq!(fast.elements(), reread.elements(), "the table patched as the text reads");
+    assert_eq!(fast.roots(), reread.roots());
+
+    fast.unapply_splice(&record[0]).unwrap();
+    assert_eq!(fast.original_text(), original.original_text());
+    assert_eq!(fast.elements(), original.elements(), "undo patches the table back");
+    fast.apply_splice(&record[0]).unwrap();
+    assert_eq!(fast.elements(), reread.elements(), "redo");
+}

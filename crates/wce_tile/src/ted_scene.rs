@@ -503,6 +503,20 @@ impl TedScene {
         Ok(())
     }
 
+    /// `remove` of many elements (none inside another) at once: one splice of the text, one patch of the element table.
+    ///
+    /// # Errors
+    ///
+    /// The elements can't be removed.
+    pub fn remove_all(&mut self, elems: &[usize]) -> Result<()> {
+        let mut all = elems.to_vec();
+        for &e in elems {
+            all.extend(crate::variations::values_before(&self.doc, e));
+        }
+
+        self.doc.remove_elements_inplace(&all).map_err(xml_error)
+    }
+
     /// The first line of `elem`'s block: its first `WceVariationValues`, or itself. A move takes the block whole, and puts what it
     /// moves in front of it.
     pub(crate) fn lead(&self, elem: usize) -> usize {
