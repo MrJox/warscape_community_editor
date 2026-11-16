@@ -520,6 +520,9 @@ pub struct TileTool {
 
     pub(crate) poly_point: Option<usize>,
 
+    /// The line `poly_point` is a point of (the Inspector shows the point only while that line is selected).
+    pub(crate) poly_point_line: Option<usize>,
+
     /// The spline values panel edits every point, not only the selected one; the gesture of the value being dragged.
     spline_all: bool,
     value_gesture: u64,
@@ -946,6 +949,7 @@ impl Default for TileTool {
             flange_threshold: 0.0,
             grouped_variation: 1.5,
             poly_point: None,
+            poly_point_line: None,
             spline_all: false,
             value_gesture: 0,
             ref_units: Default::default(),
@@ -2713,6 +2717,7 @@ impl TileTool {
         self.status = match d.polygon_point(sel, "insert", i, cur, 0) {
             Ok(()) => {
                 self.poly_point = Some(i + 1);
+                self.poly_point_line = Some(sel);
                 "point inserted".to_owned()
             }
 
@@ -3891,20 +3896,87 @@ impl TileTool {
                 self.draw_wall_rows(e, id, s);
             } else if d.tile().is_road(s)
                 && let Some(pt) = self.poly_point
-                && let Some(&p) = d.tile().tscene().polygon_points(s).get(pt)
             {
-                // A point turned at by 90 degrees or more is a corner whatever its mark.
-                let mut sharp = d.tile().tscene().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
-                if gui::checkbox("sharp corner (a corner piece instead of a bend)", &mut sharp) {
-                    d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
-                }
-
-                if gui::is_item_hovered() {
-                    gui::set_tooltip("The selected point's sharp mark. A turn of 90 degrees or more is a corner whatever the mark.");
-                }
-
-                self.draw_road_point_fence(d, s, pt, p);
+                self.draw_point_rows(d, s, pt);
             }
+        }
+    }
+
+    /// The Inspector while a point of the selected polygon, spline, road or wall is picked: that point's own rows alone (where it is, and
+    /// its marks and values), not the line's, with a button back to the line's (user 2026-11-16: a click on a point still showed the
+    /// whole spline's toggles). False when no point is picked (the selection's own Inspector then).
+    fn inspect_point(&mut self, e: &mut Editor) -> bool {
+        if self.placing.is_some() || self.drawing || e.selection.items().len() != 1 {
+            return false;
+        }
+
+        let (Some(id), Some(s), Some(pt)) = (document_id(e), primary(e), self.poly_point) else { return false };
+        if self.poly_point_line != Some(s) {
+            return false;
+        }
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return false };
+        if !d.tile().is_polygon(s) || pt >= d.tile().tscene().polygon_points(s).len() {
+            return false;
+        }
+
+        let name = d.tile().tscene().name(s);
+        let kind = d.tile().tscene().type_of(s).to_owned();
+        gui::text(&format!("Point {pt} of {} ({kind})", if name.is_empty() { "the line" } else { &name }));
+        gui::same_line();
+        if gui::small_button("Whole line") {
+            self.poly_point = None;
+            return true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Back to the line's own rows (Esc, or a click on the line away from its points, does it too).");
+        }
+
+        gui::separator();
+        if let Some(w) = d.tile().polygon_world_points(s).get(pt) {
+            gui::text(&format!("at x {:.2}  y {:.2}  z {:.2} m", w.x, w.y, w.z));
+        }
+
+        if !self.draw_point_rows(d, s, pt) {
+            gui::text_disabled("This kind of line has nothing of its own per point: drag the point to move it.");
+        }
+
+        true
+    }
+
+    /// One point's own rows (`pt` of the line `s`): a road's sharp mark and fence, a wall's sharp mark, a river's or road spline's values.
+    /// False for a line whose points have none.
+    fn draw_point_rows(&mut self, d: &mut TileDocument, s: usize, pt: usize) -> bool {
+        let points = d.tile().tscene().polygon_points(s);
+        let Some(&p) = points.get(pt) else { return false };
+        if d.tile().is_road(s) {
+            // A point turned at by 90 degrees or more is a corner whatever its mark.
+            let mut sharp = d.tile().tscene().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+            if gui::checkbox("sharp corner (a corner piece instead of a bend)", &mut sharp) {
+                d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The selected point's sharp mark. A turn of 90 degrees or more is a corner whatever the mark.");
+            }
+
+            self.draw_road_point_fence(d, s, pt, p);
+            true
+        } else if d.tile().is_wall(s) {
+            let mut sharp = d.tile().tscene().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+            if gui::checkbox("sharp corner (a mitre instead of a curve)", &mut sharp) {
+                d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The selected point's sharp mark: the wall turns there in a mitre instead of a curve.");
+            }
+
+            true
+        } else if d.is_spline(s) {
+            self.spline_value_rows(d, s, pt, &[pt])
+        } else {
+            false
         }
     }
 
@@ -3997,16 +4069,7 @@ impl TileTool {
         }
 
         let Some(pt) = self.poly_point else { return };
-        let points = d.tile().tscene().polygon_points(wall);
-        let Some(&p) = points.get(pt) else { return };
-        let mut sharp = d.tile().tscene().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
-        if gui::checkbox("sharp corner (a mitre instead of a curve)", &mut sharp) {
-            d.set_point_attribute(wall, pt, "sharp", wce_tile::properties::format_bool(sharp));
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The selected point's sharp mark: the wall turns there in a mitre instead of a curve.");
-        }
+        self.draw_point_rows(d, wall, pt);
     }
 
     /// A river's or road's points: how to edit them, and the values of the selected point (or of all of them).
@@ -4053,9 +4116,17 @@ impl TileTool {
 
         let Some(shown) = (if self.spline_all { Some(0) } else { self.poly_point.filter(|&p| p < points.len()) }) else { return };
         let targets = if self.spline_all { (0..points.len()).collect::<Vec<_>>() } else { vec![shown] };
-        let kind = sc.type_of(s).to_owned();
-        let Some(t) = wce_tile::instance_templates::template(&kind) else { return };
+        self.spline_value_rows(d, s, shown, &targets);
+    }
+
+    /// A spline's per-point values (a river's width, foam, flow...): `shown`'s, edited into `targets`. False when its kind has none.
+    fn spline_value_rows(&mut self, d: &mut TileDocument, s: usize, shown: usize, targets: &[usize]) -> bool {
+        let points = d.tile().tscene().polygon_points(s);
+        let kind = d.tile().tscene().type_of(s).to_owned();
+        let Some(t) = wce_tile::instance_templates::template(&kind) else { return false };
+        let mut any = false;
         for &(attr, _) in t.point_attrs.iter().filter(|(a, _)| !matches!(*a, "position" | "controlIn" | "controlOut")) {
+            any = true;
             let sc = d.tile().tscene();
             let mut v = sc.get(points[shown], attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
             let speed = if matches!(attr, "width" | "terrain_offset") { 0.1 } else { 0.01 };
@@ -4071,13 +4142,15 @@ impl TileTool {
             }
 
             if changed {
-                d.set_spline_value(s, &targets, attr, &wce_tile::ted_scene::format_general(f64::from(v)), self.value_gesture);
+                d.set_spline_value(s, targets, attr, &wce_tile::ted_scene::format_general(f64::from(v)), self.value_gesture);
             }
 
             if gui::is_item_deactivated() {
                 d.history_mut().break_merge();
             }
         }
+
+        any
     }
 }
 
@@ -4362,6 +4435,7 @@ impl TileTool {
 
             if let Some((i, out)) = best {
                 self.poly_point = Some(i);
+                self.poly_point_line = Some(sel);
                 self.gesture = Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture() });
                 return true;
             }
@@ -4370,6 +4444,7 @@ impl TileTool {
         let best = nearest_handle(pts.iter().copied(), o, dir);
         if best.is_some() {
             self.poly_point = best;
+            self.poly_point_line = Some(sel);
             self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
             return true;
         }
@@ -4412,6 +4487,7 @@ impl TileTool {
 
             if d.polygon_point(sel, op, index, cur, 0).is_ok() {
                 self.poly_point = Some(new_point);
+                self.poly_point_line = Some(sel);
                 self.status = "point inserted".to_owned();
             }
 
@@ -5485,7 +5561,7 @@ impl Tool for TileTool {
 
         self.inspect_new_set(e);
 
-        self.inspect_making(e, ins) || self.inspect_brush(e, ins)
+        self.inspect_making(e, ins) || self.inspect_brush(e, ins) || self.inspect_point(e)
     }
 
     fn inspector_subject(&mut self, e: &Editor) -> Option<u64> {
