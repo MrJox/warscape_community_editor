@@ -58,6 +58,12 @@ const COARSE_CELLS: i32 = 64;
 /// whose two sides need not have the same heights.
 const OVERLAP_STEPS: i32 = 4;
 
+/// How fast (metres per metre past the edge) the overlap ring of a tile without heights of its own there goes down (`load_template`).
+const RING_DROP: f64 = 2.0;
+
+/// A decompiled tile's carried binary files (`wce_tile_io`'s `stage_b::CARRIED_DIR`).
+const TERRAIN_CARRIED_DIR: &str = "decompiled_terrain";
+
 /// How far the ring of vertices around a tile's ground goes down (scene units): a skirt that closes what the overlap leaves open.
 pub(super) const SKIRT: f32 = 20.0;
 
@@ -554,7 +560,17 @@ pub fn load_template(
     let stretch = (t.unit() / unit) as f32;
     let baked = project.final_heights();
     let height = |x: f64, z: f64| (baked.as_ref().map_or_else(|| project.height_at(x, z), |f| f.at(x, z)) / unit) as f32;
-    let own = Grid::sample(nx, nz, -o, -o, step, &height);
+    // The ring past the edge where the tile has no heights there of its own: BOB's final heights end at the edge, and a tile decompiled
+    // from the packs has its border filled from the edge. Held at the edge, it stood over a neighbour whose ground falls away from the
+    // seam, as a shelf ending in a step (Thrones' port_b over its beach's sea_coast tile: 0.5 m, cutting the beach's decals). Those tiles
+    // meet their neighbours exactly at the edge (the export's seams), so their ring slopes down out of the way instead.
+    let held = baked.is_some() || project.own_dir().join(TERRAIN_CARRIED_DIR).is_dir();
+    let ring = |x: f64, z: f64| {
+        let (cx, cz) = (x.clamp(0.0, ex), z.clamp(0.0, ez));
+        let out = (x - cx).abs().max((z - cz).abs());
+        height(cx, cz) - (RING_DROP * out / unit) as f32
+    };
+    let own = if held { Grid::sample(nx, nz, -o, -o, step, &ring) } else { Grid::sample(nx, nz, -o, -o, step, &height) };
 
     // The material with its border (at most what the height map has), its normal map from the heights over it, its alpha map, its box.
     let border = project.border_m();

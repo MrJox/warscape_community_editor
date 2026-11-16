@@ -140,6 +140,10 @@ plains (aa .. ad) elsewhere.
   alpha map (1 over the tile, 0 over the border, 4-unit texels whose edges fall on the tile's: bilinear, it fades out over a texel past the
   edge as the neighbour's fades in; the resolve divides by the weights' sum), the same material at a quarter, and its other entities.
   Placements share the heights buffers and materials (`Arc`): the renderer keeps one copy of their geometry and maps on the GPU.
+  A tile with no heights past its edge (drawn from `final_heights.dds`, or decompiled from the packs: its border is the edge repeated)
+  has its overlap ring slope down 2 m per m instead (2026-11-16): such tiles meet their neighbours exactly at the edge (the export's
+  seams; Thrones' `anglosaxon_port_b` and its beach's `sea_coast/2x2_tb_inner` agree to the centimetre), and the held edge stood over a
+  neighbour whose ground falls away from the seam, a 0.5 m shelf ending in a step that cut the beach's decals.
 - **Disk cache** (`context/cache.rs`, `<settings>/map_context/<key>.bin`, lz4): the template's heights, material and entities; the key hashes
   the tile folder's files (path, size, time), the terrain look, the trees switch and the format version. Rome small at the campaign's
   (619, 676) with the default rings: 89 tiles, 76 MB; 23 s to open them (four at a time), 0.5 s from the cache. The game files the tiles
@@ -235,7 +239,10 @@ plains (aa .. ad) elsewhere.
     `lf_sea_height_map.dds` (4064 x 2874 L16, 0 = -20 m on all but 5246 pixels) and binds it for the sea geometry pass (fn 0x119256e0 with
     sea = 1, pass 0x15; techniques `sea_geometry_30(_new)`, `ps_sea_geom`). The editor draws the `sea` set's tiles on that LF (taken as 0:
     -20 m) in every ring; drawn so, the matched view agrees with the game's screenshot. ASSUMPTION: that pass is what draws the sea tiles
-    (which patches it draws was not traced); the sea LF's few non-zero pixels are not read. Side effect: at a beach the sea tiles sit a
+    (which patches it draws was not traced); the sea LF's few non-zero pixels are not read. Outside a campaign's own map, a `sea` tile goes on the sea's LF
+    when the land LF under it reaches the sea somewhere (its lowest quarter-cell sample at most 10 m; 2026-11-16, was the median: Thrones'
+    `vik_attila_map` has land LF ridges up to 38 m under sea tiles off its coast, `sea/1x1` at (377, 807) median 11.5 m, which rose out
+    of the sea as a sand bank where the game has open sea; TDD's Long Lake stays on the land's 626 m). Side effect: at a beach the sea tiles sit a
     few metres lower than on the land's LF, and the open tile's seaward edge stands over them (Carthage: -20 m against -40 m). Since
     2026-11-01 a floor lies under the open tile (`Frame::open_floor`: its cells, off the LF, at the sea tiles' bed or under the tile's
     lowest height), as under the custom-mesh tiles: without it the views through that gap ran under the tile to the sky, which the sea
