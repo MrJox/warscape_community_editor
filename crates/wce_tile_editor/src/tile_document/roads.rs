@@ -1404,6 +1404,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12 ^ (t as u64) << 36),
                         decal_depth: None,
                         decal_tilt: None,
+                        detail_turns: true,
                     };
                     match fit_dressed(&tp.1, &tp.3, &tp.2, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                         Ok(f) => items.push(RoadItem {
@@ -1431,6 +1432,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12),
                 decal_depth: None,
                 decal_tilt: None,
+                detail_turns: true,
             };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => {
@@ -1469,6 +1471,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                     jitter_seed: road_hash(road.settings.seed, road.id, number ^ 0x1771_7E12),
                     decal_depth: Some(DECK_DECAL_BOX / unit),
                     decal_tilt: Some(DECK_DECAL_TILT),
+                    detail_turns: true,
                 };
                 match fit_dressed(&q.1, &q.3, &q.2, &laid, &Site { line: &plan.line, width, unit, ground: &deck_height }, &dress) {
                     Ok(f) => items.push(RoadItem {
@@ -1591,6 +1594,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         jitter_seed: 0,
                         decal_depth: None,
                         decal_tilt: None,
+                        detail_turns: true,
                     };
                     match wce_tile::road_layout::fit_dressed(
                         fp,

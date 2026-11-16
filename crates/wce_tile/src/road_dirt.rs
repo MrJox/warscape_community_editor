@@ -159,6 +159,31 @@ fn bank(side: f64, z: f64) -> Vec<u8> {
     ).into_bytes()
 }
 
+/// The detail decals, as the kit's road and path prefabs scatter them (`global_dirt_road_*`, `global_path_*`: per 20 m of road about four to
+/// seven rocks, two smaller stones, a puddle or two, erosion on the verges, a worn patch): each at its middle in the piece's frame.
+fn rocks(at: [f64; 2]) -> Vec<u8> {
+    decal("global_terrain_rocks_04", at, UP, 2.5, 2.5, None)
+}
+
+/// The kit's larger scatter of rocks (it lays `rocks_04` at 5 m too).
+fn big_rocks(at: [f64; 2]) -> Vec<u8> {
+    decal("global_terrain_rocks_04", at, UP, 5.0, 5.0, None)
+}
+
+fn stones(at: [f64; 2]) -> Vec<u8> {
+    decal("global_terrain_rocks_01", at, UP, 2.5, 2.5, None)
+}
+
+/// A small puddle (the kit's `puddle_02` at half its size), across the road.
+fn small_puddle(at: [f64; 2]) -> Vec<u8> {
+    decal("global_terrain_puddle_02", at, RIGHT, 1.2, 2.5, None)
+}
+
+/// A worn patch along the road (the kit's `path_04`, as its paths lay their `path_01`: one of the decals every kit with dirt roads has).
+fn worn_patch(at: [f64; 2], length: f64) -> Vec<u8> {
+    decal("global_terrain_path_04", at, UP, length, 3.5, None)
+}
+
 /// Where roads meet the middle is worn all over, not grass between two pairs of ruts: a rut laid across it diagonally (`way`, not a unit
 /// vector), where the piece has it.
 fn worn_middle(way: [f64; 2]) -> Vec<u8> {
@@ -204,8 +229,12 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(decal("global_terrain_rocks_04", [h - 0.6, -2.2], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [-h - 0.5, 1.6], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_erossion_12", [h + VERGE * 0.6, 0.8], RIGHT, 2.5, 6.0, None));
+            out.push(rocks([-1.2, -3.0]));
+            out.push(rocks([h + 1.4, 2.6]));
+            out.push(stones([h + 0.8, -3.2]));
             if piece == "straight" {
                 out.push(decal("global_terrain_puddle_02", [0.7, 1.9], RIGHT, 2.5, 5.0, None));
+                out.push(small_puddle([-0.6, -0.6]));
             } else {
                 // A ford: wet all over, stones across.
                 out.push(decal("global_terrain_puddle_02", [-1.2, -2.0], RIGHT, 2.5, 5.0, None));
@@ -225,6 +254,10 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(decal("global_terrain_path_04", [-0.8, -1.2], UP, 7.5, 3.5, None));
             out.push(decal("global_terrain_erossion_03", [-h - 1.4, 0.8], UP, 6.0, 2.5, None));
             out.push(decal("global_terrain_rocks_04", [-h + 0.4, 2.4], UP, 2.5, 2.5, None));
+            out.push(rocks([h - 0.8, -2.6]));
+            out.push(big_rocks([-h - 2.2, -2.0]));
+            out.push(small_puddle([1.3, 2.2]));
+            out.push(stones([0.4, 3.4]));
         }
 
         "straight_3" => {
@@ -235,6 +268,10 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(decal("global_terrain_puddle_02", [0.9, -1.4], RIGHT, 2.5, 5.0, None));
             out.push(decal("global_terrain_erossion_12", [h + VERGE * 0.5, -1.0], RIGHT, 2.5, 6.0, None));
             out.push(decal("global_terrain_rocks_01", [h - 0.5, 2.5], UP, 2.5, 2.5, None));
+            out.push(worn_patch([-0.3, 0.6], 7.5));
+            out.push(rocks([-h + 0.6, -2.8]));
+            out.push(rocks([h + 1.8, 2.2]));
+            out.push(stones([-1.6, 3.1]));
         }
 
         "straight_4" => {
@@ -245,6 +282,10 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(bank(h, -0.5));
             out.push(decal("global_terrain_path_04", [1.0, 1.5], DOWN, 7.5, 3.5, None));
             out.push(decal("global_terrain_rocks_04", [0.3, -2.0], UP, 2.5, 2.5, None));
+            out.push(rocks([-1.4, 3.0]));
+            out.push(stones([1.8, -3.3]));
+            out.push(small_puddle([-0.9, 0.2]));
+            out.push(rocks([h - 0.4, 3.4]));
         }
 
         "straight_5" => {
@@ -255,6 +296,11 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(decal("global_terrain_rocks_04", [-1.5, 2.8], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_04", [h + 0.9, -1.8], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [-h - 0.6, -2.6], UP, 2.5, 2.5, None));
+            out.push(worn_patch([0.4, 0.2], 7.5));
+            out.push(big_rocks([h + 2.0, 2.0]));
+            out.push(small_puddle([-1.1, -1.4]));
+            out.push(rocks([-h - 1.6, 1.6]));
+            out.push(stones([1.2, 3.2]));
         }
 
         "end" => {
@@ -265,6 +311,9 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(border_x("border_2", -e, -h - 0.5, h + 0.5));
             out.push(decal("global_terrain_rocks_04", [-1.8, -2.4], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [2.0, -2.6], UP, 2.5, 2.5, None));
+            out.push(rocks([0.6, -0.9]));
+            out.push(small_puddle([-1.0, 0.8]));
+            out.push(stones([h + 0.9, 0.6]));
         }
 
         "curve" => {
@@ -285,6 +334,11 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(decal("global_terrain_rocks_04", at(r - h + 0.6, -0.2), UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", at(r + h + 0.5, 0.25), UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_erossion_12", at(r + h + VERGE * 0.6, -0.05), RIGHT, 2.5, 4.0, None));
+            out.push(rocks(at(r - 0.4, 0.15)));
+            out.push(rocks(at(r + h + 1.4, -0.22)));
+            out.push(stones(at(r + 0.9, -0.3)));
+            out.push(small_puddle(at(r + 0.6, 0.32)));
+            out.push(rocks(at(r - h - 1.2, -0.3)));
         }
 
         "corner" => {
@@ -298,6 +352,10 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
             out.push(decal("global_terrain_rocks_04", [-h - 1.2, h + 1.2], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [h + 0.6, -h - 0.6], UP, 2.5, 2.5, None));
+            out.push(rocks([-0.6, 0.8]));
+            out.push(rocks([-h - 2.0, -2.6]));
+            out.push(stones([2.4, h + 1.6]));
+            out.push(small_puddle([0.9, -0.9]));
         }
 
         "fence" => {
@@ -326,6 +384,10 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
 
             out.push(worn_middle([1.0, 1.0]));
             out.push(decal("global_terrain_rocks_04", [-h - 0.5, -0.8], UP, 2.5, 2.5, None));
+            out.push(rocks([h + 1.5, -h - 1.6]));
+            out.push(stones([-h - 1.4, 3.6]));
+            out.push(small_puddle([1.2, -1.0]));
+            out.push(rocks([-h + 0.6, 4.6]));
         }
 
         "x_junction" => {
@@ -343,6 +405,10 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             out.push(worn_middle([1.0, 1.0]));
             out.push(worn_middle([1.0, -1.0]));
             out.push(decal("global_terrain_rocks_01", [h + 0.9, h + 0.9], UP, 2.5, 2.5, None));
+            out.push(rocks([-h - 1.0, -h - 1.2]));
+            out.push(rocks([h + 1.2, -h - 1.0]));
+            out.push(small_puddle([-1.0, 1.2]));
+            out.push(stones([-h - 1.1, h + 1.3]));
         }
 
         _ => {}

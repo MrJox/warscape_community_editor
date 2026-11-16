@@ -7,7 +7,7 @@ use wce_foundation::math::{Double3, Double3x3};
 
 use crate::new_instances::ROAD_GUIDE;
 use crate::prefab_refs::{Override, apply};
-use crate::road_pieces::{Anchor, Part, Piece};
+use crate::road_pieces::{Anchor, Part, PartRole, Piece};
 use crate::ted_scene::{TedScene, format_number};
 use crate::world_transform::{euler_from_matrix, euler_matrix};
 
@@ -446,6 +446,30 @@ pub struct Dress<'a> {
     /// Decals tilted onto `ground` too (how far along and across it is read, each way, metres): decals on a bridge's deck, whose boxes are
     /// thinner than its slope over their length.
     pub decal_tilt: Option<[f64; 2]>,
+
+    /// The detail parts (`PartRole::Detail`) turned by the seed (`jitter_seed`), each its own way ([`detail_turn`]): the same rock or puddle
+    /// does not lie the same way on every piece.
+    pub detail_turns: bool,
+}
+
+/// How a detail part is turned on a piece (radians about up), by the piece's seed and the part's index: a thing whose footprint is about
+/// square (a rock's decal, a stump) any way round; a longer one (a puddle, erosion along the verge, a worn patch) end for end or not, so
+/// that it keeps to the stretch it was drawn on. A turn end for end is the flip: mirroring a decal is not one, as the game draws a decal by
+/// the size of its box, not its sign (docs/re/renderer.md).
+#[must_use]
+pub fn detail_turn(part: &Part, seed: u64, index: usize) -> f64 {
+    let r = jitter_roll(seed, index, 0x7E7A);
+    let square = part.kind != "ProjectedDecalInstance" || {
+        let [a, b] = part.size;
+        (a - b).abs() <= 0.25 * a.max(b)
+    };
+    if square {
+        r * std::f64::consts::PI
+    } else if r >= 0.0 {
+        std::f64::consts::PI
+    } else {
+        0.0
+    }
 }
 
 /// A decal's jitter at full irregularity: along and across its way (metres), its turn (radians) and its size (a fraction).
@@ -534,6 +558,12 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
             let (sn, cs) = (r(3) * JITTER[2] * j).sin_cos();
             x = [x[0] * cs - x[1] * sn, x[0] * sn + x[1] * cs];
             size_factor = 1.0 + r(4) * JITTER[3] * j;
+        }
+
+        // A detail turned its own way about where it is.
+        if dress.detail_turns && part.role == Some(PartRole::Detail) {
+            let (sn, cs) = detail_turn(part, dress.jitter_seed, index).sin_cos();
+            x = [x[0] * cs - x[1] * sn, x[0] * sn + x[1] * cs];
         }
 
         let height = ground(at[0], at[1]);
@@ -1524,8 +1554,16 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "fence", frame: Frame::Along { from: 5.0, to: 10.0 } };
-        let dress =
-            Dress { tilt: Some(FENCE_TILT), attrs: None, keep: None, jitter: 0.0, jitter_seed: 0, decal_depth: None, decal_tilt: None };
+        let dress = Dress {
+            tilt: Some(FENCE_TILT),
+            attrs: None,
+            keep: None,
+            jitter: 0.0,
+            jitter_seed: 0,
+            decal_depth: None,
+            decal_tilt: None,
+            detail_turns: false,
+        };
         let orientation = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1551,7 +1589,16 @@ mod tests {
         assert!(detail >= 3, "straight_5 has its rocks and erosion as detail: {detail}");
 
         let decals = |keep: Option<PartKeep>| {
-            let dress = Dress { tilt: None, attrs: None, keep, jitter: 0.0, jitter_seed: 0, decal_depth: None, decal_tilt: None };
+            let dress = Dress {
+                tilt: None,
+                attrs: None,
+                keep,
+                jitter: 0.0,
+                jitter_seed: 0,
+                decal_depth: None,
+                decal_tilt: None,
+                detail_turns: false,
+            };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
                 .unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1580,7 +1627,16 @@ mod tests {
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
         let places = |jitter: f64| {
-            let dress = Dress { tilt: None, attrs: None, keep: None, jitter, jitter_seed: 99, decal_depth: None, decal_tilt: None };
+            let dress = Dress {
+                tilt: None,
+                attrs: None,
+                keep: None,
+                jitter,
+                jitter_seed: 99,
+                decal_depth: None,
+                decal_tilt: None,
+                detail_turns: false,
+            };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
                 .unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1598,6 +1654,47 @@ mod tests {
     }
 
     #[test]
+    fn details_turn_their_own_way_and_nothing_else_does() {
+        // The straight's parts laid without and with the detail turns: only the details turn, a square one any way, a long one end for
+        // end or not at all (its footprint kept); none moves.
+        let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let (_, children) = crate::road_dirt::pieces().into_iter().find(|p| p.0 == "straight").unwrap();
+        let text = crate::road_pieces::group_text("road_dirt_straight", &children);
+        let piece = crate::road_pieces::read(&text).unwrap();
+        let scene = TedScene::parse_any(text).unwrap();
+        let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
+        let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
+        let lay = |turns: bool| {
+            let dress = Dress { jitter_seed: 42, detail_turns: turns, ..Dress::default() };
+            let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }, &dress)
+                .unwrap();
+            let s = TedScene::parse_any(f.text).unwrap();
+            s.find_all("ProjectedDecalInstance")
+                .into_iter()
+                .map(|e| (s.get(e, "name").unwrap_or_default(), s.position(e).unwrap(), s.euler(e).unwrap().x))
+                .collect::<Vec<_>>()
+        };
+
+        let (plain, turned) = (lay(false), lay(true));
+        assert_eq!(plain.len(), turned.len());
+        let detail = |name: &str| name.starts_with("global_terrain_");
+        let mut square_turns = vec![];
+        for ((name, p0, y0), (_, p1, y1)) in plain.iter().zip(&turned) {
+            assert!((p0.x - p1.x).abs() < 1e-6 && (p0.z - p1.z).abs() < 1e-6, "{name} moved");
+            let d = (y1 - y0).rem_euclid(std::f64::consts::TAU);
+            if !detail(name) {
+                assert!(d.min(std::f64::consts::TAU - d) < 1e-6, "{name} is not a detail: not turned");
+            } else if name.contains("rocks") {
+                square_turns.push(d);
+            } else {
+                assert!(d < 1e-6 || (d - std::f64::consts::PI).abs() < 1e-6 || d > std::f64::consts::TAU - 1e-6, "{name}: {d}");
+            }
+        }
+
+        assert!(square_turns.iter().any(|&d| d > 0.1 && (d - std::f64::consts::PI).abs() > 0.1), "a rock turned freely: {square_turns:?}");
+    }
+
+    #[test]
     fn a_decal_depth_sets_every_decals_box_height_alone() {
         let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
         let (_, children) = crate::road_dirt::pieces().into_iter().find(|p| p.0 == "straight").unwrap();
@@ -1607,7 +1704,16 @@ mod tests {
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
         let scales = |decal_depth: Option<f64>| {
-            let dress = Dress { tilt: None, attrs: None, keep: None, jitter: 0.0, jitter_seed: 0, decal_depth, decal_tilt: None };
+            let dress = Dress {
+                tilt: None,
+                attrs: None,
+                keep: None,
+                jitter: 0.0,
+                jitter_seed: 0,
+                decal_depth,
+                decal_tilt: None,
+                detail_turns: false,
+            };
             let f = fit_dressed(&piece, &contents, "s", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 3.0 }, &dress)
                 .unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1640,6 +1746,7 @@ mod tests {
             jitter_seed: 0,
             decal_depth: Some(0.35),
             decal_tilt: Some([2.0, 0.5]),
+            detail_turns: false,
         };
         let f = fit_dressed(&piece, &contents, "d", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground: &deck }, &dress).unwrap();
         let s = TedScene::parse_any(f.text).unwrap();
@@ -1667,8 +1774,16 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
-        let dress =
-            Dress { tilt: Some(PIECE_TILT), attrs: None, keep: None, jitter: 0.0, jitter_seed: 0, decal_depth: None, decal_tilt: None };
+        let dress = Dress {
+            tilt: Some(PIECE_TILT),
+            attrs: None,
+            keep: None,
+            jitter: 0.0,
+            jitter_seed: 0,
+            decal_depth: None,
+            decal_tilt: None,
+            detail_turns: false,
+        };
         let up = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "b", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
