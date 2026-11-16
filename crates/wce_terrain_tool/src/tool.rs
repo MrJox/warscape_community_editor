@@ -2274,7 +2274,8 @@ impl Tool for TerrainTool {
         }
 
         wce_foundation::wce_prof!("terrain_tool.props");
-        self.props.update(e, self.shown, frame);
+        let view = &self.view;
+        self.props.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), view.tiles_loaded());
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {

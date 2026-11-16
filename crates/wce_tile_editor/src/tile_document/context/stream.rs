@@ -430,6 +430,24 @@ impl Streamer {
         self.shared.frame().0
     }
 
+    /// How many tiles have come into memory so far (opened or read from the cache).
+    pub fn tiles_loaded(&self) -> usize {
+        let stats = lock(&self.shared.stats);
+        stats.opened + stats.from_cache
+    }
+
+    /// The drawn ground at a frame point (`Frame::ground_at`), from the tiles in memory: none is opened for it.
+    pub fn ground_at(&self, frame: &Frame, x: f64, z: f64) -> f32 {
+        let tiles = lock(&self.shared.tiles);
+        frame.ground_at(x, z, &|i| {
+            let p = &frame.map.placements[i];
+            match tiles.get(&(p.location.clone(), p.variation.clone(), frame.climate_name(i))) {
+                Some(Slot::Ready(t, _)) => Some(t.clone()),
+                _ => None,
+            }
+        })
+    }
+
     /// A frame over new placements of the map (`Frame::with_map`, made away from the UI thread): the chunks in `changed` (whose
     /// placements differ) and those being built are built again with it; the others stay as they are on the scene.
     pub fn swap_frame(&mut self, frame: Arc<Frame>, changed: &[ChunkKey]) {

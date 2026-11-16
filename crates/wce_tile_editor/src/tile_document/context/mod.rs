@@ -540,6 +540,36 @@ impl Frame {
         self.lf.as_ref().map_or(0.0, |lf| lf.height_at(x as f32, z as f32))
     }
 
+    /// The drawn ground at a frame point: the LF plus the tile's own heights there (the highest of the placements over its cell whose
+    /// template `template` has ready: a masked tile's ground slopes down where another lies), the LF alone where none is ready. A campaign
+    /// map's props and trees stand on it: on the LF alone they floated over the tiles that sink below it (TDD's Emyn Muil, 2026-11-16).
+    pub fn ground_at(&self, x: f64, z: f64, template: &dyn Fn(usize) -> Option<Arc<Template>>) -> f32 {
+        let (mx, my) = self.to_map.apply(x, z);
+        let (cx, cy) = (mx.floor() as i32, my.floor() as i32);
+        let back = (self.reach + CHUNK - 1) / CHUNK;
+        let (kx, ky) = (cx.div_euclid(CHUNK), cy.div_euclid(CHUNK));
+        let mut own: Option<f32> = None;
+        for gy in ky - back..=ky {
+            for gx in kx - back..=kx {
+                for &i in self.by_chunk.get(&(gx, gy)).map_or(&[][..], Vec::as_slice) {
+                    let p = &self.map.placements[i];
+                    let r = p.rect();
+                    if cx < r[0] || cx >= r[2] || cy < r[1] || cy >= r[3] {
+                        continue;
+                    }
+
+                    if let Some(t) = template(i).filter(|t| t.custom.is_none()) {
+                        let (lx, lz) = p.to_map().inverse().apply(mx, my);
+                        let h = t.own.height(lx, lz);
+                        own = Some(own.map_or(h, |o| o.max(h)));
+                    }
+                }
+            }
+        }
+
+        self.lift(x, z) + own.unwrap_or(0.0)
+    }
+
     /// Where the map's north (smaller rows) is in the frame (x, z): +z unless the open tile is placed turned.
     pub fn north(&self) -> [f32; 2] {
         let (a, b) = (self.from_map.apply(0.0, 1.0), self.from_map.apply(0.0, 0.0));
