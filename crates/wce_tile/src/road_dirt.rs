@@ -146,6 +146,13 @@ pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
     })
 }
 
+/// Whether a game's packs have every decal the pieces use (`rigidmodels/decals/battle/<name>.rigid_model_v2`): Thrones of Britannia's kit
+/// has no prefabs to look in, its packs have them all (user 2026-11-16: no dirt road there).
+#[must_use]
+pub fn game_has_decals(exists: &dyn Fn(&str) -> bool) -> bool {
+    DECALS.iter().all(|d| exists(&format!("rigidmodels/decals/battle/{d}.rigid_model_v2")))
+}
+
 /// Whether every dirt piece is in a prefab folder as this generation makes it, or as the user made it.
 #[must_use]
 pub fn all_written(prefab_root: &Path, fences: &Fences) -> bool {

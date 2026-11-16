@@ -990,8 +990,10 @@ impl Tile {
     /// Leaked once per list seen: the property rows hold it.
     #[must_use]
     pub fn road_types(&self) -> &'static [(&'static str, &'static str)] {
-        // The tables' types first, in their order; then the library's others (a road type made by hand), by name.
-        let mut names = wce_tile::road_dirt::styles().iter().map(|s| s.name.to_owned()).collect::<Vec<_>>();
+        // The types whose pieces the library has (user 2026-11-16: a type of the tables without pieces is not offered): the tables' first,
+        // in their order; then the library's others (a road type made by hand), by name.
+        let has = |t: &str| self.road_prefabs.as_ref().is_some_and(|lib| lib.get(&key(t, "straight")).is_some());
+        let mut names = wce_tile::road_dirt::styles().iter().filter(|s| has(s.name)).map(|s| s.name.to_owned()).collect::<Vec<_>>();
         let mut others = self
             .road_prefabs
             .as_ref()
