@@ -167,7 +167,7 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   (`commontextures/default_white_cubemap.dds`; the capture's is 1 x 1), `s_environment` the map's `cubemap.dds` (the capture's 512,
   10 mips: the top mip dropped by the texture setting); no sky cube, no environment cube, no engine ambient read-back (161 of 163
   campaign files have their own ambient). The projection's far plane 500 world units on a campaign map (the streaming keeps its own).
-  DEVIATION: the skybox casts no shadow (the game's casts into every cascade; outside their slices). Checked against the screenshots:
+  DEVIATION (accepted by the user, 2026-11-17): the skybox casts no shadow (the game's casts into every cascade; outside their slices). Checked against the screenshots:
   the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
 - Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
   constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
