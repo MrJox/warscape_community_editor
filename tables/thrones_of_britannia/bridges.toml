@@ -1,0 +1,19 @@
+# Thrones of Britannia: the kit bridges a procedural road's bridges are generated from (a road's road_bridge), in the order the editor lists them; a road
+# asking for one this file does not have gets the first.
+#
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in bridges_custom.toml
+# beside it (the editor never writes it, an update leaves it alone): a [[bases]] entry there replaces the base of its name or is added
+# after these. The editor reads both each time a tile is opened.
+#   name    what a road's road_bridge says
+#   label   its name in the editor's list
+#   key     the bridge building: a deck along its x, bent along the road and widened to it (docs/plans/procedural_roads.md)
+#   end     optional: its end piece, laid at each end of the deck (a ramp down from it)
+#
+# The wooden one alone for now: bridge_stone_1 is a humped bridge of its own, and cut into pieces it repeated its hump and its arch (its
+# deck in steps); other bases wait for a standard shape a base is made to.
+
+[[bases]]
+name = "wood"
+label = "Wood (bridge_wood_2)"
+key = "bridge_wood_2"
+end = "bridge_wood_2_end"

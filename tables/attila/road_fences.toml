@@ -1,0 +1,91 @@
+# Attila: the fences of the generated dirt road types (roads_proc/dirt and roads_proc/dirt_track).
+#
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own fences in
+# road_fences_custom.toml beside it (the editor never writes it, an update leaves it alone): a [fence] there replaces the one below, a
+# [[named]] fence replaces the one of its name or is added. The editor reads both each time it scans the prefab library (opening a tile),
+# then makes again every fence piece nobody edited: road_<type>_fence (the [fence]) and road_<type>_fence_<name> (each [[named]] one).
+#
+# A fence piece is 5 m long: use a building about that long.
+#   name     the piece's name (fence_<name>): lowercase letters, digits and _, not a number alone. [fence] has none.
+#   key      the building (its key in battlefield_buildings).
+#   along    "x": its model runs along its x from its pivot (the kit's lowfence_*); "z": along its z, about its pivot (the cultures' fences).
+#   joiners  optional: buildings laid on the joints between two fences (one picked for each joint), as a building spline's joiners. They go
+#            in the piece's joiner group (road_role="joiner"), at its back port. A road's road_fence_joiners can use others, or none.
+
+[fence]
+key = "lowfence_3"
+along = "x"
+
+[[named]]
+name = "lowfence1"
+key = "lowfence_1"
+along = "x"
+
+[[named]]
+name = "lowfence2"
+key = "lowfence_2"
+along = "x"
+
+[[named]]
+name = "lowfence4"
+key = "lowfence_4"
+along = "x"
+joiners = ["lowfence_4_pillar"]
+
+[[named]]
+name = "highfence"
+key = "highfence_1"
+along = "x"
+
+[[named]]
+name = "woven"
+key = "barbarian_woven_fence_10m"
+along = "x"
+
+[[named]]
+name = "roman"
+key = "roman_lowfence"
+along = "z"
+joiners = ["roman_lowfence_pillar"]
+
+[[named]]
+name = "greek"
+key = "greek_lowfence"
+along = "z"
+joiners = ["greek_lowfence_pillar"]
+
+[[named]]
+name = "egyptian"
+key = "egyptian_lowfence"
+along = "z"
+joiners = ["egyptian_lowfence_pillar"]
+
+[[named]]
+name = "egyptian_high"
+key = "egyptian_highfence"
+along = "z"
+joiners = ["egyptian_highfence_pillar"]
+
+[[named]]
+name = "persian"
+key = "persian_lowfence"
+along = "z"
+joiners = ["persian_lowfence_pillar"]
+
+[[named]]
+name = "persian_high"
+key = "persian_highfence"
+along = "z"
+joiners = ["persian_highfence_pillar"]
+
+[[named]]
+name = "sassanid"
+key = "sassanid_lowfence"
+along = "z"
+joiners = ["sassanid_lowfence_pillar"]
+
+[[named]]
+name = "sassanid_high"
+key = "sassanid_highfence"
+along = "z"
+joiners = ["sassanid_highfence_pillar"]

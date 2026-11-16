@@ -183,7 +183,7 @@ impl TileTool {
 
         // The first road type, from the kit's road decals, where its pieces are missing and the kit has them.
         // Its fences from the fences file in the settings folder (written there where missing: the user's to edit).
-        crate::tool::load_tables();
+        crate::tool::load_tables(e);
         let fences = wce_tile::road_fences::fences();
         if !wce_tile::road_dirt::all_written(&folders[0], fences) {
             if wce_tile::road_dirt::kit_has_decals(&lib) {
