@@ -207,7 +207,7 @@ impl Renderer {
         frustum: Option<&Frustum>,
         oit: Option<((f32, f32), bool)>,
     ) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
-        let units = self.camera.units;
+        let units = self.camera.terrain_units;
         let reach = GRASS_DISTANCE / units + PATCH_RADIUS;
         let (c0, c1) = (cell_of(eye.x - reach, eye.z - reach), cell_of(eye.x + reach, eye.z + reach));
         let mut all: Vec<f32> = vec![];
@@ -306,7 +306,7 @@ impl Renderer {
                 half,
                 half,
             )]);
-            self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.units).data());
+            self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.terrain_units).data());
             self.upload();
             let mut first = 0u32;
             for (model, mi, count) in &runs {

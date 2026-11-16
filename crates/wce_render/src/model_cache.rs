@@ -220,6 +220,10 @@ pub struct GpuMesh {
     /// The material's normal map's path (the climate variants, `Renderer::climate_variant`).
     pub normal_path: String,
 
+    /// Drawn unlit (`rigid_config_PS.g_unlit` 1): a campaign map's skybox (`campaign_maps/<map>/display/skybox/`; RenderDoc,
+    /// camp_attila 2026-11-16: the rigid shaders with g_unlit 1, the only draw with it).
+    pub unlit: bool,
+
     /// The tessellation displacement map (RMV2 texture type 6, linear), if the material has one: with tessellation on the G-buffer pass
     /// draws the mesh tessellated (the game's `gbuffer_displacement_sm5`).
     pub displacement: Option<SharedTexture>,
@@ -657,6 +661,13 @@ pub struct ModelCache {
 
 /// The texture a material gives a slot, or a fallback.
 /// The path a material texture loads from: where the material says, else under the same name next to the model.
+/// Whether a model is a campaign map's skybox (`campaign_maps/<map>/display/skybox/campaign_skybox.rigid_model_v2`, which the game
+/// loads by that path, fn 0x10afd250, and draws unlit).
+pub fn is_campaign_skybox(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_lowercase();
+    p.starts_with("campaign_maps/") && p.contains("/display/skybox/")
+}
+
 /// The engine's stand-ins for the art tools' placeholder textures (the material resolver fn 0x1186c880, first match wins, `\name` or
 /// `/name` anywhere in the path): test_gray -> default_grey, test_black / test_mask / test_gloss -> default_black, test_white ->
 /// default_white (with `_srgb` for a colour slot), flatnormal -> default_normal. The placeholders' own files are not what the game draws
@@ -1275,6 +1286,7 @@ impl ModelInner {
                 .find(|t| *t.tex_type() == TextureType::Normal)
                 .map(|t| t.path().replace('\\', "/"))
                 .unwrap_or_default(),
+            unlit: is_campaign_skybox(path),
             displacement: material
                 .textures()
                 .iter()
@@ -1340,6 +1352,7 @@ impl ModelInner {
             ],
             diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
             normal_path: String::new(),
+            unlit: false,
             displacement: None,
             bmin: Float3::new(lo[0], lo[1], lo[2]),
             bmax: Float3::new(hi[0], hi[1], hi[2]),
@@ -2008,6 +2021,7 @@ fn build_patch(
         ],
         diffuse_path: String::new(),
         normal_path: String::new(),
+        unlit: false,
         displacement: None,
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),

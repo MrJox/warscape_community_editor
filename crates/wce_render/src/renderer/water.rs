@@ -216,6 +216,8 @@ impl Renderer {
         }
 
         // The sea planes: the game's ocean shaders (renderer/ocean.rs); rivers and the models' water planes below.
+        // In the tile content's units (a campaign map's 0.2, its sea plane's `campaign_CB` sizes too); the models' water planes in the
+        // scene's, as their instance rows.
         if !rivers {
             self.draw_ocean(scene, &water);
             if !model_water {
@@ -296,8 +298,9 @@ impl Renderer {
         bind_sampler(ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());
         let normal = nt.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.black_srv.clone());
         bind_srv(ctx, &ps, "s_normal", normal.as_ref());
-        bind_srv(ctx, &ps, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
-        bind_srv(ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
+        let (env, sky) = (self.env_srv(), self.sky_srv());
+        bind_srv(ctx, &ps, "s_environment", env.as_ref());
+        bind_srv(ctx, &ps, "s_sky", sky.as_ref());
         bind_srv(ctx, &ps, "s_terrain_refraction", self.water.refr.srv.as_ref());
         bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
@@ -325,6 +328,12 @@ impl Renderer {
         // The models' water meshes: the same shaders, the vertices in model space (f16 position) and the instance's world rows from the
         // G-buffer pass's instances (POSITION1..3; the shader reads nothing else of them).
         if model_water {
+            // A campaign map's lakes (its tiles' water planes) have their own transparency.
+            if scene.campaign_sea.is_some() {
+                self.cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[super::ocean::CAMPAIGN_LAKE_TRANSPARENCY]);
+                self.upload();
+            }
+
             // The shader declares the sea quad's inputs too (TEXCOORD0, POSITION4..6), unread: the uv and the instance's other rows.
             let mut el = vec![
                 element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false),

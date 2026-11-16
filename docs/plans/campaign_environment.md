@@ -94,6 +94,15 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
      `s_sky` / `s_environment` hold (`cubemap.dds` or an EnvMapGen cube), the skybox draw's shader and blend, the shroud plane's grid
      and blend, `s_overlay`.
    - The camera at two zooms near a sphere's edge (eye or look-at); a season change at the end of a turn (a fade or not).
+   **The checklist (asked of the user 2026-11-16):** RenderDoc 1.46 as for `coast.rdc` (low textures, "unlimited video memory" off,
+   few packs: the 32-bit game runs out of address space). Capture A, vanilla Attila (`D:\renderdoc\camp_attila.rdc`): the main
+   campaign on turn 1, the camera over a coast with the sea, a river and a settlement in view, at a middle zoom, tilted so the
+   horizon and the sky show. Capture B, if TDD fits in memory (`camp_tdd.rdc`): the Rauros lake and the marshes south of it, as in
+   the 2026-11-16 screenshot. Optional: Capture C, A's place at the closest zoom. A screenshot of each view at the user's normal
+   settings beside it. Read from them: `camera_VS_PS` (eye, view, projection: near / far, the units) in the terrain's draw, a
+   prop's, a tree's, the sea's, a lake model's and a river's; the skybox draw (shader, its world matrix, depth and blend states, its
+   place in the pass order); what `t_sky` / `t_environment` hold; whether `battlefog` runs, the shroud plane's draw; `fog_VS_PS`,
+   `shadowmap_PS`.
 1. **The campaign frame** (no new visuals, the base everything else stands on): `scene.game_units` 0.2 for campaign maps; a campaign
    mode in the scene (`g_is_campaign` everywhere it is read, shadow pull-back 14 and the campaign split scale, the campaign tweakables
    above); the env cube's position at the camera's ground; the older `.lighting` attributes read (sun euler, light colour, the HDR and
@@ -139,13 +148,31 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   `europe_sp1` / `desert_sp1` / `med_sp1` (its collection's `europe.lighting` does not exist: the view fell back to the leftover
   `environment/spring.lighting`); `main_attila_map` with `europe_sp`, `med_sp`, `desert_sp`, `england_sp` as written (spring all year,
   decision 1).
-- Units, checked: the spheres are in the `.terry`'s units (x to 678.5: the world's width), so the engine compares them with the camera
-  in the logical campaign world; the shaders' constants are in the tile database's (`unit_scale` 0.2, `blend_pixel_scale` 620: at
-  the `.terry`'s 0.0026 a scene unit a texture would repeat every 1 860 cells). The two worlds differ by about 77.
-- Seen, for Phase 4: at 0.2 the battle fog formula with the campaign files' fog (height top 40 at full strength, clear distance 300)
-  fogs everything near sea level beyond about 12 cells: from the view's 440 game units up, Attila's Mediterranean is white. Whether
-  the game's camera ever stands that high, and whether its fog is `battlefog` or the shroud plane, is for the Phase 0 captures (a
-  screenshot over the open sea at the game's highest zoom would do for a first look).
+- **Units, settled by RenderDoc (2026-11-16, `D:\renderdoc\camp_attila_frame6628.rdc`, `_frame7363.rdc`, vanilla, Roma; the user's
+  screenshots 325610_20261116231426 / 231459; scripts and dumps in `%TEMP%\wce_scratch\camprd`):** one camera for every draw, in the
+  campaign world's units (the `.terry`'s: the map 678.5 wide; eye (207.5, 9.3, 280.1), about 37 degrees down, vertical fov 80 degrees,
+  **near 1, far 500**). The tiles' scale is in their instance matrices (a terrain patch x 0.0026087 = 0.33391 / 128, y 0.013043 =
+  that / 0.2, z x 1.1547: the game's world is the hex grid's, z longer than the editor's square-celled frame), and the terrain's
+  repeats are passed converted (`g_blend_pixel_scale_array` 620 x 0.013043 = 8.087); its details raw (mid (1000, 1000, 3, 0.6), near
+  (200, 20, 0.6, 0)). So `game_units` = the frame's unit (0.0026087) for everything and `RenderScene::terrain_units` 0.2 only converts
+  the tile database's repeats (`Renderer::tile_scale`); the tiles' grass still draws in 0.2 (`Renderer::in_tile_units`; the game's
+  frame has no grass pass: ASSUMPTION kept for TDD's marsh reeds, not checked). Shadows: split distances 1, 6.25, 16.8, 37.8, 79.8 =
+  the campaign rows x 1.05 in those units, 4 cascades, terrain, trees, buildings and the skybox casting. Fog: `battlefog` fullscreen with
+  the file's values, then the shroud plane (twice; `g_shroud_enabled` 1). Water: the sea `campaign_CB` (15, 15, 2, 2), refraction
+  -0.2 / 4.1, uv scales 0.1, transparency 35 (the lake quads 30), `g_ps_sea_info` (0, 0, -3.482, 6.983); the rivers are drawn into a
+  2048 x 1620 overlay that the lighting and the sea read (`g_overlay_view_projection`), not as meshes.
+- **Phase 2, the sky (2026-11-16):** the skybox (`wce_terrain_tool` `skybox.rs`): `campaign_skybox.rigid_model_v2` at the eye x 37.5 (its
+  pivot added: the capture's translation is the eye + (−0.91, 111.4, 0.55)), drawn in the G-buffer with `g_unlit` 1 (`GpuMesh::unlit`,
+  the `display/skybox/` models), lit by nothing, fogged as the rest. `s_sky` the engine's white cube
+  (`commontextures/default_white_cubemap.dds`; the capture's is 1 x 1), `s_environment` the map's `cubemap.dds` (the capture's 512,
+  10 mips: the top mip dropped by the texture setting); no sky cube, no environment cube, no engine ambient read-back (161 of 163
+  campaign files have their own ambient). The projection's far plane 500 world units on a campaign map (the streaming keeps its own).
+  DEVIATION: the skybox casts no shadow (the game's casts into every cascade; outside their slices). Checked against the screenshots:
+  the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
+- Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
+  constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
+  RenderDoc. The rivers' overlay technique. The z stretch of the hex world (the editor's frame has square cells: the game's map is
+  15 % longer north to south). The view's lens (the game's 80 degrees). The view streams short of the horizon.
 
 ## Decisions (user, 2026-11-16)
 

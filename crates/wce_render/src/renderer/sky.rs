@@ -379,7 +379,8 @@ impl Renderer {
 
         self.bind(&vs);
         self.bind(&ps);
-        bind_srv(&self.ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
+        let sky = self.sky_srv();
+        bind_srv(&self.ctx, &ps, "s_sky", sky.as_ref());
         bind_sampler(&self.ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());
         self.ctx.draw_indexed(36, 0, 0);
     }
@@ -502,6 +503,26 @@ impl Renderer {
     }
 
     /// A sky texture (cloud maps, the lens flare sprites), cached; `None` (reported once) when it can't be loaded.
+    /// What the shaders' `s_sky` samples: the sky cube; on a campaign map the engine's default white cube (RenderDoc, camp_attila
+    /// 2026-11-16: a 1 x 1 white cube in the fog, the shroud plane and the rivers; the campaign has no sky dome).
+    pub(crate) fn sky_srv(&self) -> Option<ID3D11ShaderResourceView> {
+        match &self.campaign_cubes {
+            Some((sky, _)) => sky.clone(),
+            None => self.sky.cube.srv.clone(),
+        }
+    }
+
+    /// What the shaders' `s_environment` samples: the environment cube (the sky cube until it is made); on a campaign map its
+    /// `display/skybox/cubemap.dds` (fns 0x10afd250, 0x1178b6d0: slot 0 of the scene's sky holder; RenderDoc: a 512 RGBA16F cube in the
+    /// lighting, the water, SSR and the effects).
+    pub(crate) fn env_srv(&self) -> Option<ID3D11ShaderResourceView> {
+        match &self.campaign_cubes {
+            Some((_, env)) => env.clone(),
+            None if self.env.valid => self.env.cube.srv.clone(),
+            None => self.sky.cube.srv.clone(),
+        }
+    }
+
     pub(crate) fn sky_texture(&mut self, path: &str, srgb: bool) -> Option<ID3D11ShaderResourceView> {
         let key = format!("{path}{}", if srgb { "|srgb" } else { "|unorm" });
         if let Some(srv) = self.sky.textures.get(&key) {

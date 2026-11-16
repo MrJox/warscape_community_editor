@@ -16,11 +16,11 @@ impl Renderer {
     /// The forward-lit shaders' lighting inputs beyond the constant buffers the light passes filled: the environment cube, the sky, the
     /// cascaded shadow map with its comparison sampler, the snow normals.
     pub(crate) fn bind_forward_inputs(&mut self, ps: &Rc<GameShader>) {
-        let env = if self.env.valid { self.env.cube.srv.clone() } else { self.sky.cube.srv.clone() };
+        let (env, sky) = (self.env_srv(), self.sky_srv());
         let snow = self.snow_normals_srv();
         let ctx = &self.ctx;
         bind_srv(ctx, ps, "s_environment", env.as_ref());
-        bind_srv(ctx, ps, "s_sky", self.sky.cube.srv.as_ref());
+        bind_srv(ctx, ps, "s_sky", sky.as_ref());
         bind_srv(ctx, ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         self.bind_baked_shadow(ps);
         bind_srv(ctx, ps, "s_snow_normals", snow.as_ref());

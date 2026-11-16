@@ -387,6 +387,9 @@ pub struct TerrainTool {
     /// A campaign map's lighting spheres, blended at the camera every frame (none: one file lights the view).
     lighting: Option<crate::lighting::CampaignLighting>,
 
+    /// A campaign map's skybox at the camera.
+    skybox: Option<crate::skybox::CampaignSkybox>,
+
     /// The Map panel (the active map from above).
     map_panel: crate::map_panel::MapPanel,
 
@@ -460,6 +463,7 @@ impl Default for TerrainTool {
             season: "su".to_owned(),
             weather: None,
             lighting: None,
+            skybox: None,
             map_panel: crate::map_panel::MapPanel::new(),
             paint: LfPaint::default(),
             cells: crate::cell_paint::CellPaint::default(),
@@ -1080,11 +1084,23 @@ impl TerrainTool {
             self.cameras.insert(self.shown, e.viewport.camera());
         }
 
-        // The scene is the tile frame (128 units a cell); the game draws it at its database's `unit_scale`: 0.2 game units a scene unit
-        // on a campaign map, 2 on a battle map. The shaders' world-space values (fog, texture repeats, shadows, DOF) are in game units.
-        let campaign = e.docs.find_as::<MapDocument>(id).is_some_and(|d| map_kind(&d.name).0 == MapKind::Campaign);
-        e.scene.game_units = if campaign { 0.2 } else { UNIT as f32 };
-        e.scene.campaign = campaign;
+        // The scene is the tile frame (128 units a cell). A battle map is drawn in its database's `unit_scale`, 2 game units a scene
+        // unit. A campaign map's tiles in theirs (0.2: their texture repeats and detail distances), everything else in the campaign
+        // world's, a cell its width over the map's cells (0.33391 / 128: the props, the skybox, the fog, the shadows; the engine's
+        // campaign distances, `campaign_props_max_distance` 60, `campaign_sky_scale` 37.5, are in those).
+        let frame = e.docs.find_as::<MapDocument>(id).filter(|d| map_kind(&d.name).0 == MapKind::Campaign).map(|d| d.terry_frame);
+        e.scene.game_units = frame.map_or(UNIT as f32, |f| f.unit as f32);
+        e.scene.terrain_units = if frame.is_some() { 0.2 } else { 0.0 };
+        e.scene.campaign = frame.is_some();
+        if let Some(sky) = self.skybox.take() {
+            sky.clear(e);
+        }
+
+        if frame.is_some()
+            && let Some(name) = e.docs.find_as::<MapDocument>(id).map(|d| map_kind(&d.name).1.to_owned())
+        {
+            self.skybox = crate::skybox::CampaignSkybox::show(e, id, &name);
+        }
         self.light(e, id);
         e.scene.campaign_sea = campaign_sea(e, id, &s);
         e.scene.campaign_snow = campaign_snow(e, id, &s, &self.season);
@@ -2255,16 +2271,25 @@ impl Tool for TerrainTool {
     fn update(&mut self, e: &mut Editor) {
         self.poll(e);
 
-        // A campaign map's lighting spheres, at the camera.
+        // A campaign map's lighting spheres and skybox, at the camera.
         if let Some(l) = self.lighting.as_mut() {
             l.update(e);
+        }
+
+        if let Some(s) = &self.skybox {
+            s.update(e);
         }
 
         // The map closed: its view goes with it.
         if self.shown != 0 && e.docs.find(self.shown).is_none() {
             self.view.clear(e);
             e.scene.campaign = false;
+            e.scene.terrain_units = 0.0;
             self.lighting = None;
+            if let Some(sky) = self.skybox.take() {
+                sky.clear(e);
+            }
+
             e.scene.campaign_sea = None;
             e.scene.campaign_snow = None;
             self.cameras.remove(&self.shown);

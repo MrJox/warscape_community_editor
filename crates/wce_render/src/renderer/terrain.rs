@@ -1351,7 +1351,7 @@ impl Renderer {
             array: c.array.clone(),
             world: [w * u, h * u],
             offset,
-            repeat: super::tiling(s.pixel_scale, super::ORIGIN_REACH * u),
+            repeat: super::tiling(s.pixel_scale * self.tile_scale(), super::ORIGIN_REACH * u),
         })
     }
 
@@ -1930,11 +1930,12 @@ impl Renderer {
         // ps_height_map_cb: the values the live game shows (dump of a battle) where the tool has no other source; the far-distance blend
         // and the map-wide normal map are switched off (g_far_tile_distance / g_far_blend_range very large): the tile's own maps are the near
         // field, and the editor has one tile.
-        // A campaign's: its database's RENDER_PARAMS (mid_distance_detail_near / _scale / _slope_high / _strength 1000, 1000, 1.5, 0.6,
-        // slope_low 0.8, normal strength 1; no near-distance detail). ASSUMPTION: that the game feeds them as it feeds the battle's; not traced.
+        // A campaign's: the details as the game passes them (RenderDoc, camp_attila 2026-11-16: mid (1000, 1000, 3, 0.6), near (200, 20,
+        // 0.6, 0), raw, not in the world's units as the texture repeats are); the normal strength and slope from its database's
+        // RENDER_PARAMS (ASSUMPTION: not read from the capture).
         if campaign {
-            cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[1000.0, 1000.0, 1.5, 0.6]);
-            cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.0, 0.0]);
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[1000.0, 1000.0, 3.0, 0.6]);
+            cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 20.0, 0.6, 0.0]);
             cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[1.0]);
             cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.8, 1.5]);
         } else {
@@ -2075,7 +2076,7 @@ impl Renderer {
                     self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
                     let mut arr = [0.0f32; 16];
                     for l in 0..4 {
-                        arr[l * 4] = super::tiling(m.pixel_scale[l], super::ORIGIN_REACH * u);
+                        arr[l * 4] = super::tiling(m.pixel_scale[l] * self.tile_scale(), super::ORIGIN_REACH * u);
                         arr[l * 4 + 1] = m.outfield_scale[l];
                         arr[l * 4 + 2] = m.mid_strength[l];
                     }
@@ -2463,8 +2464,8 @@ impl Renderer {
         let clip = game_clip(relative, self.camera.units);
         let triangles = self.draw_terrain_patches(&ents, &vs, &ps, view_proj, &clip);
 
-        // The cascade's matrix back for the objects after.
-        self.cbs.set_m("camera_VS_PS", "view_projection", clip.data());
+        // The cascade's matrix back for the objects after (in the scene's game units: the tile content's may differ).
+        self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(relative, self.camera.units).data());
         self.upload();
         triangles
     }
