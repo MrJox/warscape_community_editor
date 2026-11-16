@@ -15,6 +15,7 @@ pub mod cities;
 pub mod heights;
 pub mod normals;
 pub mod roads;
+pub mod start;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

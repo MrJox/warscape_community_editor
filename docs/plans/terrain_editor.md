@@ -370,7 +370,9 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
      and Thrones' campaigns; no battle database shares geometry; docs/re/battle_maps.md), so the textured tile drawn with its own mesh
      over the left-out geometry-only placement is the game's ground. The bits' meaning stays read from BOB, not decompiled.
    - The settlements at the campaign's start (2026-11-04; Attila's main campaign; `wce_terrain_io::attila::cities`, after RPFM's
-     startpos code): each slot's building from the startpos (`data/campaigns/<campaign>/startpos.esf`), its model from the settlement
+     startpos code): each slot's building from the startpos (`campaigns/<campaign>/startpos.esf`, the packs' else the game's `data`; since
+     2026-11-16 the campaign is the db's, `wce_terrain_io::attila::start`: a `campaigns` row of the map whose startpos names the map, not
+     the map's name less `_map`: TDD's `rom_third_age_map` is campaign `main_attila_map`'s), its model from the settlement
      display tables by the owner's faction, subculture or culture, at its cell of the map's `map_data.esf` (the hex grid in the world of
      the tree list); drawn near the camera with the props, a model unit a world unit, standing on the ground. `cities_check`: 745 slots,
      408 buildings with a model (every one in the packs). ASSUMPTIONS: a model at its cell's centre, unturned. 2026-11-05: the slots
