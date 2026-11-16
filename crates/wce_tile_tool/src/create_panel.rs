@@ -1059,6 +1059,12 @@ impl TileTool {
         let d = document(e).ok_or("no tile open")?;
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
         let (at, on_terrain) = if self.preview_forced { (at, true) } else { self.place_point() };
+        // Upright on the slope where it goes (the Follow slope chip).
+        let text = if self.modes.unwrap_or_default().1 == crate::settings::RotationMode::Slope {
+            d.tile().slope_tilted_text(&text, at)
+        } else {
+            text
+        };
         let placed = d.place_text(&format!("Add {what}"), &text, into, at, name.as_deref(), on_terrain).map(|_| format!("added {what}"));
 
         // Still placing (TEd's way: as many as there are clicks, Esc stops): the new one is not selected, and the selection there was

@@ -515,21 +515,18 @@ impl TileDocument {
                         ins.text("surface_note", "", "kept at its height; G puts it on what is under the mouse");
                     }
 
-                    // The rotation: free (as given), or following the surface under it (tilted to it now; a grab tilts it again).
-                    let follow = self.tile().tscene().get(e, ROTATION_ATTR).is_some_and(|v| v == "surface");
-                    let rotations = ["Free", "Follow surface"].map(str::to_owned);
-                    let mut r = i32::from(follow);
-                    let tips = ["Turned as given.", "Tilted to the surface under it, now and again after each grab."].map(str::to_owned);
-                    if ins.edit_choice_tips("rotation_mode", "rotation", &mut r, &rotations, &tips) && editable && (r == 1) != follow {
-                        if r == 1 {
-                            let p = self.tile().world_position(e);
-                            let n = self.tile().terrain_normal(p.x, p.z);
-                            self.tilt_to_surface(e, n, base + 5);
-                            self.history.break_merge();
-                            self.set_attribute(e, ROTATION_ATTR, "surface");
-                        } else {
-                            self.set_attribute(e, ROTATION_ATTR, "");
-                        }
+                    // The rotation: free (as given), following the surface under it, or upright on its slope (tilted to it now; a grab
+                    // tilts it again).
+                    let before = rotation_index(self.tile().tscene().get(e, ROTATION_ATTR).as_deref());
+                    let mut r = before;
+                    let (rotations, tips) = (ROTATION_MODES.map(str::to_owned), ROTATION_TIPS.map(str::to_owned));
+                    if ins.edit_choice_tips("rotation_mode", "rotation", &mut r, &rotations, &tips) && editable && r != before {
+                        self.set_attribute(e, ROTATION_ATTR, ROTATION_VALUES[r.clamp(0, 2) as usize]);
+                        let p = self.tile().world_position(e);
+                        let n = self.tile().terrain_normal(p.x, p.z);
+                        self.history.break_merge();
+                        self.follow_ground(e, n, base + 5);
+                        self.history.break_merge();
                     }
 
                     let t = self.tile();
@@ -703,7 +700,7 @@ impl TileDocument {
             }
 
             // The rotation mode is a row of the placement's.
-            let rotation = |e: usize| doc.get(e, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface");
+            let rotation = |e: usize| rotation_index(doc.get(e, wce_tile::project_files::ROTATION_ATTR).as_deref());
             if p.kind == Kind::Placement && elems[1..].iter().any(|&e| rotation(e) != rotation(elems[0])) {
                 marks.push(("rotation_mode".to_owned(), DIFFERS.to_owned()));
             }
@@ -851,22 +848,21 @@ impl TileDocument {
     /// one undo entry, then marks them.
     fn common_rotation_row(&mut self, elems: &[usize], editable: bool, base: u64, ins: &mut dyn Inspector) {
         use wce_tile::project_files::ROTATION_ATTR;
-        let follow = self.tile().tscene().get(elems[0], ROTATION_ATTR).is_some_and(|v| v == "surface");
-
-        let rotations = ["Free", "Follow surface"].map(str::to_owned);
-        let mut r = i32::from(follow);
-        let tips = ["Turned as given.", "Tilted to the surface under it, now and again after each grab."].map(str::to_owned);
+        let mut r = rotation_index(self.tile().tscene().get(elems[0], ROTATION_ATTR).as_deref());
+        let (rotations, tips) = (ROTATION_MODES.map(str::to_owned), ROTATION_TIPS.map(str::to_owned));
         if !(ins.edit_choice_tips("rotation_mode", "rotation", &mut r, &rotations, &tips) && editable) {
             return;
         }
 
-        if r == 1 {
+        self.set_attribute_all(elems, ROTATION_ATTR, ROTATION_VALUES[r.clamp(0, 2) as usize]);
+        self.history.break_merge();
+        if r != 0 {
             // Every tilt in one entry, as the gizmo's moves of a selection.
             self.move_batch = Some(vec![]);
             for &e in elems {
                 let p = self.tile().world_position(e);
                 let n = self.tile().terrain_normal(p.x, p.z);
-                self.tilt_to_surface(e, n, base + 5);
+                self.follow_ground(e, n, base + 5);
             }
 
             let moves = self.move_batch.take().unwrap_or_default();
@@ -875,9 +871,6 @@ impl TileDocument {
             }
 
             self.history.break_merge();
-            self.set_attribute_all(elems, ROTATION_ATTR, "surface");
-        } else {
-            self.set_attribute_all(elems, ROTATION_ATTR, "");
         }
     }
 
@@ -1234,4 +1227,23 @@ fn shown_raw(sc: &wce_tile::ted_scene::TedScene, e: usize, i: usize) -> String {
     sc.display_variation(e)
         .and_then(|v| wce_tile::variations::own_value(sc.doc(), e, v, name))
         .unwrap_or_else(|| String::from_utf8_lossy(sc.doc().attr_raw(e, i)).into_owned())
+}
+
+/// The Inspector's rotation modes: their names, tooltips and `wce_rotation` values.
+const ROTATION_MODES: [&str; 3] = ["Free", "Follow surface", "Follow slope"];
+const ROTATION_TIPS: [&str; 3] = [
+    "Turned as given.",
+    "Tilted to the surface under it, now and again after each grab.",
+    "Upright: pitched to the slope along its length only, never leaning to a side, as the building spline lays a building without Tilt \
+     across slope (a fence on a hillside). Now and again after each grab.",
+];
+const ROTATION_VALUES: [&str; 3] = ["", "surface", "slope"];
+
+/// The rotation mode of a `wce_rotation` value (none or another: Free).
+fn rotation_index(value: Option<&str>) -> i32 {
+    match value {
+        Some("surface") => 1,
+        Some("slope") => 2,
+        _ => 0,
+    }
 }

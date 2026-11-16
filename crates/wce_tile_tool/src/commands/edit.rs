@@ -542,7 +542,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "place_modes",
-        "place_modes <freeform|landscape|entity> [none|surface]",
+        "place_modes <freeform|landscape|entity> [none|surface|slope]",
         "the placement chips: what new things stand on and how they are turned",
         |e, a| {
             use crate::settings::{RotationMode, SurfaceMode};
@@ -550,10 +550,14 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 Some("freeform") => SurfaceMode::Freeform,
                 Some("landscape") => SurfaceMode::Landscape,
                 Some("entity") => SurfaceMode::Entity,
-                _ => return fail("usage: place_modes <freeform|landscape|entity> [none|surface]"),
+                _ => return fail("usage: place_modes <freeform|landscape|entity> [none|surface|slope]"),
             };
 
-            let rotation = if a.get(1).map(String::as_str) == Some("surface") { RotationMode::Surface } else { RotationMode::None };
+            let rotation = match a.get(1).map(String::as_str) {
+                Some("surface") => RotationMode::Surface,
+                Some("slope") => RotationMode::Slope,
+                _ => RotationMode::None,
+            };
             with_tile(e, |t, e| {
                 t.modes = Some((surface, rotation));
                 e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| {

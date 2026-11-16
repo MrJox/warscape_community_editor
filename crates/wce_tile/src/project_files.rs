@@ -519,7 +519,7 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
         report.polyfilled.push(format!("{on_entities} item(s) placed on other things written as freeform at their height"));
     }
 
-    let tilted = count(ROTATION_ATTR, "surface");
+    let tilted = count(ROTATION_ATTR, "surface") + count(ROTATION_ATTR, "slope");
     if tilted != 0 {
         report.polyfilled.push(format!("{tilted} item(s) tilted to their surface written with that orientation"));
     }

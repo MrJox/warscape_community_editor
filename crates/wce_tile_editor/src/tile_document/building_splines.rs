@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use wce_foundation::math::Float3;
+use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::{EntityId, RenderScene};
 use wce_tile::building_spline::{Footprint, KEYS, Settings, instance_text, lay, parse_keys};
 use wce_tile::roads::centre_line_handled;
@@ -107,9 +107,43 @@ impl Tile {
         curve
     }
 
+    /// The world rotation that stands an instance upright on the slope under it (the *Follow slope* rotation mode): its heading kept (where
+    /// its +z points), pitched to the ground along its long axis only, as the building spline lays a building without *Tilt across slope*
+    /// (`wce_tile::building_spline::slope_tilt`). `world`: its world rotation now; `at`: its pivot on the map (metres); `key`: a building's,
+    /// for its footprint (its long axis and length; anything else is 5 m long along its x).
+    pub(crate) fn slope_rotation(&self, world: Double3x3, at: [f64; 2], key: Option<&str>) -> Double3x3 {
+        let forward = world * Double3::new(0.0, 0.0, 1.0);
+        let yaw = if forward.x.hypot(forward.z) > 1e-6 { forward.x.atan2(forward.z) } else { 0.0 };
+        let heading = Double3x3::rotation_y(yaw);
+        let foot = key.map_or(Footprint::centred(5.0, 0.5), |k| self.building_extent(k));
+        let axis = if foot.along_z() { Double3::new(0.0, 0.0, 1.0) } else { Double3::new(1.0, 0.0, 0.0) };
+        let a = heading * axis;
+        let l = a.x.hypot(a.z).max(1e-9);
+        let dir = [a.x / l, a.z / l];
+        let (lo, hi) = foot.along();
+        let middle = (lo + hi) * 0.5;
+        let mid = [at[0] + dir[0] * middle, at[1] + dir[1] * middle];
+        let half = ((hi - lo) * 0.5).max(wce_tile::building_spline::MIN_LENGTH * 0.5);
+        let ground = |x: f64, z: f64| f64::from(self.terrain_height(x as f32, z as f32));
+        wce_tile::building_spline::slope_tilt(dir, mid, half, false, &ground) * heading
+    }
+
+    /// An element's text (a building, a prop) stood upright on the slope under `at` as [`Self::slope_rotation`] does: what a click places in
+    /// the *Follow slope* mode.
+    pub fn slope_tilted_text(&self, text: &[u8], at: Float3) -> Vec<u8> {
+        let Ok(mut sc) = TedScene::parse_any(text.to_vec()) else { return text.to_vec() };
+        let els = sc.doc().elements();
+        let Some(root) = (0..els.len()).find(|&e| els[e].parent.is_none()) else { return text.to_vec() };
+        let key = (sc.type_of(root) == "BUILDING_INSTANCE").then(|| sc.get(root, "key")).flatten();
+        let world = wce_tile::world_transform::world_transform(&sc, root).rotation;
+        let turned = self.slope_rotation(world, [f64::from(at.x), f64::from(at.z)], key.as_deref());
+        wce_tile::world_transform::set_world_rotation(&mut sc, root, &turned);
+        sc.save()
+    }
+
     /// A building's footprint (metres, from its pivot; it is laid along the longer of its x and z): its logic file's box, else its model's
     /// bounds (the scene's, else its piece files' vertices). A building with neither is 5 m long along x about its pivot.
-    fn building_extent(&self, key: &str) -> Footprint {
+    pub(crate) fn building_extent(&self, key: &str) -> Footprint {
         let fallback = Footprint::centred(5.0, 0.5);
         if let Some(v) = self.building_splines.extents.borrow().get(key) {
             return v.unwrap_or(fallback);

@@ -2413,8 +2413,8 @@ impl TileTool {
                 grab.last = now;
             }
 
-            // An item that follows its surface is tilted to the one it is moved onto.
-            if d.tile().tscene().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
+            // An item that follows its surface is tilted to the one it is moved onto (one upright on its slope, to the terrain's).
+            if d.tile().tscene().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface" || v == "slope") {
                 let n = match (self.modes.unwrap_or_default().0, self.surface_hit) {
                     (crate::settings::SurfaceMode::Entity, Some(h)) => {
                         wce_foundation::math::Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z))
@@ -2422,7 +2422,7 @@ impl TileTool {
                     _ => d.tile().terrain_normal(gx, gz),
                 };
 
-                d.tilt_to_surface(g, n, gesture);
+                d.follow_ground(g, n, gesture);
             }
         }
     }
