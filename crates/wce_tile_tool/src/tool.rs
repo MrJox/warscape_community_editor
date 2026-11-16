@@ -1372,10 +1372,8 @@ impl TileTool {
     ///
     /// What could not be found or opened.
     pub fn open_tile(&mut self, e: &mut Editor, target: &str, variation: &str) -> Result<String, String> {
-        // The wall and bridge bases from their files in the settings folder (the user's to edit: read again on each opening).
-        let settings_dir = e.settings_ref().paths().config_dir().to_path_buf();
-        wce_walls::profile::load(&settings_dir);
-        wce_walls::bridge::load(&settings_dir);
+        // The tables from their files (read again on each opening: the user's custom ones may have changed).
+        load_tables();
         let p = Path::new(target);
         let ext = p.extension().map(|x| format!(".{}", x.to_string_lossy().to_lowercase())).unwrap_or_default();
         let mut entry_xml = None;
@@ -6186,4 +6184,13 @@ mod snap_tests {
         assert_eq!(nearest_handle(handles, o, dir), Some(2));
         assert_eq!(nearest_handle([], o, dir), None);
     }
+}
+
+/// Reads the editor's tables from their files in the app's `tables` folder, each with the user's custom one beside it
+/// (`wce_tile::user_files`): the wall and bridge bases and the road fences.
+pub(crate) fn load_tables() {
+    let dir = wce_tile::user_files::tables_dir();
+    wce_walls::profile::load(&dir);
+    wce_walls::bridge::load(&dir);
+    wce_tile::road_fences::load(&dir);
 }

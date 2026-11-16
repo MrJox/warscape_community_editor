@@ -8,3 +8,5 @@ scratch/
 manifest/
 third_party/_dl/
 /target/
+# A developer's own table changes (the app reads tables/*_custom.toml beside the shipped tables).
+/tables/*_custom.toml

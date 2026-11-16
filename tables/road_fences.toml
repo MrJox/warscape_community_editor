@@ -1,8 +1,9 @@
 # The fences of the generated dirt road types (roads_proc/dirt and roads_proc/dirt_track).
 #
-# The editor writes this file where it is missing and reads it each time it scans the prefab library (opening a tile), then makes again
-# every fence piece nobody edited: road_<type>_fence (the [fence] below) and road_<type>_fence_<name> (each [[named]] one). Add a fence,
-# change one's building or its joiners here; no rebuild of the editor needed. Delete the file to get these back.
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own fences in
+# road_fences_custom.toml beside it (the editor never writes it, an update leaves it alone): a [fence] there replaces the one below, a
+# [[named]] fence replaces the one of its name or is added. The editor reads both each time it scans the prefab library (opening a tile),
+# then makes again every fence piece nobody edited: road_<type>_fence (the [fence]) and road_<type>_fence_<name> (each [[named]] one).
 #
 # A fence piece is 5 m long: use a building about that long.
 #   name     the piece's name (fence_<name>): lowercase letters, digits and _, not a number alone. [fence] has none.
