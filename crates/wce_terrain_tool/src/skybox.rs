@@ -2,7 +2,7 @@
 //! `campaign_skybox.rigid_model_v2` (a cylinder 12.24 model units round, a 4096 x 512 cloud panorama) at the camera, unturned, scaled by
 //! `campaign_sky_scale` 37.5 in the campaign world's units (fns 0x10afd250, 0x10b29f60; RenderDoc, camp_attila 2026-11-16: the world
 //! matrix scale 37.5 at the eye plus the mesh's pivot, drawn in the G-buffer unlit, then fogged); `cubemap.dds` is the environment cube.
-//! DEVIATION: the game draws it into the shadow cascades too; here it casts none (it stands outside every cascade's slice).
+//! DEVIATION, for review (docs/plans/campaign_environment.md): the game draws it into the shadow cascades too; here it casts none.
 
 use wce_editor::editor::Editor;
 use wce_foundation::math::Float4x4;
