@@ -41,6 +41,7 @@ pub mod ted_scene;
 pub mod terrain_layers;
 pub mod tile_project;
 pub mod tile_sets;
+pub mod user_files;
 pub mod variations;
 pub mod vegetation;
 pub mod vegetation_sets;

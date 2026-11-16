@@ -28,7 +28,6 @@ use wce_tile_editor::tile_document::layers::LayerType;
 use wce_tile_editor::tile_document::{BrushKind, GROUND_ERASE, Placement, TileDocument};
 
 use crate::tool::{HINTS, MODE_NAMES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
-use wce_tile::property_enums::WALL_BASE;
 
 mod edit;
 mod files;

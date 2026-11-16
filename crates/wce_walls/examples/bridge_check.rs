@@ -1,5 +1,5 @@
 //! A generated bridge checked as `wall_tech_check` checks a wall (docs/plans/procedural_roads.md, "Bridges"): each base of
-//! `bridge::BASES` bent along a curved, sloped deck, then, in the world: the deck walkable from end to end (no stretch of its centre line
+//! `bridge::bases()` bent along a curved, sloped deck, then, in the world: the deck walkable from end to end (no stretch of its centre line
 //! off every platform), no platforms over one another, the pieces' platforms meeting at their joints (corners shared within a
 //! centimetre), every platform's corners on the deck's surface, each end piece with a platform edge the ground can link to (along its
 //! collision outline, as the game links them), and the files reading back.
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use rpfm_lib::files::{Decodeable, cs2_parsed::Cs2Parsed};
 use wce_vfs::{Config, GameProfile, Vfs};
-use wce_walls::bridge::{BASES, BridgeWarp, Deck, make_piece, prepare};
+use wce_walls::bridge::{BridgeWarp, Deck, bases, make_piece, prepare};
 use wce_walls::building::BuildingFiles;
 
 /// The intact collision outlines of a logic file, as their corners (and whether each is a collision outline, with heights, or the
@@ -232,7 +232,7 @@ fn main() {
         .collect::<Vec<_>>();
     let deck = Deck::new(path);
     let ground = |_: f64, _: f64| -20.0;
-    for b in BASES {
+    for &b in bases() {
         let Ok(files) = BuildingFiles::read(&vfs, b.key) else {
             println!("{}: not in the packs", b.key);
             continue;

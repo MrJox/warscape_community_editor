@@ -171,29 +171,15 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
 /// Not TEd's: the sides a `WceRoadSpline` has fences on, as it runs.
 pub const ROAD_FENCES: &[(&str, &str)] = &[("none", "None"), ("left", "Left"), ("right", "Right"), ("both", "Both")];
 
-/// Not TEd's: the bases a `WceRoadSpline`'s bridges are generated from, by the names of `wce_walls::bridge::BASES`.
-pub const ROAD_BRIDGE: &[(&str, &str)] = &[("wood", "Wood (bridge_wood_2)")];
+/// Not TEd's: the bases a `WceRoadSpline`'s bridges are generated from: the editor's list is `wce_walls::bridge::choices` (`bridges.toml`
+/// in the settings folder, the user's to edit), put in the row's place (`Tile::game_choices`).
+pub const ROAD_BRIDGE: &[(&str, &str)] = &[];
 
 /// Not TEd's: the ground types a `WceRoadSpline` (docs/plans/procedural_roads.md) can be, by the names of `ground_types::GROUND_TYPES`.
 pub const ROAD_GROUND: &[(&str, &str)] =
     &[("road", "Road"), ("mud", "Mud"), ("sand", "Sand"), ("grass", "Grass"), ("rock", "Rock"), ("wooden floor", "Wooden floor")];
 
-/// Not TEd's: the base walls a `WceWallSpline` (a procedural wall, docs/plans/procedural_walls.md) is generated from; the keys of
-/// `wce_walls::profile::BASES`, in its order.
-pub const WALL_BASE: &[(&str, &str)] = &[
-    ("barbarian_fort_straight", "8 m: barbarian"),
-    ("eastern_fort_small_wall_straight", "8 m: eastern small wall"),
-    ("sassanid_fort_small_wall_straight", "8 m: sassanid small wall"),
-    ("western_fort_small_wall_straight", "8 m: western small wall"),
-    ("khazad_fort_wall_small_straight", "8 m: khazad (TDD)"),
-    ("mordor_fort_small_wall_straight", "8 m: mordor (TDD)"),
-    ("roman_fort_straight", "15 m: roman"),
-    ("eastern_fort_straight", "15 m: eastern"),
-    ("sassanid_fort_straight", "15 m: sassanid"),
-    ("greek_fort_straight", "15 m: greek"),
-    ("egyptian_fort_straight", "15 m: egyptian"),
-    ("persian_fort_straight", "15 m: persian"),
-    ("easterling_fort_straight", "15 m: easterling (TDD)"),
-    ("gondorean_fort_straight", "15 m: gondorean (TDD)"),
-    ("gondor_fort_straight", "15 m: gondor (TDD)"),
-];
+/// Not TEd's: the base walls a `WceWallSpline` (a procedural wall, docs/plans/procedural_walls.md) is generated from: the editor's list is
+/// `wce_walls::profile::available_bases` (`walls.toml` in the settings folder, the user's to edit), put in the row's place
+/// (`Tile::game_choices`).
+pub const WALL_BASE: &[(&str, &str)] = &[];

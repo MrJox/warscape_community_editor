@@ -25,6 +25,7 @@ pub const WIDTH_ATTR: &str = "bridge_width";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BridgeBase {
     pub name: &'static str,
+    pub label: &'static str,
     pub key: &'static str,
 
     /// The kit's end piece of the base, laid at each end of the deck (a ramp down from it: `bridge_wood_2_end`'s platform drops 1 unit
@@ -32,15 +33,86 @@ pub struct BridgeBase {
     pub end: Option<&'static str>,
 }
 
-/// The bases (Attila's kit). `bridge_wood_2`: a 20 x 10 deck on posts, one platform at 1. The wooden one alone for now (user,
-/// 2026-11-08): `bridge_stone_1` is a humped bridge of its own, and cut into pieces it repeated its hump and its arch (its deck in steps);
-/// other bases wait for a standard shape a base is made to. A road asking for one it does not have gets the first.
-pub const BASES: [BridgeBase; 1] = [BridgeBase { name: "wood", key: "bridge_wood_2", end: Some("bridge_wood_2_end") }];
+/// The bridge bases' file in the settings folder (user 2026-11-16: buildings added without a rebuild; `bridges.toml`, shipped as
+/// [`DEFAULT_TEXT`]). A road asking for one it does not have gets the first.
+pub const FILE_NAME: &str = "bridges.toml";
+pub const DEFAULT_TEXT: &str = include_str!("bridges.toml");
+
+/// The bases, from the file ([`load`]) or as shipped.
+pub static BRIDGES: wce_tile::user_files::Registry<Bridges> = wce_tile::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse);
+
+/// The bridge bases and the editor's list of them (name, label), in the file's order.
+#[derive(Debug)]
+pub struct Bridges {
+    pub bases: Vec<BridgeBase>,
+    pub choices: Vec<(&'static str, &'static str)>,
+}
+
+#[derive(serde::Deserialize)]
+struct BridgeDef {
+    name: String,
+    #[serde(default)]
+    label: String,
+    key: String,
+    end: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct BridgesFile {
+    bases: Vec<BridgeDef>,
+}
+
+/// Reads a bridges file.
+///
+/// # Errors
+///
+/// It is not TOML of this shape, it has no base, or a name is there twice.
+pub fn parse(text: &str) -> Result<Bridges, String> {
+    use wce_tile::user_files::keep;
+    let file: BridgesFile = toml::from_str(text).map_err(|e| e.to_string())?;
+    if file.bases.is_empty() {
+        return Err("no [[bases]]".to_owned());
+    }
+
+    let mut bases: Vec<BridgeBase> = vec![];
+    for b in &file.bases {
+        if bases.iter().any(|o| o.name == b.name) {
+            return Err(format!("the bridge '{}' twice", b.name));
+        }
+
+        bases.push(BridgeBase {
+            name: keep(&b.name),
+            label: keep(if b.label.is_empty() { &b.key } else { &b.label }),
+            key: keep(&b.key),
+            end: b.end.as_deref().filter(|e| !e.is_empty()).map(keep),
+        });
+    }
+
+    let choices = bases.iter().map(|b| (b.name, b.label)).collect();
+    Ok(Bridges { bases, choices })
+}
+
+/// Reads the bridges file in the settings folder (written as shipped where missing): the bases from then on.
+pub fn load(dir: &std::path::Path) {
+    BRIDGES.load(dir);
+}
+
+/// The bases, in the editor's order.
+#[must_use]
+pub fn bases() -> &'static [BridgeBase] {
+    &BRIDGES.get().bases
+}
+
+/// The editor's list of bases (name, label).
+#[must_use]
+pub fn choices() -> &'static [(&'static str, &'static str)] {
+    &BRIDGES.get().choices
+}
 
 /// A base by its key or its end piece's key.
 #[must_use]
 pub fn base_of_key(key: &str) -> Option<BridgeBase> {
-    BASES.iter().copied().find(|b| b.key == key || b.end == Some(key))
+    bases().iter().copied().find(|b| b.key == key || b.end == Some(key))
 }
 
 /// What a piece of a bridge gets at its ends besides its base's platforms.
@@ -103,7 +175,7 @@ pub fn parts(deck: &Deck, base: &Prepared, end: Option<&Prepared>) -> Vec<Part> 
 /// A base by its name or its key.
 #[must_use]
 pub fn base(name: &str) -> Option<BridgeBase> {
-    BASES.iter().copied().find(|b| b.name == name || b.key == name)
+    bases().iter().copied().find(|b| b.name == name || b.key == name)
 }
 
 /// How far apart the warp cuts a base's meshes and outlines along it (scene units): the curve and the slope are followed that closely.

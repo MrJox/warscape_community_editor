@@ -1372,6 +1372,10 @@ impl TileTool {
     ///
     /// What could not be found or opened.
     pub fn open_tile(&mut self, e: &mut Editor, target: &str, variation: &str) -> Result<String, String> {
+        // The wall and bridge bases from their files in the settings folder (the user's to edit: read again on each opening).
+        let settings_dir = e.settings_ref().paths().config_dir().to_path_buf();
+        wce_walls::profile::load(&settings_dir);
+        wce_walls::bridge::load(&settings_dir);
         let p = Path::new(target);
         let ext = p.extension().map(|x| format!(".{}", x.to_string_lossy().to_lowercase())).unwrap_or_default();
         let mut entry_xml = None;

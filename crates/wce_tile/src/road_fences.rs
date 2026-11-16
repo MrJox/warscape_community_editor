@@ -88,20 +88,11 @@ pub fn parse(text: &str) -> Result<Fences, String> {
 /// one used (the file is left as it is, for the user to mend).
 #[must_use]
 pub fn load(dir: &Path) -> Fences {
-    let path = dir.join(FILE_NAME);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&text).unwrap_or_else(|e| {
-            wce_foundation::log::warn(format!("{}: {e}: the shipped fences are used", path.display()));
-            Fences::default()
-        }),
-        Err(_) => {
-            if let Err(e) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, DEFAULT_TEXT)) {
-                wce_foundation::log::warn(format!("{}: not written: {e}", path.display()));
-            }
-
-            Fences::default()
-        }
-    }
+    let text = crate::user_files::read_or_write(dir, FILE_NAME, DEFAULT_TEXT);
+    parse(&text).unwrap_or_else(|e| {
+        wce_foundation::log::warn(format!("{}: {e}: the shipped fences are used", dir.join(FILE_NAME).display()));
+        Fences::default()
+    })
 }
 
 #[cfg(test)]

@@ -2695,7 +2695,9 @@ version = "0.0.1"
 dependencies = [
  "nalgebra",
  "rpfm_lib",
+ "serde",
  "serde_json",
+ "toml",
  "wce_formats",
  "wce_foundation",
  "wce_tile",
