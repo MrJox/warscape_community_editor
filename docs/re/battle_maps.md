@@ -121,8 +121,15 @@ plains (aa .. ad) elsewhere.
   units with `g_blend_lf_min_max` (-20, 548.4); others 1616 x 1802 (the sea LF's size). `g_infield_dimensions` 2248. The camera stood at
   (1022, 93.6, -1022) game units, the battle's limit, at the hillfort tile's south-east corner (2 game units a metre: cell (393, 216)).
   The game shows open water over the loch east of it (land LF 1.8 m, `sea/1x1` tiles at x 395, `sea_coast` tiles either side whose land
-  stands 1 .. 5 m over that LF), where the editor draws those tiles' beaches and a sand bank: not explained yet (neither the offset nor
-  the water level differ).
+  stands 1 .. 5 m over that LF), where the editor drew a sand bank. **Settled by a RenderDoc capture** of the same view
+  (`D:enderdoc	hrones_loch_frame5377.rdc`, read with `scripts/re/rd_terrain_dump.py`): the battle's `t_low_res_height_map` is a
+  256 x 256 window of the campaign LF over 16384 game units (32 m a texel, the map's own), cells 256 game units; the game's ground
+  over the loch is the sea and coast tiles' own (`LF * 3000 - 20 + hf`, within 0.1 of it per tile; the sea tiles at -40), the east bank
+  5 .. 8 under the water. The editor's sand bank was `atlantic_mountains/large_short_30_l` (24 x 20 cells from (395, 210)), drawn
+  over its whole rectangle: its entry's `mask` leaves those cells out (row y = the map's row from the tile's origin, v = h - z / 128 of
+  the tile's frame), BOB's mesh has no squares there, and the loch's own placements lie under them. The map context now sinks a
+  masked tile's ground over the cells its mask leaves out (`template::Mask`). Left: the coast tiles' beaches show sand in the editor
+  where the game, outside the battle's area, shows grass (its distance material, not traced).
 - Not traced: whether the game lifts a tile's buildings by the LF too (the building list's y is used as it is; on the kit maps the LF
   under the settlements is flat, so it doesn't show there).
 
