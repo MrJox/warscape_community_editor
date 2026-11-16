@@ -113,6 +113,16 @@ plains (aa .. ad) elsewhere.
   the campaign map), and the shipped tiles' `lf_influence_map.png` are 1 everywhere. The campaign LF is mostly flat under settlements
   (range over the tile: median 2.7 m, 10th percentile 0, 90th 35 m). A placement's LF min / max (2 cells around the tile) is the vertical
   extent of its blend box (`g_blend_lf_min_max`).
+- **Measured in Thrones (2026-11-16, a memory dump of a battle at `viking_hillfort_cities/saxon_hillfort_a/medium`, (385, 208) of
+  `vik_attila_map`, read with `scripts/re/dump_cbs.py --by-name`):** `vs_height_map_cb` has `g_height_map_lf_scale` 3000 and
+  `g_height_map_vertical_offset` 20 in every copy: the battle is not lowered by the LF under its tile (whose median is 9.98 m there), the
+  ground is `LF * 3000 - 20 + hf` as on the map. The water is `ocean_v2` (`ocean2.hlsl`: its height `g_water_level * g_height_scale_meters`
+  = 0.8 x 1; `coastal_water.g_water_level` 0.82), `ocean_VS.g_vs_sea_info` is 0. One copy holds a 1024 x 1024 LF window over 16384 game
+  units with `g_blend_lf_min_max` (-20, 548.4); others 1616 x 1802 (the sea LF's size). `g_infield_dimensions` 2248. The camera stood at
+  (1022, 93.6, -1022) game units, the battle's limit, at the hillfort tile's south-east corner (2 game units a metre: cell (393, 216)).
+  The game shows open water over the loch east of it (land LF 1.8 m, `sea/1x1` tiles at x 395, `sea_coast` tiles either side whose land
+  stands 1 .. 5 m over that LF), where the editor draws those tiles' beaches and a sand bank: not explained yet (neither the offset nor
+  the water level differ).
 - Not traced: whether the game lifts a tile's buildings by the LF too (the building list's y is used as it is; on the kit maps the LF
   under the settlements is flat, so it doesn't show there).
 
