@@ -1,4 +1,4 @@
-# The base walls procedural walls (WceWallSpline) are generated from, in the order the editor lists them.
+# Rome II: the base walls procedural walls (WceWallSpline) are generated from, in the order the editor lists them.
 #
 # This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in walls_custom.toml beside
 # it (the editor never writes it, an update leaves it alone): a [families.<name>] there sets those numbers of the family of its name (or
@@ -90,56 +90,6 @@ step_up = "barbarian_fort_step_up_a"
 step_down = "barbarian_fort_step_down_a"
 
 [[bases]]
-key = "eastern_fort_small_wall_straight"
-label = "8 m: eastern small wall"
-family = "eight"
-defences = ["eastern_fort_small_wall_curved_bastion"]
-cap_start = "eastern_fort_small_wall_endcap_left"
-cap_end = "eastern_fort_small_wall_endcap_right"
-step_up = "eastern_fort_small_wall_step_up_a"
-step_down = "eastern_fort_small_wall_step_down_a"
-
-[[bases]]
-key = "sassanid_fort_small_wall_straight"
-label = "8 m: sassanid small wall"
-family = "eight"
-defences = ["sassanid_fort_small_wall_curved_bastion"]
-cap_start = "sassanid_fort_small_wall_endcap_left"
-cap_end = "sassanid_fort_small_wall_endcap_right"
-step_up = "sassanid_fort_small_wall_step_up_a"
-step_down = "sassanid_fort_small_wall_step_down_a"
-
-[[bases]]
-key = "western_fort_small_wall_straight"
-label = "8 m: western small wall"
-family = "eight"
-defences = ["western_fort_small_wall_curved_bastion"]
-cap_start = "western_fort_small_wall_endcap_left"
-cap_end = "western_fort_small_wall_endcap_right"
-step_up = "western_fort_small_wall_step_up_a"
-step_down = "western_fort_small_wall_step_down_a"
-
-[[bases]]
-key = "khazad_fort_wall_small_straight"
-label = "8 m: khazad (TDD)"
-family = "eight"
-defences = ["khazad_fort_wall_small_curved_bastion"]
-cap_start = "khazad_fort_wall_small_endcap_left"
-cap_end = "khazad_fort_wall_small_endcap_right"
-step_up = "khazad_fort_wall_small_step_up"
-step_down = "khazad_fort_wall_small_step_down"
-
-[[bases]]
-key = "mordor_fort_small_wall_straight"
-label = "8 m: mordor (TDD)"
-family = "eight"
-defences = ["mordor_fort_small_wall_curved_bastion"]
-cap_start = "mordor_fort_small_wall_endcap_left"
-cap_end = "mordor_fort_small_wall_endcap_right"
-step_up = "mordor_fort_small_wall_step_up_a"
-step_down = "mordor_fort_small_wall_step_down_a"
-
-[[bases]]
 key = "roman_fort_straight"
 label = "15 m: roman"
 family = "fifteen"
@@ -149,28 +99,6 @@ cap_end = "roman_fort_tower_end_right"
 door = "roman_fort_straight_with_doors_a"
 step_up = "roman_fort_straight_stepped_up_10m_square_bastion_a"
 step_down = "roman_fort_straight_stepped_down_10m_square_bastion_a"
-
-[[bases]]
-key = "eastern_fort_straight"
-label = "15 m: eastern"
-family = "fifteen"
-defences = ["eastern_fort_tower_c_straight_with_extension", "eastern_fort_straight_with_solid_squared_bastion"]
-cap_start = "eastern_fort_tower_end_left"
-cap_end = "eastern_fort_tower_end_right"
-door = "eastern_fort_straight_with_doors_a"
-step_up = "eastern_fort_straight_stepped_up_10m_square_bastion_a"
-step_down = "eastern_fort_straight_stepped_down_10m_square_bastion_a"
-
-[[bases]]
-key = "sassanid_fort_straight"
-label = "15 m: sassanid"
-family = "fifteen"
-defences = ["sassanid_fort_tower_c_straight_with_extension", "sassanid_fort_straight_with_solid_squared_bastion"]
-cap_start = "sassanid_fort_tower_end_left"
-cap_end = "sassanid_fort_tower_end_right"
-door = "sassanid_fort_straight_with_doors_a"
-step_up = "sassanid_fort_straight_stepped_up_10m_square_bastion_a"
-step_down = "sassanid_fort_straight_stepped_down_10m_square_bastion_a"
 
 [[bases]]
 key = "greek_fort_straight"
@@ -204,41 +132,3 @@ cap_end = "persian_fort_tower_end_right"
 door = "persian_fort_straight_with_doors_a"
 step_up = "persian_fort_straight_stepped_up_10m_square_bastion_a"
 step_down = "persian_fort_straight_stepped_down_10m_square_bastion_a"
-
-[[bases]]
-key = "easterling_fort_straight"
-label = "15 m: easterling (TDD)"
-family = "fifteen"
-defences = ["easterling_fort_tower_c_straight_with_extension", "easterling_fort_straight_with_solid_squared_bastion"]
-cap_start = "easterling_fort_tower_end_left"
-cap_end = "easterling_fort_tower_end_right"
-door = "easterling_fort_straight_with_doors_a"
-step_up = "easterling_fort_straight_stepped_up_10m_square_bastion_a"
-step_down = "easterling_fort_straight_stepped_down_10m_square_bastion_a"
-
-[[bases]]
-key = "gondorean_fort_straight"
-label = "15 m: gondorean (TDD)"
-family = "fifteen"
-defences = ["gondorean_fort_tower_c_straight_with_extension", "gondorean_fort_straight_with_solid_squared_bastion"]
-cap_start = "gondorean_fort_tower_end_left"
-cap_end = "gondorean_fort_tower_end_right"
-door = "gondorean_fort_straight_with_doors_a"
-step_up = "gondorean_fort_straight_stepped_up_10m_square_bastion_a"
-step_down = "gondorean_fort_straight_stepped_down_10m_square_bastion_a"
-
-# TDD's gondor pieces are 21 long (their logic files' boxes, walkways and footprints: -10.5..10.5; at 20 the pieces lay a metre over each
-# other). Their step pieces' stair lies further out than the game's (treads z 3.99..7.49, side beams 3.74..8.09).
-[[bases]]
-key = "gondor_fort_straight"
-label = "15 m: gondor (TDD)"
-family = "fifteen"
-defences = ["gondor_fort_tower_c_straight", "gondor_fort_bastion"]
-cap_start = "gondor_fort_tower_end_left"
-cap_end = "gondor_fort_tower_end_right"
-door = "gondor_fort_straight_with_doors_a"
-step_up = "gondor_fort_straight_stepped_up_bastion_a"
-step_down = "gondor_fort_straight_stepped_down_bastion_a"
-x = [-10.5, 10.5]
-cap_join = [10.5, -10.5]
-slab_zy = [[3.74, 8.09], [14.0, 26.5]]

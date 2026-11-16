@@ -103,10 +103,15 @@ impl Profile {
 /// The wall bases' file in the app's tables folder, with the user's `walls_custom.toml` beside it (`wce_tile::user_files`; user
 /// 2026-11-16: buildings added without a rebuild): their families' numbers and each base's pieces. Built in as [`DEFAULT_TEXT`].
 pub const FILE_NAME: &str = "walls.toml";
-pub const DEFAULT_TEXT: &str = include_str!("../../../tables/walls.toml");
+pub const BUILT_IN: wce_tile::user_files::BuiltIn = &[
+    ("attila", include_str!("../../../tables/attila/walls.toml")),
+    ("rome_2", include_str!("../../../tables/rome_2/walls.toml")),
+    ("thrones_of_britannia", include_str!("../../../tables/thrones_of_britannia/walls.toml")),
+];
+pub const DEFAULT_TEXT: &str = BUILT_IN[0].1;
 
 /// The bases, from the file ([`load`]) or as shipped.
-pub static WALLS: wce_tile::user_files::Registry<Walls> = wce_tile::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse_with);
+pub static WALLS: wce_tile::user_files::Registry<Walls> = wce_tile::user_files::Registry::new(FILE_NAME, BUILT_IN, parse_with);
 
 /// The wall bases and the editor's list of them (key, label), in the file's order.
 #[derive(Debug)]
@@ -290,8 +295,8 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Walls, String> 
 }
 
 /// Reads the walls files in the tables folder (`wce_tile::user_files::tables_dir`): the bases from then on.
-pub fn load(dir: &std::path::Path) {
-    WALLS.load(dir);
+pub fn load(tables: &std::path::Path, game: &str) {
+    WALLS.load(tables, game);
 }
 
 /// The bases, in the editor's order.
@@ -363,6 +368,19 @@ mod tests {
         let g = w.bases.iter().find(|p| p.key == "gondor_fort_straight").unwrap();
         assert_eq!((g.x, g.cap_join, g.walkway), ((-10.5, 10.5), (10.5, -10.5), 15.0));
         assert_eq!(g.slab_zy, Some(((3.74, 8.09), (14.0, 26.5))));
+    }
+
+    #[test]
+    fn every_games_walls_read_and_are_attilas() {
+        // Rome 2 and Thrones of Britannia: the bases their kits' battlefield_buildings have, as Attila's file has them.
+        let attila = WALLS.shipped();
+        for (game, text, n) in [("rome_2", BUILT_IN[1].1, 5), ("thrones_of_britannia", BUILT_IN[2].1, 3)] {
+            let w = parse(text).unwrap_or_else(|e| panic!("{game}: {e}"));
+            assert_eq!(w.bases.len(), n, "{game}");
+            for b in &w.bases {
+                assert_eq!(Some(b), attila.bases.iter().find(|a| a.key == b.key), "{game}: {}", b.key);
+            }
+        }
     }
 
     #[test]

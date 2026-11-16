@@ -7,11 +7,18 @@ use serde::{Deserialize, Serialize};
 /// The shipped file's name, in the app's tables folder.
 pub const FILE_NAME: &str = "road_fences.toml";
 
-/// The shipped file as built into the editor (used where the app's is missing).
-pub const DEFAULT_TEXT: &str = include_str!("../../../tables/road_fences.toml");
+/// The shipped files as built into the editor, by game (used where the app's is missing).
+pub const BUILT_IN: crate::user_files::BuiltIn = &[
+    ("attila", include_str!("../../../tables/attila/road_fences.toml")),
+    ("rome_2", include_str!("../../../tables/rome_2/road_fences.toml")),
+    ("thrones_of_britannia", include_str!("../../../tables/thrones_of_britannia/road_fences.toml")),
+];
+
+/// Attila's (the table before any load).
+pub const DEFAULT_TEXT: &str = BUILT_IN[0].1;
 
 /// The fences, from the files ([`load`]) or as built in.
-pub static FENCES: crate::user_files::Registry<Fences> = crate::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse_with);
+pub static FENCES: crate::user_files::Registry<Fences> = crate::user_files::Registry::new(FILE_NAME, BUILT_IN, parse_with);
 
 /// Which way a fence's model runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,9 +120,9 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Fences, String>
     Ok(f)
 }
 
-/// Reads the fences files in the tables folder (`user_files::tables_dir`): the fences from then on.
-pub fn load(dir: &std::path::Path) {
-    FENCES.load(dir);
+/// Reads a game's fences files in the tables folder (`user_files::tables_dir`): the fences from then on.
+pub fn load(tables: &std::path::Path, game: &str) {
+    FENCES.load(tables, game);
 }
 
 /// The fences: the files' last read, else the built-in ones.
@@ -138,6 +145,14 @@ mod tests {
         assert!(parse("[fence]\nkey = \"a\"\n[[named]]\nname = \"Big\"\nkey = \"b\"\n").is_err());
         assert!(parse("[fence]\nkey = \"a\"\n[[named]]\nname = \"x\"\nkey = \"b\"\n[[named]]\nname = \"x\"\nkey = \"c\"\n").is_err());
         assert!(parse("[fence]\nkey = \"a\"\n").is_ok_and(|f| f.named.is_empty() && f.fence.along == Along::X));
+    }
+
+    #[test]
+    fn every_games_fences_read() {
+        for (game, text) in BUILT_IN {
+            let f = parse(text).unwrap_or_else(|e| panic!("{game}: {e}"));
+            assert_eq!(f.fence.key, "lowfence_3", "{game}");
+        }
     }
 
     #[test]

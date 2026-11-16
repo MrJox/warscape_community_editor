@@ -1,0 +1,244 @@
+# Attila: the base walls procedural walls (WceWallSpline) are generated from, in the order the editor lists them.
+#
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in walls_custom.toml beside
+# it (the editor never writes it, an update leaves it alone): a [families.<name>] there sets those numbers of the family of its name (or
+# makes a new family), a [[bases]] entry replaces the base of its key (whole: give it all its pieces) or is added after these. The editor
+# reads both each time a tile is opened; the Inspector's Wall base row lists the bases whose pieces the game's files have.
+# Docs: docs/re/buildings.md ("The families", "The kit table"), docs/plans/procedural_walls.md.
+#
+# In a piece's frame, scene units (the models' units): x along the wall, -z the outer side, y = 0 the ground the piece stands on.
+#
+# [families.<name>]: what the bases of a family share (every number below; a base can set any of them again).
+#   x             where the frame starts and ends along x (the 8 m pieces run 0..20 from their origin, the 15 m ones -10..10)
+#   walkway       the walkway's height over the piece's ground
+#   outer_face    the outer face's line (z), where ladders and towers meet the wall
+#   depth         the footprint across the wall (z), the outer side first
+#   step_rise, step_run   the most one stair rises, and its length along the wall
+#   step_gap      between two chained step sections, flat
+#   max_slope     the steepest the wall itself may slope over a step (rise per unit along it)
+#   min_run       the shortest flat run between two steps
+#   whole_rise    a climb of about this much over a short straight stretch is one whole step piece (0: never)
+#   cap_join      the caps' joining x, at the start and at the end
+#   foot, bury    below foot[1] the mesh stretches so its bottom (foot[0]) reaches bury under the terrain
+#   slab_up, slab_down, slab_walk   the step section of a step piece: its x going up and down, the walkway's height where it starts
+#   slab_zy       optional: what of the step section is brought (z range, then y range); none: its whole cross-section
+#   step_replaces whether the step section replaces the base over its length, or is added to it
+#   slab_band     optional: only what lies within this (y) of the stair's slope is brought
+#   step_across   the stair spread across the whole walkway
+#   door_at       where the door section's doors come out on the ground (x, z)
+#
+# [[bases]]: a base wall.
+#   key           its straight piece (a building key); label: its name in the editor's list; family: one of the families above
+#   cap_start, cap_end   the pieces that close a free end, at the start and at the end
+#   step_up, step_down   the culture's step pieces, going up and going down along +x
+#   door          the culture's door section (empty: none)
+#   defences      the culture's in-line towers and bastions, used in turn at the wall's defence spacing
+
+[families.eight]
+x = [0.0, 20.0]
+walkway = 8.0
+outer_face = -2.5
+depth = [-3.0, 12.0]
+step_rise = 2.5
+step_run = 3.0
+step_gap = 2.0
+max_slope = 0.8333333333333334
+min_run = 10.0
+whole_rise = 0.0
+cap_join = [0.0, 0.0]
+foot = [-2.0, 0.0]
+bury = 2.0
+slab_up = [2.0, 5.0]
+slab_down = [2.0, 5.0]
+slab_walk = [8.0, 13.0]
+slab_zy = [[-3.5, 3.0], [-3.0, 16.0]]
+step_replaces = true
+step_across = false
+door_at = [0.0, 0.0]
+
+[families.fifteen]
+x = [-10.0, 10.0]
+walkway = 15.0
+outer_face = 0.0
+depth = [-6.0, 16.0]
+step_rise = 10.0
+step_run = 12.0
+step_gap = 4.0
+max_slope = 0.4
+min_run = 20.0
+whole_rise = 10.0
+cap_join = [10.0, -10.0]
+foot = [0.0, 2.0]
+bury = 0.5
+slab_up = [-5.8, 6.2]
+slab_down = [-6.2, 5.8]
+slab_walk = [15.0, 25.0]
+slab_zy = [[5.1, 8.9], [14.0, 26.5]]
+step_replaces = false
+slab_band = 0.9
+step_across = true
+door_at = [0.0, 13.0]
+
+[[bases]]
+key = "barbarian_fort_straight"
+label = "8 m: barbarian"
+family = "eight"
+defences = ["barbarian_fort_curved_bastion"]
+cap_start = "barbarian_fort_endcap_left"
+cap_end = "barbarian_fort_endcap_right"
+step_up = "barbarian_fort_step_up_a"
+step_down = "barbarian_fort_step_down_a"
+
+[[bases]]
+key = "eastern_fort_small_wall_straight"
+label = "8 m: eastern small wall"
+family = "eight"
+defences = ["eastern_fort_small_wall_curved_bastion"]
+cap_start = "eastern_fort_small_wall_endcap_left"
+cap_end = "eastern_fort_small_wall_endcap_right"
+step_up = "eastern_fort_small_wall_step_up_a"
+step_down = "eastern_fort_small_wall_step_down_a"
+
+[[bases]]
+key = "sassanid_fort_small_wall_straight"
+label = "8 m: sassanid small wall"
+family = "eight"
+defences = ["sassanid_fort_small_wall_curved_bastion"]
+cap_start = "sassanid_fort_small_wall_endcap_left"
+cap_end = "sassanid_fort_small_wall_endcap_right"
+step_up = "sassanid_fort_small_wall_step_up_a"
+step_down = "sassanid_fort_small_wall_step_down_a"
+
+[[bases]]
+key = "western_fort_small_wall_straight"
+label = "8 m: western small wall"
+family = "eight"
+defences = ["western_fort_small_wall_curved_bastion"]
+cap_start = "western_fort_small_wall_endcap_left"
+cap_end = "western_fort_small_wall_endcap_right"
+step_up = "western_fort_small_wall_step_up_a"
+step_down = "western_fort_small_wall_step_down_a"
+
+[[bases]]
+key = "khazad_fort_wall_small_straight"
+label = "8 m: khazad (TDD)"
+family = "eight"
+defences = ["khazad_fort_wall_small_curved_bastion"]
+cap_start = "khazad_fort_wall_small_endcap_left"
+cap_end = "khazad_fort_wall_small_endcap_right"
+step_up = "khazad_fort_wall_small_step_up"
+step_down = "khazad_fort_wall_small_step_down"
+
+[[bases]]
+key = "mordor_fort_small_wall_straight"
+label = "8 m: mordor (TDD)"
+family = "eight"
+defences = ["mordor_fort_small_wall_curved_bastion"]
+cap_start = "mordor_fort_small_wall_endcap_left"
+cap_end = "mordor_fort_small_wall_endcap_right"
+step_up = "mordor_fort_small_wall_step_up_a"
+step_down = "mordor_fort_small_wall_step_down_a"
+
+[[bases]]
+key = "roman_fort_straight"
+label = "15 m: roman"
+family = "fifteen"
+defences = ["roman_fort_tower_c_straight_with_extension", "roman_fort_straight_with_solid_squared_bastion"]
+cap_start = "roman_fort_tower_end_left"
+cap_end = "roman_fort_tower_end_right"
+door = "roman_fort_straight_with_doors_a"
+step_up = "roman_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "roman_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "eastern_fort_straight"
+label = "15 m: eastern"
+family = "fifteen"
+defences = ["eastern_fort_tower_c_straight_with_extension", "eastern_fort_straight_with_solid_squared_bastion"]
+cap_start = "eastern_fort_tower_end_left"
+cap_end = "eastern_fort_tower_end_right"
+door = "eastern_fort_straight_with_doors_a"
+step_up = "eastern_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "eastern_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "sassanid_fort_straight"
+label = "15 m: sassanid"
+family = "fifteen"
+defences = ["sassanid_fort_tower_c_straight_with_extension", "sassanid_fort_straight_with_solid_squared_bastion"]
+cap_start = "sassanid_fort_tower_end_left"
+cap_end = "sassanid_fort_tower_end_right"
+door = "sassanid_fort_straight_with_doors_a"
+step_up = "sassanid_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "sassanid_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "greek_fort_straight"
+label = "15 m: greek"
+family = "fifteen"
+defences = ["greek_fort_tower_c_straight_with_extension", "greek_fort_straight_with_solid_squared_bastion"]
+cap_start = "greek_fort_tower_end_left"
+cap_end = "greek_fort_tower_end_right"
+door = "greek_fort_straight_with_doors_a"
+step_up = "greek_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "greek_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "egyptian_fort_straight"
+label = "15 m: egyptian"
+family = "fifteen"
+defences = ["egyptian_fort_tower_c_straight_with_extension", "egyptian_fort_straight_with_solid_squared_bastion"]
+cap_start = "egyptian_fort_tower_end_left"
+cap_end = "egyptian_fort_tower_end_right"
+door = "egyptian_fort_straight_with_doors_a"
+step_up = "egyptian_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "egyptian_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "persian_fort_straight"
+label = "15 m: persian"
+family = "fifteen"
+defences = ["persian_fort_tower_c_straight_with_extension", "persian_fort_straight_with_solid_squared_bastion"]
+cap_start = "persian_fort_tower_end_left"
+cap_end = "persian_fort_tower_end_right"
+door = "persian_fort_straight_with_doors_a"
+step_up = "persian_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "persian_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "easterling_fort_straight"
+label = "15 m: easterling (TDD)"
+family = "fifteen"
+defences = ["easterling_fort_tower_c_straight_with_extension", "easterling_fort_straight_with_solid_squared_bastion"]
+cap_start = "easterling_fort_tower_end_left"
+cap_end = "easterling_fort_tower_end_right"
+door = "easterling_fort_straight_with_doors_a"
+step_up = "easterling_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "easterling_fort_straight_stepped_down_10m_square_bastion_a"
+
+[[bases]]
+key = "gondorean_fort_straight"
+label = "15 m: gondorean (TDD)"
+family = "fifteen"
+defences = ["gondorean_fort_tower_c_straight_with_extension", "gondorean_fort_straight_with_solid_squared_bastion"]
+cap_start = "gondorean_fort_tower_end_left"
+cap_end = "gondorean_fort_tower_end_right"
+door = "gondorean_fort_straight_with_doors_a"
+step_up = "gondorean_fort_straight_stepped_up_10m_square_bastion_a"
+step_down = "gondorean_fort_straight_stepped_down_10m_square_bastion_a"
+
+# TDD's gondor pieces are 21 long (their logic files' boxes, walkways and footprints: -10.5..10.5; at 20 the pieces lay a metre over each
+# other). Their step pieces' stair lies further out than the game's (treads z 3.99..7.49, side beams 3.74..8.09).
+[[bases]]
+key = "gondor_fort_straight"
+label = "15 m: gondor (TDD)"
+family = "fifteen"
+defences = ["gondor_fort_tower_c_straight", "gondor_fort_bastion"]
+cap_start = "gondor_fort_tower_end_left"
+cap_end = "gondor_fort_tower_end_right"
+door = "gondor_fort_straight_with_doors_a"
+step_up = "gondor_fort_straight_stepped_up_bastion_a"
+step_down = "gondor_fort_straight_stepped_down_bastion_a"
+x = [-10.5, 10.5]
+cap_join = [10.5, -10.5]
+slab_zy = [[3.74, 8.09], [14.0, 26.5]]

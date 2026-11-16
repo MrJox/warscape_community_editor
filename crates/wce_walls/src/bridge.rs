@@ -36,10 +36,15 @@ pub struct BridgeBase {
 /// The bridge bases' file in the app's tables folder, with the user's `bridges_custom.toml` beside it (`wce_tile::user_files`; user
 /// 2026-11-16: buildings added without a rebuild). Built in as [`DEFAULT_TEXT`]. A road asking for one they do not have gets the first.
 pub const FILE_NAME: &str = "bridges.toml";
-pub const DEFAULT_TEXT: &str = include_str!("../../../tables/bridges.toml");
+pub const BUILT_IN: wce_tile::user_files::BuiltIn = &[
+    ("attila", include_str!("../../../tables/attila/bridges.toml")),
+    ("rome_2", include_str!("../../../tables/rome_2/bridges.toml")),
+    ("thrones_of_britannia", include_str!("../../../tables/thrones_of_britannia/bridges.toml")),
+];
+pub const DEFAULT_TEXT: &str = BUILT_IN[0].1;
 
 /// The bases, from the file ([`load`]) or as shipped.
-pub static BRIDGES: wce_tile::user_files::Registry<Bridges> = wce_tile::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse_with);
+pub static BRIDGES: wce_tile::user_files::Registry<Bridges> = wce_tile::user_files::Registry::new(FILE_NAME, BUILT_IN, parse_with);
 
 /// The bridge bases and the editor's list of them (name, label), in the file's order.
 #[derive(Debug)]
@@ -109,8 +114,8 @@ pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Bridges, String
 }
 
 /// Reads the bridges files in the tables folder (`wce_tile::user_files::tables_dir`): the bases from then on.
-pub fn load(dir: &std::path::Path) {
-    BRIDGES.load(dir);
+pub fn load(tables: &std::path::Path, game: &str) {
+    BRIDGES.load(tables, game);
 }
 
 /// The bases, in the editor's order.

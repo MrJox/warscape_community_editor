@@ -1,4 +1,4 @@
-# The kit bridges a procedural road's bridges are generated from (a road's road_bridge), in the order the editor lists them; a road
+# Attila: the kit bridges a procedural road's bridges are generated from (a road's road_bridge), in the order the editor lists them; a road
 # asking for one this file does not have gets the first.
 #
 # This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in bridges_custom.toml

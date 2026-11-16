@@ -1,4 +1,4 @@
-# The fences of the generated dirt road types (roads_proc/dirt and roads_proc/dirt_track).
+# Rome II: the fences of the generated dirt road types (roads_proc/dirt and roads_proc/dirt_track).
 #
 # This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own fences in
 # road_fences_custom.toml beside it (the editor never writes it, an update leaves it alone): a [fence] there replaces the one below, a
@@ -25,12 +25,6 @@ along = "x"
 name = "lowfence2"
 key = "lowfence_2"
 along = "x"
-
-[[named]]
-name = "lowfence4"
-key = "lowfence_4"
-along = "x"
-joiners = ["lowfence_4_pillar"]
 
 [[named]]
 name = "highfence"
@@ -77,15 +71,3 @@ name = "persian_high"
 key = "persian_highfence"
 along = "z"
 joiners = ["persian_highfence_pillar"]
-
-[[named]]
-name = "sassanid"
-key = "sassanid_lowfence"
-along = "z"
-joiners = ["sassanid_lowfence_pillar"]
-
-[[named]]
-name = "sassanid_high"
-key = "sassanid_highfence"
-along = "z"
-joiners = ["sassanid_highfence_pillar"]
