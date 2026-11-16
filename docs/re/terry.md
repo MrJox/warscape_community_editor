@@ -265,7 +265,11 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   points 37 m up, the file 32 points along the carved bed, 1.48 m down, where `final_heights.dds` has the bed), and the width factor of
   a file to TEd is 5 or 1 (`river_files::Factors`). The map's view draws an unedited campaign river from its file, else TEd's points at
   / 0.2 (width x 5), and stretches its heights with the tile's (x 10). `cliff_custom` variations with only `custom_mesh.CS2` (no blend
-  map; the packs ship none for any) are drawn as their mesh alone.
+  map; the packs ship none for any) are drawn as their mesh alone: the game's tile loader (fn 0x118f7410) makes a tile's Near / Far
+  Blend only when it has both `blend.dds` and `index.dds` (a missing `normal.dds` takes `terrain/textures/common/flat_normal.dds`),
+  so such a cliff has no blend box of its own and takes its neighbours' and its own albedo. Until 2026-11-16 the renderer left any
+  terrain without a material out, mesh included (TDD's `rom_third_age_map`: square holes along the cliff coasts); a custom-mesh
+  terrain now passes without one, and its floor under the sea takes the plain material of its climate.
 - **Lighting** (2026-11-04): the game lights a campaign map with its `environment_collection.xml`'s `global_lighting` (Attila:
   `lighting/europe_sp.lighting`, sun azimuth 262.8, from the west, as the game's screenshots show), not a battle weather (which drew its
   grass dark grey-blue).

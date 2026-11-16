@@ -1589,7 +1589,10 @@ impl Renderer {
             }
 
             total += 1;
-            if t.material.is_none() || t.nx < 2 || t.nz < 2 || t.heights.is_empty() || !is_ground_world(&e.world) {
+            // A custom mesh without a material is drawn: the game makes a tile's blend box only when it has both `blend.dds` and
+            // `index.dds` (the tile loader, fn 0x118f7410), which none of Attila's campaign cliffs ships; the mesh still takes its
+            // neighbours' boxes and its own albedo.
+            if (t.material.is_none() && t.custom.is_none()) || t.nx < 2 || t.nz < 2 || t.heights.is_empty() || !is_ground_world(&e.world) {
                 // Rome 2 has no legacy ground to fall back on, nor has a map context's terrain (not `legacy`): a terrain without a material
                 // (still loading, or none made) is left out. Falling back for it turned the whole ground off: the context's has no
                 // legacy patches.
