@@ -1,6 +1,6 @@
 //! What the decompiler and the compiler read from a game's packs besides the tile: the tile databases (the entries), the buildings'
-//! destruction levels (`<key>_tech.cs2.parsed`, or the models' `_destructNN` names), and the `battlefield_buildings` tables (category
-//! and `destruct_thresholds` per key, through rpfm's schema). docs/formats/tile_decompile.md, "Buildings".
+//! destruction levels (`<key>_tech.cs2.parsed`, or the models' `_destructNN` names), and the `battlefield_buildings` tables (category,
+//! `destruct_thresholds` and `height_map_mesh` per key, through rpfm's schema). docs/formats/tile_decompile.md, "Buildings".
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -37,6 +37,7 @@ pub struct GameData {
     levels: Lookup<u32>,
     categories: Lookup<String>,
     thresholds: Lookup<Vec<f32>>,
+    height_meshes: Lookup<bool>,
 
     /// What could not be read (no schema: the buildings' categories and thresholds are unknown).
     pub warnings: Vec<String>,
@@ -47,9 +48,19 @@ pub fn default_schema_path(game: &GameProfile) -> Option<PathBuf> {
     wce_foundation::settings::rpfm_schema_path(game)
 }
 
-/// The rows of the packs' `battlefield_buildings` tables: key (lower case), category and destruction thresholds, a mod's rows (TDD's tables
-/// are in its main pack) before the game's.
-fn building_table_rows(vfs: &Vfs, schema: &Schema, warnings: &mut Vec<String>) -> Vec<(String, String, Vec<f32>)> {
+/// A row of the packs' `battlefield_buildings` tables.
+struct BuildingRow {
+    /// Lower case.
+    key: String,
+    category: String,
+    thresholds: Vec<f32>,
+
+    /// Whether BOB stamps the building's height-map mesh into the tile's height map; `None` in a table without the column.
+    height_mesh: Option<bool>,
+}
+
+/// The rows of the packs' `battlefield_buildings` tables, a mod's rows (TDD's tables are in its main pack) before the game's.
+fn building_table_rows(vfs: &Vfs, schema: &Schema, warnings: &mut Vec<String>) -> Vec<BuildingRow> {
     wce_foundation::wce_prof!("game_data.tables");
     let is_mod = |path: &str| vfs.owner(path).is_some_and(|p| vfs.packs()[p].is_mod);
     let mut rows = vec![];
@@ -65,22 +76,25 @@ fn building_table_rows(vfs: &Vfs, schema: &Schema, warnings: &mut Vec<String>) -
 
         let col = |c: &str| db.column_position_by_name(c);
         let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
+        let hmm = col("height_map_mesh");
         for row in db.data().iter() {
-            let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
-            rows.push((is_mod(n), row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
+            let thresholds = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
+            let height_mesh = hmm.map(|c| matches!(row[c].data_to_string().trim(), "true" | "1"));
+            let key = row[k].data_to_string().to_lowercase();
+            rows.push((is_mod(n), BuildingRow { key, category: row[cat].data_to_string().into_owned(), thresholds, height_mesh }));
         }
     }
 
     rows.sort_by_key(|r| !r.0);
-    rows.into_iter().map(|(_, key, category, values)| (key, category, values)).collect()
+    rows.into_iter().map(|(_, r)| r).collect()
 }
 
 /// The buildings' categories in the mounted packs, a mod's over the game's: what the Assembly Kits' tables do not have, which a mod's buildings
 /// are not in.
 pub fn building_categories_in_packs(vfs: &Vfs, schema: &Schema) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    for (key, category, _) in building_table_rows(vfs, schema, &mut vec![]) {
-        out.entry(key).or_insert(category);
+    for r in building_table_rows(vfs, schema, &mut vec![]) {
+        out.entry(r.key).or_insert(r.category);
     }
 
     out
@@ -206,9 +220,14 @@ impl GameData {
         let mut levels = pieces.into_iter().map(|(k, p)| (k, p.values().copied().max().unwrap_or(1))).collect::<BTreeMap<_, _>>();
         levels.extend(from_cs2);
         let (mut categories, mut thresholds): (BTreeMap<String, String>, BTreeMap<String, Vec<f32>>) = (BTreeMap::new(), BTreeMap::new());
-        for (key, category, values) in rows {
-            categories.entry(key.clone()).or_insert(category);
-            thresholds.entry(key).or_insert(values);
+        let mut height_meshes = BTreeMap::new();
+        for r in rows {
+            if let Some(h) = r.height_mesh {
+                height_meshes.entry(r.key.clone()).or_insert(h);
+            }
+
+            categories.entry(r.key.clone()).or_insert(r.category);
+            thresholds.entry(r.key).or_insert(r.thresholds);
         }
 
         Ok(Self {
@@ -219,6 +238,7 @@ impl GameData {
             levels: Box::new(move |k| levels.get(&k.to_lowercase()).copied()),
             categories: Box::new(move |k| categories.get(&k.to_lowercase()).cloned()),
             thresholds: Box::new(move |k| thresholds.get(&k.to_lowercase()).filter(|t| !t.is_empty()).cloned()),
+            height_meshes: Box::new(move |k| height_meshes.get(&k.to_lowercase()).copied()),
             warnings,
         })
     }
@@ -243,6 +263,11 @@ impl GameData {
     /// The destruction levels of a building key.
     pub fn levels_of(&self, key: &str) -> Option<u32> {
         (self.levels)(key)
+    }
+
+    /// Whether the packs' `battlefield_buildings` row of a key has `height_map_mesh` set (`None`: no row, or no schema).
+    pub fn height_meshes(&self) -> &(dyn Fn(&str) -> Option<bool> + Send + Sync) {
+        &*self.height_meshes
     }
 
     /// The compiler's lookups over this data (destruction levels and thresholds).

@@ -425,7 +425,7 @@ pub fn save_exported_with(
     let thresholds_or_base = |k: &str| thresholds.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
     ctx.building_levels = Some(&levels_or_base);
     ctx.building_thresholds = Some(&thresholds_or_base);
-    ctx.stage_b = Some(StageB { roots: &roots, models: &models });
+    ctx.stage_b = Some(StageB { roots: &roots, models: &models, height_meshes: Some(game.data.height_meshes()) });
     ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC {
         params,
         grass: grass.as_ref(),

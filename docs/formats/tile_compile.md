@@ -248,6 +248,14 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
   f32): per triangle moved by the matrix, the samples of its truncated box widened by one (clamped to the field less its last row
   and column; field row z, not flipped) inside it by the crossing rule over (a c), (b a), (c b) take the height interpolated by the
   sub-triangle areas (`|cross| / 2 / area`) when it is not below theirs.
+  - **Without the kit's tables** (`terrain_mesh::building_stamps`): the flag of a key no `raw_data/db/battlefield_buildings.xml` has
+    comes from the packs' `battlefield_buildings_tables` (`height_map_mesh`, a mod's rows first). The packs lack `cs2_file`, and no pack
+    file holds the height-map meshes (a `.cs2.parsed` keeps only `collision3d`: the grounds' is the same size, `ruin_floor_1`'s is not,
+    29 against 68 faces), so a key without a `models_building.xml` row takes `<key>.cs2` (any case) from under a `raw_data`'s `art`, the
+    projects' (the art resources' working tree) first, the first with a height-map mesh (the Attila kit has copies, `bridge_stone_1` in
+    `bridges` and `global/bridges`). All 41 keys of the Attila and Thrones kits are named so. hornburg's `hf_height_map.data` is BOB's
+    either way; generic_northmen_port/small (323 stamps), pyramids/8x8_aa (80) and osgiliath_small_08 (1647) the same with and without
+    the tables. TDD's packs flag `hd_gate_entrance`, which no kit row and no CS2 has: left out with a note, as BOB leaves it.
 - **Terrain mesh** (`TILE_RAW_DATA::build_base_mesh`, `FUN_10019750`; `attila::terrain_mesh`): the surface of `mesh.rigid_model_v2`
   and the CHMF's source.
   - A vertex per final-heights sample: x, z in metres from the near corner, the height of the field's row `size - 1 - z`, the normal
