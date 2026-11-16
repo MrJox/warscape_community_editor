@@ -8,8 +8,8 @@
 //! With them the campaign's forests, as the game draws them: `campaign_maps/<map>/display/trees/trees.campaign_tree_list` in the packs
 //! (BOB's; the kit has no source for it): u32 version (3), f32 bounds x0 z0 x1 z1 (the map: x east, z north, 678.5 x 556.1 on Attila's
 //! main map, not square to its cells), u32 models, per model a u16-length path and a u32 count of 15-byte trees (f32 x, y, z; u8 0 / 1,
-//! u8 0 .. 5, u8 15). Mapped by the bounds, all but 6 of 17 576 sampled trees stand on land (`campaign_tree_fit`; by the `.terry`'s 0.32 a
-//! cell, a third in the sea or off the map). ASSUMPTIONS: the second byte is the turn in sixths (its six values equally common), and
+//! u8 0 .. 5, u8 15). Mapped by the bounds, all but 6 of 17 576 sampled trees stand on land (`campaign_tree_fit`; by the 0.32 a cell the
+//! `.terry` frame once took, a third in the sea or off the map). ASSUMPTIONS: the second byte is the turn in sixths (its six values equally common), and
 //! a tree stands on the ground (y, -0.5 .. 4.9, unused); the first byte (1 on 5582)
 //! and the last (15: the seasons?) are not read.
 
