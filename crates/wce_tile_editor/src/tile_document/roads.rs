@@ -1398,6 +1398,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         jitter: road.settings.irregularity,
                         jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12 ^ (t as u64) << 36),
                         decal_depth: None,
+                        decal_tilt: None,
                     };
                     match fit_dressed(&tp.1, &tp.3, &tp.2, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                         Ok(f) => items.push(RoadItem {
@@ -1424,6 +1425,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 jitter: road.settings.irregularity,
                 jitter_seed: road_hash(road.settings.seed, road.id, k as u64 ^ 0x1771_7E12),
                 decal_depth: None,
+                decal_tilt: None,
             };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => {
@@ -1434,13 +1436,16 @@ fn road_items(i: ItemsInput) -> ItemsMade {
         }
 
         // Over its bridges, the road goes on (docs/plans/procedural_roads.md, "Variety", V7): its straights from rim to rim at the deck's height,
-        // their decals alone (no bank or building on a deck), in boxes shallow enough not to reach the ground or the water under it. The game
-        // paints decals on a bridge's planks (checked 2026-11-15, docs/re/renderer.md).
+        // their decals alone (no bank or building on a deck), tilted with the deck, in boxes thinner than the game's refit (`DECK_DECAL_BOX`).
         for (&(a, b), &(from, to)) in plan.gaps.iter().zip(spans.iter()) {
+            // The deck's surface (the path its bridge is bent along), between its samples.
             let deck_height = |x: f64, z: f64| {
                 let s = wce_tile::road_layout::nearest(&plan.line, [x, z]).0;
-                let i = (a..=b).min_by(|&i, &j| (st.of_sample(i) - s).abs().total_cmp(&(st.of_sample(j) - s).abs())).unwrap_or(a);
-                plan.heights.get(i).copied().unwrap_or(0.0) + DECK_LIFT
+                let h = |i: usize| plan.heights.get(i).copied().unwrap_or(0.0) + DECK_LIFT;
+                let i = (a..b).find(|&i| st.of_sample(i + 1) >= s).unwrap_or(b.max(a + 1) - 1);
+                let (s0, s1) = (st.of_sample(i), st.of_sample((i + 1).min(b)));
+                let t = if s1 > s0 { ((s - s0) / (s1 - s0)).clamp(0.0, 1.0) } else { 0.0 };
+                h(i) + (h((i + 1).min(b)) - h(i)) * t
             };
             let options = pieces.iter().filter(|q| q.0 == "straight" && q.1.parts.iter().all(|part| !part.solid)).collect::<Vec<_>>();
             let n = (((to - from) / measures.straight).round() as usize).max(1);
@@ -1457,7 +1462,8 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                     keep: Some(&keep),
                     jitter: road.settings.irregularity,
                     jitter_seed: road_hash(road.settings.seed, road.id, number ^ 0x1771_7E12),
-                    decal_depth: Some(DECK_DECAL_DEPTH),
+                    decal_depth: Some(DECK_DECAL_BOX / unit),
+                    decal_tilt: Some(DECK_DECAL_TILT),
                 };
                 match fit_dressed(&q.1, &q.3, &q.2, &laid, &Site { line: &plan.line, width, unit, ground: &deck_height }, &dress) {
                     Ok(f) => items.push(RoadItem {
@@ -1579,6 +1585,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         jitter: 0.0,
                         jitter_seed: 0,
                         decal_depth: None,
+                        decal_tilt: None,
                     };
                     match wce_tile::road_layout::fit_dressed(
                         fp,
@@ -1716,9 +1723,14 @@ fn level_past_rims(line: &[[f64; 2]], mut heights: Vec<f64>, gaps: &[(usize, usi
 /// (user 2026-11-08).
 const DECK_LIFT: f64 = 0.5;
 
-/// How tall the boxes of the road's decals laid on a bridge's deck are (metres): the deck's planks inside them, the ground or the water
-/// under the span not (the road's own boxes are 15 m, which over a shallow gap reached the bed).
-const DECK_DECAL_DEPTH: f64 = 3.0;
+/// How tall the boxes of the road's decals laid on a bridge's deck are (scene units, the game's). The game refits every battle prop decal's
+/// box to the terrain under it, from 0.25 below its lowest to 0.5 over its highest (`rescale_battle_prop_decals` and its two safety
+/// margins, empire.retail.dll fn 0x104c4250, docs/re/renderer.md), but only when that is no taller than the box: a box under 0.75 is
+/// never refitted, and stays on the deck. A taller one went down to the ground under the bridge.
+const DECK_DECAL_BOX: f64 = 0.7;
+
+/// How far along and across the deck its decals read its slope (metres, each way): their thin boxes follow it.
+const DECK_DECAL_TILT: [f64; 2] = [2.0, 0.5];
 
 /// Under a bridge's deck the bank beside the road is held back this far past its sides (more than a height-map pixel: 2 m on a
 /// 64-density tile; metres).
