@@ -223,11 +223,11 @@ impl PropModels {
             return;
         }
 
-        // The settlements: read once a map, away from the UI (the startpos is a loose file of the game's `data` folder).
+        // The settlements: read once a map, away from the UI (its campaign's startpos: `wce_terrain_io::attila::start`).
         if self.cities.as_ref().is_none_or(|(id, _)| *id != doc) {
             let cell = Arc::new(std::sync::OnceLock::new());
             let (_, name) = crate::tool::map_kind(&d.name);
-            let (name, campaign) = (name.to_owned(), name.strip_suffix("_map").unwrap_or(name).to_owned());
+            let name = name.to_owned();
             let game = e.game();
             let (files, dir) = (e.files(), e.settings_ref().game_dir());
             let out = cell.clone();
@@ -239,8 +239,9 @@ impl PropModels {
                     let read = |p: &str| files.read(p).ok().map(|b| b.to_vec());
                     let tables = wce_terrain_io::attila::cities::DisplayTables::read(&schema, &list, &read);
                     let map_data = files.read(&format!("campaign_maps/{name}/map_data.esf")).ok()?;
-                    let startpos = std::fs::read(dir?.join(format!("data/campaigns/{campaign}/startpos.esf"))).ok()?;
-                    wce_terrain_io::attila::cities::read(&map_data, &startpos, &tables).ok().map(Arc::new)
+                    let reader = crate::tool::startpos_reader(&files, dir.as_deref());
+                    let start = wce_terrain_io::attila::start::find(&schema, &name, &list, &read, &reader).ok()?;
+                    wce_terrain_io::attila::cities::read(&map_data, &start.startpos, &tables).ok().map(Arc::new)
                 })();
                 let _ = out.set(cities);
             });

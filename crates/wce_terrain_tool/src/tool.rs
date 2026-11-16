@@ -573,22 +573,31 @@ fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
     LfField::shared(f.grid().clone())
 }
 
-/// A campaign's roads at its start (`wce_terrain_io::attila::roads`): its map's `map_data.esf`, its startpos (a loose file of the game's
-/// `data` folder), `tile_upgrades.xml` (the first of the projects and the kits that has it, then the packs') and the db. None when one is missing (logged).
+/// A reader of a campaign's startpos by its path (`campaigns/<key>/startpos.esf`): the packs' (a mod's: TDD's), else the game's `data`
+/// folder's loose file (the game's own campaigns').
+pub(crate) fn startpos_reader<'a>(
+    files: &'a Arc<dyn Files>,
+    install: Option<&'a std::path::Path>,
+) -> impl Fn(&str) -> Option<Vec<u8>> + 'a {
+    move |p: &str| files.read(p).ok().map(|b| b.to_vec()).or_else(|| std::fs::read(install?.join("data").join(p)).ok())
+}
+
+/// A campaign's roads at its start (`wce_terrain_io::attila::roads`): its map's `map_data.esf`, its campaign's startpos
+/// (`wce_terrain_io::attila::start`), `tile_upgrades.xml` (the first of the projects and the kits that has it, then the packs') and the db. None when one is missing (logged).
 fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>> {
     let started = std::time::Instant::now();
     let (_, name) = map_kind(&i.name);
-    let campaign = name.strip_suffix("_map").unwrap_or(name);
     let r = (|| {
         let files = i.files.as_ref().ok_or("no game files")?;
         let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(i.game).ok_or("no rpfm schema")?, None)
             .map_err(|e| e.to_string())?;
         let list = |p: &str| files.list(p, "");
         let read = |p: &str| files.read(p).ok().map(|b| b.to_vec());
-        let tables = wce_terrain_io::attila::roads::RoadTables::read(&schema, campaign, &list, &read);
+        let start = wce_terrain_io::attila::start::find(&schema, name, &list, &read, &startpos_reader(files, i.install.as_deref()))?;
+        log::info(format!("terrain open {}: the start of campaign {}", i.name, start.campaign));
+        let tables = wce_terrain_io::attila::roads::RoadTables::read(&schema, &start.campaign, &list, &read);
         let map_data = files.read(&format!("campaign_maps/{name}/map_data.esf")).map_err(|e| format!("map_data.esf: {e}"))?;
-        let startpos = std::fs::read(i.install.as_ref().ok_or("no game folder")?.join(format!("data/campaigns/{campaign}/startpos.esf")))
-            .map_err(|e| format!("startpos.esf: {e}"))?;
+        let startpos = start.startpos;
         const UPGRADES: &str = "terrain/tiles/campaign/tile_upgrades.xml";
         let upgrades = wce_tile::sources::first_file(&i.roots, UPGRADES)
             .and_then(|p| std::fs::read(p).ok())
