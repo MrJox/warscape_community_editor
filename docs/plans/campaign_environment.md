@@ -116,6 +116,37 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
 8. **Docs**: docs/formats/weather_files.md (the `lighting/` set, the collection, `light_grid.xml`, `environment_map.dds`), a "Campaign"
    section in docs/re/renderer.md with the constants above, docs/re/environment_to_shader.md for the campaign fields.
 
+## Progress
+
+**2026-11-16 (branch `campaign-environment`).**
+- Phase 1, the campaign frame: `RenderScene::game_units` 0.2 on a campaign map, 2 on a battle map (the Terrain tool never set it: 1, or
+  the Tile tool's 2); `RenderScene::campaign` (the decals' `g_is_campaign`: they skip the weather's snow, as the terrain does; the
+  shadows below). Not done, on purpose: the older `.lighting` attributes (`sun_direction` euler, `light_colour`, `hdr_*`...): only
+  the leftover files have them (`environment/<season>.lighting`, `rigidmodels/skybox/default_campaign_*`), which nothing in the game
+  loads; every file of the maps' `lighting/` folders has the new set.
+- The campaign shadows (fns 0x117665e0, 0x11784c00, 0x117329a0, 0x118debf0; V): the battle's cascade code with the table's campaign
+  rows (mode * 4 + quality at dll+0x1c88aa0: (10, 30, 30, 30), (5, 15, 35, 35), (5, 10, 20, 40), (5, 10, 20, 40)), the depth
+  analysis as in battle, pull-back 14; the terrain casts only at the top quality (`terrain_enable_shadows`, set only for the campaign
+  at quality index 2). `campaign_shadow_split_scale`, `battle_shadow_split_scale`, `g_campaign_depth_bias` and
+  `g_campaign_terrain_slope_scale_depth_bias` have no reader; `shadow_split_campaign_min_distance_delta` only gates the depth
+  analysis's refresh (0.01, as the battle's). ASSUMPTION: the rows in the shaders' units (0.2 a scene unit). At 0.2 with the battle
+  rows the marsh reeds threw long, blocky shadows over Rauros; with the campaign's there are none at the view's height, as in the
+  user's screenshot.
+- Phase 3, the lighting spheres (`wce_scene::campaign_lighting`, `wce_terrain_tool` `lighting.rs`): the collection read, every name
+  resolved per season and stage (n = the climate stage + 1, as the snow masks), the spheres weighted at the camera's eye in `.terry`
+  units (z by `CAMPAIGN_Z_SCALE`; y by the frame's unit: ASSUMPTION) and blended over the global lighting every frame the weights
+  change; the Terrain panel lists the files and their share at the camera. TDD's `rom_third_age_map` now lights with
+  `europe_sp1` / `desert_sp1` / `med_sp1` (its collection's `europe.lighting` does not exist: the view fell back to the leftover
+  `environment/spring.lighting`); `main_attila_map` with `europe_sp`, `med_sp`, `desert_sp`, `england_sp` as written (spring all year,
+  decision 1).
+- Units, checked: the spheres are in the `.terry`'s units (x to 678.5: the world's width), so the engine compares them with the camera
+  in the logical campaign world; the shaders' constants are in the tile database's (`unit_scale` 0.2, `blend_pixel_scale` 620: at
+  the `.terry`'s 0.0026 a scene unit a texture would repeat every 1 860 cells). The two worlds differ by about 77.
+- Seen, for Phase 4: at 0.2 the battle fog formula with the campaign files' fog (height top 40 at full strength, clear distance 300)
+  fogs everything near sea level beyond about 12 cells: from the view's 440 game units up, Attila's Mediterranean is white. Whether
+  the game's camera ever stands that high, and whether its fog is `battlefog` or the shroud plane, is for the Phase 0 captures (a
+  screenshot over the open sea at the game's highest zoom would do for a first look).
+
 ## Decisions (user, 2026-11-16)
 
 1. **Names resolved as the engine does**: if the captures confirm it, main_attila_map's lighting stays spring all year (its season

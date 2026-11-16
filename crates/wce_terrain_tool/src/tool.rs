@@ -384,6 +384,9 @@ pub struct TerrainTool {
     /// A campaign map's weather (a lighting or environment file of its folder); none: the map's global lighting of the season.
     weather: Option<String>,
 
+    /// A campaign map's lighting spheres, blended at the camera every frame (none: one file lights the view).
+    lighting: Option<crate::lighting::CampaignLighting>,
+
     /// The Map panel (the active map from above).
     map_panel: crate::map_panel::MapPanel,
 
@@ -456,6 +459,7 @@ impl Default for TerrainTool {
             overview: true,
             season: "su".to_owned(),
             weather: None,
+            lighting: None,
             map_panel: crate::map_panel::MapPanel::new(),
             paint: LfPaint::default(),
             cells: crate::cell_paint::CellPaint::default(),
@@ -998,23 +1002,30 @@ impl TerrainTool {
     /// (ASSUMPTION: a stand-in for the Tile tool's weather choice through the kit's variation database, not shared yet).
     fn light(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<MapDocument>(id) else { return };
-        // A campaign map: its own lighting, as the game has it (`environment_collection.xml`'s `global_lighting`, Attila's
-        // `lighting/europe_sp.lighting`; else the folder's `default.environment`). A battle weather drew its ground dark and blue.
+        self.lighting = None;
+        // A campaign map: its own lighting, as the game has it (`environment_collection.xml`'s spheres and global lighting, each
+        // resolved for the season and climate stage and blended at the camera: `lighting::CampaignLighting`). A battle weather drew
+        // its ground dark and blue.
         if let (MapKind::Campaign, name) = map_kind(&d.name)
             && let Some(files) = e.files()
         {
             let dir = format!("terrain/campaigns/{name}");
-            let global = files.read(&format!("{dir}/environment_collection.xml")).ok().and_then(|b| {
-                let text = String::from_utf8_lossy(&b).into_owned();
-                let at = text.find("global_lighting=")? + "global_lighting=".len();
-                let quote = text[at..].chars().next()?;
-                text[at + 1..].split(quote).next().map(|s| s.to_lowercase().replace('\\', "/"))
-            });
-            // The chosen weather, else the global lighting of the view's season (the collection names spring's: `europe_sp` ->
-            // `europe_<season>`), else as named, else (a map without a collection: Rome 2's) the folder's season lighting
-            // (`environment/summer.lighting`; ASSUMPTION: the game's choice there; `default.environment` hazed the view), else the
-            // folder's `default.environment`.
-            let seasonal = global.as_ref().and_then(|g| g.rsplit_once("_sp.").map(|(a, b)| format!("{a}_{}.{b}", self.season)));
+            let frame = d.terry_frame;
+            // The climate stage's number, as the snow masks': the stage + 1 (`campaign_snow`).
+            let n = d.view_roads.as_ref().and_then(|r| r.climate_stage).unwrap_or(0) + 1;
+            let season = ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
+            if self.weather.is_none()
+                && let Some(mut l) = crate::lighting::CampaignLighting::load(&*files, &dir, season, n, frame)
+            {
+                log::info(format!("terrain: the map's lighting spheres ({})", l.summary()));
+                l.update(e);
+                self.lighting = Some(l);
+                return;
+            }
+
+            // The chosen weather, else (a map without a collection: Rome 2's `light_grid.xml`, not read yet) the folder's season
+            // lighting (`environment/summer.lighting`; ASSUMPTION: `default.environment` hazed the view), else the folder's
+            // `default.environment`.
             let season_name = match self.season.as_str() {
                 "sp" => "spring",
                 "au" => "autumn",
@@ -1025,8 +1036,6 @@ impl TerrainTool {
                 .weather
                 .clone()
                 .filter(|f| files.exists(f))
-                .or_else(|| seasonal.filter(|f| files.exists(f)))
-                .or_else(|| global.filter(|f| files.exists(f)))
                 .or_else(|| Some(format!("{dir}/environment/{season_name}.lighting")).filter(|f| files.exists(f)))
                 .or_else(|| Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
             if let Some(file) = file {
@@ -1071,6 +1080,11 @@ impl TerrainTool {
             self.cameras.insert(self.shown, e.viewport.camera());
         }
 
+        // The scene is the tile frame (128 units a cell); the game draws it at its database's `unit_scale`: 0.2 game units a scene unit
+        // on a campaign map, 2 on a battle map. The shaders' world-space values (fog, texture repeats, shadows, DOF) are in game units.
+        let campaign = e.docs.find_as::<MapDocument>(id).is_some_and(|d| map_kind(&d.name).0 == MapKind::Campaign);
+        e.scene.game_units = if campaign { 0.2 } else { UNIT as f32 };
+        e.scene.campaign = campaign;
         self.light(e, id);
         e.scene.campaign_sea = campaign_sea(e, id, &s);
         e.scene.campaign_snow = campaign_snow(e, id, &s, &self.season);
@@ -1173,8 +1187,17 @@ impl TerrainTool {
 
             if gui::is_item_hovered() {
                 gui::set_tooltip(
-                    "The campaign map's weather: its lighting files (lighting/<climate>_<season>[n], environment/<season>) or default.environment. Automatic: the global lighting (environment_collection.xml) of the view's season, as the game lights the campaign.",
+                    "The campaign map's weather: its lighting files (lighting/<climate>_<season>[n], environment/<season>) or default.environment. Automatic: as the game lights the campaign, environment_collection.xml's spheres blended at the camera over its global lighting, each file of the view's season and climate stage.",
                 );
+            }
+
+            // The automatic lighting's files at the camera, with their weights.
+            if self.weather.is_none()
+                && let Some(l) = &self.lighting
+            {
+                for (name, w) in l.readout(e) {
+                    gui::text_disabled(&format!("{:>3.0} %  {name}", w * 100.0));
+                }
             }
         }
 
@@ -2232,9 +2255,16 @@ impl Tool for TerrainTool {
     fn update(&mut self, e: &mut Editor) {
         self.poll(e);
 
+        // A campaign map's lighting spheres, at the camera.
+        if let Some(l) = self.lighting.as_mut() {
+            l.update(e);
+        }
+
         // The map closed: its view goes with it.
         if self.shown != 0 && e.docs.find(self.shown).is_none() {
             self.view.clear(e);
+            e.scene.campaign = false;
+            self.lighting = None;
             e.scene.campaign_sea = None;
             e.scene.campaign_snow = None;
             self.cameras.remove(&self.shown);
