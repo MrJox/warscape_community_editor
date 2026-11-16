@@ -752,13 +752,72 @@ pub fn commands(e: &mut Editor) {
         gui::set_keyboard_focus_here(-1);
     }
 
+    // The line's first word filters the list as it is typed (`command_matches`); a click on a command puts it in the line.
+    let word = line.split_whitespace().next().unwrap_or_default().to_owned();
+    let shown = command_matches(&word, e.commands().entries().map(|c| (c.name.as_str(), c.help.as_str())));
+    let total = e.commands().entries().count();
+    if !word.is_empty() {
+        gui::text_disabled(&format!("{} of {total} commands match '{word}'", shown.len()));
+    }
+
     e.panel_data.command_line = line;
     gui::separator();
-    for entry in e.commands().entries() {
-        gui::text(&entry.usage);
+    let entries = e.commands().entries().map(|c| (c.name.clone(), c.usage.clone(), c.help.clone())).collect::<Vec<_>>();
+    for &i in &shown {
+        let (name, usage, help) = &entries[i];
+        if gui::selectable(&format!("{usage}##cmd_{name}"), false, 0) {
+            e.panel_data.command_line = format!("{name} ");
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Click: put it in the command line");
+        }
+
         gui::same_line_at(300.0);
-        gui::text_disabled(&entry.help);
+        gui::text_disabled(help);
     }
 
     gui::end();
+}
+
+/// The commands a typed word picks (indices into `commands`, given as name and help), best first: the name itself, then the names that
+/// start with it, that have it, and last the commands whose help mentions it; case aside. No word: all of them, in their order.
+fn command_matches<'a>(word: &str, commands: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<usize> {
+    let word = word.to_lowercase();
+    let mut ranked = commands
+        .enumerate()
+        .filter_map(|(i, (name, help))| {
+            let name = name.to_lowercase();
+            let rank = if word.is_empty() || name == word {
+                0
+            } else if name.starts_with(&word) {
+                1
+            } else if name.contains(&word) {
+                2
+            } else if help.to_lowercase().contains(&word) {
+                3
+            } else {
+                return None;
+            };
+            Some((rank, i))
+        })
+        .collect::<Vec<_>>();
+    ranked.sort();
+    ranked.into_iter().map(|(_, i)| i).collect()
+}
+
+#[cfg(test)]
+mod command_filter_tests {
+    use super::command_matches;
+
+    #[test]
+    fn the_first_word_picks_the_name_then_its_starts_then_the_rest_then_the_help() {
+        let cmds = [("tile_select", "select elements"), ("select", "select by index"), ("selection_info", "log it"), ("quit", "close")];
+        let pick = |w: &str| command_matches(w, cmds.iter().copied());
+        assert_eq!(pick(""), vec![0, 1, 2, 3], "no word: all, in order");
+        assert_eq!(pick("select"), vec![1, 2, 0], "the name, a name starting with it, one having it");
+        assert_eq!(pick("SEL"), vec![1, 2, 0]);
+        assert_eq!(pick("elements"), vec![0], "the help, last");
+        assert!(pick("nothing").is_empty());
+    }
 }
