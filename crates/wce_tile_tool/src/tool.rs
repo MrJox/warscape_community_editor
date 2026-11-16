@@ -613,6 +613,9 @@ pub struct TileTool {
     /// A road point's fence damage being dragged in the Polygon panel (road, point, value): written when let go.
     pub(crate) road_damage_draft: Option<(usize, usize, f32)>,
 
+    /// A road point's own width being dragged (road, point, metres): written when let go, as the damage's.
+    pub(crate) road_width_draft: Option<(usize, usize, f32)>,
+
     /// A kit's tile with a project too, the kit's copy chosen (`kit_copy_prompt.rs`): its folder opens as itself, not as the project.
     pub(crate) kit_choice: Option<PathBuf>,
     pub(crate) copy_prompt: Option<crate::kit_copy_prompt::CopyPrompt>,
@@ -996,6 +999,7 @@ impl Default for TileTool {
             bridge_overlay: true,
             open_kit_copy: false,
             road_damage_draft: None,
+            road_width_draft: None,
             kit_choice: None,
             copy_prompt: None,
             copy_prompt_open: false,
@@ -3960,6 +3964,7 @@ impl TileTool {
                 gui::set_tooltip("The selected point's sharp mark. A turn of 90 degrees or more is a corner whatever the mark.");
             }
 
+            self.draw_road_point_width(d, s, pt, p);
             self.draw_road_point_fence(d, s, pt, p);
             true
         } else if d.tile().is_wall(s) {
@@ -4052,6 +4057,42 @@ impl TileTool {
                 self.road_damage_draft = None;
                 d.set_point_attribute(road, pt, "road_fence_damage", &wce_tile::ted_scene::format_number(f64::from(v)));
             }
+        }
+    }
+
+    /// A road point's own width (`road_width` on the point; unset: the road's): the road narrows or widens to it from its neighbours
+    /// (`roads::sample_widths`), its terrain, pieces and fences with it.
+    fn draw_road_point_width(&mut self, d: &mut TileDocument, road: usize, pt: usize, p: usize) {
+        let own = d.tile().tscene().get(p, "road_width").and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| *v > 0.0);
+        let road_width = d.tile().tscene().get(road, "road_width").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(6.0);
+        let mut on = own.is_some();
+        if gui::checkbox("own width##road_point_width", &mut on) {
+            let value = if on { wce_tile::ted_scene::format_number(f64::from(road_width)) } else { String::new() };
+            d.set_point_attribute(road, pt, "road_width", &value);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Off: the road's width here. On: the road's width at this point (metres): it narrows or widens to it from its neighbouring points, its ground, pieces and fences with it.",
+            );
+        }
+
+        if let Some(saved) = own {
+            // Dragged as a draft, written once when let go (one undo entry, the road made again once).
+            let mut v = self.road_width_draft.filter(|d| d.0 == road && d.1 == pt).map_or(saved, |d| d.2);
+            gui::same_line();
+            gui::set_next_item_width(140.0);
+            if gui::slider_float("##road_point_width_v", &mut v, 0.5, 40.0, "%.1f m") {
+                self.road_width_draft = Some((road, pt, v));
+            }
+
+            if gui::is_item_deactivated_after_edit() {
+                self.road_width_draft = None;
+                d.set_point_attribute(road, pt, "road_width", &wce_tile::ted_scene::format_number(f64::from(v)));
+            }
+        } else {
+            gui::same_line();
+            gui::text_disabled(&format!("the road's, {road_width:.1} m"));
         }
     }
 

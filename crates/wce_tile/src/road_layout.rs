@@ -713,6 +713,12 @@ pub const FENCE_GAP: f64 = 0.0;
 /// each run centred in its stretch. A fence is never stretched: a run is as many as fit.
 #[must_use]
 pub fn fence_runs(line: &[[f64; 2]], held: &[(f64, f64)], side: f64, offset: f64, length: f64) -> (Vec<[f64; 2]>, Vec<Laid>) {
+    fence_runs_by(line, held, side, &vec![offset; line.len()], length)
+}
+
+/// [`fence_runs`], the line's offset from the centre line its own at each sample (`offsets`: a road narrower in places, its fences with it).
+#[must_use]
+pub fn fence_runs_by(line: &[[f64; 2]], held: &[(f64, f64)], side: f64, offsets: &[f64], length: f64) -> (Vec<[f64; 2]>, Vec<Laid>) {
     let n = line.len();
     if n < 2 || length <= 0.0 {
         return (vec![], vec![]);
@@ -724,6 +730,7 @@ pub fn fence_runs(line: &[[f64; 2]], held: &[(f64, f64)], side: f64, offset: f64
                 line[(i + 1).min(n - 1)][0] - line[i.saturating_sub(1)][0],
                 line[(i + 1).min(n - 1)][1] - line[i.saturating_sub(1)][1],
             ]);
+            let offset = offsets.get(i).copied().unwrap_or(0.0);
             [line[i][0] + t[1] * side * offset, line[i][1] - t[0] * side * offset]
         })
         .collect::<Vec<_>>();
