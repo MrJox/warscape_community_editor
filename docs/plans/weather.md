@@ -25,7 +25,7 @@ weather and particle code: docs/plans/weather_current_state.md.
 1. **VFX editor** (Phase 2 item 4). The VFX tool is still a placeholder (`crates/wce_app/src/tools.rs`, feature `placeholders`); vfx
    files open as XML documents of the weather tool. Wanted: a tree view of emitters and behaviour chains, a curve editor for
    `ranged_property`, byte-identical UTF-16 save, a standalone preview scene.
-2. **Campaign mode** (Phase 3).
+2. **Campaign mode** (Phase 3): moved to docs/plans/campaign_environment.md (2026-11-16); the list below is its first draft.
    - A campaign camera rig and scale.
    - A campaign test map: a flat plane with random `rigidmodels/campaign` models.
    - Campaign shaders: shroud, campaign fog, campaign cloud and mountain VFX. `g_is_campaign` is hardcoded 0
