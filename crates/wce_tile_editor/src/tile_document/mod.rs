@@ -34,6 +34,8 @@ mod measure;
 
 /// Whether anything is being made off the editor's thread (`tile_wait_jobs`).
 pub use jobs::running as jobs_running;
+/// Work off the editor's thread that `tile_wait_jobs` waits for.
+pub use jobs::{Job, Poll as JobPoll};
 mod grass;
 pub mod kit;
 mod kit_walls;
@@ -43,6 +45,7 @@ mod pick;
 pub mod prefab_ground;
 mod preview;
 mod radar;
+pub use radar::RadarRequest;
 pub mod river_links;
 pub mod roads;
 mod shift;

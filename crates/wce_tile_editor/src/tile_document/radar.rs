@@ -10,8 +10,10 @@ use wce_tile::blend_field::BlendField;
 use wce_tile::world_transform::world_transform;
 
 use super::Tile;
+use super::jobs::Ground;
 use crate::radar::{Building, Field, P, RadarInput, Wall, blend_roads};
 use crate::terrain_bake::WaterDepth;
+use wce_tile::roads::WaterMap;
 
 /// The heights are sampled every this many metres.
 const HEIGHT_CELL_M: f64 = 2.0;
@@ -26,30 +28,26 @@ impl Tile {
     /// What the radar draws of the tile as it is in memory: `water` is stage B's water depth when the tool has it (the rivers and lakes),
     /// the cliffs the automatic no-go areas the tool has worked out.
     pub fn radar_input(&mut self, water: Option<&WaterDepth>) -> RadarInput {
-        let nogos = self.auto_nogos.clone();
-        self.radar_input_with(water, nogos.as_deref().map(Vec::as_slice))
+        self.radar_request(water).input()
     }
 
     /// [`Self::radar_input`] with the cliffs of `nogos` (the automatic no-go areas, metres), none without.
     pub fn radar_input_with(&mut self, water: Option<&WaterDepth>, nogos: Option<&[Vec<[f32; 2]>]>) -> RadarInput {
+        self.radar_request_with(water, nogos).input()
+    }
+
+    /// [`Self::radar_input`] as what it is made from, taken from the tile; [`RadarRequest::input`] makes it on any thread (sampling
+    /// the heights, the water and the blend map's roads took a third of a second on a port).
+    pub fn radar_request(&mut self, water: Option<&WaterDepth>) -> RadarRequest {
+        let nogos = self.auto_nogos.clone();
+        self.radar_request_with(water, nogos.as_deref().map(Vec::as_slice))
+    }
+
+    /// [`Self::radar_request`] with the cliffs of `nogos`, as [`Self::radar_input_with`].
+    pub fn radar_request_with(&mut self, water: Option<&WaterDepth>, nogos: Option<&[Vec<[f32; 2]>]>) -> RadarRequest {
         // The image is the tile (as the hand-made radars: the border is left out); what is sampled covers the border too.
         let bordered = self.minimap_area();
-        let [x0, z0, w_m, h_m] = bordered;
         let mut input = RadarInput { area: [0.0, 0.0, self.project.extent_x(), self.project.extent_z()], ..RadarInput::default() };
-
-        // The heights.
-        if self.project.has_height() {
-            let (w, h) = (((w_m / HEIGHT_CELL_M).ceil() as usize).max(2), ((h_m / HEIGHT_CELL_M).ceil() as usize).max(2));
-            let (cx, cz) = (w_m / w as f64, h_m / h as f64);
-            let project = &self.project;
-            let v: Vec<f32> = (0..w * h)
-                .into_par_iter()
-                .map(|k| project.height_at(x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz) as f32)
-                .collect();
-            // The sea only where the game draws one (a coastal set's tile): another's low ground is dry.
-            input.sea = self.has_sea() && v.iter().any(|&h| h < wce_siege::Sea::WATER as f32);
-            input.height = Field { x0, z0, w_m, h_m, w, h, v };
-        }
 
         // Rivers and lakes: stage B's depth over the tile without its border.
         if let Some(d) = water.filter(|d| d.w > 1 && d.h > 1) {
@@ -60,59 +58,19 @@ impl Tile {
             input.water = Some(Field { x0: -sx * 0.5, z0: -sz * 0.5, w_m: ex + sx, h_m: ez + sz, w: d.w, h: d.h, v });
         }
 
-        // The water planes and the rivers as the tile places them (stage B leaves out a plane barely over the ground): their surface over
-        // the ground, with stage B's depth, every `WATER_CELL_M`.
-        let mut wm = self.water_map();
-        wm.sea = false;
+        // The water planes and the rivers as the tile places them (stage B leaves out a plane barely over the ground).
+        let mut water_map = self.water_map();
+        water_map.sea = false;
         // The water planes from their models' bounds as the files have them: the viewport's need not have loaded them (a hidden layer,
         // far from the camera), and a plane it has not is missing from the water map.
-        wm.planes = self.radar_water_planes();
-        input.water_planes = wm.planes.iter().map(|(c, _)| c.to_vec()).collect();
-        if !wm.planes.is_empty() || !wm.rivers.is_empty() || input.water.is_some() {
-            let (w, h) = (((w_m / WATER_CELL_M).ceil() as usize).max(2), ((h_m / WATER_CELL_M).ceil() as usize).max(2));
-            let (cx, cz) = (w_m / w as f64, h_m / h as f64);
-            let (project, staged, unit) = (&self.project, input.water.as_ref(), self.unit());
-            // The planes' and the rivers' boxes: the water map is asked only inside one (it walks every plane and river segment).
-            let mut boxes: Vec<[f64; 4]> = wm
-                .planes
-                .iter()
-                .map(|(c, _)| {
-                    c.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| {
-                        [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
-                    })
-                })
-                .collect();
-            boxes.extend(wm.rivers.iter().map(|r| {
-                r.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| {
-                    [b[0].min(p[0] - p[3]), b[1].min(p[1] - p[3]), b[2].max(p[0] + p[3]), b[3].max(p[1] + p[3])]
-                })
-            }));
-            let v: Vec<f32> = (0..w * h)
-                .into_par_iter()
-                .map(|k| {
-                    let (x, z) = (x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz);
-                    let inside = boxes.iter().any(|b| x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]);
-                    // The water map's heights are the scene's (metres over the unit).
-                    let own =
-                        if inside { wm.level(x, z).map_or(0.0, |l| (l * unit - project.height_at(x, z)).max(0.0)) as f32 } else { 0.0 };
-                    own.max(staged.map_or(0.0, |f| f.sample(x, z)))
-                })
-                .collect();
-            input.water = Some(Field { x0, z0, w_m, h_m, w, h, v });
-        }
+        water_map.planes = self.radar_water_planes();
+        input.water_planes = water_map.planes.iter().map(|(c, _)| c.to_vec()).collect();
 
         // The roads of the blend map (the map in memory, else its file), over the bordered tile.
-        let read;
-        let blend = match self.project.blend.as_ref() {
-            Some(b) => Some(b),
-            None => {
-                read = BlendField::read(&self.project.dir.join("blend_map.tif")).ok();
-                read.as_ref()
-            }
-        };
-        if let Some(b) = blend.filter(|_| self.project.bordered()) {
-            input.roads = Some(blend_roads(b.weights(), b.width() as usize, b.height() as usize, bordered));
-        }
+        let blend = self.project.bordered().then(|| match self.project.blend.as_ref() {
+            Some(b) => BlendSource::Weights(b.weights().to_vec(), b.width() as usize, b.height() as usize),
+            None => BlendSource::File(self.project.dir.join("blend_map.tif")),
+        });
 
         // The trees: the shown list's and the static ones.
         let trees = self.tree_list();
@@ -183,6 +141,97 @@ impl Tile {
         if let Some(nogos) = nogos {
             input.cliffs = nogos.iter().map(|o| o.iter().map(|p| [f64::from(p[0]), f64::from(p[1])]).collect()).collect();
         }
+
+        RadarRequest {
+            input,
+            bordered,
+            ground: self.project.has_height().then(|| Ground::of(&self.project)),
+            sea: self.has_sea(),
+            water_map,
+            unit: self.unit(),
+            blend,
+        }
+    }
+}
+
+/// Where the blend map's roads are read from.
+enum BlendSource {
+    /// The map in memory: its weights, its size.
+    Weights(Vec<u16>, usize, usize),
+    File(std::path::PathBuf),
+}
+
+/// What the radar draws of a tile, taken from it ([`Tile::radar_request`]): all but what is sampled over the ground.
+pub struct RadarRequest {
+    input: RadarInput,
+    bordered: [f64; 4],
+    ground: Option<Ground>,
+    sea: bool,
+    water_map: WaterMap,
+    unit: f64,
+    blend: Option<BlendSource>,
+}
+
+impl RadarRequest {
+    /// The radar's input: the heights, the water and the roads of the blend map sampled.
+    pub fn input(self) -> RadarInput {
+        let Self { mut input, bordered, ground, sea, water_map: wm, unit, blend } = self;
+        let [x0, z0, w_m, h_m] = bordered;
+        let height_at = |x: f64, z: f64| ground.as_ref().map_or(0.0, |g| g.height_at(x, z));
+
+        // The heights.
+        if ground.is_some() {
+            let (w, h) = (((w_m / HEIGHT_CELL_M).ceil() as usize).max(2), ((h_m / HEIGHT_CELL_M).ceil() as usize).max(2));
+            let (cx, cz) = (w_m / w as f64, h_m / h as f64);
+            let v: Vec<f32> = (0..w * h)
+                .into_par_iter()
+                .map(|k| height_at(x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz) as f32)
+                .collect();
+            // The sea only where the game draws one (a coastal set's tile): another's low ground is dry.
+            input.sea = sea && v.iter().any(|&h| h < wce_siege::Sea::WATER as f32);
+            input.height = Field { x0, z0, w_m, h_m, w, h, v };
+        }
+
+        // The water planes' and the rivers' surface over the ground, with stage B's depth, every `WATER_CELL_M`.
+        if !wm.planes.is_empty() || !wm.rivers.is_empty() || input.water.is_some() {
+            let (w, h) = (((w_m / WATER_CELL_M).ceil() as usize).max(2), ((h_m / WATER_CELL_M).ceil() as usize).max(2));
+            let (cx, cz) = (w_m / w as f64, h_m / h as f64);
+            let staged = input.water.as_ref();
+            // The planes' and the rivers' boxes: the water map is asked only inside one (it walks every plane and river segment).
+            let mut boxes: Vec<[f64; 4]> = wm
+                .planes
+                .iter()
+                .map(|(c, _)| {
+                    c.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| {
+                        [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+                    })
+                })
+                .collect();
+            boxes.extend(wm.rivers.iter().map(|r| {
+                r.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| {
+                    [b[0].min(p[0] - p[3]), b[1].min(p[1] - p[3]), b[2].max(p[0] + p[3]), b[3].max(p[1] + p[3])]
+                })
+            }));
+            let v: Vec<f32> = (0..w * h)
+                .into_par_iter()
+                .map(|k| {
+                    let (x, z) = (x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz);
+                    let inside = boxes.iter().any(|b| x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]);
+                    // The water map's heights are the scene's (metres over the unit).
+                    let own = if inside { wm.level(x, z).map_or(0.0, |l| (l * unit - height_at(x, z)).max(0.0)) as f32 } else { 0.0 };
+                    own.max(staged.map_or(0.0, |f| f.sample(x, z)))
+                })
+                .collect();
+            input.water = Some(Field { x0, z0, w_m, h_m, w, h, v });
+        }
+
+        input.roads = match blend {
+            Some(BlendSource::Weights(weights, w, h)) => Some(blend_roads(&weights, w, h, bordered)),
+            Some(BlendSource::File(path)) => {
+                BlendField::read(&path).ok().map(|b| blend_roads(b.weights(), b.width() as usize, b.height() as usize, bordered))
+            }
+            None => None,
+        };
 
         input
     }
@@ -268,10 +317,11 @@ impl Tile {
             .collect()
     }
 
-    /// How many of the tile's models have their bounds (they come in while the renderer loads them): the water planes' footprints are
-    /// their models', so a radar drawn before they came is drawn again.
-    pub fn radar_models_resolved(&self) -> usize {
-        self.models.values().filter(|m| m.resolved).count()
+    /// How many of the water planes' models have their bounds (they come in while the renderer loads them): the water planes' footprints
+    /// are their models', so a radar drawn before they came is drawn again. Only theirs: a layer of buildings shown has its models come in
+    /// over many frames, and the radar was drawn again every second while they did.
+    pub fn radar_planes_resolved(&self) -> usize {
+        self.models.iter().filter(|(k, m)| m.resolved && k.to_lowercase().contains("water_plane")).count()
     }
 
     /// The roads as lines: the procedural roads' centre lines, and every shown road decal (a path, a road, its borders) as a line along

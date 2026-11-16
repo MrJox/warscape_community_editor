@@ -423,7 +423,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_wait_jobs", "tile_wait_jobs", "wait for what the walls and roads are making off the editor's thread (for scripts; the walls' pieces go on the scene at the next frame)", |e, _| {
+    c.add("tile_wait_jobs", "tile_wait_jobs", "wait for what is being made off the editor's thread (the walls and roads, the water depth and no-go areas, the radar; for scripts: what they made goes in at the next frame)", |e, _| {
         let start = std::time::Instant::now();
         let wait = || {
             while wce_tile_editor::tile_document::jobs_running() && start.elapsed() < std::time::Duration::from_secs(120) {

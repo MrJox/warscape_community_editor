@@ -275,6 +275,10 @@ pub struct MinimapUi {
     radar_for: Option<(u64, bool, bool, usize)>,
     radar_time: f64,
 
+    /// The radar being drawn off the editor's thread (0.8 s on a port, every second while models came in after a layer was shown):
+    /// its picture comes in when it is done.
+    radar_job: Option<RadarJob>,
+
     siege: Option<MinimapSiege>,
     siege_for: u64,
     siege_time: f64,
@@ -310,6 +314,7 @@ impl Default for MinimapUi {
             radar: Picture::default(),
             radar_for: None,
             radar_time: -1e9,
+            radar_job: None,
             siege: None,
             siege_for: 0,
             siege_time: -1e9,
@@ -696,21 +701,22 @@ impl MinimapUi {
     }
 
     fn refresh_radar(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
+        self.finish_radar(e);
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let key = (
             d.history().version().wrapping_add(d.tile().view_version() << 40),
             d.tile().water_depth().is_some(),
             d.tile().auto_nogos().is_some(),
-            d.tile().radar_models_resolved(),
+            d.tile().radar_planes_resolved(),
         );
         let idle = !(0..3).any(gui::is_mouse_down);
-        if self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY)) {
-            let started = std::time::Instant::now();
-            let (size, rgba, area) = draw_radar(e, id);
-            self.radar.set(e, &mut self.serial, size, size, rgba, area);
+        let due = self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY));
+        if due && self.radar_job.is_none() {
+            let request = radar_request(e, id);
+            let job = wce_tile_editor::tile_document::Job::spawn("radar", move || render_radar(request));
+            self.radar_job = Some(RadarJob { job, doc: id, planes: key.3, started: std::time::Instant::now() });
             self.radar_for = Some(key);
             self.radar_time = now;
-            log::info(format!("radar drawn in {:.2} s ({} models with their bounds)", started.elapsed().as_secs_f64(), key.3));
         }
 
         let (water, nogo) = (key.1, key.2);
@@ -718,6 +724,31 @@ impl MinimapUi {
             (true, true) => format!("the radar the tile would ship (`radar_save` writes {RADAR_FILE})"),
             _ => "radar: working out the rivers and the cliffs...".to_owned(),
         };
+    }
+
+    /// The radar drawn off the editor's thread, shown when it is done (and still of the open tile).
+    fn finish_radar(&mut self, e: &mut Editor) {
+        use wce_tile_editor::tile_document::JobPoll;
+        let Some(j) = self.radar_job.as_ref() else { return };
+        let drawn = match j.job.poll() {
+            JobPoll::Running => return,
+            JobPoll::Done(drawn) => Some(drawn),
+            JobPoll::Failed => None,
+        };
+
+        let RadarJob { doc, planes, started, .. } = self.radar_job.take().expect("a job");
+        match drawn {
+            Some((size, rgba, area)) if doc == self.doc => {
+                self.radar.set(e, &mut self.serial, size, size, rgba, area);
+                log::info(format!(
+                    "radar drawn in {:.2} s ({planes} water plane models with their bounds)",
+                    started.elapsed().as_secs_f64()
+                ));
+            }
+
+            Some(_) => {}
+            None => log::warn("the radar was not drawn (it stopped)"),
+        }
     }
 
     /// Writes the open tile's radar to `path` (a PNG when it ends in `.png`, else the game's JPEG; the tile's folder's `RADAR_FILE`
@@ -930,14 +961,32 @@ impl ExportRadar {
 /// The radar of a tile as it is (with the water depth and the no-go areas the tool has worked out): its side, its pixels with rows along +z
 /// (as the minimap's pictures), the ground it covers.
 fn draw_radar(e: &mut Editor, id: DocumentId) -> (u32, Vec<u8>, [f64; 4]) {
-    wce_foundation::wce_prof!("tile.minimap.radar");
+    render_radar(radar_request(e, id))
+}
+
+/// What [`draw_radar`] draws, taken from the tile.
+fn radar_request(e: &mut Editor, id: DocumentId) -> wce_tile_editor::tile_document::RadarRequest {
+    wce_foundation::wce_prof!("tile.minimap.radar_request");
     let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
     let water = d.tile().water_depth().cloned();
-    let input = d.tile_mut().radar_input(water.as_ref());
+    d.tile_mut().radar_request(water.as_ref())
+}
+
+/// [`draw_radar`] of what was taken, on any thread.
+fn render_radar(request: wce_tile_editor::tile_document::RadarRequest) -> (u32, Vec<u8>, [f64; 4]) {
+    let input = request.input();
     let img = wce_tile_editor::radar::render(&input, &wce_tile_editor::radar::RadarStyle::default());
     let row = img.size as usize * 4;
     let rgba = img.rgba.chunks(row).rev().flatten().copied().collect();
     (img.size, rgba, input.area)
+}
+
+/// A radar being drawn (`MinimapUi::refresh_radar`): for which tile, with how many water plane models in.
+struct RadarJob {
+    job: wce_tile_editor::tile_document::Job<(u32, Vec<u8>, [f64; 4])>,
+    doc: DocumentId,
+    planes: usize,
+    started: std::time::Instant,
 }
 
 /// The entry's cells (x, rows from the +z edge, as the entry counts them) and whether each is valid (its mask; all without one).
