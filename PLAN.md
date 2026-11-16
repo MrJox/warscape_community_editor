@@ -32,6 +32,7 @@ Each open item lives in one plan; the others point to it.
 | [rendering_remaining.md](docs/plans/rendering_remaining.md) | the rendering gaps of the tile view (sea, water, shadows, engine details) | open |
 | [vegetation_remaining.md](docs/plans/vegetation_remaining.md) | the vegetation port's leftovers | small |
 | [weather.md](docs/plans/weather.md) | the Weather tool's leftovers: a VFX editor, campaign mode | open |
+| [campaign_environment.md](docs/plans/campaign_environment.md) | the campaign map's lighting, sky, fog and weather: environment volumes, the skybox, the campaign frame | planned (2026-11-16), not started |
 | [weather_current_state.md](docs/plans/weather_current_state.md) | the particle and VFX engine items still approximated | open |
 | [editor_todo.md](docs/plans/editor_todo.md) | editor-wide ideas: a minimap with views, siege AI problems on save | open |
 | [autosave.md](docs/plans/autosave.md) | autosave into `<projects>/autosave/`, rotated copies, recovery at the next launch | built (2026-11-14); prefab stages left |
