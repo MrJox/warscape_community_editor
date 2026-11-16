@@ -171,7 +171,9 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
 - Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
   constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
-  RenderDoc. The rivers' overlay technique. The z stretch of the hex world (the editor's frame has square cells: the game's map is
+  RenderDoc. The rivers as the game draws them (to do, not a deviation: the user, 2026-11-17): into the 2048 x 1620 overlay target
+  with the overlay camera (the eye 1 - 1.7 units back), read by the lighting and the sea through `s_overlay` /
+  `g_overlay_view_projection`; the editor's river meshes with the battle river shader are not the campaign's. The z stretch of the hex world (the editor's frame has square cells: the game's map is
   15 % longer north to south). The view's lens (the game's 80 degrees). The view streams short of the horizon.
 
 ## Decisions (user, 2026-11-16)
