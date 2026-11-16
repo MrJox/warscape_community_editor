@@ -457,7 +457,7 @@ impl Renderer {
         let cbs = &mut self.cbs;
         cbs.set_f("projected_decal_PS", "g_viewport_offset_scale", &[0.0, 0.0, 1.0, 1.0]);
         cbs.set_f("projected_decal_PS", "g_texture_ratio", &[1.0, 1.0]);
-        cbs.set_f("projected_decal_PS", "g_is_campaign", &[0.0]);
+        cbs.set_i("projected_decal_PS", "g_is_campaign", i32::from(scene.campaign));
         cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
         self.upload();
 

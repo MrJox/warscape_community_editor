@@ -1506,6 +1506,12 @@ impl Editor {
         Ok(format!("previewing {path}"))
     }
 
+    /// Lights the scene with an environment made by a tool (a campaign map's lighting spheres blended at the camera), named `key` (not
+    /// a file: no document follows it).
+    pub fn set_weather_params(&mut self, key: &str, params: EnvironmentParams) {
+        self.weather_preview = Some(WeatherPreview { params, path: key.to_owned() });
+    }
+
     /// The previewed weather file (normalized), if any.
     pub fn weather_preview(&self) -> Option<&str> {
         self.weather_preview.as_ref().map(|w| w.path.as_str())

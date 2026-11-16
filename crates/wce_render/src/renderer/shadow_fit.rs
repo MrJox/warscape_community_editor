@@ -10,6 +10,11 @@ use wce_foundation::math::{Float3, Float4x4, cross, dot, length, normalize};
 /// one shadow-map depth unit about 3 m at the camera, and the 2500-unit bias wiped out the shadows of everything lower: fences, walls).
 pub(crate) const DEPTH_OFFSET: f32 = 150.0;
 
+/// The campaign's pull-back (`shadow_cam_depth_offset_campaign`, 14; fn 0x117329a0 at 0x11732b06 takes it when the shadow view's mode,
+/// +0x80, is the campaign's). The battle's `terrain_enable_shadows ? 5000 : 150` is always 150 there: that switch is only ever set on the
+/// campaign (fns 0x117665e0, 0x11794ca0: top quality and the campaign mode).
+pub(crate) const DEPTH_OFFSET_CAMPAIGN: f32 = 14.0;
+
 /// The fit of one slice: the light's view-projection (clip x, y in -1..1, depth 0..1) and the width of the light box (metres).
 pub(crate) struct LightFit {
     pub view_proj: Float4x4,
@@ -38,8 +43,9 @@ fn row(a: Float3, w: f32) -> [f32; 4] {
 }
 
 /// `corners`: the slice's eight corners (world); `light`: the direction the light travels; `view`: the camera's view direction; `side`:
-/// its side vector; `near`: the slice's near distance.
-pub(crate) fn fit(corners: &[Float3; 8], light: Float3, view: Float3, side: Float3, near: f32) -> LightFit {
+/// its side vector; `near`: the slice's near distance; `pull_back`: how far the light camera stands behind the slice ([`DEPTH_OFFSET`],
+/// [`DEPTH_OFFSET_CAMPAIGN`]).
+pub(crate) fn fit(corners: &[Float3; 8], light: Float3, view: Float3, side: Float3, near: f32, pull_back: f32) -> LightFit {
     let [ax, ay, az] = light_basis(light, view, side);
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     for p in corners {
@@ -50,10 +56,10 @@ pub(crate) fn fit(corners: &[Float3; 8], light: Float3, view: Float3, side: Floa
         }
     }
 
-    let depth = DEPTH_OFFSET + hi[2] - lo[2];
+    let depth = pull_back + hi[2] - lo[2];
     let (w, h) = (hi[0] - lo[0], hi[1] - lo[1]);
     let (cx, cy) = ((lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5);
-    let eye = ax * cx + ay * cy + az * (lo[2] - DEPTH_OFFSET);
+    let eye = ax * cx + ay * cy + az * (lo[2] - pull_back);
 
     // Not warped: the box's ortho projection (x, y centred, depth from the pulled-back eye).
     let warp = dot(light, view).abs() < 0.999;
@@ -196,7 +202,7 @@ mod tests {
         let view = normalize(Float3::new(0.3, -0.35, 0.89));
         let eye = Float3::new(100.0, 80.0, -50.0);
         let side = normalize(cross(Float3::new(0.0, 1.0, 0.0), view));
-        let fit = fit(&slice(eye, view, 10.0, 130.0), light, view, side, 10.0);
+        let fit = fit(&slice(eye, view, 10.0, 130.0), light, view, side, 10.0, DEPTH_OFFSET);
         let m = fit.view_proj.m;
         let r3 = Float3::new(m[3][0], m[3][1], m[3][2]);
         assert!((length(r3) - 1.0).abs() < 1e-4);
@@ -215,7 +221,7 @@ mod tests {
         let view = normalize(Float3::new(0.0, -0.4, 1.0));
         let side = normalize(cross(Float3::new(0.0, 1.0, 0.0), view));
         let corners = slice(Float3::new(0.0, 50.0, 0.0), view, 5.0, 200.0);
-        let fit = fit(&corners, light, view, side, 5.0);
+        let fit = fit(&corners, light, view, side, 5.0, DEPTH_OFFSET);
 
         // x reaches 1 / cos(theta) at the widest corner, theta from the x row's 1 / sin(theta) scale.
         let sx = length(Float3::new(fit.view_proj.m[0][0], fit.view_proj.m[0][1], fit.view_proj.m[0][2]));
@@ -236,7 +242,7 @@ mod tests {
         let view = light;
         let side = Float3::new(1.0, 0.0, 0.0);
         let corners = slice(Float3::new(0.0, 500.0, 0.0), Float3::new(0.0, -1.0, 0.0001), 10.0, 100.0);
-        let fit = fit(&corners, light, view, side, 10.0);
+        let fit = fit(&corners, light, view, side, 10.0, DEPTH_OFFSET);
         assert_eq!(fit.view_proj.m[3], [0.0, 0.0, 0.0, 1.0]);
         for p in corners {
             let [x, y, z, _] = clip(&fit.view_proj, p);

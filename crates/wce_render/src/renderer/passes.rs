@@ -16,6 +16,11 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 const SHADOW_ROWS: [[f32; 4]; 4] =
     [[60.0, 180.0, 180.0, 180.0], [30.0, 90.0, 210.0, 210.0], [30.0, 90.0, 210.0, 450.0], [30.0, 90.0, 210.0, 450.0]];
 
+/// The campaign's rows: the same table's rows 4 to 7 (indexed mode * 4 + quality, the shadow view's +0x80 and +0x84; dumped at
+/// dll+0x1c88aa0). ASSUMPTION: in the shaders' game units (the campaign database's 0.2 a scene unit), as the battle's are in theirs.
+const SHADOW_ROWS_CAMPAIGN: [[f32; 4]; 4] =
+    [[10.0, 30.0, 30.0, 30.0], [5.0, 15.0, 35.0, 35.0], [5.0, 10.0, 20.0, 40.0], [5.0, 10.0, 20.0, 40.0]];
+
 /// The atlas quadrants of the four cascades.
 pub(crate) const SHADOW_BOUNDS: [[f32; 4]; 4] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5], [0.0, 0.5, 0.5, 1.0], [0.5, 0.5, 1.0, 1.0]];
 
@@ -688,7 +693,8 @@ impl Renderer {
         }
 
         let u = self.camera.units;
-        let row = SHADOW_ROWS[self.settings.shadow_quality.clamp(0, 3) as usize];
+        let rows = if scene.campaign { &SHADOW_ROWS_CAMPAIGN } else { &SHADOW_ROWS };
+        let row = rows[self.settings.shadow_quality.clamp(0, 3) as usize];
         let n = cam.znear.max(1.0);
         let far_q = n + row[0] + row[1] + row[2] + row[3];
         let (mut start, mut scale) = (n, 1.0f32);
@@ -779,7 +785,8 @@ impl Renderer {
             }
 
             // Fitted in game units (the pull-back and the warp's near distance are the game's numbers), then taking scene units.
-            let mut fit = shadow_fit::fit(&pts.map(|p| p * u), light_dir, view_dir, side, slice_near[c] * u);
+            let pull_back = if scene.campaign { shadow_fit::DEPTH_OFFSET_CAMPAIGN } else { shadow_fit::DEPTH_OFFSET };
+            let mut fit = shadow_fit::fit(&pts.map(|p| p * u), light_dir, view_dir, side, slice_near[c] * u, pull_back);
             for r in &mut fit.view_proj.m {
                 for v in r.iter_mut().take(3) {
                     *v *= u;
@@ -898,7 +905,9 @@ impl Renderer {
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
-                if terrain_material {
+                // The campaign's terrain casts only at the top shadow quality (fn 0x118debf0 skips the shadow pass unless
+                // `terrain_enable_shadows`, set for the campaign at the shadow view's quality index 2: gfx_shadow_quality 3).
+                if terrain_material && (!scene.campaign || self.settings.shadow_quality >= 3) {
                     self.ctx.set_rasterizer_state(rs_shadow_terrain.as_ref());
                     self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c], &light_rel[c]);
                     self.ctx.set_rasterizer_state(rs_shadow.as_ref());

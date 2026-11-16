@@ -1169,6 +1169,10 @@ pub struct RenderScene {
     /// the ground there). A tile's centre; (0, 0) for a scene drawn around its own origin.
     pub battle_centre: [f32; 2],
 
+    /// The scene is a campaign map: the shaders' campaign switches (`g_is_campaign`: the decals skip the weather's snow, as the
+    /// terrain does) and the campaign's shadow settings.
+    pub campaign: bool,
+
     /// A campaign map's sea colour (its `lf_sea_colour.dds`): the sea planes are drawn with the game's campaign water shader, which
     /// colours the water from it. None: the battle's ocean.
     pub campaign_sea: Option<CampaignSea>,
@@ -1287,6 +1291,7 @@ impl Default for RenderScene {
             sea_level: 0.0,
             overlay_slots: [[0.0; 4]; OVERLAY_SLOTS],
             battle_centre: [0.0, 0.0],
+            campaign: false,
             campaign_sea: None,
             campaign_snow: None,
             snow: None,

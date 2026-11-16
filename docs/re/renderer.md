@@ -613,8 +613,9 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
     532.6, 1313.2; h 57.8, 187.9, 485.2, 1117.0; depth 241.5, 449.7, 935.6, 1976.7. Pull-back 150 (`shadow_cam_depth_offset_battle`)
     gives n 62.2, 179.0, 502.4, 1236.2 and depth 222.4, 387.5, 772.7, 1598.3 (the rest is the view's slightly other pitch); 5000
     (`g_battle_terrain_on_...`) gives n 249 and depth 5072 for the first cascade. `shadow_fit::DEPTH_OFFSET` is 150.
-- ASSUMPTION: which of the two tweakables a battle uses (the game's condition for "battle terrain on") was not traced; one max-settings
-  coast battle used 150.
+- Resolved 2026-11-16 (fn 0x117329a0 at 0x11732af2 - 0x11732b14): a battle always uses 150. The 5000 is taken when
+  `terrain_enable_shadows` is set, and fns 0x117665e0 / 0x11794ca0 set it only at quality index 2 in the campaign mode, where the
+  campaign's 14 wins anyway. The campaign's cascades: docs/plans/campaign_environment.md, "Progress".
 
 
 ## Battle fog (2026-11-13)
