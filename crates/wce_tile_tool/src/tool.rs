@@ -4984,8 +4984,9 @@ impl Tool for TileTool {
             (self.stroke_preview(e), Float3::default(), 0.0, None)
         } else if self.terrain_hit && (e.viewport.hovered || self.preview_forced) {
             let text = self.placing_preview(e);
-            let normal = e.docs.find_as::<TileDocument>(id).and_then(|d| self.preview_normal(d));
-            (text, self.place_point().0, self.preview_yaw(), normal)
+            let (at, yaw) = (self.place_point().0, self.preview_yaw());
+            let tilt = e.docs.find_as::<TileDocument>(id).zip(text.as_deref()).and_then(|(d, t)| self.preview_tilt(d, t, at, yaw));
+            (text, at, yaw, tilt)
         } else {
             (None, self.place_point().0, 0.0, None)
         };

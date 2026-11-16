@@ -10,7 +10,6 @@ use wce_scene::render_scene::{Decal, EntityId, MeshInstance, Overlay, Payload, R
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, world_transform};
 
-use super::draft::tilt_to;
 use super::index::{matrix_of, piece_copy, static_piece, vegetation_model};
 use super::{TERRAIN, Tile, scene_key};
 
@@ -90,10 +89,10 @@ impl Tile {
 
     /// Shows `text` (an element as `insert_element_text` takes it) at `at` (world metres, on the ground), or nothing (`None`). Reading the
     /// text again only when it changed; moving it is cheap.
-    /// `yaw` (degrees about the vertical) turns what `text` shows and `normal` then tilts it to a surface (`draft::tilted`), the order a
-    /// click has them in: a matrix of what is there, so that neither makes it again as a new text would, every frame of an Alt drag or of
-    /// the mouse going over the ground.
-    pub fn set_preview(&mut self, scene: &mut RenderScene, text: Option<&[u8]>, at: Float3, yaw: f32, normal: Option<Double3>) {
+    /// `yaw` (degrees about the vertical) turns what `text` shows and `tilt` then turns the result (a surface's, `draft::tilt_to` of its
+    /// normal as `draft::tilted` does; the slope's, `Tile::slope_preview_tilt`), the order a click has them in: a matrix of what is there, so
+    /// that neither makes it again as a new text would, every frame of an Alt drag or of the mouse going over the ground.
+    pub fn set_preview(&mut self, scene: &mut RenderScene, text: Option<&[u8]>, at: Float3, yaw: f32, tilt: Option<Double3x3>) {
         let key = scene_key(scene);
         let gone = self.preview.scene_key != key
             || self.preview.entities.iter().chain([&self.preview.overlay]).any(|&e| e != 0 && scene.find(e).is_none());
@@ -122,12 +121,12 @@ impl Tile {
             self.preview.at = None;
         }
 
-        let mut tilt = Float4x4::IDENTITY;
-        for (row, r) in tilt.m.iter_mut().zip(normal.map_or(Double3x3::IDENTITY, tilt_to).m) {
+        let mut tilt4 = Float4x4::IDENTITY;
+        for (row, r) in tilt4.m.iter_mut().zip(tilt.unwrap_or(Double3x3::IDENTITY).m) {
             row[..3].copy_from_slice(&r.map(|v| v as f32));
         }
 
-        let turn = tilt * rotation_y(yaw.to_radians());
+        let turn = tilt4 * rotation_y(yaw.to_radians());
         if self.preview.at == Some((at, turn)) {
             return;
         }

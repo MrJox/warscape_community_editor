@@ -478,7 +478,7 @@ fn a_fill_is_the_general_value_times_its_types() {
 #[test]
 fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
     use wce_scene::render_scene::RenderScene;
-    use wce_tile_editor::tile_document::{tilted, turned};
+    use wce_tile_editor::tile_document::{tilt_to, tilted, turned};
 
     let (_dir, mut d) = open_with_house();
     let mut scene = RenderScene::default();
@@ -519,12 +519,21 @@ fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
     let normal = Double3::new(0.3, 1.0, -0.2);
     d.tile_mut().set_preview(&mut scene, Some(&text), at, 0.0, None);
     let (before, structure) = (shown(&scene), scene.structure_revision());
-    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0, Some(normal));
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0, Some(tilt_to(normal)));
     let by_matrix = shown(&scene);
     assert_eq!(by_matrix.iter().map(|e| e.0).collect::<Vec<_>>(), before.iter().map(|e| e.0).collect::<Vec<_>>(), "the same entities");
     assert_eq!(scene.structure_revision(), structure, "nothing was made again");
     d.tile_mut().set_preview(&mut scene, Some(&tilted(&turned(&text, 37.0), normal)), at, 0.0, None);
     same(&by_matrix, &shown(&scene));
+
+    // Upright on a slope (Follow slope): what a click places, turned then stood on the slope, as the preview shows it.
+    let tilt = d.tile().slope_preview_tilt(&text, at, 37.0);
+    assert!((tilt.m[1][1] - 1.0).abs() > 1e-4, "the test tile's ramp tilts it: {tilt:?}");
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0, Some(tilt));
+    let by_slope = shown(&scene);
+    let placed = d.tile().slope_tilted_text(&turned(&text, 37.0), at);
+    d.tile_mut().set_preview(&mut scene, Some(&placed), at, 0.0, None);
+    same(&by_slope, &shown(&scene));
 }
 
 /// What a scene shows of the items: (item, kind, its matrix's bits), sorted.
