@@ -596,6 +596,14 @@ impl TileDocument {
 
         if let Some(v) = new {
             self.set_property(e, prop, &v, gesture);
+            // A road type chosen: the road at its width (a track's 3 m, dirt's 6), its pieces then drawn as they are, not stretched.
+            if prop.attr == "road_type"
+                && let Some(w) = self.tile().road_type_width(&v)
+                && let Some(width) = wce_tile::properties::schema(self.tile().tscene().type_of(e))
+                    .and_then(|s| s.iter().find(|p| p.attr == "road_width").copied())
+            {
+                self.set_property(e, &width, &wce_tile::ted_scene::format_number(w), gesture ^ 0x51);
+            }
         }
 
         if ins.gesture_ended() {

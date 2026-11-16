@@ -15,10 +15,27 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, PartRole, UNIT, VERGE, WIDTH, base_guides};
+use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, PartRole, UNIT, VERGE, WIDTH, guides_of_width};
 
 /// The road type's folder and name.
 pub const TYPE: &str = "dirt";
+
+/// A road type made of dirt's decals: its name (its folder), its width and how many lanes of ruts it has.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Style {
+    pub name: &'static str,
+    pub width: f64,
+    pub lanes: u8,
+}
+
+/// Dirt: two lanes of ruts side by side (the kit's `path_1` twice), 6 m wide.
+pub const DIRT: Style = Style { name: TYPE, width: WIDTH, lanes: 2 };
+
+/// A track: one lane (one `path_1` down the middle), 3 m wide (user 2026-11-16: a road one decal wide).
+pub const TRACK: Style = Style { name: "dirt_track", width: 3.0, lanes: 1 };
+
+/// The road types made here.
+pub const STYLES: [Style; 2] = [DIRT, TRACK];
 
 /// Dirt's variants of its pieces (`road_pieces::varies`): straights with the kit's banks, patches, puddles and erosion.
 pub const VARIANTS: [&str; 4] = ["straight_2", "straight_3", "straight_4", "straight_5"];
@@ -69,7 +86,7 @@ pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
 /// Whether every dirt piece is in a prefab folder as this generation makes it, or as the user made it.
 #[must_use]
 pub fn all_written(prefab_root: &Path) -> bool {
-    !road_pieces::generated_stale_weighted(prefab_root, TYPE, &pieces(), &weight)
+    STYLES.iter().all(|st| !road_pieces::generated_stale_weighted(prefab_root, st.name, &pieces_of(st), &weight))
 }
 
 /// The kit's fence the dirt road's fence piece is (`lowfence_3`, about 5 m long along its x: the kit's road prefabs space them so).
@@ -123,16 +140,30 @@ pub const OVERLAP: f64 = 0.75;
 const RUT: f64 = 2.6;
 const BORDER: f64 = 2.0;
 
-/// The ruts down a stretch along z, from `z0` to `z1`: two strips side by side, the left one turned end for end so that they do not repeat.
-fn ruts(z0: f64, z1: f64) -> Vec<Vec<u8>> {
-    let (x, z, length) = (WIDTH * 0.25 - 0.2, (z0 + z1) * 0.5, z1 - z0);
+/// The ruts down a stretch along z, from `z0` to `z1`: two strips side by side, the left one turned end for end so that they do not repeat;
+/// a track's one down the middle.
+fn ruts(st: &Style, z0: f64, z1: f64) -> Vec<Vec<u8>> {
+    let (x, z, length) = (st.width * 0.25 - 0.2, (z0 + z1) * 0.5, z1 - z0);
+    if st.lanes == 1 {
+        return vec![decal("path_1", [0.0, z], UP, length, RUT, None)];
+    }
+
     vec![decal("path_1", [-x, z], DOWN, length, RUT, None), decal("path_1", [x, z], UP, length, RUT, None)]
 }
 
 /// The ruts down a stretch along x, from `x0` to `x1` (a branch to the right or left).
-fn ruts_x(x0: f64, x1: f64) -> Vec<Vec<u8>> {
-    let (z, x, length) = (WIDTH * 0.25 - 0.2, (x0 + x1) * 0.5, x1 - x0);
+fn ruts_x(st: &Style, x0: f64, x1: f64) -> Vec<Vec<u8>> {
+    let (z, x, length) = (st.width * 0.25 - 0.2, (x0 + x1) * 0.5, x1 - x0);
+    if st.lanes == 1 {
+        return vec![decal("path_1", [x, 0.0], RIGHT, length, RUT, None)];
+    }
+
     vec![decal("path_1", [x, -z], LEFT, length, RUT, None), decal("path_1", [x, z], RIGHT, length, RUT, None)]
+}
+
+/// Where a style's ruts run across the road from its middle: dirt's two lanes 1.3 m each side, a track's one in the middle.
+fn lane_offsets(st: &Style) -> &'static [f64] {
+    if st.lanes == 1 { &[0.0] } else { &[1.3, -1.3] }
 }
 
 /// An edge's border from one place to another along z (`side`: its x) or along x (`side`: its z), its lip facing out of the road (`out`:
@@ -217,13 +248,19 @@ fn quarter(out: &mut Vec<Vec<u8>>, c: [f64; 2], r: f64, n: u32, name: &str, widt
 /// The decals of a piece of the dirt road.
 #[must_use]
 pub fn parts(piece: &str) -> Vec<Vec<u8>> {
-    let h = WIDTH * 0.5;
+    parts_of(&DIRT, piece)
+}
+
+/// The decals of a piece of a dirt style's road ([`STYLES`]).
+#[must_use]
+pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
+    let h = st.width * 0.5;
     let (s, e, j) = (road_pieces::STRAIGHT * 0.5 + OVERLAP, road_pieces::END * 0.5, road_pieces::JUNCTION * 0.5 + OVERLAP);
     let j0 = road_pieces::JUNCTION * 0.5;
     let mut out = vec![];
     match piece {
         "straight" | "ford" => {
-            out.extend(ruts(-s, s));
+            out.extend(ruts(st, -s, s));
             out.push(border_z("border_1", -h, -s, s));
             out.push(border_z("border_1", h, -s, s));
             out.push(decal("global_terrain_rocks_04", [h - 0.6, -2.2], UP, 2.5, 2.5, None));
@@ -247,7 +284,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         // The straight's variants ([`VARIANTS`]), the kit's other things along its roads in each: its banks of ground on one side,
         // the other or both, its worn patch (`path_04`), a puddle, erosion beside the road, rocks. Laid one or another along a road.
         "straight_2" => {
-            out.extend(ruts(-s, s));
+            out.extend(ruts(st, -s, s));
             out.push(border_z("border_1", -h, -s, s));
             out.push(border_z("border_1", h, -s, s));
             out.push(bank(h, 0.0));
@@ -261,7 +298,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         }
 
         "straight_3" => {
-            out.extend(ruts(-s, s));
+            out.extend(ruts(st, -s, s));
             out.push(border_z("border_1", -h, -s, s));
             out.push(border_z("border_1", h, -s, s));
             out.push(bank(-h, 0.0));
@@ -275,7 +312,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         }
 
         "straight_4" => {
-            out.extend(ruts(-s, s));
+            out.extend(ruts(st, -s, s));
             out.push(border_z("border_1", -h, -s, s));
             out.push(border_z("border_1", h, -s, s));
             out.push(bank(-h, 0.5));
@@ -289,7 +326,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         }
 
         "straight_5" => {
-            out.extend(ruts(-s, s));
+            out.extend(ruts(st, -s, s));
             out.push(border_z("border_1", -h, -s, s));
             out.push(border_z("border_1", h, -s, s));
             out.push(decal("global_terrain_erossion_03", [h + 1.3, -0.6], DOWN, 6.0, 2.5, None));
@@ -305,7 +342,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
 
         "end" => {
             // The road stops at z = -2: worn ground fading over the end, its edges closed across the back.
-            out.extend(ruts(-e, e + OVERLAP));
+            out.extend(ruts(st, -e, e + OVERLAP));
             out.push(border_z("border_1", -h, -e, e + OVERLAP));
             out.push(border_z("border_1", h, -e, e + OVERLAP));
             out.push(border_x("border_2", -e, -h - 0.5, h + 0.5));
@@ -325,8 +362,9 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             for i in 0..5 {
                 let t = (f64::from(i) - 2.0) * CURVE_TURN / 5.0;
                 let w = if i % 2 == 0 { back(t) } else { way(t) };
-                out.push(decal("path_1", at(r + 1.3, t), w, 4.6, RUT, None));
-                out.push(decal("path_1", at(r - 1.3, t), way(t), 4.6, RUT, None));
+                for (k, &off) in lane_offsets(st).iter().enumerate() {
+                    out.push(decal("path_1", at(r + off, t), if k == 0 { w } else { way(t) }, 4.6, RUT, None));
+                }
                 out.push(decal("border_1", at(r + h, t), back(t), 4.6, BORDER, None));
                 out.push(decal("border_1", at(r - h, t), way(t), 4.6, BORDER, None));
             }
@@ -348,8 +386,9 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             let c = [j0, -j0];
             quarter(&mut out, c, j0 + h, 4, "border_1", BORDER, Some(false));
             quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
-            quarter(&mut out, c, j0 + 1.3, 3, "path_1", RUT, None);
-            quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
+            for &off in lane_offsets(st) {
+                quarter(&mut out, c, j0 + off, if off > 0.0 { 3 } else { 2 }, "path_1", RUT, None);
+            }
             out.push(decal("global_terrain_rocks_04", [-h - 1.2, h + 1.2], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [h + 0.6, -h - 0.6], UP, 2.5, 2.5, None));
             out.push(rocks([-0.6, 0.8]));
@@ -372,14 +411,15 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
             // The through road along z, straight, its far side's edge unbroken; the branch to the right (+x) turns into it either way
             // (user 2026-11-08: the curves of the road, not two pairs of ruts crossing): its ruts and its inside edges on quarter circles
             // about the two inside corners, as the corner's.
-            out.extend(ruts(-j, 0.25));
-            out.extend(ruts(-0.25, j));
+            out.extend(ruts(st, -j, 0.25));
+            out.extend(ruts(st, -0.25, j));
             out.push(border_z("border_1", -h, -j, 0.25));
             out.push(border_z("border_1", -h, -0.25, j));
             for c in [[j0, -j0], [j0, j0]] {
                 quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
-                quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
-                quarter(&mut out, c, j0 + 1.3, 3, "path_1", RUT, None);
+                for &off in lane_offsets(st) {
+                    quarter(&mut out, c, j0 + off, if off > 0.0 { 3 } else { 2 }, "path_1", RUT, None);
+                }
             }
 
             out.push(worn_middle([1.0, 1.0]));
@@ -393,13 +433,14 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         "x_junction" => {
             // Both roads straight through, and in each quarter a turn from one into the other: its inside edge and a rut on quarter
             // circles about the inside corner, as the corner's.
-            out.extend(ruts(-j, 0.25));
-            out.extend(ruts(-0.25, j));
-            out.extend(ruts_x(-j, 0.25));
-            out.extend(ruts_x(-0.25, j));
+            out.extend(ruts(st, -j, 0.25));
+            out.extend(ruts(st, -0.25, j));
+            out.extend(ruts_x(st, -j, 0.25));
+            out.extend(ruts_x(st, -0.25, j));
             for c in [[j0, -j0], [j0, j0], [-j0, j0], [-j0, -j0]] {
                 quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
-                quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
+                let inner = lane_offsets(st).iter().copied().fold(f64::MAX, f64::min);
+                quarter(&mut out, c, j0 + inner, 2, "path_1", RUT, None);
             }
 
             out.push(worn_middle([1.0, 1.0]));
@@ -436,13 +477,19 @@ fn role_of(part: &[u8]) -> PartRole {
 /// The dirt pieces' contents: the base's guides and the parts, in their role groups (`road_pieces::role_group`).
 #[must_use]
 pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
+    pieces_of(&DIRT)
+}
+
+/// A dirt style's pieces ([`STYLES`]): its guides at its width and its parts, in their role groups.
+#[must_use]
+pub fn pieces_of(st: &Style) -> Vec<(&'static str, Vec<Vec<u8>>)> {
     PIECES
         .iter()
         .copied()
         .chain(VARIANTS.iter().copied())
         .map(|p| {
-            let mut children = base_guides(p);
-            let parts = parts(p);
+            let mut children = guides_of_width(p, st.width);
+            let parts = parts_of(st, p);
             for role in PartRole::ALL {
                 let mine = parts.iter().filter(|q| role_of(q) == role).cloned().collect::<Vec<_>>();
                 children.push(road_pieces::role_group(role, &mine));
@@ -461,12 +508,33 @@ pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
 ///
 /// A file can't be written.
 pub fn write(prefab_root: &Path) -> Result<Vec<PathBuf>, String> {
-    road_pieces::write_generated_weighted(prefab_root, TYPE, &pieces(), &weight)
+    let mut out = vec![];
+    for st in &STYLES {
+        out.extend(road_pieces::write_generated_weighted(prefab_root, st.name, &pieces_of(st), &weight)?);
+    }
+
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::road_pieces::base_guides;
+
+    #[test]
+    fn the_track_is_one_lane_and_half_as_wide() {
+        // Its straight: one rut down the middle, its edges at 1.5 m; read back as a piece 3 m wide.
+        let ruts = parts_of(&TRACK, "straight").iter().filter(|p| String::from_utf8_lossy(p).contains("name=\"path_1\"")).count();
+        assert_eq!(ruts, 1);
+        let dirt_ruts = parts("straight").iter().filter(|p| String::from_utf8_lossy(p).contains("name=\"path_1\"")).count();
+        assert_eq!(dirt_ruts, 2);
+        for (piece, children) in pieces_of(&TRACK) {
+            let text = crate::road_pieces::group_text(&format!("road_dirt_track_{piece}"), &children);
+            let p = crate::road_pieces::read(&text).unwrap();
+            let want = if piece == "fence" { crate::road_pieces::FENCE_WIDTH } else { 3.0 };
+            assert!((p.width - want).abs() < 1e-6, "{piece}: {}", p.width);
+        }
+    }
     use crate::road_pieces::{Anchor, group_text, key, read};
 
     #[test]
@@ -609,7 +677,7 @@ mod tests {
     #[test]
     fn written_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(write(dir.path()).unwrap().len(), PIECES.len() + VARIANTS.len());
+        assert_eq!(write(dir.path()).unwrap().len(), (PIECES.len() + VARIANTS.len()) * STYLES.len());
         assert!(write(dir.path()).unwrap().is_empty());
         let lib = crate::prefabs::PrefabLibrary::scan_folders(&[dir.path().to_path_buf()]);
         let curve = lib.load("road_dirt_curve").unwrap();
