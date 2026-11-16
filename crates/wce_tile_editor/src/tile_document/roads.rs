@@ -58,6 +58,9 @@ struct Road {
     /// Its points' own widths (`road_width` on a point; none: the road's), the road's width ramping from one to the next
     /// (`roads::sample_widths`).
     point_widths: Vec<Option<f64>>,
+
+    /// Its fences' type (`road_fence_type`: `fence`, or a named fence piece of its type, `fence_greek`); a point's own `road_fence` wins.
+    fence_type: Option<String>,
     signature: u64,
 }
 
@@ -450,8 +453,9 @@ impl Tile {
                     .iter()
                     .map(|&p| doc.get(p, "road_width").and_then(|v| wce_formats::c_num::strtod(&v)).filter(|v| *v > 0.0).map(|v| v.max(0.5)))
                     .collect::<Vec<_>>();
+                let fence_type = doc.get(e, "road_fence_type").map(|v| v.trim().to_owned()).filter(|v| !v.is_empty() && v != "fence");
                 let signature = hash_text(&format!(
-                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {point_widths:?} {water:x}"
+                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {point_widths:?} {fence_type:?} {water:x}"
                 ));
                 Road {
                     id: number(e, "road_id", 0.0) as u32,
@@ -467,6 +471,7 @@ impl Tile {
                     point_fences,
                     point_damage,
                     point_widths,
+                    fence_type,
                     signature,
                 }
             })
@@ -956,9 +961,6 @@ impl Tile {
     /// Leaked once per list seen: the property rows hold it.
     #[must_use]
     pub fn road_types(&self) -> &'static [(&'static str, &'static str)] {
-        use std::sync::{Mutex, OnceLock};
-        type List = &'static [(&'static str, &'static str)];
-        static MADE: OnceLock<Mutex<Vec<(Vec<String>, List)>>> = OnceLock::new();
         let mut names = self
             .road_prefabs
             .as_ref()
@@ -974,23 +976,13 @@ impl Tile {
         names.sort();
         names.dedup();
         names.push("none".to_owned());
-        let mut made = MADE.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((_, list)) = made.iter().find(|(n, _)| *n == names) {
-            return list;
-        }
+        leaked_choices(names)
+    }
 
-        let list: List = Box::leak(
-            names
-                .iter()
-                .map(|n| {
-                    let n: &'static str = Box::leak(n.clone().into_boxed_str());
-                    (n, n)
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-        );
-        made.push((names, list));
-        list
+    /// The fence types a road may have (Inspector's fence type row): `fence` and its type's named fences ([`Self::road_fence_choices`]).
+    #[must_use]
+    pub fn road_fence_types(&self, road: usize) -> &'static [(&'static str, &'static str)] {
+        leaked_choices(self.road_fence_choices(road))
     }
 
     /// A road type's own width: its straight's (`road_<type>_straight`), what a road of it is made at when the type is chosen.
@@ -1638,7 +1630,7 @@ fn road_items(i: ItemsInput) -> ItemsMade {
 
                     // The point it is nearest: its own fence and damage, else the road's.
                     let at = point_of(&plan.line, &plan.at_point, fst.at((from + to) * 0.5).0);
-                    let own_fence = at.and_then(|i| road.point_fences.get(i).cloned().flatten());
+                    let own_fence = at.and_then(|i| road.point_fences.get(i).cloned().flatten()).or_else(|| road.fence_type.clone());
                     let chance = at.and_then(|i| road.point_damage.get(i).copied().flatten()).unwrap_or(road.fence_damage);
                     if own_fence.as_deref() == Some("none") {
                         continue;
@@ -1949,4 +1941,28 @@ mod tests {
         assert!((2.6..3.4).contains(&ratio), "3 to 1: {count:?}");
         assert!(weighted(&[&0.0f64, &0.0], |w| *w, 1).is_some(), "all nothing: the first");
     }
+}
+
+/// A choice list for a property row (value and label alike), leaked once per list seen: the rows hold it.
+fn leaked_choices(names: Vec<String>) -> &'static [(&'static str, &'static str)] {
+    use std::sync::{Mutex, OnceLock};
+    type List = &'static [(&'static str, &'static str)];
+    static MADE: OnceLock<Mutex<Vec<(Vec<String>, List)>>> = OnceLock::new();
+    let mut made = MADE.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, list)) = made.iter().find(|(n, _)| *n == names) {
+        return list;
+    }
+
+    let list: List = Box::leak(
+        names
+            .iter()
+            .map(|n| {
+                let n: &'static str = Box::leak(n.clone().into_boxed_str());
+                (n, n)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    made.push((names, list));
+    list
 }

@@ -578,6 +578,12 @@ impl TileDocument {
 
         let gesture = base ^ (attr_hash(prop.attr) << 4) ^ 0x7;
         let prop = &self.tile().game_choices(prop);
+        // A road's fence type: `fence` or its road type's named fences.
+        let prop = &if prop.attr == "road_fence_type" && self.tile().road_prefabs.is_some() {
+            Prop { kind: Kind::Enum(self.tile().road_fence_types(e)), ..*prop }
+        } else {
+            *prop
+        };
         let mut new = edit_value(prop, &cur, text.is_some(), i64::from(self.tile().destruction_levels(&key)), ins);
         if prop.kind == Kind::Text {
             // Typed text is applied when the typing ends (a key edit loads a model).

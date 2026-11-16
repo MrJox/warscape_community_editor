@@ -92,6 +92,56 @@ pub fn all_written(prefab_root: &Path) -> bool {
 /// The kit's fence the dirt road's fence piece is (`lowfence_3`, about 5 m long along its x: the kit's road prefabs space them so).
 pub const FENCE_KEY: &str = "lowfence_3";
 
+/// A named fence of the dirt types (`road_<type>_fence_<name>`, a point's or the road's fence type): a kit fence of about the fence
+/// piece's 5 m, one to a piece (user 2026-11-16: other kinds of fences).
+#[derive(Clone, Copy, Debug)]
+pub struct NamedFence {
+    /// Its piece's name (`fence_<name>`; no number at its end: that would read as a variant).
+    pub piece: &'static str,
+    /// The kit's building.
+    pub key: &'static str,
+    /// Whether its model runs along its z, about its pivot (the cultures' fences); else along its x from its pivot (`lowfence_*`).
+    pub along_z: bool,
+    /// Its post, put at the piece's back port (so one between every two fences).
+    pub post: Option<&'static str>,
+}
+
+/// The named fences: the kit's fences 5 m long (measured: `tile_model_bounds`, 9.96 to 10.25 file units). Its 2 m villa and civic walls
+/// would leave gaps or overlap in a 5 m piece; its court walls are buildings' sides.
+pub const NAMED_FENCES: [NamedFence; 13] = [
+    NamedFence { piece: "fence_lowfence1", key: "lowfence_1", along_z: false, post: None },
+    NamedFence { piece: "fence_lowfence2", key: "lowfence_2", along_z: false, post: None },
+    NamedFence { piece: "fence_lowfence4", key: "lowfence_4", along_z: false, post: Some("lowfence_4_pillar") },
+    NamedFence { piece: "fence_highfence", key: "highfence_1", along_z: false, post: None },
+    NamedFence { piece: "fence_woven", key: "barbarian_woven_fence_10m", along_z: false, post: None },
+    NamedFence { piece: "fence_roman", key: "roman_lowfence", along_z: true, post: Some("roman_lowfence_pillar") },
+    NamedFence { piece: "fence_greek", key: "greek_lowfence", along_z: true, post: Some("greek_lowfence_pillar") },
+    NamedFence { piece: "fence_egyptian", key: "egyptian_lowfence", along_z: true, post: Some("egyptian_lowfence_pillar") },
+    NamedFence { piece: "fence_egyptian_high", key: "egyptian_highfence", along_z: true, post: Some("egyptian_highfence_pillar") },
+    NamedFence { piece: "fence_persian", key: "persian_lowfence", along_z: true, post: Some("persian_lowfence_pillar") },
+    NamedFence { piece: "fence_persian_high", key: "persian_highfence", along_z: true, post: Some("persian_highfence_pillar") },
+    NamedFence { piece: "fence_sassanid", key: "sassanid_lowfence", along_z: true, post: Some("sassanid_lowfence_pillar") },
+    NamedFence { piece: "fence_sassanid_high", key: "sassanid_highfence", along_z: true, post: Some("sassanid_highfence_pillar") },
+];
+
+/// A fence building of a fence piece: at `z` (metres along the piece), turned by `yaw`, where the piece puts it.
+fn fence_building(key: &str, z: f64, yaw: f64) -> Vec<u8> {
+    format!(
+        "<BUILDING_INSTANCE flags=\" OIF_VISIBLE|OIF_ACTIVE\" key=\"{key}\" name=\"{key}\" surface_mode=\"MSM_LANDSCAPE\" position=\"vector(0,0,{})\" orientation=\"euler({},0,0)\" {ANCHOR_ATTR}=\"fixed\"/>\n",
+        crate::ted_scene::format_number(z * UNIT),
+        crate::ted_scene::format_number(yaw)
+    )
+    .into_bytes()
+}
+
+/// A named fence's parts: its fence across the piece and its post at the back port.
+fn named_fence_parts(f: &NamedFence) -> Vec<Vec<u8>> {
+    let back = -road_pieces::FENCE * 0.5;
+    let mut out = vec![if f.along_z { fence_building(f.key, 0.0, 0.0) } else { fence_building(f.key, back, -std::f64::consts::FRAC_PI_2) }];
+    out.extend(f.post.map(|p| fence_building(p, back, 0.0)));
+    out
+}
+
 /// How tall a decal's box is (metres): enough for a road's banks.
 const DEPTH: f64 = 15.0;
 
@@ -400,11 +450,7 @@ pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
         "fence" => {
             // One fence along the road, its x along it (as the kit's prefabs have them), where the fence line is. Its model runs from its
             // pivot along its x (0 to 5.25 m): the pivot at the piece's back port, so that it spans the piece.
-            out.push(format!(
-                "<BUILDING_INSTANCE flags=\" OIF_VISIBLE|OIF_ACTIVE\" key=\"{FENCE_KEY}\" name=\"{FENCE_KEY}\" surface_mode=\"MSM_LANDSCAPE\" position=\"vector(0,0,{})\" orientation=\"euler({},0,0)\" {ANCHOR_ATTR}=\"fixed\"/>\n",
-                crate::ted_scene::format_number(-road_pieces::FENCE * 0.5 * UNIT),
-                crate::ted_scene::format_number(-std::f64::consts::FRAC_PI_2)
-            ).into_bytes());
+            out.push(fence_building(FENCE_KEY, -road_pieces::FENCE * 0.5, -std::f64::consts::FRAC_PI_2));
         }
 
         "t_junction" => {
@@ -498,6 +544,11 @@ pub fn pieces_of(st: &Style) -> Vec<(&'static str, Vec<Vec<u8>>)> {
             children.retain(|c| !c.is_empty());
             (p, children)
         })
+        .chain(NAMED_FENCES.iter().map(|f| {
+            let mut children = guides_of_width("fence", st.width);
+            children.extend(named_fence_parts(f));
+            (f.piece, children)
+        }))
         .collect()
 }
 
@@ -522,6 +573,18 @@ mod tests {
     use crate::road_pieces::base_guides;
 
     #[test]
+    fn the_named_fences_are_fence_pieces_no_variants() {
+        for f in &NAMED_FENCES {
+            assert!(crate::road_pieces::varies(f.piece).is_none() && f.piece.starts_with("fence_"), "{}", f.piece);
+            let mut children = base_guides("fence");
+            children.extend(named_fence_parts(f));
+            let p = read(&group_text(&key(TYPE, f.piece), &children)).unwrap();
+            assert!((p.width - crate::road_pieces::FENCE_WIDTH).abs() < 1e-9 && p.arms.len() == 1, "{}", f.piece);
+            assert_eq!(p.parts.len(), 1 + usize::from(f.post.is_some()), "{}", f.piece);
+        }
+    }
+
+    #[test]
     fn the_track_is_one_lane_and_half_as_wide() {
         // Its straight: one rut down the middle, its edges at 1.5 m; read back as a piece 3 m wide.
         let ruts = parts_of(&TRACK, "straight").iter().filter(|p| String::from_utf8_lossy(p).contains("name=\"path_1\"")).count();
@@ -531,7 +594,7 @@ mod tests {
         for (piece, children) in pieces_of(&TRACK) {
             let text = crate::road_pieces::group_text(&format!("road_dirt_track_{piece}"), &children);
             let p = crate::road_pieces::read(&text).unwrap();
-            let want = if piece == "fence" { crate::road_pieces::FENCE_WIDTH } else { 3.0 };
+            let want = if piece.starts_with("fence") { crate::road_pieces::FENCE_WIDTH } else { 3.0 };
             assert!((p.width - want).abs() < 1e-6, "{piece}: {}", p.width);
         }
     }
@@ -540,7 +603,7 @@ mod tests {
     #[test]
     fn the_role_groups_change_no_parts_anchor_or_place() {
         for (piece, children) in pieces() {
-            if piece == "fence" {
+            if piece.starts_with("fence") {
                 continue;
             }
 
@@ -677,7 +740,7 @@ mod tests {
     #[test]
     fn written_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(write(dir.path()).unwrap().len(), (PIECES.len() + VARIANTS.len()) * STYLES.len());
+        assert_eq!(write(dir.path()).unwrap().len(), (PIECES.len() + VARIANTS.len() + NAMED_FENCES.len()) * STYLES.len());
         assert!(write(dir.path()).unwrap().is_empty());
         let lib = crate::prefabs::PrefabLibrary::scan_folders(&[dir.path().to_path_buf()]);
         let curve = lib.load("road_dirt_curve").unwrap();
