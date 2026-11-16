@@ -968,6 +968,11 @@ impl Tile {
                 world.m[0][3] += (x / unit) as f32;
                 world.m[1][3] += (y / unit) as f32;
                 world.m[2][3] += (z / unit) as f32;
+                // A road's decal refitted to the ground as the game does (its tall box: the ground and what is low on it).
+                if matches!(payload, wce_scene::render_scene::Payload::Decal(_)) {
+                    world = self.refit_decal(world);
+                }
+
                 ids.push(scene.add(self.layer, world, payload, source));
             }
         }

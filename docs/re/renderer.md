@@ -587,8 +587,11 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
     A decal whose own box is under 0.75 (scene units, the game's) is never refitted and paints what its box holds, at any height.
   - The rendering: fn 0x117f5b00 (the queue of a decal mesh) copies the decal's world matrix into its instance (fn 0x117c8400, 0x17
     floats: the three rows, the size and parallax from the decal, ...), so the refitted matrix is what the box is drawn with.
-  - The editor does not refit yet (it draws the file's boxes, and only the ground and TerrainBlend meshes take decals). Doing what the game
-    does: the refit when a decal is placed, then every model marked for decals (`DECAL_RECEIVER`) as the game marks them with decals on.
+  - The editor does the same (2026-11-16): a decal's box is refitted when its entity is made or refreshed (`wce_tile::decal_refit`,
+    `Tile::refit_decal`: the tile's decals and the roads' generated ones), and the G-buffer pass marks every model but trees and ropes
+    for decals (`DECAL_RECEIVER`). On wce_decal_test the ruts paint the ground and not the bridge's planks, the house's roof is clean, as
+    in game; on wce_bridge_test a generated bridge's deck takes its road's decals (V7's 0.7 boxes, kept). Not done: the type 0x100
+    objects of the measure, and the map-bounds check (every decal is refitted).
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
