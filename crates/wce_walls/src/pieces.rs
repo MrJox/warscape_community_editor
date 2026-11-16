@@ -481,10 +481,10 @@ impl<'a> PieceWarp<'a> {
         s
     }
 
-    /// The level of a point near a corner's face: towards the corner's own level as it nears the face, over `FACE_BLEND` (as `s_at` moves
-    /// it onto the bisector), so that both arms meet at one height along it. On a slope the face's points are at another distance along
-    /// each arm (inside the corner before it on one, after it on the other): at their own levels the inner sides stood apart in height
-    /// (user 2026-11-08).
+    /// The level of a point near a corner's face: towards the level both arms share at that point of the face ([`Self::face_level`]) as it
+    /// nears the face, over `FACE_BLEND` (as `s_at` moves it onto the bisector), so that both arms meet at one height along it. On a slope
+    /// the face's points are at another distance along each arm (inside the corner before it on one, after it on the other): at their own
+    /// levels the inner sides stood apart in height (user 2026-11-08).
     fn level_at_faces(&self, level: f64, s: f64, z: f64) -> f64 {
         // `s`: where the point is before the face's move (`s_of`), as `s_at` measures it.
         let mut level = level;
@@ -501,10 +501,31 @@ impl<'a> PieceWarp<'a> {
             }
 
             let w = if gap <= 0.0 { 1.0 } else { 1.0 - gap / FACE_BLEND };
-            level += (wall_level(self.plan, corner) - level) * w;
+            level += (self.face_level(corner, lin) - level) * w * self.face_reach(corner, lin);
         }
 
         level
+    }
+
+    /// The level both arms of the corner at `corner` meet at where the face crosses the wall at `lin` (a distance along this arm): the mean
+    /// of the arms' levels as far from the corner as that point is (the face is the bisector: a point of it is as far along each arm). At
+    /// the corner itself, the corner's level. Not the corner's level everywhere: on a sharp corner the face runs far back from it on the
+    /// inner side (a 33 degree one of a 15 m wall: 16 to 34 m), where the wall stood steps lower or higher, and pulling those points to
+    /// the corner's level stretched the arms into spikes (user 2026-11-16).
+    /// How much the arms are made to meet in height at the face point at `lin`: fully while it is no farther from the corner than the
+    /// wall is deep (all of a right angle's face, or a wider corner's), fading out over `FACE_BLEND` past that. Only a sharp corner's
+    /// face reaches farther, on its inner side, where each arm keeps its own level (a seam with a step, as the pieces' own levels have;
+    /// pulled together, the stairs and parapets there stretched into blades, user 2026-11-16).
+    fn face_reach(&self, corner: f64, lin: f64) -> f64 {
+        let depth = self.profile.depth.0.abs().max(self.profile.depth.1.abs());
+        let past = (lin - corner).abs() - depth;
+        if past <= 0.0 { 1.0 } else { (1.0 - past / FACE_BLEND).max(0.0) }
+    }
+
+    fn face_level(&self, corner: f64, lin: f64) -> f64 {
+        let d = (lin - corner).abs();
+        let at = |s: f64| wall_level(self.plan, s.clamp(0.0, self.plan.length));
+        (at(corner - d) + at(corner + d)) * 0.5
     }
 
     /// A corner face at the section's start (0) or end (1): the corner and the bisector's normal, the same from both pieces of the
@@ -1524,6 +1545,41 @@ mod tests {
         let past = [19.0, 8.0, 6.0];
         assert!(!crate::warp::inside(&a.clip_planes(), past), "{:?}", a.clip_planes());
         assert!(crate::warp::inside(&a.clip_planes(), [10.0, 8.0, 6.0]));
+    }
+
+    #[test]
+    fn a_sharp_corner_matches_heights_only_as_far_as_the_wall_is_deep() {
+        // An acute corner (internal 30 degrees): its face runs far back on the inner side. A point on the face near the corner is taken
+        // to the level both arms share there; one much farther back than the wall is deep keeps its own (user 2026-11-16: pulled to the
+        // corner's level, the stairs and parapets there stretched into blades).
+        let ground = |_: f64, _: f64| 0.0;
+        let p = profile("barbarian_fort_straight").unwrap();
+        let input = WallInput {
+            points: vec![[0.0, 0.0], [60.0, 0.0], [8.0, 30.0]],
+            sharp: vec![false, true, false],
+            tolerance: 0.5,
+            ..Default::default()
+        };
+        let plan = solve(&input, p, &ground);
+        let ps = pieces(&plan, p);
+        let corner = plan.corners[0].0;
+        let k = ps.iter().position(|q| (q.s.1 - corner).abs() < 1e-6).expect("the piece ending at the corner");
+        let w = PieceWarp::new(&plan, p, ps[k], &ground);
+        let shear = w.shears().1;
+        let depth = p.depth.0.abs().max(p.depth.1.abs());
+        let own = 99.0;
+        let on_face = |d: f64| {
+            // The inner side: the face is `d` before the corner there.
+            let z = -d / shear;
+            let lin = corner + shear * z;
+            assert!((corner - lin - d).abs() < 1e-9);
+            w.level_at_faces(own, lin, z)
+        };
+
+        let shared = w.face_level(corner, corner - 1.0);
+        assert!((on_face(1.0) - shared).abs() < 1e-9, "near the corner: the arms' shared level");
+        assert!((on_face(depth + FACE_BLEND + 1.0) - own).abs() < 1e-9, "far back on a sharp corner: its own level");
+        assert!(w.face_reach(corner, corner - depth) == 1.0 && w.face_reach(corner, corner + depth) == 1.0, "all of the wall's depth");
     }
 
     #[test]
