@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use wce_formats::cas2::Cas2File;
-use wce_scene::render_scene::{CUSTOM_TERRAIN_Y, CustomTerrainLod, CustomTerrainMesh, CustomTerrainVertex};
+use wce_scene::render_scene::{CUSTOM_FLAT_FRAME, CUSTOM_TERRAIN_Y, CustomTerrainLod, CustomTerrainMesh, CustomTerrainVertex};
 use wce_vfs::files::Files;
 
 /// The packs' model's level distances (BOB writes these for every cliff tile read; the CS2 has none).
@@ -50,6 +50,7 @@ pub fn from_cs2(cs2: &Cas2File, albedo: String, id: u64, depth: f32) -> Result<C
                 let v = CustomTerrainVertex {
                     position: p,
                     normal: [unorm(n[2]), unorm(n[1]), unorm(n[0]), (weight.clamp(0.0, 1.0) * 255.0).round() as u8],
+                    frame: CUSTOM_FLAT_FRAME,
                     uv,
                 };
                 // Shared by the vertices whose drawn bytes are the same. BOB keeps a few more apart (3501 against 3482 in the LOD 0 of
@@ -95,6 +96,14 @@ fn half(bits: u16) -> f32 {
     }
 }
 
+/// The bytes a vector rpfm read with `read_vector_4_f32_normal_from_vector_4_u8` came from: each `b / 255 * 2 - 1`, x, y and z then
+/// times w when w > 0 (w itself as read). Exact: the bytes are what the game's vertex holds.
+fn byte4([x, y, z, w]: [f32; 4]) -> [u8; 4] {
+    let to_byte = |f: f32| (((f + 1.0) / 2.0 * 255.0).round().clamp(0.0, 255.0)) as u8;
+    let un = |f: f32| if w > 0.0 { f / w } else { f };
+    [to_byte(un(x)), to_byte(un(y)), to_byte(un(z)), to_byte(w)]
+}
+
 /// The mesh of the packs' model (BOB's `custom_mesh.rigid_model_v2`, docs/re/battle_maps.md, "Custom-mesh tiles"), the form a tile no
 /// kit has comes in: its levels and their distances, each vertex's position and N0 bytes (rpfm's `uk_1`) as they are, its uv from the
 /// half2 rpfm reads as the bits of an f32 (the next f32 is the 4 zero bytes), the triangles as the model winds them (from_cs2 winds the
@@ -121,7 +130,12 @@ pub fn from_model(bytes: &[u8], albedo: String, id: u64, depth: f32) -> Result<C
                     (lo[a], hi[a]) = (lo[a].min(q), hi[a].max(q));
                 }
 
-                vertices.push(CustomTerrainVertex { position, normal: [n.x, n.y, n.z, n.w], uv: [half(t as u16), half((t >> 16) as u16)] });
+                // N1 and N2: rpfm's `normal` and `tangent` of this layout, read as normals from their bytes and scaled by their w.
+                let (a, b) = (v.normal(), v.tangent());
+                let (a, b) = (byte4([a.x, a.y, a.z, a.w]), byte4([b.x, b.y, b.z, b.w]));
+                let frame = [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]];
+                let uv = [half(t as u16), half((t >> 16) as u16)];
+                vertices.push(CustomTerrainVertex { position, normal: [n.x, n.y, n.z, n.w], frame, uv });
             }
 
             indices.extend(mesh.indices().iter().map(|&i| base + u32::from(i)));

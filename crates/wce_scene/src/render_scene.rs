@@ -448,8 +448,15 @@ pub struct CustomTerrainLod {
 pub struct CustomTerrainVertex {
     pub position: [f32; 3],
     pub normal: [u8; 4],
+
+    /// The bytes of `N1` and `N2`, BOB's tangent frame (the directions of the normal map's x and y on the mesh): Rome 2's
+    /// `ps30_custom_geom_mat` turns its normal map by them. [`CUSTOM_FLAT_FRAME`] where the source has none (the kit's CS2).
+    pub frame: [u8; 8],
     pub uv: [f32; 2],
 }
+
+/// `N1` and `N2` of a vertex without a tangent frame: a flat unit vector (+z) with weight 0 each.
+pub const CUSTOM_FLAT_FRAME: [u8; 8] = [255, 127, 127, 0, 255, 127, 127, 0];
 
 impl Default for Terrain {
     fn default() -> Self {
