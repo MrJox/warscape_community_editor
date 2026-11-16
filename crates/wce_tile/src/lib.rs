@@ -30,6 +30,7 @@ pub mod property_enums;
 pub mod resize;
 pub mod river_files;
 pub mod road_dirt;
+pub mod road_fences;
 pub mod road_layout;
 pub mod road_pieces;
 pub mod roads;

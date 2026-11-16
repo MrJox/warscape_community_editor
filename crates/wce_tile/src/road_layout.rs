@@ -652,15 +652,13 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
     // Without its guides (they are the piece's drawing, not the road) and the parts left out: found by their paths before any goes, then
     // taken out from the last, so that no removal moves another's element.
     let mut scene = TedScene::parse_any(text).map_err(|e| e.to_string())?;
+    // A fence piece's joiners too: they are laid on the joints between fences, not with each one.
     let mut gone = scene.find_all(ROAD_GUIDE);
-    if let Some(keep) = dress.keep {
-        let root = (0..scene.doc().elements().len()).find(|&e| scene.doc().elements()[e].parent.is_none()).unwrap_or(0);
-        for (index, part) in piece.parts.iter().enumerate() {
-            if !keep(index, part)
-                && let Some(e) = crate::prefab_refs::element_at(scene.doc(), root, &part.path)
-            {
-                gone.push(e);
-            }
+    let root = (0..scene.doc().elements().len()).find(|&e| scene.doc().elements()[e].parent.is_none()).unwrap_or(0);
+    for (index, part) in piece.parts.iter().enumerate() {
+        let left_out = part.role == Some(PartRole::Joiner) || dress.keep.is_some_and(|keep| !keep(index, part));
+        if left_out && let Some(e) = crate::prefab_refs::element_at(scene.doc(), root, &part.path) {
+            gone.push(e);
         }
     }
 

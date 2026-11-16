@@ -351,6 +351,8 @@ const ROAD: &[Prop] = &[
     p("road_bridge", Kind::Enum(en::ROAD_BRIDGE)),
     p("road_fences", Kind::Enum(en::ROAD_FENCES)),
     p("road_fence_type", Kind::Text),
+    p("road_fence_joiners", Kind::Text),
+    p("road_fence_joiner_ends", Kind::Bool),
     p("road_fence_damage", Kind::Slider(0.0, 1.0)),
     p("road_detail_density", Kind::Slider(0.0, 1.0)),
     p("road_irregularity", Kind::Slider(0.0, 1.0)),
