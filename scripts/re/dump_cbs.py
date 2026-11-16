@@ -13,6 +13,14 @@ Engine layout (empire.retail.dll 1.6.0, verified by disassembly 2026-10-06, see 
                           the 2026-10-06 dump: sun_colour 0x0db596c0, ambient_cube_lr 0x0db596d0)
 The script scans the manager for variable objects (name pointer into the DLL + owner pointer that
 names a cbuffer) and prints the floats in the variable's slot (16 for matrices/arrays, else 4).
+
+    python dump_cbs.py <thrones.dmp> <regex> --by-name
+
+--by-name needs no manager address (another game's DLL: Thrones of Britannia's, 32-bit too): it finds the
+variable names the regex matches among the DLL image's strings, then every dumped dword pointing at one; a
+variable object is one whose +0x0c owner names a cbuffer at +0x28, as above. The regex selects by the
+variable's name alone (it is matched before the cbuffer is known). Several objects may share a name (a
+cbuffer per shader stage or technique): each is printed with its address.
 """
 import os
 import re
@@ -29,7 +37,51 @@ MANAGER_FIELD = 0x71558
 SCAN_BYTES = 0x200000  # the shader manager is ~1.4 MB (skydome shader at +0xd31ec)
 
 
+def value_text(D, vp, name):
+    n = 16 if re.search(r"matrix|cube_|split|bounds|projection|world_view|view|sample_data", name) else 4
+    raw = (D.read(vp, 4 * n) if vp else None) or b""
+    return " ".join(f"{x:.6g}" for x in struct.unpack(f"<{n}f", raw)) if len(raw) == 4 * n else "-"
+
+
+def by_name(D, base, size, pat):
+    """Variables found from their name strings (see the module's docs): (key, object address, value text)."""
+    image = bytearray()
+    for p in range(0, size, 0x1000):
+        image += D.read(base + p, 0x1000) or bytes(0x1000)
+    names = {}
+    for m in re.finditer(rb"(?<=\0)([A-Za-z_][A-Za-z0-9_]{2,63})\0", bytes(image)):
+        name = m.group(1).decode()
+        if pat.search(name):
+            names[base + m.start(1)] = name
+    print(f"{len(names)} name strings match")
+    rows = []
+    for va, name in names.items():
+        needle = struct.pack("<I", va)
+        for start, rsize, offset in D.regions:
+            at = D.m.find(needle, offset, offset + rsize)
+            while at != -1:
+                obj = start + (at - offset) - 8
+                owner = D.u32(obj + 0x0C)
+                cb_p = D.u32(owner + 0x28) if owner else 0
+                cb = D.cstr(cb_p, 64) if base <= cb_p < base + size else None
+                if cb and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{2,63}", cb):
+                    rows.append((f"{cb}.{name}", obj, value_text(D, D.u32(obj + 0x14), name)))
+                at = D.m.find(needle, at + 4, offset + rsize)
+    return rows
+
+
 def main():
+    if "--by-name" in sys.argv:
+        args = [a for a in sys.argv[1:] if a != "--by-name"]
+        D = Dump(args[0])
+        base, size = D.module("empire.retail.dll") or sys.exit("empire.retail.dll not in the dump's module list")
+        print(f"empire.retail.dll at {base:#x}, {size:#x} bytes")
+        rows = by_name(D, base, size, re.compile(args[1]))
+        for key, addr, val in sorted(set(rows)):
+            print(f"{key:58} @{addr:#010x} {val}")
+        print(f"{len(rows)} variables")
+        return
+
     args = [a for a in sys.argv[1:] if not a.startswith("--array=")]
     # --array=N: print the first N float4 rows of every matching variable (non-zero rows only, with their index),
     # for the [512] per-emitter arrays of the cb_vfx_emitter_constants_* buffers.
