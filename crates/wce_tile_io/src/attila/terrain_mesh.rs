@@ -1000,33 +1000,60 @@ fn battle_settings(roots: &[std::path::PathBuf]) -> String {
 /// A building's height mesh and its [`stamp_matrix`].
 pub type Stamp = (std::sync::Arc<HeightMesh>, [f32; 16]);
 
+/// Whether a building's height-map mesh is stamped, by key (the packs' `battlefield_buildings.height_map_mesh`; `None`: no row).
+pub type HeightMeshFlags<'a> = &'a (dyn Fn(&str) -> Option<bool> + Sync);
+
 /// The height-mesh stamps of a project's buildings (BOB_Tile `FUN_1000bb10`): each `BUILDING_INSTANCE` whose `battlefield_buildings`
-/// row has `height_map_mesh` 1, its [`HeightMesh`] from `models_building.cs2_file` in the first of `roots` (`raw_data` folders, the
-/// projects' then the kits') that has it, and its [`stamp_matrix`]. The keys without a mesh file come back apart (BOB fails the tile:
+/// row has `height_map_mesh` 1, with its [`HeightMesh`] and [`stamp_matrix`]. The keys without a mesh come back apart (BOB fails the tile:
 /// "Height map mesh file ... is missing").
-pub fn building_stamps(raw: &wce_tile_model::Tile, roots: &[std::path::PathBuf]) -> (Vec<Stamp>, Vec<String>) {
+///
+/// BOB reads both from the kit's tables; here they need not be there, so a mod's buildings work without their tables redistributed:
+/// - The flag: a `raw_data/db/battlefield_buildings.xml` row of `roots` (`raw_data` folders, the projects' then the kits'), the first
+///   that has the key, else `in_packs`.
+/// - The mesh: the `models_building.cs2_file` of such a row, else the CS2 named after the key (`<key>.cs2`, any case: all 41 keys of the
+///   Attila and Thrones kits are) anywhere under a root's `art` (the projects' is the art resources' working tree). The kits have copies
+///   in several folders (`bridge_stone_1` in `bridges` and `global/bridges`): the first in the roots' order, then the paths', that has a
+///   height-map mesh.
+pub fn building_stamps(
+    raw: &wce_tile_model::Tile,
+    roots: &[std::path::PathBuf],
+    in_packs: Option<HeightMeshFlags>,
+) -> (Vec<Stamp>, Vec<String>) {
+    use std::collections::HashMap;
+
     wce_foundation::wce_prof!("stage_b.building_stamps");
     let get = |r: &Vec<(String, String)>, k: &str| r.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).unwrap_or_default();
-    let with_mesh = kit_table(roots, "battlefield_buildings")
-        .iter()
-        .filter(|r| get(r, "height_map_mesh") == "1")
-        .map(|r| get(r, "key"))
-        .collect::<std::collections::HashSet<_>>();
-    let cs2 = kit_table(roots, "models_building")
-        .iter()
-        .map(|r| (get(r, "key"), get(r, "cs2_file")))
-        .collect::<std::collections::HashMap<_, _>>();
-    let mut meshes = std::collections::HashMap::new();
+    let mut in_kits = HashMap::new();
+    for r in &kit_table(roots, "battlefield_buildings") {
+        in_kits.entry(get(r, "key").to_lowercase()).or_insert_with(|| get(r, "height_map_mesh") == "1");
+    }
+
+    let mut cs2 = HashMap::new();
+    for r in &kit_table(roots, "models_building") {
+        cs2.entry(get(r, "key").to_lowercase()).or_insert_with(|| get(r, "cs2_file"));
+    }
+
+    let read = |path: &std::path::Path| {
+        let f = wce_formats::cas2::Cas2File::parse(&std::fs::read(path).ok()?).ok()?;
+        Some(HeightMesh::of(&f)).filter(|m| !m.faces.is_empty()).map(std::sync::Arc::new)
+    };
+    let mut art: Option<HashMap<String, Vec<std::path::PathBuf>>> = None;
+    let mut meshes = HashMap::new();
     let (mut out, mut missing) = (vec![], vec![]);
     for (key, world) in super::compile::buildings(raw) {
-        if !with_mesh.contains(&key) {
+        let lower = key.to_lowercase();
+        let flagged = in_kits.get(&lower).copied().or_else(|| in_packs.and_then(|f| f(&lower))).unwrap_or(false);
+        if !flagged {
             continue;
         }
 
-        let mesh = meshes.entry(key.clone()).or_insert_with(|| {
-            let path = cs2.get(&key).and_then(|c| wce_tile::sources::first_file(roots, c))?;
-            let f = wce_formats::cas2::Cas2File::parse(&std::fs::read(path).ok()?).ok()?;
-            Some(std::sync::Arc::new(HeightMesh::of(&f)))
+        let mesh = meshes.entry(lower.clone()).or_insert_with(|| {
+            let listed = cs2.get(&lower).filter(|c| !c.is_empty()).and_then(|c| wce_tile::sources::first_file(roots, c));
+            if let Some(path) = listed {
+                return read(&path);
+            }
+
+            art.get_or_insert_with(|| art_cs2_files(roots)).get(&lower)?.iter().find_map(|p| read(p))
         });
         match mesh {
             Some(m) => out.push((m.clone(), stamp_matrix(&world))),
@@ -1036,6 +1063,36 @@ pub fn building_stamps(raw: &wce_tile_model::Tile, roots: &[std::path::PathBuf])
     }
 
     (out, missing)
+}
+
+/// The CS2 files under the roots' `art` folders by name (lower case, without the extension): each name's in the roots' order, then the
+/// paths' (sorted: the same pick every time).
+fn art_cs2_files(roots: &[std::path::PathBuf]) -> std::collections::HashMap<String, Vec<std::path::PathBuf>> {
+    wce_foundation::wce_prof!("stage_b.art_cs2_files");
+    let mut out: std::collections::HashMap<String, Vec<std::path::PathBuf>> = std::collections::HashMap::new();
+    for root in roots {
+        let mut found = vec![];
+        let mut dirs = vec![root.join("art")];
+        while let Some(dir) = dirs.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let path = e.path();
+                if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("cs2")) {
+                    found.push(path);
+                }
+            }
+        }
+
+        found.sort();
+        for path in found {
+            let Some(stem) = path.file_stem() else { continue };
+            out.entry(stem.to_string_lossy().to_lowercase()).or_default().push(path);
+        }
+    }
+
+    out
 }
 
 /// The decimation angle of the kit's battle tiles (`_tile_database/_settings.xml`, `CONVERSION_PARAMS`
@@ -1229,4 +1286,41 @@ pub fn terrain_files(
         super::terrain_outlines::terrain_outlines(&heights, w, h, &super::compile::go_outlines(raw), &links.mask, g.cells_of_tile(raw)),
     ));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_buildings_cs2_is_found_by_its_key_under_art() {
+        let scratch = std::env::temp_dir().join(format!("wce_art_cs2_{}", std::process::id()));
+        let (project, kit) = (scratch.join("project"), scratch.join("kit"));
+        for (root, rel) in [
+            (&kit, "art/global/bridges/Bridge_Stone_1.CS2"),
+            (&kit, "art/bridges/bridge_stone_1.cs2"),
+            (&kit, "art/global/grounds/global_ground_10x10.cs2"),
+            (&kit, "db/not_art.cs2"),
+            (&project, "art/rohan/hd_gate_entrance_hmm.cs2"),
+            (&project, "art/rohan/global_ground_10x10.cs2"),
+        ] {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"").unwrap();
+        }
+
+        let found = art_cs2_files(&[project.clone(), kit.clone()]);
+        let _ = std::fs::remove_dir_all(&scratch);
+        // Any case; the roots' order first, then the paths'; nothing outside art.
+        assert_eq!(
+            found["bridge_stone_1"],
+            [kit.join("art/bridges/bridge_stone_1.cs2"), kit.join("art/global/bridges/Bridge_Stone_1.CS2")]
+        );
+        assert_eq!(
+            found["global_ground_10x10"],
+            [project.join("art/rohan/global_ground_10x10.cs2"), kit.join("art/global/grounds/global_ground_10x10.cs2")]
+        );
+        assert_eq!(found["hd_gate_entrance_hmm"], [project.join("art/rohan/hd_gate_entrance_hmm.cs2")]);
+        assert!(!found.contains_key("not_art"));
+    }
 }

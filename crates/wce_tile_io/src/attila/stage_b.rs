@@ -11,12 +11,13 @@ use super::compile::CompileNotes;
 
 /// What stage B needs besides the project: the `raw_data` folders its kit-layout inputs come from, the first that has one winning (the
 /// projects', then the Assembly Kits' in the settings' order: the tile database's `_settings.xml` and entries, the linking tiles' final
-/// heights, the db tables and the buildings' raw height-map meshes) and a model's bytes by key (BOB's VFS: the game's packs, for the
-/// water planes).
+/// heights, the buildings' raw height-map meshes and any db tables there), a model's bytes by key (BOB's VFS: the game's packs, for the
+/// water planes) and the packs' `height_map_mesh` flags (for the buildings the roots' tables lack: `terrain_mesh::building_stamps`).
 #[derive(Clone, Copy)]
 pub struct StageB<'a> {
     pub roots: &'a [std::path::PathBuf],
     pub models: &'a (dyn Fn(&str) -> Option<Vec<u8>> + Sync),
+    pub height_meshes: Option<super::terrain_mesh::HeightMeshFlags<'a>>,
 }
 
 /// Files by name, as they go into the exported tile's folder.
@@ -234,10 +235,11 @@ pub fn made_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) ->
 /// [`made_files`]' terrain: the building stamps, the meshes, the height fields, the outlines.
 fn made_terrain(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> Result<(Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
-    let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.roots);
+    let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.roots, ctx.height_meshes);
     if !missing.is_empty() {
         notes.notes.push(format!(
-            "stage B: no height-map mesh for {} (BOB: \"Height map mesh file ... is missing\", no hf_height_map.data nor terrain_outlines.xml)",
+            "stage B: no height-map mesh for {} (no <key>.cs2 with one under the project's or the Assembly Kits' raw_data/art): the height \
+             map is the ground's under them (BOB: \"Height map mesh file ... is missing\", no hf_height_map.data nor terrain_outlines.xml)",
             missing.join(", ")
         ));
     }

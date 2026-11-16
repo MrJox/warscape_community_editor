@@ -4,11 +4,16 @@
 //! raw folder (the working one's path with `raw_data`).
 //!
 //!   cargo run --release -p wce_tile_io --example terrain_mesh_check -- <raw tile folder> <BOB's working tile folder> <kit raw_data>
+//!       [<raw_data for the stamps>]
+//!
+//! With a fourth folder the buildings' height-map meshes are looked up there instead (a `raw_data` with an `art` folder and no `db`: as
+//! without the kit's tables), their `height_map_mesh` flags from the game's packs (the kit's `../..`, `WCE_GAME` its profile).
 
 use std::path::PathBuf;
 
 use wce_formats::chmf::ChmfFile;
 use wce_tile_io::attila::TedProject;
+use wce_tile_io::attila::game_data::{GameData, default_schema_path};
 use wce_tile_io::attila::terrain_mesh::{building_stamps, decimation_angle, terrain_files};
 use wce_tile_io::{TileFiles, TileFormat};
 
@@ -18,7 +23,14 @@ fn main() {
     let roots = std::slice::from_ref(kit);
     let files = TileFiles::from_kit_dir(raw).expect("the raw tile");
     let (project, _) = TedProject.read(&files).expect("the project");
-    let (stamps, missing) = building_stamps(&project, roots);
+    let (stamps, missing) = match args.get(3) {
+        None => building_stamps(&project, roots, None),
+        Some(stamp_root) => {
+            let game = wce_foundation::game::GameProfile::from_env();
+            let data = GameData::load(game, &kit.join("../.."), default_schema_path(game).as_deref()).expect("the game's packs");
+            building_stamps(&project, std::slice::from_ref(stamp_root), Some(data.height_meshes()))
+        }
+    };
     println!(
         "{} building stamps{}",
         stamps.len(),
@@ -30,15 +42,16 @@ fn main() {
     let out = terrain_files(&project, roots, decimation_angle(roots), &stamps, &models, Default::default()).expect("stage B");
     println!("built in {:?}", t0.elapsed());
     for (name, ours) in out {
+        if let Ok(dir) = std::env::var("WCE_DUMP") {
+            std::fs::write(PathBuf::from(dir).join(&name), &ours).expect("dump");
+        }
+
         // BOB writes the final heights and alpha into the raw folder: look there too.
         let raw_oracle = PathBuf::from(work.to_string_lossy().replace("working_data", "raw_data")).join(&name);
         let Ok(theirs) = std::fs::read(work.join(&name)).or_else(|_| std::fs::read(raw_oracle)) else {
             println!("{name}: BOB wrote none");
             continue;
         };
-        if let Ok(dir) = std::env::var("WCE_DUMP") {
-            std::fs::write(PathBuf::from(dir).join(&name), &ours).expect("dump");
-        }
         if name.ends_with(".data") {
             let (o, t) = (ChmfFile::parse(&ours).expect("ours"), ChmfFile::parse(&theirs).expect("BOB's"));
             let ((_, _, os), (_, _, ts)) = (o.region_samples(0).expect("ours"), t.region_samples(0).expect("BOB's"));
