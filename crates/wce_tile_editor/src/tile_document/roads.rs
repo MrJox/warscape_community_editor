@@ -40,7 +40,7 @@ struct Road {
     /// Its road type: the folder of `roads_proc` its pieces come from (`none`: no pieces).
     road_type: String,
 
-    /// The base its bridges are made from (`wce_walls::bridge::BASES`).
+    /// The base its bridges are made from (`wce_walls::bridge::bases`, `bridges.toml`).
     bridge: String,
 
     /// Its fences: on its left, on its right (as it runs); and how many of them are destroyed (0 to 1: the chance each one is).
@@ -437,7 +437,7 @@ impl Tile {
                 let bridge = doc
                     .get(e, "road_bridge")
                     .filter(|b| wce_walls::bridge::base(b).is_some())
-                    .unwrap_or_else(|| wce_walls::bridge::BASES[0].name.to_owned());
+                    .unwrap_or_else(|| wce_walls::bridge::bases()[0].name.to_owned());
                 let fences = match doc.get(e, "road_fences").as_deref() {
                     Some("left") => [true, false],
                     Some("right") => [false, true],
@@ -2022,6 +2022,30 @@ fn road_layer<K: Kind>(s: &mut Stack<K>, road: u32, variation: Option<&str>, own
     id
 }
 
+/// A choice list for a property row (value and label alike), leaked once per list seen: the rows hold it.
+fn leaked_choices(names: Vec<String>) -> &'static [(&'static str, &'static str)] {
+    use std::sync::{Mutex, OnceLock};
+    type List = &'static [(&'static str, &'static str)];
+    static MADE: OnceLock<Mutex<Vec<(Vec<String>, List)>>> = OnceLock::new();
+    let mut made = MADE.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, list)) = made.iter().find(|(n, _)| *n == names) {
+        return list;
+    }
+
+    let list: List = Box::leak(
+        names
+            .iter()
+            .map(|n| {
+                let n: &'static str = Box::leak(n.clone().into_boxed_str());
+                (n, n)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    made.push((names, list));
+    list
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2065,28 +2089,4 @@ mod tests {
         assert!((2.6..3.4).contains(&ratio), "3 to 1: {count:?}");
         assert!(weighted(&[&0.0f64, &0.0], |w| *w, 1).is_some(), "all nothing: the first");
     }
-}
-
-/// A choice list for a property row (value and label alike), leaked once per list seen: the rows hold it.
-fn leaked_choices(names: Vec<String>) -> &'static [(&'static str, &'static str)] {
-    use std::sync::{Mutex, OnceLock};
-    type List = &'static [(&'static str, &'static str)];
-    static MADE: OnceLock<Mutex<Vec<(Vec<String>, List)>>> = OnceLock::new();
-    let mut made = MADE.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((_, list)) = made.iter().find(|(n, _)| *n == names) {
-        return list;
-    }
-
-    let list: List = Box::leak(
-        names
-            .iter()
-            .map(|n| {
-                let n: &'static str = Box::leak(n.clone().into_boxed_str());
-                (n, n)
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
-    made.push((names, list));
-    list
 }

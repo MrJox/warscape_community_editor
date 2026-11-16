@@ -1,7 +1,7 @@
 //! Walls of the kit's own pieces (docs/plans/kit_walls.md), phase 1: a culture's fort pieces read from their logic files and measured,
 //! what a wall with *Procedural* off is laid with.
 //!
-//! A culture is a procedural wall base (`wall_base`, `profile::BASES`): its pieces are the fort keys that start with the base's prefix
+//! A culture is a procedural wall base (`wall_base`, `profile::bases()`, `walls.toml`): its pieces are the fort keys that start with the base's prefix
 //! (`roman_fort_straight` -> `roman_fort_`). Each piece's joints are its end caps' (`logic::ends`: the 15 m pieces, towers, corners,
 //! joiners), else the ends of its wall-walk ([`walkway_ends`]: the 8 m pieces and the curves have no caps). Measured from the first
 //! joint to the second: the span between them, the turn (degrees, positive from +x towards +z, as the wall goes in by the first and out by
@@ -111,11 +111,11 @@ pub fn prefix_of(base: &str) -> String {
 }
 
 /// The keys of a culture: those of `keys` (every building with a logic file) that start with its prefix, sorted; not those of another
-/// base whose prefix is longer and starts with it (`eastern_fort_` is not `eastern_fort_small_wall_`, the 8 m culture: `profile::BASES`).
+/// base whose prefix is longer and starts with it (`eastern_fort_` is not `eastern_fort_small_wall_`, the 8 m culture: `profile::bases()`, `walls.toml`).
 #[must_use]
 pub fn culture_keys<'a>(base: &str, keys: impl Iterator<Item = &'a str>) -> Vec<String> {
     let prefix = prefix_of(base);
-    let others = crate::profile::BASES
+    let others = crate::profile::bases()
         .iter()
         .map(|b| prefix_of(b.key))
         .filter(|o| o.len() > prefix.len() && o.starts_with(&prefix))

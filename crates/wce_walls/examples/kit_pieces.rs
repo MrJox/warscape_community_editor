@@ -1,4 +1,4 @@
-//! The kit pieces of each wall culture (`wce_walls::kit`, docs/plans/kit_walls.md phase 1): per base of `profile::BASES` (or the bases
+//! The kit pieces of each wall culture (`wce_walls::kit`, docs/plans/kit_walls.md phase 1): per base of `profile::bases()` (`walls.toml`) (or the bases
 //! given), its pieces by role with their span, turn and rise, and the keys of its prefix that are left out, with why.
 //!
 //!   cargo run --release -p wce_walls --example kit_pieces -- <game folder> [base ...]
@@ -35,7 +35,7 @@ fn main() {
         .into_iter()
         .filter_map(|p| p.rsplit('/').next()?.strip_suffix("_tech.cs2.parsed").map(str::to_owned))
         .collect::<Vec<_>>();
-    let bases = if args.len() > 1 { args[1..].to_vec() } else { wce_walls::profile::BASES.iter().map(|b| b.key.to_owned()).collect() };
+    let bases = if args.len() > 1 { args[1..].to_vec() } else { wce_walls::profile::bases().iter().map(|b| b.key.to_owned()).collect() };
     let read = |k: &str| vfs.read(&format!("{}{k}_tech.cs2.parsed", wce_walls::building::folder(k))).ok();
     if let Ok(detail) = std::env::var("KIT_DETAIL") {
         for key in detail.split(',') {

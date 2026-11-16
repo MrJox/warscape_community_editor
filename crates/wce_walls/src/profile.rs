@@ -2,21 +2,14 @@
 //! walkway, outer face and how it changes height. In the piece's frame (scene units, which are the models' units): x along the wall, -z
 //! the outer side, y = 0 the ground the piece stands on.
 
-/// The two families of the first iteration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Family {
-    /// Earth bank and palisade; units walk up the bank behind. Steps: the culture's `_step_up_a` / `_step_down_a`.
-    Eight,
-
-    /// Stone; units go up through the door sections. Steps: the ramp of the stepped bastion.
-    Fifteen,
-}
-
 /// A base wall.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Profile {
     pub key: &'static str,
-    pub family: Family,
+
+    /// Its family in `walls.toml` (the 8 m and 15 m walls: `eight`, `fifteen`), and its name in the editor's list.
+    pub family: &'static str,
+    pub label: &'static str,
 
     /// Where the frame starts and ends along x (the 8 m pieces run 0..20 from their origin, the 15 m ones -10..10).
     pub x: (f64, f64),
@@ -107,242 +100,175 @@ impl Profile {
     }
 }
 
-const EIGHT: Profile = Profile {
-    key: "",
-    family: Family::Eight,
-    x: (0.0, 20.0),
-    walkway: 8.0,
-    outer_face: -2.5,
-    depth: (-3.0, 12.0),
-    step_rise: 2.5,
-    step_run: 3.0,
-    step_gap: 2.0,
-    max_slope: 2.5 / 3.0,
-    min_run: 10.0,
-    whole_rise: 0.0,
-    cap_start: "",
-    cap_end: "",
-    cap_join: (0.0, 0.0),
-    foot: (-2.0, 0.0),
-    bury: 2.0,
-    step_up: "",
-    step_down: "",
-    slab_up: (2.0, 5.0),
-    slab_down: (2.0, 5.0),
-    slab_walk: (8.0, 13.0),
-    slab_zy: Some(((-3.5, 3.0), (-3.0, 16.0))),
-    step_replaces: true,
-    slab_band: None,
-    step_across: false,
-    door: "",
-    door_at: (0.0, 0.0),
-    defences: &[],
-};
+/// The wall bases' file in the settings folder (user 2026-11-16: buildings added without a rebuild): their families' numbers and each
+/// base's pieces (`walls.toml`, shipped as [`DEFAULT_TEXT`]).
+pub const FILE_NAME: &str = "walls.toml";
+pub const DEFAULT_TEXT: &str = include_str!("walls.toml");
 
-const FIFTEEN: Profile = Profile {
-    key: "",
-    family: Family::Fifteen,
-    x: (-10.0, 10.0),
-    walkway: 15.0,
-    outer_face: 0.0,
-    depth: (-6.0, 16.0),
-    step_rise: 10.0,
-    step_run: 12.0,
-    step_gap: 4.0,
-    max_slope: 0.4,
-    min_run: 20.0,
-    whole_rise: 10.0,
-    cap_start: "",
-    cap_end: "",
-    cap_join: (10.0, -10.0),
-    foot: (0.0, 2.0),
-    bury: 0.5,
-    step_up: "",
-    step_down: "",
-    slab_up: (-5.8, 6.2),
-    slab_down: (-6.2, 5.8),
-    slab_walk: (15.0, 25.0),
-    slab_zy: Some(((5.1, 8.9), (14.0, 26.5))),
-    step_replaces: false,
-    slab_band: Some(0.9),
-    step_across: true,
-    door: "",
-    door_at: (0.0, 13.0),
-    defences: &[],
-};
+/// The bases, from the file ([`load`]) or as shipped.
+pub static WALLS: wce_tile::user_files::Registry<Walls> = wce_tile::user_files::Registry::new(FILE_NAME, DEFAULT_TEXT, parse);
 
-/// The bases of the first iteration (the game's and TDD's straights of both families; their walkways and frames checked in the logic
-/// files, 2026-10-24), in the order the editor lists them.
-pub const BASES: [Profile; 15] = [
-    Profile {
-        key: "barbarian_fort_straight",
-        defences: &["barbarian_fort_curved_bastion"],
-        cap_start: "barbarian_fort_endcap_left",
-        cap_end: "barbarian_fort_endcap_right",
-        step_up: "barbarian_fort_step_up_a",
-        step_down: "barbarian_fort_step_down_a",
-        ..EIGHT
-    },
-    Profile {
-        key: "eastern_fort_small_wall_straight",
-        defences: &["eastern_fort_small_wall_curved_bastion"],
-        cap_start: "eastern_fort_small_wall_endcap_left",
-        cap_end: "eastern_fort_small_wall_endcap_right",
-        step_up: "eastern_fort_small_wall_step_up_a",
-        step_down: "eastern_fort_small_wall_step_down_a",
-        ..EIGHT
-    },
-    Profile {
-        key: "sassanid_fort_small_wall_straight",
-        defences: &["sassanid_fort_small_wall_curved_bastion"],
-        cap_start: "sassanid_fort_small_wall_endcap_left",
-        cap_end: "sassanid_fort_small_wall_endcap_right",
-        step_up: "sassanid_fort_small_wall_step_up_a",
-        step_down: "sassanid_fort_small_wall_step_down_a",
-        ..EIGHT
-    },
-    Profile {
-        key: "western_fort_small_wall_straight",
-        defences: &["western_fort_small_wall_curved_bastion"],
-        cap_start: "western_fort_small_wall_endcap_left",
-        cap_end: "western_fort_small_wall_endcap_right",
-        step_up: "western_fort_small_wall_step_up_a",
-        step_down: "western_fort_small_wall_step_down_a",
-        ..EIGHT
-    },
-    Profile {
-        key: "khazad_fort_wall_small_straight",
-        defences: &["khazad_fort_wall_small_curved_bastion"],
-        cap_start: "khazad_fort_wall_small_endcap_left",
-        cap_end: "khazad_fort_wall_small_endcap_right",
-        step_up: "khazad_fort_wall_small_step_up",
-        step_down: "khazad_fort_wall_small_step_down",
-        ..EIGHT
-    },
-    Profile {
-        key: "mordor_fort_small_wall_straight",
-        defences: &["mordor_fort_small_wall_curved_bastion"],
-        cap_start: "mordor_fort_small_wall_endcap_left",
-        cap_end: "mordor_fort_small_wall_endcap_right",
-        step_up: "mordor_fort_small_wall_step_up_a",
-        step_down: "mordor_fort_small_wall_step_down_a",
-        ..EIGHT
-    },
-    Profile {
-        key: "roman_fort_straight",
-        defences: &["roman_fort_tower_c_straight_with_extension", "roman_fort_straight_with_solid_squared_bastion"],
-        cap_start: "roman_fort_tower_end_left",
-        cap_end: "roman_fort_tower_end_right",
-        door: "roman_fort_straight_with_doors_a",
-        step_up: "roman_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "roman_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "eastern_fort_straight",
-        defences: &["eastern_fort_tower_c_straight_with_extension", "eastern_fort_straight_with_solid_squared_bastion"],
-        cap_start: "eastern_fort_tower_end_left",
-        cap_end: "eastern_fort_tower_end_right",
-        door: "eastern_fort_straight_with_doors_a",
-        step_up: "eastern_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "eastern_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "sassanid_fort_straight",
-        defences: &["sassanid_fort_tower_c_straight_with_extension", "sassanid_fort_straight_with_solid_squared_bastion"],
-        cap_start: "sassanid_fort_tower_end_left",
-        cap_end: "sassanid_fort_tower_end_right",
-        door: "sassanid_fort_straight_with_doors_a",
-        step_up: "sassanid_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "sassanid_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "greek_fort_straight",
-        defences: &["greek_fort_tower_c_straight_with_extension", "greek_fort_straight_with_solid_squared_bastion"],
-        cap_start: "greek_fort_tower_end_left",
-        cap_end: "greek_fort_tower_end_right",
-        door: "greek_fort_straight_with_doors_a",
-        step_up: "greek_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "greek_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "egyptian_fort_straight",
-        defences: &["egyptian_fort_tower_c_straight_with_extension", "egyptian_fort_straight_with_solid_squared_bastion"],
-        cap_start: "egyptian_fort_tower_end_left",
-        cap_end: "egyptian_fort_tower_end_right",
-        door: "egyptian_fort_straight_with_doors_a",
-        step_up: "egyptian_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "egyptian_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "persian_fort_straight",
-        defences: &["persian_fort_tower_c_straight_with_extension", "persian_fort_straight_with_solid_squared_bastion"],
-        cap_start: "persian_fort_tower_end_left",
-        cap_end: "persian_fort_tower_end_right",
-        door: "persian_fort_straight_with_doors_a",
-        step_up: "persian_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "persian_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "easterling_fort_straight",
-        defences: &["easterling_fort_tower_c_straight_with_extension", "easterling_fort_straight_with_solid_squared_bastion"],
-        cap_start: "easterling_fort_tower_end_left",
-        cap_end: "easterling_fort_tower_end_right",
-        door: "easterling_fort_straight_with_doors_a",
-        step_up: "easterling_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "easterling_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "gondorean_fort_straight",
-        defences: &["gondorean_fort_tower_c_straight_with_extension", "gondorean_fort_straight_with_solid_squared_bastion"],
-        cap_start: "gondorean_fort_tower_end_left",
-        cap_end: "gondorean_fort_tower_end_right",
-        door: "gondorean_fort_straight_with_doors_a",
-        step_up: "gondorean_fort_straight_stepped_up_10m_square_bastion_a",
-        step_down: "gondorean_fort_straight_stepped_down_10m_square_bastion_a",
-        ..FIFTEEN
-    },
-    Profile {
-        key: "gondor_fort_straight",
-        defences: &["gondor_fort_tower_c_straight", "gondor_fort_bastion"],
-        cap_start: "gondor_fort_tower_end_left",
-        cap_end: "gondor_fort_tower_end_right",
-        door: "gondor_fort_straight_with_doors_a",
-        step_up: "gondor_fort_straight_stepped_up_bastion_a",
-        step_down: "gondor_fort_straight_stepped_down_bastion_a",
-        // TDD's gondor pieces are 21 long (their logic files' boxes, walkways and footprints: -10.5..10.5; user 2026-11-04: at 20 the
-        // pieces lay a metre over each other, platforms over platforms).
-        // Their step pieces' stair lies further out than the game's (treads z 3.99..7.49, its side beams 3.74..8.09, measured in their
-        // meshes; the game's and TDD's other step pieces 5.15..8.65 and 4.90..9.25): spread over the walkway from the game's z, its treads
-        // stuck a metre out of the parapet's outer face and stopped short of the walkway's inner side (user 2026-11-08).
-        x: (-10.5, 10.5),
-        cap_join: (10.5, -10.5),
-        slab_zy: Some(((3.74, 8.09), (14.0, 26.5))),
-        ..FIFTEEN
-    },
-];
+/// The wall bases and the editor's list of them (key, label), in the file's order.
+#[derive(Debug)]
+pub struct Walls {
+    pub bases: Vec<Profile>,
+    pub choices: Vec<(&'static str, &'static str)>,
+}
 
-/// The editor's list of bases (`wce_tile::property_enums::WALL_BASE`) that the game's files have whole (every piece's logic file: Rome 2
+/// What a family gives its bases, and a base may set again: every number of a [`Profile`].
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+struct Params {
+    x: Option<(f64, f64)>,
+    walkway: Option<f64>,
+    outer_face: Option<f64>,
+    depth: Option<(f64, f64)>,
+    step_rise: Option<f64>,
+    step_run: Option<f64>,
+    step_gap: Option<f64>,
+    max_slope: Option<f64>,
+    min_run: Option<f64>,
+    whole_rise: Option<f64>,
+    cap_join: Option<(f64, f64)>,
+    foot: Option<(f64, f64)>,
+    bury: Option<f64>,
+    slab_up: Option<(f64, f64)>,
+    slab_down: Option<(f64, f64)>,
+    slab_walk: Option<(f64, f64)>,
+    slab_zy: Option<((f64, f64), (f64, f64))>,
+    step_replaces: Option<bool>,
+    slab_band: Option<f64>,
+    step_across: Option<bool>,
+    door_at: Option<(f64, f64)>,
+}
+
+/// A base as the file has it.
+#[derive(Debug, serde::Deserialize)]
+struct BaseDef {
+    key: String,
+    #[serde(default)]
+    label: String,
+    family: String,
+    #[serde(default)]
+    defences: Vec<String>,
+    #[serde(default)]
+    cap_start: String,
+    #[serde(default)]
+    cap_end: String,
+    #[serde(default)]
+    step_up: String,
+    #[serde(default)]
+    step_down: String,
+    #[serde(default)]
+    door: String,
+    #[serde(flatten)]
+    params: Params,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WallsFile {
+    families: std::collections::HashMap<String, Params>,
+    bases: Vec<BaseDef>,
+}
+
+/// Reads a walls file.
+///
+/// # Errors
+///
+/// It is not TOML of this shape, it has no base, a base's family is not one of its families, a number is missing from both a base and
+/// its family, or a key is listed twice.
+pub fn parse(text: &str) -> Result<Walls, String> {
+    use wce_tile::user_files::keep;
+    let file: WallsFile = toml::from_str(text).map_err(|e| e.to_string())?;
+    if file.bases.is_empty() {
+        return Err("no [[bases]]".to_owned());
+    }
+
+    let mut bases = Vec::with_capacity(file.bases.len());
+    for b in &file.bases {
+        let Some(fam) = file.families.get(&b.family) else { return Err(format!("{}: no family '{}'", b.key, b.family)) };
+        if bases.iter().any(|p: &Profile| p.key.eq_ignore_ascii_case(&b.key)) {
+            return Err(format!("{}: twice", b.key));
+        }
+
+        let (p, f) = (&b.params, fam);
+        macro_rules! need {
+            ($field:ident) => {
+                p.$field.or(f.$field).ok_or_else(|| format!("{}: no {} (nor its family's)", b.key, stringify!($field)))?
+            };
+        }
+        bases.push(Profile {
+            key: keep(&b.key),
+            family: keep(&b.family),
+            label: keep(if b.label.is_empty() { &b.key } else { &b.label }),
+            x: need!(x),
+            walkway: need!(walkway),
+            outer_face: need!(outer_face),
+            depth: need!(depth),
+            step_rise: need!(step_rise),
+            step_run: need!(step_run),
+            step_gap: need!(step_gap),
+            max_slope: need!(max_slope),
+            min_run: need!(min_run),
+            whole_rise: need!(whole_rise),
+            cap_start: keep(&b.cap_start),
+            cap_end: keep(&b.cap_end),
+            cap_join: need!(cap_join),
+            foot: need!(foot),
+            bury: need!(bury),
+            step_up: keep(&b.step_up),
+            step_down: keep(&b.step_down),
+            slab_up: need!(slab_up),
+            slab_down: need!(slab_down),
+            slab_walk: need!(slab_walk),
+            slab_zy: p.slab_zy.or(f.slab_zy),
+            step_replaces: need!(step_replaces),
+            slab_band: p.slab_band.or(f.slab_band),
+            step_across: need!(step_across),
+            door: keep(&b.door),
+            door_at: need!(door_at),
+            defences: Box::leak(b.defences.iter().map(|d| keep(d)).collect::<Vec<_>>().into_boxed_slice()),
+        });
+    }
+
+    let choices = bases.iter().map(|p| (p.key, p.label)).collect();
+    Ok(Walls { bases, choices })
+}
+
+/// Reads the walls file in the settings folder (written as shipped where missing): the bases from then on.
+pub fn load(dir: &std::path::Path) {
+    WALLS.load(dir);
+}
+
+/// The bases, in the editor's order.
+#[must_use]
+pub fn bases() -> &'static [Profile] {
+    &WALLS.get().bases
+}
+
+/// The editor's list of bases (key, label): every base, whatever the game has.
+#[must_use]
+pub fn choices() -> &'static [(&'static str, &'static str)] {
+    &WALLS.get().choices
+}
+
+/// The editor's list of bases ([`choices`], `walls.toml`) that the game's files have whole (every piece's logic file: Rome 2
 /// has the barbarian, roman, greek, egyptian and persian forts; TDD's bases come with its packs), made once per game and mount (made again
 /// when mods are added or taken away: `Files::mount_id`); every base without the files' game.
 pub fn available_bases(files: &dyn wce_vfs::files::Files) -> &'static [(&'static str, &'static str)] {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     type List = &'static [(&'static str, &'static str)];
-    static MADE: OnceLock<Mutex<HashMap<String, (u64, List)>>> = OnceLock::new();
-    let all = wce_tile::property_enums::WALL_BASE;
+    static MADE: OnceLock<Mutex<HashMap<String, (u64, usize, List)>>> = OnceLock::new();
+    let all = choices();
     let Some(game) = files.game() else { return all };
     let made = MADE.get_or_init(Mutex::default);
     let mut made = made.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mount = files.mount_id();
-    if let Some(&(m, list)) = made.get(game.key)
+    // Made again for another mount, or another walls file.
+    let table = all.as_ptr() as usize;
+    if let Some(&(m, t, list)) = made.get(game.key)
         && m == mount
+        && t == table
     {
         return list;
     }
@@ -354,13 +280,13 @@ pub fn available_bases(files: &dyn wce_vfs::files::Files) -> &'static [(&'static
     let list: Vec<(&'static str, &'static str)> = all.iter().copied().filter(|(k, _)| profile(k).is_none_or(whole)).collect();
     let list: &'static [(&'static str, &'static str)] = Box::leak(list.into_boxed_slice());
     // The list a mount before had stays (leaked, a few bytes): the editor's property rows may still hold it.
-    made.insert(game.key.to_owned(), (mount, list));
+    made.insert(game.key.to_owned(), (mount, table, list));
     list
 }
 
 /// A base by its key.
 pub fn profile(key: &str) -> Option<&'static Profile> {
-    BASES.iter().find(|p| p.key.eq_ignore_ascii_case(key))
+    bases().iter().find(|p| p.key.eq_ignore_ascii_case(key))
 }
 
 #[cfg(test)]
@@ -368,10 +294,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_editors_list_is_the_bases() {
-        let keys = BASES.iter().map(|p| p.key).collect::<Vec<_>>();
-        let listed = wce_tile::property_enums::WALL_BASE.iter().map(|(k, _)| *k).collect::<Vec<_>>();
-        assert_eq!(keys, listed);
+    fn the_shipped_file_has_the_bases_and_their_families_numbers() {
+        let w = WALLS.shipped();
+        assert_eq!(w.bases.len(), 15);
+        assert_eq!(w.choices.len(), 15);
+        let b = w.bases.iter().find(|p| p.key == "barbarian_fort_straight").unwrap();
+        assert_eq!((b.family, b.label, b.x, b.walkway), ("eight", "8 m: barbarian", (0.0, 20.0), 8.0));
+        assert!((b.max_slope - 2.5 / 3.0).abs() < 1e-15 && b.slab_band.is_none() && b.step_replaces);
+        assert_eq!(b.defences, ["barbarian_fort_curved_bastion"]);
+        let r = w.bases.iter().find(|p| p.key == "roman_fort_straight").unwrap();
+        assert_eq!((r.walkway, r.slab_band, r.door), (15.0, Some(0.9), "roman_fort_straight_with_doors_a"));
+        // Gondor's own frame over its family's.
+        let g = w.bases.iter().find(|p| p.key == "gondor_fort_straight").unwrap();
+        assert_eq!((g.x, g.cap_join, g.walkway), ((-10.5, 10.5), (10.5, -10.5), 15.0));
+        assert_eq!(g.slab_zy, Some(((3.74, 8.09), (14.0, 26.5))));
+    }
+
+    #[test]
+    fn a_bad_walls_file_says_why() {
+        assert!(parse("[families]\n[[bases]]\nkey = \"a\"\nfamily = \"none\"\n").unwrap_err().contains("no family"));
+        let missing = "[families.f]\nwalkway = 1.0\n[[bases]]\nkey = \"a\"\nfamily = \"f\"\n";
+        assert!(parse(missing).unwrap_err().contains("no x"));
+        // A family's numbers, the base's key: a wall of its own.
+        let whole = DEFAULT_TEXT.split("\n[[bases]]").next().unwrap().to_owned()
+            + "\n[[bases]]\nkey = \"my_fort_straight\"\nfamily = \"eight\"\nwalkway = 9.0\n";
+        let w = parse(&whole).unwrap();
+        assert_eq!(
+            (w.bases[0].key, w.bases[0].label, w.bases[0].walkway, w.bases[0].bury),
+            ("my_fort_straight", "my_fort_straight", 9.0, 2.0)
+        );
     }
 
     #[test]
@@ -407,7 +358,7 @@ mod tests {
             }
         }
 
-        let all = wce_tile::property_enums::WALL_BASE.len();
+        let all = choices().len();
         let packs = Packs { whole: AtomicBool::new(false), mount: AtomicU64::new(u64::MAX - 1) };
         let few = available_bases(&packs).len();
         assert!(few < all);

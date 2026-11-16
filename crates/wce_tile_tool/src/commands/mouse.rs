@@ -115,7 +115,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 d.attrs.insert("hint_type".to_owned(), h.clone());
             }
 
-            if let (Some(b), Some(d)) = (a.get(1).filter(|b| WALL_BASE.iter().any(|(k, _)| *k == b.as_str())), t.draft.as_mut()) {
+            if let (Some(b), Some(d)) = (a.get(1).filter(|b| wce_walls::profile::profile(b).is_some()), t.draft.as_mut()) {
                 d.attrs.insert("wall_base".to_owned(), b.clone());
             }
 

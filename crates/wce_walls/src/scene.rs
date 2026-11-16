@@ -130,7 +130,7 @@ pub fn wall_handles(scene: &TedScene, elem: usize) -> Vec<[Option<[f64; 2]>; 2]>
 /// A wall's base (its `wall_base`, else the default).
 pub fn wall_profile(scene: &TedScene, elem: usize) -> Option<&'static Profile> {
     let base = scene.get(elem, "wall_base").unwrap_or_default();
-    profile(&base).or_else(|| profile(DEFAULT_BASE))
+    profile(&base).or_else(|| profile(DEFAULT_BASE)).or_else(|| crate::profile::bases().first())
 }
 
 /// A wall's layout; `None` for an element that is not a wall or has fewer than 2 points.

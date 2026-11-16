@@ -135,7 +135,7 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **Model:** `WceWallSpline`, stored like a polygon (`<points>`, `polygon_closed="0"`) with `wall_base`, `wall_tolerance`, `wall_flip`,
   `wall_access_every`, `wall_defence_every` and per point `sharp`. Ends are not stored as attached: an end on a fort building's end (within
   0.5 units; snapped within 8) is attached, at that building's level and along its axis.
-- **Kit table** (`wce_walls::profile::BASES`): per base straight its family profile, step pieces and stair range, door section, caps and
+- **Kit table** (`wce_walls::profile::bases()`, from `walls.toml` in the settings folder since 2026-11-16: the user adds or changes a base there without a rebuild, read on each tile opening; families as templates of the numbers, each base's pieces and its own numbers over them): per base straight its family profile, step pieces and stair range, door section, caps and
   defences.
 - **Solver** (`wce_walls::solver`): corners at the ends, marked points and turns under 25 degrees; centripetal Catmull-Rom between them;
   the centre line straightened under defences and at attached ends so every joint is exact (`straighten`); runs held to the ground,
@@ -185,7 +185,7 @@ polyfill. Checks:
 
 - [ ] **Phase 6, kits:** the table covers every 8 m and 15 m culture (incl. TDD khazad, mordor, easterling, gondorean, gondor), but
   `wall_generate_check` only generates `barbarian_fort_straight` and `roman_fort_straight`: make it a gate that every base in
-  `profile::BASES` generates (pieces, steps, doors, caps, defences).
+  `profile::bases()` generates (pieces, steps, doors, caps, defences).
 - [ ] **TDD Rohan and cliff families** in `profile.rs` (ladder pipes as access, `_step_up`; the cliff wall's way up unknown).
 - [ ] **In game (user):** record the docking fix (`solver::straighten`, eb1fc15): units cross from docked ladders and towers onto
   generated walls; one Edoras wall pack checked in game end to end.
