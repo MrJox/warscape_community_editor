@@ -169,6 +169,12 @@ fn read_chmf(name: &str, kind: MapKind, b: &[u8], tile: &mut Tile) -> std::resul
         let mut region = Node::new("region");
         region.set("rect", Value::Ints(r.rect.iter().map(|&v| i64::from(v)).collect()));
         region.set("tag", Value::Ints(r.tag.iter().map(|&v| i64::from(v)).collect()));
+        // A block table cut short (TDD's campaign tiles): the game reads the missing blocks as 0, so the decompiler takes the tile's mesh.
+        let missing = w.div_ceil(16) as usize * h.div_ceil(16) as usize;
+        if r.offsets.len() < missing {
+            region.set("missing_blocks", Value::Int((missing - r.offsets.len()) as i64));
+        }
+
         root.children.push(region);
         let (_, offsets, data) = encode_region(w, h, &samples);
         exact &= offsets == r.offsets && data == r.data;

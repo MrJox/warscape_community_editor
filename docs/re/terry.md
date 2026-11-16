@@ -276,6 +276,13 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   ground has there. The editor read every tile in the battle unit (2): a campaign tile's objects stood at a tenth of their place and size,
   in the tile's corner (the Dead Marshes' pools without water, their water planes under the ground). A campaign tile project now has
   the unit 0.2 on every axis (`TileProject::unit_scale`; its heights too, as the map's view had them), in the Tile tool and the map's view.
+- **Heights of TDD's campaign tiles** (2026-11-16): their `hf_height_map.data` has a block table cut short (`wce_formats::chmf`: a
+  missing block reads as 0, the minimum): `lakes/22x32_rauros`' is -36 over nearly the whole tile, a lake without shores, while its
+  `mesh.rigid_model_v2`, which the game draws, has the bowl and the sandy shore at the falls. The decompiler takes such a tile's heights
+  from the mesh (`terrain_heights::mesh_heights`, LOD 0): its z runs from the far edge, as the markers' (its cells cover 669 of the 682
+  the entry's mask keeps that way, 511 the other), 943 triangles fanning across the tile from a few vertices left out (edges over
+  512), seams up to a few samples filled from their neighbours. `hf_mesh_check` compares a tile's mesh with its height map, a kit's
+  `final_heights.dds` and its mask.
 - **Lighting** (2026-11-04): the game lights a campaign map with its `environment_collection.xml`'s `global_lighting` (Attila:
   `lighting/europe_sp.lighting`, sun azimuth 262.8, from the west, as the game's screenshots show), not a battle weather (which drew its
   grass dark grey-blue).

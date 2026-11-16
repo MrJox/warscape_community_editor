@@ -218,6 +218,20 @@ fn height_map(binary: &Tile, cells: (u32, u32), border_cells: u32, losses: &mut 
     let m = binary.map(MapKind::Height, 0)?;
     let Samples::U16(src) = &m.raster.samples else { return None };
     let (w, h) = (m.raster.width, m.raster.height);
+    let mut min = doc.root.get("min").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+    // The samples run from min to max: the variation's scale is the difference.
+    let mut max = doc.root.get("max").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+    let missing = doc.root.children.iter().find(|c| c.class == "region").and_then(|r| r.get("missing_blocks")).and_then(Value::as_int);
+    let spacing = doc.root.get("spacing").and_then(Value::as_int).unwrap_or(1).max(1) as f64;
+    let filled = missing.and_then(|n| {
+        let (samples, lo, hi) = mesh_filled(binary, src, (w, h), spacing, (min, max))?;
+        losses.note(format!(
+            "height map: {n} blocks missing from hf_height_map.data: the heights from mesh.rigid_model_v2, which the game draws"
+        ));
+        (min, max) = (lo, hi);
+        Some(samples)
+    });
+    let src: &[u16] = filled.as_deref().unwrap_or(src);
     if doc.root.children.iter().filter(|c| c.class == "region").count() != 1 {
         losses.note("height map: more than one region, only the first is used");
     }
@@ -243,10 +257,22 @@ fn height_map(binary: &Tile, cells: (u32, u32), border_cells: u32, losses: &mut 
         losses.note(format!("height map: the border ring ({border_cells} cell, {border} px) is not in the binary: filled from the edge"));
     }
 
-    let min = doc.root.get("min").and_then(Value::as_f64).unwrap_or(0.0) as f32;
-    // The samples run from min to max: the variation's scale is the difference.
-    let max = doc.root.get("max").and_then(Value::as_f64).unwrap_or(1.0) as f32;
     Some((Raster { width: ow, height: oh, channels: 1, samples: Samples::U16(out) }, min, max - min))
+}
+
+/// A height map's samples with the tile's mesh where it covers them (`terrain_heights::mesh_heights`, its rows from the far edge), in a range
+/// that holds both; the samples, min and max. None without a mesh.
+fn mesh_filled(binary: &Tile, src: &[u16], (w, h): (u32, u32), spacing: f64, (min, max): (f32, f32)) -> Option<(Vec<u16>, f32, f32)> {
+    use rpfm_lib::files::rigidmodel::RigidModel;
+    let file = binary.files.iter().find(|f| f.path.eq_ignore_ascii_case("mesh.rigid_model_v2"))?;
+    let bytes = file.data.bytes().ok()?;
+    let model = RigidModel::decode(&mut std::io::Cursor::new(&bytes[..]), &Some(rpfm_lib::files::DecodeableExtraData::default())).ok()?;
+    let mesh = super::terrain_heights::mesh_heights(&model, w, h, spacing, true)?;
+    let metres = |s: u16| min + (max - min) * f32::from(s) / 65535.0;
+    let heights: Vec<f32> = src.iter().zip(&mesh).map(|(&s, m)| m.unwrap_or_else(|| metres(s))).collect();
+    let (lo, hi) = heights.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    let range = (hi - lo).max(1e-6);
+    Some((heights.iter().map(|&v| ((v - lo) / range * 65535.0).round().clamp(0.0, 65535.0) as u16).collect(), lo, hi))
 }
 
 /// TEd's blend map (`blend_map.tif`: 16 weights per pixel, channel 4 g + v = texture group g, variation v, summing to 65535) from BOB's

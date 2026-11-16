@@ -22,7 +22,8 @@ const MAGIC: &[u8; 6] = b"WCECTX";
 // 11: a masked tile's ground over the cells its mask leaves out slopes down out of the way (BOB's mesh has no squares there).
 // 12: a campaign tile in its database's unit (0.2): its objects at TEd's x 5, where BOB puts them (they were at TEd's / 2, x 10 up).
 // 13: a decompiled campaign tile's objects in its unit too (`decompile::Frame`).
-const VERSION: u16 = 13;
+// 14: a decompiled tile whose height map lacks blocks has its mesh's heights.
+const VERSION: u16 = 14;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {

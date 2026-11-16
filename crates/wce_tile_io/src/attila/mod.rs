@@ -14,6 +14,7 @@ pub mod schema;
 pub mod stage_b;
 pub mod stage_c;
 mod ted_project;
+pub mod terrain_heights;
 pub mod terrain_mesh;
 pub mod terrain_outlines;
 pub mod tile_binary;
