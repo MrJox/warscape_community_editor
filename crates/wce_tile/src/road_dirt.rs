@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::road_fences::{Along, Fence, Fences};
 use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, PartRole, UNIT, VERGE, WIDTH, guides_of_width};
 
 /// The road type's folder and name.
@@ -85,44 +86,14 @@ pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
 
 /// Whether every dirt piece is in a prefab folder as this generation makes it, or as the user made it.
 #[must_use]
-pub fn all_written(prefab_root: &Path) -> bool {
-    STYLES.iter().all(|st| !road_pieces::generated_stale_weighted(prefab_root, st.name, &pieces_of(st), &weight))
+pub fn all_written(prefab_root: &Path, fences: &Fences) -> bool {
+    STYLES.iter().all(|st| !road_pieces::generated_stale_weighted(prefab_root, st.name, &as_refs(&pieces_of(st, fences)), &weight))
 }
 
-/// The kit's fence the dirt road's fence piece is (`lowfence_3`, about 5 m long along its x: the kit's road prefabs space them so).
-pub const FENCE_KEY: &str = "lowfence_3";
-
-/// A named fence of the dirt types (`road_<type>_fence_<name>`, a point's or the road's fence type): a kit fence of about the fence
-/// piece's 5 m, one to a piece (user 2026-11-16: other kinds of fences).
-#[derive(Clone, Copy, Debug)]
-pub struct NamedFence {
-    /// Its piece's name (`fence_<name>`; no number at its end: that would read as a variant).
-    pub piece: &'static str,
-    /// The kit's building.
-    pub key: &'static str,
-    /// Whether its model runs along its z, about its pivot (the cultures' fences); else along its x from its pivot (`lowfence_*`).
-    pub along_z: bool,
-    /// Its post, put at the piece's back port (so one between every two fences).
-    pub post: Option<&'static str>,
+/// Pieces as `road_pieces`' writers take them.
+fn as_refs(pieces: &[(String, Vec<Vec<u8>>)]) -> Vec<(&str, Vec<Vec<u8>>)> {
+    pieces.iter().map(|(n, c)| (n.as_str(), c.clone())).collect()
 }
-
-/// The named fences: the kit's fences 5 m long (measured: `tile_model_bounds`, 9.96 to 10.25 file units). Its 2 m villa and civic walls
-/// would leave gaps or overlap in a 5 m piece; its court walls are buildings' sides.
-pub const NAMED_FENCES: [NamedFence; 13] = [
-    NamedFence { piece: "fence_lowfence1", key: "lowfence_1", along_z: false, post: None },
-    NamedFence { piece: "fence_lowfence2", key: "lowfence_2", along_z: false, post: None },
-    NamedFence { piece: "fence_lowfence4", key: "lowfence_4", along_z: false, post: Some("lowfence_4_pillar") },
-    NamedFence { piece: "fence_highfence", key: "highfence_1", along_z: false, post: None },
-    NamedFence { piece: "fence_woven", key: "barbarian_woven_fence_10m", along_z: false, post: None },
-    NamedFence { piece: "fence_roman", key: "roman_lowfence", along_z: true, post: Some("roman_lowfence_pillar") },
-    NamedFence { piece: "fence_greek", key: "greek_lowfence", along_z: true, post: Some("greek_lowfence_pillar") },
-    NamedFence { piece: "fence_egyptian", key: "egyptian_lowfence", along_z: true, post: Some("egyptian_lowfence_pillar") },
-    NamedFence { piece: "fence_egyptian_high", key: "egyptian_highfence", along_z: true, post: Some("egyptian_highfence_pillar") },
-    NamedFence { piece: "fence_persian", key: "persian_lowfence", along_z: true, post: Some("persian_lowfence_pillar") },
-    NamedFence { piece: "fence_persian_high", key: "persian_highfence", along_z: true, post: Some("persian_highfence_pillar") },
-    NamedFence { piece: "fence_sassanid", key: "sassanid_lowfence", along_z: true, post: Some("sassanid_lowfence_pillar") },
-    NamedFence { piece: "fence_sassanid_high", key: "sassanid_highfence", along_z: true, post: Some("sassanid_highfence_pillar") },
-];
 
 /// A fence building of a fence piece: at `z` (metres along the piece), turned by `yaw`, where the piece puts it.
 fn fence_building(key: &str, z: f64, yaw: f64) -> Vec<u8> {
@@ -134,12 +105,21 @@ fn fence_building(key: &str, z: f64, yaw: f64) -> Vec<u8> {
     .into_bytes()
 }
 
-/// A named fence's parts: its fence across the piece and its post at the back port.
-fn named_fence_parts(f: &NamedFence) -> Vec<Vec<u8>> {
+/// A fence piece's contents past its guides ([`Fences`], the fences file): its fence across the piece in the fence group (a model along
+/// its x from its pivot at the back port, turned a quarter; one along its z about its middle), and its joiners at the back port in the
+/// joiner group (`PartRole::Joiner`: laid on the joints, not with the piece).
+#[must_use]
+pub fn fence_parts(f: &Fence) -> Vec<Vec<u8>> {
     let back = -road_pieces::FENCE * 0.5;
-    let mut out = vec![if f.along_z { fence_building(f.key, 0.0, 0.0) } else { fence_building(f.key, back, -std::f64::consts::FRAC_PI_2) }];
-    out.extend(f.post.map(|p| fence_building(p, back, 0.0)));
-    out
+    let fence = match f.along {
+        Along::Z => fence_building(&f.key, 0.0, 0.0),
+        Along::X => fence_building(&f.key, back, -std::f64::consts::FRAC_PI_2),
+    };
+    let joiners = f.joiners.iter().map(|j| fence_building(j, back, 0.0)).collect::<Vec<_>>();
+    [road_pieces::role_group(PartRole::Fence, &[fence]), road_pieces::role_group(PartRole::Joiner, &joiners)]
+        .into_iter()
+        .filter(|g| !g.is_empty())
+        .collect()
 }
 
 /// How tall a decal's box is (metres): enough for a road's banks.
@@ -450,7 +430,8 @@ pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
         "fence" => {
             // One fence along the road, its x along it (as the kit's prefabs have them), where the fence line is. Its model runs from its
             // pivot along its x (0 to 5.25 m): the pivot at the piece's back port, so that it spans the piece.
-            out.push(fence_building(FENCE_KEY, -road_pieces::FENCE * 0.5, -std::f64::consts::FRAC_PI_2));
+            // The shipped fences file's fence ([`pieces_of`] lays the file's own).
+            out.extend(fence_parts(&Fences::default().fence));
         }
 
         "t_junction" => {
@@ -511,7 +492,6 @@ fn role_of(part: &[u8]) -> PartRole {
     let text = String::from_utf8_lossy(part);
     let attr = |name: &str| text.split(&format!(" {name}=\"")).nth(1).and_then(|r| r.split('"').next()).unwrap_or_default().to_owned();
     match (attr("name").as_str(), attr(ANCHOR_ATTR).as_str()) {
-        (FENCE_KEY, _) => PartRole::Fence,
         (BANK_KEY, _) => PartRole::Verge,
         ("path_1", "fixed") => PartRole::Fixed,
         ("path_1", _) => PartRole::Surface,
@@ -522,17 +502,24 @@ fn role_of(part: &[u8]) -> PartRole {
 
 /// The dirt pieces' contents: the base's guides and the parts, in their role groups (`road_pieces::role_group`).
 #[must_use]
-pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
-    pieces_of(&DIRT)
+pub fn pieces() -> Vec<(String, Vec<Vec<u8>>)> {
+    pieces_of(&DIRT, &Fences::default())
 }
 
-/// A dirt style's pieces ([`STYLES`]): its guides at its width and its parts, in their role groups.
+/// A dirt style's pieces ([`STYLES`]): its guides at its width and its parts, in their role groups; its fence and named fences those of
+/// `fences` (the fences file).
 #[must_use]
-pub fn pieces_of(st: &Style) -> Vec<(&'static str, Vec<Vec<u8>>)> {
+pub fn pieces_of(st: &Style, fences: &Fences) -> Vec<(String, Vec<Vec<u8>>)> {
+    let fence = |f: &Fence| {
+        let mut children = guides_of_width("fence", st.width);
+        children.extend(fence_parts(f));
+        (f.piece(), children)
+    };
     PIECES
         .iter()
         .copied()
         .chain(VARIANTS.iter().copied())
+        .filter(|&p| p != "fence")
         .map(|p| {
             let mut children = guides_of_width(p, st.width);
             let parts = parts_of(st, p);
@@ -542,13 +529,9 @@ pub fn pieces_of(st: &Style) -> Vec<(&'static str, Vec<Vec<u8>>)> {
             }
 
             children.retain(|c| !c.is_empty());
-            (p, children)
+            (p.to_owned(), children)
         })
-        .chain(NAMED_FENCES.iter().map(|f| {
-            let mut children = guides_of_width("fence", st.width);
-            children.extend(named_fence_parts(f));
-            (f.piece, children)
-        }))
+        .chain(std::iter::once(&fences.fence).chain(&fences.named).map(fence))
         .collect()
 }
 
@@ -558,10 +541,10 @@ pub fn pieces_of(st: &Style) -> Vec<(&'static str, Vec<Vec<u8>>)> {
 /// # Errors
 ///
 /// A file can't be written.
-pub fn write(prefab_root: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn write(prefab_root: &Path, fences: &Fences) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
     for st in &STYLES {
-        out.extend(road_pieces::write_generated_weighted(prefab_root, st.name, &pieces_of(st), &weight)?);
+        out.extend(road_pieces::write_generated_weighted(prefab_root, st.name, &as_refs(&pieces_of(st, fences)), &weight)?);
     }
 
     Ok(out)
@@ -574,14 +557,35 @@ mod tests {
 
     #[test]
     fn the_named_fences_are_fence_pieces_no_variants() {
-        for f in &NAMED_FENCES {
-            assert!(crate::road_pieces::varies(f.piece).is_none() && f.piece.starts_with("fence_"), "{}", f.piece);
+        for f in &Fences::default().named {
+            let piece = f.piece();
+            assert!(crate::road_pieces::varies(&piece).is_none() && piece.starts_with("fence_"), "{piece}");
             let mut children = base_guides("fence");
-            children.extend(named_fence_parts(f));
-            let p = read(&group_text(&key(TYPE, f.piece), &children)).unwrap();
-            assert!((p.width - crate::road_pieces::FENCE_WIDTH).abs() < 1e-9 && p.arms.len() == 1, "{}", f.piece);
-            assert_eq!(p.parts.len(), 1 + usize::from(f.post.is_some()), "{}", f.piece);
+            children.extend(fence_parts(f));
+            let p = read(&group_text(&key(TYPE, &piece), &children)).unwrap();
+            assert!((p.width - crate::road_pieces::FENCE_WIDTH).abs() < 1e-9 && p.arms.len() == 1, "{piece}");
+            // Its fence in the fence group, its joiners in the joiner group.
+            assert_eq!(p.parts.iter().filter(|q| q.role == Some(PartRole::Fence) && q.key == f.key).count(), 1, "{piece}");
+            let joiners = p.parts.iter().filter(|q| q.role == Some(PartRole::Joiner)).map(|q| q.key.clone()).collect::<Vec<_>>();
+            assert_eq!(joiners, f.joiners, "{piece}");
         }
+    }
+
+    #[test]
+    fn the_fences_file_makes_the_fence_pieces() {
+        let fences = crate::road_fences::parse(
+            "[fence]\nkey = \"plain\"\n[[named]]\nname = \"mine\"\nkey = \"my_fence\"\nalong = \"z\"\njoiners = [\"a\", \"b\"]\n",
+        )
+        .unwrap();
+        let pieces = pieces_of(&DIRT, &fences);
+        let text = |name: &str| {
+            let (_, children) = pieces.iter().find(|p| p.0 == name).unwrap();
+            read(&group_text(&key(TYPE, name), children)).unwrap()
+        };
+        assert!(text("fence").parts.iter().any(|q| q.key == "plain"));
+        let mine = text("fence_mine");
+        assert_eq!(mine.parts.iter().filter(|q| q.role == Some(PartRole::Joiner)).count(), 2);
+        assert!(pieces.iter().all(|p| p.0 != "fence_greek"), "only the file's fences");
     }
 
     #[test]
@@ -591,7 +595,7 @@ mod tests {
         assert_eq!(ruts, 1);
         let dirt_ruts = parts("straight").iter().filter(|p| String::from_utf8_lossy(p).contains("name=\"path_1\"")).count();
         assert_eq!(dirt_ruts, 2);
-        for (piece, children) in pieces_of(&TRACK) {
+        for (piece, children) in pieces_of(&TRACK, &Fences::default()) {
             let text = crate::road_pieces::group_text(&format!("road_dirt_track_{piece}"), &children);
             let p = crate::road_pieces::read(&text).unwrap();
             let want = if piece.starts_with("fence") { crate::road_pieces::FENCE_WIDTH } else { 3.0 };
@@ -603,6 +607,7 @@ mod tests {
     #[test]
     fn the_role_groups_change_no_parts_anchor_or_place() {
         for (piece, children) in pieces() {
+            let piece = piece.as_str();
             if piece.starts_with("fence") {
                 continue;
             }
@@ -699,7 +704,7 @@ mod tests {
         assert!(p.notes.is_empty(), "{:?}", p.notes);
         assert_eq!(p.parts.len(), 1);
         let q = &p.parts[0];
-        assert!(q.solid && q.key == FENCE_KEY && q.anchor == Anchor::Fixed, "{q:?}");
+        assert!(q.solid && q.key == Fences::default().fence.key && q.anchor == Anchor::Fixed, "{q:?}");
         assert!(q.turn.sin().abs() < 1e-6 && q.across.abs() < 1e-9, "its x along the line: {q:?}");
         // Its pivot (the model's end) at the back port: the model runs forward from it over the piece.
         assert!(q.along.abs() < 1e-9, "its pivot at the back: {q:?}");
@@ -740,8 +745,11 @@ mod tests {
     #[test]
     fn written_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(write(dir.path()).unwrap().len(), (PIECES.len() + VARIANTS.len() + NAMED_FENCES.len()) * STYLES.len());
-        assert!(write(dir.path()).unwrap().is_empty());
+        assert_eq!(
+            write(dir.path(), &Fences::default()).unwrap().len(),
+            (PIECES.len() + VARIANTS.len() + Fences::default().named.len()) * STYLES.len()
+        );
+        assert!(write(dir.path(), &Fences::default()).unwrap().is_empty());
         let lib = crate::prefabs::PrefabLibrary::scan_folders(&[dir.path().to_path_buf()]);
         let curve = lib.load("road_dirt_curve").unwrap();
         assert_eq!(read(&curve.group_text).unwrap().arms.len(), 1);

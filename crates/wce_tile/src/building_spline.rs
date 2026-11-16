@@ -256,6 +256,24 @@ pub fn lay(
     out
 }
 
+/// A joiner stood on a joint at `at` (world metres, x and z) along `way`, as a building spline's are ([`lay`]): its middle on the joint,
+/// upright and pitched along `way` by the ground, destroyed by the chance `damage` (rolled by `seed` and `index`). A road's fences' joiners.
+#[allow(clippy::too_many_arguments, reason = "what a joiner stands by")]
+#[must_use]
+pub fn joiner(
+    key: String,
+    footprint: &Footprint,
+    at: [f64; 2],
+    way: [f64; 2],
+    (seed, index): (u32, usize),
+    damage: f64,
+    levels: &dyn Fn(&str) -> u32,
+    ground: &dyn Fn(f64, f64) -> f64,
+) -> Laid {
+    let settings = Settings { align: true, seed, damage, ..Settings::default() };
+    stand(key, footprint, at, way, &settings, (index, 10, false), levels, ground).0
+}
+
 /// How long a footprint is along its long axis, at least [`MIN_LENGTH`].
 fn along_length(f: &Footprint) -> f64 {
     let (lo, hi) = f.along();

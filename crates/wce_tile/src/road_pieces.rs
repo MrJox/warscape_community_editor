@@ -147,10 +147,13 @@ pub enum PartRole {
     Fence,
     Detail,
     Fixed,
+    /// A fence piece's joiners: not laid with the piece, but one on each joint between two fences (`road_layout::fit_dressed` leaves
+    /// them out; the editor's roads stand them as a building spline's joiners).
+    Joiner,
 }
 
 impl PartRole {
-    pub const ALL: [Self; 6] = [Self::Surface, Self::Edge, Self::Verge, Self::Fence, Self::Detail, Self::Fixed];
+    pub const ALL: [Self; 7] = [Self::Surface, Self::Edge, Self::Verge, Self::Fence, Self::Detail, Self::Fixed, Self::Joiner];
 
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -161,6 +164,7 @@ impl PartRole {
             Self::Fence => "fence",
             Self::Detail => "detail",
             Self::Fixed => "fixed",
+            Self::Joiner => "joiner",
         }
     }
 
@@ -177,7 +181,7 @@ impl PartRole {
             Self::Edge => Some(Anchor::Edge),
             Self::Verge => Some(Anchor::Verge),
             Self::Fixed => Some(Anchor::Fixed),
-            Self::Fence | Self::Detail => None,
+            Self::Fence | Self::Detail | Self::Joiner => None,
         }
     }
 }

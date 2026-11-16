@@ -139,6 +139,8 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
             ("road_bridge", "wood"),
             ("road_fences", "none"),
             ("road_fence_type", "fence"),
+            ("road_fence_joiners", ""),
+            ("road_fence_joiner_ends", "false"),
             ("road_fence_damage", "0"),
             ("road_detail_density", "0.5"),
             ("road_irregularity", "0.3"),

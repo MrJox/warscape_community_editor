@@ -61,6 +61,11 @@ struct Road {
 
     /// Its fences' type (`road_fence_type`: `fence`, or a named fence piece of its type, `fence_greek`); a point's own `road_fence` wins.
     fence_type: Option<String>,
+
+    /// The joiners laid on the joints between its fences (`road_fence_joiners`: empty, the fence pieces' own, their joiner group; `none`;
+    /// or building keys, one picked for each joint, as a building spline's), and whether each run of fences has one at its ends too.
+    fence_joiners: Option<Vec<String>>,
+    joiner_ends: bool,
     signature: u64,
 }
 
@@ -453,9 +458,15 @@ impl Tile {
                     .iter()
                     .map(|&p| doc.get(p, "road_width").and_then(|v| wce_formats::c_num::strtod(&v)).filter(|v| *v > 0.0).map(|v| v.max(0.5)))
                     .collect::<Vec<_>>();
+                let fence_joiners = match doc.get(e, "road_fence_joiners").map(|v| v.trim().to_owned()).unwrap_or_default() {
+                    v if v.is_empty() => None,
+                    v if v == "none" => Some(vec![]),
+                    v => Some(wce_tile::building_spline::parse_keys(&v)),
+                };
+                let joiner_ends = doc.get(e, "road_fence_joiner_ends").is_some_and(|v| wce_tile::properties::parse_bool(&v));
                 let fence_type = doc.get(e, "road_fence_type").map(|v| v.trim().to_owned()).filter(|v| !v.is_empty() && v != "fence");
                 let signature = hash_text(&format!(
-                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {point_widths:?} {fence_type:?} {water:x}"
+                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {detail_density} {point_fences:?} {point_damage:?} {point_widths:?} {fence_type:?} {fence_joiners:?} {joiner_ends} {water:x}"
                 ));
                 Road {
                     id: number(e, "road_id", 0.0) as u32,
@@ -472,6 +483,8 @@ impl Tile {
                     point_damage,
                     point_widths,
                     fence_type,
+                    fence_joiners,
+                    joiner_ends,
                     signature,
                 }
             })
@@ -769,8 +782,24 @@ impl Tile {
             }
         }
 
+        // The joiners' footprints (the fence pieces' own and the roads' choices), and their levels.
+        let mut extents = HashMap::new();
+        let joiner_keys = pieces
+            .values()
+            .flatten()
+            .flat_map(|p| p.1.parts.iter().filter(|q| q.role == Some(wce_tile::road_pieces::PartRole::Joiner)).map(|q| q.key.clone()))
+            .chain(roads.iter().flat_map(|(_, r)| r.fence_joiners.clone().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        for k in joiner_keys {
+            if !extents.contains_key(&k) {
+                extents.insert(k.clone(), self.building_extent(&k));
+                levels.entry(k.clone()).or_insert_with(|| self.building_levels(&k));
+            }
+        }
+
         let variation = self.road_variation();
-        let input = ItemsInput { roads, variation, water, height, hdims, frame, ground, pieces, bases, levels, making: self.road_making };
+        let input =
+            ItemsInput { roads, variation, water, height, hdims, frame, ground, pieces, bases, levels, extents, making: self.road_making };
         self.road_items_job = Some(super::jobs::Job::spawn("road items", move || road_items(input)));
     }
 
@@ -1254,6 +1283,9 @@ struct ItemsInput {
     pieces: HashMap<String, Pieces>,
     bases: HashMap<&'static str, Option<std::sync::Arc<wce_walls::bridge::Prepared>>>,
     levels: HashMap<String, u32>,
+
+    /// The joiners' footprints (`Tile::building_extent`).
+    extents: HashMap<String, wce_tile::building_spline::Footprint>,
     making: u64,
 }
 
@@ -1269,7 +1301,7 @@ pub(crate) struct ItemsMade {
 /// their bases (their files given back, to go among the generated ones). Off the editor's thread.
 fn road_items(i: ItemsInput) -> ItemsMade {
     wce_foundation::wce_prof!("tile.make_road_items");
-    let ItemsInput { roads, variation, water, height, hdims, frame, ground, pieces, bases, levels, making } = i;
+    let ItemsInput { roads, variation, water, height, hdims, frame, ground, pieces, bases, levels, extents, making } = i;
     let (unit, border, ex, ez, mx, mz) = frame;
     let mut items = vec![];
     let mut made = ItemsMade::default();
@@ -1620,8 +1652,11 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                 })
             };
             let mut k = 0u64;
+            let mut joint_n = 0usize;
             for (fence_line, runs) in &lines {
                 let fst = Stations::new(fence_line);
+                // The fences laid on this line: their stretch, their piece's joiners and their damage chance.
+                let mut laid_fences: Vec<(f64, f64, Vec<String>, f64)> = vec![];
                 for l in runs {
                     let wce_tile::road_layout::Frame::Along { from, to } = l.frame else { continue };
                     if [from, (from + to) * 0.5, to].iter().any(|&s| on_road(fst.at(s).0)) {
@@ -1693,15 +1728,77 @@ fn road_items(i: ItemsInput) -> ItemsMade {
                         &Site { line: fence_line, width: fp.width, unit, ground: &terrain },
                         &dress,
                     ) {
-                        Ok(f) => items.push(RoadItem {
-                            road: *elem,
-                            text: f.text,
-                            position: f.position,
-                            meshes: vec![],
-                            export: None,
-                            building: None,
-                        }),
+                        Ok(f) => {
+                            items.push(RoadItem {
+                                road: *elem,
+                                text: f.text,
+                                position: f.position,
+                                meshes: vec![],
+                                export: None,
+                                building: None,
+                            });
+                            let own = fp.parts.iter().filter(|q| q.role == Some(wce_tile::road_pieces::PartRole::Joiner));
+                            laid_fences.push((from.min(to), from.max(to), own.map(|q| q.key.clone()).collect(), chance));
+                        }
+
                         Err(why) => wce_foundation::log::warn(format!("road {}: {fkey}: {why}", road.id)),
+                    }
+                }
+
+                // The joiners: one on each joint between two fences laid end to end, and at a run's ends when asked; the fence pieces'
+                // own (the one before the joint's, else the one after's) unless the road names others.
+                let chord = |a: f64, b: f64| {
+                    let (p, q) = (fst.at(a).0, fst.at(b).0);
+                    let d = [q[0] - p[0], q[1] - p[1]];
+                    let l = d[0].hypot(d[1]).max(1e-9);
+                    [d[0] / l, d[1] / l]
+                };
+                let mut joints: Vec<(f64, [f64; 2], &[String], f64)> = vec![];
+                for (i, f) in laid_fences.iter().enumerate() {
+                    // Laid end to end: the next starts where this one ends or before (`fences_between` overlaps them a little to cover
+                    // the run); a fence left out between them (a gap, one on a road) leaves a space.
+                    let joined_before = i > 0 && f.0 <= laid_fences[i - 1].1 + 0.05;
+                    let joined_after = laid_fences.get(i + 1).is_some_and(|g| g.0 <= f.1 + 0.05);
+                    if !joined_before && road.joiner_ends {
+                        joints.push((f.0, chord(f.0, f.1), &f.2, f.3));
+                    }
+
+                    if let Some(g) = laid_fences.get(i + 1).filter(|_| joined_after) {
+                        let (a, b) = (chord(f.0, f.1), chord(g.0, g.1));
+                        let m = [a[0] + b[0], a[1] + b[1]];
+                        let l = m[0].hypot(m[1]);
+                        let way = if l < 1e-6 { a } else { [m[0] / l, m[1] / l] };
+                        let own = if f.2.is_empty() { &g.2 } else { &f.2 };
+                        joints.push(((f.1 + g.0) * 0.5, way, own, f.3));
+                    } else if road.joiner_ends {
+                        joints.push((f.1, chord(f.0, f.1), &f.2, f.3));
+                    }
+                }
+
+                for (s, way, own, chance) in joints {
+                    let keys = road.fence_joiners.as_deref().unwrap_or(own);
+                    if keys.is_empty() {
+                        continue;
+                    }
+
+                    joint_n += 1;
+                    let pick = (road_hash(road.settings.seed, road.id, joint_n as u64 ^ 0x1013_7E00) % keys.len() as u64) as usize;
+                    let key = keys[pick].clone();
+                    let footprint = extents.get(&key).copied().unwrap_or_else(|| wce_tile::building_spline::Footprint::centred(0.5, 0.5));
+                    let levels_of = |k: &str| levels.get(k).copied().unwrap_or(1);
+                    let laid = wce_tile::building_spline::joiner(
+                        key,
+                        &footprint,
+                        fst.at(s).0,
+                        way,
+                        (road.settings.seed ^ road.id.rotate_left(7), joint_n),
+                        chance,
+                        &levels_of,
+                        &terrain,
+                    );
+                    match joiner_item(*elem, &laid, unit) {
+                        Ok(item) => items.push(item),
+                        Err(why) => wce_foundation::log::warn(format!("road {}: joiner {}: {why}", road.id, laid.key)),
                     }
                 }
             }
@@ -1718,6 +1815,28 @@ fn road_items(i: ItemsInput) -> ItemsMade {
 
     made.items = items;
     made
+}
+
+/// A fence joiner as a road item: its building in a group at its place (as a fitted piece's are), freeform at its height.
+fn joiner_item(road: usize, laid: &wce_tile::building_spline::Laid, unit: f64) -> Result<RoadItem, String> {
+    let [x, y, z] = laid.position;
+    let local = wce_tile::building_spline::Laid { position: [0.0, y, 0.0], ..laid.clone() };
+    let child = wce_tile::building_spline::instance_text(&local, unit)?;
+    let n = wce_tile::ted_scene::format_number;
+    let mut text = format!(
+        "<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE\" lf_offset=\"0\" position=\"vector({},0,{})\" name=\"{}\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">\n    <children>\n",
+        n(x * unit),
+        n(z * unit),
+        laid.key
+    )
+    .into_bytes();
+    for line in child.split_inclusive(|&c| c == b'\n') {
+        text.extend_from_slice(b"        ");
+        text.extend_from_slice(line);
+    }
+
+    text.extend_from_slice(b"    </children>\n</UserInstanceGroup>\n");
+    Ok(RoadItem { road, text, position: [x * unit, 0.0, z * unit], meshes: vec![], export: None, building: None })
 }
 
 /// A bridge's base and its end piece, prepared (`wce_walls::bridge::prepare`), each if in the packs.
