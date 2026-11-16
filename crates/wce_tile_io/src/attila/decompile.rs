@@ -474,9 +474,9 @@ pub fn quaternion_euler(q: [f64; 4]) -> [f64; 3] {
 
 /// A building of a binary list as TEd's instance, top level of its layer: scene x = 2 x, scene z = 2 (extent z - z), scene y = y (the
 /// list keeps x / z in metres, y in scene units; docs/formats/tile_ted.md).
-fn building_node(bl: &BattlefieldBuilding, extent_z: f64, ctx: &Context, losses: &mut BuildingLosses) -> Node {
+fn building_node(bl: &BattlefieldBuilding, fr: Frame, ctx: &Context, losses: &mut BuildingLosses) -> Node {
     let p = bl.position.map(f64::from);
-    let pos = [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])];
+    let pos = [fr.x(p[0]), p[1], fr.z(p[2])];
     let euler = quaternion_euler(bl.orientation.map(f64::from));
     let mut own = vec![
         ("opacity", Value::Float(1.0)),
@@ -736,7 +736,7 @@ fn seasons(mask: i64) -> Value {
 /// the position is (x, y, z) halved and z mirrored: scene (2 x, 2 y, 2 (extent - z)). The decal's scale fields are TEd's scale halved;
 /// `signed`: they are signed and the rows' lengths their magnitudes (`TileConventions::signed_decal_fields`), else the fields are
 /// magnitudes and the rows carry the sign.
-fn prop_node(rec: &Node, key: &str, extent_z: f64, signed: bool) -> Node {
+fn prop_node(rec: &Node, key: &str, fr: Frame, signed: bool) -> Node {
     let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
     let decal = rec.get("is_decal").and_then(Value::as_int) == Some(1);
     let half = if decal {
@@ -786,8 +786,8 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64, signed: bool) -> Node {
 
     let rows = marker_rotation(rows_of(&half));
 
-    let pos = [2.0 * m[12], 2.0 * m[13], 2.0 * (extent_z - m[14])];
-    let scale = Value::Vec3(half.map(|h| r32(2.0 * h)));
+    let pos = [fr.x(m[12]), fr.prop_y * m[13], fr.z(m[14])];
+    let scale = Value::Vec3([fr.xz * half[0], fr.prop_y * half[1], fr.xz * half[2]].map(r32));
     if decal {
         instance(
             "ProjectedDecalInstance",
@@ -820,7 +820,7 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64, signed: bool) -> Node {
 
 /// A particle emitter record as a VFXInstance: the matrix holds the rotation transposed (not mirrored, unlike a prop's: all 42 emitters of
 /// western_city_b/small agree), the position is in the buildings' frame (scene (2 x, y, 2 (extent - z))), the scale is TEd's halved.
-fn emitter_node(rec: &Node, key: &str, extent_z: f64) -> Node {
+fn emitter_node(rec: &Node, key: &str, fr: Frame) -> Node {
     let m = rec.get("transform").and_then(Value::as_floats).unwrap_or(&[0.0; 16]);
     // Versions before 9 keep the fields in the bytes after the matrix (docs/formats/tile_compile.md): 6 zeros, autoplay, (7+)
     // use_in_outfield, (8) 2 zeros, the scale, (5+) the seasons; the length tells the version.
@@ -850,12 +850,12 @@ fn emitter_node(rec: &Node, key: &str, extent_z: f64) -> Node {
     instance(
         "VFXInstance",
         "VFX",
-        [2.0 * m[12], m[13], 2.0 * (extent_z - m[14])],
+        [fr.x(m[12]), m[13], fr.z(m[14])],
         rows_euler(rows),
         vec![
             ("vfx", s(key)),
             ("use_in_outfield", b(num(rec, "use_in_outfield") != 0.0)),
-            ("scale", Value::Float(r32(2.0 * num(rec, "scale")))),
+            ("scale", Value::Float(r32(fr.xz * num(rec, "scale")))),
             ("seasons", seasons(rec.get("seasons").and_then(Value::as_int).unwrap_or(15))),
             ("autoplay", b(num(rec, "autoplay") != 0.0)),
         ],
@@ -863,11 +863,11 @@ fn emitter_node(rec: &Node, key: &str, extent_z: f64) -> Node {
 }
 
 /// A point light record (the buildings' frame, no rotation).
-fn light_node(rec: &Node, key: &str, extent_z: f64) -> Node {
+fn light_node(rec: &Node, key: &str, fr: Frame) -> Node {
     instance(
         "POINT_LIGHT_INSTANCE",
         key,
-        [2.0 * num(rec, "x"), num(rec, "y"), 2.0 * (extent_z - num(rec, "z"))],
+        [fr.x(num(rec, "x")), num(rec, "y"), fr.z(num(rec, "z"))],
         [0.0; 3],
         vec![
             ("random_offset", Value::Float(r32(num(rec, "random_offset")))),
@@ -932,7 +932,7 @@ pub use wce_tile::vegetation::static_cover::on_generator_grid;
 /// The static trees of a FASTBIN tree list document as TEd's VEGETATION_INSTANCEs (the list's frame: x, z metres with z from the far
 /// edge, y in scene units; scale as the list's), and how many generated objects were left out: those on the generator's grid at
 /// `density` (BOB makes them from the seeds; an outfield_tents list's yurts, a climate's generated trees).
-fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
+fn tree_nodes(doc: &Node, fr: Frame, density: u32) -> ListTrees {
     let mut out = ListTrees::default();
     for t in doc.children.iter().filter(|c| c.class == "type") {
         let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
@@ -949,7 +949,7 @@ fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
 
             out.statics.push((p[0], p[2]));
             let own = vec![("key", s(&key)), ("scale", Value::Float(r32(scale.get(i).copied().unwrap_or(1.0))))];
-            let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
+            let mut n = instance("VEGETATION_INSTANCE", "tree", [fr.x(p[0]), p[1], fr.z(p[2])], [0.0; 3], own);
             // The list's flag is BOB's `surface_mode == MSM_FREEFORM`.
             if flags.get(i).is_none_or(|f| f & 1 == 0) {
                 n.set("surface_mode", s("MSM_LANDSCAPE"));
@@ -973,7 +973,7 @@ struct ListTrees {
 
 /// [`tree_nodes`] of an older list (`default.tree_list`, Rome 2's: types named by their model with the index of their first record;
 /// half-float positions, the scale byte): its trees off the generator's grid, put on the terrain (the list has no known freeform flag).
-fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
+fn old_tree_nodes(doc: &Node, fr: Frame, density: u32) -> ListTrees {
     let mut out = ListTrees::default();
     let Some(recs) = doc.child("records") else { return out };
     let pos = recs.get("position").and_then(Value::as_floats).unwrap_or_default();
@@ -995,7 +995,7 @@ fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
             out.statics.push((p[0], p[2]));
             let size = scale.get(i).map_or(1.0, |b| f64::from(*b) / 127.0);
             let own = vec![("key", s(&key)), ("scale", Value::Float(r32(size)))];
-            let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
+            let mut n = instance("VEGETATION_INSTANCE", "tree", [fr.x(p[0]), p[1], fr.z(p[2])], [0.0; 3], own);
             n.set("surface_mode", s("MSM_LANDSCAPE"));
             out.nodes.push(n);
         }
@@ -1006,9 +1006,34 @@ fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
 
 // ---- logic: polygons, deployment, AI hints, the siege graph
 
-/// The binaries' 2D points (x, z from the far edge, metres) in the scene (2 x, 2 (extent - z)).
-fn scene_xz(points: &[(f64, f64)], extent_z: f64) -> Vec<(f64, f64)> {
-    points.iter().map(|&(x, z)| (2.0 * x, 2.0 * (extent_z - z))).collect()
+/// Where a tile's binaries put things in TEd's scene: x times the tile database's unit (`xz`: 2 for a battle tile, 0.2 for a campaign one,
+/// as BOB divides them; `wce_tile::tile_project::height_unit`), z the same from the far edge (`z`: the extent), a prop's y times
+/// `prop_y` (2 in a battle tile; 1 in a campaign one: BOB keeps a campaign prop's y and y scale, `swamp_01/4x3/aa`'s water plane at TEd's
+/// y -4.90 is at -4.9 in its `prop_marker.markers`, its x 59.85 at 299.2).
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    z: f64,
+    xz: f64,
+    prop_y: f64,
+}
+
+impl Frame {
+    fn new(extent_z: f64, unit: f64) -> Self {
+        Self { z: extent_z, xz: unit, prop_y: if unit < 1.0 { 1.0 } else { unit } }
+    }
+
+    fn x(self, x: f64) -> f64 {
+        self.xz * x
+    }
+
+    fn z(self, z: f64) -> f64 {
+        self.xz * (self.z - z)
+    }
+}
+
+/// The binaries' 2D points (x, z from the far edge, metres) in the scene ([`Frame`]).
+fn scene_xz(points: &[(f64, f64)], fr: Frame) -> Vec<(f64, f64)> {
+    points.iter().map(|&(x, z)| (fr.x(x), fr.z(z))).collect()
 }
 
 /// A TEd polygon instance: at the centre of its points' bounding box (y 0: the binary has no heights; landscape polygons follow the
@@ -1190,7 +1215,7 @@ fn zone_node(pts: &[(f64, f64)]) -> Node {
 
 /// The civilian deployment zones below a node (`civilian_deployment.bin`, a BMD's `civilian_deployment_list`): a polygon each with its
 /// kind and size.
-fn civilian_nodes(root: &Node, extent_z: f64) -> Vec<Node> {
+fn civilian_nodes(root: &Node, fr: Frame) -> Vec<Node> {
     let mut list = vec![];
     all(root, "civilian_deployment_list", &mut list);
     list.iter()
@@ -1200,7 +1225,7 @@ fn civilian_nodes(root: &Node, extent_z: f64) -> Vec<Node> {
             polygon(
                 "CivilianDeploymentZone",
                 "Civilian Deployment Zone",
-                &scene_xz(&pts, extent_z),
+                &scene_xz(&pts, fr),
                 true,
                 vec![
                     ("line_colour", Value::Colour([0.294, 0.0, 0.51, 1.0])),
@@ -1219,7 +1244,7 @@ fn bmd_points(n: &Node) -> Vec<(f64, f64)> {
 }
 
 /// The logic layer: outlines, zones, deployment areas, AI hints and separators, the siege graph.
-fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
+fn logic_layer(binary: &Tile, fr: Frame, losses: &mut Losses) -> Node {
     let mut l = layer("Logic", "LayerExportType_Normal");
     let mut items = vec![];
     let xml_outlines = |file: &str| {
@@ -1231,7 +1256,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         items.push(polygon(
             "GO_REGION_POLYGON_INSTANCE",
             "Go region",
-            &scene_xz(&pts, extent_z),
+            &scene_xz(&pts, fr),
             true,
             vec![("line_colour", Value::Colour([0.0, 0.25, 0.0, 1.0]))],
             (0.0, 0.0),
@@ -1239,14 +1264,14 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
     }
 
     for pts in xml_outlines("non_terrain_outlines.xml") {
-        items.push(nogo_node(&scene_xz(&pts, extent_z)));
+        items.push(nogo_node(&scene_xz(&pts, fr)));
     }
 
     if let Some(z) = binary.document("zones.xml") {
         let mut zones = vec![];
         all(&z.root, "BATTLEFIELD_ZONE_TEMPLATE", &mut zones);
         for t in zones {
-            items.push(zone_node(&scene_xz(&xml_points(t), extent_z)));
+            items.push(zone_node(&scene_xz(&xml_points(t), fr)));
         }
 
         if !items.is_empty() {
@@ -1300,7 +1325,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                     g.wrapped_mut("children").push(polygon(
                         "DEPLOYMENT_ZONE_POLYGON_INSTANCE",
                         "Deployment Zone Polygon",
-                        &scene_xz(&xml_points(bnd), extent_z),
+                        &scene_xz(&xml_points(bnd), fr),
                         true,
                         vec![
                             ("line_colour", Value::Colour([0.0, 0.0, 1.0, 0.7])),
@@ -1334,7 +1359,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                 items.push(polygon(
                     "AI_HINT_POLYGON_INSTANCE",
                     "AI hint polygon",
-                    &scene_xz(&pts, extent_z),
+                    &scene_xz(&pts, fr),
                     closed,
                     vec![
                         ("subdivision_length", Value::Float(5.0)),
@@ -1356,7 +1381,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                 items.push(polygon(
                     "AISeparatorInstance",
                     "AI Separator",
-                    &scene_xz(&pts, extent_z),
+                    &scene_xz(&pts, fr),
                     false,
                     vec![("subdivision_length", Value::Float(5.0)), ("max_subdivisions", i(100)), ("type", s(&ty))],
                     (0.0, 0.0),
@@ -1384,7 +1409,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
 
             let node_pos = if class == "SiegeAINodeInstance" {
                 lines.first().map_or((0.0, 0.0), |p| {
-                    let p = scene_xz(p, extent_z);
+                    let p = scene_xz(p, fr);
                     let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
                     for &(x, z) in &p {
                         lo = (lo.0.min(x), lo.1.min(z));
@@ -1409,14 +1434,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                 let name = names[j.min(1)];
                 // A node's bounding box and boundary are closed, an edge's street and boundaries open.
                 let closed = class == "SiegeAINodeInstance";
-                n.wrapped_mut("children").push(polygon(
-                    "SIEGE_AI_POLYGON_INSTANCE",
-                    name,
-                    &scene_xz(pts, extent_z),
-                    closed,
-                    vec![],
-                    node_pos,
-                ));
+                n.wrapped_mut("children").push(polygon("SIEGE_AI_POLYGON_INSTANCE", name, &scene_xz(pts, fr), closed, vec![], node_pos));
             }
 
             items.push(n);
@@ -1425,12 +1443,12 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
 
     // Civilian deployment zones (civilian_deployment.bin).
     if let Some(d) = binary.document("civilian_deployment.bin") {
-        items.extend(civilian_nodes(&d.root, extent_z));
+        items.extend(civilian_nodes(&d.root, fr));
     }
 
     // The normal layers' capture locations (the escalation layers' are in their BMDs).
     if let Some(doc) = binary.document("capture_location_list.xml") {
-        items.extend(xml_captures(&doc.root).iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent_z)));
+        items.extend(xml_captures(&doc.root).iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), fr)));
         let mut lists = vec![];
         all(&doc.root, "CAPTURE_LOCATION_LIST", &mut lists);
         // The others (alternative sets) are carried: the compile writes them after the project's list.
@@ -1446,7 +1464,7 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
         all(&d.root, "civilian_shelter_list", &mut list);
         for item in list.iter().flat_map(|l| l.children.iter().filter(|c| c.class == "item")) {
             let Some(area) = item.child("area") else { continue };
-            let at = |x: &str, y: &str| (2.0 * num(area, x), 2.0 * (extent_z - num(area, y)));
+            let at = |x: &str, y: &str| (fr.x(num(area, x)), fr.z(num(area, y)));
             let ((tx, tz), (px, pz)) = (at("min_x", "min_y"), at("max_x", "max_y"));
             let mut n = node("CivilianShelter", vec![("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]))]);
             n.set("target", Value::Vec3([r32(tx), 0.0, r32(tz)]));
@@ -1663,8 +1681,8 @@ fn xml_captures(doc: &Node) -> Vec<CaptureLocation> {
 /// A capture location as TEd's CaptureLocationInstance with its boundary. A circle (a radius and one point): the instance at the centre,
 /// the flag at `flag_position` from it, the boundary TEd's circle of the radius doubled (as the kit has them). A polygon through the
 /// points: the instance at the flag.
-fn capture_node(c: &CaptureLocation, name: &str, extent_z: f64) -> Node {
-    let scene = |(x, z): (f64, f64)| (2.0 * x, 2.0 * (extent_z - z));
+fn capture_node(c: &CaptureLocation, name: &str, fr: Frame) -> Node {
+    let scene = |(x, z): (f64, f64)| (fr.x(x), fr.z(z));
     let flag = scene(c.flag);
     let circle = c.radius > 0.0 && c.points.len() <= 1;
     let centre = if circle { c.points.first().map_or(flag, |&p| scene(p)) } else { flag };
@@ -1689,7 +1707,7 @@ fn capture_node(c: &CaptureLocation, name: &str, extent_z: f64) -> Node {
     n.set("surface_mode", s("MSM_LANDSCAPE"));
     let boundary = if circle {
         // TEd's circle: 20 points from +z towards +x, (r sin a, r cos a) for a = 0, 18, ... 342 degrees.
-        let r = 2.0 * c.radius;
+        let r = fr.xz * c.radius;
         let ring = (0..20)
             .map(|k| {
                 let a = f64::from(k) * 18f64.to_radians();
@@ -1701,7 +1719,7 @@ fn capture_node(c: &CaptureLocation, name: &str, extent_z: f64) -> Node {
         b.set("polygon_shape", s("PS_CIRCLE"));
         b
     } else {
-        polygon("CaptureLocationPolygonInstance", "Boundary", &scene_xz(&c.points, extent_z), true, vec![], centre)
+        polygon("CaptureLocationPolygonInstance", "Boundary", &scene_xz(&c.points, fr), true, vec![], centre)
     };
 
     n.wrapped_mut("children").push(boundary);
@@ -1959,6 +1977,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
     // The scene.
     let extent = (f64::from(*row.width()) * 128.0, f64::from(*row.height()) * 128.0);
+    let fr = Frame::new(extent.1, wce_tile::tile_project::height_unit(std::path::Path::new(&format!("/{folder}"))));
     let mut p = project(extent);
     losses.note("tile.ted: the camera, the vegetation seeds and the layers' names and structure are not in the binary (made up)");
     let mut bl = BuildingLosses::default();
@@ -1996,7 +2015,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             _ => Default::default(),
         };
         for (k, b) in list.iter().enumerate() {
-            let mut node = building_node(b, extent.1, ctx, &mut bl);
+            let mut node = building_node(b, fr, ctx, &mut bl);
             if let Some(c) = linked.get(&k) {
                 node.set("capture_location", s(c));
             }
@@ -2004,7 +2023,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             l.wrapped_mut("children").push(node);
             // The zones decide the main list's flags (the kit's zoned tiles); the other lists' are not theirs.
             if let Some(lite) = b.lite.filter(|_| name == "building_list") {
-                lite_of.push((2.0 * f64::from(b.position[0]), 2.0 * (extent.1 - f64::from(b.position[2])), lite));
+                lite_of.push((fr.x(f64::from(b.position[0])), fr.z(f64::from(b.position[2])), lite));
             }
         }
 
@@ -2041,7 +2060,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let caps = bmd_captures(&doc.root);
         let linked = building_captures(&caps, &mut losses);
         for (k, b) in bmd_buildings(&doc.root).iter().enumerate() {
-            let mut node = building_node(b, extent.1, ctx, &mut bl);
+            let mut node = building_node(b, fr, ctx, &mut bl);
             if let Some(c) = linked.get(&k) {
                 node.set("capture_location", s(c));
             }
@@ -2071,23 +2090,23 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             order.into_iter().flat_map(|k| records.iter().filter(|(_, r)| *r == k).cloned().collect::<Vec<_>>()).collect::<Vec<_>>()
         };
         for (rec, key) in in_table_order(items("prop_list").iter().map(bmd_prop_record).collect()) {
-            l.wrapped_mut("children").push(prop_node(&rec, &key, extent.1, true));
+            l.wrapped_mut("children").push(prop_node(&rec, &key, fr, true));
         }
 
         for (rec, key) in in_table_order(items("particle_emitter_list").iter().map(bmd_emitter_record).collect()) {
-            l.wrapped_mut("children").push(emitter_node(&rec, &key, extent.1));
+            l.wrapped_mut("children").push(emitter_node(&rec, &key, fr));
         }
 
         if unordered > 0 {
             losses.note(format!("escalation props / emitters: no insertion order gives the marker table's order ({unordered} lists of bmd_data_escalation{n}.bin)"));
         }
 
-        l.wrapped_mut("children").extend(caps.iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), extent.1)));
+        l.wrapped_mut("children").extend(caps.iter().enumerate().map(|(k, c)| capture_node(c, &capture_name(k), fr)));
         // No-go regions, zones and civilian deployment zones.
         if let Some(nt) = doc.root.child("non_terrain_outlines").and_then(|n| n.child("empire_outline")) {
             for o in &nt.children {
                 let pts = o.child("outline").map_or(vec![], bmd_points);
-                l.wrapped_mut("children").push(nogo_node(&scene_xz(&pts, extent.1)));
+                l.wrapped_mut("children").push(nogo_node(&scene_xz(&pts, fr)));
             }
         }
 
@@ -2098,12 +2117,12 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
                     .and_then(|t| t.child("outline"))
                     .and_then(|o| o.child("outline"))
                     .map_or(vec![], bmd_points);
-                l.wrapped_mut("children").push(zone_node(&scene_xz(&pts, extent.1)));
+                l.wrapped_mut("children").push(zone_node(&scene_xz(&pts, fr)));
             }
         }
 
         if let Some(c) = doc.root.child("civilian_deployment_list") {
-            l.wrapped_mut("children").extend(civilian_nodes(c, extent.1));
+            l.wrapped_mut("children").extend(civilian_nodes(c, fr));
         }
 
         // TEd writes an escalation layer's file even when it is empty.
@@ -2201,18 +2220,18 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
                 "prop_marker.markers" => prop_node(
                     rec,
                     &key,
-                    extent.1,
+                    fr,
                     ctx.conventions.signed_decal_fields(doc.root.get("version").and_then(Value::as_int).unwrap_or(9)),
                 ),
-                "particle_emitter_marker.markers" => emitter_node(rec, &key, extent.1),
-                _ => light_node(rec, &key, extent.1),
+                "particle_emitter_marker.markers" => emitter_node(rec, &key, fr),
+                _ => light_node(rec, &key, fr),
             });
         }
 
         graph(&mut p).wrapped_mut("children").push(l);
     }
 
-    let logic = logic_layer(binary, extent.1, &mut losses);
+    let logic = logic_layer(binary, fr, &mut losses);
     if !logic.wrapped("children").is_empty() {
         losses.note("logic: the polygons' heights are not in the binary (landscape polygons at height 0)");
         graph(&mut p).wrapped_mut("children").push(logic);
@@ -2231,7 +2250,7 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             .or_else(|| ctx.tree_list.is_none().then(|| binary.document("default.tree_list")).flatten());
         // The generator ran at the database's density (the row's, before the height map's may replace it above).
         let density = vi.map_or(128, |v| *row.variations()[v].raw_data_tri_density()).max(1);
-        let read = |d: &Node| if d.class == "TREE_LIST" { old_tree_nodes(d, extent.1, density) } else { tree_nodes(d, extent.1, density) };
+        let read = |d: &Node| if d.class == "TREE_LIST" { old_tree_nodes(d, fr, density) } else { tree_nodes(d, fr, density) };
         let trees = doc.map(|d| read(&d.root)).unwrap_or_default();
         if let Some(doc) = doc.filter(|_| !trees.nodes.is_empty() || !trees.generated.is_empty()) {
             losses.note(format!(
@@ -2253,10 +2272,9 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             .collect::<Vec<_>>();
         let cover = wce_tile::vegetation::static_cover::static_cover(&trees.statics, &generated, extent);
         let mut l = layer("Decompiled vegetation", "LayerExportType_Normal");
-        let ez = extent.1;
         for outline in &cover {
             // The list's z runs from the far edge; the scene's half metres.
-            let pts = outline.iter().map(|&(x, z)| (2.0 * x, 2.0 * (ez - z))).collect::<Vec<_>>();
+            let pts = outline.iter().map(|&(x, z)| (fr.x(x), fr.z(z))).collect::<Vec<_>>();
             l.wrapped_mut("children").push(polygon("VegetationExclusionPolygonInstance", "Static trees", &pts, true, vec![], (0.0, 0.0)));
         }
 
@@ -2417,14 +2435,14 @@ mod tests {
         let a: f64 = 0.4;
         let (c, sn) = (a.cos(), a.sin());
         let m = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, -sn, 0.0, c, 0.0, 10.0, 0.5, 30.0, 1.0];
-        let n = prop_node(&prop(m, true), "k", 100.0, true);
+        let n = prop_node(&prop(m, true), "k", Frame::new(100.0, 2.0), true);
         assert_eq!(n.get("position").and_then(Value::as_vec3), Some([20.0, 1.0, 140.0]));
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
 
         // A simple mesh of the same turn has its z row negated (f = F).
         let mm = [c, 0.0, sn, 0.0, 0.0, 1.0, 0.0, 0.0, sn, 0.0, -c, 0.0, 10.0, 0.5, 30.0, 1.0];
-        let n = prop_node(&prop(mm, false), "k", 100.0, true);
+        let n = prop_node(&prop(mm, false), "k", Frame::new(100.0, 2.0), true);
         let o = n.get("orientation").and_then(Value::as_vec3).unwrap();
         assert!((o[0] - r32(a)).abs() < 1e-6 && o[1].abs() < 1e-6 && o[2].abs() < 1e-6, "{o:?}");
         assert_eq!(n.get("scale").and_then(Value::as_vec3), Some([2.0, 2.0, 2.0]));
@@ -2519,7 +2537,7 @@ mod tests {
         list.children.push(l);
         let caps = xml_captures(&list);
         assert_eq!(caps.len(), 1);
-        let n = capture_node(&caps[0], "capture_point_1", 1024.0);
+        let n = capture_node(&caps[0], "capture_point_1", Frame::new(1024.0, 2.0));
         // The instance at the circle's centre, the flag at the list's position.
         let p = n.get("position").and_then(Value::as_vec3).unwrap();
         let f = n.get("flag_position").and_then(Value::as_vec3).unwrap();

@@ -84,11 +84,12 @@ impl PacksTree {
 
         // `_2`: the decompiler's tiles changed (a campaign tile's rivers in its own unit); the older trees are not these. `_3`: a
         // location's entry keeps every decompiled variation's height range (`workflow::write_entry`); the older trees lost all but the
-        // last one's, and the templates of their tiles (keyed by the folder) went with them.
+        // last one's, and the templates of their tiles (keyed by the folder) went with them. `_4`: a campaign tile's objects in its own
+        // unit (`decompile::Frame`), as the tile project now reads them; the older trees had them at a tenth (the battle unit's 2).
         let sources = kits.iter().fold(packs, |h, k| {
             k.to_string_lossy().to_lowercase().bytes().fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
         });
-        Self { vfs, kits, root: cache.join(format!("{key}_{sources:016x}_3")), built: std::sync::OnceLock::new() }
+        Self { vfs, kits, root: cache.join(format!("{key}_{sources:016x}_4")), built: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Result<&(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String> {
