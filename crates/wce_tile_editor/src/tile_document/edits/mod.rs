@@ -1435,7 +1435,8 @@ impl Tile {
             ("wall_base", Kind::Enum(_), Some(files)) => Prop { kind: Kind::Enum(wce_walls::profile::available_bases(files)), ..*prop },
             ("wall_base", Kind::Enum(_), None) => Prop { kind: Kind::Enum(wce_walls::profile::choices()), ..*prop },
             ("road_bridge", Kind::Enum(_), _) => Prop { kind: Kind::Enum(wce_walls::bridge::choices()), ..*prop },
-            ("road_type", Kind::Text, _) if self.road_prefabs.is_some() => Prop { kind: Kind::Enum(self.road_types()), ..*prop },
+            ("road_type", Kind::Enum(_), _) => Prop { kind: Kind::Enum(self.road_types()), ..*prop },
+            ("road_fence_type", Kind::Enum(_), _) => Prop { kind: Kind::Enum(self.road_fence_types(None)), ..*prop },
             _ => *prop,
         }
     }

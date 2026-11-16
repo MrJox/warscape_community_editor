@@ -1,0 +1,19 @@
+# The road types made from the kit's dirt decals (their pieces written to roads_proc/<name> in the projects' prefabs), in the order the
+# editor lists them; a road's Road type row lists these and any other road type the prefab library has (roads_proc/<type>).
+#
+# This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put your own in road_types_custom.toml
+# beside it (the editor never writes it, an update leaves it alone): a [[types]] entry there replaces the type of its name or is added
+# after these. The editor reads both each time a tile is opened.
+#   name    the type's name and folder: lowercase letters, digits and _ (not base, not none)
+#   width   the road's width its pieces are drawn at (metres); choosing the type puts a road at it
+#   lanes   1: one rut (path_1) down the middle; 2: two side by side, a quarter of the width less 0.2 m out from the middle
+
+[[types]]
+name = "dirt"
+width = 6.0
+lanes = 2
+
+[[types]]
+name = "dirt_track"
+width = 3.0
+lanes = 1

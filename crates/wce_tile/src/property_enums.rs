@@ -171,6 +171,14 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
 /// Not TEd's: the sides a `WceRoadSpline` has fences on, as it runs.
 pub const ROAD_FENCES: &[(&str, &str)] = &[("none", "None"), ("left", "Left"), ("right", "Right"), ("both", "Both")];
 
+/// Not TEd's: a `WceRoadSpline`'s road types: the editor's list is `Tile::road_types` (`road_dirt::styles`, from `road_types.toml` in the
+/// app's tables, and the prefab library's other `roads_proc` types), put in the row's place (`Tile::game_choices`).
+pub const ROAD_TYPE: &[(&str, &str)] = &[];
+
+/// Not TEd's: a `WceRoadSpline`'s fence type: the editor's list is `Tile::road_fence_types` (`fence` and the named fences of
+/// `road_fences.toml` in the app's tables, and the road type's other named fences in the prefab library), put in the row's place.
+pub const ROAD_FENCE_TYPE: &[(&str, &str)] = &[];
+
 /// Not TEd's: the bases a `WceRoadSpline`'s bridges are generated from: the editor's list is `wce_walls::bridge::choices` (`bridges.toml`
 /// in the settings folder, the user's to edit), put in the row's place (`Tile::game_choices`).
 pub const ROAD_BRIDGE: &[(&str, &str)] = &[];
