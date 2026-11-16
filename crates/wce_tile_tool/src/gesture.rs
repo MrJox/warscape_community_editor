@@ -35,6 +35,9 @@ pub(crate) struct Grab {
     pub drag: bool,
 }
 
+/// How far the mouse goes (pixels) before a pressed point is dragged: less is a click, which picks the point and leaves it where it is.
+pub const POINT_DRAG_PIXELS: i32 = 4;
+
 /// What the left button (or G) is doing in the viewport.
 pub(crate) enum Gesture {
     Grab(Grab),
@@ -46,10 +49,15 @@ pub(crate) enum Gesture {
     VegStroke(Stroke),
 
     /// A polygon's or spline's point dragged (`TileTool::poly_point`), or a spline's handle of it (`handle`: its controlOut (true) or
-    /// controlIn).
+    /// controlIn). Nothing moves until the mouse has gone [`POINT_DRAG_PIXELS`] from where it was pressed (`press`): a click only picks
+    /// the point (user 2026-11-16: a click moved it a little, and the whole line was made again). Then the point keeps its offset from the
+    /// mouse (`grab`: where it was less where the mouse pressed, on the ground), not jumping onto it.
     Point {
         handle: Option<bool>,
         gesture: u64,
+        press: (i32, i32),
+        moving: bool,
+        grab: Float3,
     },
 
     /// A point light's radius handle; `grab`: the radius minus where the mouse took the handle (it does not jump to the mouse).
