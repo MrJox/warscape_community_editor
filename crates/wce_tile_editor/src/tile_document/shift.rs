@@ -208,16 +208,42 @@ impl Tile {
         };
 
         self.renumber(scene, layer, &map, new_len, change == ViewChange::Shown);
-        if self.idx.type_names != names || dirty.len() != self.dirty_type.len() {
-            self.columns_changed();
-            self.tech.dirty = true;
+
+        // The type numbers, which the marker overlays are kept by: a type that came (the first of it placed) or went (its last one
+        // deleted) numbers the others again.
+        let retyped = self.idx.type_names != names;
+        let new_type = |t: usize| if retyped { self.idx.type_names.iter().position(|n| *n == names[t]) } else { Some(t) };
+        let new_types = (0..names.len()).map(new_type).collect::<Vec<_>>();
+        if retyped {
+            if dirty.len() != names.len() || self.batch_entity.len() > names.len() {
+                self.columns_changed();
+                self.tech.dirty = true;
+                self.markers_dirty = true;
+                self.polygons_dirty = true;
+                self.publish_items(scene, layer, true);
+                return;
+            }
+
+            let mut batches = vec![0; self.idx.type_names.len()];
+            for (t, &id) in self.batch_entity.iter().enumerate() {
+                match new_types[t] {
+                    Some(n) => batches[n] = id,
+                    None if id != 0 => {
+                        scene.remove(id);
+                    }
+
+                    None => {}
+                }
+            }
+
+            // Those of the types that came are added by the next update_view, with the markers drawn again. Nothing else is kept by
+            // type number.
+            self.batch_entity = batches;
             self.markers_dirty = true;
-            self.polygons_dirty = true;
-            self.publish_items(scene, layer, true);
-            return;
+        } else {
+            self.dirty_type = dirty;
         }
 
-        self.dirty_type = dirty;
         self.edits_seen = self.edits_seen.wrapping_add(1);
         self.last_highlight = None;
         self.last_mask = None;
@@ -229,7 +255,10 @@ impl Tile {
         let hide_buildings = self.display.hidden_types.contains("BUILDING_INSTANCE");
         let mut buildings = false;
         for t in (0..old_len).filter(|&e| map.map(e).is_none()).map(|e| types[e] as usize).collect::<BTreeSet<_>>() {
-            self.dirty_type[t] = 1;
+            if let Some(n) = new_types[t] {
+                self.dirty_type[n] = 1;
+            }
+
             self.water_dirty |= Some(t) == river;
             if Some(t) == building {
                 buildings = true;
@@ -238,6 +267,9 @@ impl Tile {
             }
         }
 
+        // What came is numbered as the types are now.
+        let building = self.idx.type_names.iter().position(|t| t == "BUILDING_INSTANCE");
+        let river = self.idx.type_names.iter().position(|t| t == "SplineRiverInstance");
         for &e in &map.came {
             if !self.is_instance(e) {
                 continue;
