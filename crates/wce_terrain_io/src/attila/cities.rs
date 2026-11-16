@@ -411,6 +411,29 @@ impl DisplayTables {
     }
 }
 
+/// The campaign world's bounds in a map's `map_data.esf`: `REGIONS_DATA`'s two `Coord2d`, min x, min y, max x, max y (0, 0, 678.5,
+/// 556.14 on Attila's `main_attila_map` and TDD's `rom_third_age_map`). The game scales the campaign's terrain to the world's width
+/// (empire.retail.dll fn 0x10ad9b40 passes it to the terrain's loader, fn 0x11806d80: a cell `width / the map's cells across`, the
+/// same scale along z), so a world unit of the props' markers is `cells / width` cells; none when the file has no such pair.
+#[must_use]
+pub fn world_bounds(map_data: &[u8]) -> Option<[f64; 4]> {
+    let md = ESF::decode(&mut Cursor::new(map_data), &None).ok()?;
+    let root = as_record(md.root_node())?;
+    let regions_data = child(root, "REGIONS_DATA")?;
+    let corners: Vec<(f64, f64)> = regions_data.children().iter().find_map(|g| {
+        let v: Vec<(f64, f64)> = g
+            .iter()
+            .filter_map(|n| match n {
+                NodeType::Coord2d(c) => Some((f64::from(*c.x()), f64::from(*c.y()))),
+                _ => None,
+            })
+            .collect();
+        (v.len() >= 2).then_some(v)
+    })?;
+    let ([x0, y0], [x1, y1]) = ([corners[0].0, corners[0].1], [corners[1].0, corners[1].1]);
+    (x1 > x0 && y1 > y0).then_some([x0, y0, x1, y1])
+}
+
 /// The settlements of a campaign from its map's `map_data.esf`, its startpos and the display tables.
 ///
 /// # Errors

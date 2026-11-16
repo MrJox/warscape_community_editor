@@ -90,13 +90,23 @@ pub struct TerryFrame {
     pub y_from_lf: bool,
 }
 
+/// A campaign cell in `.terry` units when the map's world bounds are not known (`TerryFrame::campaign`).
+pub const CAMPAIGN_CELL: f64 = 0.32;
+
 impl TerryFrame {
     pub const BATTLE: Self = Self { unit: 2.0, origin: [0.0, 0.0], cell: TERRY_CELL, y_from_lf: false };
 
-    /// A campaign map `w` x `h` cells.
-    pub fn campaign(w: u32, h: u32) -> Self {
-        let cell = 0.32;
-        Self { unit: cell / 128.0, origin: [f64::from(w) / 2.0 * cell, f64::from(h) / 2.0 * cell], cell, y_from_lf: true }
+    /// A campaign map `w` x `h` cells in a world of `bounds` (its `map_data.esf`'s: min x, min z, max x, max z). The game scales the
+    /// terrain to the world's width: a cell is `width / w` world units along both axes, from the bounds' min corner, rows from the map's
+    /// bottom edge (678.5 / 2032 = 0.33391 on Attila's and TDD's maps: by 0.32 TDD's Argonath stood 45 cells east and 30 north of the head
+    /// of Rauros, its marsh reeds off its marshes; Attila's fauna fit their land and sea best at 0.3325 .. 0.335). Without bounds, 0.32.
+    pub fn campaign(w: u32, h: u32, bounds: Option<[f64; 4]>) -> Self {
+        let (cell, min) = match bounds {
+            Some([x0, z0, x1, _]) if w > 0 && x1 > x0 => ((x1 - x0) / f64::from(w), [x0, z0]),
+            _ => (CAMPAIGN_CELL, [0.0, 0.0]),
+        };
+        let origin = [min[0] + f64::from(w) / 2.0 * cell, min[1] + f64::from(h) / 2.0 * cell];
+        Self { unit: cell / 128.0, origin, cell, y_from_lf: true }
     }
 
     /// A `.terry` point (x, z) in the frame.
@@ -817,5 +827,21 @@ impl Document for MapDocument {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TerryFrame;
+
+    #[test]
+    fn a_campaign_frame_scales_to_the_world_width() {
+        // TDD's rom_third_age_map: 2032 x 1441 cells in a world 678.5 wide; the Argonath's marker stands at the head of Rauros (its lake
+        // tile from row 732, x 1052 .. 1074).
+        let f = TerryFrame::campaign(2032, 1441, Some([0.0, 0.0, 678.5, 556.1439]));
+        let (cx, cy) = f.cell_of(353.5, 236.4, 2032, 1441);
+        assert!((cx - 1058.7).abs() < 0.1 && (cy - 732.5).abs() < 0.1, "{cx} {cy}");
+        // Without bounds: 0.32 a cell.
+        assert!((TerryFrame::campaign(2032, 1441, None).cell - 0.32).abs() < 1e-12);
     }
 }

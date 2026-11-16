@@ -338,7 +338,8 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
    the 375 MB LF paged from disk.
    **Progress 2026-11-04.** Done:
    - The Terrain tool opens the kit's campaign maps (`campaigns/<map>`): the campaign tile database, the LF at its scale, the `.terry`'s
-     frame (0.32 a cell from the bottom-left corner, z north), the props, VFX and environment volumes as overlays.
+     frame (from the bottom-left corner, z north; a cell is the world's width in `map_data.esf` over the map's cells, 0.33391 on Attila's
+     and TDD's maps, as the game scales its campaign terrain: 0.32 until 2026-11-16, which put TDD's Argonath 45 cells off Rauros), the props, VFX and environment volumes as overlays.
    - The whole campaign build (docs/re/terry.md, "Campaign maps"): the markers with the kit's transform, the environment collection, the
      LF DDSs and CHMF, the fill with shared geometry and `also_place_tile_set`, the campaign blm and masks. `build_check
      campaigns/main_attila_map` (gate `build_campaign_<map>`): 13 of 13 of BOB's files byte for byte, 21 s.

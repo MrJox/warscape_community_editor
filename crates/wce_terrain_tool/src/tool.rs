@@ -57,6 +57,9 @@ struct Loaded {
 
     /// Read from an autosave copy (`OpenInputs::restored_from`).
     restored_from: Option<PathBuf>,
+
+    /// A campaign's world bounds (`campaign_maps/<map>/map_data.esf`), the frame of its `.terry` and markers.
+    world: Option<[f64; 4]>,
 }
 
 impl Loaded {
@@ -66,7 +69,7 @@ impl Loaded {
         d.view_roads = self.roads;
         d.restored_from = self.restored_from;
         d.terry_frame = if map_kind(&d.name).0 == MapKind::Campaign {
-            wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height)
+            wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height, self.world)
         } else {
             wce_terrain_editor::document::TerryFrame::BATTLE
         };
@@ -680,7 +683,16 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     }
 
     let roads = if kind == MapKind::Campaign { campaign_roads(i) } else { None };
-    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages, roads, restored_from: i.restored_from.clone() })
+    let world = (kind == MapKind::Campaign)
+        .then(|| i.files.as_ref()?.read(&format!("campaign_maps/{}/map_data.esf", map_kind(&i.name).1)).ok())
+        .flatten()
+        .and_then(|b| wce_terrain_io::attila::cities::world_bounds(&b));
+    if kind == MapKind::Campaign {
+        log::info(format!("terrain open {}: the world {world:?} (map_data.esf)", i.name));
+    }
+
+    let restored_from = i.restored_from.clone();
+    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages, roads, restored_from, world })
 }
 
 impl TerrainTool {
