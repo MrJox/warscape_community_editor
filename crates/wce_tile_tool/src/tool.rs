@@ -6145,6 +6145,16 @@ fn snap_heading(m: Float4x4, step: f32, tolerance: f32) -> Float4x4 {
     translation(at) * wce_foundation::math::rotation_y(diff.to_radians()) * translation(Float3::new(-at.x, -at.y, -at.z)) * m
 }
 
+/// Reads the game's tables from their files in the app's `tables/<game key>` folder, each with the user's custom one beside it
+/// (`wce_tile::user_files`): the wall and bridge bases, the road fences and the road types.
+pub(crate) fn load_tables(e: &Editor) {
+    let (dir, game) = (wce_tile::user_files::tables_dir(), e.settings_ref().game_profile().key);
+    wce_walls::profile::load(&dir, game);
+    wce_walls::bridge::load(&dir, game);
+    wce_tile::road_fences::load(&dir, game);
+    wce_tile::road_dirt::load(&dir, game);
+}
+
 #[cfg(test)]
 mod snap_tests {
     use super::*;
@@ -6184,13 +6194,4 @@ mod snap_tests {
         assert_eq!(nearest_handle(handles, o, dir), Some(2));
         assert_eq!(nearest_handle([], o, dir), None);
     }
-}
-
-/// Reads the game's tables from their files in the app's `tables/<game key>` folder, each with the user's custom one beside it
-/// (`wce_tile::user_files`): the wall and bridge bases and the road fences.
-pub(crate) fn load_tables(e: &Editor) {
-    let (dir, game) = (wce_tile::user_files::tables_dir(), e.settings_ref().game_profile().key);
-    wce_walls::profile::load(&dir, game);
-    wce_walls::bridge::load(&dir, game);
-    wce_tile::road_fences::load(&dir, game);
 }

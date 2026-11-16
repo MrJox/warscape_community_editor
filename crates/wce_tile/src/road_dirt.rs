@@ -35,8 +35,76 @@ pub const DIRT: Style = Style { name: TYPE, width: WIDTH, lanes: 2 };
 /// A track: one lane (one `path_1` down the middle), 3 m wide (user 2026-11-16: a road one decal wide).
 pub const TRACK: Style = Style { name: "dirt_track", width: 3.0, lanes: 1 };
 
-/// The road types made here.
-pub const STYLES: [Style; 2] = [DIRT, TRACK];
+/// The road types' file in the app's `tables/<game>` folder, with the user's `road_types_custom.toml` beside it (`user_files`; user
+/// 2026-11-16: the Road type row's values from the tables). Built in by game.
+pub const FILE_NAME: &str = "road_types.toml";
+pub const BUILT_IN: crate::user_files::BuiltIn = &[
+    ("attila", include_str!("../../../tables/attila/road_types.toml")),
+    ("rome_2", include_str!("../../../tables/rome_2/road_types.toml")),
+    ("thrones_of_britannia", include_str!("../../../tables/thrones_of_britannia/road_types.toml")),
+];
+
+/// The road types made here: the files' ([`load`]) or as built in (dirt, then the track).
+pub static ROAD_TYPES: crate::user_files::Registry<Vec<Style>> = crate::user_files::Registry::new(FILE_NAME, BUILT_IN, parse_with);
+
+#[derive(serde::Deserialize)]
+struct TypeDef {
+    name: String,
+    width: f64,
+    lanes: u8,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct TypesFile {
+    #[serde(default)]
+    types: Vec<TypeDef>,
+}
+
+/// Reads the shipped road types file and the custom one over it: a custom type in place of the shipped one of its name, or after them.
+///
+/// # Errors
+///
+/// Either is not TOML of its shape, there is no type, or a type's name (lowercase letters, digits and _; not `base` nor `none`; once),
+/// width (over 0) or lanes (1 or 2) is not one.
+pub fn parse_with(shipped: &str, custom: Option<&str>) -> Result<Vec<Style>, String> {
+    let mut file: TypesFile = toml::from_str(shipped).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    if let Some(text) = custom {
+        let name = crate::user_files::custom_name(FILE_NAME);
+        let c: TypesFile = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+        crate::user_files::replace_or_add(&mut file.types, c.types, |a, b| a.name == b.name);
+    }
+
+    if file.types.is_empty() {
+        return Err("no [[types]]".to_owned());
+    }
+
+    let mut out: Vec<Style> = vec![];
+    for t in &file.types {
+        let ok_name = !t.name.is_empty() && t.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !ok_name || t.name == road_pieces::BASE || t.name == "none" || out.iter().any(|o| o.name == t.name) {
+            return Err(format!("the road type name '{}' (lowercase letters, digits and _, not base nor none, once)", t.name));
+        }
+
+        if !(t.width > 0.0) || !matches!(t.lanes, 1 | 2) {
+            return Err(format!("the road type '{}': a width over 0 and 1 or 2 lanes", t.name));
+        }
+
+        out.push(Style { name: crate::user_files::keep(&t.name), width: t.width, lanes: t.lanes });
+    }
+
+    Ok(out)
+}
+
+/// Reads a game's road types files in the tables folder (`user_files::tables_dir`): the types from then on.
+pub fn load(tables: &Path, game: &str) {
+    ROAD_TYPES.load(tables, game);
+}
+
+/// The road types made here, in the editor's order.
+#[must_use]
+pub fn styles() -> &'static [Style] {
+    ROAD_TYPES.get()
+}
 
 /// Dirt's variants of its pieces (`road_pieces::varies`): straights with the kit's banks, patches, puddles and erosion.
 pub const VARIANTS: [&str; 4] = ["straight_2", "straight_3", "straight_4", "straight_5"];
@@ -87,7 +155,7 @@ pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
 /// Whether every dirt piece is in a prefab folder as this generation makes it, or as the user made it.
 #[must_use]
 pub fn all_written(prefab_root: &Path, fences: &Fences) -> bool {
-    STYLES.iter().all(|st| !road_pieces::generated_stale_weighted(prefab_root, st.name, &as_refs(&pieces_of(st, fences)), &weight))
+    styles().iter().all(|st| !road_pieces::generated_stale_weighted(prefab_root, st.name, &as_refs(&pieces_of(st, fences)), &weight))
 }
 
 /// Pieces as `road_pieces`' writers take them.
@@ -191,9 +259,10 @@ fn ruts_x(st: &Style, x0: f64, x1: f64) -> Vec<Vec<u8>> {
     vec![decal("path_1", [x, -z], LEFT, length, RUT, None), decal("path_1", [x, z], RIGHT, length, RUT, None)]
 }
 
-/// Where a style's ruts run across the road from its middle: dirt's two lanes 1.3 m each side, a track's one in the middle.
-fn lane_offsets(st: &Style) -> &'static [f64] {
-    if st.lanes == 1 { &[0.0] } else { &[1.3, -1.3] }
+/// Where a style's ruts run across the road from its middle: two lanes as its straights' (dirt's: 1.3 m each side), one in the middle.
+fn lane_offsets(st: &Style) -> Vec<f64> {
+    let x = st.width * 0.25 - 0.2;
+    if st.lanes == 1 { vec![0.0] } else { vec![x, -x] }
 }
 
 /// An edge's border from one place to another along z (`side`: its x) or along x (`side`: its z), its lip facing out of the road (`out`:
@@ -281,7 +350,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
     parts_of(&DIRT, piece)
 }
 
-/// The decals of a piece of a dirt style's road ([`STYLES`]).
+/// The decals of a piece of a dirt style's road ([`styles`]).
 #[must_use]
 pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
     let h = st.width * 0.5;
@@ -392,7 +461,7 @@ pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
             for i in 0..5 {
                 let t = (f64::from(i) - 2.0) * CURVE_TURN / 5.0;
                 let w = if i % 2 == 0 { back(t) } else { way(t) };
-                for (k, &off) in lane_offsets(st).iter().enumerate() {
+                for (k, off) in lane_offsets(st).into_iter().enumerate() {
                     out.push(decal("path_1", at(r + off, t), if k == 0 { w } else { way(t) }, 4.6, RUT, None));
                 }
                 out.push(decal("border_1", at(r + h, t), back(t), 4.6, BORDER, None));
@@ -416,7 +485,7 @@ pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
             let c = [j0, -j0];
             quarter(&mut out, c, j0 + h, 4, "border_1", BORDER, Some(false));
             quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
-            for &off in lane_offsets(st) {
+            for off in lane_offsets(st) {
                 quarter(&mut out, c, j0 + off, if off > 0.0 { 3 } else { 2 }, "path_1", RUT, None);
             }
             out.push(decal("global_terrain_rocks_04", [-h - 1.2, h + 1.2], UP, 2.5, 2.5, None));
@@ -444,7 +513,7 @@ pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
             out.push(border_z("border_1", -h, -0.25, j));
             for c in [[j0, -j0], [j0, j0]] {
                 quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
-                for &off in lane_offsets(st) {
+                for off in lane_offsets(st) {
                     quarter(&mut out, c, j0 + off, if off > 0.0 { 3 } else { 2 }, "path_1", RUT, None);
                 }
             }
@@ -466,7 +535,7 @@ pub fn parts_of(st: &Style, piece: &str) -> Vec<Vec<u8>> {
             out.extend(ruts_x(st, -0.25, j));
             for c in [[j0, -j0], [j0, j0], [-j0, j0], [-j0, -j0]] {
                 quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
-                let inner = lane_offsets(st).iter().copied().fold(f64::MAX, f64::min);
+                let inner = lane_offsets(st).into_iter().fold(f64::MAX, f64::min);
                 quarter(&mut out, c, j0 + inner, 2, "path_1", RUT, None);
             }
 
@@ -506,7 +575,7 @@ pub fn pieces() -> Vec<(String, Vec<Vec<u8>>)> {
     pieces_of(&DIRT, &Fences::default())
 }
 
-/// A dirt style's pieces ([`STYLES`]): its guides at its width and its parts, in their role groups; its fence and named fences those of
+/// A dirt style's pieces ([`styles`]): its guides at its width and its parts, in their role groups; its fence and named fences those of
 /// `fences` (the fences file).
 #[must_use]
 pub fn pieces_of(st: &Style, fences: &Fences) -> Vec<(String, Vec<Vec<u8>>)> {
@@ -543,7 +612,7 @@ pub fn pieces_of(st: &Style, fences: &Fences) -> Vec<(String, Vec<Vec<u8>>)> {
 /// A file can't be written.
 pub fn write(prefab_root: &Path, fences: &Fences) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
-    for st in &STYLES {
+    for st in styles() {
         out.extend(road_pieces::write_generated_weighted(prefab_root, st.name, &as_refs(&pieces_of(st, fences)), &weight)?);
     }
 
@@ -554,6 +623,22 @@ pub fn write(prefab_root: &Path, fences: &Fences) -> Result<Vec<PathBuf>, String
 mod tests {
     use super::*;
     use crate::road_pieces::base_guides;
+
+    #[test]
+    fn the_road_types_files_read_and_say_why_not() {
+        for (game, text) in BUILT_IN {
+            assert_eq!(parse_with(text, None).unwrap_or_else(|e| panic!("{game}: {e}")), [DIRT, TRACK], "{game}");
+        }
+
+        let custom = "[[types]]\nname = \"dirt_track\"\nwidth = 2.5\nlanes = 1\n[[types]]\nname = \"lane\"\nwidth = 8.0\nlanes = 2\n";
+        let t = parse_with(BUILT_IN[0].1, Some(custom)).unwrap();
+        assert_eq!(t.iter().map(|s| (s.name, s.width)).collect::<Vec<_>>(), [("dirt", 6.0), ("dirt_track", 2.5), ("lane", 8.0)]);
+        for bad in
+            ["name = \"none\"\nwidth = 3.0\nlanes = 1", "name = \"x\"\nwidth = 3.0\nlanes = 3", "name = \"Big\"\nwidth = 3.0\nlanes = 1"]
+        {
+            assert!(parse_with(BUILT_IN[0].1, Some(&format!("[[types]]\n{bad}\n"))).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn the_named_fences_are_fence_pieces_no_variants() {
@@ -747,7 +832,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             write(dir.path(), &Fences::default()).unwrap().len(),
-            (PIECES.len() + VARIANTS.len() + Fences::default().named.len()) * STYLES.len()
+            (PIECES.len() + VARIANTS.len() + Fences::default().named.len()) * styles().len()
         );
         assert!(write(dir.path(), &Fences::default()).unwrap().is_empty());
         let lib = crate::prefabs::PrefabLibrary::scan_folders(&[dir.path().to_path_buf()]);

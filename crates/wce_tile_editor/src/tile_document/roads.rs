@@ -990,7 +990,9 @@ impl Tile {
     /// Leaked once per list seen: the property rows hold it.
     #[must_use]
     pub fn road_types(&self) -> &'static [(&'static str, &'static str)] {
-        let mut names = self
+        // The tables' types first, in their order; then the library's others (a road type made by hand), by name.
+        let mut names = wce_tile::road_dirt::styles().iter().map(|s| s.name.to_owned()).collect::<Vec<_>>();
+        let mut others = self
             .road_prefabs
             .as_ref()
             .map(|lib| {
@@ -1002,21 +1004,37 @@ impl Tile {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        names.sort();
-        names.dedup();
+        others.sort();
+        others.dedup();
+        others.retain(|o| !names.contains(o));
+        names.extend(others);
         names.push("none".to_owned());
         leaked_choices(names)
     }
 
-    /// The fence types a road may have (Inspector's fence type row): `fence` and its type's named fences ([`Self::road_fence_choices`]).
+    /// The fence types a road may have (Inspector's fence type row): `fence` and the named fences of the fences table, then (a road given)
+    /// its type's other named fences in the prefab library ([`Self::road_fence_choices`]).
     #[must_use]
-    pub fn road_fence_types(&self, road: usize) -> &'static [(&'static str, &'static str)] {
-        leaked_choices(self.road_fence_choices(road))
+    pub fn road_fence_types(&self, road: Option<usize>) -> &'static [(&'static str, &'static str)] {
+        let f = wce_tile::road_fences::fences();
+        let mut names = std::iter::once(&f.fence).chain(&f.named).map(wce_tile::road_fences::Fence::piece).collect::<Vec<_>>();
+        for n in road.map(|r| self.road_fence_choices(r)).unwrap_or_default() {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+
+        leaked_choices(names)
     }
 
-    /// A road type's own width: its straight's (`road_<type>_straight`), what a road of it is made at when the type is chosen.
+    /// A road type's own width: the tables' (`road_types.toml`), else its straight's (`road_<type>_straight`): what a road of it is made
+    /// at when the type is chosen.
     #[must_use]
     pub fn road_type_width(&self, road_type: &str) -> Option<f64> {
+        if let Some(s) = wce_tile::road_dirt::styles().iter().find(|s| s.name == road_type) {
+            return Some(s.width);
+        }
+
         let lib = self.road_prefabs.as_ref()?;
         let prefab = lib.load(&key(road_type, "straight")).ok()?;
         read(&prefab.group_text).ok().map(|p| p.width)
