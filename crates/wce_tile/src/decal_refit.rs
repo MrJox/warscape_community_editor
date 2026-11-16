@@ -5,8 +5,9 @@
 //! box paints the ground and what stands on it up to half a unit over the ground, not the tents and walls above; a box already shorter is
 //! kept, wherever it is (a decal on a bridge's deck).
 //!
-//! NOT DONE: the game's measure also takes the points of objects of type 0x100 (planes) overlapping the footprint, not identified; and it
-//! refits only decals whose footprint is inside the map's bounds (all here).
+//! NOT DONE: the game's measure also takes the points of the ground surfaces overlapping the footprint (building platforms with `flag_2`,
+//! or of a `ground_platform` building, and one unidentified class; they lie at about the ground's height); and it refits only decals whose
+//! footprint is inside the map's bounds (all here).
 
 /// `rescale_battle_prop_decals_lower_safety_margin` and `..._upper_safety_margin` (scene units, the game's).
 pub const LOWER_MARGIN: f64 = 0.25;
