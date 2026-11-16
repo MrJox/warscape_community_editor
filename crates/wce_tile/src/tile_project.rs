@@ -135,7 +135,12 @@ pub fn fit_baked_heights(pairs: &[(f64, f64)]) -> Option<(f64, f64, usize)> {
 /// game's own campaign `lf_normal.dds` agrees: its normals tilt about 14 times as far for a slope of the LF as the battle map's do
 /// against its LF, `normal_lf_scale` taken out (`campaign_normal_scale`; 10 by the unit scales).
 pub fn height_unit(dir: &Path) -> f64 {
-    if dir.to_string_lossy().replace('\\', "/").to_lowercase().contains("/terrain/tiles/campaign/") { 0.2 } else { 2.0 }
+    if is_campaign_tile(dir) { 0.2 } else { 2.0 }
+}
+
+/// Whether a tile is a campaign map's (`terrain/tiles/campaign`): its database's unit is 0.2, its cells 128 game units.
+pub fn is_campaign_tile(dir: &Path) -> bool {
+    dir.to_string_lossy().replace('\\', "/").to_lowercase().contains("/terrain/tiles/campaign/")
 }
 
 /// Whether a folder holds a tile: the editor's tile.wce or TEd's tile.ted.
@@ -231,7 +236,9 @@ pub struct TileProject {
     /// Its file name as read (`ground_type_map.png` in some case).
     pub ground_file: String,
 
-    /// Scene units per metre horizontally.
+    /// TEd's units a scene unit is (the tile database's `RENDER_PARAMS` `unit_scale`): 2 for a battle tile, 0.2 for a campaign tile, whose
+    /// TEd positions BOB writes times 5 (the packs' `prop_marker.markers` of `swamp_01/4x3/aa`: its water plane at TEd's (59.85, 29.34)
+    /// is at (299.2, 384 - 146.7), its scale 30 x 20 is 150 x 100). Every axis, as the tile document's world is TEd's divided by it.
     pub unit_scale: f64,
 
     /// Which min_height / scale the height map uses when it is not the entry's (see `calibrate_from_final_heights`), empty otherwise.
@@ -428,6 +435,7 @@ impl TileProject {
             Some(_) => String::new(),
         };
 
+        let unit_scale = height_unit(&dir);
         let mut project = Self {
             dir,
             info: found.info,
@@ -445,7 +453,7 @@ impl TileProject {
             ground: None,
             ground_dirty: false,
             ground_file: String::new(),
-            unit_scale: 2.0,
+            unit_scale,
             height_calibration: String::new(),
             river_texts: vec![],
             prefab_base: None,

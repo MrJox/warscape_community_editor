@@ -658,7 +658,7 @@ impl Tile {
 
     /// Whether this tile's rivers can have their real heights (`RIVER_HEIGHT_ATTR`): a battle tile's, whose heights were measured in game.
     pub(crate) fn rivers_keep_heights(&self) -> bool {
-        wce_tile::tile_project::height_unit(&self.project.dir) >= self.unit()
+        !wce_tile::tile_project::is_campaign_tile(&self.project.dir)
     }
 
     /// What a river's scene heights are divided by in its file, which is where the game has it (`river_files::Factors`). 1 in a campaign
@@ -680,14 +680,14 @@ impl Tile {
     pub(super) fn river_ribbons(&self) -> Vec<(Vec<RiverPoint>, Vec<RiverSample>)> {
         let u = self.unit();
         // Across: a campaign tile's scene is in its database's unit (0.2: BOB's river_spline<n>.xml has its x and z / 0.2, a battle tile's
-        // / 2); up: the project's unit (a map's view stretches a campaign tile's heights, `tile_project::height_unit`). A campaign river is
+        // / 2); up: the project's unit (a campaign tile's 0.2 too, `TileProject::unit_scale`). A campaign river is
         // drawn from its file when it has one (and is not edited since), as the game has it: many of the kit's campaign tile.ted rivers were edited after their file
         // was written (4x2_varient1's: 9 straight points 37 m up, its file 32 points along the carved bed, 1.48 m down), and the file's
         // width is the full width of BOB's ribbon (the packs' river block has 70 for a file's 70), TEd's times 5 or times 1 by the TEd that
         // wrote it (`river_files::Factors`). Without a file: TEd's points, the width times 5. A battle river's are TEd's, its width the full
         // width in metres (docs/re/water.md).
         let across = wce_tile::tile_project::height_unit(&self.project.dir);
-        let campaign = across < u;
+        let campaign = wce_tile::tile_project::is_campaign_tile(&self.project.dir);
         let mut river_index = 0;
         let mut out = vec![];
         let sc = self.tscene();

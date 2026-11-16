@@ -270,6 +270,12 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   so such a cliff has no blend box of its own and takes its neighbours' and its own albedo. Until 2026-11-16 the renderer left any
   terrain without a material out, mesh included (TDD's `rom_third_age_map`: square holes along the cliff coasts); a custom-mesh
   terrain now passes without one, and its floor under the sea takes the plain material of its climate.
+- **Objects of the campaign tiles** (2026-11-16): BOB writes a campaign tile's TEd positions and x / z scales times 5 (the database's
+  `unit_scale` 0.2; a battle tile's times 0.5), y and the y scale as they are: `swamp_01/4x3/aa`'s water plane, TEd (59.85, -4.90, 29.34)
+  scale (30, 1, 20), is in the packs' `prop_marker.markers` at (299.2, -4.9, 384 - 146.7) scale (150, 1, -100), over the pool its
+  ground has there. The editor read every tile in the battle unit (2): a campaign tile's objects stood at a tenth of their place and size,
+  in the tile's corner (the Dead Marshes' pools without water, their water planes under the ground). A campaign tile project now has
+  the unit 0.2 on every axis (`TileProject::unit_scale`; its heights too, as the map's view had them), in the Tile tool and the map's view.
 - **Lighting** (2026-11-04): the game lights a campaign map with its `environment_collection.xml`'s `global_lighting` (Attila:
   `lighting/europe_sp.lighting`, sun azimuth 262.8, from the west, as the game's screenshots show), not a battle weather (which drew its
   grass dark grey-blue).
