@@ -406,6 +406,7 @@ impl Command<Tile> for TedSpliceCommand {
     }
 
     fn revert(&mut self, t: &mut Tile) {
+        wce_foundation::wce_prof!("tile.splice_revert");
         let _ = t.project.scene.unapply(&self.record);
         self.changed(t, false);
         t.hint = Some(self.sel_before.clone());

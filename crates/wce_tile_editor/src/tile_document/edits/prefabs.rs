@@ -640,9 +640,13 @@ impl TileDocument {
         let spans = self.subtree_spans(&top);
         let Ok(mark) = self.begin() else { return false };
 
-        // From the last one: the indices of the others stay.
-        for &e in top.iter().rev() {
-            let _ = self.tscene_mut().remove(e);
+        {
+            wce_foundation::wce_prof!("tile.remove_items");
+            if let Err(e) = self.tscene_mut().remove_all(&top) {
+                wce_foundation::log::warn(format!("delete: {e}"));
+                let _ = self.rolled_back::<()>(mark, e);
+                return false;
+            }
         }
 
         self.push_splice_removed(name, mark, sel_before, spans);
