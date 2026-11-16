@@ -8,7 +8,7 @@
 use wce_editor::editor::Editor;
 use wce_editor::tool::ViewportEvent;
 use wce_editor::{gui, icons};
-use wce_foundation::math::{Double3, Float3};
+use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_tile_editor::tile_document::{TileDocument, elem_of, piece_of, tilted, with_root_attr};
 
 use crate::settings::{RotationMode, SETTINGS_ID, SurfaceMode, TileSettings};
@@ -97,9 +97,15 @@ impl TileTool {
         self.apply_placement_modes_on(text, Some(self.surface_normal(d)))
     }
 
-    /// What the preview tilts its text by (`Tile::set_preview`): the surface's normal, when the item follows it.
-    pub(crate) fn preview_normal(&self, d: &TileDocument) -> Option<Double3> {
-        (self.modes.unwrap_or_default().1 == RotationMode::Surface).then(|| self.surface_normal(d))
+    /// What the preview turns its text by after its yaw (`Tile::set_preview`), for it to show what a click places: tilted to the surface
+    /// under the mouse (Follow surface), or stood on the slope there (Follow slope, `Tile::slope_preview_tilt` of the preview's `text`, `at`
+    /// the place point, `yaw` the placement's turn); none when it is not tilted.
+    pub(crate) fn preview_tilt(&self, d: &TileDocument, text: &[u8], at: Float3, yaw: f32) -> Option<Double3x3> {
+        match self.modes.unwrap_or_default().1 {
+            RotationMode::Surface => Some(wce_tile_editor::tile_document::tilt_to(self.surface_normal(d))),
+            RotationMode::Slope => Some(d.tile().slope_preview_tilt(text, at, yaw)),
+            RotationMode::None => None,
+        }
     }
 
     /// The same, tilted to a given surface normal (a painted tree: the terrain's at its own point, not at the mouse), or not tilted (the
@@ -167,7 +173,7 @@ impl TileTool {
                 (
                     RotationMode::Slope,
                     icons::MOUNTAIN,
-                    "Follow slope: upright, pitched to the slope along its length only (a fence on a hillside); the preview stays level",
+                    "Follow slope: upright, pitched to the slope along its length only (a fence on a hillside)",
                 ),
             ];
             for (mode, icon, tip) in rotations {

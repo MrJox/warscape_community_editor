@@ -141,6 +141,17 @@ impl Tile {
         sc.save()
     }
 
+    /// What the placement preview turns its text by (after the placement's `yaw`, degrees, as `Tile::set_preview` takes it) for it to stand
+    /// as [`Self::slope_tilted_text`] stands what a click places at `at`: the rotation from the turned text's to the one on the slope.
+    pub fn slope_preview_tilt(&self, text: &[u8], at: Float3, yaw: f32) -> Double3x3 {
+        let Ok(sc) = TedScene::parse_any(text.to_vec()) else { return Double3x3::IDENTITY };
+        let els = sc.doc().elements();
+        let Some(root) = (0..els.len()).find(|&e| els[e].parent.is_none()) else { return Double3x3::IDENTITY };
+        let key = (sc.type_of(root) == "BUILDING_INSTANCE").then(|| sc.get(root, "key")).flatten();
+        let turned = Double3x3::rotation_y(f64::from(yaw).to_radians()) * wce_tile::world_transform::world_transform(&sc, root).rotation;
+        self.slope_rotation(turned, [f64::from(at.x), f64::from(at.z)], key.as_deref()) * turned.transpose()
+    }
+
     /// A building's footprint (metres, from its pivot; it is laid along the longer of its x and z): its logic file's box, else its model's
     /// bounds (the scene's, else its piece files' vertices). A building with neither is 5 m long along x about its pivot.
     pub(crate) fn building_extent(&self, key: &str) -> Footprint {
