@@ -107,6 +107,7 @@ enum Ask {
     Duplicate,
     Rename,
     Delete,
+    PortKits,
 }
 
 /// A group with nothing in it, as a new prefab's.
@@ -263,6 +264,38 @@ impl PrefabTool {
         let path = self.library(e).copy_to(key, &projects, name, folder)?;
         self.rescan(e);
         Ok(format!("{key} duplicated as {}", path.display()))
+    }
+
+    /// The Assembly Kits' prefabs ported to the projects' art/prefabs (the art resources' working tree): each kit prefab without a `.wce`
+    /// there gets one, the copies of prefabs in it made references (`PrefabLibrary::port_kits`); each one checked to read back as the kit's.
+    /// `dry_run`: only counted. Returns what was done.
+    ///
+    /// # Errors
+    ///
+    /// None: the prefabs that fail are listed in the message (and logged).
+    pub fn port_kits(&mut self, e: &mut Editor, dry_run: bool) -> Result<String, String> {
+        let projects = Self::projects_prefabs(e);
+        let done = self.library(e).port_kits(&projects, dry_run);
+        for f in &done.failed {
+            wce_foundation::log::warn(format!("prefab port: {f}"));
+        }
+
+        if !dry_run && !done.ported.is_empty() {
+            self.rescan(e);
+        }
+
+        let verb = if dry_run { "would be ported" } else { "ported" };
+        let mut m = format!(
+            "{} Assembly Kit prefab(s) {verb} to {} ({} the projects had already)",
+            done.ported.len(),
+            projects.display(),
+            done.already
+        );
+        if !done.failed.is_empty() {
+            m.push_str(&format!("; {} failed (see the log): {}", done.failed.len(), done.failed.join("; ")));
+        }
+
+        Ok(m)
     }
 
     /// Renames a prefab of the projects (open on the stage, it is opened again under its new name). Tiles' references to the old name are
@@ -540,6 +573,16 @@ impl PrefabTool {
             gui::set_tooltip("A new empty prefab in the projects' art/prefabs (the folder below it, optional)");
         }
 
+        if gui::button(&format!("{}  Port Assembly Kit prefabs...", icons::FOLDER_PLUS)) {
+            ask_now = Some((Ask::PortKits, String::new()));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Port the Assembly Kit's prefabs to the projects: each one without a projects' copy gets one in art/prefabs (the art resources'                  folder, ready to publish), as saving an edit of it would; the kit's files are not touched.",
+            );
+        }
+
         if !self.status.is_empty() {
             gui::text_wrapped(&self.status);
         }
@@ -659,7 +702,7 @@ impl PrefabTool {
         if let Some((what, key)) = ask_now {
             let folder = lib.get(&key).map(|p| p.folder.clone()).unwrap_or_default();
             let name = match what {
-                Ask::Rename | Ask::Delete => key.clone(),
+                Ask::Rename | Ask::Delete | Ask::PortKits => key.clone(),
                 Ask::SaveAs | Ask::Duplicate => format!("{key}_copy"),
             };
 
@@ -693,6 +736,13 @@ impl PrefabTool {
             Ask::Delete => gui::text(&format!(
                 "Delete the projects' prefab {key}? Its file goes; tiles' references to it find the Assembly Kit's of that name, if any."
             )),
+            Ask::PortKits => {
+                let lib = self.library(e);
+                let kit = lib.entries().filter(|p| !p.wce).count();
+                gui::text_wrapped(&format!(
+                    "Port {kit} Assembly Kit prefab(s) to the projects' art/prefabs? Each one gets a .wce there (the copies of prefabs in it                      made references), which takes the kit's place in the editor and can be published with the art resources. The kit's files                      are not touched; a prefab the projects have already is left as it is."
+                ));
+            }
             _ => {
                 gui::text(match what {
                     Ask::SaveAs => "Save the stage as a new prefab:",
@@ -712,7 +762,11 @@ impl PrefabTool {
             }
         }
 
-        go |= gui::button(if what == Ask::Delete { "Delete" } else { "OK" });
+        go |= gui::button(match what {
+            Ask::Delete => "Delete",
+            Ask::PortKits => "Port",
+            _ => "OK",
+        });
         gui::same_line();
         let cancel = gui::button("Cancel");
         if go || cancel {
@@ -734,6 +788,7 @@ impl PrefabTool {
             Ask::Duplicate => self.duplicate(e, &key, &name, &folder),
             Ask::Rename => self.rename(e, &key, &name),
             Ask::Delete => self.delete(e, &key),
+            Ask::PortKits => self.port_kits(e, false),
         };
 
         self.report(e, r);
@@ -883,6 +938,16 @@ fn register(c: &mut CommandRegistry<Editor>) {
         let Some(key) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_open <key>") };
         with_prefab(e, |p, e| p.open_prefab(e, &key))
     });
+
+    c.add(
+        "prefab_port_kits",
+        "prefab_port_kits [--dry-run]",
+        "port the Assembly Kits' prefabs to the projects' art/prefabs (a .wce for each one the projects lack; the kit's files untouched)",
+        |e, a| {
+            let dry = a.iter().any(|w| w == "--dry-run");
+            with_prefab(e, |p, e| p.port_kits(e, dry))
+        },
+    );
 
     c.add("prefab_tool_new", "prefab_tool_new <name> [folder]", "a new empty prefab in the projects, opened on the stage", |e, a| {
         let Some(name) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_new <name> [folder]") };
