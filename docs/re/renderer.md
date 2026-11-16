@@ -577,8 +577,12 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   - its model's bounding box (y from `ymin` to `ymax`; the decal models are the unit box, -0.5 .. 0.5) and its vertical axis (the matrix's
     y column, normalised; its length L is the box's height);
   - fn 0x1043b0c0: the lowest and highest terrain under the footprint's map-aligned bounds (the height map's cells over them and one
-    beyond, each height measured along that axis from the decal's origin), widened by the objects of type 0x100 overlapping it (planes:
-    a plane's height at its points; to the lowest when the axis points down, else to the highest; not identified, none on the test tile);
+    beyond, each height measured along that axis from the decal's origin), widened by the walkable surfaces overlapping it whose slot
+    0x30 answers true (type 0x100 in the surfaces' grid, fn 0x103645e0 with mask 0x100; each surface's plane height at its outline's
+    points, to the lowest when the axis points down, else to the highest). Slot 0x30 is the "ground" bit (docs/re/platforms_and_bridges.md,
+    "Platform objects"): **the building platforms with `flag_2`, or every platform of a `ground_platform` building**, and the surfaces of
+    one non-building class (vtable 0x1b213f4, built by fn 0x102d3c20 from fns 0x102d72a0 / 0x10177930; what they are was not found).
+    The other surfaces (raised platforms, a bridge's deck) are not counted: none on the test tile changed the box;
   - H = (highest + upper margin) - (lowest - lower margin), the new scale H / (ymax - ymin); **only when that is no more than L** the y
     column becomes the axis times it and the origin moves along the axis so that the box runs from lowest - 0.25 to highest + 0.5
     (constants 0.5 at RVA 0x1afbd68, 1.0 at 0x1afbd74). A shorter box is kept as it is.
@@ -590,8 +594,9 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   - The editor does the same (2026-11-16): a decal's box is refitted when its entity is made or refreshed (`wce_tile::decal_refit`,
     `Tile::refit_decal`: the tile's decals and the roads' generated ones), and the G-buffer pass marks every model but trees and ropes
     for decals (`DECAL_RECEIVER`). On wce_decal_test the ruts paint the ground and not the bridge's planks, the house's roof is clean, as
-    in game; on wce_bridge_test a generated bridge's deck takes its road's decals (V7's 0.7 boxes, kept). Not done: the type 0x100
-    objects of the measure, and the map-bounds check (every decal is refitted).
+    in game; on wce_bridge_test a generated bridge's deck takes its road's decals (V7's 0.7 boxes, kept). Not done: the ground
+    surfaces of the measure (they lie at about the ground's height, so they would raise a box's top by little), and the map-bounds check
+    (every decal is refitted).
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
