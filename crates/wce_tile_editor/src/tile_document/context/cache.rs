@@ -19,7 +19,8 @@ const MAGIC: &[u8; 6] = b"WCECTX";
 // 5: decal boxes keep TEd's signed scale again (4 took the magnitudes; the decal pass now draws with the shaders that expect the sign).
 // 9: a decompiled tile's rivers, baked into its terrain mesh (`baked_river`), drawn.
 // 10: the overlap ring of a tile with no heights past its edge (final heights, decompiled) slopes down instead of holding the edge.
-const VERSION: u16 = 10;
+// 11: a masked tile's ground over the cells its mask leaves out slopes down out of the way (BOB's mesh has no squares there).
+const VERSION: u16 = 11;
 
 /// The folder of the cache.
 pub fn cache_dir() -> PathBuf {

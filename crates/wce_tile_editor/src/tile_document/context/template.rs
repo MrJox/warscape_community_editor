@@ -64,6 +64,52 @@ const RING_DROP: f64 = 2.0;
 /// A decompiled tile's carried binary files (`wce_tile_io`'s `stage_b::CARRIED_DIR`).
 const TERRAIN_CARRIED_DIR: &str = "decompiled_terrain";
 
+/// A tile entry's mask (`mask='0011…'`): which of its cells (128 m subtiles) are the tile's. Row y counts the cells from the tile's -z
+/// edge in the map's terms (v = h - z / 128 of the tile's frame), x its columns.
+struct Mask {
+    w: i32,
+    h: i32,
+    cells: Vec<bool>,
+}
+
+impl Mask {
+    /// The entry's mask when it has one of the tile's size (`extent` in metres) with a cell left out; none otherwise.
+    fn of(entry: Option<&wce_formats::tile_entry::TileEntry>, extent: (f64, f64)) -> Option<Self> {
+        let (w, h) = ((extent.0 / 128.0).round() as i32, (extent.1 / 128.0).round() as i32);
+        let cells: Vec<bool> = entry?.mask().bytes().map(|c| c == b'1').collect();
+        (w > 0 && h > 0 && cells.len() == (w * h) as usize && cells.iter().any(|v| !v)).then_some(Self { w, h, cells })
+    }
+
+    fn valid(&self, i: i32, j: i32) -> bool {
+        (0..self.w).contains(&i) && (0..self.h).contains(&j) && self.cells[(j * self.w + i) as usize]
+    }
+
+    /// How far (metres) a point of the tile's frame lies inside the cells left out: 0 in the tile's own cells and on their edges, else the
+    /// distance to the nearest of the eight cells around that is the tile's (a cell's side, 128, when none is).
+    fn depth(&self, x: f64, z: f64) -> f64 {
+        let v = f64::from(self.h) * 128.0 - z;
+        let (i, j) = (((x / 128.0).floor() as i32).clamp(0, self.w - 1), ((v / 128.0).floor() as i32).clamp(0, self.h - 1));
+        if self.valid(i, j) {
+            return 0.0;
+        }
+
+        let mut d = 128.0f64;
+        for (di, dj) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+            let (a, b) = (i + di, j + dj);
+            if !self.valid(a, b) {
+                continue;
+            }
+
+            let (x0, v0) = (f64::from(a) * 128.0, f64::from(b) * 128.0);
+            let dx = (x0 - x).max(x - (x0 + 128.0)).max(0.0);
+            let dv = (v0 - v).max(v - (v0 + 128.0)).max(0.0);
+            d = d.min(dx.hypot(dv));
+        }
+
+        d
+    }
+}
+
 /// How far the ring of vertices around a tile's ground goes down (scene units): a skirt that closes what the overlap leaves open.
 pub(super) const SKIRT: f32 = 20.0;
 
@@ -565,12 +611,20 @@ pub fn load_template(
     // seam, as a shelf ending in a step (Thrones' port_b over its beach's sea_coast tile: 0.5 m, cutting the beach's decals). Those tiles
     // meet their neighbours exactly at the edge (the export's seams), so their ring slopes down out of the way instead.
     let held = baked.is_some() || project.own_dir().join(TERRAIN_CARRIED_DIR).is_dir();
+    // The entry's mask: the subtiles the tile is made of. BOB's terrain mesh leaves out the squares over the others (docs/formats/
+    // tile_compile.md, "The mask"), where other placements lie: Thrones' `atlantic_mountains/large_short_30_l` (24 x 20 cells) covers a
+    // loch with its mask's zeros, and drawn whole its ground stood over the loch's sea tiles as a sand bank where the game has open water
+    // (a RenderDoc capture, 2026-11-16: the game's ground there is the sea and coast tiles'). Its ground over those subtiles slopes down
+    // out of the way, as the ring does. Row y of the mask is the tile's cell row from its -z edge in the map's terms: v = h - z / 128.
+    let mask = Mask::of(project.entry.as_ref(), (ex, ez));
     let ring = |x: f64, z: f64| {
         let (cx, cz) = (x.clamp(0.0, ex), z.clamp(0.0, ez));
-        let out = (x - cx).abs().max((z - cz).abs());
-        height(cx, cz) - (RING_DROP * out / unit) as f32
+        let out = if held { (x - cx).abs().max((z - cz).abs()) } else { 0.0 };
+        let inside = mask.as_ref().map_or(0.0, |m| m.depth(cx, cz));
+        let h = if held || inside > 0.0 { height(cx, cz) } else { height(x, z) };
+        h - (RING_DROP * (out + inside) / unit) as f32
     };
-    let own = if held { Grid::sample(nx, nz, -o, -o, step, &ring) } else { Grid::sample(nx, nz, -o, -o, step, &height) };
+    let own = Grid::sample(nx, nz, -o, -o, step, &ring);
 
     // The material with its border (at most what the height map has), its normal map from the heights over it, its alpha map, its box.
     let border = project.border_m();
@@ -646,6 +700,17 @@ mod tests {
         let slots = slot_colours(&m, &|p| Some(if p == "a" { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] }));
         assert_eq!(slots[1], [0.0, 1.0, 0.0]);
         assert_eq!(slots[7], [0.5, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn a_mask_rows_count_from_the_tiles_minus_z_edge_in_map_terms() {
+        // 2 x 2 cells, row 0 (v 0..128: z 128..256 of the tile's frame) "01", row 1 "11": the cell at x < 128, z > 128 is left out.
+        let m = Mask { w: 2, h: 2, cells: vec![false, true, true, true] };
+        assert_eq!(m.depth(64.0, 64.0), 0.0);
+        assert_eq!(m.depth(200.0, 200.0), 0.0);
+        assert_eq!(m.depth(64.0, 200.0), 64.0);
+        // On the edge with a cell of the tile: not inside.
+        assert_eq!(m.depth(128.0, 200.0), 0.0);
     }
 
     #[test]
