@@ -9,9 +9,10 @@
 //! (BOB's; the kit has no source for it): u32 version (3), f32 bounds x0 z0 x1 z1 (the map: x east, z north, 678.5 x 556.1 on Attila's
 //! main map, not square to its cells), u32 models, per model a u16-length path and a u32 count of 15-byte trees (f32 x, y, z; u8 0 / 1,
 //! u8 0 .. 5, u8 15). Mapped by the bounds, all but 6 of 17 576 sampled trees stand on land (`campaign_tree_fit`; by the 0.32 a cell the
-//! `.terry` frame once took, a third in the sea or off the map). ASSUMPTIONS: the second byte is the turn in sixths (its six values equally common), and
-//! a tree stands on the ground (y, -0.5 .. 4.9, unused); the first byte (1 on 5582)
-//! and the last (15: the seasons?) are not read.
+//! `.terry` frame once took, a third in the sea or off the map). A tree stands at its y (the list's units, as a prop at its marker's y;
+//! 2026-11-16: on the ground instead, the rocks and cliff pieces sunk into the hills by their markers floated over them).
+//! ASSUMPTIONS: the second byte is the turn in sixths (its six values equally common); the first byte (1 on 5582) and the last (15: the
+//! seasons?) are not read.
 
 use std::sync::Arc;
 
@@ -317,7 +318,10 @@ impl PropModels {
             }
 
             world.m[0][3] = fx as f32;
-            world.m[1][3] = ground(fx, fz);
+            // At the marker's own height: most stand on the LF (the ground less the marker's height, 25 / 50 / 75 %: 1 / 10 / 33
+            // frame units near Emyn Muil), but the rocks and cliff pieces are sunk into it (`cliff_med02` at 1.748, 480 units under
+            // the LF there; 10 % of the props over 105): stood on the ground they floated over the hills.
+            world.m[1][3] = (w[1] / tf.unit) as f32;
             world.m[2][3] = fz as f32;
             let p16 = DEFAULT_INSTANCE_PARAMS;
             let mesh = MeshInstance {
@@ -354,7 +358,9 @@ impl PropModels {
                 let (s, c) = (f32::from(turn) * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [c * k, 0.0, s * k, fx as f32];
-                world.m[1] = [0.0, k, 0.0, ground(fx, fz)];
+                // At the list's own height, as the props at their markers'.
+                let gy = file_y * unit;
+                world.m[1] = [0.0, k, 0.0, gy];
                 world.m[2] = [-s * k, 0.0, c * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
