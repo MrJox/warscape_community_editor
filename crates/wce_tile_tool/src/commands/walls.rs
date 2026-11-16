@@ -34,6 +34,40 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "pick_point",
+        "pick_point [index | none]",
+        "pick a point of the selected line, as a click on it does (the Inspector then shows it alone); no argument: log the point picked",
+        |e, a| {
+            let el = primary(e);
+            let pick = a.first().map(String::as_str);
+            with_tile(e, |t, e| {
+                let Some(d) = document(e) else { return no_tile() };
+                match pick {
+                    None => ok(match (t.poly_point, t.poly_point_line) {
+                        (Some(p), Some(l)) => format!("point {p} of element {l}"),
+                        _ => "none".to_owned(),
+                    }),
+                    Some("none") => {
+                        t.poly_point = None;
+                        ok("")
+                    }
+                    Some(v) => {
+                        let (Some(i), Some(l)) = (v.parse::<usize>().ok(), el.filter(|&l| d.tile().is_polygon(l))) else {
+                            return fail("usage: pick_point [index | none], a line selected");
+                        };
+                        if i >= d.tile().tscene().polygon_points(l).len() {
+                            return fail("no such point");
+                        }
+
+                        (t.poly_point, t.poly_point_line) = (Some(i), Some(l));
+                        ok("")
+                    }
+                }
+            })
+        },
+    );
+
+    c.add(
         "road_point_fence",
         "road_point_fence <point index> road|none|<fence piece> [damage 0..1 | road]",
         "a point of the selected procedural road: its own fence (road: the road's; none: a gap; fence, fence_wood...: road_<type>_<piece>) and fence damage, for the fences around it",
