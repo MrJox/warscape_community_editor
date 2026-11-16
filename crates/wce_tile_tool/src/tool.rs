@@ -501,6 +501,9 @@ pub struct TileTool {
     /// The same for the automatic no-go areas (worked out with the depth, from the same final heights, while they show).
     pub(crate) nogo_for: Option<(DocumentId, u64)>,
 
+    /// Stage B working them out off the editor's thread: for which tile and version, and with the no-go areas.
+    pub(crate) water_job: Option<crate::water_view::WaterJob>,
+
     /// Paint water ground types' depths: shallow water from the first, deep water from the second (metres).
     pub(crate) water_shallow_m: f32,
     pub(crate) water_deep_m: f32,
@@ -933,6 +936,7 @@ impl Default for TileTool {
             water_seen: None,
             water_since: 0.0,
             nogo_for: None,
+            water_job: None,
             water_shallow_m: 0.3,
             water_deep_m: 2.5,
             filter_height_on: false,

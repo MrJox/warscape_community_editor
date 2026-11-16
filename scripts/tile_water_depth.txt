@@ -8,6 +8,8 @@ tile_water off
 tile_sea off
 tile_ground_view water
 frames 10
+tile_wait_jobs
+frames 2
 assert_water_depth 240 64 2
 brush 10 6 0.5
 paint_ground_type none 240 64 1

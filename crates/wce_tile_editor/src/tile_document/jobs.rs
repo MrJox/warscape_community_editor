@@ -9,12 +9,12 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
 
 /// A computation on its own thread.
-pub(crate) struct Job<T> {
+pub struct Job<T> {
     rx: Receiver<T>,
 }
 
 /// What a job gave so far.
-pub(crate) enum Poll<T> {
+pub enum Poll<T> {
     Running,
     Done(T),
 
@@ -24,7 +24,7 @@ pub(crate) enum Poll<T> {
 
 impl<T: Send + 'static> Job<T> {
     /// Starts `work` on a thread named `name`.
-    pub(crate) fn spawn(name: &str, work: impl FnOnce() -> T + Send + 'static) -> Self {
+    pub fn spawn(name: &str, work: impl FnOnce() -> T + Send + 'static) -> Self {
         let (tx, rx) = channel();
         RUNNING.fetch_add(1, Ordering::SeqCst);
         let spawned = std::thread::Builder::new().name(name.to_owned()).spawn(move || {
@@ -49,14 +49,14 @@ impl<T: Send + 'static> Job<T> {
     }
 
     /// Waits for it to end.
-    pub(crate) fn wait(&self) -> Poll<T> {
+    pub fn wait(&self) -> Poll<T> {
         match self.rx.recv() {
             Ok(v) => Poll::Done(v),
             Err(_) => Poll::Failed,
         }
     }
 
-    pub(crate) fn poll(&self) -> Poll<T> {
+    pub fn poll(&self) -> Poll<T> {
         match self.rx.try_recv() {
             Ok(v) => Poll::Done(v),
             Err(TryRecvError::Empty) => Poll::Running,
