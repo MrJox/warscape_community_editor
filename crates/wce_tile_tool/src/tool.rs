@@ -4436,16 +4436,21 @@ impl TileTool {
             if let Some((i, out)) = best {
                 self.poly_point = Some(i);
                 self.poly_point_line = Some(sel);
-                self.gesture = Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture() });
+                let grab = Float3::default();
+                self.gesture =
+                    Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture(), press: (ev.x, ev.y), moving: false, grab });
                 return true;
             }
         }
 
         let best = nearest_handle(pts.iter().copied(), o, dir);
-        if best.is_some() {
+        if let Some(i) = best {
             self.poly_point = best;
             self.poly_point_line = Some(sel);
-            self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
+            // Where the point is less where the mouse is on the ground: a drag keeps it so.
+            let at = pts.get(i).copied().unwrap_or(self.cursor);
+            let grab = Float3::new(at.x - self.cursor.x, 0.0, at.z - self.cursor.z);
+            self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture(), press: (ev.x, ev.y), moving: false, grab });
             return true;
         }
 
@@ -4535,8 +4540,21 @@ impl TileTool {
                 }
             }
 
-            Some(Gesture::Point { handle, gesture }) => {
+            Some(Gesture::Point { handle, gesture, press, moving, grab }) => {
                 self.on_hover(e, ev);
+                // A click, not a drag yet: the point stays where it is.
+                if !moving {
+                    let (dx, dy) = (ev.x - press.0, ev.y - press.1);
+                    if dx * dx + dy * dy < crate::gesture::POINT_DRAG_PIXELS * crate::gesture::POINT_DRAG_PIXELS {
+                        return true;
+                    }
+
+                    if let Some(Gesture::Point { moving, .. }) = &mut self.gesture {
+                        *moving = true;
+                    }
+                }
+
+                let target = Float3::new(self.cursor.x + grab.x, self.cursor.y, self.cursor.z + grab.z);
                 let sel = primary(e);
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
@@ -4546,9 +4564,9 @@ impl TileTool {
                         let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, gesture);
                     } else if let Some(&point) = pts.get(pt) {
                         let before = sc.point_position(point).unwrap_or_default();
-                        let after = d.tile().to_local(sel, self.cursor);
+                        let after = d.tile().to_local(sel, target);
                         if before != after {
-                            let _ = d.polygon_point(sel, "move", pt, self.cursor, gesture);
+                            let _ = d.polygon_point(sel, "move", pt, target, gesture);
                         }
                     }
                 }
