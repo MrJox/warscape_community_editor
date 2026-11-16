@@ -319,7 +319,10 @@ border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are ne
   files' times are useless, the kit's height maps are often minutes newer than their exports); the open tile from its editing heights
   with the export's fade (`TileProject::faded_height_at`, `edge_fade`), live; a tile decompiled from the packs (its `decompiled_terrain`
   folder) without it, its heights being the game's final ones already (faded again, Carthage's sea edges, -20 m in the packs, rose to the
-  surface as a strip of land along the sea; 2026-11-01). Its material in a map context is the neighbours' kind (2026-11-01): over the
+  surface as a strip of land along the sea; 2026-11-01). Its height range is its `hf_height_map.data`'s min / max, not the database's
+  (they differ: Thrones' `sea_coast/2x2_tt_straight/2x2_ab` has -8 / 16 in the database, -20 .. 6.8 in the file); a location's
+  variations share one entry, so each decompile writes only its own variation's numbers into it (2026-11-16: written whole, the last
+  variation decompiled put the database's range back on the others, and their sea bed rose above the sea as a sand shelf). Its material in a map context is the neighbours' kind (2026-11-01): over the
   tile with its border, faded out by the game's alpha (`template::game_alpha`), its normal map from the whole height map; cut at the
   tile's edge with no alpha, it met the neighbours' faded ground in a seam. Measured fade (`final_fade_check`, western_city_rome/small,
   plains/2x2/2x2_aa): 0 to 2 m, `1 - exp(-(d - 2)^2 / 930)` to 16 m, then 0.4087 (24), 0.6253 (32), 0.7959 (40), 0.9067 (48), 0.9674 (56),

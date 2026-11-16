@@ -213,7 +213,12 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     let raw = workspace.join("raw_data");
     let dir = raw.join(folder);
     let database = raw.join("terrain/tiles").join(kind_of(folder)).join("_tile_database");
-    written.write_to(&dir, Some(&database.join("TILES"))).map_err(|e| e.to_string())?;
+    written.write_to(&dir, None).map_err(|e| e.to_string())?;
+    if let Some((name, blob)) = &written.entry {
+        let fresh = blob.bytes().map_err(|e| e.to_string())?;
+        write_entry(&database.join("TILES").join(name), &fresh, project.variation.as_deref())?;
+    }
+
     // A kit's settings are copied once; without a kit (Rome 2) they are made from the packs' database, so a stale copy (an older
     // conversion) is made again.
     let settings = database.join("_settings.xml");
@@ -227,6 +232,41 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     // The editor resolves the tile through the workspace's index, which has a new entry now.
     wce_formats::tile_index::TileIndex::forget_shared();
     Ok((dir, losses))
+}
+
+/// Writes a decompiled tile's entry into the workspace's database. A location's variations share the entry, and the decompile gives only
+/// its own variation the binary's numbers (`min_height`, `scale`, `raw_data_tri_density`; the database's can differ: Thrones'
+/// `sea_coast/2x2_tt_straight/2x2_ab` says -8 / 16, its heights run from -20 to 6.8). So the other variations keep what an entry already
+/// there has for them (their own decompiles' numbers); written whole, the last variation decompiled put the database's numbers back on
+/// the others, which then read their heights in the wrong range (sea bed raised above the sea). One writer at a time: the map context
+/// decompiles on several threads.
+fn write_entry(path: &Path, fresh: &[u8], variation: Option<&str>) -> Result<(), String> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let merged = std::fs::read(path).ok().zip(variation).and_then(|(old, v)| merge_entry(&old, fresh, v));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+
+    wce_foundation::files::write_replacing(path, merged.as_deref().unwrap_or(fresh)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `fresh` (an entry) with its VARIATIONs other than `variation` taken from `old` where it has them; none when either does not read.
+fn merge_entry(old: &[u8], fresh: &[u8], variation: &str) -> Option<Vec<u8>> {
+    use crate::xml;
+
+    let schema = super::schema::EntrySchema;
+    let (old, _, _) = xml::read(old, &schema).ok()?;
+    let (mut root, style, _) = xml::read(fresh, &schema).ok()?;
+    let location = |n: &wce_tile_model::Node| n.get("location").and_then(|l| l.as_str()).map(str::to_lowercase);
+    for slot in root.wrapped_mut("VARIATIONS").iter_mut() {
+        let Some(at) = location(slot).filter(|l| !l.eq_ignore_ascii_case(variation)) else { continue };
+        if let Some(kept) = old.wrapped("VARIATIONS").iter().find(|n| location(n).as_deref() == Some(at.as_str())) {
+            *slot = kept.clone();
+        }
+    }
+
+    Some(xml::write(&root, &style, &schema))
 }
 
 /// The tile database `base` with the entries of `entries` (TILES XML files, read with the kit's `_settings.xml`) in place of the tiles
@@ -764,6 +804,23 @@ pub fn read_database(bytes: &[u8]) -> Result<TileDatabase, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(aa: (&str, &str), ab: (&str, &str), links: &str) -> String {
+        format!(
+            "<TILE serialise_version='3' location='terrain\\tiles\\battle\\sea_coast\\2x2_tt_straight' width='2' height='2'>\r\n\t<VARIATIONS>\r\n\t\t<VARIATION serialise_version='2' location='2x2_aa' min_height='{}' scale='{}'/>\r\n\t\t<VARIATION serialise_version='2' location='2x2_ab' min_height='{}' scale='{}'/>\r\n\t</VARIATIONS>\r\n\t<TILE_LINKS{links}/>\r\n</TILE>\r\n",
+            aa.0, aa.1, ab.0, ab.1
+        )
+    }
+
+    #[test]
+    fn decompiling_a_variation_keeps_the_others_numbers() {
+        // aa decompiled first: its heights' range; ab still the database's.
+        let old = entry(("-20.000000", "25.958466"), ("-8.000000", "16.000000"), "");
+        // ab decompiled now: its range, and the database's for aa again; the tile's own part as the packs have it now.
+        let fresh = entry(("-20.000000", "26.000000"), ("-20.000000", "26.798322"), " x='1'");
+        let merged = merge_entry(old.as_bytes(), fresh.as_bytes(), "2x2_AB").expect("merged");
+        assert_eq!(String::from_utf8(merged).unwrap(), entry(("-20.000000", "25.958466"), ("-20.000000", "26.798322"), " x='1'"));
+    }
 
     #[test]
     fn missing_attributes_are_added_to_every_element() {
