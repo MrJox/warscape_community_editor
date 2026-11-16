@@ -820,15 +820,32 @@ impl Frame {
         // the LF. Beside the mesh is the sea, and the sea is transparent: with nothing under it the background showed through. The LF
         // there is the land the cliff drops from, so the floor cannot follow it; it is where the sea tiles' bed is on the open sea's LF
         // (LF 0: -20 m, and their own -20 m), so their skirts (40 m) reach it. ASSUMPTION: what the game has there was not traced.
+        // A cliff without a blend map of its own (`load_custom_template`) has no material to lend it: the plain one of its climate.
         if t.custom.is_some() {
             let mut floor = frame;
             floor.m[1][3] = self.sea_y() - (FLOOR_DEPTH / self.unit) as f32;
-            let ground = Terrain { custom: None, lf: None, ..terrain.clone() };
+            let material = terrain.material.clone().or_else(|| self.plain_over(i, grid));
+            let ground = Terrain { custom: None, lf: None, material, ..terrain.clone() };
             out.push((floor, Payload::Terrain(ground)));
         }
 
         out.push((frame, Payload::Terrain(terrain)));
         self.place_entities(t, lod, frame, out);
+    }
+
+    /// The plain material of a placement's climate (that of its first cell) over a grid of its tile.
+    fn plain_over(&self, i: usize, grid: &Grid) -> Option<Arc<TerrainMaterial>> {
+        let r = self.map.placements[i].rect();
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        let climate = self.climate.get((r[1].clamp(0, h - 1) * w + r[0].clamp(0, w - 1)) as usize).copied().unwrap_or(NO_CLIMATE);
+        let (base, id) = self.plain_for(climate);
+        let base = base?;
+        let mut m = plain_material(&base, id, self.plain_normal_id);
+        let e = PLAIN_MARGIN;
+        let (x0, z0) = (f64::from(grid.ox), f64::from(grid.oz));
+        let (x1, z1) = (x0 + f64::from(grid.nx - 1) * f64::from(grid.step), z0 + f64::from(grid.nz - 1) * f64::from(grid.step));
+        (m.x0, m.z0, m.x1, m.z1) = (x0 - e, z0 - e, x1 + e, z1 + e);
+        Some(Arc::new(m))
     }
 
     /// A sea tile's ground (`frame`: where it stands on the land's LF) on the sea's LF: the map's sea LF (`LF * 400 - 20` m), else a
