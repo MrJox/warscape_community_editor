@@ -525,11 +525,17 @@ fn arc(c: [f64; 2], r: f64, a0: f64, a1: f64) -> Vec<[f64; 2]> {
 /// The guides of a base piece, at the standard measures.
 #[must_use]
 pub fn base_guides(piece: &str) -> Vec<Vec<u8>> {
+    guides_of_width(piece, WIDTH)
+}
+
+/// [`base_guides`] of a road `width` wide (a road type of another width: `road_dirt::TRACK`'s 3 m).
+#[must_use]
+pub fn guides_of_width(piece: &str, width: f64) -> Vec<Vec<u8>> {
     if let Some(p) = varies(piece) {
-        return base_guides(p);
+        return guides_of_width(p, width);
     }
 
-    let (h, v, j) = (WIDTH * 0.5, WIDTH * 0.5 + VERGE, JUNCTION * 0.5);
+    let (h, v, j) = (width * 0.5, width * 0.5 + VERGE, JUNCTION * 0.5);
     let straight = |l: f64| {
         let z = l * 0.5;
         vec![

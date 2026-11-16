@@ -952,6 +952,55 @@ impl Tile {
             .collect()
     }
 
+    /// The road types the prefab library has (a `road_<type>_straight` in `roads_proc/<type>`), and `none` (Inspector's road type row).
+    /// Leaked once per list seen: the property rows hold it.
+    #[must_use]
+    pub fn road_types(&self) -> &'static [(&'static str, &'static str)] {
+        use std::sync::{Mutex, OnceLock};
+        type List = &'static [(&'static str, &'static str)];
+        static MADE: OnceLock<Mutex<Vec<(Vec<String>, List)>>> = OnceLock::new();
+        let mut names = self
+            .road_prefabs
+            .as_ref()
+            .map(|lib| {
+                lib.entries()
+                    .filter_map(|en| {
+                        let t = en.folder.strip_prefix("roads_proc/")?;
+                        (t != BASE && en.key == key(t, "straight")).then(|| t.to_owned())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names.dedup();
+        names.push("none".to_owned());
+        let mut made = MADE.get_or_init(Mutex::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, list)) = made.iter().find(|(n, _)| *n == names) {
+            return list;
+        }
+
+        let list: List = Box::leak(
+            names
+                .iter()
+                .map(|n| {
+                    let n: &'static str = Box::leak(n.clone().into_boxed_str());
+                    (n, n)
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        made.push((names, list));
+        list
+    }
+
+    /// A road type's own width: its straight's (`road_<type>_straight`), what a road of it is made at when the type is chosen.
+    #[must_use]
+    pub fn road_type_width(&self, road_type: &str) -> Option<f64> {
+        let lib = self.road_prefabs.as_ref()?;
+        let prefab = lib.load(&key(road_type, "straight")).ok()?;
+        read(&prefab.group_text).ok().map(|p| p.width)
+    }
+
     /// The fence pieces a road's points may choose (Polygon panel): `fence` and the type's named ones (`fence_wood`, ...).
     #[must_use]
     pub fn road_fence_choices(&self, road: usize) -> Vec<String> {
