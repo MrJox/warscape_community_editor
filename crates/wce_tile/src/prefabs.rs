@@ -219,12 +219,8 @@ impl PrefabLibrary {
         terrain: Option<Option<&PrefabTerrain>>,
     ) -> Result<PathBuf, String> {
         let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
-        let target = if entry.wce && entry.path.starts_with(projects_root) {
-            entry.path.clone()
-        } else {
-            let folder = if entry.folder.is_empty() { projects_root.to_path_buf() } else { projects_root.join(&entry.folder) };
-            folder.join(format!("{}.wce", entry.key))
-        };
+        let target =
+            if entry.wce && entry.path.starts_with(projects_root) { entry.path.clone() } else { prefab_target(projects_root, entry) };
 
         let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?)
             .map_err(|e| format!("{}: {e}", entry.path.display()))?;
@@ -310,6 +306,68 @@ impl PrefabLibrary {
         Ok(entry)
     }
 
+    /// The Assembly Kits' prefabs ported to the projects' prefab folder `projects_root` (the art resources' working tree): each kit prefab
+    /// the projects have no `.wce` of gets one, at the same folder below `art/prefabs`, as the first save of an edit makes it
+    /// (`save_edit` with its contents unchanged: the prefabs placed in it become references). The library scanned again then must give each
+    /// one the same contents as the kit's file did; one that does not is reported and its `.wce` removed (the kit's is found again).
+    /// `dry_run`: nothing written, what would be is counted. A prefab whose key is in several kits is the first kit's (the library's).
+    #[must_use]
+    pub fn port_kits(&self, projects_root: &Path, dry_run: bool) -> Ported {
+        let mut out = Ported::default();
+        let kit = self.entries().filter(|p| !(p.wce && p.path.starts_with(projects_root))).cloned().collect::<Vec<_>>();
+        out.already = self.len() - kit.len();
+        // Every prefab's contents, for the copies of one placed in another (TEd saves them as plain groups named after it).
+        let keys = self.entries().map(|p| p.key.clone()).collect::<Vec<_>>();
+        let index = (!dry_run)
+            .then(|| crate::prefab_refs::ContentIndex::new(keys.iter().filter_map(|k| self.contents(k).map(|c| (k.as_str(), c)))));
+
+        let mut written = vec![];
+        for p in &kit {
+            let Some(index) = &index else {
+                out.ported.push(prefab_target(projects_root, p));
+                continue;
+            };
+
+            let result = self.load(&p.key).and_then(|prefab| {
+                let children = self.with_references(&prefab.group_text, index)?;
+                self.save_edit(&p.key, projects_root, &children)
+            });
+            match result {
+                Ok(path) => written.push((p.key.clone(), path)),
+                Err(err) => out.failed.push(format!("{}: {err}", p.key)),
+            }
+        }
+
+        // Each one as the editor reads it now: the projects' file, with the same contents as the kit's.
+        let again = Self::scan_folders(&self.roots);
+        for (key, path) in written {
+            let same = again.get(&key).is_some_and(|q| q.path == path)
+                && again.contents(&key).map(|c| without_references(&c)) == self.contents(&key).map(|c| without_references(&c));
+            if same {
+                out.ported.push(path);
+            } else {
+                let _ = std::fs::remove_file(&path);
+                out.failed.push(format!("{key}: its .wce does not read back as the kit's file (removed)"));
+            }
+        }
+
+        out
+    }
+
+    /// A prefab group's contents with the groups inside that are exact copies of a prefab made references to it (`wce_prefab`), as opening
+    /// a tile from the Assembly Kit does (`prefab_refs::recognise`); the group itself is not taken for a copy of itself.
+    fn with_references(&self, group_text: &[u8], index: &crate::prefab_refs::ContentIndex) -> Result<Vec<u8>, String> {
+        let mut scene = TedScene::parse_any(group_text.to_vec()).map_err(|e| e.to_string())?;
+        let root = *scene.find_all("UserInstanceGroup").first().ok_or("no UserInstanceGroup")?;
+        scene.set_attr(root, "name", "");
+        let found = crate::prefab_refs::recognise(&scene, index, &|n| self.get(n).is_some());
+        for (g, key) in &found.copies {
+            scene.set_attr(*g, crate::project_files::PREFAB_ATTR, key);
+        }
+
+        Ok(scene.children_text(root))
+    }
+
     /// "Save for Assembly Kit" of a prefab: its file as TEd reads it (the prefabs placed in it baked) in the kit's prefab folder `kit_root`,
     /// at the same folder, as `<key>.xml`, its buildings marked Export as prop as their models (`export_as_prop`; `models_in`: the game's
     /// files). A file it replaces with other bytes keeps a `.bak`. Returns the file and the conversion's report.
@@ -344,6 +402,41 @@ impl PrefabLibrary {
         wce_foundation::files::write_replacing(&target, ted).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok((target, report))
     }
+}
+
+/// What [`PrefabLibrary::port_kits`] did: the files written (or that would be), the prefabs the projects had already, those that failed and why.
+#[derive(Clone, Debug, Default)]
+pub struct Ported {
+    pub ported: Vec<PathBuf>,
+    pub already: usize,
+    pub failed: Vec<String>,
+}
+
+/// A prefab's contents without the marks of the references in it (`wce_prefab="..."`): a copy made a reference reads as the same items.
+fn without_references(text: &[u8]) -> Vec<u8> {
+    let mark = format!(" {}=\"", crate::project_files::PREFAB_ATTR);
+    let mark = mark.as_bytes();
+    let mut out = Vec::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        if text[i..].starts_with(mark)
+            && let Some(end) = text[i + mark.len()..].iter().position(|&b| b == b'"')
+        {
+            i += mark.len() + end + 1;
+            continue;
+        }
+
+        out.push(text[i]);
+        i += 1;
+    }
+
+    out
+}
+
+/// Where a prefab's projects' `.wce` goes: its folder below `projects_root`.
+fn prefab_target(projects_root: &Path, entry: &PrefabEntry) -> PathBuf {
+    let folder = if entry.folder.is_empty() { projects_root.to_path_buf() } else { projects_root.join(&entry.folder) };
+    folder.join(format!("{}.wce", entry.key))
 }
 
 /// A prefab's key as a file name takes it: trimmed, not empty, no slashes, dots or characters files can't have.
@@ -494,6 +587,53 @@ mod tests {
         assert_eq!(back, path);
         let ted = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
         assert!(!ted.contains("wce_") && ted.contains("vector(2,0,0)"), "{ted}");
+    }
+
+    #[test]
+    fn porting_the_kits_prefabs_writes_each_one_the_projects_lack_and_reads_back_the_same() {
+        let (kit, projects) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let kit_root = prefab_root(kit.path());
+        let put = |rel: &str, text: &str| {
+            let p = kit_root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, text).unwrap();
+        };
+
+        // Rocks; a camp placing a copy of the rocks (a plain group named after it, as TEd saves it); a well the projects have already.
+        put("global/rocks.xml", FILE);
+        let camp = FILE.replace("name=\"rocks\"", "name=\"camp\"").replace(
+            "                <BUILDING_INSTANCE position=\"vector(-1,0,0)\" key=\"rock\" name=\"rock\"/>\n",
+            "                <UserInstanceGroup flags=\" OIF_VISIBLE\" position=\"vector(5,0,0)\" name=\"rocks\" orientation=\"euler(0,0,0)\">\n                    <children>\n                        <BUILDING_INSTANCE position=\"vector(1,0,0)\" key=\"rock\" name=\"rock\"/>\n                        <BUILDING_INSTANCE position=\"vector(-1,0,0)\" key=\"rock\" name=\"rock\"/>\n                    </children>\n                </UserInstanceGroup>\n",
+        );
+        put("camps/camp.xml", &camp);
+        put("well.xml", &FILE.replace("name=\"rocks\"", "name=\"well\""));
+        let proj_root = prefab_root(projects.path());
+        let scan = || PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
+        scan().save_edit("well", &proj_root, b"<BUILDING_INSTANCE position=\"vector(9,0,0)\" key=\"well\" name=\"well\"/>\n").unwrap();
+        let before = scan();
+        let kit_bytes = std::fs::read(kit_root.join("camps").join("camp.xml")).unwrap();
+
+        let dry = before.port_kits(&proj_root, true);
+        assert_eq!((dry.ported.len(), dry.already), (2, 1));
+        assert!(!proj_root.join("global").join("rocks.wce").exists(), "a dry run writes nothing");
+
+        let done = before.port_kits(&proj_root, false);
+        assert!(done.failed.is_empty(), "{:?}", done.failed);
+        assert_eq!(done.ported, vec![proj_root.join("camps").join("camp.wce"), proj_root.join("global").join("rocks.wce")]);
+        assert_eq!(std::fs::read(kit_root.join("camps").join("camp.xml")).unwrap(), kit_bytes, "the kit's files are not touched");
+
+        let after = scan();
+        for key in ["rocks", "camp", "well"] {
+            let e = after.get(key).unwrap();
+            assert!(e.wce && e.path.starts_with(&proj_root), "{e:?}");
+            let read = |lib: &PrefabLibrary| lib.contents(key).map(|c| without_references(&c));
+            assert_eq!(read(&after), read(&before), "{key}: the same items (a copy made a reference)");
+        }
+
+        // The camp's rocks are a reference in the projects' file, and the port again has nothing to do.
+        assert!(String::from_utf8(std::fs::read(proj_root.join("camps").join("camp.wce")).unwrap()).unwrap().contains("wce_prefab"));
+        let again = after.port_kits(&proj_root, false);
+        assert_eq!((again.ported.len(), again.already, again.failed.len()), (0, 3, 0));
     }
 
     #[test]
