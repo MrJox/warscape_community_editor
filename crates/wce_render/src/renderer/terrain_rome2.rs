@@ -110,7 +110,12 @@ impl Renderer {
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         let zw_rtv = self.gbuffer.channels[3].rtv.clone();
         let ds_depth = self.terrain.ds_depth.clone();
-        self.draw_terrain_surface(ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, super::terrain_custom::CustomDraw::None);
+        // A custom-mesh tile's mesh (the cliffs) instead of its patches, with Rome 2's own `vs30_custom_geom` (the LF through
+        // `lf_block_cb`, as its surface shader): without it the cliff tiles drew nothing over their floor, and the land beside them ended
+        // in its skirts over the sea (the Dardanelles' coast).
+        let custom_vs = self.shader(super::terrain_custom::CUSTOM_GEOM_VS);
+        let how = custom_vs.as_deref().map_or(super::terrain_custom::CustomDraw::None, super::terrain_custom::CustomDraw::Depth);
+        self.draw_terrain_surface(ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
 
         // ---- 2. Per material: its boxes accumulated, then textured into the terrain targets.
         let Some(box_il) = self.layout(&blend_vs, "terrain_box_rome2", &box_layout()) else { return };

@@ -2481,8 +2481,10 @@ impl Renderer {
         how: CustomDraw,
     ) -> u64 {
         let material_only = matches!(how, CustomDraw::Material);
+        // The patches' input layout as the caller bound it, put back after each group's custom meshes (which bind their own). Not made
+        // here: Rome 2's surface shader takes another vertex (`terrain_rome2::geom_layout`), and Attila's elements fail on it.
         let geom_il = match how {
-            CustomDraw::Depth(_) => self.layout(vs, "terrain_geom", &geom_layout()),
+            CustomDraw::Depth(_) => self.ctx.input_layout(),
             _ => None,
         };
 
