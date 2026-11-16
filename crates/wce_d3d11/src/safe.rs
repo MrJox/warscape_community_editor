@@ -608,6 +608,8 @@ pub trait ContextExt {
     fn set_depth_stencil_state(&self, state: Option<&ID3D11DepthStencilState>, stencil_ref: u32);
     fn set_rasterizer_state(&self, state: Option<&ID3D11RasterizerState>);
     fn set_input_layout(&self, layout: Option<&ID3D11InputLayout>);
+    /// The bound input layout (to put it back after a draw that binds its own).
+    fn input_layout(&self) -> Option<ID3D11InputLayout>;
     fn set_topology(&self, topology: D3D_PRIMITIVE_TOPOLOGY);
 
     /// Vertex buffers from `start`, one stride and offset per buffer.
@@ -770,6 +772,11 @@ impl ContextExt for ID3D11DeviceContext {
     fn set_input_layout(&self, layout: Option<&ID3D11InputLayout>) {
         // SAFETY: a binding call.
         unsafe { self.IASetInputLayout(layout) };
+    }
+
+    fn input_layout(&self) -> Option<ID3D11InputLayout> {
+        // SAFETY: a state query (none bound: an error, read as none).
+        unsafe { self.IAGetInputLayout() }.ok()
     }
 
     fn set_topology(&self, topology: D3D_PRIMITIVE_TOPOLOGY) {
