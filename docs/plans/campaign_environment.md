@@ -187,6 +187,14 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   drawn as meshes on a campaign map. Checked: the Tiber at Rome; TDD's rivers are water again (lighter than the user's
   screenshot). Left: the campaign borders (`campaignborder.hlsl`, the same pass), the overlay camera's d from the game (Ghidra or a
   third capture at another zoom).
+- **The lakes (2026-11-17):** a campaign map's tiles' water planes drawn with `waterplane.hlsl` `vs30_water_campaign_lake` /
+  `ps30_campaign_lake` (the battle water plane's inputs, the campaign sea's pixel shader less the overlay), the sea's campaign inputs,
+  transparency 30; the render origin pinned to the map's south-west corner on a campaign map (the whole map is under 700 of its units:
+  no precision lost), so the lakes, the sea and the overlay read the colour map at world xz over the map's size, as the game's frame
+  does. TDD's Rauros lake and marsh pools are dark water, as in the user's screenshot. Seen: a few dark triangles of water plane
+  beside the pools (not checked against the game).
+- Seen on master 81952bcf (not this branch's): in scripted runs Rome's settlement buildings are not drawn (their models never
+  requested); this branch shows the same since its rebase onto it.
 - Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
   constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
   RenderDoc. The rivers as the game draws them (to do, not a deviation: the user, 2026-11-17): into the 2048 x 1620 overlay target

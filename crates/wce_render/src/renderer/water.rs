@@ -25,6 +25,11 @@ const RIVER_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_
 const SEA_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_waterplane.hlsl_ps_ps30_battle_ultra_water_quality";
 const SEA_VS: &str = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_water_battle";
 
+/// A campaign map's lakes (its tiles' water planes; RenderDoc, camp_attila: instanced quads with the campaign water shaders,
+/// transparency 30): the battle water plane's inputs, the campaign sea's pixel shader less the overlay.
+const LAKE_VS: &str = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_water_campaign_lake";
+const LAKE_PS: &str = "dx11_sm_3_0_waterplane.hlsl_ps_ps30_campaign_lake";
+
 /// The water planes' pixel shader at a gfx_water_quality level (the engine's techniques `water_low` .. `water_ultra`, fn 0x116ec510;
 /// Rome 2's extreme draws ultra). Only ultra has the variants with shadows.
 pub(crate) fn sea_ps(quality: i32) -> String {
@@ -328,10 +333,17 @@ impl Renderer {
         // The models' water meshes: the same shaders, the vertices in model space (f16 position) and the instance's world rows from the
         // G-buffer pass's instances (POSITION1..3; the shader reads nothing else of them).
         if model_water {
-            // A campaign map's lakes (its tiles' water planes) have their own transparency.
-            if scene.campaign_sea.is_some() {
+            // A campaign map's lakes: their own shaders and transparency, the sea's campaign inputs (its constants as the sea set them).
+            let mut vs = vs.clone();
+            if let Some(sea) = scene.campaign_sea.as_ref().filter(|_| scene.campaign)
+                && let (Some(lvs), Some(lps)) = (self.shader(LAKE_VS), self.shader(LAKE_PS))
+            {
                 self.cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[super::ocean::CAMPAIGN_LAKE_TRANSPARENCY]);
                 self.upload();
+                self.bind(&lvs);
+                self.bind(&lps);
+                self.bind_campaign_lake_inputs(&lps, &sea.colour);
+                vs = lvs;
             }
 
             // The shader declares the sea quad's inputs too (TEXCOORD0, POSITION4..6), unread: the uv and the instance's other rows.
