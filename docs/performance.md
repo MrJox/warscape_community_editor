@@ -85,6 +85,29 @@ it by default (`libs/render/gpu_adapter`: the high performance adapter unless `W
 
 Rome 2 has its own terrain pass, with no baked blend: it keeps the per-chunk levels. A block shows as LF ground first and is merged when its tiles have been read, so the first time over a whole map takes minutes and writes the tile cache (`map_context`) as it goes. Blocks are not thinned by distance (the strides of two neighbours part by more than a skirt closes), and their blend boxes are tall: the height the blend pass finds from the depth is tens of units off at those distances, and a pixel out of every box is black. Where a tile starts in a block and reaches into a chunk, the chunk fills those cells with LF ground. The climates' plain colour comes from the first tile opened, so it can differ between runs. `perf`'s worst frame right after `map_context_settle` is the wait itself, not a frame: script commands run inside the frame.
 
+## Panning a streamed map (2026-11-17)
+
+The Terrain tool panned as slowly on a campaign map, whose tiles are nearly empty, as on the battle map (10 and 12 fps, a laptop's RTX
+5070 Ti on battery; scripts in a scratch folder: `cam_look` one step a frame for 400 frames, `--live`, `perf full`). The frame's own cost
+is set by the cells and the rings, the same on both (2032 x ~1440 cells); what differed was work done again every time a streamed chunk
+landed (most frames), and it was not the tiles':
+
+| | before | after |
+|---|---|---|
+| campaign map, pan near Rome | 10.1 fps (`camera.obstacles_refresh` 140 ms, on 231 of 400 frames) | 76 fps |
+| battle map, the same pan | 12.4 fps (`render.ocean_sea_bed` 266 ms, on 79 frames) | 53 fps |
+| campaign map, still at Rome | 9.7 ms, worst 224 ms | 9.0 ms, worst 54 ms |
+
+* The camera's obstacle boxes (`camera_world::ObstacleProbe`) and the ground probe (`coords::GroundProbe`) follow the scene's structure log
+  instead of reading every entity again; a few campaign props 6 500 units across had put 1.6 M entries in the obstacles' 64 m buckets
+  (large boxes now keep their range in a list, large terrains go in a coarser grid).
+* The sea bed texture read the LF's lock once a texel from every thread: once a row now (`Terrain::ground_in`), and the terrains over each
+  square of a 32 x 32 grid (271 -> 9.5 ms; the texture the same to the bit over 34 rebuilds).
+* The campaign sea draws its chunks' rest positions: their wave displacement is no longer computed (1 -> 0.3 ms a frame).
+
+Left: the ocean's surface textures (1 ms a frame, the campaign water samples them too), `render.ocean`'s walks over every entity when the
+scene's revision moves (about 1 ms), shadows and terrain passes as before.
+
 ## Tools for the next person
 
 * Menu bar (right): frames per second and milliseconds of the last 60 frames; not in fixed-step runs (their shots must not depend on the machine).
