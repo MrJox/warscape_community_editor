@@ -201,6 +201,8 @@ fn raw_battle_and_campaign_save_reopen_preserve_all_other_resources() {
         let mut d = document(kind, false);
         let dir = scratch();
         let target = SaveTarget { path: dir.join("saved") };
+        // Exercise owned project Save; an arbitrary target is a copy and must not clean history.
+        d.save_dir = Some(target.path.clone());
         d.save(&target).unwrap();
         assert!(!d.history().modified());
         let png = encode(68, 5, &pixels()).unwrap();
