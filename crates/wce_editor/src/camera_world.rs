@@ -158,8 +158,9 @@ impl ObstacleProbe {
             return;
         };
 
-        // Smaller than the eye: nothing to bump into.
-        if length(m.bmax - m.bmin) < 0.5 {
+        // Smaller than the eye, or decals alone (painted on what is under them; their box is a cube about them: a campaign map's
+        // fallen_leaves patches made walls 4 600 units tall over its forests): nothing to bump into.
+        if length(m.bmax - m.bmin) < 0.5 || m.meshes.is_empty() {
             return;
         }
 
