@@ -45,7 +45,7 @@ Restoring an autosave reads from its recovery copy. If the owned project folder 
 
 ## Focused tests
 
-Use the [README](../../README.md#build), checked-out lockfile and existing caches. Synthetic tests need no game assets. Before integration tests, set `P004_SCRATCH` to a fresh writable disposable output directory; for example in PowerShell:
+Use the [README](../../README.md#build), checked-out lockfile and existing caches. Synthetic tests need no game assets or environment setup. Native-preservation tests create a fresh per-case directory under the operating system's temporary directory. Optionally set `P004_SCRATCH` to choose a different writable disposable output parent; for example in PowerShell:
 
 ```powershell
 $env:P004_SCRATCH = Join-Path ([System.IO.Path]::GetTempPath()) ('wce-save-tests-' + [guid]::NewGuid())
