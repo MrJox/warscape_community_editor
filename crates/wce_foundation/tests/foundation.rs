@@ -314,6 +314,59 @@ fn job_pool_order() {
     assert_eq!(JobPool::current_priority(), 0.0);
 }
 
+/// A shut-down pool drops its queued jobs (and what they hold) unrun, waits for the running one up to its timeout, and drops what is
+/// posted after.
+#[test]
+fn job_pool_shutdown() {
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+    use wce_foundation::jobs::JobPool;
+
+    let pool = JobPool::new(1);
+    let (release, gate) = mpsc::channel::<()>();
+    let (done_tx, done) = mpsc::channel::<&'static str>();
+    let tx = done_tx.clone();
+    pool.post(
+        move || {
+            let _ = gate.recv();
+            let _ = tx.send("running");
+        },
+        0.0,
+    );
+    while pool.running() == 0 {
+        std::thread::yield_now();
+    }
+
+    // What a queued job holds (a device, in the app).
+    let held = Arc::new(());
+    let (h, tx) = (held.clone(), done_tx.clone());
+    pool.post(
+        move || {
+            let _keep = h;
+            let _ = tx.send("queued");
+        },
+        1.0,
+    );
+
+    assert!(!pool.shutdown(Duration::from_millis(50)), "the running job holds the thread past the timeout");
+    assert_eq!(Arc::strong_count(&held), 1, "the queued job was dropped unrun");
+
+    let (h, tx) = (held.clone(), done_tx);
+    pool.post(
+        move || {
+            let _keep = h;
+            let _ = tx.send("late");
+        },
+        0.0,
+    );
+    assert_eq!(Arc::strong_count(&held), 1, "a job posted after the shutdown is dropped");
+
+    release.send(()).unwrap();
+    assert!(pool.shutdown(Duration::from_secs(5)), "the running job finishes");
+    assert_eq!(done.recv_timeout(Duration::from_secs(1)), Ok("running"));
+    assert!(done.recv_timeout(Duration::from_millis(100)).is_err(), "nothing else ran");
+}
+
 #[test]
 fn graphics_presets() {
     use wce_foundation::graphics::{ATTILA, THRONES_OF_BRITANNIA, parse_preferences};

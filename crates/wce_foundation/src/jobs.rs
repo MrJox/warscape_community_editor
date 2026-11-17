@@ -76,6 +76,11 @@ impl JobPool {
 
         let id = {
             let mut queue = self.shared.lock();
+            // Shut down: nothing runs any more (the job is dropped, and what it holds with it).
+            if queue.stop {
+                return Handle(0);
+            }
+
             let id = queue.next_id;
             queue.next_id += 1;
             queue.tasks.push(Task { id, priority, job: Box::new(job) });
@@ -117,6 +122,36 @@ impl JobPool {
 
     pub fn running(&self) -> usize {
         self.shared.running.load(Ordering::Acquire)
+    }
+
+    /// Stops the pool for good (the process is about to end): the queued jobs are dropped unrun, with what they hold (a renderer's
+    /// device, its caches), jobs posted later are dropped too, and the jobs running are waited for up to `timeout`. Whether they all
+    /// finished. A pool in a static is never dropped, and its jobs held the graphics device past the app's teardown: the driver's exit
+    /// handlers then ran while the device's threads were still freeing its memory (a crash at exit).
+    pub fn shutdown(&self, timeout: std::time::Duration) -> bool {
+        let dropped = {
+            let mut queue = self.shared.lock();
+            queue.stop = true;
+            std::mem::take(&mut queue.tasks)
+        };
+
+        self.shared.work.notify_all();
+        drop(dropped);
+        let deadline = std::time::Instant::now() + timeout;
+        let mut queue = self.shared.lock();
+        while self.shared.running.load(Ordering::Acquire) != 0 {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+
+            queue = match self.shared.idle.wait_timeout(queue, left) {
+                Ok((q, _)) => q,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+
+        true
     }
 
     /// Blocks until the queue is empty and no job runs.

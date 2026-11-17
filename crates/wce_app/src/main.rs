@@ -528,6 +528,13 @@ unsafe fn run_editor(
     drop(editor);
     drop(renderer);
     drop(platform);
+
+    // The background jobs hold the device too (model and texture loads, terrain buffers: a map streaming when the editor closes): the
+    // queued ones go unrun, the running ones are waited for. The process ends after this, so the pool is not needed again.
+    if !wce_foundation::jobs::io_pool().shutdown(std::time::Duration::from_secs(5)) {
+        log::warn("background jobs still running at exit (after 5 s)");
+    }
+
     (exit_code, restart)
 }
 
@@ -622,7 +629,7 @@ fn main() {
     open_log(&opt);
 
     // SAFETY: no other thread runs yet; SDL and D3D calls with valid arguments; the window outlives the device.
-    let (code, restart) = unsafe {
+    let (code, restart, device_held) = unsafe {
         init_platform();
 
         // An unattended run's window cannot take the focus and is not activated when shown.
@@ -678,10 +685,18 @@ fn main() {
         drop(imgui);
         drop(swap);
         drop(ctx);
+
+        // Anything still holding the device keeps it, and its threads, alive into the process's exit, where the driver's exit handlers
+        // ran while those threads were freeing its memory (a crash at exit on Linux, NVIDIA, after a map had been open).
+        let held = wce_d3d11::other_references(&dev);
+        if held > 0 {
+            log::warn(format!("the graphics device is still held at exit ({held} references)"));
+        }
+
         drop(dev);
         SDL_DestroyWindow(window);
         SDL_Quit();
-        (code, restart)
+        (code, restart, held > 0)
     };
 
     // After an update: the new build, once this one has let go of its window and device.
@@ -691,5 +706,21 @@ fn main() {
         log::error(format!("cannot restart {}: {e}", exe.display()));
     }
 
+    // Still held (said above): the device's threads may be running, so the exit skips the C exit handlers, the graphics driver's among
+    // them, that raced them. Everything of ours is written: the log flushes each line, stdout here.
+    #[cfg(target_os = "linux")]
+    if device_held {
+        unsafe extern "C" {
+            fn _exit(status: i32) -> !;
+        }
+
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        // SAFETY: ends the process; nothing after it runs.
+        unsafe { _exit(code) };
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    let _ = device_held;
     std::process::exit(code);
 }
