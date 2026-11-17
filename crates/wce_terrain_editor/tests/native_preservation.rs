@@ -51,8 +51,12 @@ use wce_tile::battle_map::{
 use wce_tile_model::Blob;
 
 fn scratch(id: &str) -> PathBuf {
-    let p = PathBuf::from(std::env::var_os("P004_SCRATCH").expect("set P004_SCRATCH to isolated output"))
-        .join(format!("{}-{id}", std::process::id()));
+    let root = std::env::var_os("P004_SCRATCH").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let p = root.join(format!(
+        "wce-native-preservation-{}-{}-{id}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
     std::fs::create_dir_all(&p).unwrap();
     p
 }
