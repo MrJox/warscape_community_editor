@@ -1186,6 +1186,9 @@ pub struct RenderScene {
     /// A campaign map's shroud plane (over the map's land LF; revealed: the map's edges only).
     pub campaign_shroud: Option<CampaignShroud>,
 
+    /// A campaign map's lines in its overlay (the borders, the trade routes), drawn after its rivers.
+    pub campaign_lines: Option<Arc<CampaignLines>>,
+
     /// A campaign map's sea colour (its `lf_sea_colour.dds`): the sea planes are drawn with the game's campaign water shader, which
     /// colours the water from it. None: the battle's ocean.
     pub campaign_sea: Option<CampaignSea>,
@@ -1227,6 +1230,39 @@ pub struct CampaignSky {
 #[derive(Clone, Debug)]
 pub struct CampaignShroud {
     pub lf: Arc<LfMap>,
+}
+
+/// A campaign map's overlay lines (`campaignborder.hlsl`): chains of cubic Béziers drawn flat into the overlay, each a strip of 16
+/// columns a curve (the curve's `ts`), two vertices a column at -+ `half_width` across, `u` = the curve's uv offset + scale * t.
+/// Positions are game units from the map's south-west corner (the render origin of a campaign map), x east, z north.
+#[derive(Clone, Debug, Default)]
+pub struct CampaignLines {
+    /// Changes with the content (the renderer rebuilds its buffers then).
+    pub id: u64,
+    pub lines: Vec<OverlayLine>,
+}
+
+/// One chain: its texture (a packs path), colour (`g_border_colour_a`), half width, length and start / end fade lengths
+/// (`g_length`, `g_start_length`, `g_end_length`).
+#[derive(Clone, Debug)]
+pub struct OverlayLine {
+    pub texture: String,
+    pub colour: [f32; 4],
+    pub half_width: f32,
+    pub length: f32,
+    pub fades: [f32; 2],
+    pub curves: Vec<OverlayCurve>,
+
+    /// The last curve's column at t = 1 is drawn (the game's chains end there).
+    pub close_end: bool,
+}
+
+/// One cubic Bézier of a line: its control points (x, z), its 16 columns' t, its uv offset and scale.
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayCurve {
+    pub cp: [[f32; 2]; 4],
+    pub ts: [f32; 16],
+    pub uv: [f32; 2],
 }
 
 /// A campaign map's sea colour map: the texture (a packs path) and the frame rectangle it covers, from its south-west corner (x, z; scene
@@ -1321,6 +1357,7 @@ impl Default for RenderScene {
             campaign: false,
             campaign_sky: None,
             campaign_shroud: None,
+            campaign_lines: None,
             campaign_sea: None,
             campaign_snow: None,
             snow: None,

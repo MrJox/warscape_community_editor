@@ -390,6 +390,9 @@ pub struct TerrainTool {
     /// A campaign map's skybox at the camera.
     skybox: Option<crate::skybox::CampaignSkybox>,
 
+    /// A campaign map's borders and trade routes (read on a worker for the faction picked).
+    lines: crate::lines::CampaignLinesView,
+
     /// The Map panel (the active map from above).
     map_panel: crate::map_panel::MapPanel,
 
@@ -464,6 +467,7 @@ impl Default for TerrainTool {
             weather: None,
             lighting: None,
             skybox: None,
+            lines: crate::lines::CampaignLinesView::default(),
             map_panel: crate::map_panel::MapPanel::new(),
             paint: LfPaint::default(),
             cells: crate::cell_paint::CellPaint::default(),
@@ -1101,6 +1105,14 @@ impl TerrainTool {
             && let Some(name) = e.docs.find_as::<MapDocument>(id).map(|d| map_kind(&d.name).1.to_owned())
         {
             self.skybox = crate::skybox::CampaignSkybox::show(e, id, &name);
+            // The borders and trade routes: read again for another map (its default faction).
+            if self.lines.shown.as_ref().is_none_or(|s| s.0 != id) {
+                self.lines.clear(e);
+                self.lines.faction = None;
+                self.lines.start(e, id, &name, None);
+            }
+        } else {
+            self.lines.clear(e);
         }
         self.light(e, id);
         e.scene.campaign_sea = campaign_sea(e, id, &s);
@@ -1206,6 +1218,28 @@ impl TerrainTool {
                 gui::set_tooltip(
                     "The campaign map's weather: its lighting files (lighting/<climate>_<season>[n], environment/<season>) or default.environment. Automatic: as the game lights the campaign, environment_collection.xml's spheres blended at the camera over its global lighting, each file of the view's season and climate stage.",
                 );
+            }
+
+            // The borders' faction: their colours are the diplomacy's towards it (own, allied, at war, neutral, rebels).
+            if !self.lines.factions.is_empty() {
+                let keys: Vec<&str> = self.lines.factions.iter().map(|f| f.key.as_str()).collect();
+                let mut k = self.lines.faction.as_deref().and_then(|f| keys.iter().position(|x| *x == f)).unwrap_or(0) as i32;
+                if gui::combo("borders for##terrain_faction", &mut k, &keys) {
+                    let pick = keys.get(k.max(0) as usize).map(|s| (*s).to_owned());
+                    if pick != self.lines.faction {
+                        self.lines.faction.clone_from(&pick);
+                        let name = e.docs.find_as::<MapDocument>(id).map(|d| map_kind(&d.name).1.to_owned());
+                        if let Some(name) = name {
+                            self.lines.start(e, id, &name, pick);
+                        }
+                    }
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "The faction the campaign map's borders are drawn for, as the game draws the player's: own orange, allied blue, at war red, neutral grey, rebels black (the startpos's diplomacy). The view only.",
+                    );
+                }
             }
 
             // The automatic lighting's files at the camera, with their weights.
@@ -2281,6 +2315,12 @@ impl Tool for TerrainTool {
             s.update(e);
         }
 
+        if self.shown != 0
+            && let Some(name) = e.docs.find_as::<MapDocument>(self.shown).map(|d| map_kind(&d.name).1.to_owned())
+        {
+            self.lines.poll(e, self.shown, &name);
+        }
+
         // The map closed: its view goes with it.
         if self.shown != 0 && e.docs.find(self.shown).is_none() {
             self.view.clear(e);
@@ -2291,6 +2331,8 @@ impl Tool for TerrainTool {
             if let Some(sky) = self.skybox.take() {
                 sky.clear(e);
             }
+
+            self.lines.clear(e);
 
             e.scene.campaign_sea = None;
             e.scene.campaign_snow = None;
