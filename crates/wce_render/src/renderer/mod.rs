@@ -45,6 +45,7 @@ mod reflection;
 mod shadow_baked;
 mod shadow_fit;
 mod shared;
+mod shroud;
 mod sky;
 mod states;
 mod targets;
@@ -1021,6 +1022,9 @@ pub struct Renderer {
 
     /// The `rigid_config_PS.g_unlit` last set (the campaign skybox draws unlit).
     pub(crate) unlit_bound: bool,
+
+    /// A campaign map's shroud plane's resources.
+    pub(crate) shroud: shroud::ShroudGpu,
     pub(crate) particles: ParticleSystem,
 
     /// Rome 2's effects (its own particle system and per-effect shaders).
@@ -1209,6 +1213,7 @@ impl Renderer {
             world_yaw: 0.0,
             campaign_cubes: None,
             unlit_bound: false,
+            shroud: shroud::ShroudGpu::default(),
             particles,
             vfx_rome2,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
@@ -1955,6 +1960,8 @@ impl Renderer {
 
         self.pass_environment_specular();
         self.pass_fog();
+        // A campaign map's shroud plane, after the fog (RenderDoc, camp_attila: fog 18667, the plane 18699).
+        self.pass_shroud_plane(scene);
         if rome2 {
             self.gpu_timer.mark("rivers");
             self.pass_water(scene, true);
