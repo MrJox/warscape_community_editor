@@ -105,8 +105,20 @@ landed (most frames), and it was not the tiles':
   square of a 32 x 32 grid (271 -> 9.5 ms; the texture the same to the bit over 34 rebuilds).
 * The campaign sea draws its chunks' rest positions: their wave displacement is no longer computed (1 -> 0.3 ms a frame).
 
-Left: the ocean's surface textures (1 ms a frame, the campaign water samples them too), `render.ocean`'s walks over every entity when the
-scene's revision moves (about 1 ms), shadows and terrain passes as before.
+Then the sea's own frame (on AC power, the same pans; `render.ocean` a frame: battle 2.22 -> 1.74 ms, campaign 0.84 -> 0.38 ms, a still
+campaign view 0.30 ms):
+
+* The chunks' vertices are written straight into the mapped vertex buffer (a vector of a few megabytes made, zeroed and copied each frame
+  was 0.4 ms), and flat chunks (the campaign water's) laid out as last frame are not written again.
+* The surfaces' blended angles go into a kept buffer on the calling thread, and only when the frame pair or the blend moved (handing
+  160 000 values to the busy pool each frame: 0.33 -> 0.26 ms).
+* Fixed on the way: a model of decals alone (the campaign's `fallen_leaves` patches, 6 500 units across) was a camera obstacle, a cube
+  4 600 units tall about its decal boxes: a fly or walk camera over a campaign forest was shoved 4 000 units aside (an orbit gave up past
+  its 512-unit reach). Decals are painted on what is under them: no obstacle now.
+
+Screenshots of the sea (both maps, two views each, fixed clock) differ from the build before by less than two of its own runs do.
+
+Left: shadows and terrain passes as before.
 
 ## Tools for the next person
 
