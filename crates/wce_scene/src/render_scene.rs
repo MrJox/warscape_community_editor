@@ -742,6 +742,15 @@ impl Terrain {
 
     /// The ground's height at a world point under the entity's world matrix (its own heights plus the LF map's), `None` off its grid.
     pub fn ground_at(&self, world: &Float4x4, x: f32, z: f32) -> Option<f32> {
+        match &self.lf {
+            Some(lf) => self.ground_in(world, x, z, Some(&lf.values.read())),
+            None => self.ground_in(world, x, z, None),
+        }
+    }
+
+    /// [`Self::ground_at`] with its LF map's samples read already (`lf`: a `values.read()` of [`Self::lf`]; many lookups in a row take
+    /// the lock once, not once a point from every thread).
+    pub fn ground_in(&self, world: &Float4x4, x: f32, z: f32, lf: Option<&LfRead<'_>>) -> Option<f32> {
         // The inverse of the matrix's xz part (a turn about y and a scale).
         let m = &world.m;
         let (a, b, c, d) = (m[0][0], m[0][2], m[2][0], m[2][2]);
@@ -761,7 +770,13 @@ impl Terrain {
         let (u, v) = (fi - i as f32, fj - j as f32);
         let h = |a: i32, b: i32| self.height_at(a, b);
         let local = (h(i, j) * (1.0 - u) + h(i + 1, j) * u) * (1.0 - v) + (h(i, j + 1) * (1.0 - u) + h(i + 1, j + 1) * u) * v;
-        Some(local * m[1][1] + m[1][3] + self.lf.as_ref().map_or(0.0, |lf| lf.height_at(x, z)))
+        let lf = match (&self.lf, lf) {
+            (Some(map), Some(v)) => map.height_in(v, x, z),
+            (Some(map), None) => map.height_at(x, z),
+            (None, _) => 0.0,
+        };
+
+        Some(local * m[1][1] + m[1][3] + lf)
     }
 }
 

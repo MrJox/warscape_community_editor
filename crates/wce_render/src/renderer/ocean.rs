@@ -62,6 +62,9 @@ fn r2_ocean_ps_shadows(quality: i32) -> String {
 const SEA_BED_SIZE: u32 = 1024;
 const SEA_BED_HALF: f32 = 1024.0;
 
+/// The sea bed's terrains are looked up in squares of a grid this many a side (of the texture).
+const SEA_BED_GRID: usize = 32;
+
 /// The sea bed's height range (`g_vs_sea_info.xy`) and `g_transparency_exponential_scale`: the dumps' values, not in the tables.
 const SEA_BED_RANGE: [f32; 2] = [-20.0, 25.0];
 
@@ -279,12 +282,6 @@ pub(crate) struct OceanGpu {
     clear: Option<ID3D11ShaderResourceView>,
 }
 
-/// The ground height of the scene's terrains at a point, if one covers it (the first that does). The sea bed info holds the ground as
-/// drawn, the LF in (a capture of a Rome 2 battle at Carthage, 2026-11-01: the texture within its 8-bit step of the terrain's vertices).
-fn ground_at(terrains: &[(&Entity, &wce_scene::render_scene::Terrain)], x: f32, z: f32) -> Option<f32> {
-    terrains.iter().find_map(|(e, t)| t.ground_at(&e.world, x, z))
-}
-
 /// A dynamic R16G16 texture the CPU writes every frame.
 fn dynamic_rg16(dev: &ID3D11Device, n: u32) -> Option<(ID3D11Texture2D, ID3D11ShaderResourceView)> {
     let td = D3D11_TEXTURE2D_DESC {
@@ -483,12 +480,63 @@ impl Renderer {
         let n = SEA_BED_SIZE as usize;
         let texel = 2.0 * SEA_BED_HALF / SEA_BED_SIZE as f32;
         let [lo, range] = SEA_BED_RANGE;
+
+        // The terrains over each square of a coarse grid, in their order (the first that covers a texel is its ground, as over the whole
+        // list): a map view has hundreds over the texture, and testing each at each texel took 200 to 300 ms whenever its chunks changed.
+        let side = n / SEA_BED_GRID;
+        let mut grid: Vec<Vec<usize>> = vec![vec![]; SEA_BED_GRID * SEA_BED_GRID];
+        for (k, (e, t)) in terrains.iter().enumerate() {
+            let m = &e.world.m;
+            let (x1, z1) = (t.origin_x + (t.nx - 1) as f32 * t.step, t.origin_z + (t.nz - 1) as f32 * t.step);
+            let (mut a, mut b) = ([f32::MAX; 2], [f32::MIN; 2]);
+            for (x, z) in [(t.origin_x, t.origin_z), (x1, t.origin_z), (t.origin_x, z1), (x1, z1)] {
+                let (wx, wz) = (m[0][0] * x + m[0][2] * z + m[0][3], m[2][0] * x + m[2][2] * z + m[2][3]);
+                (a[0], a[1], b[0], b[1]) = (a[0].min(wx), a[1].min(wz), b[0].max(wx), b[1].max(wz));
+            }
+
+            // Texel columns and rows whose centres the bounds may hold (a texel's margin either side for rounding), as squares.
+            let cell = |v: f32, origin: f32| (((v - origin) * u + SEA_BED_HALF) / texel).floor();
+            let span = |a: f32, b: f32, origin: f32| {
+                let (c0, c1) = (cell(a, origin) - 1.0, cell(b, origin) + 1.0);
+                (c1 >= 0.0 && c0 < n as f32).then(|| ((c0.max(0.0) as usize) / side, (c1.min(n as f32 - 1.0) as usize) / side))
+            };
+
+            let (Some((i0, i1)), Some((j0, j1))) = (span(a[0], b[0], o.x), span(a[1], b[1], o.z)) else { continue };
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    grid[j * SEA_BED_GRID + i].push(k);
+                }
+            }
+        }
+
+        // The LF maps under the terrains (most share one): each row reads their samples' lock once, not once a texel from every thread
+        // (that contention was most of the build).
+        let mut lfs: Vec<&std::sync::Arc<wce_scene::render_scene::LfMap>> = vec![];
+        let lf_of: Vec<Option<usize>> = terrains
+            .iter()
+            .map(|(_, t)| {
+                let lf = t.lf.as_ref()?;
+                Some(lfs.iter().position(|l| std::sync::Arc::ptr_eq(l, lf)).unwrap_or_else(|| {
+                    lfs.push(lf);
+                    lfs.len() - 1
+                }))
+            })
+            .collect();
+
         let mut data = vec![0.0f32; n * n];
         data.par_chunks_mut(n).enumerate().for_each(|(j, row)| {
             let z = -SEA_BED_HALF + (j as f32 + 0.5) * texel;
+            let reads: Vec<_> = lfs.iter().map(|l| l.values.read()).collect();
             for (i, out) in row.iter_mut().enumerate() {
                 let x = -SEA_BED_HALF + (i as f32 + 0.5) * texel;
-                let h = ground_at(&terrains, x / u + o.x, z / u + o.z).map_or(lo, |h| (h - o.y) * u);
+                let near = &grid[(j / side) * SEA_BED_GRID + i / side];
+                let h = near
+                    .iter()
+                    .find_map(|&k| {
+                        let (e, t) = terrains[k];
+                        t.ground_in(&e.world, x / u + o.x, z / u + o.z, lf_of[k].map(|l| &reads[l]))
+                    })
+                    .map_or(lo, |h| (h - o.y) * u);
                 *out = ((h - lo) / range).clamp(0.0, 1.0);
             }
         });
@@ -691,8 +739,9 @@ impl Renderer {
         let mut verts = vec![0.0f32; floats];
         {
             wce_prof!("render.ocean_chunks");
-            // The surfaces only (the textures beside them are not shared across threads).
-            let sea = self.water.ocean.sea.as_ref().map(|s| (&s.sea, &s.swell)).zip(at);
+            // The surfaces only (the textures beside them are not shared across threads). The campaign water reads the rest positions
+            // alone: its chunks are not displaced (sampling the surfaces for nothing was a millisecond a frame).
+            let sea = self.water.ocean.sea.as_ref().map(|s| (&s.sea, &s.swell)).zip(at).filter(|_| campaign.is_none());
             let height = |x: f32, z: f32| {
                 sea.map_or(0.0, |((sea, swell), (sea_at, swell_at))| sea.height_at(sea_at, x, z) + swell.height_at(swell_at, x, z))
             };
