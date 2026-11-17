@@ -290,14 +290,21 @@ type MaterialBoxes = (Arc<TerrainMaterial>, Option<Arc<LfMap>>, Vec<f32>, bool);
 
 /// One patch's vertex buffer: the (cells + 1)² grid (x, height, z), x and z in cells of the patch; past the grid's last row or column the vertices
 /// repeat its edge (the index buffers of a smaller patch never reach them).
-fn hf_patch_vb(dev: &ID3D11Device, t: &Terrain, pi: i32, pj: i32, cells: i32) -> (Option<ID3D11Buffer>, Option<f32>) {
+fn hf_patch_vb(
+    dev: &ID3D11Device,
+    flat_vbs: &FlatPatches,
+    t: &Terrain,
+    pi: i32,
+    pj: i32,
+    cells: i32,
+) -> (Option<ID3D11Buffer>, Option<f32>) {
     // A flat patch (its grid's heights all one value: a campaign's LF ground, its shared-geometry tiles) is the same grid wherever it
     // is: one buffer of heights 0 for all of them, its height in its instances, so they draw as one batch (they were a draw call each).
     let at = |x: i32, z: i32| t.height_at((pi * cells + x).min(t.nx - 1), (pj * cells + z).min(t.nz - 1));
     let h0 = at(0, 0);
     let flat = (0..=cells).all(|z| (0..=cells).all(|x| at(x, z).to_bits() == h0.to_bits()));
     if flat {
-        let mut shared = FLAT_PATCH.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut shared = flat_vbs.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((_, vb)) = shared.iter().find(|(c, _)| *c == cells) {
             return (Some(vb.clone()), Some(h0));
         }
@@ -325,7 +332,7 @@ fn hf_patch_vb(dev: &ID3D11Device, t: &Terrain, pi: i32, pj: i32, cells: i32) ->
 
 /// A heights buffer's patches from `g` (empty, or the same grid's from an older buffer: only the patches whose heights differ are made
 /// again). The device is free-threaded: a loading thread may run it.
-fn fill_hf(dev: &ID3D11Device, mut g: HfGeo, t: &Terrain) -> HfGeo {
+fn fill_hf(dev: &ID3D11Device, flat_vbs: &FlatPatches, mut g: HfGeo, t: &Terrain) -> HfGeo {
     let (cx, cz, cells) = (t.nx - 1, t.nz - 1, g.cells);
     let (px, pz) = ((cx + cells - 1) / cells, (cz + cells - 1) / cells);
     let reuse = g.patches.len() == (px * pz) as usize;
@@ -364,7 +371,7 @@ fn fill_hf(dev: &ID3D11Device, mut g: HfGeo, t: &Terrain) -> HfGeo {
                 }
 
                 (p.lo, p.hi) = (lo, hi);
-                (p.vb, p.level) = hf_patch_vb(dev, t, p.pi, p.pj, cells);
+                (p.vb, p.level) = hf_patch_vb(dev, flat_vbs, t, p.pi, p.pj, cells);
             }
 
             p
@@ -633,6 +640,9 @@ pub(crate) struct TerrainGpuState {
 
     /// The patches of the heights buffers by key, and each terrain entity's placement of its buffer.
     hf: IdMap<usize, HfGeo>,
+
+    /// The flat patches' shared vertex buffers.
+    flat_vbs: FlatPatches,
 
     /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
     /// while for its chunk, which goes on the scene after).
@@ -945,7 +955,7 @@ impl Renderer {
             _ => HfGeo::new(t),
         };
 
-        self.terrain.hf.insert(key, fill_hf(&self.dev, g, t));
+        self.terrain.hf.insert(key, fill_hf(&self.dev, &self.terrain.flat_vbs, g, t));
         self.terrain.made += 1;
 
         // Whoever placed the old buffer places the new one again.
@@ -1539,9 +1549,10 @@ impl Renderer {
         let hf = self.terrain.hf.contains_key(&key);
         if !hf && t.nx >= 2 && t.nz >= 2 && self.terrain.hf_pending.insert(key) {
             let (dev, t, jobs) = (crate::model_cache::SharedDevice(self.dev.clone()), t.clone(), self.terrain.jobs.clone());
+            let flat_vbs = self.terrain.flat_vbs.clone();
             io_pool().post(
                 move || {
-                    let g = fill_hf(dev.device(), HfGeo::new(&t), &t);
+                    let g = fill_hf(dev.device(), &flat_vbs, HfGeo::new(&t), &t);
                     jobs.lock().unwrap_or_else(|p| p.into_inner()).hf.push((key, g));
                 },
                 0.0,
@@ -2703,13 +2714,15 @@ impl Default for TerrainCluster {
     }
 }
 
-/// The vertex buffer every flat patch shares (`hf_patch_vb`).
-struct FlatPatch(std::sync::Mutex<Vec<(i32, ID3D11Buffer)>>);
+/// The vertex buffers every flat patch of a size shares (`hf_patch_vb`): the renderer's, shared with its loading threads. (A static
+/// once: it held its buffer, so the device, past the renderer, and the device's threads were still running when the process exited.)
+#[derive(Clone, Default)]
+pub(crate) struct FlatPatches(Arc<std::sync::Mutex<Vec<(i32, ID3D11Buffer)>>>);
 
-// SAFETY: a D3D11 buffer is a free-threaded device child (the device is never made single-threaded); the mutex guards the slot.
-unsafe impl Sync for FlatPatch {}
-
-static FLAT_PATCH: FlatPatch = FlatPatch(std::sync::Mutex::new(Vec::new()));
+// SAFETY: a D3D11 buffer is a free-threaded device child (the device is never made single-threaded); the mutex guards the list.
+unsafe impl Send for FlatPatches {}
+// SAFETY: as above.
+unsafe impl Sync for FlatPatches {}
 
 /// The patch batching's profile slot (a scope ended before the function's end).
 static BATCH_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
