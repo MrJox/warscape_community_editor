@@ -855,7 +855,10 @@ impl Renderer {
             (world.m[0][3], world.m[2][3]) = ((o.x - corner.x) * u, (o.z - corner.z) * u);
             let cbs = &mut self.cbs;
             cbs.set_m("waterplane_VS", "g_world", world.data());
-            cbs.set_m("waterplane_VS", "g_overlay_view_projection", Float4x4::IDENTITY.data());
+            // The overlay's camera in the sea's frame (the map corner's).
+            let ovp = self.overlay_for(corner - self.camera.origin).map_or(Float4x4::IDENTITY, |o| o.0);
+            let cbs = &mut self.cbs;
+            cbs.set_m("waterplane_VS", "g_overlay_view_projection", ovp.data());
             cbs.set_f("campaign_CB", "g_wp_world_size", &[c.size[0] * u, c.size[1] * u]);
             // The game's campaign values (RenderDoc, camp_attila 2026-11-16, the sea draw; the campaign world's units): the surfaces'
             // repeats, the refraction, the transparency (35; the lakes 30, `CAMPAIGN_LAKE_TRANSPARENCY`), the sea info.
@@ -936,7 +939,8 @@ impl Renderer {
             }
 
             bind_srv(ctx, &ps, "s_lf_colour", colour.as_ref());
-            bind_srv(ctx, &ps, "s_overlay", self.res.opaque_black_srv.as_ref());
+            let ov = self.overlay.srv.clone().filter(|_| self.overlay.view_proj.is_some()).or_else(|| self.res.opaque_black_srv.clone());
+            bind_srv(ctx, &ps, "s_overlay", ov.as_ref());
             bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
         }
 

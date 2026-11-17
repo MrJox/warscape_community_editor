@@ -444,7 +444,10 @@ impl Renderer {
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
         self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
-        self.cbs.set_m("directional_light_PS", "g_overlay_view_projection", Float4x4::IDENTITY.data());
+        // A campaign map's overlay (the rivers): over the terrain's pixels, through its camera.
+        let overlay = self.overlay_for(Float3::default());
+        let ovp = overlay.as_ref().map_or(Float4x4::IDENTITY, |o| o.0);
+        self.cbs.set_m("directional_light_PS", "g_overlay_view_projection", ovp.data());
 
         // The engine's default (see the water pass); the shader writes the refraction weight into the light buffer's alpha.
         self.cbs.set_f("directional_light_PS", "g_refraction_depth", &[0.75]);
@@ -457,7 +460,8 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
         let env = if self.env.active { self.sky.cube.srv.clone() } else { self.env_srv() };
         bind_srv(&self.ctx, &ps, "s_environment", env.as_ref());
-        bind_srv(&self.ctx, &ps, "s_overlay", self.res.overlay_none_srv.as_ref());
+        let ov = overlay.and_then(|o| o.1).or_else(|| self.res.overlay_none_srv.clone());
+        bind_srv(&self.ctx, &ps, "s_overlay", ov.as_ref());
         bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
         bind_srv(&self.ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);

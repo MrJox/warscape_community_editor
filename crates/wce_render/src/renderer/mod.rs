@@ -34,6 +34,7 @@ mod ropes;
 mod skinned;
 pub use self::editor::{SurfaceGrid, SurfaceHit};
 mod blend_mesh;
+mod campaign_overlay;
 mod dof;
 mod nis;
 mod nis_coef;
@@ -1025,6 +1026,9 @@ pub struct Renderer {
 
     /// A campaign map's shroud plane's resources.
     pub(crate) shroud: shroud::ShroudGpu,
+
+    /// A campaign map's overlay (the rivers drawn flat, read by the lighting and the sea).
+    pub(crate) overlay: campaign_overlay::OverlayGpu,
     pub(crate) particles: ParticleSystem,
 
     /// Rome 2's effects (its own particle system and per-effect shaders).
@@ -1214,6 +1218,7 @@ impl Renderer {
             campaign_cubes: None,
             unlit_bound: false,
             shroud: shroud::ShroudGpu::default(),
+            overlay: campaign_overlay::OverlayGpu::default(),
             particles,
             vfx_rome2,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
@@ -1945,6 +1950,8 @@ impl Renderer {
         self.pass_sky_forward();
         self.pass_sun(&env, &view_m, &proj);
         self.pass_clouds(&env);
+        // A campaign map's overlay (the rivers), read by the light and the sea.
+        self.pass_campaign_overlay(scene, &cam, aspect, (width, height), time_s);
         self.pass_directional_light();
         self.pass_point_lights(scene);
         self.gpu_timer.mark("sea");
@@ -1953,7 +1960,8 @@ impl Renderer {
         // Attila, as the game: the rivers with the other water, before the environment specular pass that adds their reflection (they are
         // stencil 2: the fog pass leaves them, their shader fogs itself). Rome 2's are forward and come after the fog.
         let rome2 = self.game == game::RenderGame::Rome2;
-        if !rome2 {
+        // A campaign map's rivers are in its overlay (pass_campaign_overlay), not drawn as meshes.
+        if !rome2 && self.overlay.view_proj.is_none() {
             self.gpu_timer.mark("rivers");
             self.pass_water(scene, true);
         }
