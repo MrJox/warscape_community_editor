@@ -52,6 +52,7 @@ fn lf_region_production_loader_save_reopen_retains_f1_metadata_and_project_overr
             name: name.into(),
             game_dir: "terrain/battles/main_attila_map",
             raw,
+            roots: roots.to_vec(),
             db: Arc::default(),
             render_lf: campaign_render_lf(&roots, kind),
             files: None,
@@ -59,6 +60,7 @@ fn lf_region_production_loader_save_reopen_retains_f1_metadata_and_project_overr
             built: None,
             game: &wce_foundation::game::GameProfile::ATTILA,
             install: None,
+            restored_from: None,
         };
         let mut doc = open_map(&inputs(kit.clone())).unwrap().document();
         let expected = if kind == MapKind::Campaign { (712., 38.28) } else { (3000., 20.) };
