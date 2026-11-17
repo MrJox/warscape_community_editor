@@ -176,6 +176,17 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   only over the outer 2 % of the map (the edge fade with the scrolling `shroud_cloud` layers); the land is unchanged. Not checked
   against the game (a screenshot of a map edge wanted). DEVIATION, for review: depth read only (the game's writes it). Left: the
   fog-of-war switch (a faction's `s_shroud` at the start: the game's is 1485 x 1240 A8, padded and blurred; its making to trace).
+- **Phase 4, the overlay (2026-11-17; RenderDoc camp_attila, events 6768 - 15879; scripts in `%TEMP%\wce_scratch\camprd\ov`):**
+  `wce_render` `renderer/campaign_overlay.rs`: the tiles' river meshes drawn flat into an RGBA16F target (1.5 x the screen, at most
+  2048: ASSUMPTION from 2048 x 1620 at 1080p) cleared to (0, 0, 0, 1), colour SrcAlpha / InvSrcAlpha, alpha Zero / InvSrcAlpha, with
+  `rigidriver.hlsl` `main_river` (their vertices repacked: (x, y, z, flow sign), (u, v, end fade, across 0 .. 1 from the metres off
+  the centre line: ASSUMPTION, the half width the mesh's widest), `s_lf_colour` the sea colour map, `s_normal` the battle river
+  normal (the capture's is its mip 2); the overlay camera the view's rotation, fov and aspect, moved back horizontally by d (near
+  + d, far - d; d ASSUMED: the eye's height times the cotangent of the view's lowest ray; the game's 1.01 / 1.69 not derived). Read
+  by the directional light (the G-buffer's terrain bit) and the campaign sea through `g_overlay_view_projection`; the rivers are not
+  drawn as meshes on a campaign map. Checked: the Tiber at Rome; TDD's rivers are water again (lighter than the user's
+  screenshot). Left: the campaign borders (`campaignborder.hlsl`, the same pass), the overlay camera's d from the game (Ghidra or a
+  third capture at another zoom).
 - Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
   constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
   RenderDoc. The rivers as the game draws them (to do, not a deviation: the user, 2026-11-17): into the 2048 x 1620 overlay target
