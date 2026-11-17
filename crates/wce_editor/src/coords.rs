@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use wce_foundation::math::{Float3, length, normalize};
 use wce_scene::camera::Camera;
-use wce_scene::render_scene::{EntityId, Payload, RenderScene, Water};
+use wce_scene::render_scene::{EntityId, Payload, RenderScene, StructureChange, Water};
 
 use crate::gui;
 
@@ -49,6 +49,11 @@ impl BattleFrame {
 /// The side of the grid the terrains are bucketed on (scene units).
 const BUCKET: f32 = 256.0;
 
+/// A terrain over more buckets than this goes in the coarse grid (`COARSE` buckets a side) instead: a map view's far LF ground and blocks
+/// span thousands of buckets, and filling them took 6 ms each time the streamed map changed.
+const LARGE_BUCKETS: i64 = 64;
+const COARSE: f32 = BUCKET * 16.0;
+
 /// A sea plane: its height and its rectangle.
 #[derive(Clone, Copy, Debug)]
 struct SeaPlane {
@@ -73,12 +78,24 @@ impl SeaPlane {
     }
 }
 
-/// The scene's terrains by the grid squares their bounds touch and its sea planes, made again when the scene's structure or terrains change.
+/// The scene's terrains by the grid squares their bounds touch and its sea planes. They follow the scene's structure log (a streamed map
+/// adds and drops chunks most frames: reading every terrain again each time was 3 to 6 ms): the entries of removed terrains stay until
+/// they are many (a lookup skips them, ids are never reused), the added entities' come. Read again when the log says anything else or a
+/// terrain's payload changes (`terrain_revision`: a brush stroke).
 #[derive(Default)]
 pub struct GroundProbe {
-    key: (usize, u64, u64),
+    /// The scene, its terrain revision, its structure log's position and the first entity id not looked at yet.
+    key: (usize, u64),
+    cursor: u64,
+    next: EntityId,
+
+    /// The bucket entries each terrain has, and how many belong to terrains gone.
+    entries: HashMap<EntityId, usize>,
+    live: usize,
+    dead: usize,
     buckets: HashMap<(i32, i32), Vec<EntityId>>,
-    seas: Vec<SeaPlane>,
+    coarse: HashMap<(i32, i32), Vec<EntityId>>,
+    seas: Vec<(EntityId, SeaPlane)>,
 
     /// The last cursor ray (eye, direction) and what it hit.
     last: Option<([f32; 6], Option<Float3>)>,
@@ -86,52 +103,132 @@ pub struct GroundProbe {
 
 impl GroundProbe {
     fn refresh(&mut self, scene: &RenderScene) {
-        let key = (scene.uid(), scene.structure_revision(), scene.terrain_revision());
-        if key == self.key {
+        let key = (scene.uid(), scene.terrain_revision());
+        let mut cursor = self.cursor;
+        let log = scene.structure_since(&mut cursor).filter(|_| key == self.key);
+        let follow = log.filter(|l| l.iter().all(|c| !matches!(c, StructureChange::Other)));
+        let Some(log) = follow.filter(|_| self.dead <= 65_536 || self.dead <= self.live) else {
+            wce_foundation::wce_prof!("coords.ground_refresh");
+            self.key = key;
+            self.last = None;
+            self.entries.clear();
+            (self.live, self.dead) = (0, 0);
+            self.buckets.clear();
+            self.coarse.clear();
+            self.seas.clear();
+            for e in scene.entities() {
+                self.add(scene, e);
+            }
+
+            self.next = scene.next_id();
+            let _ = scene.structure_since(&mut self.cursor);
+            return;
+        };
+
+        self.cursor = cursor;
+        if log.is_empty() && self.next == scene.next_id() {
             return;
         }
 
-        self.key = key;
+        wce_foundation::wce_prof!("coords.ground_follow");
         self.last = None;
-        self.buckets.clear();
-        self.seas.clear();
-        for e in scene.entities() {
-            if !scene.drawable(e) {
-                continue;
-            }
+        for c in &log {
+            match c {
+                StructureChange::Removed(r) => {
+                    if r.end - r.start > self.entries.len() as EntityId {
+                        let gone: Vec<EntityId> = self.entries.keys().copied().filter(|id| r.contains(id)).collect();
+                        gone.into_iter().for_each(|id| self.kill(id));
+                    } else {
+                        r.clone().for_each(|id| self.kill(id));
+                    }
 
-            let t = match &e.payload {
-                Payload::Terrain(t) if t.nx >= 2 && t.nz >= 2 => t,
-                Payload::Water(w) if !w.river => {
-                    self.seas.extend(SeaPlane::of(w));
-                    continue;
+                    self.seas.retain(|(id, _)| !r.contains(id));
                 }
 
-                _ => continue,
-            };
-
-            // The grid's corners in the world (the matrix turns and scales xz, the heights do not move them).
-            let (x1, z1) = (t.origin_x + (t.nx - 1) as f32 * t.step, t.origin_z + (t.nz - 1) as f32 * t.step);
-            let m = &e.world.m;
-            let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-            for (lx, lz) in [(t.origin_x, t.origin_z), (x1, t.origin_z), (t.origin_x, z1), (x1, z1)] {
-                let (x, z) = (m[0][0] * lx + m[0][2] * lz + m[0][3], m[2][0] * lx + m[2][2] * lz + m[2][3]);
-                lo = [lo[0].min(x), lo[1].min(z)];
-                hi = [hi[0].max(x), hi[1].max(z)];
-            }
-
-            for i in (lo[0] / BUCKET).floor() as i32..=(hi[0] / BUCKET).floor() as i32 {
-                for j in (lo[1] / BUCKET).floor() as i32..=(hi[1] / BUCKET).floor() as i32 {
-                    self.buckets.entry((i, j)).or_default().push(e.id);
+                // Another payload: its entries as it is now.
+                StructureChange::Payload(id) => {
+                    self.kill(*id);
+                    self.seas.retain(|(s, _)| s != id);
+                    if *id < self.next
+                        && let Some(e) = scene.find(*id)
+                    {
+                        self.add(scene, e);
+                    }
                 }
+
+                StructureChange::Other => unreachable!("filtered above"),
             }
+        }
+
+        // The entities added since (their ids follow; the scene keeps them in id order).
+        let all = scene.entities();
+        let first = all.partition_point(|e| e.id < self.next);
+        for e in &all[first..] {
+            self.add(scene, e);
+        }
+
+        self.next = scene.next_id();
+    }
+
+    /// A drawn terrain's bucket entries, or a sea's plane.
+    fn add(&mut self, scene: &RenderScene, e: &wce_scene::render_scene::Entity) {
+        if !scene.drawable(e) {
+            return;
+        }
+
+        let t = match &e.payload {
+            Payload::Terrain(t) if t.nx >= 2 && t.nz >= 2 => t,
+            Payload::Water(w) if !w.river => {
+                self.seas.extend(SeaPlane::of(w).map(|s| (e.id, s)));
+                return;
+            }
+
+            _ => return,
+        };
+
+        // The grid's corners in the world (the matrix turns and scales xz, the heights do not move them).
+        let (x1, z1) = (t.origin_x + (t.nx - 1) as f32 * t.step, t.origin_z + (t.nz - 1) as f32 * t.step);
+        let m = &e.world.m;
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for (lx, lz) in [(t.origin_x, t.origin_z), (x1, t.origin_z), (t.origin_x, z1), (x1, z1)] {
+            let (x, z) = (m[0][0] * lx + m[0][2] * lz + m[0][3], m[2][0] * lx + m[2][2] * lz + m[2][3]);
+            lo = [lo[0].min(x), lo[1].min(z)];
+            hi = [hi[0].max(x), hi[1].max(z)];
+        }
+
+        let (i0, i1, j0, j1) = ((lo[0] / BUCKET).floor(), (hi[0] / BUCKET).floor(), (lo[1] / BUCKET).floor(), (hi[1] / BUCKET).floor());
+        let (size, grid) = match ((i1 - i0 + 1.0) as i64) * ((j1 - j0 + 1.0) as i64) > LARGE_BUCKETS {
+            true => (COARSE, &mut self.coarse),
+            false => (BUCKET, &mut self.buckets),
+        };
+
+        let mut n = 0;
+        for i in (lo[0] / size).floor() as i32..=(hi[0] / size).floor() as i32 {
+            for j in (lo[1] / size).floor() as i32..=(hi[1] / size).floor() as i32 {
+                grid.entry((i, j)).or_default().push(e.id);
+                n += 1;
+            }
+        }
+
+        *self.entries.entry(e.id).or_default() += n;
+        self.live += n;
+    }
+
+    /// A terrain's entries belong to one gone (a lookup no longer finds it).
+    fn kill(&mut self, id: EntityId) {
+        if let Some(n) = self.entries.remove(&id) {
+            self.live -= n;
+            self.dead += n;
         }
     }
 
     /// The highest ground of the terrains at a point.
     fn ground(&self, scene: &RenderScene, x: f32, z: f32) -> Option<f32> {
-        let ids = self.buckets.get(&((x / BUCKET).floor() as i32, (z / BUCKET).floor() as i32))?;
-        ids.iter()
+        let fine = self.buckets.get(&((x / BUCKET).floor() as i32, (z / BUCKET).floor() as i32));
+        let coarse = self.coarse.get(&((x / COARSE).floor() as i32, (z / COARSE).floor() as i32));
+        fine.into_iter()
+            .chain(coarse)
+            .flatten()
             .filter_map(|&id| scene.find(id))
             .filter_map(|e| match &e.payload {
                 Payload::Terrain(t) => t.ground_at(&e.world, x, z),
@@ -149,7 +246,7 @@ impl GroundProbe {
     /// What the cameras stand on at a point: the ground, or the sea where it is over it (or off the terrains).
     pub fn surface_at(&mut self, scene: &RenderScene, x: f32, z: f32) -> Option<f32> {
         self.refresh(scene);
-        let sea = self.seas.iter().filter(|s| s.covers(x, z)).map(|s| s.y).reduce(f32::max);
+        let sea = self.seas.iter().map(|(_, s)| s).filter(|s| s.covers(x, z)).map(|s| s.y).reduce(f32::max);
         match (self.ground(scene, x, z), sea) {
             (Some(g), Some(s)) => Some(g.max(s)),
             (g, s) => g.or(s),
@@ -167,6 +264,7 @@ impl GroundProbe {
         let sea = self
             .seas
             .iter()
+            .map(|(_, s)| s)
             .filter(|s| eye.y > s.y)
             .filter_map(|s| {
                 let t = (s.y - eye.y) / dir.y;
@@ -306,6 +404,102 @@ mod tests {
         let hit = probe.surface_hit(&scene, Float3::new(1.0, 8.0, 2.0), down, 1000.0);
         assert_eq!(hit, Some(Float3::new(1.0, 3.0, 2.0)), "a ray stops on the sea");
         assert_eq!(probe.surface_hit(&scene, Float3::new(1.0, 1.0, 2.0), down, 1000.0), None, "not from under it");
+    }
+
+    /// A flat terrain of `cells` x `cells` at a height, its corner at (x, z).
+    fn terrain(cells: i32, step: f32, height: f32) -> Payload {
+        let n = cells + 1;
+        Payload::Terrain(wce_scene::render_scene::Terrain {
+            nx: n,
+            nz: n,
+            origin_x: 0.0,
+            origin_z: 0.0,
+            step,
+            heights: std::sync::Arc::new(vec![height; (n * n) as usize]),
+            ..Default::default()
+        })
+    }
+
+    fn at(x: f32, z: f32) -> Float4x4 {
+        let mut m = Float4x4::IDENTITY;
+        (m.m[0][3], m.m[2][3]) = (x, z);
+        m
+    }
+
+    /// A probe that follows a streamed scene (chunks added and removed in ranges, payloads replaced, seas) answers as one made afresh.
+    #[test]
+    fn a_followed_probe_answers_as_a_fresh_one() {
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut rand = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % u64::from(n)) as u32
+        };
+
+        let mut scene = RenderScene::default();
+        let layer = scene.add_layer(1, "map");
+        let mut chunks: Vec<std::ops::Range<EntityId>> = vec![];
+        let mut probe = GroundProbe::default();
+        for step in 0..120 {
+            match rand(5) {
+                // A chunk: small terrains, a large one (the coarse grid's), now and then a sea.
+                0 | 1 => {
+                    let first = scene.next_id();
+                    for _ in 0..1 + rand(6) {
+                        let (x, z) = (rand(8000) as f32 - 4000.0, rand(8000) as f32 - 4000.0);
+                        let p = if rand(4) == 0 { terrain(64, 64.0, rand(50) as f32) } else { terrain(8, 32.0, rand(50) as f32) };
+                        scene.add(layer, at(x, z), p, SourceRef { doc: 1, item: u64::MAX });
+                    }
+
+                    if rand(6) == 0 {
+                        let y = rand(30) as f32;
+                        let v = |x: f32, z: f32| WaterVertex { x, y, z, ..Default::default() };
+                        let (x, z) = (rand(6000) as f32 - 3000.0, rand(6000) as f32 - 3000.0);
+                        let verts = vec![v(x, z), v(x + 900.0, z), v(x, z + 900.0), v(x + 900.0, z + 900.0)];
+                        let water = Water { verts, indices: vec![0, 2, 1, 1, 2, 3], ..Default::default() };
+                        scene.add(layer, Float4x4::IDENTITY, Payload::Water(water), SourceRef { doc: 1, item: u64::MAX });
+                    }
+
+                    chunks.push(first..scene.next_id());
+                }
+
+                // Chunks dropped.
+                2 if !chunks.is_empty() => {
+                    let gone = chunks.remove(rand(chunks.len() as u32) as usize);
+                    let more = if chunks.is_empty() || rand(2) == 0 { vec![] } else { vec![chunks.remove(0)] };
+                    scene.remove_ranges(&[vec![gone], more].concat());
+                }
+
+                // A payload replaced by another kind (a terrain becomes an overlay, or the other way).
+                3 => {
+                    if let Some(e) = scene.entities().get(rand(scene.entities().len().max(1) as u32) as usize) {
+                        let id = e.id;
+                        let p = match e.payload {
+                            Payload::Terrain(_) => Payload::Overlay(Default::default()),
+                            _ => terrain(8, 32.0, rand(50) as f32),
+                        };
+                        scene.update_payload(id, p);
+                    }
+                }
+
+                _ => {}
+            }
+
+            // Asked between changes, as the viewport asks every frame.
+            let fresh = &mut GroundProbe::default();
+            for _ in 0..200 {
+                let (x, z) = (rand(12000) as f32 - 6000.0, rand(12000) as f32 - 6000.0);
+                assert_eq!(probe.surface_at(&scene, x, z), fresh.surface_at(&scene, x, z), "step {step} at {x}, {z}");
+                assert_eq!(probe.ground_at(&scene, x, z), fresh.ground_at(&scene, x, z), "step {step} at {x}, {z}");
+            }
+
+            let (eye, dir) = (Float3::new(rand(4000) as f32 - 2000.0, 200.0, 0.0), Float3::new(0.3, -0.2, 0.5));
+            assert_eq!(probe.surface_hit(&scene, eye, dir, 5000.0), fresh.surface_hit(&scene, eye, dir, 5000.0), "step {step}");
+        }
+
+        // Only a probe that followed the removals keeps their entries (a reading afresh starts without).
+        assert!(probe.dead > 0, "the probe followed the log");
     }
 
     #[test]
