@@ -1,6 +1,8 @@
 # Terrain Editor developer handover
 
-Maintained entry point for Attila and Rome II, following the [Terrain roadmap](plans/terrain_editor.md). Last verified: **15 November 2026**, upstream base `master` at `45fa5fe8f334aa72451aa756671f73174d5e0ad9`, with the locally prepared self-contained Reliable Terrain Save/Export feature including its required publication modules/tests directly. It has no dependency on unmerged #51 and leaves upstream Tile I/O unchanged. This document describes source and accepted local behavior through D3E; it does not certify every profile or game-runtime output. Update the revision, availability and focused verification when a feature lands.
+Contributor entry point for Attila and Rome II, following the [Terrain roadmap](plans/terrain_editor.md). **17 November 2026:** final contribution preparation is aligned with upstream `81952bcf117bf676333c708beea0febe8b36bf1a`. Reliable Terrain Save/Export includes its required publication modules/tests directly, has no dependency on unmerged #51, and leaves upstream Tile I/O unchanged. The contributing project is ending major development; Frodo and Victimized will decide integration and further development. Occasional small corrections may follow.
+
+Start with the [Save/Export workflow](plans/terrain_save_export.md). [Remaining work and source references](terrain_remaining_work.md) identify unfinished contributions separately from code in this branch. They are reference material for maintainers, not a promise of further implementation by the contributor.
 
 ## Start here
 
@@ -10,7 +12,7 @@ Read this handover, then the relevant part of the roadmap. Reuse the existing [m
 
 ## Availability and accepted revisions
 
-Acceptance, publication and upstream merge are separate states. This feature branch starts directly from verified upstream master and includes its publication infrastructure. Upstream autosave/recovery is retained; restored documents stay unsaved after Save As or failure until successful owned Save. Paths marked **local** below refer to the named accepted revision and may not exist in this checkout; inspect them with `git show <revision>:<repository-path>`, obtaining missing Git objects through the contribution owner. No private report or game-resource archive is required.
+Acceptance, submission and upstream merge are separate states. This feature branch starts from the upstream revision above and includes its publication infrastructure. Upstream autosave/recovery is retained; restored documents stay unsaved after Save As or failure until successful owned Save. Historical accepted revisions below document provenance, not current-master compatibility. Fetch the named reference branches in the remaining-work guide to inspect unfinished source; no private game-resource archive is required.
 
 | Capability | Upstream at the revision above | Accepted local boundary / delivery status |
 |---|---|---|
@@ -28,7 +30,7 @@ Acceptance, publication and upstream merge are separate states. This feature bra
 
 The earlier native-prop milestone is `1ac29cd3a678cdd6054d974552732e1658b42909`; accepted Attila F1/F2 integration is `35c4f358754f6841dd7ad00f4b8b13ad732669e8`. These are provenance landmarks, not recommended upstream bases. D3E is independently based on F1 and does **not** contain all D3C work. Its D3C compatibility composition is a test witness, not a delivery prerequisite.
 
-Height-only preparation [#52](https://github.com/MrJox/warscape_community_editor/pull/52) remains **held**, although GitHub lists it open. D3C contains that work transitively through campaign authoring. Do not import the whole integration to get validation or Save: check module/type/build dependencies as well as runtime calls. Work 3 owns feature packaging and coordination with Frodo/Victimized. New submissions are paused pending review; this handover authorizes no publication or history restructuring.
+Height-only preparation [#52](https://github.com/MrJox/warscape_community_editor/pull/52) remains **held**, although GitHub lists it open. D3C contains that work transitively through campaign authoring. Do not import the whole integration to get validation or Save: check module/type/build dependencies as well as runtime calls. Maintainers decide adoption of these historical branches; the final submissions exclude held height preparation.
 
 ## Architecture and source map
 
@@ -116,16 +118,18 @@ cargo run --release --locked --offline -p wce_terrain_io --example built_normals
 
 It checks a single edit's normals in memory, not F-B or campaign normals. The broader [gates/baseline workflow](../README.md#gates) needs a locally inventoried corpus and render resources; do not recreate archives to run a narrow check. Automated editor scripts must stay non-activating and end with `quit`; capture only the editor, preserve a user-opened instance. Run `cargo fmt --all` before Rust commits, then `cargo fmt --all --check` and `git diff --check` using the current upstream configuration. On Windows, error 206 requires equivalent per-package formatting/checks for every workspace member; report the actual fallback instead of claiming the one-shot command passed.
 
-## Limits, priorities and resuming work
+## Ownership and remaining work
 
 Native battle normals use a detail-preserving slope-change approximation and known shipped-chunk layouts; unsupported layouts retain originals. CHMF generation retains shipped tags/layout assumptions. Neither supplies a general native campaign normal reconstruction rule. **P0-02C remains blocked** pending a defensible campaign-normal relationship; F-B is the separate battle continuity question. Campaign rendering/material/sky/sprawl and asset coverage remain incomplete; accepted prop responsiveness in one scene is not an all-map FPS guarantee. Large global refill, LF memory and broader brush/UI parity remain roadmap work.
 
-Current packaging priority is the complete reliable Terrain Save/Export feature. Complete D3E and incremental Terry preview remain independent later features. F-B persistence and held campaign-height preparation are outside this package. Resume as follows:
+The final ready-feature submissions are Reliable Terrain Save/Export and exact land-LF PNG region interchange. F-B persistence, historical native-prop controls, shared validation, incremental Terry preview and held campaign-height preparation remain separate source references. Their status and next technical requirements are in [remaining work](terrain_remaining_work.md).
 
-1. Verify upstream SHA, open PR heads and the feature owner's current packaging decision; update this snapshot. Use a new local branch, leaving accepted and published refs intact.
+When adopting a historical source reference:
+
+1. Verify upstream SHA and existing PRs; update this snapshot. Start from current master and preserve existing source/reference branches.
 2. Pick one game/map kind, source profile and operation. Trace loader → command/history → writer → publisher → reopen; identify every real prerequisite before composing it. Do not silently absorb held #52.
 3. Reuse the smallest synthetic fixture and relevant existing tests, then one read-only real witness only if needed. Record exact head, commands, changed resources and byte comparisons; keep game assets out of Git.
 4. Preserve newer upstream scene/picking/invalidation APIs when integrating older work. Current-master naval/cloth/scene changes were not covered by old Terrain performance evidence; port bounded changes, not whole historical files.
-5. Include feature docs, supported profiles, refusal behavior and focused verification with the proposed package. Work 3 coordinates publication with Frodo/Victimized; owner review precedes any new submission.
+5. Include feature docs, supported profiles, refusal behavior and focused verification with the adopted package. Maintainers own future scope and release decisions.
 
-Publication coordination still needed: owner review of this complete feature and explicit disposition of historical #51 before replacement publication; #50 is updated and remains separate. Maintainer input is still needed for the separate native normal-continuity contract; supported native profiles and native-Y semantics; a portable real-fixture/oracle policy; and reconciliation of stale roadmap/top-level status and RPFM setup wording. None is permission to relax preservation guards or start campaign-normal reconstruction.
+Historical #51 retains its Tile-only work and review history; this Terrain feature incorporates only the necessary generic publication infrastructure. #50 remains the separate native v9 safeguard contribution. Keep supported native profiles, normal authority, source precedence and byte preservation explicit in any later changes. The contributor's future support is limited to occasional small fixes or clarification.
