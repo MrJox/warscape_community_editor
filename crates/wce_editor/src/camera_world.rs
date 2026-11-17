@@ -4,93 +4,203 @@
 //! TODO: collide with the buildings' real collision meshes (their cs2 hard collision, `docs/re/buildings.md`) instead of their models'
 //! bounding boxes: a box shuts a courtyard or the space under an arch.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use wce_editor_core::camera_controller::CameraWorld;
 use wce_foundation::math::{Float3, Float4x4, inverse, length};
 use wce_render::model_cache::{ModelCache, State};
-use wce_scene::render_scene::{EntityId, Payload, RenderScene};
+use wce_scene::render_scene::{Entity, EntityId, Payload, RenderScene, StructureChange};
 
 use crate::coords::GroundProbe;
 
 /// Bucket size in metres.
 const BUCKET: f32 = 64.0;
 
-/// A model's box in the world: its matrix, the matrix's inverse and its local corners.
+/// A box over more buckets than this is kept in a list of its own (its bucket range) instead of in each of its buckets: a campaign map's
+/// props (`fallen_leaves_medium`, 6 500 units across) put 1.6 M entries in the buckets, 140 ms each time the streamed map changed.
+const LARGE_BUCKETS: i64 = 64;
+
+/// A model's box in the world: its matrix, the matrix's inverse and its local corners; dead once its entity went.
 #[derive(Clone, Copy, Debug)]
 struct Obstacle {
     world: Float4x4,
     to_local: Float4x4,
     bmin: Float3,
     bmax: Float3,
+    id: EntityId,
+    alive: bool,
 }
 
-/// The models' boxes of a scene, in buckets over the ground, read again when its structure changes, an obstacle moves (or while models are
-/// still loading). Not when anything else moves: a preview follows the mouse, and reading every box again for it cost a frame's worth of
-/// time at every step of the mouse.
+/// The models' boxes of a scene, in buckets over the ground. They follow the scene's structure log: the boxes of removed entities die, the
+/// added entities' come (a streamed map adds and drops chunks most frames: reading every box again each time was 3 to 5 ms, 140 ms on a
+/// campaign map before its large props left the buckets). Read again when the log says anything else, when an obstacle moves, or once
+/// many boxes are dead. Not when anything else moves: a preview follows the mouse, and reading every box again for it cost a frame's worth
+/// of time at every step of the mouse.
 #[derive(Default)]
 pub struct ObstacleProbe {
-    key: (usize, u64),
+    /// The scene the boxes are of, its structure log's position and the first entity id not looked at yet.
+    uid: usize,
+    cursor: u64,
+    next: EntityId,
     moved: u64,
-    missing: bool,
+
+    /// Frames since the entities whose models were loading were looked at again, and those entities.
     frames: u32,
-    ids: HashSet<EntityId>,
+    pending: Vec<EntityId>,
+
+    /// Each entity's box.
+    ids: HashMap<EntityId, u32>,
     boxes: Vec<Obstacle>,
+    dead: usize,
     buckets: HashMap<(i32, i32), Vec<u32>>,
+
+    /// The boxes over more than `LARGE_BUCKETS` buckets, in order: the box and its bucket range (x and z, inclusive).
+    large: Vec<(u32, [i32; 4])>,
+
+    /// The boxes a point is tested against (reused).
+    near: Vec<u32>,
 }
 
 impl ObstacleProbe {
     fn refresh(&mut self, scene: &RenderScene, models: &ModelCache) {
-        let key = (scene.uid(), scene.structure_revision());
         let moved = scene.moved_since(&mut self.moved);
-        let obstacle_moved = moved.is_none_or(|ids| ids.iter().any(|id| self.ids.contains(id)));
+        let obstacle_moved = moved.is_none_or(|ids| ids.iter().any(|id| self.ids.contains_key(id)));
         self.frames += 1;
-        if key == self.key && !obstacle_moved && !(self.missing && self.frames >= 60) {
+
+        // What changed since: removals and payloads follow, anything else reads every box again.
+        let mut cursor = self.cursor;
+        let log = scene.structure_since(&mut cursor).filter(|_| self.uid == scene.uid() && !obstacle_moved);
+        let follow = log.filter(|l| l.iter().all(|c| !matches!(c, StructureChange::Other)));
+        let Some(log) = follow.filter(|_| self.dead <= 4096 || self.dead * 2 <= self.boxes.len()) else {
+            wce_foundation::wce_prof!("camera.obstacles_refresh");
+            self.uid = scene.uid();
+            (self.frames, self.dead) = (0, 0);
+            self.pending.clear();
+            self.ids.clear();
+            self.boxes.clear();
+            self.buckets.clear();
+            self.large.clear();
+            for e in scene.entities() {
+                self.add(scene, models, e);
+            }
+
+            self.next = scene.next_id();
+            let _ = scene.structure_since(&mut self.cursor);
+            return;
+        };
+
+        self.cursor = cursor;
+        let retry = !self.pending.is_empty() && self.frames >= 60;
+        if log.is_empty() && self.next == scene.next_id() && !retry {
             return;
         }
 
-        wce_foundation::wce_prof!("camera.obstacles_refresh");
-        (self.key, self.missing, self.frames) = (key, false, 0);
-        self.ids.clear();
-        self.boxes.clear();
-        self.buckets.clear();
-        for e in scene.entities() {
-            let Payload::MeshInstance(mi) = &e.payload else { continue };
-            if !scene.drawable(e) || e.transient {
-                continue;
+        wce_foundation::wce_prof!("camera.obstacles_follow");
+        for c in &log {
+            match c {
+                StructureChange::Removed(r) => {
+                    if r.end - r.start > self.ids.len() as EntityId {
+                        let gone: Vec<EntityId> = self.ids.keys().copied().filter(|id| r.contains(id)).collect();
+                        gone.into_iter().for_each(|id| self.kill(id));
+                    } else {
+                        r.clone().for_each(|id| self.kill(id));
+                    }
+
+                    self.pending.retain(|id| !r.contains(id));
+                }
+
+                // Another payload (a mesh or not): its box as it is now.
+                StructureChange::Payload(id) => {
+                    self.kill(*id);
+                    self.pending.retain(|p| p != id);
+                    if *id < self.next
+                        && let Some(e) = scene.find(*id)
+                    {
+                        self.add(scene, models, e);
+                    }
+                }
+
+                StructureChange::Other => unreachable!("filtered above"),
             }
+        }
 
-            let (model, state) = models.peek(&mi.model);
-            let Some(m) = model else {
-                self.missing |= state != State::Failed;
-                continue;
-            };
+        // The entities added since (their ids follow; the scene keeps them in id order), and the ones whose models were loading.
+        let all = scene.entities();
+        let first = all.partition_point(|e| e.id < self.next);
+        for e in &all[first..] {
+            self.add(scene, models, e);
+        }
 
-            // Smaller than the eye: nothing to bump into.
-            if length(m.bmax - m.bmin) < 0.5 {
-                continue;
-            }
-
-            let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-            for k in 0..8 {
-                let c = Float3::new(
-                    if k & 1 != 0 { m.bmax.x } else { m.bmin.x },
-                    if k & 2 != 0 { m.bmax.y } else { m.bmin.y },
-                    if k & 4 != 0 { m.bmax.z } else { m.bmin.z },
-                );
-                let p = e.world.transform_point(c);
-                lo = [lo[0].min(p.x), lo[1].min(p.z)];
-                hi = [hi[0].max(p.x), hi[1].max(p.z)];
-            }
-
-            let n = self.boxes.len() as u32;
-            self.ids.insert(e.id);
-            self.boxes.push(Obstacle { world: e.world, to_local: inverse(&e.world), bmin: m.bmin, bmax: m.bmax });
-            for i in (lo[0] / BUCKET).floor() as i32..=(hi[0] / BUCKET).floor() as i32 {
-                for j in (lo[1] / BUCKET).floor() as i32..=(hi[1] / BUCKET).floor() as i32 {
-                    self.buckets.entry((i, j)).or_default().push(n);
+        self.next = scene.next_id();
+        if retry {
+            self.frames = 0;
+            for id in std::mem::take(&mut self.pending) {
+                if let Some(e) = scene.find(id) {
+                    self.add(scene, models, e);
                 }
             }
+        }
+    }
+
+    /// The box of an entity that is a drawn mesh (noted to look at again while its model is loading).
+    fn add(&mut self, scene: &RenderScene, models: &ModelCache, e: &Entity) {
+        let Payload::MeshInstance(mi) = &e.payload else { return };
+        if !scene.drawable(e) || e.transient {
+            return;
+        }
+
+        let (model, state) = models.peek(&mi.model);
+        let Some(m) = model else {
+            if state != State::Failed {
+                self.pending.push(e.id);
+            }
+
+            return;
+        };
+
+        // Smaller than the eye: nothing to bump into.
+        if length(m.bmax - m.bmin) < 0.5 {
+            return;
+        }
+
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for k in 0..8 {
+            let c = Float3::new(
+                if k & 1 != 0 { m.bmax.x } else { m.bmin.x },
+                if k & 2 != 0 { m.bmax.y } else { m.bmin.y },
+                if k & 4 != 0 { m.bmax.z } else { m.bmin.z },
+            );
+            let p = e.world.transform_point(c);
+            lo = [lo[0].min(p.x), lo[1].min(p.z)];
+            hi = [hi[0].max(p.x), hi[1].max(p.z)];
+        }
+
+        let n = self.boxes.len() as u32;
+        self.ids.insert(e.id, n);
+        self.boxes.push(Obstacle { world: e.world, to_local: inverse(&e.world), bmin: m.bmin, bmax: m.bmax, id: e.id, alive: true });
+        let range = [
+            (lo[0] / BUCKET).floor() as i32,
+            (hi[0] / BUCKET).floor() as i32,
+            (lo[1] / BUCKET).floor() as i32,
+            (hi[1] / BUCKET).floor() as i32,
+        ];
+        if (i64::from(range[1]) - i64::from(range[0]) + 1) * (i64::from(range[3]) - i64::from(range[2]) + 1) > LARGE_BUCKETS {
+            self.large.push((n, range));
+            return;
+        }
+
+        for i in range[0]..=range[1] {
+            for j in range[2]..=range[3] {
+                self.buckets.entry((i, j)).or_default().push(n);
+            }
+        }
+    }
+
+    /// An entity's box dies (its bucket entries stay until the boxes are read again).
+    fn kill(&mut self, id: EntityId) {
+        if let Some(n) = self.ids.remove(&id) {
+            self.boxes[n as usize].alive = false;
+            self.dead += 1;
         }
     }
 
@@ -99,10 +209,29 @@ impl ObstacleProbe {
     pub fn push_out(&mut self, scene: &RenderScene, models: &ModelCache, centre: Float3, radius: f32) -> Float3 {
         self.refresh(scene, models);
         let mut p = centre;
+        let mut near = std::mem::take(&mut self.near);
         for _ in 0..2 {
-            let Some(ids) = self.buckets.get(&((p.x / BUCKET).floor() as i32, (p.z / BUCKET).floor() as i32)) else { return p };
-            for &i in ids {
+            // The bucket's boxes and the large ones over it.
+            let cell = ((p.x / BUCKET).floor() as i32, (p.z / BUCKET).floor() as i32);
+            near.clear();
+            near.extend(self.buckets.get(&cell).into_iter().flatten().copied());
+            near.extend(
+                self.large.iter().filter(|(_, r)| (r[0]..=r[1]).contains(&cell.0) && (r[2]..=r[3]).contains(&cell.1)).map(|(n, _)| *n),
+            );
+            if near.is_empty() {
+                break;
+            }
+
+            // In the scene's order (entity ids), as a reading afresh has them: the pushes add up in turn, and a box that came late (its
+            // model was loading) must not take another's turn.
+            near.sort_unstable_by_key(|&i| self.boxes[i as usize].id);
+
+            for &i in &near {
                 let o = &self.boxes[i as usize];
+                if !o.alive {
+                    continue;
+                }
+
                 let l = o.to_local.transform_point(p);
                 let clamp = Float3::new(l.x.clamp(o.bmin.x, o.bmax.x), l.y.clamp(o.bmin.y, o.bmax.y), l.z.clamp(o.bmin.z, o.bmax.z));
                 let inside = clamp == l;
@@ -142,6 +271,7 @@ impl ObstacleProbe {
             }
         }
 
+        self.near = near;
         p
     }
 }
