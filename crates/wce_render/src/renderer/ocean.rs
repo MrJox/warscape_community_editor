@@ -32,7 +32,7 @@ use wce_foundation::wce_prof;
 use wce_scene::render_scene::{Entity, EntityId, LfMap, Payload, RenderScene, Terrain};
 
 use super::*;
-use crate::sea_surface::{SeaRow, SeaSurface, parse_sea_surfaces, parse_wind_levels};
+use crate::sea_surface::{FrameAt, SeaRow, SeaSurface, parse_sea_surfaces, parse_wind_levels};
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 const OCEAN_VS: &str = "dx11_sm_4_0_ocean.hlsl_vs_vs30_main";
@@ -150,6 +150,7 @@ fn leaf_width_at(root: SeaNode, x: f32, z: f32, eye: Float3, y: f32) -> Option<f
 
 /// A chunk's vertices to make: its corner, cell size, cells a side, height and per edge (west, east,
 /// south, north) how many of its cells one of the neighbour's spans.
+#[derive(Clone, Debug, PartialEq)]
 struct ChunkJob {
     x0: f32,
     z0: f32,
@@ -240,6 +241,10 @@ struct SeaAssets {
     sea_tex: (ID3D11Texture2D, ID3D11ShaderResourceView),
     swell_tex: (ID3D11Texture2D, ID3D11ShaderResourceView),
     whitecaps: Option<ID3D11ShaderResourceView>,
+
+    /// The frame pairs the textures hold (written again when the time moves on), and the texels' buffer.
+    uploaded: Option<(FrameAt, FrameAt)>,
+    texels: Vec<u16>,
 }
 
 #[derive(Default)]
@@ -272,6 +277,9 @@ pub(crate) struct OceanGpu {
 
     /// The scene (address, revision) and the sea's origin the sea bed was last checked for: unchanged, nothing is looked at.
     sea_bed_quick: (usize, u64, u32, u32, u32),
+
+    /// The flat chunks (no surfaces displace them) the vertex buffer holds, as laid out.
+    flat_jobs: Option<Vec<ChunkJob>>,
 
     /// The game units per scene unit the grids and the sea bed were built with (both are in game units).
     units: f32,
@@ -408,7 +416,7 @@ impl Renderer {
         };
         let whitecaps =
             if row.foam_enabled { whitecap_array(&self.dev, sea.n as u32, &sea.foam_slices(row.foam_decay_rate)) } else { None };
-        self.water.ocean.sea = Some(SeaAssets { row, sea, swell, sea_tex, swell_tex, whitecaps });
+        self.water.ocean.sea = Some(SeaAssets { row, sea, swell, sea_tex, swell_tex, whitecaps, uploaded: None, texels: vec![] });
     }
 
     /// The origin of the sea's positions (scene units): the battle's centre, as the game's world origin, where its shaders put the sea bed
@@ -690,10 +698,15 @@ impl Renderer {
         // The surfaces at this frame's time: their textures.
         let t = self.clock.last_time.max(0.0);
         let at = self.water.ocean.sea.as_ref().map(|s| (s.sea.frame_at(t), s.swell.frame_at(t)));
-        if let (Some(s), Some((sea_at, swell_at))) = (&self.water.ocean.sea, at) {
+        if let (Some(s), Some((sea_at, swell_at))) = (&mut self.water.ocean.sea, at)
+            && s.uploaded != Some((sea_at, swell_at))
+        {
             wce_prof!("render.ocean_surfaces");
-            write_rows(&self.ctx, &s.sea_tex.0, &s.sea.angle_texels(sea_at), s.sea.n * 2);
-            write_rows(&self.ctx, &s.swell_tex.0, &s.swell.angle_texels(swell_at), s.swell.n * 2);
+            s.uploaded = Some((sea_at, swell_at));
+            s.sea.angle_texels_into(sea_at, &mut s.texels);
+            write_rows(&self.ctx, &s.sea_tex.0, &s.texels, s.sea.n * 2);
+            s.swell.angle_texels_into(swell_at, &mut s.texels);
+            write_rows(&self.ctx, &s.swell_tex.0, &s.texels, s.swell.n * 2);
         }
 
         // The chunks in view, their levels by distance, and their vertices displaced by the surfaces' heights.
@@ -736,37 +749,56 @@ impl Renderer {
             }
         }
 
-        let mut verts = vec![0.0f32; floats];
-        {
-            wce_prof!("render.ocean_chunks");
-            // The surfaces only (the textures beside them are not shared across threads). The campaign water reads the rest positions
-            // alone: its chunks are not displaced (sampling the surfaces for nothing was a millisecond a frame).
-            let sea = self.water.ocean.sea.as_ref().map(|s| (&s.sea, &s.swell)).zip(at).filter(|_| campaign.is_none());
-            let height = |x: f32, z: f32| {
-                sea.map_or(0.0, |((sea, swell), (sea_at, swell_at))| sea.height_at(sea_at, x, z) + swell.height_at(swell_at, x, z))
-            };
-            let mut parts = vec![];
-            let mut rest = verts.as_mut_slice();
-            for job in &jobs {
-                let (head, tail) = rest.split_at_mut(((job.cells + 1) * (job.cells + 1) * 9) as usize);
-                parts.push((job, head));
-                rest = tail;
-            }
+        // The surfaces only (the textures beside them are not shared across threads). The campaign water reads the rest positions
+        // alone: its chunks are not displaced (sampling the surfaces for nothing was a millisecond a frame).
+        let sea = self.water.ocean.sea.as_ref().map(|s| (&s.sea, &s.swell)).zip(at).filter(|_| campaign.is_none());
 
-            parts.into_par_iter().for_each(|(job, out)| chunk_vertices(job, out, &height));
-        }
-
+        // Flat chunks laid out as last frame are in the buffer already (a still camera over a campaign map).
+        let same = sea.is_none() && self.water.ocean.flat_jobs.as_ref() == Some(&jobs) && self.water.ocean.vb.is_some();
         if floats > self.water.ocean.vb_floats {
             let size = floats.next_power_of_two().max(1 << 16);
             self.water.ocean.vb = dynamic_buffer(&self.dev, size * 4, D3D11_BIND_VERTEX_BUFFER);
             self.water.ocean.vb_floats = if self.water.ocean.vb.is_some() { size } else { 0 };
         }
 
+        let mut written = floats == 0;
         if floats > 0
+            && !same
             && let Some(vb) = &self.water.ocean.vb
             && let Ok(mut map) = self.ctx.map(vb, 0, D3D11_MAP_WRITE_DISCARD, 0)
         {
-            map.write(0, &verts);
+            wce_prof!("render.ocean_chunks");
+            let height = |x: f32, z: f32| {
+                sea.map_or(0.0, |((sea, swell), (sea_at, swell_at))| sea.height_at(sea_at, x, z) + swell.height_at(swell_at, x, z))
+            };
+
+            // Straight into the mapped buffer (a vector of a few megabytes made, zeroed and copied each frame was 0.4 ms), on the threads.
+            let fill = |verts: &mut [f32]| {
+                let mut parts = vec![];
+                let mut rest = verts;
+                for job in &jobs {
+                    let (head, tail) = rest.split_at_mut(((job.cells + 1) * (job.cells + 1) * 9) as usize);
+                    parts.push((job, head));
+                    rest = tail;
+                }
+
+                parts.into_par_iter().for_each(|(job, out)| chunk_vertices(job, out, &height));
+            };
+
+            match map.get_mut(..floats * 4).and_then(|b| bytemuck::try_cast_slice_mut::<u8, f32>(b).ok()) {
+                Some(verts) => fill(verts),
+                None => {
+                    let mut verts = vec![0.0f32; floats];
+                    fill(&mut verts);
+                    map.write(0, &verts);
+                }
+            }
+
+            written = true;
+        }
+
+        if !same {
+            self.water.ocean.flat_jobs = (sea.is_none() && written).then(|| jobs.clone());
         }
 
         // Without the sea's files: the calm row's values (the dumps').
