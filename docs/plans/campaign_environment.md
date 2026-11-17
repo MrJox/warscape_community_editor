@@ -213,4 +213,12 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
 4. **First pass**: the view on Attila and TDD (Phases 1 to 4), the weather VFX (Phase 5), Thrones and Rome 2 (Phase 7). Editing
    (Phase 6) is later.
 
+5. **Borders and trade routes (user, 2026-11-17):** the borders coloured by diplomacy for a faction picked in the Terrain panel
+   (default the campaign's first playable; relations from the startpos); their curves exactly the game's fit from `borders.pbd`'s
+   hex-cell chains (traced, no approximation); the trade routes (`trade_routes.ptd`, the yellow dashed lines) drawn in the same
+   overlay pass. Found so far (2026-11-17): `borders.pbd` = u16 1, u16 0x12a, the region keys, per region its neighbour segments as
+   lines of (u16 col, u16 row) hex cells on the 1016 x 720 grid, a CRC32; colours by fn 0x10946810: own (180, 60, 0), at war red,
+   allied (0, 90, 190), neutral 178 grey, owner 0 black; the outer texture between factions, the inner between provinces of one owner;
+   half-width 0.225, start / end fades 0.75, the distance fade 95 units; the dashed lines half-width 0.05, colour (240, 200, 20).
+
 Order: 1, 3, 2, 4, 5, 7, 6; Phase 8's docs with each phase.
