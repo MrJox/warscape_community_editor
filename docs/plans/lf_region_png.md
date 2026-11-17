@@ -18,3 +18,19 @@ Replacement is available only for raw/kit documents. Native/built import refuses
 Persistence uses the existing raw writer. TIFF headers, trailing bytes, samples outside the rectangle, sea LF and other resources retain their existing preservation rules. Database metadata and project override ordering are unchanged. No native writer, normal-authority API, campaign-height preparation API, dependency manifest or lockfile changes are needed.
 
 Focused coverage is in `wce_formats/tests/lf_region_png.rs`, the `wce_terrain::lf_edit` controls, `wce_terrain_editor/tests/lf_region.rs`, and the Terrain tool's `lf_region_tests`. The real-witness test is opt-in and maps only the land LF, reads a 5 x 5 region plus file headers, never saves, and takes witness paths from `D3E_ATTILA_MAP` and `D3E_ROME2_MAP`. Destructive replacement and Save/reopen checks use tiny synthetic maps.
+
+## Example and verification
+
+On a raw/kit map at least 130 by 67 samples, export region `(62, 62, 68, 5)` to a new file. Modify one pixel in an image tool that preserves grayscale16, then replace the same rectangle. The changed region is one history entry; Undo restores the original samples and Redo restores the replacement. Save, close and reopen the raw project, export to another new filename, and compare decoded samples. Samples outside the rectangle and unrelated resources must remain unchanged. Image extraction is separate from **Export built files**.
+
+Run synthetic checks without game assets:
+
+```text
+cargo test --locked -p wce_formats --test lf_region_png
+cargo test --locked -p wce_terrain --lib lf_edit
+cargo test --locked -p wce_terrain_editor --test lf_region
+cargo test --locked -p wce_terrain_tool --lib lf_region
+cargo check --locked -p wce_app -p wce_terrain_tool --all-targets
+```
+
+Only enable the real-witness test after setting its read-only source paths. Use fresh disposable output directories for file-writing checks. The feature adds no native import, TIFF interchange, sea-LF editing or map resizing. The final contribution starts from upstream `81952bcf117bf676333c708beea0febe8b36bf1a`; it preserves the newer map-list labels, loading and command routes. It is independent of the Reliable Terrain Save/Export contribution.
