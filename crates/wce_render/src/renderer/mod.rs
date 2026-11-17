@@ -1865,8 +1865,12 @@ impl Renderer {
 
         // The render origin follows the camera, on a grid; its height is the sea's (the shaders' heights are relative to
         // the sea, as the game's: its terrain lifts land and lowers sea bed by their sign, so that the shore and the water do not fight).
+        // A campaign map's: its south-west corner, as the game's world (the whole map is under 700 of its units: no precision lost),
+        // so that the sea, its lakes and the overlay read the map's colour map at their world xz over the map's size.
         let o = self.camera.origin;
-        if (cam.eye.x - o.x).abs() > ORIGIN_REACH || (cam.eye.z - o.z).abs() > ORIGIN_REACH {
+        if let Some(sea) = scene.campaign_sea.as_ref().filter(|_| scene.campaign) {
+            self.camera.origin = Float3::new(sea.corner[0], 0.0, sea.corner[1]);
+        } else if (cam.eye.x - o.x).abs() > ORIGIN_REACH || (cam.eye.z - o.z).abs() > ORIGIN_REACH {
             let snap = |v: f32| (v / ORIGIN_REACH).round() * ORIGIN_REACH;
             self.camera.origin = Float3::new(snap(cam.eye.x), 0.0, snap(cam.eye.z));
         }

@@ -598,6 +598,30 @@ impl Renderer {
 
     /// Draws the sea planes of the scene with the ocean shaders, into the same targets as the other water (the G-buffer channels 1 .. 3 and
     /// the lit colour), stencil 1. The caller has made the refraction copy and set the depth-stencil state.
+    /// A campaign lake's pixel shader inputs (`waterplane.hlsl` ps30_campaign_lake: the campaign sea's less the overlay), as the sea's.
+    pub(crate) fn bind_campaign_lake_inputs(&self, ps: &GameShader, colour_map: &str) {
+        let srv = |t: Option<crate::model_cache::SharedTexture>| t.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+        let detail = srv(self.textures.get("sea/water_detail_normal.dds", false)).or_else(|| self.res.black_srv.clone());
+        let colour = srv(self.textures.get(colour_map, false)).or_else(|| self.res.white_srv.clone());
+        let o = &self.water.ocean;
+        let (sea_srv, swell_srv) =
+            o.sea.as_ref().map_or((o.neutral.clone(), o.neutral.clone()), |s| (Some(s.sea_tex.1.clone()), Some(s.swell_tex.1.clone())));
+        let env = self.env_srv();
+        let ctx = &self.ctx;
+        ps_samplers(ctx, ps, &self.states.s_wrap_linear);
+        for s in ["refraction_texture_sampler", "s_lf_colour", "s_shroud"] {
+            bind_sampler(ctx, ps, s, self.states.s_clamp_linear.as_ref());
+        }
+
+        bind_srv(ctx, ps, "s_lf_colour", colour.as_ref());
+        bind_srv(ctx, ps, "detail_normal_sampler", detail.as_ref());
+        bind_srv(ctx, ps, "sea_surface_sampler", sea_srv.as_ref());
+        bind_srv(ctx, ps, "swell_surface_sampler", swell_srv.as_ref());
+        bind_srv(ctx, ps, "s_environment", env.as_ref());
+        bind_srv(ctx, ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());
+        bind_srv(ctx, ps, "s_shroud", self.res.white_srv.as_ref());
+    }
+
     pub(crate) fn draw_ocean(&mut self, scene: &RenderScene, seas: &[&Entity]) -> bool {
         let seas =
             seas.iter().copied().filter(|e| matches!(&e.payload, Payload::Water(w) if !w.river) && scene.drawable(e)).collect::<Vec<_>>();
