@@ -220,5 +220,6 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
    lines of (u16 col, u16 row) hex cells on the 1016 x 720 grid, a CRC32; colours by fn 0x10946810: own (180, 60, 0), at war red,
    allied (0, 90, 190), neutral 178 grey, owner 0 black; the outer texture between factions, the inner between provinces of one owner;
    half-width 0.225, start / end fades 0.75, the distance fade 95 units; the dashed lines half-width 0.05, colour (240, 200, 20).
+   Data side done (2026-11-17): formats, fit, chains, colours and known gaps in [campaign_borders.md](../formats/campaign_borders.md).
 
 Order: 1, 3, 2, 4, 5, 7, 6; Phase 8's docs with each phase.
