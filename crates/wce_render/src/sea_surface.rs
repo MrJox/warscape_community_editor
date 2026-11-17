@@ -16,8 +16,6 @@
 //! stamp `max(foam, a + (b - a) * w)`, fn 0x11719330 then multiplies every cell above 0.001 by `foam_decay_rate` and writes
 //! `round(foam * 255 + 0.5)`).
 
-use rayon::prelude::*;
-
 /// A row of `sea_surfaces_tables` (version 2), the fields the editor uses.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SeaRow {
@@ -255,19 +253,24 @@ impl SeaSurface {
     }
 
     /// The surface's texture at a frame pair: the blended angles, R16G16 (x, z) in rows.
-    /// (Every frame: on the threads.)
     pub fn angle_texels(&self, at: FrameAt) -> Vec<u16> {
+        let mut out = vec![];
+        self.angle_texels_into(at, &mut out);
+        out
+    }
+
+    /// [`Self::angle_texels`] into `out` (every frame: a buffer kept, on the calling thread; 160 000 values handed to the busy pool cost
+    /// a millisecond a frame while a map streamed).
+    pub fn angle_texels_into(&self, at: FrameAt, out: &mut Vec<u16>) {
         let (a, b) = (&self.frames[at.frame].angles, &self.frames[at.next].angles);
         let scale = [0, 1].map(|c| (f32::from(self.angle_max[c]) - f32::from(self.angle_min[c])) / 255.0);
-        a.par_iter()
-            .zip(b.par_iter())
-            .enumerate()
-            .map(|(i, (&x, &y))| {
-                let c = i & 1;
-                let v = f32::from(self.angle_min[c]) + (f32::from(x) + (f32::from(y) - f32::from(x)) * at.blend) * scale[c];
-                v.round().clamp(0.0, 65535.0) as u16
-            })
-            .collect()
+        let min = [0, 1].map(|c| f32::from(self.angle_min[c]));
+        out.clear();
+        out.extend(a.iter().zip(b).enumerate().map(|(i, (&x, &y))| {
+            let c = i & 1;
+            let v = min[c] + (f32::from(x) + (f32::from(y) - f32::from(x)) * at.blend) * scale[c];
+            v.round().clamp(0.0, 65535.0) as u16
+        }));
     }
 
     /// The height at a world point (bilinear, the patch tiled), blended between the frame pair.
