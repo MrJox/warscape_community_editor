@@ -9,13 +9,18 @@
 //!
 //! A file that does not read as its kind is carried as it is.
 
+pub mod border_fit;
+pub mod borders;
 pub mod build;
 pub mod campaign;
 pub mod cities;
+pub mod diplomacy;
 pub mod heights;
 pub mod normals;
+pub mod overlay;
 pub mod roads;
 pub mod start;
+pub mod trade_routes;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
