@@ -170,6 +170,12 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   DEVIATION, for review (the user, 2026-11-17: not settled): the skybox casts no shadow (the game's casts into every cascade;
   outside their slices). To review: draw it into the cascades as the game does and compare (stray shadows if the editor's fit differs). Checked against the screenshots:
   the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
+- **Phase 4, the shroud plane (2026-11-17):** `wce_render` `renderer/shroud.rs`, after the fog: the game's grid (256 x 256 over +-500
+  world units, the camera quantised by 1000 / 255), draped 1.1 units over a low-res map of the land LF (every 8th sample on Attila:
+  2032 x 1441, as the game's), in the map's corner frame, drawn twice as the game draws it; `s_shroud` white (revealed), so it shows
+  only over the outer 2 % of the map (the edge fade with the scrolling `shroud_cloud` layers); the land is unchanged. Not checked
+  against the game (a screenshot of a map edge wanted). DEVIATION, for review: depth read only (the game's writes it). Left: the
+  fog-of-war switch (a faction's `s_shroud` at the start: the game's is 1485 x 1240 A8, padded and blurred; its making to trace).
 - Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
   constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
   RenderDoc. The rivers as the game draws them (to do, not a deviation: the user, 2026-11-17): into the 2048 x 1620 overlay target

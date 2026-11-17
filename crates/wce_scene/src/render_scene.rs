@@ -1183,6 +1183,9 @@ pub struct RenderScene {
     /// the map's `cubemap.dds` (the skybox model itself is an entity of the tool's, kept at the camera).
     pub campaign_sky: Option<CampaignSky>,
 
+    /// A campaign map's shroud plane (over the map's land LF; revealed: the map's edges only).
+    pub campaign_shroud: Option<CampaignShroud>,
+
     /// A campaign map's sea colour (its `lf_sea_colour.dds`): the sea planes are drawn with the game's campaign water shader, which
     /// colours the water from it. None: the battle's ocean.
     pub campaign_sea: Option<CampaignSea>,
@@ -1218,6 +1221,12 @@ pub struct CampaignSnow {
 pub struct CampaignSky {
     /// `cubemap.dds`: `s_environment`.
     pub environment: String,
+}
+
+/// A campaign map's shroud plane: the land LF it is draped over (its low-res map made from it).
+#[derive(Clone, Debug)]
+pub struct CampaignShroud {
+    pub lf: Arc<LfMap>,
 }
 
 /// A campaign map's sea colour map: the texture (a packs path) and the frame rectangle it covers, from its south-west corner (x, z; scene
@@ -1311,6 +1320,7 @@ impl Default for RenderScene {
             battle_centre: [0.0, 0.0],
             campaign: false,
             campaign_sky: None,
+            campaign_shroud: None,
             campaign_sea: None,
             campaign_snow: None,
             snow: None,
