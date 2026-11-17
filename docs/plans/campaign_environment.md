@@ -195,6 +195,14 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   beside the pools (not checked against the game).
 - Seen on master 81952bcf (not this branch's): in scripted runs Rome's settlement buildings are not drawn (their models never
   requested); this branch shows the same since its rebase onto it.
+- **Borders and trade routes drawn (2026-11-17):** the data side `wce_terrain_io::attila::overlay` (docs/formats/campaign_borders.md;
+  `borders_check`: 947 / 950 land curves of the capture within 4.3e-4, the trade routes within 3e-5); in the view `wce_terrain_tool`
+  `lines.rs` (read on a worker for the faction picked in the Terrain panel, `borders for`; default the playable faction holding the
+  most regions: ASSUMPTION, nothing marks the game's) and `wce_render` `campaign_overlay.rs` (`campaignborder.hlsl` border, a strip
+  of 16 columns a curve into the overlay after the rivers; the game's z over `CAMPAIGN_Z_SCALE` into the editor's square cells).
+  Checked: WRE's trade route dashed yellow in the sea west of Rome, its own border orange over the Alps. Left: the sea-region
+  borders and three land curves (docs/formats/campaign_borders.md, known gaps); the trade routes' land legs (only the sea legs drawn,
+  as the capture shows; the rule not found); a darker block of sea at the overlay's edge near the horizon (the overlay camera's d).
 - Open: TDD's Rauros lake and marsh pools show their beds and its rivers are bed-coloured (they were water at 0.2); the campaign
   constants above changed nothing there, so their water takes another path (the tiles' water objects); the TDD capture crashed under
   RenderDoc. The rivers as the game draws them (to do, not a deviation: the user, 2026-11-17): into the 2048 x 1620 overlay target

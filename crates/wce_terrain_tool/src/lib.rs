@@ -6,6 +6,7 @@ mod export;
 mod launch;
 mod layout_view;
 mod lighting;
+mod lines;
 mod map_panel;
 mod placements;
 mod prop_models;

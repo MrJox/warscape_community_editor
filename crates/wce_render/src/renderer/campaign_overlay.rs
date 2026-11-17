@@ -30,6 +30,8 @@ const OVERLAY_PS: &str = "dx11_sm_3_0_rigidriver.hlsl_ps_ps30_main_river";
 const OVERLAY_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidriver.hlsl_ps_ps30_main_river";
 const RIVER_NORMAL: &str = "battleterrain/river/river_normal.dds";
 const OVERLAY_MAX: u32 = 2048;
+const BORDER_VS: &str = "dx11_sm_3_0_campaignborder.hlsl_vs_vs30_border";
+const BORDER_PS: &str = "dx11_sm_3_0_campaignborder.hlsl_ps_ps30_border";
 
 /// The overlay's target, its blend state, the rivers' vertex buffers in the campaign layout, and this frame's camera.
 #[derive(Default)]
@@ -43,6 +45,9 @@ pub(crate) struct OverlayGpu {
 
     /// `g_overlay_view_projection` for world positions relative to the render origin (game units); None: no overlay this frame.
     pub view_proj: Option<Float4x4>,
+
+    /// The lines' buffers (for `CampaignLines::id`): vertices, indices, each line's (first index, count).
+    lines: Option<(u64, Option<ID3D11Buffer>, Option<ID3D11Buffer>, Vec<(u32, u32)>)>,
 }
 
 impl Renderer {
@@ -147,9 +152,6 @@ impl Renderer {
         }
 
         self.overlay.meshes = keep;
-        if rivers.is_empty() {
-            return;
-        }
 
         // The rivers in the map corner's frame (the pixel shader reads the colour map at world xz / the map's size).
         let corner = Float3::new(sea.corner[0], o.y, sea.corner[1]);
@@ -195,6 +197,9 @@ impl Renderer {
             self.draw_stats.draw_calls += 1;
         }
 
+        // Then the borders and trade routes, as the game's pass draws them after its rivers.
+        null_ps_srvs(&self.ctx, 16);
+        self.draw_overlay_lines(scene);
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_render_targets(&[], None);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
@@ -208,6 +213,91 @@ impl Renderer {
 
         self.ctx.set_viewports(&[viewport(0.0, 0.0, screen.0 as f32, screen.1 as f32)]);
         self.upload();
+    }
+
+    /// A campaign map's lines (`RenderScene::campaign_lines`) into the bound overlay: `campaignborder.hlsl` vs30 / ps30 `border`, a
+    /// draw a line (its texture and constants); the vertex: the curve's control points (x, z pairs: POSITION 0 and 1, TEXCOORD0 2 and 3),
+    /// TEXCOORD1 (t, uv offset, uv scale, +-half width: + the v = 1 side). RenderDoc, camp_attila: Back culling (here none: either
+    /// winding), the overlay's blend, no depth.
+    fn draw_overlay_lines(&mut self, scene: &RenderScene) {
+        let Some(lines) = scene.campaign_lines.clone() else { return };
+        let (Some(vs), Some(ps)) = (self.shader(BORDER_VS), self.shader(BORDER_PS)) else { return };
+        let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        let el = [
+            element(c"POSITION", 0, f4, 0, 0, false),
+            element(c"TEXCOORD", 0, f4, 0, 16, false),
+            element(c"TEXCOORD", 1, f4, 0, 32, false),
+        ];
+        let Some(layout) = self.layout(&vs, "campaign_border", &el) else { return };
+        if self.overlay.lines.as_ref().is_none_or(|l| l.0 != lines.id) {
+            let mut verts: Vec<f32> = vec![];
+            let mut idx: Vec<u32> = vec![];
+            let mut ranges = vec![];
+            for line in &lines.lines {
+                let first = idx.len() as u32;
+                let mut columns = 0u32;
+                let base = (verts.len() / 12) as u32;
+                let n = line.curves.len();
+                for (k, c) in line.curves.iter().enumerate() {
+                    let last = k + 1 == n && line.close_end;
+                    let ts = c.ts.iter().copied().chain(last.then_some(1.0));
+                    for t in ts {
+                        for side in [-line.half_width, line.half_width] {
+                            verts.extend([c.cp[0][0], c.cp[0][1], c.cp[1][0], c.cp[1][1], c.cp[2][0], c.cp[2][1], c.cp[3][0], c.cp[3][1]]);
+                            verts.extend([t, c.uv[0], c.uv[1], side]);
+                        }
+
+                        columns += 1;
+                    }
+                }
+
+                for c in 0..columns.saturating_sub(1) {
+                    let a = base + 2 * c;
+                    idx.extend([a, a + 1, a + 2, a + 1, a + 3, a + 2]);
+                }
+
+                ranges.push((first, idx.len() as u32 - first));
+            }
+
+            let vb =
+                (!verts.is_empty()).then(|| immutable_buffer(&self.dev, bytemuck::cast_slice(&verts), D3D11_BIND_VERTEX_BUFFER)).flatten();
+            let ib = (!idx.is_empty()).then(|| immutable_buffer(&self.dev, bytemuck::cast_slice(&idx), D3D11_BIND_INDEX_BUFFER)).flatten();
+            self.overlay.lines = Some((lines.id, vb, ib, ranges));
+        }
+
+        let Some((_, Some(vb), Some(ib), ranges)) = self.overlay.lines.clone() else { return };
+        // The cubic Bézier basis as the game uploads it: row i the weights of control point i in (t^3, t^2, t, 1).
+        self.cbs.set_f(
+            "campaign_border_PS",
+            "g_bezier_basis",
+            &[-1.0, 3.0, -3.0, 1.0, 3.0, -6.0, 3.0, 0.0, -3.0, 3.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        );
+        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+        let ctx = &self.ctx;
+        ctx.set_input_layout(Some(&layout));
+        ctx.set_vertex_buffers(0, &[Some(vb)], &[48], &[0]);
+        ctx.set_index_buffer(Some(&ib), DXGI_FORMAT_R32_UINT, 0);
+        self.bind(&vs);
+        self.bind(&ps);
+        bind_sampler(&self.ctx, &ps, "s_border_diffuse", self.states.s_wrap_linear.as_ref());
+        bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
+        bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        for (line, (first, count)) in lines.lines.iter().zip(ranges) {
+            if count == 0 {
+                continue;
+            }
+
+            let tex = self.textures.get(&line.texture, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+            let cbs = &mut self.cbs;
+            cbs.set_f("campaign_border_PS", "g_border_colour_a", &line.colour);
+            cbs.set_f("campaign_border_PS", "g_length", &[line.length]);
+            cbs.set_f("campaign_border_PS", "g_start_length", &[line.fades[0]]);
+            cbs.set_f("campaign_border_PS", "g_end_length", &[line.fades[1]]);
+            self.upload();
+            bind_srv(&self.ctx, &ps, "s_border_diffuse", tex.as_ref().or(self.res.white_srv.as_ref()));
+            self.ctx.draw_indexed(count, first, 0);
+            self.draw_stats.draw_calls += 1;
+        }
     }
 
     /// `g_overlay_view_projection` for world positions in a frame moved by `shift` from the render origin (scene units), and the
