@@ -33,8 +33,6 @@ use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::context::{ContextRequest, Streamer, TileProvider, cache};
 use wce_vfs::files::Files;
 
-/// Scene units per metre (the tiles' editor units: the map context's frame is in them).
-/// The File > Export > Built files entry's key for its last destination (`Editor::export_dir`).
 #[path = "lf_region.rs"]
 mod lf_region;
 
@@ -42,6 +40,8 @@ mod lf_region;
 #[path = "lf_region_tests.rs"]
 mod lf_region_tests;
 
+/// Scene units per metre (the tiles' editor units: the map context's frame is in them).
+/// The File > Export > Built files entry's key for its last destination (`Editor::export_dir`).
 const EXPORT_KEY: &str = "terrain";
 
 const EXPORT_TIP: &str = "What BOB_Terrain builds (tile map, battle field, LF heights, locations.blm and its masks, deployment files), made from the map as it is, loose under a folder you choose and as a mod pack there";

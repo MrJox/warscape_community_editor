@@ -1,5 +1,7 @@
 # Terrain tool: Terry's replacement (plan, 2026-11-02)
 
+**17 November 2026 — exact land-LF region PNG interchange:** Terrain can export a bounded land-height rectangle and replace it from exact grayscale16 PNG on raw/kit maps, with one Undo/Redo step. Native maps permit read-only image export; native import remains refused. [Workflow, limits and focused checks](lf_region_png.md).
+
 The Terrain tool edits a map: the battle map a game's battles are cut from (the campaign's `main_attila_map`, a mod's `rom_third_age_map`, a
 historical battle, a settlement map), its low-frequency (LF) ground, the tiles painted on it and the metadata Terry keeps in the map's
 `.terry` project. It replaces the Assembly Kit's Terry: Attila's crashes at launch, Rome 2's kit has none, Thrones' works but slowly (user,
