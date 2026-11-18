@@ -165,6 +165,7 @@ fn project_file(name: &str) -> bool {
         || lower == TED_FILE
         || lower == crate::terrain_layers::FILE
         || lower == crate::texture_rules::FILE
+        || lower == crate::biomes::FILE
         || lower.ends_with(".bak")
         || lower.starts_with("river_spline")
         || MAPS.contains(&lower.as_str())

@@ -443,7 +443,8 @@ pub fn expand_prefabs(mut text: Vec<u8>, contents: &dyn Fn(&str) -> Option<Vec<u
 }
 
 /// The editor's attributes a polyfill turns into what TEd holds (reported as polyfilled, not as dropped).
-const POLYFILLED_ATTRS: [&str; 4] = [PREFAB_ATTR, SURFACE_ATTR, ROTATION_ATTR, crate::river_files::RIVER_HEIGHT_ATTR];
+const POLYFILLED_ATTRS: [&str; 6] =
+    [PREFAB_ATTR, SURFACE_ATTR, ROTATION_ATTR, crate::river_files::RIVER_HEIGHT_ATTR, crate::biomes::BIOME_ATTR, crate::biomes::SEED_ATTR];
 
 /// An item placed on another thing ("Entity: Above"): `wce_surface="entity"`, kept as freeform at the height it was put at.
 pub const SURFACE_ATTR: &str = "wce_surface";
@@ -528,6 +529,12 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     let rivers = (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, crate::river_files::RIVER_HEIGHT_ATTR).is_some()).count();
     if rivers != 0 {
         report.polyfilled.push(format!("{rivers} river(s) with their real heights in their river files: a save in TEd lowers them again"));
+    }
+
+    // - a biome's area is the vegetation exclusion polygon it is; its trees, undergrowth and rocks are the export's (`with_biome_items`).
+    let areas = (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, crate::biomes::BIOME_ATTR).is_some()).count();
+    if areas != 0 {
+        report.polyfilled.push(format!("{areas} biome area(s) written as vegetation exclusion polygons"));
     }
 
     // Elements TEd lacks, the outermost of each (with what is inside), last first so that the indices stay valid.
@@ -834,5 +841,15 @@ mod wall_migration_tests {
     fn a_wall_without_the_checkbox_reads_as_procedural() {
         use crate::new_instances::wall_procedural;
         assert!(wall_procedural(None) && wall_procedural(Some("true")) && !wall_procedural(Some("false")));
+    }
+
+    #[test]
+    fn a_biome_area_goes_to_ted_as_a_plain_exclusion_polygon() {
+        let wce = b"<project version=\"16\" wce_version=\"1\">\n    <VegetationExclusionPolygonInstance name=\"wood\" wce_biome=\"Pine forest\" wce_biome_seed=\"7\"/>\n</project>\n".to_vec();
+        let (ted, report) = to_ted(wce).unwrap();
+        let ted = String::from_utf8(ted).unwrap();
+        assert!(ted.contains("<VegetationExclusionPolygonInstance name=\"wood\"/>"), "{ted}");
+        assert!(report.dropped.is_empty(), "{:?}", report.dropped);
+        assert!(report.polyfilled.iter().any(|p| p.contains("1 biome area")), "{:?}", report.polyfilled);
     }
 }

@@ -609,6 +609,9 @@ pub struct TileTool {
     /// The texture rules' window.
     pub(crate) rules_ui: crate::texture_rules_panel::RulesUi,
 
+    /// The biome presets (`create_panel::biome_presets`), read on first use.
+    pub(crate) biome_presets: Option<Arc<Vec<wce_tile::biomes::Biome>>>,
+
     /// The last bridge check (`Tile::check_bridges`), for the tile and the edit it was made at; whether the viewport shows its edges.
     pub(crate) bridge_check: Option<((DocumentId, u64, u64), wce_tile_editor::tile_document::BridgeReport)>,
     pub(crate) bridge_overlay: bool,
@@ -1002,6 +1005,7 @@ impl Default for TileTool {
             scratch_name: String::new(),
             coverage: Default::default(),
             rules_ui: Default::default(),
+            biome_presets: None,
             snap_outlines: Default::default(),
             bridge_check: None,
             bridge_overlay: true,

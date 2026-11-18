@@ -176,6 +176,9 @@ pub enum Make {
 
     /// A vegetation set, by its name (its trees placed or painted, a key picked by the weights for each).
     VegSet { name: String },
+
+    /// A biome's area (docs/plans/auto_detail.md, C), by the biome's name: drawn as a vegetation exclusion polygon with `wce_biome`.
+    Biome { name: String },
 }
 
 #[derive(Clone, Debug)]
@@ -214,6 +217,7 @@ impl Entry {
             Make::Draw { kind } => format!("{kind}|"),
             Make::Prefab { key } => format!("prefab|{key}"),
             Make::VegSet { name } => format!("vegset|{name}"),
+            Make::Biome { name } => format!("biome|{name}"),
         }
     }
 
@@ -223,6 +227,7 @@ impl Entry {
             Make::Prefab { .. } if self.project => PROJECT_PREFAB_ICON,
             Make::Prefab { .. } => icons::COMPONENT,
             Make::VegSet { .. } => icons::TREES,
+            Make::Biome { .. } => icons::SHRUB,
         }
     }
 }
@@ -429,6 +434,13 @@ impl TileTool {
             let keys = set.entries.iter().map(|en| en.key.as_str()).collect::<Vec<_>>().join(" ");
             let what = if set.kind == SetKind::Building { "building" } else { "vegetation" };
             out.push(entry(set_category(set.kind), label, Make::VegSet { name: set.name.clone() }, &format!("{what} set {keys}")));
+        }
+
+        // The biomes (the built-in ones and the projects' presets), in the vegetation, to draw an area of.
+        for b in self.biome_presets(e).iter() {
+            let mut en = entry(1, format!("biome: {}", b.name), Make::Biome { name: b.name.clone() }, "biome area forest wood grove");
+            en.folder = "Biomes".to_owned();
+            out.push(en);
         }
 
         for (category, kind) in KEYED {
@@ -783,6 +795,27 @@ impl TileTool {
                 d.key.clone_from(key);
                 self.draft = Some(d);
                 self.placing = Some(crate::tool::Placing::Draft);
+            }
+
+            Make::Biome { name } => {
+                let Some(b) = self.biome_presets(e).iter().find(|b| b.name == *name).cloned() else {
+                    self.status = format!("no biome {name}");
+                    self.making = None;
+                    return;
+                };
+
+                // The tile takes the biome in first (an undo entry of its own), then the area is drawn.
+                if let Some(d) = document(e) {
+                    d.adopt_biome(&b);
+                }
+
+                let kind = wce_tile::biomes::AREA_TYPE;
+                let mut draft = Draft::new(kind, "");
+                draft.attrs.insert(wce_tile::biomes::BIOME_ATTR.to_owned(), b.name.clone());
+                draft.attrs.insert(wce_tile::biomes::SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
+                draft.attrs.insert("name".to_owned(), b.name.clone());
+                self.draft = Some(draft);
+                self.start_drawing();
             }
 
             Make::Draw { kind } => {
@@ -2064,6 +2097,20 @@ pub fn make_set_for_script(t: &mut TileTool, e: &mut Editor, name: &str) -> Resu
     };
     t.start_making(e, &en);
     Ok(())
+}
+
+impl TileTool {
+    /// The biome presets (the built-in ones first), read once; again after a preset is saved or deleted.
+    pub(crate) fn biome_presets(&mut self, e: &mut Editor) -> Arc<Vec<wce_tile::biomes::Biome>> {
+        if let Some(b) = &self.biome_presets {
+            return b.clone();
+        }
+
+        let root = wce_tile::biomes::presets_root(&Self::workspace_dir(e).join("raw_data"));
+        let b = Arc::new(wce_tile::biomes::scan_presets(&root));
+        self.biome_presets = Some(b.clone());
+        b
+    }
 }
 
 #[cfg(test)]
