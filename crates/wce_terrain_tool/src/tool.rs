@@ -1099,7 +1099,8 @@ impl TerrainTool {
         e.scene.game_units = frame.map_or(UNIT as f32, |f| f.unit as f32);
         e.scene.terrain_units = if frame.is_some() { 0.2 } else { 0.0 };
         e.scene.campaign = frame.is_some();
-        e.scene.campaign_shroud = frame.and(s.frame().lf.clone()).map(|lf| wce_scene::render_scene::CampaignShroud { lf });
+        let fog = self.lines.fog.clone();
+        e.scene.campaign_shroud = frame.and(s.frame().lf.clone()).map(|lf| wce_scene::render_scene::CampaignShroud { lf, fog });
         if let Some(sky) = self.skybox.take() {
             sky.clear(e);
         }

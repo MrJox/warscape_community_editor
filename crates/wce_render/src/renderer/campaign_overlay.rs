@@ -280,7 +280,8 @@ impl Renderer {
             "g_bezier_basis",
             &[-1.0, 3.0, -3.0, 1.0, 3.0, -6.0, 3.0, 0.0, -3.0, 3.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
         );
-        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+        let on = self.shroud_enabled();
+        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[on]);
         let ctx = &self.ctx;
         ctx.set_input_layout(Some(&layout));
         ctx.set_vertex_buffers(0, &[Some(vb)], &[48], &[0]);
@@ -289,7 +290,7 @@ impl Renderer {
         self.bind(&ps);
         bind_sampler(&self.ctx, &ps, "s_border_diffuse", self.states.s_wrap_linear.as_ref());
         bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
-        bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        bind_srv(&self.ctx, &ps, "s_shroud", self.shroud_srv().as_ref());
         for (line, (first, count)) in lines.lines.iter().zip(ranges) {
             if count == 0 {
                 continue;

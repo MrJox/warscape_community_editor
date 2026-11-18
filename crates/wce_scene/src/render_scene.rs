@@ -1230,6 +1230,20 @@ pub struct CampaignSky {
 #[derive(Clone, Debug)]
 pub struct CampaignShroud {
     pub lf: Arc<LfMap>,
+
+    /// A faction's fog of war (`s_shroud`; docs/formats/campaign_shroud.md); none: revealed (the editor's default, decision 2).
+    pub fog: Option<Arc<ShroudMap>>,
+}
+
+/// A campaign fog of war texture as the game builds it: A8, `width` x `height` bytes, row 0 the map's south edge, 64 hidden, 128
+/// explored, 255 visible, blurred; its content (2 texels a world unit) inside a padding of `uv_offset` of each side.
+#[derive(Debug, Default)]
+pub struct ShroudMap {
+    /// Changes with the content (the renderer uploads it again then).
+    pub id: u64,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
 }
 
 /// A campaign map's overlay lines (`campaignborder.hlsl`): chains of cubic Béziers drawn flat into the overlay, each a strip of 16

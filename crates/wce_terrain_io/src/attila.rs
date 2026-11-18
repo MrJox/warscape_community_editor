@@ -19,6 +19,7 @@ pub mod heights;
 pub mod normals;
 pub mod overlay;
 pub mod roads;
+pub mod shroud;
 pub mod start;
 pub mod trade_routes;
 

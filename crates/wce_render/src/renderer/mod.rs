@@ -1429,6 +1429,12 @@ impl Renderer {
 
     pub(crate) fn bind(&self, s: &GameShader) {
         bind_shader(&self.ctx, s, &self.cbs);
+        // Every reader of the campaign fog of war gets it (white: revealed); a pass that clears its textures after binds it again.
+        if s.textures.contains_key("s_shroud") {
+            let fog = self.shroud_srv();
+            crate::shader_lib::bind_srv(&self.ctx, s, "s_shroud", fog.as_ref());
+            crate::shader_lib::bind_sampler(&self.ctx, s, "s_shroud", self.states.s_clamp_linear.as_ref());
+        }
     }
 
     /// With MSAA the multisampled G-buffer for an `_ms` shader: `gbuffer_channel_1..3_texture_ms` the MS channels, `..._4_...` the MS
@@ -1848,6 +1854,7 @@ impl Renderer {
         self.clock.last_time = time_s;
         self.cloud_layer.dt = self.clock.dt;
         self.update_weather(&env, time_s, scene.campaign);
+        self.update_fog(scene);
 
         // Attila's water leaves its reflection to the environment specular pass (the rivers' shader skips its cube reflection with this 1,
         // as in the game's captures); Rome 2 has no such pass.

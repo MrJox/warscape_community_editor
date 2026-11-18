@@ -29,6 +29,9 @@ pub(crate) struct CampaignLinesView {
     pub shown: Option<(DocumentId, String)>,
     pub factions: Vec<FactionInfo>,
     pub faction: Option<String>,
+
+    /// The faction's fog of war at the start, when it is shown (the Terrain panel's switch); none: revealed.
+    pub fog: Option<Arc<wce_scene::render_scene::ShroudMap>>,
     rx: Option<Receiver<Read>>,
     next_id: u64,
 }

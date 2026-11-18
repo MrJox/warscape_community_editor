@@ -43,9 +43,55 @@ pub(crate) struct ShroudGpu {
     /// (LF id, its revision, the texture, samples a side, LF samples a texel).
     low_res: Option<(u64, u64, Option<ID3D11ShaderResourceView>, [i32; 2], i32)>,
     ds: Option<ID3D11DepthStencilState>,
+
+    /// The fog of war on the GPU (its `ShroudMap::id`, the texture), and whether this frame draws one.
+    fog: Option<(u64, Option<ID3D11ShaderResourceView>)>,
+    pub(crate) fog_on: bool,
 }
 
+/// The fog of war texture's padding in uv (64 texels of 1485 x 1240: the game's `g_uv_offset`).
+const FOG_UV_OFFSET: [f32; 2] = [64.0 / 1485.0, 64.0 / 1240.0];
+
 impl Renderer {
+    /// A frame's fog of war (`CampaignShroud::fog`): its texture uploaded when it changes and the shaders' shroud constants (`shroud_PS`:
+    /// the map's bounds in the view's frame from its LF, the texture's padding). Every reader of `s_shroud` binds [`Self::shroud_srv`]
+    /// and enables it by [`Self::shroud_enabled`].
+    pub(crate) fn update_fog(&mut self, scene: &RenderScene) {
+        let shroud = scene.campaign_shroud.as_ref().filter(|_| scene.campaign);
+        let fog = shroud.and_then(|s| s.fog.clone());
+        match &fog {
+            Some(f) if self.shroud.fog.as_ref().is_none_or(|(id, _)| *id != f.id) => {
+                let srv = immutable_srv(&self.dev, f.width, f.height, DXGI_FORMAT_A8_UNORM, &f.pixels);
+                self.shroud.fog = Some((f.id, srv));
+            }
+
+            None => self.shroud.fog = None,
+            _ => {}
+        }
+
+        self.shroud.fog_on = self.shroud.fog.as_ref().is_some_and(|(_, s)| s.is_some());
+        let on = self.shroud_enabled();
+        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[on]);
+        if let Some(s) = shroud {
+            let u = self.camera.units;
+            let world = [s.lf.nx as f32 * s.lf.step * u, s.lf.nz as f32 * s.lf.step * u];
+            let cbs = &mut self.cbs;
+            cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, world[0], world[1]]);
+            cbs.set_f("shroud_PS", "g_campaign_playable_area_bounds", &[0.0, 0.0, world[0], world[1]]);
+            cbs.set_f("shroud_PS", "g_uv_offset", &FOG_UV_OFFSET);
+        }
+    }
+
+    /// The fog of war texture (`s_shroud`), white (revealed) without one.
+    pub(crate) fn shroud_srv(&self) -> Option<ID3D11ShaderResourceView> {
+        self.shroud.fog.as_ref().and_then(|(_, s)| s.clone()).or_else(|| self.res.white_srv.clone())
+    }
+
+    /// `g_shroud_enabled` for the readers of [`Self::shroud_srv`]: 1 with a fog of war.
+    pub(crate) fn shroud_enabled(&self) -> f32 {
+        if self.shroud.fog_on { 1.0 } else { 0.0 }
+    }
+
     /// The shroud plane of a campaign map (`RenderScene::campaign_shroud`), over the lit and fogged scene.
     pub(crate) fn pass_shroud_plane(&mut self, scene: &RenderScene) {
         let Some(shroud) = scene.campaign_shroud.as_ref() else { return };
@@ -77,7 +123,7 @@ impl Renderer {
         cbs.set_f("shroud_PS", "g_shroud_enabled", &[1.0]);
         cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, world[0], world[1]]);
         cbs.set_f("shroud_PS", "g_campaign_playable_area_bounds", &[0.0, 0.0, world[0], world[1]]);
-        cbs.set_f("shroud_PS", "g_uv_offset", &[0.0431, 0.0516]);
+        cbs.set_f("shroud_PS", "g_uv_offset", &FOG_UV_OFFSET);
         self.upload();
 
         let cloud = self.textures.get(SHROUD_CLOUD, true).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
@@ -96,7 +142,9 @@ impl Renderer {
         let ctx = &self.ctx;
         bind_srv(ctx, &vs, "t_low_res_height_map", srv.as_ref());
         bind_srv(ctx, &ps, "s_shroud_cloud", cloud.as_ref().or(self.res.white_srv.as_ref()));
-        bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        let fog = self.shroud_srv();
+        let ctx = &self.ctx;
+        bind_srv(ctx, &ps, "s_shroud", fog.as_ref());
         bind_srv(ctx, &ps, "s_sky", sky.as_ref());
         bind_srv(ctx, &ps, "t_readable_depth_texture", self.gbuffer.depth_srv().as_ref());
         bind_sampler(ctx, &ps, "s_sky", self.states.s_clamp_linear.as_ref());

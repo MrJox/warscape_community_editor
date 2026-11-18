@@ -619,7 +619,7 @@ impl Renderer {
         bind_srv(ctx, ps, "swell_surface_sampler", swell_srv.as_ref());
         bind_srv(ctx, ps, "s_environment", env.as_ref());
         bind_srv(ctx, ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());
-        bind_srv(ctx, ps, "s_shroud", self.res.white_srv.as_ref());
+        bind_srv(ctx, ps, "s_shroud", self.shroud_srv().as_ref());
     }
 
     pub(crate) fn draw_ocean(&mut self, scene: &RenderScene, seas: &[&Entity]) -> bool {
@@ -893,7 +893,7 @@ impl Renderer {
             cbs.set_f("campaign_ocean_cb", "g_swell_uv_scale", &[0.1]);
             cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[35.0]);
             cbs.set_f("OceanSharedConstants", "g_ps_sea_info", &[0.0, 0.0, -3.482, 6.983]);
-            cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+            cbs.set_f("shroud_PS", "g_shroud_enabled", &[if self.shroud.fog_on { 1.0 } else { 0.0 }]);
             sea_shift = corner - self.camera.origin;
         }
 
@@ -957,6 +957,7 @@ impl Renderer {
         self.bind_baked_shadow(&ps);
         if let Some((c, _, _)) = &campaign {
             let colour = srv(self.textures.get(&c.colour, false)).or_else(|| self.res.white_srv.clone());
+            let fog = self.shroud_srv();
             let ctx = &self.ctx;
             for s in ["s_lf_colour", "s_overlay", "s_shroud"] {
                 bind_sampler(ctx, &ps, s, self.states.s_clamp_linear.as_ref());
@@ -965,7 +966,7 @@ impl Renderer {
             bind_srv(ctx, &ps, "s_lf_colour", colour.as_ref());
             let ov = self.overlay.srv.clone().filter(|_| self.overlay.view_proj.is_some()).or_else(|| self.res.opaque_black_srv.clone());
             bind_srv(ctx, &ps, "s_overlay", ov.as_ref());
-            bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+            bind_srv(ctx, &ps, "s_shroud", fog.as_ref());
         }
 
         // The camera (and the cascades) in the sea's frame for its draws (a campaign sea's: the map corner's), the view's again after.
