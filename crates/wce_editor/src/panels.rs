@@ -225,6 +225,7 @@ impl Inspector for ImGuiInspector {
 
     fn edit_curve(&mut self, field: &str, label: &str, keys: &mut Vec<(f32, f32)>, lo: f32, hi: f32, colour: [f32; 4]) -> bool {
         const GRAB: f32 = 7.0;
+        self.ended = false;
         self.draw_label(field, label, false);
         let path = self.path(field).to_string();
         let w = gui::content_region_avail().x.max(80.0);
@@ -244,10 +245,11 @@ impl Inspector for ImGuiInspector {
 
         let mut changed = false;
         let dragging = CURVE_DRAG.with(|d| d.borrow().as_ref().filter(|(f, _)| *f == path).map(|(_, k)| *k));
-        if active && gui::is_mouse_clicked(0) {
-            if let Some(k) = near {
-                CURVE_DRAG.with(|d| *d.borrow_mut() = Some((path.clone(), k)));
-            }
+        if active
+            && gui::is_mouse_clicked(0)
+            && let Some(k) = near
+        {
+            CURVE_DRAG.with(|d| *d.borrow_mut() = Some((path.clone(), k)));
         }
 
         if let Some(k) = dragging.filter(|&k| k < keys.len()) {
@@ -275,12 +277,14 @@ impl Inspector for ImGuiInspector {
             keys.insert(at, (t, v));
             changed = true;
             self.ended = true;
-        } else if hovered && gui::is_mouse_clicked(1) && keys.len() > 2 {
-            if let Some(k) = near {
-                keys.remove(k);
-                changed = true;
-                self.ended = true;
-            }
+        } else if hovered
+            && gui::is_mouse_clicked(1)
+            && keys.len() > 2
+            && let Some(k) = near
+        {
+            keys.remove(k);
+            changed = true;
+            self.ended = true;
         }
 
         let dl = gui::window_draw_list();

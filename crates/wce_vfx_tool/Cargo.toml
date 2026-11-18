@@ -1,0 +1,20 @@
+[package]
+name = "wce_vfx_tool"
+description = "The VFX tool: vfx/*.xml effects edited visually, played on the sample map with playback, solo / mute, viewport handles and curve editing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_assets = { path = "../wce_assets" }
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
+wce_foundation = { path = "../wce_foundation" }
+wce_render = { path = "../wce_render" }
+wce_scene = { path = "../wce_scene" }
+wce_vfs = { path = "../wce_vfs" }
+wce_weather = { path = "../wce_weather" }
+
+[lints]
+workspace = true

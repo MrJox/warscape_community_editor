@@ -75,6 +75,64 @@ impl Command<XmlDoc> for XmlAttrCommand {
     }
 }
 
+/// Several attributes of one element set at once (a colour's channels, a range's min and max): one undo entry, merged over a drag.
+struct XmlAttrsCommand {
+    name: String,
+    elem: usize,
+
+    /// (attribute, before, after).
+    attrs: Vec<(usize, Vec<u8>, Vec<u8>)>,
+    gesture: u64,
+}
+
+impl Command<XmlDoc> for XmlAttrsCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, xml: &mut XmlDoc) {
+        for (a, _, after) in &self.attrs {
+            xml.set_attr_raw(self.elem, *a, after.clone());
+        }
+    }
+
+    fn revert(&mut self, xml: &mut XmlDoc) {
+        for (a, before, _) in self.attrs.iter().rev() {
+            xml.set_attr_raw(self.elem, *a, before.clone());
+        }
+    }
+
+    fn merge_key(&self) -> u64 {
+        if self.gesture != 0 { self.gesture ^ ((self.elem as u64) << 20) ^ 0x6d75_6c74 } else { 0 }
+    }
+
+    /// The same element: the attributes it sets join this command's (an attribute already in it keeps its first `before`).
+    fn merge_from(&mut self, next: &dyn Command<XmlDoc>) -> bool {
+        match next.as_any().downcast_ref::<Self>() {
+            Some(n) if n.elem == self.elem => {
+                for (a, before, after) in &n.attrs {
+                    match self.attrs.iter_mut().find(|(x, _, _)| x == a) {
+                        Some(slot) => slot.2.clone_from(after),
+                        None => self.attrs.push((*a, before.clone(), after.clone())),
+                    }
+                }
+
+                true
+            }
+
+            _ => false,
+        }
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![self.elem as u64]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// A structural edit swaps the whole XmlDoc (element indices change), so it keeps snapshots like the legacy editor did.
 struct XmlSnapshotCommand {
     name: String,
@@ -173,6 +231,22 @@ impl XmlFileDocument {
 
         let name = format!("Edit {} @{}", self.xml().path_of(elem), self.xml().elements()[elem].attrs[attr].name);
         self.history.push(Box::new(XmlAttrCommand { name, elem, attr, before, after: raw, gesture }));
+    }
+
+    /// Sets several attributes of one element (raw, entity-encoded) as one undo entry; `gesture` merges a drag's frames into it.
+    pub fn set_attrs(&mut self, elem: usize, values: Vec<(usize, Vec<u8>)>, gesture: u64) {
+        let attrs = values
+            .into_iter()
+            .filter(|(a, _)| self.valid(elem, *a))
+            .map(|(a, raw)| (a, self.xml().attr_raw(elem, a).to_vec(), raw))
+            .filter(|(_, before, after)| before != after)
+            .collect::<Vec<_>>();
+        // Always this command (one attribute too): a drag whose frames change one or several attributes merges into one entry.
+        if !attrs.is_empty() {
+            let names = attrs.iter().map(|(a, _, _)| self.xml().elements()[elem].attrs[*a].name.clone()).collect::<Vec<_>>();
+            let name = format!("Edit {} @{}", self.xml().path_of(elem), names.join(", @"));
+            self.history.push(Box::new(XmlAttrsCommand { name, elem, attrs, gesture }));
+        }
     }
 
     /// Parses the displayed value of an attribute, replaces it, formats it back in the number style of the original text.

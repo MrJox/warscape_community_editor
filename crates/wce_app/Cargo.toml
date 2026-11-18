@@ -23,8 +23,10 @@ audio = ["dep:wce_audio_tool"]
 terrain = ["dep:wce_terrain_tool"]
 # The Unit tool (docs/plans/unit_editor.md): variant mesh definitions worn by a unit.
 unit = ["dep:wce_unit_tool"]
+# The VFX tool (docs/plans/vfx_tool.md): vfx/*.xml edited visually. Off by default.
+vfx = ["dep:wce_vfx_tool"]
 
-# The tabs of the editors still to come (VFX, cinematic): only their plans, no features.
+# The tabs of the editors still to come (cinematic): only their plans, no features.
 placeholders = []
 
 [dependencies]
@@ -39,6 +41,7 @@ wce_tile_tool = { path = "../wce_tile_tool", optional = true }
 wce_ui_tool = { path = "../wce_ui_tool", optional = true }
 wce_audio_tool = { path = "../wce_audio_tool", optional = true }
 wce_unit_tool = { path = "../wce_unit_tool", optional = true }
+wce_vfx_tool = { path = "../wce_vfx_tool", optional = true }
 wce_weather_tool = { path = "../wce_weather_tool", optional = true }
 
 [target.'cfg(windows)'.dependencies]

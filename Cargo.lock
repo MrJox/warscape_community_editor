@@ -2366,6 +2366,7 @@ dependencies = [
  "wce_tile_tool",
  "wce_ui_tool",
  "wce_unit_tool",
+ "wce_vfx_tool",
  "wce_weather_tool",
 ]
 
@@ -2772,6 +2773,21 @@ dependencies = [
  "tempfile",
  "thiserror",
  "wce_foundation",
+]
+
+[[package]]
+name = "wce_vfx_tool"
+version = "0.0.1"
+dependencies = [
+ "wce_assets",
+ "wce_editor",
+ "wce_editor_core",
+ "wce_formats",
+ "wce_foundation",
+ "wce_render",
+ "wce_scene",
+ "wce_vfs",
+ "wce_weather",
 ]
 
 [[package]]
