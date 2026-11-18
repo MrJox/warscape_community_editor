@@ -18,6 +18,7 @@ Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Defa
 | Question | Answer |
 |---|---|
 | Hand paint and the rules | **Hand paint wins**: the rules' layer lies under the user's blend layers, right over the base |
+| A tile's own painting (2026-11-18) | **Only over the main ground**: a rule's weight is scaled by how much the base is the texture group most of it is; what the base has painted in other textures (a kit tile's forest, streets, mud) stays |
 | When the rules run | **Live**: made again off the editor's thread once an edit settles, as the roads' layers are |
 | The ground coverage | Rebased onto `feature/auto_detail` and merged into it; B and C continue it here |
 
@@ -113,7 +114,8 @@ earlier one, as blend layers go over each other).
    `settlement_1..3` and `forest`; settlements need their own preset). Later (2026-11-18): the packs' textures show `settlement_1` is
    the base ground, `settlement_2` packed earth or sand, `settlement_3` rock in every climate, so `Default`'s groups take 2 as worn
    ground and 3 as rock: the nordic city gets 3.9 % of its map (92 % worn ground round the huts and by the streets, 8 % rock on the
-   cliff, `check/settle_crop.png`).
+   cliff, `check/settle_crop.png`). Then only over the main ground (decision above): the nordic city 2.7 % (its forest paint and streets stay,
+   `check/settle_three.png`), river/2x2_lt_rb 0.4 % (its banks are painted mud already).
 6. **Ground types per rule** (done). A rule may name a ground type and a weight threshold (`ground="rock" ground_threshold="0.5"`);
    where its weight passes it, the type goes into a ground type layer the rules own, under the user's as their blend layer; the latest
    rule laying one at a place wins. `Default` lays none (gameplay). A tile without a ground type map still gets its textures. The ground

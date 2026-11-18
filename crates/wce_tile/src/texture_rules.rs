@@ -203,6 +203,18 @@ pub struct Fields {
 
     /// The areas rules may be bound to ([`Rule::area`]).
     areas: Vec<AreaMask>,
+
+    /// How much of the tile's own painting is its main ground, 0..1 a pixel ([`main_ground`]): the rules lay their textures only over
+    /// that, so what was painted in other textures stays. None: everywhere (a tile of one texture).
+    keep: Option<Keep>,
+}
+
+#[derive(Clone)]
+struct Keep {
+    w: u32,
+    h: u32,
+    ppm: (f64, f64),
+    share: Vec<f32>,
 }
 
 /// What a distance condition measures to.
@@ -437,7 +449,7 @@ impl Fields {
             }
         }
 
-        Self { w, h, mpp, heights, sums, distances: [None, None, None], areas: vec![] }
+        Self { w, h, mpp, heights, sums, distances: [None, None, None], areas: vec![], keep: None }
     }
 
     /// From a tile's height field, its samples `mpp` metres apart; `unit`, the tile's scene units a metre (the editor's metres are the
@@ -479,6 +491,29 @@ impl Fields {
     pub fn with_areas(mut self, areas: Vec<AreaMask>) -> Self {
         self.areas = areas;
         self
+    }
+
+    /// Where the rules may lay their textures, from the base's painting: `share` ([`main_ground`]) on a `w` x `h` grid of `ppm` pixels a
+    /// metre (the blend map's).
+    ///
+    /// # Panics
+    ///
+    /// `share` is not `w` x `h`.
+    #[must_use]
+    pub fn with_main_ground(mut self, w: u32, h: u32, ppm: (f64, f64), share: Vec<f32>) -> Self {
+        assert_eq!(share.len(), w as usize * h as usize);
+        self.keep = Some(Keep { w, h, ppm, share });
+        self
+    }
+
+    /// How much of the base is its main ground at a point, 1 without a base given.
+    #[must_use]
+    pub fn main_ground_share(&self, wx: f64, wz: f64) -> f64 {
+        self.keep.as_ref().map_or(1.0, |k| {
+            let x = ((wx * k.ppm.0).floor().max(0.0) as u32).min(k.w - 1);
+            let y = ((wz * k.ppm.1).floor().max(0.0) as u32).min(k.h - 1);
+            f64::from(k.share[(y * k.w + x) as usize])
+        })
     }
 
     /// Gives the distances to a feature.
@@ -551,7 +586,7 @@ impl Rule {
         });
 
         let cond = |r: &Option<Range>, v: &dyn Fn() -> f64| r.map_or(1.0, |r| r.weight(v() + n * f64::from(r.fade)));
-        let mut w = f64::from(self.strength.clamp(0.0, 1.0));
+        let mut w = f64::from(self.strength.clamp(0.0, 1.0)) * fields.main_ground_share(wx, wz);
         if let Some(a) = self.area {
             w *= fields.areas.get(a).map_or(0.0, |m| m.weight(wx as f32, wz as f32));
         }
@@ -901,6 +936,35 @@ pub fn scan_presets(root: &std::path::Path) -> Vec<Preset> {
     out
 }
 
+/// The tile's main ground in its own painting (the blend map's base, `pixel` giving a pixel's 16 weights: 4 texture groups of 4
+/// variations) and how much of each pixel it is, 0..1, row by row: the texture group most pixels mostly are. A pixel of no weight
+/// counts as the main ground. A tile painted in one texture is 1 everywhere.
+#[must_use]
+pub fn main_ground(w: u32, h: u32, pixel: impl Fn(u32, u32) -> [u16; 16]) -> (usize, Vec<f32>) {
+    let groups = |px: &[u16; 16]| -> [u32; 4] { std::array::from_fn(|g| px[g * 4..g * 4 + 4].iter().map(|&v| u32::from(v)).sum()) };
+    let mut most = [0u64; 4];
+    for y in (0..h).step_by(4) {
+        for x in (0..w).step_by(4) {
+            let g = groups(&pixel(x, y));
+            if g.iter().any(|&v| v > 0) {
+                let top = (0..4).max_by_key(|&i| (g[i], std::cmp::Reverse(i))).unwrap_or(0);
+                most[top] += 1;
+            }
+        }
+    }
+
+    let main = (0..4).max_by_key(|&i| (most[i], std::cmp::Reverse(i))).unwrap_or(0);
+    let share = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let g = groups(&pixel(x, y));
+            let total = g.iter().sum::<u32>();
+            if total == 0 { 1.0 } else { g[main] as f32 / total as f32 }
+        })
+        .collect();
+    (main, share)
+}
+
 /// The kit's names of mud and of rock, the most usual first (its TILES entries). Settlement tiles name their textures `settlement_1..3`:
 /// in every climate's packs 1 is the base ground (grass, dry earth), 2 packed earth or sand, 3 rock, so 2 is their worn ground and 3
 /// their rock.
@@ -1207,6 +1271,31 @@ mod tests {
                 .iter()
                 .all(|r| slot_of(&["grass_a".into(), "grass_b".into(), "mud_a".into(), "rock_b".into()], &r.group).is_some())
         );
+    }
+
+    #[test]
+    fn only_over_the_main_ground() {
+        // 8 x 8: grass (group 0) but a mud column (group 1) at x = 0 and a half-and-half one at x = 1; empty at (7, 7).
+        let pixel = |x: u32, y: u32| {
+            let mut p = [0u16; 16];
+            match (x, y) {
+                (7, 7) => {}
+                (0, _) => p[4] = 1000,
+                (1, _) => (p[0], p[6]) = (500, 500),
+                _ => p[1] = 1000,
+            }
+            p
+        };
+        let (main, share) = main_ground(8, 8, pixel);
+        assert_eq!(main, 0);
+        assert_eq!((share[0], share[1], share[2], share[63]), (0.0, 0.5, 1.0, 1.0));
+
+        let fields = field(8, |_, _| 0.0).with_main_ground(8, 8, (1.0, 1.0), share);
+        let rule = Rule { group: "rock".to_owned(), ..Rule::default() };
+        assert_eq!(rule.weight(&fields, 0.5, 3.5), 0.0, "the mud stays");
+        assert!((rule.weight(&fields, 1.5, 3.5) - 0.5).abs() < 1e-6);
+        assert_eq!(rule.weight(&fields, 4.5, 3.5), 1.0);
+        assert_eq!(field(8, |_, _| 0.0).main_ground_share(0.5, 0.5), 1.0, "no base given: everywhere");
     }
 
     #[test]

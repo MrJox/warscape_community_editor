@@ -130,7 +130,8 @@ selection, inspector, gizmo and history work on them.
 *Texture rules...*; `texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>`; [plans/auto_detail.md](plans/auto_detail.md)):
 textures laid by the terrain. A rule puts a texture group (several names separated by `|`, the first the tile has) and variation where
 its conditions hold: height, slope, hollows and ridges, and distance to water, procedural roads and real buildings, each a range with
-soft ends, edges moved by noise. Later rules go over earlier ones. They make one blend layer owned by them that lies **under** the user's
+soft ends, edges moved by noise. Later rules go over earlier ones, and only over the tile's **main ground** (the texture group most of its
+base blend map is): what the tile's own painting holds in other textures stays (a kit tile's artist's work). They make one blend layer owned by them that lies **under** the user's
 layers (hand paint goes over it; painting with no working layer goes into a `Painted` layer), made again off the editor's thread when
 the terrain, the scene or the rules change. The tile keeps its rules in `texture_rules.wce` beside `tile.wce`; presets are files in the
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
