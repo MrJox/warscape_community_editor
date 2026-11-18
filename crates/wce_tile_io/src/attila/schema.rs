@@ -108,8 +108,7 @@ impl Schema for TedSchema {
             | "zone_skirt_distance"
             | "wall_tolerance"
             | "wall_access_every"
-            | "wall_defence_every"
-            | "wce_scale" => FLOAT,
+            | "wall_defence_every" => FLOAT,
 
             "animation_type"
             | "building_tech_level"

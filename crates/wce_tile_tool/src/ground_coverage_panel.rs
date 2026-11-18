@@ -1040,7 +1040,8 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
     changed |= gui::checkbox("scale the rocks", &mut p.scale_rocks);
     if gui::is_item_hovered() {
         gui::set_tooltip(
-            "A building's scale is the editor's: TEd has none, and whether Attila honours it is not known. Off: every rock at scale 1.",
+            "The game ignores a building's scale unless it is exported as a prop, so a scaled rock is marked Export as prop: plain models, \
+             with no collision. Off: every rock a building at scale 1.",
         );
     }
 

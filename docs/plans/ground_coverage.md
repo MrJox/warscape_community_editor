@@ -10,8 +10,9 @@ after a survey of the kit. What is left is step 6, the user's: see [Where it sta
 the redesign describe the first version (what the redesign builds on).
 
 Status (2026-10-26): steps 1-4 done on `feature/auto_ground_coverage`; step 5 (trying it on kit tiles, tuning the defaults) is the user's.
-Building scale (`wce_scale`) was added for the rocks and is **optional** (`scale the rocks`, off by default): TEd has no building scale and
-whether Attila honours the building list's scale is not known. Script command for checks: `ground_coverage <preview|generate> <rocks|-> <plants|-> [seed]`.
+Rock scale is **optional** (`scale the rocks`, off by default). Changed 2026-11-18 (user): the editor's own `wce_scale` is gone; a scaled
+rock gets master's building `scale` and Export as prop (`wce_export_as_prop`), since the game ignores a building's scale otherwise
+(docs/re/buildings.md): a scaled rock is plain models, with no collision. Script command for checks: `ground_coverage <preview|generate> <rocks|-> <plants|-> [seed]`.
 
 Seen on mediterranean_mountains/custom_pillar_hercules_a (defaults, seed 7): 301 slopes, 97 covered, 18,685 rocks, 5,339 plants, 635
 polygons, about 1 s in release. A whole mountainside is one differential (283,000 m², 15,900 rocks on its face): the face density and a cap

@@ -554,8 +554,10 @@ impl TileDocument {
             let mut items = vec![];
             for r in &d.rocks {
                 let mut s = with_root_attr(&text("BUILDING_INSTANCE", &r.key)?, "surface_mode", "MSM_FREEFORM");
+                // The game ignores a building's scale but for one exported as a prop (docs/re/buildings.md): a scaled rock is one.
                 if r.scale != 1.0 {
-                    s = with_root_attr(&s, wce_tile::project_files::SCALE_ATTR, &num(r.scale));
+                    s = with_root_attr(&s, "scale", &num(r.scale));
+                    s = with_root_attr(&s, wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR, "true");
                 }
 
                 items.push((turned(&s, r.yaw), Float3::new(r.x, r.y, r.z)));
