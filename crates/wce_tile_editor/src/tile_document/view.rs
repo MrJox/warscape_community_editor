@@ -1993,6 +1993,7 @@ impl Tile {
         self.sync_terrain_layers();
         self.refresh_prefab_ground();
         self.refresh_roads();
+        self.refresh_texture_rules();
 
         // What the layers wrote is no edit of the history's, which is what the terrain follows otherwise.
         // The polygons lie on it too (a kit wall's own layer raised the ground over its line, which was left under it).

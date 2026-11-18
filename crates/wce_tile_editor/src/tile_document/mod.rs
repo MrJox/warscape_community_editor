@@ -52,6 +52,7 @@ mod shift;
 pub mod siege;
 pub mod stage;
 mod tech;
+pub mod texture_rules;
 mod vegetation;
 mod view;
 mod walls;
@@ -619,6 +620,12 @@ pub struct Tile {
     /// The signature of the roads when last looked at: a line that moved since waits.
     pub(crate) roads_seen: u64,
 
+    /// The texture rules' layer being made off the editor's thread, the signature of what it is made from when last looked at (a change
+    /// since waits), and the heights' hash by their version (`texture_rules.rs`).
+    pub(crate) texture_rules_job: Option<texture_rules::TextureRulesJob>,
+    pub(crate) texture_rules_seen: u64,
+    pub(crate) texture_rules_heights: ((usize, u64), u64),
+
     /// The prefabs' ground (`prefab_ground.rs`): the history's version the document last gave (any edit, undo or redo changes it), what
     /// the references were last looked at for, and whether their prefabs' layers changed (made again whatever).
     pub(crate) history_version: u64,
@@ -986,6 +993,9 @@ impl TileDocument {
             layers_shown: false,
             roads_stale: false,
             roads_seen: 0,
+            texture_rules_job: None,
+            texture_rules_seen: 0,
+            texture_rules_heights: ((0, u64::MAX), 0),
             history_version: 0,
             prefab_ground_seen: 0,
             prefab_ground_stale: false,
@@ -1189,6 +1199,7 @@ impl TileDocument {
         t.sync_terrain_layers();
         t.refresh_prefab_ground();
         t.refresh_roads();
+        t.refresh_texture_rules();
     }
 
     /// Per frame: the tile's view (`Tile::update_view`), knowing of the edits.

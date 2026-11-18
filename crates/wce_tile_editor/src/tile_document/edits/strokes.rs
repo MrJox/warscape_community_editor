@@ -17,6 +17,10 @@ impl TileDocument {
             return;
         }
 
+        if matches!(kind, BrushKind::Paint(_)) && !self.tile().stroke_open {
+            self.paint_over_texture_rules();
+        }
+
         // A stroke goes on only while its entry is the last change: after another edit the next step would be a new entry sharing the height
         // field's open record with the old one, and undo would take back both strokes' heights with the newer entry.
         if self.tile().stroke_open && self.history.version() != self.tile().stroke_version {
@@ -214,8 +218,9 @@ impl TileDocument {
     pub fn paint_whole_tile(&mut self, kind: BrushKind, settings: &BrushSettings) -> Result<bool, String> {
         let BrushKind::Paint(channel) = kind else { return Err("not a paint brush".to_owned()) };
         self.end_stroke();
+        self.tile_mut().project.load_blend()?;
+        self.paint_over_texture_rules();
         let t = self.tile_mut();
-        t.project.load_blend()?;
         let depth = t.project.blend.as_ref().map_or(0, wce_tile::blend_field::BlendField::edit_depth);
         t.paint_blend(usize::from(channel), None, settings, f64::from(settings.opacity).clamp(0.0, 1.0));
         t.end_stroke_edit();

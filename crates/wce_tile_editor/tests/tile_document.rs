@@ -2497,3 +2497,90 @@ fn a_drag_of_several_items_is_one_entry() {
     d.history_mut().redo();
     assert_ne!(text(&d), original);
 }
+
+/// A tile with a blend map and an entry whose texture groups are grass, mud, forest and rock (channels 0..3, 4..7, 8..11, 12..15).
+fn open_with_texture_groups() -> (tempfile::TempDir, TileDocument) {
+    let (dir, _) = open_with_blend();
+    let mut p = TileProject::open(dir.path()).unwrap();
+    let entry = "<TILE serialise_version='3' location='terrain\\tiles\\battle\\test\\1x1' tile_set='test' width='1' height='1'>\
+                 <TEXTURE_GROUP red='grass' green='mud' blue='forest' alpha='rock'/><VARIATIONS/></TILE>";
+    p.entry = Some(wce_formats::tile_entry::TileEntry::parse(entry.as_bytes().to_vec()).unwrap());
+    let mut d = TileDocument::new(p, None);
+    d.tile_mut().load_blend().unwrap();
+    (dir, d)
+}
+
+#[test]
+fn texture_rules_make_a_layer_that_hand_paint_goes_over() {
+    use wce_tile::texture_rules::{Rule, RuleSet};
+    use wce_tile_editor::tile_document::layers::{LayerType, PAINTED};
+
+    let (_dir, mut d) = open_with_texture_groups();
+    let weights = |d: &TileDocument| d.project().blend.as_ref().unwrap().weights().to_vec();
+    let original = weights(&d);
+    let size = d.history().size();
+
+    // Rock everywhere: no conditions.
+    let rock = Rule { name: "rock".to_owned(), group: "rock".to_owned(), ..Rule::default() };
+    let set = RuleSet { preset: String::new(), rules: vec![rock] };
+    d.set_texture_rules(Some(set.clone()));
+    assert_eq!(d.history().size(), size + 1);
+    d.finish_texture_rules();
+    assert!(weights(&d).chunks(16).all(|p| p[12] == u16::MAX), "all rock");
+    assert!(d.terrain_layers(LayerType::Blend).0.is_empty(), "the rules' layer is not the user's");
+    assert!(d.texture_rules_missing_groups().is_empty());
+
+    // Paint with no working layer: it goes into a layer of the user's over the rules, and shows.
+    let s = BrushSettings { opacity: 1.0, ..BrushSettings::default() };
+    assert!(d.paint_whole_tile(BrushKind::Paint(9), &s).unwrap());
+    let (rows, working) = d.terrain_layers(LayerType::Blend);
+    assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), [PAINTED]);
+    assert_eq!(working, Some(rows[0].id));
+    assert!(weights(&d).chunks(16).all(|p| p[9] == u16::MAX), "the paint shows over the rules");
+
+    // The rules change under the paint: it still shows.
+    let mud = Rule { name: "mud".to_owned(), group: "mud".to_owned(), ..Rule::default() };
+    d.set_texture_rules(Some(RuleSet { preset: String::new(), rules: vec![mud] }));
+    d.finish_texture_rules();
+    assert!(weights(&d).chunks(16).all(|p| p[9] == u16::MAX), "the paint still shows");
+
+    // Back: the paint goes, then its layer, then the rules (rock again in between), then the rules' layer.
+    d.history_mut().undo();
+    d.finish_texture_rules();
+    d.history_mut().undo();
+    d.finish_texture_rules();
+    assert!(weights(&d).chunks(16).all(|p| p[12] == u16::MAX), "rock again: {:?}", &weights(&d)[..16]);
+    d.history_mut().undo();
+    d.finish_texture_rules();
+    assert!(d.terrain_layers(LayerType::Blend).0.is_empty());
+    d.history_mut().undo();
+    d.finish_texture_rules();
+    assert_eq!(d.texture_rules(), None);
+    assert_eq!(weights(&d), original);
+
+    // A group the tile does not have lays nothing, and says so.
+    let snow = Rule { name: "snow".to_owned(), group: "snow".to_owned(), ..Rule::default() };
+    d.set_texture_rules(Some(RuleSet { preset: String::new(), rules: vec![snow] }));
+    d.finish_texture_rules();
+    assert_eq!(weights(&d), original);
+    assert_eq!(d.texture_rules_missing_groups(), ["snow (snow)"]);
+}
+
+#[test]
+fn texture_rules_are_saved_beside_the_tile() {
+    use wce_tile::texture_rules::{RuleSet, default_rules};
+
+    let (dir, mut d) = open_with_texture_groups();
+    let set = RuleSet { preset: "Default".to_owned(), rules: default_rules() };
+    d.set_texture_rules(Some(set.clone()));
+    d.finish_texture_rules();
+    let here = wce_editor_core::document::SaveTarget { path: std::path::PathBuf::new() };
+    d.save(&here).unwrap();
+    let file = dir.path().join(wce_tile::texture_rules::FILE);
+    assert_eq!(wce_tile::texture_rules::parse(&std::fs::read(&file).unwrap()).unwrap(), set);
+    assert_eq!(TileProject::open(dir.path()).unwrap().texture_rules, Some(set));
+
+    d.set_texture_rules(None);
+    d.save(&here).unwrap();
+    assert!(!file.exists(), "taken away with the rules");
+}
