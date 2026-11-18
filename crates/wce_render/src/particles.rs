@@ -616,6 +616,10 @@ pub struct ParticleSystem {
     /// The placed effects' definitions (loaded once per name; their emitters' constants rows follow the weather's) and emitter instances.
     world_effects: Vec<Effect>,
 
+    /// A campaign map's effects (the renderer sets it): their `scene_view_type` 2 emitters (SeaColourOverlay) are not reported, as the
+    /// game simulates them there but draws none (RenderDoc, five campaign captures: the storm and rain clouds' `cloud_heavy`).
+    pub campaign: bool,
+
     /// Per placed effect definition, its first constants row after the weather's (the sum of the earlier definitions' emitters).
     world_first_row: Vec<usize>,
     world_names: BTreeMap<String, usize>,
@@ -735,6 +739,7 @@ impl ParticleSystem {
             effect: WeatherVfx::default(),
             state: vec![],
             world_effects: vec![],
+            campaign: false,
             world_first_row: vec![],
             world_names: BTreeMap::new(),
             world_libs: BTreeMap::new(),
@@ -1121,6 +1126,10 @@ impl ParticleSystem {
                 }
 
                 for note in &effect.notes {
+                    if self.campaign && note.contains("scene_view_type 2 ") {
+                        continue;
+                    }
+
                     self.error(format!("{}: {note}", fx.effect));
                 }
 
