@@ -78,6 +78,9 @@ const SEA_LF_REACH: f64 = 10.0;
 /// How deep a custom-mesh tile's floor lies under the sea (metres): see `Frame::place`.
 const FLOOR_DEPTH: f64 = 40.0;
 
+/// How far under the land LF a campaign map's cliff floor lies where it is land (metres): under the cliff mesh's top, on the LF too.
+const CAMPAIGN_FLOOR_UNDER: f64 = 2.0;
+
 /// What to build.
 #[derive(Clone)]
 pub struct ContextRequest {
@@ -851,7 +854,26 @@ impl Frame {
         // there is the land the cliff drops from, so the floor cannot follow it; it is where the sea tiles' bed is on the open sea's LF
         // (LF 0: -20 m, and their own -20 m), so their skirts (40 m) reach it. ASSUMPTION: what the game has there was not traced.
         // A cliff without a blend map of its own (`load_custom_template`) has no material to lend it: the plain one of its climate.
-        if t.custom.is_some() {
+        // A campaign map's: on the land LF, the parts of the tile its mesh leaves bare that lie against land (`custom_floor_heights`) a
+        // little under it, the rest (under the mesh, against the sea) at the battle's depth under it. At the battle's fixed depth for all,
+        // main_attila's inner cliff south-east of Rome (`6x4_inner_right_t1_r3`, its mesh 47 % of its cells) left a flat hole showing the
+        // sea where the game has land.
+        if let (Some(_), Some((f, covered)), "campaign") = (&t.custom, &t.floor, self.climates.kind.as_str()) {
+            let material = terrain.material.clone().or_else(|| self.plain_over(i, grid));
+            let heights = self.custom_floor_heights(i, f, covered, frame.m[1][1]);
+            let ground = Terrain {
+                nx: f.nx,
+                nz: f.nz,
+                origin_x: f.ox,
+                origin_z: f.oz,
+                step: f.step,
+                heights: Arc::new(heights),
+                custom: None,
+                material,
+                ..terrain.clone()
+            };
+            out.push((frame, Payload::Terrain(ground)));
+        } else if t.custom.is_some() {
             let mut floor = frame;
             floor.m[1][3] = self.sea_y() - (FLOOR_DEPTH / self.unit) as f32;
             let material = terrain.material.clone().or_else(|| self.plain_over(i, grid));
@@ -861,6 +883,62 @@ impl Frame {
 
         out.push((frame, Payload::Terrain(terrain)));
         self.place_entities(t, lod, frame, out);
+    }
+
+    /// A campaign cliff floor's heights over the LF (tile units; `scale_y` the frame's): the points its mesh leaves bare whose nearest edge
+    /// of the tile has a land tile beyond it, a little under the LF (`CAMPAIGN_FLOOR_UNDER`: the land behind an inner cliff); the others
+    /// (under the mesh, against sea tiles or the open sea) twice `FLOOR_DEPTH` under it.
+    /// ASSUMPTION: what the game draws where a cliff's mesh does not reach was not traced (its screenshots: land behind that cliff, sea in
+    /// front of the others).
+    fn custom_floor_heights(&self, i: usize, f: &Grid, covered: &[bool], scale_y: f32) -> Vec<f32> {
+        let p = &self.map.placements[i];
+        let to_map = p.to_map();
+        let me = p.rect();
+        let (nx, nz) = (f.nx as usize, f.nz as usize);
+        let under = |m: f64| -((m / self.unit) as f32) / scale_y.max(1e-6);
+        // The sea side twice the battle's depth under the LF: the land LF stands 20 - 30 m up under some sea in front of the cliffs, and
+        // at one depth the floor there showed lighter through the water than the open sea's.
+        let (land_h, sea_h) = (under(CAMPAIGN_FLOOR_UNDER), under(2.0 * FLOOR_DEPTH));
+        // Whether a map cell beside the tile is under a land tile (not of the sea set, not a cliff); none: the open sea.
+        let land_at = |x: i32, y: i32| {
+            if x >= me[0] && x < me[2] && y >= me[1] && y < me[3] {
+                return false;
+            }
+
+            let (cx, cy) = (x.div_euclid(CHUNK), y.div_euclid(CHUNK));
+            let r = (self.reach + CHUNK - 1) / CHUNK;
+            (cy - r..=cy + r).flat_map(|ky| (cx - r..=cx + r).map(move |kx| (kx, ky))).any(|k| {
+                self.by_chunk.get(&k).is_some_and(|list| {
+                    list.iter().any(|&j| {
+                        let q = &self.map.placements[j];
+                        let rr = q.rect();
+                        x >= rr[0] && x < rr[2] && y >= rr[1] && y < rr[3] && !is_sea_set(&q.location) && !q.location.contains("cliff")
+                    })
+                })
+            })
+        };
+
+        // Each bare point is what lies beyond the tile's nearest edge: the cell just outside it, straight out (a bare region can reach round a
+        // cliff's end from the sea to the land, so regions mislead).
+        let (x0, z0) = (f64::from(f.ox), f64::from(f.oz));
+        let (x1, z1) = (x0 + (nx - 1) as f64 * f64::from(f.step), z0 + (nz - 1) as f64 * f64::from(f.step));
+        let mut heights = vec![sea_h; nx * nz];
+        for k in 0..nx * nz {
+            if covered[k] {
+                continue;
+            }
+
+            let (x, z) = (x0 + (k % nx) as f64 * f64::from(f.step), z0 + (k / nx) as f64 * f64::from(f.step));
+            let out = 64.0;
+            let edges = [(x - x0, (x0 - out, z)), (x1 - x, (x1 + out, z)), (z - z0, (x, z0 - out)), (z1 - z, (x, z1 + out))];
+            let (_, (ox, oz)) = edges.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).expect("four edges");
+            let (u, v) = to_map.apply(ox, oz);
+            if land_at(u.floor() as i32, v.floor() as i32) {
+                heights[k] = land_h;
+            }
+        }
+
+        heights
     }
 
     /// The plain material of a placement's climate (that of its first cell) over a grid of its tile.
