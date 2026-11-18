@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left). C designed, its steps 1 to 4 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left). C's steps 1 to 6 done (the user's look left) (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -211,6 +211,16 @@ touched up with a brush), kept live.
 4. **The texture** (done) through A's rules job: `Rule::area` binds a rule to an `AreaMask` of `Fields`; the job lays the tile's rules,
    then each area's biome's (its seed mixed into theirs), each weighted by its area's mask (the biome's edge band). The layer is made
    for areas alone too (a tile without rules of its own).
-5. **The window** (biome presets, the selected area's biome and seed) and the **brush**; script commands.
-6. **Check on kit tiles**, then the user's look.
+5. **The window** (biome presets, the selected area's biome and seed) and the **brush**; script commands. Done: `biomes_panel.rs`
+   (Tile panel > Biomes...): the presets (Save, Save as, Delete), the chosen biome's fields (its props as a set or keys, densities,
+   spacing, scales, the edge band, its texture rules with the texture rules window's rule editor), Draw an area, Brush (radius; a stroke
+   on an area grows it, away from every area makes one of the chosen biome, Ctrl takes away), the selected area's biome ("Give it ...")
+   and seed (Reroll). `wce_tile::biomes::stroke_outline` (the area and the stroke's circles on a grid, the outer outlines traced along
+   the cells' edges and simplified, holes left out) and `TileDocument::biome_stroke` (one undo entry: the area reshaped, the other
+   pieces new areas, an area cut away entirely removed). The projects' sets go to the document every frame (`feed_sets`). Commands
+   `biome_area`, `biome_brush`, `biomes_wait`, `biomes window`.
+6. **Check on kit tiles** (2026-11-18, river/2x2_lt_rb): a Pine forest area drawn and a Broadleaf wood brushed: 2 areas, 1135 trees and
+   plants, 34 rocks; the texture rules' layer made for the areas alone (1.9 % of the blend map, all forest). The pines, shrubs and rocks
+   stand in the area (`~/wce_re/scratch/auto_detail/check/biome_close.png`). Left: the user's look. Found while checking: scripted runs
+   froze after a while with the screen blanked (FIFO presentation waits for a display that is off); master's binary froze the same way.
 

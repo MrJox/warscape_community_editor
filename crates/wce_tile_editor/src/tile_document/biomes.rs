@@ -330,6 +330,120 @@ impl TileDocument {
         }
     }
 
+    /// A brush stroke on the biome areas (circles of `radius` at `dabs`, world metres): `area`'s outline grown by them (or cut, `erase`),
+    /// or (no area) a new area of `biome` in the layer `into`. What is left in more than one piece becomes as many areas (the same
+    /// biome, new seeds); an area cut away entirely goes. One undo entry; the areas after it.
+    ///
+    /// # Errors
+    ///
+    /// No such area, nothing to make (a stroke that makes no area), or the scene's edit failed.
+    pub fn biome_stroke(
+        &mut self,
+        area: Option<usize>,
+        into: usize,
+        biome: &str,
+        dabs: &[(f32, f32)],
+        radius: f32,
+        erase: bool,
+    ) -> Result<Vec<usize>, String> {
+        let t = self.tile();
+        let cell = (radius / 4.0).clamp(0.5, 4.0);
+        let (existing, attrs, layer) = match area {
+            Some(e) => {
+                let a = t.biome_areas().into_iter().find(|a| a.elem == e).ok_or("not a biome area")?;
+                let sc = t.tscene();
+                let attrs = [BIOME_ATTR, SEED_ATTR, "name"]
+                    .into_iter()
+                    .filter_map(|k| sc.get(e, k).map(|v| (k.to_owned(), v)))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                // Its container: the layer or group whose `children` it is in.
+                let els = sc.doc().elements();
+                let holder = els[e].parent.and_then(|c| if els[c].name == "children" { els[c].parent } else { Some(c) }).unwrap_or(into);
+                (a.points, attrs, holder)
+            }
+
+            None if erase => return Err("nothing to take away from".to_owned()),
+            None => {
+                let attrs = [(BIOME_ATTR, biome), (SEED_ATTR, &dabs.len().to_string()), ("name", biome)]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                (vec![], attrs, into)
+            }
+        };
+
+        let outlines = wce_tile::biomes::stroke_outline(&existing, dabs, radius, erase, cell);
+        if outlines.is_empty() && area.is_none() {
+            return Err("the stroke makes no area".to_owned());
+        }
+
+        // Each outline's points on the ground, world (metres).
+        let worlds = outlines
+            .iter()
+            .map(|o| o.iter().map(|&(x, z)| wce_foundation::math::Float3::new(x, self.tile().terrain_height(x, z), z)).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let mark = self.begin()?;
+        let mut out = vec![];
+        let result = (|| -> Result<(), String> {
+            let mut pieces = worlds.iter();
+            if let Some(e) = area {
+                match pieces.next() {
+                    // The area takes the largest piece: its points moved, the missing ones added, the extra ones taken away.
+                    Some(world) => {
+                        let local = world.iter().map(|&p| self.tile().to_local(e, p)).collect::<Vec<_>>();
+                        let sc = self.tscene_mut();
+                        let had = sc.polygon_points(e).len();
+                        for (i, &p) in local.iter().enumerate().take(had) {
+                            sc.set_polygon_point(e, i, p)?;
+                        }
+
+                        for (i, &p) in local.iter().enumerate().skip(had) {
+                            sc.insert_polygon_point(e, i - 1, p)?;
+                        }
+
+                        while sc.polygon_points(e).len() > local.len() {
+                            let last = sc.polygon_points(e).len() - 1;
+                            if !sc.remove_polygon_point(e, last)? {
+                                break;
+                            }
+                        }
+
+                        out.push(e);
+                    }
+
+                    None => {
+                        self.tscene_mut().remove(e)?;
+                        return Ok(());
+                    }
+                }
+            }
+
+            // The other pieces: new areas of the same biome, each its own seed.
+            for (k, world) in pieces.enumerate() {
+                let local = world.iter().map(|&p| self.tile().to_local(layer, p)).collect::<Vec<_>>();
+                let c = local.iter().fold(Double3::default(), |a, &p| a + p) * (1.0 / local.len() as f64);
+                let mut n = super::edits::new_polygon(AREA_TYPE, local.into_iter().map(|p| p - c).collect(), true).position(c);
+                for (key, v) in &attrs {
+                    let v = if key == SEED_ATTR { format!("{}{k}", v) } else { v.clone() };
+                    n.attrs.insert(key.clone(), v);
+                }
+
+                let text = wce_tile::new_instances::element_text(&n)?;
+                out.push(self.tscene_mut().insert_element_text(layer, &text)?);
+            }
+
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            return self.rolled_back(mark, err);
+        }
+
+        let sel = out.iter().map(|&e| super::item_of(e)).collect::<Vec<_>>();
+        self.push_splice(if erase { "Biome brush: take away" } else { "Biome brush" }.to_owned(), mark, vec![], sel);
+        Ok(out)
+    }
+
     /// The areas' contents made now, waiting for those being made (an export; scripts).
     pub fn finish_biomes(&mut self) {
         self.tile_mut().refresh_biomes(true);

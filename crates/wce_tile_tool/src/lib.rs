@@ -5,6 +5,7 @@
 
 pub mod actions;
 pub mod areas_chip;
+mod biomes_panel;
 mod bridge_check;
 mod building_effects_fix;
 mod building_spline_ui;

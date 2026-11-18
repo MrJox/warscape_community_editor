@@ -575,6 +575,86 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "biome_area",
+        "biome_area <biome> <x m> <z m> <x m> <z m> <x m> <z m>...",
+        "an area of a biome (a preset's or a built-in one's name; quoted when it has spaces) drawn through ground points: the tile takes the biome in, the area is a vegetation exclusion polygon with wce_biome",
+        |e, a| {
+            let Some(name) = a.first().cloned() else { return fail("usage: biome_area <biome> <x> <z> ...") };
+            let pts = a[1..].chunks(2).filter_map(|p| Some((number(p.first()?)?, number(p.get(1)?)?))).collect::<Vec<_>>();
+            if pts.len() < 3 {
+                return fail("an area needs 3 points at least");
+            }
+
+            with_tile(e, |t, e| {
+                let Some(b) = t.biome_presets(e).iter().find(|b| b.name == name).cloned() else { return fail(format!("no biome {name}")) };
+                let Some(d) = document(e) else { return fail("no tile is open") };
+                let Some(into) = t.new_items_layer(d) else { return fail("no layer") };
+                d.adopt_biome(&b);
+                let line = wce_tile_editor::tile_document::Create::Line(
+                    pts.iter().map(|&(x, z)| Float3::new(x, d.tile().terrain_height(x, z), z)).collect(),
+                );
+                let attrs = std::collections::BTreeMap::from([
+                    (wce_tile::biomes::BIOME_ATTR.to_owned(), b.name.clone()),
+                    (wce_tile::biomes::SEED_ATTR.to_owned(), "1".to_owned()),
+                    ("name".to_owned(), b.name.clone()),
+                ]);
+                d.create_with(wce_tile::biomes::AREA_TYPE, into, &line, "", &attrs)
+                    .map_or_else(fail, |elem| ok(format!("biome area {elem} of {}", b.name)))
+            })
+        },
+    );
+
+    c.add(
+        "biome_brush",
+        "biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> [<x m> <z m>]...",
+        "one stroke of the biome brush through ground points: add grows the area under the first point (else makes a new one of the biome), erase takes away from it",
+        |e, a| {
+            let usage = "usage: biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> ...";
+            let (Some(what), Some(name), Some(radius)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).and_then(|v| number(v))) else {
+                return fail(usage);
+            };
+            let dabs = a[3..].chunks(2).filter_map(|p| Some((number(p.first()?)?, number(p.get(1)?)?))).collect::<Vec<_>>();
+            if dabs.is_empty() || !matches!(what.as_str(), "add" | "erase") {
+                return fail(usage);
+            }
+
+            with_tile(e, |t, e| {
+                let biome = if name == "-" { None } else { t.biome_presets(e).iter().find(|b| b.name == name).cloned() };
+                let Some(d) = document(e) else { return fail("no tile is open") };
+                let Some(into) = t.new_items_layer(d) else { return fail("no layer") };
+                let at = dabs[0];
+                let area = d.tile().biome_areas().into_iter().find(|x| wce_tile::biomes::inside(&x.points, at.0, at.1)).map(|x| x.elem);
+                let biome_name = match (&biome, area) {
+                    (Some(b), None) => {
+                        d.adopt_biome(b);
+                        b.name.clone()
+                    }
+
+                    (_, Some(_)) => String::new(),
+                    (None, None) => return fail("no area under the first point, and no biome to make one of"),
+                };
+                d.biome_stroke(area, into, &biome_name, &dabs, radius, what == "erase")
+                    .map_or_else(fail, |areas| ok(format!("biome brush: {} area(s) after the stroke", areas.len())))
+            })
+        },
+    );
+
+    c.add("biomes_wait", "biomes_wait", "the biome areas' contents made now: how many areas, trees and plants, rocks", |e, _| {
+        let Some(d) = document(e) else { return fail("no tile is open") };
+        d.finish_biomes();
+        let (trees, rocks) = d.tile().biome_item_counts();
+        ok(format!("{} biome area(s): {trees} tree(s) and plant(s), {rocks} rock(s)", d.tile().biome_areas().len()))
+    });
+
+    c.add("biomes", "biomes window", "the biomes' window open", |e, a| match a.first().map(String::as_str) {
+        Some("window") => with_tile(e, |t, _| {
+            t.open_biomes();
+            ok("biomes' window open")
+        }),
+        _ => fail("usage: biomes window"),
+    });
+
+    c.add(
         "texture_rules",
         "texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>",
         "the tile's texture rules: off (taken away with their layer), a preset's (Default: the built-in one), a rule set's file (a preset's or a tile's texture_rules.wce), the window open; area: how much of the tile a rule (by number, from 1) covers as though alone; wait: the layer made now, and what it covers",

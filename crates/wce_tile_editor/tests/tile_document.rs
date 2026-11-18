@@ -2738,3 +2738,46 @@ fn a_biome_lays_its_texture_inside_its_area_only() {
     assert_eq!(at(&d, ex * 0.9, ez * 0.9)[9], 0, "nothing outside");
     assert!(d.texture_rules().is_none(), "no rules of the tile's own: the biome's alone");
 }
+
+#[test]
+fn a_biome_brush_makes_grows_cuts_and_takes_away_areas() {
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let original = text(&d);
+    let size = d.history().size();
+    let line = |x0: f32, x1: f32, z: f32| (0..=20).map(|k| (x0 + (x1 - x0) * k as f32 / 20.0, z)).collect::<Vec<_>>();
+
+    // A new area along a stroke.
+    let made = d.biome_stroke(None, layer, "Pine forest", &line(10.0, 50.0, 20.0), 6.0, false).unwrap();
+    assert_eq!(made.len(), 1);
+    assert_eq!(d.history().size(), size + 1, "one undo entry");
+    let areas = d.tile().biome_areas();
+    assert_eq!((areas.len(), areas[0].biome.as_str()), (1, "Pine forest"));
+    let poly = areas[0].points.clone();
+    assert!(wce_tile::biomes::inside(&poly, 30.0, 20.0) && !wce_tile::biomes::inside(&poly, 30.0, 40.0));
+
+    // Grown across: it reaches the new place, and is still one area.
+    let a = made[0];
+    let grown = d.biome_stroke(Some(a), layer, "", &[(30.0, 28.0)], 6.0, false).unwrap();
+    assert_eq!(grown.len(), 1);
+    let poly = &d.tile().biome_areas()[0].points;
+    assert!(wce_tile::biomes::inside(poly, 30.0, 32.0) && wce_tile::biomes::inside(poly, 12.0, 20.0));
+
+    // Cut across at x = 20 (bottom to top): two areas of the same biome.
+    let cut = (0..=30).map(|k| (20.0, k as f32 * 2.0)).collect::<Vec<_>>();
+    let parts = d.biome_stroke(Some(a), layer, "", &cut, 2.0, true).unwrap();
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    assert!(d.tile().biome_areas().iter().all(|x| x.biome == "Pine forest"));
+
+    // All taken away from the first: it goes.
+    let first = d.tile().biome_areas()[0].elem;
+    assert!(d.biome_stroke(Some(first), layer, "", &[(30.0, 25.0)], 100.0, true).unwrap().is_empty());
+    assert_eq!(d.tile().biome_areas().len(), 1);
+
+    // Back to the start, one stroke at a time.
+    for _ in 0..4 {
+        d.history_mut().undo();
+    }
+
+    assert_eq!(text(&d), original);
+}
