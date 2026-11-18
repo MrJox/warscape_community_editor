@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's step 1 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -118,15 +118,44 @@ earlier one, as blend layers go over each other).
    brush with rules that lay ground types and no working layer goes into a `Painted` ground layer, as the paint brush does.
 7. **Check in the app** (the user): defaults of `Default` on a few kit tiles of different climates.
 
-## B. Clutter around buildings (after A; questions to settle when it starts)
+## B. Clutter around buildings
 
-A ground coverage kind, **Around buildings**: for each real building of a category (or a key pattern), props from a weighted set (a
-building set, `kind="building"`) in a ring around its footprint, at a density, clear of other footprints, roads and the building's
-entrances. Fill and brush as the other kinds, a group per kind in the coverage's layer.
+A ground coverage kind, **Around buildings** (`Kind::Buildings`): for each real building a clutter rule matches, props from the rule's
+set in a ring around its footprint. Fill and brush as the other kinds, its own group in the coverage's layer.
 
-To settle with the user: which categories get what (farms: hay, carts; storehouses: crates, barrels; walls: debris), whether a building's
-entrances can be known (the kit's building data, or a side from the footprint's shape) or are left to the user, whether rules are per
-culture, how the props stand (Follow surface), the cap per building.
+### Decisions (user, 2026-11-18)
+
+| Question | Answer |
+|---|---|
+| Which buildings get what | **Key patterns** (`*villa*\|*farm*`), the category as a fallback; the first rule matching a building is its |
+| Doors and streets | **All around**: the user clears a door by hand (or Ctrl + drag with the brush) |
+| The props | **Incidental buildings**, the kit's way (barrels, crates, carts are `incidental` BUILDING_INSTANCEs) |
+| Where | **A fourth tab of the ground coverage window**: presets, Fill the tile / Brush, its group in `(AUTOGEN) Ground Coverage` |
+
+Found: the kit's `battlefield_buildings` has 823 `generic` keys (houses, temples, farms alike), 371 `incidental` (tents, washing lines,
+market stands, barricades, carts, hides, dock goods), 129 `fort_wall`, 76 `ground_platform`, 30 `fort_tower`, 22 unbreachable walls, 10
+gates, 10 bridges: the category alone can't tell a farm from a temple.
+
+### Design
+
+- A building is a `Target`: its key and category, where it stands, its turn and its footprint as a **rectangle** in its own frame (the
+  model's bounds, scaled): a circle's corners would leave the long sides of a house bare. Its ring is the ground `ring_gap` ..
+  `ring_gap + ring_width` out of the rectangle; ground within `ring_gap` of any building (a neighbour) is left out.
+- A `ClutterRule`: name, key patterns (`*`, `|`), categories (`|`), and its props: a building set by name, or keys inline (the built-in
+  rules', so that they work without set files).
+- Props stand on the ground (seat at the centre, not sunk, scale 1), at the density, apart from each other, no more than
+  `max_per_building` a building.
+
+### Steps (a commit per step)
+
+1. **The kind in `wce_tile::ground_coverage`** (done): `Kind::Buildings`, `Target`, `ClutterRule`, `glob`, the ring classification,
+   the props per region's rule in the fill and the brush (`Classified::owner`), the three parameters. Tests: patterns, a turned
+   footprint, a ring round a matched house clear of its unmatched neighbour, the cap.
+2. **Rules in the presets** and the built-in ones (markets, docks, townhouses, barbarian houses, farms and villas, from the kit's own
+   incidental keys).
+3. **The tile's side and the window's tab**: the targets from the scene (the real buildings by the kits' categories, their models'
+   bounds, their world turn), the rules' editor, the sets resolved; Fill and Brush.
+4. **Check on kit settlement tiles** (a few, `--filter`-sized), then the user's look.
 
 ## C. Biome brush (after B; questions to settle when it starts)
 

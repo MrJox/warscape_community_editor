@@ -56,6 +56,8 @@ impl BrushBase {
             rock_size: size,
             params: self.params,
             seed: 0,
+            targets: &[],
+            clutter: &[],
         }
     }
 
