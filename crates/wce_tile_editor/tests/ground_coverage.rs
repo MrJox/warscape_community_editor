@@ -119,8 +119,11 @@ fn the_coverage_fills_its_layer_replaces_it_and_undoes() {
     // A rock is freeform at its height, scaled when it is not at 1; the world positions are the generator's.
     let rock = sc.children(groups[0])[0];
     assert_eq!(sc.doc().get(rock, "surface_mode").as_deref(), Some("MSM_FREEFORM"));
-    assert_eq!(sc.doc().get(rock, "wce_scale").as_deref(), Some("1.3"));
-    assert_eq!(sc.doc().get(sc.children(groups[0])[1], "wce_scale"), None);
+    assert_eq!(sc.doc().get(rock, "scale").as_deref(), Some("1.3"));
+    assert_eq!(sc.doc().get(rock, "wce_export_as_prop").as_deref(), Some("true"), "scaled: a prop, or the game ignores it");
+    let unscaled = sc.children(groups[0])[1];
+    assert_eq!(sc.doc().get(unscaled, "scale"), None);
+    assert_eq!(sc.doc().get(unscaled, "wce_export_as_prop"), None);
     let p = d.tile().world_position(rock);
     assert!((p.x - 20.0).abs() < 1e-3 && (p.y - 1.0).abs() < 1e-3 && (p.z - 10.0).abs() < 1e-3, "{p:?}");
 

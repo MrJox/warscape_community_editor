@@ -451,10 +451,6 @@ pub const SURFACE_ATTR: &str = "wce_surface";
 /// An item tilted to the surface it stands on ("Follow surface"): `wce_rotation="surface"`, its orientation the tilted one.
 pub const ROTATION_ATTR: &str = "wce_rotation";
 
-/// A building's uniform scale (`wce_scale="1.4"`): TEd has none, so it goes for TEd; the game export keeps it for the building list's scale
-/// (whether Attila honours that is not known: the shipped lists all have 1).
-pub const SCALE_ATTR: &str = "wce_scale";
-
 /// A file's text (tile.wce, a prefab of the editor's) with its root element marked (`wce_version`), unless it is.
 pub fn mark_wce_text(mut text: Vec<u8>) -> Vec<u8> {
     let name = WCE_VERSION_ATTR.as_bytes();
@@ -503,15 +499,6 @@ impl TedReport {
 ///
 /// The text does not read.
 pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
-    to_ted_keeping(wce, &[])
-}
-
-/// [`to_ted`] keeping the editor's attributes in `keep` (the game export keeps [`SCALE_ATTR`] for the building lists).
-///
-/// # Errors
-///
-/// The text does not read.
-pub fn to_ted_keeping(wce: Vec<u8>, keep: &[&str]) -> Result<(Vec<u8>, TedReport), String> {
     let mut scene = TedScene::parse_any(wce)?;
     let mut report = TedReport::default();
 
@@ -568,7 +555,6 @@ pub fn to_ted_keeping(wce: Vec<u8>, keep: &[&str]) -> Result<(Vec<u8>, TedReport
     let fresh = wce_formats::xml_doc::XmlDoc::parse(text.clone()).map_err(|e| e.to_string())?;
     let mut cuts: Vec<(usize, usize, Vec<u8>)> = vec![];
     let mut rounded = 0;
-    let mut scales = 0;
     for (e, el) in fresh.elements().iter().enumerate() {
         for a in &el.attrs {
             // TEd has no scale on a building (a building that exports as a prop is models by now), and the game ignores it.
@@ -584,20 +570,8 @@ pub fn to_ted_keeping(wce: Vec<u8>, keep: &[&str]) -> Result<(Vec<u8>, TedReport
             }
 
             if a.name.starts_with("wce_") {
-                if keep.contains(&a.name.as_str()) {
-                    continue;
-                }
-
                 let unset_mark = a.name == crate::export_as_prop::EXPORT_AS_PROP_ATTR && fresh.get(e, &a.name).as_deref() != Some("true");
-
-                // Many of them (the ground coverage's rocks): one line.
-                if a.name == SCALE_ATTR {
-                    scales += 1;
-                } else if a.name != WCE_VERSION_ATTR
-                    && a.name != EXTRACTED_ATTR
-                    && !POLYFILLED_ATTRS.contains(&a.name.as_str())
-                    && !unset_mark
-                {
+                if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) && !unset_mark {
                     report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
                 }
 
@@ -622,10 +596,6 @@ pub fn to_ted_keeping(wce: Vec<u8>, keep: &[&str]) -> Result<(Vec<u8>, TedReport
 
     if rounded != 0 {
         report.polyfilled.push(format!("{rounded} number(s) written at TEd's precision"));
-    }
-
-    if scales != 0 {
-        report.dropped.push(format!("the scale of {scales} building(s) (TEd shows them at scale 1)"));
     }
 
     let mut out = Vec::with_capacity(text.len());
@@ -705,17 +675,6 @@ mod tests {
         let marked = entry_with_location_mark(entry, true);
         assert!(marked.contains("location='terrain\\tiles\\battle\\farm_nordic\\1x1_extracted'"), "{marked}");
         assert_eq!(entry_with_location_mark(&marked, false), entry);
-    }
-
-    #[test]
-    fn a_building_scale_goes_for_ted_and_stays_for_the_export() {
-        let wce = b"<project version=\"16\" wce_version=\"1\">\n    <BUILDING_INSTANCE key=\"a\" wce_scale=\"1.5\"/>\n    <BUILDING_INSTANCE key=\"b\" wce_scale=\"0.5\"/>\n</project>\n".to_vec();
-        let (ted, report) = to_ted(wce.clone()).unwrap();
-        assert!(!String::from_utf8_lossy(&ted).contains("wce_scale"));
-        assert_eq!(report.dropped, ["the scale of 2 building(s) (TEd shows them at scale 1)"]);
-        let (kept, report) = to_ted_keeping(wce, &[SCALE_ATTR]).unwrap();
-        assert!(String::from_utf8_lossy(&kept).contains("<BUILDING_INSTANCE key=\"a\" wce_scale=\"1.5\"/>"));
-        assert!(report.dropped.is_empty());
     }
 
     #[test]

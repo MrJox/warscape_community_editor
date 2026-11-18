@@ -299,7 +299,7 @@ impl ExportInputs {
                 continue;
             }
 
-            let (scene, _) = wce_tile::project_files::to_ted_keeping(text, &[wce_tile::project_files::SCALE_ATTR])?;
+            let (scene, _) = wce_tile::project_files::to_ted(text)?;
             let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &project_dir, Some(scene), out)?;
             for n in &notes.notes {
                 log::info(format!("{}: {n}", saved.display()));
@@ -1934,7 +1934,7 @@ impl TileTool {
                 let schema = walls_schema(e)?;
                 wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack, &kit_walls)?
             } else {
-                let (scene, _) = wce_tile::project_files::to_ted_keeping(text, &[wce_tile::project_files::SCALE_ATTR])?;
+                let (scene, _) = wce_tile::project_files::to_ted(text)?;
                 let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
                 (folder, notes.notes)
             };

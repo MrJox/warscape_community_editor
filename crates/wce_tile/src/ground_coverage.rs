@@ -57,8 +57,8 @@ pub struct Params {
     /// Metres between plants.
     pub plant_spacing: f32,
 
-    /// Whether the rocks are scaled at all: a building's scale is the editor's (`project_files::SCALE_ATTR`), and whether Attila honours
-    /// it is not known. Without it every rock is at scale 1.
+    /// Whether the rocks are scaled at all: the game ignores a building's scale but for one exported as a prop (`export_as_prop`), so a
+    /// scaled rock is exported as a prop (plain models: no collision). Without it every rock is a building at scale 1.
     pub scale_rocks: bool,
 
     /// Scale ranges of the rocks at the foot and on the face (a set entry's own range multiplies them).

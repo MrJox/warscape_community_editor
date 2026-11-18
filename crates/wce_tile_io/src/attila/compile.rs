@@ -279,9 +279,7 @@ fn building_record(p: &Placed, extent_z: f32, ctx: &CompileContext, lite: bool, 
     b.set("key", Value::Str(key.to_owned()));
     b.set("position", Value::Vec3([f64::from(x * 0.5), f64::from(y), f64::from(extent_z - z * 0.5)]));
     b.set("orientation", Value::Floats(quaternion(w).iter().map(|&v| f64::from(v)).collect()));
-    // TEd has no building scale (1); the editor's `wce_scale`, when the export keeps it.
-    let s = n.get(wce_tile::project_files::SCALE_ATTR).and_then(Value::as_f64).unwrap_or(1.0);
-    b.set("scale", Value::Vec3([s; 3]));
+    b.set("scale", Value::Vec3([1.0; 3]));
     b.set("starting_damage", Value::Float(f64::from(damage)));
     for (k, attr, default) in [
         ("on_fire", "burn", false),
@@ -1973,8 +1971,7 @@ fn instances_where(raw: &Tile, class: &str, keep: impl Fn(&Node) -> bool) -> Vec
         .filter(|p| p.node.class == class && keep(p.node))
         .map(|p| {
             let mut m = p.world;
-            let uniform = p.node.get(wce_tile::project_files::SCALE_ATTR).and_then(Value::as_f64).map(|s| [s as f32; 3]);
-            if let Some(s) = vec3_of(p.node, "scale").or(uniform) {
+            if let Some(s) = vec3_of(p.node, "scale") {
                 for r in 0..3 {
                     for c in 0..3 {
                         m[r * 4 + c] *= s[c];
