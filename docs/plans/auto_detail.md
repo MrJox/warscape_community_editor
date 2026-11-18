@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 3 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 4 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -96,7 +96,11 @@ earlier one, as blend layers go over each other).
    measured to be needed); it goes in when the blend stack is as it was taken, no undo entry (an undo puts back what it is made from).
    Edits of the rules are undo entries (`set_texture_rules`); exports wait for it after the roads (`finish_road_jobs`). Grass follows.
    Left for step 5: the script command and the check on kit tiles.
-4. **Distances**: water (stage B's water map), roads, buildings.
+4. **Distances** (done): water, roads, buildings. Done as: `texture_rules::Distances` (exact Euclidean distance transform on the blend
+   map's grid), the rules' `water`, `road` and `building` ranges (endless where the tile has none). Water is the roads' `WaterMap`
+   (rivers' ribbons and lake planes over the ground, the sea under 0 in the sea's sets), not stage B's (live, without a compile); roads
+   are the road-owned blend layers' pixels; buildings are the real ones by the kits' categories (the coverage's), discs of their models'
+   radius. Only what an enabled rule uses is worked out; the scene's part is cached by the scene's and the models' versions.
 5. **Presets and the window**, the rule weight view.
 6. **Ground types per rule**.
 7. **Check in the app** (the user): defaults of `Default` on a few kit tiles of different climates.

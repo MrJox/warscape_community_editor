@@ -626,6 +626,7 @@ pub struct Tile {
     pub(crate) texture_rules_job: Option<texture_rules::TextureRulesJob>,
     pub(crate) texture_rules_seen: u64,
     pub(crate) texture_rules_heights: ((usize, u64), u64),
+    pub(crate) texture_rules_inputs: Option<(u64, texture_rules::Inputs)>,
 
     /// The prefabs' ground (`prefab_ground.rs`): the history's version the document last gave (any edit, undo or redo changes it), what
     /// the references were last looked at for, and whether their prefabs' layers changed (made again whatever).
@@ -997,6 +998,7 @@ impl TileDocument {
             texture_rules_job: None,
             texture_rules_seen: 0,
             texture_rules_heights: ((0, u64::MAX), 0),
+            texture_rules_inputs: None,
             history_version: 0,
             prefab_ground_seen: 0,
             prefab_ground_stale: false,

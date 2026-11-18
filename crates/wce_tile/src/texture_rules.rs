@@ -106,6 +106,12 @@ pub struct Rule {
     pub hollow: Option<Range>,
     pub hollow_radius: f32,
 
+    /// Metres to the nearest water (rivers, lakes, the sea over the ground), road (the procedural roads' texture) and real building (a
+    /// footprint's edge). Where the tile has none of one, the distance to it is endless: a range with an upper end does not hold.
+    pub water: Option<Range>,
+    pub road: Option<Range>,
+    pub building: Option<Range>,
+
     /// Noise over the conditions (features `scale` metres across): each condition's value moved by up to `amount` times its fade, so
     /// that the rule's edges are not contour lines. Inside a range, past its fades, nothing changes.
     pub breakup: Option<Breakup>,
@@ -124,6 +130,9 @@ impl Default for Rule {
             slope: None,
             hollow: None,
             hollow_radius: 10.0,
+            water: None,
+            road: None,
+            building: None,
             breakup: None,
             seed: 0,
         }
@@ -146,6 +155,223 @@ pub struct Fields {
 
     /// The heights summed from the corner (a summed-area table, `w + 1` x `h + 1`): a box's mean in four reads, for the hollows.
     sums: Vec<f64>,
+
+    /// How far each place is from water, roads and buildings ([`Feature`]), when worked out.
+    distances: [Option<Distances>; 3],
+}
+
+/// What a distance condition measures to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Feature {
+    Water = 0,
+    Road = 1,
+    Building = 2,
+}
+
+impl Feature {
+    pub const ALL: [Self; 3] = [Self::Water, Self::Road, Self::Building];
+
+    /// Whether any rule that lays something measures to it: what is not, need not be worked out.
+    #[must_use]
+    pub fn used(self, rules: &[Rule]) -> bool {
+        rules.iter().filter(|r| r.enabled && r.strength > 0.0).any(|r| r.distance(self).is_some())
+    }
+}
+
+/// The distance in metres from every pixel of a grid to the nearest marked one (exact Euclidean, by the pixels' centres), `ppm` pixels a
+/// metre across and down, from the map's corner. Endless without any marked pixel.
+pub struct Distances {
+    w: u32,
+    h: u32,
+    ppm: (f64, f64),
+    d: Vec<f32>,
+}
+
+impl Distances {
+    /// # Panics
+    ///
+    /// `mask` is not `w` x `h`.
+    #[must_use]
+    pub fn from_mask(w: u32, h: u32, ppm: (f64, f64), mask: &[bool]) -> Self {
+        assert_eq!(mask.len(), w as usize * h as usize);
+        let (wu, hu) = (w as usize, h as usize);
+        let (sx, sz) = (1.0 / ppm.0, 1.0 / ppm.1);
+        // Felzenszwalb and Huttenlocher's squared distance transform, down the columns and then along the rows, in metres.
+        let inf = f64::INFINITY;
+        let mut g = mask.iter().map(|&m| if m { 0.0 } else { inf }).collect::<Vec<f64>>();
+        let mut col = vec![0.0; hu];
+        for x in 0..wu {
+            for y in 0..hu {
+                col[y] = g[y * wu + x];
+            }
+
+            let out = transform_1d(&col, sz);
+            for y in 0..hu {
+                g[y * wu + x] = out[y];
+            }
+        }
+
+        let mut d = vec![0.0f32; wu * hu];
+        for y in 0..hu {
+            let out = transform_1d(&g[y * wu..(y + 1) * wu], sx);
+            for x in 0..wu {
+                d[y * wu + x] = out[x].sqrt() as f32;
+            }
+        }
+
+        Self { w, h, ppm, d }
+    }
+
+    /// The distance at a point (the pixel it is in), metres from the map's corner.
+    #[must_use]
+    pub fn at(&self, wx: f64, wz: f64) -> f64 {
+        let x = ((wx * self.ppm.0).floor().max(0.0) as u32).min(self.w - 1);
+        let y = ((wz * self.ppm.1).floor().max(0.0) as u32).min(self.h - 1);
+        f64::from(self.d[y as usize * self.w as usize + x as usize])
+    }
+}
+
+/// The pixels of a grid (`w` x `h`, `ppm` pixels a metre, from the map's corner, which lies `border` metres before the tile's world
+/// origin) under water: a river's ribbon or a lake's plane whose surface is over the ground there, or the sea (at 0) over it. The heights
+/// are `fields`'.
+#[must_use]
+pub fn water_mask(water: &crate::roads::WaterMap, fields: &Fields, w: u32, h: u32, ppm: (f64, f64), border: f64) -> Vec<bool> {
+    let mut mask = vec![false; w as usize * h as usize];
+    let centre = |x: u32, y: u32| ((f64::from(x) + 0.5) / ppm.0, (f64::from(y) + 0.5) / ppm.1);
+    let ground = |x: u32, y: u32| {
+        let (mx, mz) = centre(x, y);
+        fields.height(mx, mz)
+    };
+    // The pixels of a world-space box, clamped to the grid.
+    let span = |lo: f64, hi: f64, p: f64, n: u32| {
+        let a = (((lo + border) * p).floor().max(0.0) as u32).min(n);
+        let b = (((hi + border) * p).ceil().max(0.0) as u32).min(n);
+        a..b
+    };
+
+    if water.sea {
+        for y in 0..h {
+            for x in 0..w {
+                mask[(y * w + x) as usize] = ground(x, y) < 0.0;
+            }
+        }
+    }
+
+    for river in &water.rivers {
+        for seg in river.windows(2) {
+            let (a, b) = (seg[0], seg[1]);
+            let r = a[3].max(b[3]);
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let l2 = (d[0] * d[0] + d[1] * d[1]).max(1e-12);
+            for y in span(a[1].min(b[1]) - r, a[1].max(b[1]) + r, ppm.1, h) {
+                for x in span(a[0].min(b[0]) - r, a[0].max(b[0]) + r, ppm.0, w) {
+                    let (mx, mz) = centre(x, y);
+                    let (px, pz) = (mx - border, mz - border);
+                    let t = (((px - a[0]) * d[0] + (pz - a[1]) * d[1]) / l2).clamp(0.0, 1.0);
+                    let (qx, qz) = (a[0] + d[0] * t, a[1] + d[1] * t);
+                    if (px - qx).hypot(pz - qz) <= a[3] + (b[3] - a[3]) * t && a[2] + (b[2] - a[2]) * t > ground(x, y) {
+                        mask[(y * w + x) as usize] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    for (corners, level) in &water.planes {
+        let (xs, zs) = (corners.map(|c| c[0]), corners.map(|c| c[1]));
+        let (x0, x1) = (xs.iter().copied().fold(f64::INFINITY, f64::min), xs.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+        let (z0, z1) = (zs.iter().copied().fold(f64::INFINITY, f64::min), zs.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+        for y in span(z0, z1, ppm.1, h) {
+            for x in span(x0, x1, ppm.0, w) {
+                let (mx, mz) = centre(x, y);
+                let (px, pz) = (mx - border, mz - border);
+                let side = |i: usize| {
+                    let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                    (b[0] - a[0]) * (pz - a[1]) - (b[1] - a[1]) * (px - a[0])
+                };
+                let s = [side(0), side(1), side(2), side(3)];
+                if (s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0)) && *level > ground(x, y) {
+                    mask[(y * w + x) as usize] = true;
+                }
+            }
+        }
+    }
+
+    mask
+}
+
+/// The pixels of a grid (as [`water_mask`]'s) inside discs (x, z in world metres, radius), each disc's centre pixel at least.
+#[must_use]
+pub fn disc_mask(discs: &[[f64; 3]], w: u32, h: u32, ppm: (f64, f64), border: f64) -> Vec<bool> {
+    let mut mask = vec![false; w as usize * h as usize];
+    for &[cx, cz, r] in discs {
+        let (px, py) = ((cx + border) * ppm.0, (cz + border) * ppm.1);
+        let (ix, iy) = (px.floor(), py.floor());
+        if ix >= 0.0 && iy >= 0.0 && ix < f64::from(w) && iy < f64::from(h) {
+            mask[iy as usize * w as usize + ix as usize] = true;
+        }
+
+        let (y0, y1) = (((py - r * ppm.1).floor().max(0.0) as u32).min(h), ((py + r * ppm.1).ceil().max(0.0) as u32).min(h));
+        let (x0, x1) = (((px - r * ppm.0).floor().max(0.0) as u32).min(w), ((px + r * ppm.0).ceil().max(0.0) as u32).min(w));
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let (dx, dz) = ((f64::from(x) + 0.5) / ppm.0 - border - cx, (f64::from(y) + 0.5) / ppm.1 - border - cz);
+                if dx.hypot(dz) <= r {
+                    mask[(y * w + x) as usize] = true;
+                }
+            }
+        }
+    }
+
+    mask
+}
+
+/// One line of the squared distance transform: `f` the squared distances so far (0 at a feature, endless away), samples `step` metres
+/// apart; the squared distance of each sample to the nearest one's parabola.
+fn transform_1d(f: &[f64], step: f64) -> Vec<f64> {
+    let n = f.len();
+    let mut out = vec![f64::INFINITY; n];
+    let mut v = vec![0usize; n];
+    let mut z = vec![0.0f64; n + 1];
+    let mut k = 0usize;
+    let first = f.iter().position(|v| v.is_finite());
+    let Some(first) = first else { return out };
+    v[0] = first;
+    z[0] = f64::NEG_INFINITY;
+    z[1] = f64::INFINITY;
+    let pos = |i: usize| i as f64 * step;
+    for q in first + 1..n {
+        if !f[q].is_finite() {
+            continue;
+        }
+
+        loop {
+            let p = v[k];
+            let s = ((f[q] + pos(q) * pos(q)) - (f[p] + pos(p) * pos(p))) / (2.0 * (pos(q) - pos(p)));
+            if s <= z[k] && k > 0 {
+                k -= 1;
+                continue;
+            }
+
+            k += 1;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = f64::INFINITY;
+            break;
+        }
+    }
+
+    k = 0;
+    for (q, o) in out.iter_mut().enumerate() {
+        while z[k + 1] < pos(q) {
+            k += 1;
+        }
+
+        let d = pos(q) - pos(v[k]);
+        *o = d * d + f[v[k]];
+    }
+
+    out
 }
 
 impl Fields {
@@ -165,7 +391,7 @@ impl Fields {
             }
         }
 
-        Self { w, h, mpp, heights, sums }
+        Self { w, h, mpp, heights, sums, distances: [None, None, None] }
     }
 
     /// From a tile's height field, its samples `mpp` metres apart; `unit`, the tile's scene units a metre (the editor's metres are the
@@ -202,6 +428,19 @@ impl Fields {
         gx.hypot(gz).atan().to_degrees()
     }
 
+    /// Gives the distances to a feature.
+    #[must_use]
+    pub fn with_distances(mut self, feature: Feature, d: Distances) -> Self {
+        self.distances[feature as usize] = Some(d);
+        self
+    }
+
+    /// Metres from a point to the nearest of a feature: endless when not worked out, or there is none.
+    #[must_use]
+    pub fn distance(&self, feature: Feature, wx: f64, wz: f64) -> f64 {
+        self.distances[feature as usize].as_ref().map_or(f64::INFINITY, |d| d.at(wx, wz))
+    }
+
     /// How far a point lies under the mean ground of the square `radius` metres around it each way (a hollow above 0).
     #[must_use]
     pub fn hollow(&self, wx: f64, wz: f64, radius: f64) -> f64 {
@@ -220,7 +459,8 @@ impl Fields {
     }
 }
 
-/// How far past a changed place the rules' result can change (metres): the hollows' reach, a sample's for the slope.
+/// How far past a changed place of the heights the rules' result can change (metres): the hollows' reach, a sample's for the slope.
+/// (The distances reach as far as their features move: those changes remake the whole map.)
 #[must_use]
 pub fn reach(rules: &[Rule], mpp: (f64, f64)) -> f64 {
     let sample = mpp.0.max(mpp.1);
@@ -238,6 +478,16 @@ fn slot_of(groups: &[String], name: &str) -> Option<usize> {
 }
 
 impl Rule {
+    /// The rule's distance condition to a feature.
+    #[must_use]
+    pub fn distance(&self, feature: Feature) -> Option<&Range> {
+        match feature {
+            Feature::Water => self.water.as_ref(),
+            Feature::Road => self.road.as_ref(),
+            Feature::Building => self.building.as_ref(),
+        }
+    }
+
     /// The rule's weight at a point (metres from the map's corner), 0 .. 1.
     #[must_use]
     pub fn weight(&self, fields: &Fields, wx: f64, wz: f64) -> f64 {
@@ -253,6 +503,9 @@ impl Rule {
             (&self.height, &(|| fields.height(wx, wz)) as &dyn Fn() -> f64),
             (&self.slope, &|| fields.slope(wx, wz)),
             (&self.hollow, &|| fields.hollow(wx, wz, f64::from(self.hollow_radius))),
+            (&self.water, &|| fields.distance(Feature::Water, wx, wz)),
+            (&self.road, &|| fields.distance(Feature::Road, wx, wz)),
+            (&self.building, &|| fields.distance(Feature::Building, wx, wz)),
         ] {
             if w <= 0.0 {
                 break;
@@ -363,7 +616,14 @@ pub fn text(set: &RuleSet) -> Vec<u8> {
             out += &format!(" strength=\"{}\"", num(r.strength));
         }
 
-        for (name, range) in [("height", &r.height), ("slope", &r.slope), ("hollow", &r.hollow)] {
+        for (name, range) in [
+            ("height", &r.height),
+            ("slope", &r.slope),
+            ("hollow", &r.hollow),
+            ("water", &r.water),
+            ("road", &r.road),
+            ("building", &r.building),
+        ] {
             if let Some(range) = range {
                 out += &format!(" {name}=\"{}\"", range.text());
                 if range.fade > 0.0 {
@@ -422,6 +682,9 @@ pub fn parse(bytes: &[u8]) -> Result<RuleSet, String> {
                 height: range(e, "height"),
                 slope: range(e, "slope"),
                 hollow: range(e, "hollow"),
+                water: range(e, "water"),
+                road: range(e, "road"),
+                building: range(e, "building"),
                 hollow_radius: num(e, "hollow_radius").unwrap_or(d.hollow_radius),
                 breakup: doc.get(e, "breakup").and_then(|v| {
                     let mut p = v.split_whitespace().map(str::parse::<f32>);
@@ -574,11 +837,68 @@ mod tests {
     }
 
     #[test]
+    fn distances_are_euclidean_in_metres() {
+        // 20 x 10 pixels, two a metre across, one down; one marked pixel at (4, 5).
+        let (w, h) = (20u32, 10u32);
+        let mut mask = vec![false; (w * h) as usize];
+        mask[(5 * w + 4) as usize] = true;
+        let d = Distances::from_mask(w, h, (2.0, 1.0), &mask);
+        let at = |x: u32, y: u32| d.at((f64::from(x) + 0.5) / 2.0, f64::from(y) + 0.5);
+        assert_eq!(at(4, 5), 0.0);
+        assert!((at(10, 5) - 3.0).abs() < 1e-6, "6 pixels across: 3 m");
+        assert!((at(4, 9) - 4.0).abs() < 1e-6, "4 pixels down: 4 m");
+        assert!((at(10, 9) - 5.0).abs() < 1e-6, "3-4-5");
+        let none = Distances::from_mask(w, h, (1.0, 1.0), &vec![false; (w * h) as usize]);
+        assert!(none.at(3.0, 3.0).is_infinite());
+    }
+
+    #[test]
+    fn mud_by_the_water_and_nothing_without_water() {
+        let f = field(32, |_, _| 0.0);
+        let mut mask = vec![false; 32 * 32];
+        for y in 0..32 {
+            mask[y * 32] = true;
+        }
+
+        let by_water = Rule { group: "mud".to_owned(), water: Some(Range { lo: None, hi: Some(5.0), fade: 0.0 }), ..Rule::default() };
+        assert!(layer(std::slice::from_ref(&by_water), &f, 32).iter().all(Option::is_none), "no water known: endless");
+        let f = f.with_distances(Feature::Water, Distances::from_mask(32, 32, (1.0, 1.0), &mask));
+        let l = layer(std::slice::from_ref(&by_water), &f, 32);
+        assert!(l[(10 * 32 + 3) as usize].is_some(), "3 m from the water");
+        assert!(l[(10 * 32 + 8) as usize].is_none(), "8 m from it");
+        assert!(Feature::Water.used(&[by_water]) && !Feature::Road.used(&[rock()]));
+    }
+
+    #[test]
+    fn masks_of_water_and_buildings() {
+        // A 40 x 40 m map, a pixel a metre, the tile's origin 4 m in (its border), the ground at 1 m.
+        let f = field(40, |_, _| 1.0);
+        let river =
+            crate::roads::WaterMap { rivers: vec![vec![[0.0, 10.0, 2.0, 2.0], [30.0, 10.0, 2.0, 2.0]]], planes: vec![], sea: false };
+        let m = water_mask(&river, &f, 40, 40, (1.0, 1.0), 4.0);
+        assert!(m[(14 * 40 + 10) as usize], "on the river's line");
+        assert!(m[(15 * 40 + 10) as usize] && !m[(17 * 40 + 10) as usize], "2 m wide each side");
+        let dry = crate::roads::WaterMap { rivers: vec![vec![[0.0, 10.0, 0.5, 2.0], [30.0, 10.0, 0.5, 2.0]]], planes: vec![], sea: false };
+        assert!(water_mask(&dry, &f, 40, 40, (1.0, 1.0), 4.0).iter().all(|&v| !v), "under the ground");
+        let sea = crate::roads::WaterMap { rivers: vec![], planes: vec![], sea: true };
+        let low = field(40, |x, _| x - 20.0);
+        let m = water_mask(&sea, &low, 40, 40, (1.0, 1.0), 4.0);
+        assert!(m[(5 * 40 + 10) as usize] && !m[(5 * 40 + 30) as usize]);
+
+        let m = disc_mask(&[[10.0, 10.0, 3.0], [30.0, 30.0, 0.0]], 40, 40, (1.0, 1.0), 4.0);
+        assert!(m[(14 * 40 + 14) as usize] && m[(14 * 40 + 16) as usize] && !m[(14 * 40 + 19) as usize]);
+        assert!(m[(34 * 40 + 34) as usize], "a point marks its pixel");
+    }
+
+    #[test]
     fn text_round_trip() {
         let mut set = RuleSet { preset: "Default".to_owned(), rules: default_rules() };
         set.rules[0].enabled = false;
         set.rules[1].height = Some(Range { lo: None, hi: Some(120.5), fade: 0.0 });
         set.rules[1].name = "Rock \"high\" & dry".to_owned();
+        set.rules[1].water = Some(Range { lo: Some(2.0), hi: Some(30.0), fade: 4.0 });
+        set.rules[1].road = Some(Range { lo: None, hi: Some(3.0), fade: 0.0 });
+        set.rules[1].building = Some(Range { lo: Some(1.0), hi: None, fade: 2.0 });
         let bytes = text(&set);
         assert_eq!(parse(&bytes).unwrap(), set, "{}", String::from_utf8_lossy(&bytes));
         let unnamed = RuleSet { preset: String::new(), rules: vec![] };

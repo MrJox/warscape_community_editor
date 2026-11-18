@@ -11,8 +11,9 @@
 use std::any::Any;
 
 use wce_editor_core::command::Command;
+use wce_tile::roads::WaterMap;
 use wce_tile::terrain_layers::{Blend, Stack, TerrainLayers};
-use wce_tile::texture_rules::{self, Fields, OWNER, RuleSet};
+use wce_tile::texture_rules::{self, Distances, Feature, Fields, OWNER, RuleSet};
 
 use super::{TERRAIN, Tile, TileDocument};
 
@@ -21,6 +22,24 @@ pub(crate) struct TextureRulesJob {
     job: super::jobs::Job<Stack<Blend>>,
     signature: u64,
     before: Stack<Blend>,
+}
+
+/// What the distance conditions measure to, taken from the scene (`Tile::texture_rules_inputs`), what the rules use of it only: the water
+/// and the real buildings (x, z, radius in world metres), and their hash. The roads are their own layers' (taken in the job).
+#[derive(Clone, Default)]
+pub(crate) struct Inputs {
+    water: Option<WaterMap>,
+    buildings: Option<Vec<[f64; 3]>>,
+    hash: u64,
+}
+
+/// The categories of the real buildings the rules measure to (the ground coverage's: not rocks, props or ground pieces).
+const BUILDING_CATEGORIES: [&str; 6] = wce_tile::ground_coverage::AVOIDED_CATEGORIES;
+
+fn fnv(h: &mut u64, bytes: &[u8]) {
+    for &b in bytes {
+        *h = (*h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
 }
 
 /// The owner of the layer made from what `signature` says.
@@ -38,8 +57,80 @@ impl Tile {
         self.project.entry.as_ref().map(|e| e.texture_group()).map(|g| vec![g.red, g.green, g.blue, g.alpha]).unwrap_or_default()
     }
 
-    /// What the rules' layer is made from, hashed: the rules' text, the texture groups, the heights as they show.
+    /// What the distance conditions need of the scene, worked out again only when the scene or its models changed.
+    fn texture_rules_inputs(&mut self) -> Inputs {
+        let rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
+        let key = {
+            let mut h = 0xcbf2_9ce4_8422_2325u64;
+            for v in [self.history_version, self.structure_version, self.models.len() as u64, self.unresolved.len() as u64] {
+                fnv(&mut h, &v.to_le_bytes());
+            }
+
+            for f in Feature::ALL {
+                fnv(&mut h, &[u8::from(f.used(&rules))]);
+            }
+
+            h
+        };
+        if let Some((k, inputs)) = &self.texture_rules_inputs
+            && *k == key
+        {
+            return inputs.clone();
+        }
+
+        let mut inputs = Inputs { hash: 0xcbf2_9ce4_8422_2325, ..Inputs::default() };
+        if Feature::Water.used(&rules) {
+            let w = self.water_map();
+            fnv(&mut inputs.hash, &[u8::from(w.sea)]);
+            for v in
+                w.rivers.iter().flatten().flatten().chain(w.planes.iter().flat_map(|(c, y)| c.iter().flatten().chain(std::iter::once(y))))
+            {
+                fnv(&mut inputs.hash, &v.to_le_bytes());
+            }
+
+            inputs.water = Some(w);
+        }
+
+        if Feature::Building.used(&rules) {
+            let b = self.rule_buildings();
+            for v in b.iter().flatten() {
+                fnv(&mut inputs.hash, &v.to_le_bytes());
+            }
+
+            inputs.buildings = Some(b);
+        }
+
+        self.texture_rules_inputs = Some((key, inputs.clone()));
+        inputs
+    }
+
+    /// The real buildings (`BUILDING_CATEGORIES`, by the kits' tables) outside the ground coverage's layer: x, z and the radius of their
+    /// model across (0 until it loads), world metres.
+    fn rule_buildings(&self) -> Vec<[f64; 3]> {
+        let sc = self.tscene();
+        let coverage = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == super::ground_coverage::COVERAGE_LAYER);
+        let kit = self.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project.dir));
+        self.instances()
+            .iter()
+            .copied()
+            .filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE" && coverage.is_none_or(|l| !sc.is_descendant(e, l)))
+            .filter(|&e| sc.doc().get(e, "key").is_some_and(|k| kit.category(&k).is_some_and(|c| BUILDING_CATEGORIES.contains(&c))))
+            .map(|e| {
+                let p = self.world_position(e);
+                let radius = self.model_of(e).filter(|m| m.ok && m.resolved).map_or(0.0, |m| {
+                    let s = sc.scale(e).map_or(1.0, |s| s.x.abs().max(s.z.abs()));
+                    let across = [m.bmin.x.abs(), m.bmax.x.abs(), m.bmin.z.abs(), m.bmax.z.abs()].into_iter().fold(0.0f32, f32::max);
+                    f64::from(across) * s / self.unit()
+                });
+                [f64::from(p.x), f64::from(p.z), radius]
+            })
+            .collect()
+    }
+
+    /// What the rules' layer is made from, hashed: the rules' text, the texture groups, the heights as they show, what the distances
+    /// measure to (the water, the buildings, the roads' layers).
     fn texture_rules_signature(&mut self) -> Option<u64> {
+        let inputs = self.texture_rules_inputs();
         let rules = self.project.texture_rules.as_ref()?;
         let hf = self.project.height.as_ref()?;
         let version = hf.version();
@@ -61,6 +152,17 @@ impl Tile {
 
         eat(&self.texture_rules_heights.1.to_le_bytes());
         eat(&self.project.unit_scale.to_le_bytes());
+        eat(&inputs.hash.to_le_bytes());
+        if Feature::Road.used(&rules.rules)
+            && let Some(s) = self.project.layers.as_ref().and_then(|l| l.blend.as_ref())
+        {
+            // A road's layer is named by what it was made from (`roads.rs`): its owner says when it changed.
+            for l in s.layers.iter().filter(|l| l.owner.starts_with("road:")) {
+                eat(l.owner.as_bytes());
+                eat(&[u8::from(l.visible)]);
+            }
+        }
+
         Some(h)
     }
 
@@ -126,6 +228,7 @@ impl Tile {
     /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
     fn start_texture_rules(&mut self, signature: u64) -> Result<(), String> {
         let groups = self.texture_group_slots();
+        let inputs = self.texture_rules_inputs();
         let p = &mut self.project;
         p.load_blend()?;
         let rules = p.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
@@ -141,6 +244,26 @@ impl Tile {
         let job = super::jobs::Job::spawn("texture rules", move || {
             wce_foundation::wce_prof!("tile.texture_rules");
             blend.layers.retain(|l| !l.owner.starts_with(OWNER));
+            let mut fields = fields;
+            if let Some(water) = &inputs.water {
+                let mask = texture_rules::water_mask(water, &fields, bw, bh, ppm, border);
+                fields = fields.with_distances(Feature::Water, Distances::from_mask(bw, bh, ppm, &mask));
+            }
+
+            if let Some(buildings) = &inputs.buildings {
+                let mask = texture_rules::disc_mask(buildings, bw, bh, ppm, border);
+                fields = fields.with_distances(Feature::Building, Distances::from_mask(bw, bh, ppm, &mask));
+            }
+
+            if Feature::Road.used(&rules) {
+                let empty = |p: &[u16]| p.iter().all(|&v| v == 0);
+                let mask = (0..bh)
+                    .flat_map(|y| (0..bw).map(move |x| (x, y)))
+                    .map(|(x, y)| blend.owned_at("road:", x, y, empty))
+                    .collect::<Vec<_>>();
+                fields = fields.with_distances(Feature::Road, Distances::from_mask(bw, bh, ppm, &mask));
+            }
+
             let id = blend.add(id, "Texture rules", &owner_of(signature));
             texture_rules::generate(&rules, &groups, &fields, ppm, [0, 0, bw, bh], &mut |x, y, px| blend.put(id, x, y, &px));
             blend
