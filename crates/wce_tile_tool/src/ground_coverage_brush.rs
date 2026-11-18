@@ -37,6 +37,10 @@ pub(crate) struct BrushBase {
     sizes: HashMap<String, RockSize>,
     params: Params,
     classified: Classified,
+
+    /// Around buildings: the buildings and the rules.
+    targets: Vec<wce_tile::ground_coverage::Target>,
+    clutter: Vec<wce_tile::ground_coverage::ClutterRule>,
 }
 
 /// The tile and its version, the kind, the parameters' text and the sets' names a base was worked out for.
@@ -56,8 +60,8 @@ impl BrushBase {
             rock_size: size,
             params: self.params,
             seed: 0,
-            targets: &[],
-            clutter: &[],
+            targets: &self.targets,
+            clutter: &self.clutter,
         }
     }
 
@@ -101,17 +105,25 @@ impl TileTool {
         let id = document_id(e).ok_or("no tile is open")?;
         let version = document(e).ok_or("no tile is open")?.history().version();
         let c = &self.coverage;
-        let key = (id, version, c.kind, c.params.to_text(), c.rocks.clone(), c.plants.clone());
+        let clutter_text = wce_tile::ground_coverage::ClutterDef::list_to_text(&c.clutter);
+        let key = (id, version, c.kind, c.params.to_text(), format!("{}\n{clutter_text}", c.rocks), c.plants.clone());
         if self.coverage.base.as_ref().is_some_and(|b| b.key == key) {
             return Ok(());
         }
 
         let (rocks, plants) = self.coverage_sets(e)?;
+        let clutter = self.clutter_rules(e)?;
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
         let d = document(e).ok_or("no tile is open")?;
         let started = std::time::Instant::now();
-        let (grid, blockers, sizes, _) = crate::ground_coverage_panel::tile_base(d, &rocks, &categories);
+        let (grid, blockers, sizes, _) =
+            crate::ground_coverage_panel::tile_base(d, &crate::ground_coverage_panel::with_clutter(&rocks, &clutter), &categories);
+        let targets = if self.coverage.kind == Kind::Buildings {
+            d.coverage_targets(&|k: &str| categories.get(&k.to_lowercase()).cloned())
+        } else {
+            vec![]
+        };
         let mut base = BrushBase {
             key,
             kind: self.coverage.kind,
@@ -123,6 +135,8 @@ impl TileTool {
             sizes,
             params: self.coverage.params,
             classified: Classified::default(),
+            targets,
+            clutter,
         };
         let size = |k: &str| base.size(k);
         let classified = classify(&base.input(&size));
