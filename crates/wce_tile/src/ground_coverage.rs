@@ -99,6 +99,11 @@ pub struct Params {
 
     /// Coast and banks: metres under the water the waterline band goes (rocks only: half sunk ones in the shallows).
     pub water_below: f32,
+
+    /// Around buildings: metres between a building's footprint and its ring, the ring's width, and the most props a building gets.
+    pub ring_gap: f32,
+    pub ring_width: f32,
+    pub max_per_building: f32,
 }
 
 impl Default for Params {
@@ -129,6 +134,9 @@ impl Default for Params {
             sea_margin: 1.0,
             water_reach: 6.0,
             water_below: 0.6,
+            ring_gap: 0.5,
+            ring_width: 3.0,
+            max_per_building: 6.0,
         }
     }
 }
@@ -146,16 +154,21 @@ pub enum Kind {
 
     /// The no-go ground by a river or a water plane (stage B's water map): bands from the nearest water's surface.
     Riverbank,
+
+    /// A ring around each building a clutter rule matches (`Input::targets`, `Input::clutter`; docs/plans/auto_detail.md, B): props from
+    /// the rule's set, all around (the user clears doors).
+    Buildings,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 3] = [Kind::Cliffs, Kind::Coast, Kind::Riverbank];
+    pub const ALL: [Kind; 4] = [Kind::Cliffs, Kind::Coast, Kind::Riverbank, Kind::Buildings];
 
     pub fn name(self) -> &'static str {
         match self {
             Kind::Cliffs => "cliffs",
             Kind::Coast => "coast",
             Kind::Riverbank => "riverbank",
+            Kind::Buildings => "buildings",
         }
     }
 
@@ -165,7 +178,7 @@ impl Kind {
 
     /// Whether its bands are measured from water (the waterline band reaches under it).
     pub fn by_water(self) -> bool {
-        self != Kind::Cliffs
+        matches!(self, Kind::Coast | Kind::Riverbank)
     }
 }
 
@@ -184,6 +197,18 @@ impl Params {
                 ..Self::default()
             },
             Kind::Riverbank => Self { min_rise: 0.5, min_area: 10.0, foot_up: 1.5, foot_out: 2.0, water_reach: 4.0, ..Self::default() },
+
+            // Props stand on the ground, upright, whole.
+            Kind::Buildings => Self {
+                rock_density_foot: 1.0 / 12.0,
+                rock_density_face: 0.0,
+                plant_density: 0.0,
+                seat: Seat::Centre,
+                sink: 0.0,
+                min_visible: 1.0,
+                building_clearance: 0.5,
+                ..Self::default()
+            },
         }
     }
 }
@@ -241,7 +266,7 @@ impl Params {
         p
     }
 
-    const NAMES: [&'static str; 26] = [
+    const NAMES: [&'static str; 29] = [
         "slope_deg",
         "min_rise",
         "min_area",
@@ -268,6 +293,9 @@ impl Params {
         "sea_margin",
         "water_reach",
         "water_below",
+        "ring_gap",
+        "ring_width",
+        "max_per_building",
     ];
 
     fn numbers(&self) -> Vec<(&'static str, f32)> {
@@ -303,6 +331,9 @@ impl Params {
             "sea_margin" => &mut self.sea_margin,
             "water_reach" => &mut self.water_reach,
             "water_below" => &mut self.water_below,
+            "ring_gap" => &mut self.ring_gap,
+            "ring_width" => &mut self.ring_width,
+            "max_per_building" => &mut self.max_per_building,
             _ => return None,
         })
     }
@@ -451,6 +482,89 @@ pub struct Input<'a> {
     pub rock_size: &'a dyn Fn(&str) -> RockSize,
     pub params: Params,
     pub seed: u64,
+
+    /// Around buildings: the tile's real buildings (each a ring's centre if a rule matches it, and every one kept clear of), and the
+    /// rules. Empty for the other kinds.
+    pub targets: &'a [Target],
+    pub clutter: &'a [ClutterRule],
+}
+
+/// A building, for the clutter around it: its key and category, where it stands (metres), its turn (its local x axis's direction in
+/// the world, x and z, unit length) and its footprint in its own frame (metres: x from, x to, z from, z to; scaled).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Target {
+    pub key: String,
+    pub category: String,
+    pub x: f32,
+    pub z: f32,
+    pub axis: (f32, f32),
+    pub rect: [f32; 4],
+}
+
+impl Target {
+    /// Metres from a point to the footprint (0 inside).
+    #[must_use]
+    pub fn distance(&self, x: f32, z: f32) -> f32 {
+        let (dx, dz) = (x - self.x, z - self.z);
+        let (ax, az) = self.axis;
+        // The local z axis is the local x axis turned a quarter (x, z) -> (-z, x), as the world's.
+        let (lx, lz) = (dx * ax + dz * az, -dx * az + dz * ax);
+        let [x0, x1, z0, z1] = self.rect;
+        let ox = (x0 - lx).max(lx - x1).max(0.0);
+        let oz = (z0 - lz).max(lz - z1).max(0.0);
+        ox.hypot(oz)
+    }
+
+    /// The radius of the footprint's farthest corner from the building's origin.
+    #[must_use]
+    pub fn reach(&self) -> f32 {
+        let [x0, x1, z0, z1] = self.rect;
+        x0.abs().max(x1.abs()).hypot(z0.abs().max(z1.abs()))
+    }
+}
+
+/// A clutter rule: the buildings it matches (key patterns with `*`, several separated by `|`, any case; or categories, `|` too) and the
+/// props it puts around them (a building set: the caller's from a set file or from keys). The first rule matching a building is its.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ClutterRule {
+    pub name: String,
+    pub patterns: String,
+    pub categories: String,
+    pub set: VegetationSet,
+}
+
+impl ClutterRule {
+    /// Whether it matches a building.
+    #[must_use]
+    pub fn matches(&self, key: &str, category: &str) -> bool {
+        let any = |list: &str, f: &dyn Fn(&str) -> bool| list.split('|').map(str::trim).filter(|p| !p.is_empty()).any(f);
+        any(&self.patterns, &|p| glob(p, key)) || any(&self.categories, &|c| c.eq_ignore_ascii_case(category))
+    }
+}
+
+/// Whether a key matches a pattern of `*`s (any run, empty too) and plain text, any case.
+#[must_use]
+pub fn glob(pattern: &str, key: &str) -> bool {
+    let (p, k) = (pattern.to_lowercase(), key.to_lowercase());
+    let parts = p.split('*').collect::<Vec<_>>();
+    if parts.len() == 1 {
+        return p == k;
+    }
+
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !k.starts_with(first) || !k[first.len()..].ends_with(last) || k.len() < first.len() + last.len() {
+        return false;
+    }
+
+    let mut rest = &k[first.len()..k.len() - last.len()];
+    for part in &parts[1..parts.len() - 1] {
+        match rest.find(part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+
+    true
 }
 
 /// Why a differential was left alone, or that it was not.
@@ -499,6 +613,10 @@ pub struct Differential {
     /// How many buildings it goes around.
     pub avoided: usize,
 
+    /// Around buildings: the clutter rule of its building (`Input::clutter`), and the building (`Input::targets`).
+    pub rule: Option<usize>,
+    pub target: Option<usize>,
+
     /// The exclusion polygons around its plants (x, z), counter-clockwise seen from above (+y).
     pub exclusions: Vec<Vec<(f32, f32)>>,
 }
@@ -518,6 +636,9 @@ pub struct Classified {
 
     /// Each cell's band in a kept differential: [`Band::None`] out of them.
     band: Vec<Band>,
+
+    /// Around buildings: each band cell's region (`regions`' index), `NONE` elsewhere.
+    owner: Vec<usize>,
 }
 
 /// A cell's band.
@@ -540,7 +661,9 @@ impl Classified {
 /// Finds the differentials of the grid and what goes on them.
 pub fn generate(input: &Input) -> Vec<Differential> {
     let mut c = classify(input);
-    let buildings = Buildings::new(input.blockers, input.params.building_clearance);
+    // Around buildings the rings already keep off every footprint (as rectangles: the blockers' circles would cover the rings).
+    let blockers = if input.kind == Kind::Buildings { &[][..] } else { input.blockers };
+    let buildings = Buildings::new(blockers, input.params.building_clearance);
     let keep_off = Buildings::new(input.keep_off, 0.0);
 
     // 5 and 6. What goes on the kept ones.
@@ -558,6 +681,10 @@ pub fn classify(input: &Input) -> Classified {
     let n = g.nx * g.nz;
     if g.nx < 3 || g.nz < 3 || g.heights.len() != n {
         return Classified::default();
+    }
+
+    if input.kind == Kind::Buildings {
+        return classify_buildings(input);
     }
 
     // 1. The kind's cells, closed, in regions; the height each cell's bands are measured from (its base); and the cells left to another kind.
@@ -707,7 +834,84 @@ pub fn classify(input: &Input) -> Classified {
         }
     }
 
-    Classified { regions, base, band }
+    Classified { regions, base, band, owner: vec![] }
+}
+
+/// Around buildings: a region per building a rule matches, its foot band the ring `ring_gap` .. `ring_gap + ring_width` out of its
+/// footprint, less the cells within `ring_gap` of any building's footprint (its neighbours').
+fn classify_buildings(input: &Input) -> Classified {
+    let g = input.grid;
+    let p = &input.params;
+    let n = g.nx * g.nz;
+    let mut owner = vec![NONE; n];
+    let mut regions: Vec<Differential> = vec![];
+    let mut taken = vec![false; n];
+    let (gap, width) = (p.ring_gap.max(0.0), p.ring_width.max(g.cell * 0.5));
+
+    // Every building's own ground and gap first: no ring goes there.
+    let cells_near = |t: &Target, out: f32| {
+        let reach = t.reach() + out;
+        let x0 = (((t.x - reach - g.x0) / g.cell).floor().max(0.0) as usize).min(g.nx - 1);
+        let x1 = (((t.x + reach - g.x0) / g.cell).ceil().max(0.0) as usize).min(g.nx - 1);
+        let z0 = (((t.z - reach - g.z0) / g.cell).floor().max(0.0) as usize).min(g.nz - 1);
+        let z1 = (((t.z + reach - g.z0) / g.cell).ceil().max(0.0) as usize).min(g.nz - 1);
+        (z0..=z1).flat_map(move |z| (x0..=x1).map(move |x| z * g.nx + x))
+    };
+    for t in input.targets {
+        for i in cells_near(t, gap) {
+            let (x, z) = g.at(i);
+            if t.distance(x, z) < gap {
+                taken[i] = true;
+            }
+        }
+    }
+
+    for (ti, t) in input.targets.iter().enumerate() {
+        let Some(rule) = input.clutter.iter().position(|r| r.matches(&t.key, &t.category)) else { continue };
+        let mut foot = vec![];
+        for i in cells_near(t, gap + width) {
+            let (x, z) = g.at(i);
+            let d = t.distance(x, z);
+            if d >= gap && d <= gap + width && !taken[i] && owner[i] == NONE {
+                foot.push(i);
+            }
+        }
+
+        let r = regions.len();
+        for &i in &foot {
+            owner[i] = r;
+        }
+
+        foot.sort_unstable();
+        let area = foot.len() as f32 * g.cell * g.cell;
+        regions.push(Differential {
+            number: r + 1,
+            state: Some(if foot.is_empty() { State::TooSmall(0.0) } else { State::Kept }),
+            area,
+            cells: foot.clone(),
+            foot,
+            rule: Some(rule),
+            target: Some(ti),
+            ..Default::default()
+        });
+    }
+
+    let mut band = vec![Band::None; n];
+    for d in &regions {
+        for &i in &d.foot {
+            band[i] = Band::Foot;
+        }
+    }
+
+    Classified { regions, base: g.heights.clone(), band, owner }
+}
+
+/// The props of a region: its rule's set around buildings, the rock set otherwise.
+fn rock_set<'a>(input: &'a Input, region: Option<&Differential>) -> &'a VegetationSet {
+    match region.and_then(|d| d.rule).and_then(|r| input.clutter.get(r)) {
+        Some(rule) if input.kind == Kind::Buildings => &rule.set,
+        _ => input.rocks,
+    }
 }
 
 /// Rocks and plants thrown into the band cells within `radius` of `at` (the brush's dab), up to the preset's densities (times `factor`)
@@ -755,6 +959,27 @@ pub fn scatter(
     };
 
     let mut out_rocks = vec![];
+    if input.kind == Kind::Buildings {
+        // Each band cell's building's props, as many as the density over the cells under the circle, apart from what is there.
+        let cells = cells(&[Band::Foot]);
+        let count = wanted(&cells, &[Band::Foot], p.rock_density_foot, rocks);
+        let size = |key: &str| (input.rock_size)(key).radius;
+        let mut tries = count * 20;
+        while out_rocks.len() < count && tries > 0 && !cells.is_empty() {
+            tries -= 1;
+            let at = rnd.point_in(g, &cells);
+            let region = g.index_of(at.0, at.1).and_then(|i| c.owner.get(i).copied()).filter(|&r| r != NONE);
+            let set = rock_set(input, region.and_then(|r| c.regions.get(r)));
+            let none = Buildings::new(&[], 0.0);
+            if let Some(r) = throw_rock(input, set, &none, &Buildings::new(&taken, 0.0), &mut rnd, at, p.rock_scale_foot) {
+                taken.push(Blocker { x: r.x, z: r.z, radius: size(&r.key) * r.scale });
+                out_rocks.push(r);
+            }
+        }
+
+        return (out_rocks, vec![]);
+    }
+
     if !input.rocks.entries.is_empty() {
         for (bands, density, range) in [
             (&[Band::Foot, Band::Wet][..], p.rock_density_foot, p.rock_scale_foot),
@@ -767,7 +992,7 @@ pub fn scatter(
 
             for _ in 0..wanted(&cells, bands, density, rocks) {
                 let at = rnd.point_in(g, &cells);
-                if let Some(r) = throw_rock(input, &buildings, &Buildings::new(&taken, 0.0), &mut rnd, at, range) {
+                if let Some(r) = throw_rock(input, input.rocks, &buildings, &Buildings::new(&taken, 0.0), &mut rnd, at, range) {
                     out_rocks.push(r);
                 }
             }
@@ -803,6 +1028,7 @@ pub fn scatter(
 /// or is off the tile.
 fn throw_rock(
     input: &Input,
+    set: &VegetationSet,
     buildings: &Buildings,
     keep_off: &Buildings,
     rnd: &mut Random,
@@ -811,7 +1037,7 @@ fn throw_rock(
 ) -> Option<Placed> {
     let g = input.grid;
     let p = &input.params;
-    let entry = input.rocks.pick(rnd.unit())?;
+    let entry = set.pick(rnd.unit())?;
     let own = entry.scale.map_or(1.0, |r| rnd.range(r));
     let scale = rnd.range(range) * own;
     let scale = if p.scale_rocks { scale } else { 1.0 };
@@ -925,6 +1151,9 @@ fn features(input: &Input) -> Option<Features> {
             let base = (0..n).map(|i| if far[i] == NONE { g.heights[i] } else { surface(far[i]) }).collect();
             Some(Features { mask, base, others: vec![false; n] })
         }
+
+        // Its own classification (`classify_buildings`).
+        Kind::Buildings => None,
     }
 }
 
@@ -1119,17 +1348,31 @@ fn populate(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[
     let mut rnd = Random::new(input.seed ^ (d.number as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
     let area = |cells: &[usize]| cells.len() as f32 * g.cell * g.cell;
 
-    // Rocks: at the foot (by the water, in the shallows too) and on the face, standing on the ground under them and sunk into it.
+    // Rocks: at the foot (by the water, in the shallows too) and on the face, standing on the ground under them and sunk into it. Around
+    // buildings, the rule's props, apart from each other, no more than the cap.
+    let set = rock_set(input, Some(d));
+    let props = input.kind == Kind::Buildings;
     let shore = d.foot.iter().chain(&d.wet).copied().collect::<Vec<_>>();
     for (cells, density, range) in [(&shore, p.rock_density_foot, p.rock_scale_foot), (&d.face, p.rock_density_face, p.rock_scale_face)] {
-        if cells.is_empty() || input.rocks.entries.is_empty() {
+        if cells.is_empty() || set.entries.is_empty() {
             continue;
         }
 
-        let count = (area(cells) * density).round() as usize;
-        for _ in 0..count {
+        let mut count = (area(cells) * density).round() as usize;
+        if props {
+            count = count.min(p.max_per_building.max(0.0) as usize);
+        }
+
+        let mut tries = if props { count * 20 } else { count };
+        while d.rocks.len() < count && tries > 0 {
+            tries -= 1;
             let at = rnd.point_in(g, cells);
-            if let Some(r) = throw_rock(input, buildings, keep_off, &mut rnd, at, range) {
+            if let Some(r) = throw_rock(input, set, buildings, keep_off, &mut rnd, at, range) {
+                let radius = |r: &Placed| (input.rock_size)(&r.key).radius * r.scale;
+                if props && d.rocks.iter().any(|o| (o.x - r.x).hypot(o.z - r.z) < radius(o) + radius(&r)) {
+                    continue;
+                }
+
                 d.rocks.push(r);
             }
         }
@@ -1307,6 +1550,8 @@ mod tests {
             keep_off: &[],
             params: Params::default(),
             seed,
+            targets: &[],
+            clutter: &[],
         })
     }
 
@@ -1419,6 +1664,8 @@ mod tests {
             keep_off: &[],
             params,
             seed: 5,
+            targets: &[],
+            clutter: &[],
         });
         assert!(out.iter().flat_map(|d| &d.rocks).any(|r| r.scale != 1.0));
     }
@@ -1447,6 +1694,8 @@ mod tests {
             keep_off: &[],
             params,
             seed: 3,
+            targets: &[],
+            clutter: &[],
         })
     }
 
@@ -1544,6 +1793,8 @@ mod tests {
             rock_size: &size,
             params: Params::default(),
             seed: 1,
+            targets: &[],
+            clutter: &[],
         }
     }
 
@@ -1610,5 +1861,89 @@ mod tests {
     fn a_hull_is_counter_clockwise_and_convex() {
         let hull = convex_hull(vec![(0.0, 0.0), (2.0, 0.0), (1.0, 1.0), (2.0, 2.0), (0.0, 2.0), (1.0, 0.0)]);
         assert_eq!(hull, vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)]);
+    }
+
+    #[test]
+    fn clutter_rules_match_keys_and_categories() {
+        assert!(glob("*house*", "Roman_House_1"));
+        assert!(glob("roman_*_1", "roman_villa_1") && !glob("roman_*_1", "roman_villa_2"));
+        assert!(glob("barrel", "BARREL") && !glob("barrel", "barrels"));
+        assert!(glob("*", "anything") && glob("a*b*c", "axxbyyc") && !glob("a*b*c", "axxc"));
+        let rule = ClutterRule { patterns: "*agora*| *market*".to_owned(), categories: "gate".to_owned(), ..ClutterRule::default() };
+        assert!(rule.matches("greek_agora_2", "generic") && rule.matches("roman_market", "generic"));
+        assert!(rule.matches("wall_gate_a", "gate") && !rule.matches("roman_house", "generic"));
+    }
+
+    #[test]
+    fn a_footprint_turned_with_its_building() {
+        // 6 m along its x, 4 m along its z, turned a quarter: its long side along the world's z.
+        let t = Target { x: 10.0, z: 10.0, axis: (0.0, 1.0), rect: [-3.0, 3.0, -2.0, 2.0], ..Target::default() };
+        assert_eq!(t.distance(10.0, 12.9), 0.0, "inside, along the long side");
+        assert!((t.distance(10.0, 14.0) - 1.0).abs() < 1e-5);
+        assert!((t.distance(13.0, 10.0) - 1.0).abs() < 1e-5, "across the short side");
+        assert!((t.reach() - 13f32.sqrt()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn props_go_in_a_ring_round_the_matched_buildings() {
+        let grid = Grid::sample(0.0, 0.0, 60.0, 60.0, 0.5, |_, _| 2.0);
+        let house = Target {
+            key: "roman_house_1".to_owned(),
+            category: "generic".to_owned(),
+            x: 20.0,
+            z: 20.0,
+            axis: (1.0, 0.0),
+            rect: [-3.0, 3.0, -2.0, 2.0],
+        };
+        let statue = Target {
+            key: "statue".to_owned(),
+            category: "generic".to_owned(),
+            x: 29.0,
+            z: 20.0,
+            axis: (1.0, 0.0),
+            rect: [-1.0, 1.0, -1.0, 1.0],
+        };
+        let barrels = VegetationSet::from_keys("barrels", ["barrel", "crate"]);
+        let rules = [ClutterRule { name: "houses".to_owned(), patterns: "*house*".to_owned(), set: barrels, ..ClutterRule::default() }];
+        let empty = VegetationSet::default();
+        let size = |_: &str| RockSize { radius: 0.4, height: 1.0 };
+        let params = Params { max_per_building: 40.0, rock_density_foot: 0.5, ..Params::for_kind(Kind::Buildings) };
+        let input = Input {
+            kind: Kind::Buildings,
+            grid: &grid,
+            context: None,
+            blockers: &[],
+            keep_off: &[],
+            rocks: &empty,
+            plants: &empty,
+            rock_size: &size,
+            params,
+            seed: 3,
+            targets: &[house.clone(), statue.clone()],
+            clutter: &rules,
+        };
+        let out = generate(&input);
+        assert_eq!(out.len(), 1, "the statue matches no rule");
+        let d = &out[0];
+        assert!(d.kept() && d.rule == Some(0) && d.target == Some(0));
+        assert!(!d.rocks.is_empty() && d.rocks.len() <= 40, "{}", d.rocks.len());
+        for r in &d.rocks {
+            let dist = house.distance(r.x, r.z);
+            assert!((params.ring_gap - 0.5..=params.ring_gap + params.ring_width + 0.5).contains(&dist), "{dist} from the house");
+            assert!(statue.distance(r.x, r.z) >= params.ring_gap - 0.5, "clear of the neighbour");
+            assert!(r.key == "barrel" || r.key == "crate");
+            assert_eq!(r.scale, 1.0);
+            assert!((r.y - 2.0).abs() < 1e-5, "on the ground, not sunk");
+        }
+
+        for (a, ra) in d.rocks.iter().enumerate() {
+            for rb in &d.rocks[a + 1..] {
+                assert!((ra.x - rb.x).hypot(ra.z - rb.z) >= 0.8 - 1e-4, "apart");
+            }
+        }
+
+        // The cap.
+        let capped = generate(&Input { params: Params { max_per_building: 3.0, ..params }, ..input });
+        assert_eq!(capped[0].rocks.len(), 3);
     }
 }

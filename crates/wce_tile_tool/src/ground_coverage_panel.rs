@@ -809,6 +809,8 @@ fn run(
         rock_size: &size,
         params,
         seed,
+        targets: &[],
+        clutter: &[],
     });
     (result, grid, unknown)
 }
@@ -943,6 +945,7 @@ fn kind_title(kind: Kind) -> &'static str {
         Kind::Cliffs => "Inland cliffs",
         Kind::Coast => "Coast",
         Kind::Riverbank => "Riverbanks",
+        Kind::Buildings => "Around buildings",
     }
 }
 
@@ -954,6 +957,7 @@ fn kind_tip(kind: Kind) -> &'static str {
             "The ground by the sea (under 0 m, reached from the tile's edge) that units can't walk; its bands measured from the sea"
         }
         Kind::Riverbank => "The ground by a river or a water plane that units can't walk; its bands measured from the water's surface",
+        Kind::Buildings => "A ring around each building a clutter rule matches (by its key or category), with that rule's props",
     }
 }
 
