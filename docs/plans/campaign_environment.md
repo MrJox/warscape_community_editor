@@ -226,8 +226,8 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   `affected_by_wind`: the campaign's VFX wind (2, 0, 0) units / s in both captures, its direction not traced); the storm clouds'
   `cloud_heavy` (`scene_view_type` 2, SeaColourOverlay: drawn into the overlay, not supported); OnParticleSpawn (the waterfall's
   `vfx_name="3"` names no file: nothing).
-- **Phase 5, settled by the user's captures (2026-11-18; `D:enderdoc\camp_attila_rain_frame64369.rdc` turn 1 over Londinium,
-  `_frame92544` winter over Britain, `_frame94246` winter over the Alps; dumps and scripts in `%TEMP%\wce_scratch\campvfxd2`):**
+- **Phase 5, settled by the user's captures (2026-11-18; `D:\renderdoc\camp_attila_rain_frame64369.rdc` turn 1 over Londinium,
+  `_frame92544` winter over Britain, `_frame94246` winter over the Alps; dumps and scripts in `%TEMP%\wce_scratch\campvfx\rd2`):**
   - The rain is `C_rain gusty`'s `rain_heavy_BTL` at the eye, scale 1, in the campaign world's units (drops 0.75 x 1.4, falling
     20 - 30 a second, the 30-unit recycle box): as the editor draws it. Drops show only 5 - 20 units from the eye.
   - main_attila_map's lighting is spring all year, as decision 1 has it: the winter captures fit `england_sp` / `europe_sp` /
