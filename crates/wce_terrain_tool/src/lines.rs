@@ -20,8 +20,12 @@ const BORDER_FADE: f32 = 0.75;
 const ROUTE_HALF_WIDTH: f32 = 0.05;
 const ROUTE_COLOUR: [f32; 4] = [240.0 / 255.0, 200.0 / 255.0, 20.0 / 255.0, 1.0];
 
-/// What a worker read: the map's factions, the default, and the overlay for the faction asked for.
-type Read = (DocumentId, Result<(Vec<FactionInfo>, Option<String>, CampaignOverlay), String>);
+/// What a worker read: the map's factions, the default, the overlay for the faction asked for, and its fog of war at the start when
+/// asked (`fog_on`).
+type Read = (
+    DocumentId,
+    Result<(Vec<FactionInfo>, Option<String>, CampaignOverlay, Option<wce_terrain_io::attila::shroud::CampaignShroud>), String>,
+);
 
 #[derive(Default)]
 pub(crate) struct CampaignLinesView {
@@ -32,6 +36,9 @@ pub(crate) struct CampaignLinesView {
 
     /// The faction's fog of war at the start, when it is shown (the Terrain panel's switch); none: revealed.
     pub fog: Option<Arc<wce_scene::render_scene::ShroudMap>>,
+
+    /// The Terrain panel's switch: the faction's fog of war at the start (docs/formats/campaign_shroud.md), else revealed (decision 2).
+    pub fog_on: bool,
     rx: Option<Receiver<Read>>,
     next_id: u64,
 }
@@ -43,6 +50,7 @@ impl CampaignLinesView {
         let Some(schema_path) = wce_foundation::settings::rpfm_schema_path(e.game()) else { return };
         let install = e.settings_ref().game_dir();
         let map = map.to_owned();
+        let fog_on = self.fog_on;
         let (tx, rx) = channel();
         self.rx = Some(rx);
         std::thread::spawn(move || {
@@ -54,7 +62,18 @@ impl CampaignLinesView {
                 let (infos, default) = wce_terrain_io::attila::overlay::factions(&schema, &map, &list, &read, &startpos)?;
                 let pick = faction.or_else(|| default.clone());
                 let o = wce_terrain_io::attila::overlay::read(&schema, &map, pick.as_deref(), &list, &read, &startpos)?;
-                Ok((infos, default, o))
+                let fog = if fog_on {
+                    match wce_terrain_io::attila::shroud::read(&schema, &map, pick.as_deref(), &list, &read, &startpos) {
+                        Ok(f) => Some(f),
+                        Err(err) => {
+                            log::warn(format!("terrain: no fog of war: {err}"));
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                Ok((infos, default, o, fog))
             })();
             let _ = tx.send((id, r));
         });
@@ -70,7 +89,7 @@ impl CampaignLinesView {
         }
 
         match r {
-            Ok((infos, _, o)) => {
+            Ok((infos, _, o, fog)) => {
                 log::info(format!(
                     "terrain: the campaign's borders for {}: {} chains, {} trade route segments{}",
                     o.faction,
@@ -83,6 +102,23 @@ impl CampaignLinesView {
                 self.shown = Some((id, o.faction.clone()));
                 self.next_id += 1;
                 e.scene.campaign_lines = Some(Arc::new(scene_lines(&o, map, self.next_id)));
+                // The fog of war: the game's texture (row 0 south), into the scene's shroud.
+                self.fog = fog.map(|f| {
+                    log::info(format!(
+                        "terrain: the fog of war at the start for {}{}",
+                        f.faction,
+                        if f.notes.is_empty() { String::new() } else { format!(" ({})", f.notes.join("; ")) }
+                    ));
+                    Arc::new(wce_scene::render_scene::ShroudMap {
+                        id: self.next_id,
+                        width: f.width as u32,
+                        height: f.height as u32,
+                        pixels: f.pixels,
+                    })
+                });
+                if let Some(s) = e.scene.campaign_shroud.as_mut() {
+                    s.fog.clone_from(&self.fog);
+                }
             }
 
             Err(err) => log::warn(format!("terrain: no campaign borders: {err}")),

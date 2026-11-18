@@ -62,6 +62,14 @@ impl Renderer {
         match &fog {
             Some(f) if self.shroud.fog.as_ref().is_none_or(|(id, _)| *id != f.id) => {
                 let srv = immutable_srv(&self.dev, f.width, f.height, DXGI_FORMAT_A8_UNORM, &f.pixels);
+                wce_foundation::log::info(format!(
+                    "fog of war texture {} uploaded: {} ({} x {}, {} bytes)",
+                    f.id,
+                    srv.is_some(),
+                    f.width,
+                    f.height,
+                    f.pixels.len()
+                ));
                 self.shroud.fog = Some((f.id, srv));
             }
 

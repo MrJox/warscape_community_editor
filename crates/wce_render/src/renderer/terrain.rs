@@ -2197,7 +2197,6 @@ impl Renderer {
         bind_srv(ctx, &res_ps, "s_far_diffuse_map", g.black.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_far_normal_map", g.lf_normal.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_mask_map", snow_layer.as_ref().map_or(g.black.srv.as_ref(), |l| l.mask.as_ref()));
-        bind_srv(ctx, &res_ps, "s_shroud", self.res.white_srv.as_ref());
         bind_srv(ctx, &res_ps, "s_snow_normals", snow.as_ref());
         // The resolve reads its diffuse array only for the mask's layers.
         bind_srv(ctx, &res_ps, "t_diffuse_array", snow_layer.as_ref().map_or(g.diffuse.srv.as_ref(), |l| l.array.as_ref()));
@@ -2207,7 +2206,7 @@ impl Renderer {
         bind_srv(ctx, &res_ps, "s_mid_distance_detail_map_normal", dn.as_ref());
         // The samplers as the terrain shader declares them (fn 0x117000c0): the accumulation maps point / clamp, the detail, far, mask maps
         // and the diffuse array the texture-quality class (anisotropic / wrap); s_snow_normals trilinear / wrap (fn 0x116f7b40). s_shroud
-        // is not declared there (clamp linear here, an all-white map).
+        // is not declared there (clamp linear here: the fog of war, white without one).
         ps_samplers(ctx, &res_ps, &self.states.s_wrap_aniso);
         for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map"] {
             bind_sampler(ctx, &res_ps, n, self.states.s_clamp_point.as_ref());
