@@ -298,6 +298,7 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
    picker then changes the ground and snow only). No "intended season" fallback.
 2. **The shroud plane drawn, fog of war optional**: by default fully revealed (the fog and the scrolling clouds as over explored land);
    a switch shows a faction's shroud at the start (the shroud texture's source to be traced from the startpos).
+   The texture's data side: [campaign_shroud.md](../formats/campaign_shroud.md) (`wce_terrain_io::attila::shroud`).
 3. **Build first, captures later**: Phases 1 and 3 (no captures needed) start; the sky and fog (Phases 2 and 4) are built on the
    Ghidra reading and marked ASSUMPTION until the user's Phase 0 captures settle them.
 4. **First pass**: the view on Attila and TDD (Phases 1 to 4), the weather VFX (Phase 5), Thrones and Rome 2 (Phase 7). Editing
