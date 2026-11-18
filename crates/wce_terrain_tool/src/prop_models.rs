@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_foundation::math::Float4x4;
-use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, DocumentId, EntityId, LayerId, MeshInstance, Payload, SourceRef};
+use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, DocumentId, EntityId, LayerId, MeshInstance, Payload, SourceRef, VfxEmitter};
 use wce_terrain::terry::EntityKind;
 use wce_terrain_editor::MapDocument;
 use wce_tile_editor::tile_document::context::Frame;
@@ -119,21 +119,79 @@ struct Prop {
 /// The key of a prop of the packs' markers.
 const MARKER_KEY: u64 = 1 << 59;
 
+/// The key of a placed effect (its record in `particle_emitter_marker.markers`).
+const EFFECT_KEY: u64 = 1 << 58;
+
+/// A placed effect within this many campaign world units of the camera's target plays (RenderDoc, camp_attila: the game's within
+/// about 80 of the eye active, those 80 - 85 out dying; ASSUMPTION: its rule not traced, the target for the eye).
+const EFFECT_RADIUS: f64 = 80.0;
+
+/// A campaign map's placed effect (`particle_emitter_marker.markers`: the packs', or what BOB makes of the `.terry`'s `ECVFX`): its
+/// effect (`vfx/<effect>.xml`), position and transform in the `.terry`'s frame, scale, seasons (spring 1, summer 2, autumn 4, winter 8).
+struct PlacedEffect {
+    key: u64,
+    at: [f64; 3],
+    effect: String,
+    matrix: [f32; 16],
+    scale: f32,
+    seasons: u32,
+}
+
+/// The effects of a `particle_emitter_marker.markers` (their group's key the effect).
+fn marker_effects(bytes: &[u8]) -> Vec<PlacedEffect> {
+    use wce_formats::markers::{MarkersFile, Value};
+    let Ok(f) = MarkersFile::parse(bytes) else { return vec![] };
+    let mut effect_of = vec![String::new(); f.records.len()];
+    for g in f.groups.iter().flatten() {
+        let key = group_key(&g.key);
+        for &i in &g.indices {
+            if let Some(m) = effect_of.get_mut(i as usize) {
+                m.clone_from(&key);
+            }
+        }
+    }
+
+    effect_of
+        .into_iter()
+        .enumerate()
+        .filter(|(_, n)| !n.is_empty())
+        .filter_map(|(i, effect)| {
+            let fields = f.fields(i).ok()?;
+            let get = |name: &str| fields.iter().find(|(n, _)| *n == name).map(|(_, v)| v);
+            let Some(Value::Matrix(matrix)) = get("transform") else { return None };
+            let scale = match get("scale") {
+                Some(Value::F32(s)) => *s,
+                _ => 1.0,
+            };
+            let seasons = match get("seasons") {
+                Some(Value::U32(s)) => *s,
+                _ => 15,
+            };
+            let at = [f64::from(matrix[12]), f64::from(matrix[13]), f64::from(matrix[14])];
+            Some(PlacedEffect { key: EFFECT_KEY | i as u64, at, effect, matrix: *matrix, scale, seasons })
+        })
+        .collect()
+}
+
+/// A markers group key's text.
+fn group_key(key: &[wce_formats::markers::KeyPart]) -> String {
+    use wce_formats::markers::KeyPart;
+    key.iter()
+        .find_map(|k| match k {
+            KeyPart::Wide(w) => Some(String::from_utf16_lossy(w)),
+            KeyPart::Narrow(n) => Some(String::from_utf8_lossy(n).into_owned()),
+            KeyPart::U32(_) => None,
+        })
+        .unwrap_or_default()
+}
+
 /// The props of a campaign map's `prop_marker.markers` in the packs (records with a `transform`, their group's key the model).
 fn marker_props(bytes: &[u8]) -> Vec<Prop> {
-    use wce_formats::markers::{KeyPart, MarkersFile, Value};
+    use wce_formats::markers::{MarkersFile, Value};
     let Ok(f) = MarkersFile::parse(bytes) else { return vec![] };
     let mut model_of = vec![String::new(); f.records.len()];
     for g in f.groups.iter().flatten() {
-        let key = g
-            .key
-            .iter()
-            .find_map(|k| match k {
-                KeyPart::Wide(w) => Some(String::from_utf16_lossy(w)),
-                KeyPart::Narrow(n) => Some(String::from_utf8_lossy(n).into_owned()),
-                KeyPart::U32(_) => None,
-            })
-            .unwrap_or_default();
+        let key = group_key(&g.key);
         for &i in &g.indices {
             if let Some(m) = model_of.get_mut(i as usize) {
                 m.clone_from(&key);
@@ -181,6 +239,15 @@ pub struct PropModels {
     pub city_count: usize,
     pub tree_count: usize,
 
+    /// The shown map's placed effects (document, `.terry` revision), and the view's season as a bit of their `seasons` (spring 1,
+    /// summer 2, autumn 4, winter 8; the tool sets it); those of the season near the camera are drawn.
+    effects: Option<(DocumentId, u64, Vec<PlacedEffect>)>,
+    pub season_bit: u32,
+    pub effect_count: usize,
+
+    /// The drawn effect nearest the camera's target: its effect and position in the view (`terrain_props`).
+    pub effect_near: Option<(String, [f32; 3])>,
+
     /// Per drawn tree: the file's y and the ground's height in the list's units (the view's over k) (`terrain_props`).
     pub heights: Vec<(f32, f32)>,
 }
@@ -197,6 +264,10 @@ impl Default for PropModels {
             props: None,
             trees: None,
             tree_count: 0,
+            effects: None,
+            season_bit: 2,
+            effect_count: 0,
+            effect_near: None,
             cities: None,
             city_count: 0,
             heights: vec![],
@@ -226,6 +297,7 @@ impl PropModels {
         let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed) * 2 + u64::from(cities_ready);
         // Again as tiles come (in steps: each brings the ground its props stand on).
         let revision = revision * 1_000_003 + (loaded / LOADED_STEP) as u64;
+        let revision = revision * 16 + u64::from(self.season_bit & 15);
         let key = (doc, revision, ((tx / quarter).floor() as i64, (tz / quarter).floor() as i64));
         if self.built == Some(key) {
             return;
@@ -297,6 +369,20 @@ impl PropModels {
             self.props = Some((doc, key.1, list));
         }
 
+        // The placed effects: the `.terry`'s `ECVFX` as BOB exports them (`campaign::particle_markers`), else the packs' file.
+        let terry_rev = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed);
+        if self.effects.as_ref().is_none_or(|(id, rev, _)| *id != doc || *rev != terry_rev) {
+            let (_, name) = crate::tool::map_kind(&d.name);
+            let bytes = match p {
+                Some(p) => wce_terrain_io::attila::campaign::particle_markers(p).ok(),
+                None => e
+                    .files()
+                    .and_then(|f| f.read(&format!("terrain/campaigns/{name}/particle_emitter_marker.markers")).ok())
+                    .map(|b| b.to_vec()),
+            };
+            self.effects = Some((doc, terry_rev, bytes.map_or_else(Vec::new, |b| marker_effects(&b))));
+        }
+
         let r = self.radius_cells * tf.cell;
         let k = (1.0 / tf.unit) as f32;
         // (key, world, payload, the item a click selects).
@@ -335,6 +421,39 @@ impl PropModels {
                 burning: false,
             };
             out.push((prop.key, world, Payload::MeshInstance(mesh), prop.item));
+        }
+
+        // The placed effects of the season near the camera, in the props' frame; their scale in the shaders' units (the renderer's
+        // `scale * units`) is the marker's, as the game's instances (RenderDoc: the instance's scale the marker's). DEVIATION: their snow
+        // and destruction zone flags are not read (every one shows; the snow zone's test not traced).
+        self.effect_count = 0;
+        self.effect_near = None;
+        let mut near = f64::MAX;
+        let effects = self.effects.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
+        for fx in effects {
+            let w = fx.at;
+            if fx.seasons & self.season_bit == 0 || (w[0] - tx).hypot(w[2] - tz) > EFFECT_RADIUS {
+                continue;
+            }
+
+            let (fx_x, fx_z) = tf.to_frame(w[0], w[2]);
+            let mut world = Float4x4::IDENTITY;
+            for row in 0..3 {
+                for col in 0..3 {
+                    world.m[row][col] = fx.matrix[col * 4 + row] * k;
+                }
+            }
+
+            (world.m[0][3], world.m[1][3], world.m[2][3]) = (fx_x as f32, (w[1] / tf.unit) as f32, fx_z as f32);
+            let vfx = VfxEmitter { effect: fx.effect.clone(), scale: fx.scale * k, mesh: None };
+            let dist = (w[0] - tx).hypot(w[2] - tz);
+            if dist < near {
+                near = dist;
+                self.effect_near = Some((fx.effect.clone(), [world.m[0][3], world.m[1][3], world.m[2][3]]));
+            }
+
+            out.push((fx.key, world, Payload::VfxEmitter(vfx), u64::MAX));
+            self.effect_count += 1;
         }
 
         // The forests near the camera: by cells (the trees' own frame), within the same radius.
@@ -497,7 +616,7 @@ impl PropModels {
         });
         e.scene.remove_ranges(&gone);
 
-        self.count = out.len() - self.tree_count - self.city_count;
+        self.count = out.len() - self.tree_count - self.city_count - self.effect_count;
         for (k, world, payload, item) in out {
             if self.drawn.contains_key(&k) {
                 continue;

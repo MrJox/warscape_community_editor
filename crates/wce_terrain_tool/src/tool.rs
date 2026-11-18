@@ -2374,6 +2374,7 @@ impl Tool for TerrainTool {
 
         wce_foundation::wce_prof!("terrain_tool.props");
         let view = &self.view;
+        self.props.season_bit = 1 << ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
         self.props.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), view.tiles_loaded());
     }
 
@@ -2946,8 +2947,8 @@ impl Tool for TerrainTool {
                 r.sort_by(f32::total_cmp);
                 let rq = |f: f32| r.get(((r.len() as f32 * f) as usize).min(r.len().saturating_sub(1))).copied().unwrap_or(0.0);
                 CommandResult::success(format!(
-                    "prop models {}: {} props, {} trees and {} settlement buildings within {} cells (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
-                    if t.props.on { "on" } else { "off" }, t.props.count, t.props.tree_count, t.props.city_count, t.props.radius_cells, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
+                    "prop models {}: {} props, {} trees and {} settlement buildings within {} cells, {} placed effects (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
+                    if t.props.on { "on" } else { "off" }, t.props.count, t.props.tree_count, t.props.city_count, t.props.radius_cells, t.props.effect_count, t.props.effect_near, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
                 ))
             })
         });

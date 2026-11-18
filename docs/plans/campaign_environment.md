@@ -203,6 +203,20 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   Checked: WRE's trade route dashed yellow in the sea west of Rome, its own border orange over the Alps. Left: the sea-region
   borders and three land curves (docs/formats/campaign_borders.md, known gaps); the trade routes' land legs (only the sea legs drawn,
   as the capture shows; the rule not found); a darker block of sea at the overlay's edge near the horizon (the overlay camera's d).
+- **Phase 5, the weather VFX (2026-11-18; investigation and scripts in `%TEMP%\wce_scratch\campvfx`):** the precipitation is the
+  lighting's: each campaign `.lighting` names a `WEATHER definition_name` (`C_rain gusty`, `C_snow stormy`, `dry desert`...; no db
+  table), and the sphere blend (fn 0x11721160) takes the definition of the heaviest input (strict >, the first of a tie; the global's
+  top-up competes), blending only its wind degrees and snowing intensity: as `blend_weighted` already does, so the view's weather
+  follows the spheres (checked: rain off Britain, `england_sp` = `C_rain gusty`). ASSUMPTION: around the camera at scale 1 in the
+  campaign world's units, as the battle's weather node (the particle system already runs in the shaders' units); a rainy capture
+  would settle it. The placed effects: `terrain/campaigns/<map>/particle_emitter_marker.markers` (310 on main_attila: lake fog,
+  waterfalls, mountain clouds, flies, blossom (spring), autumn leaves, the season's cloud banks, rain / storm / snow spots), or the
+  `.terry`'s `ECVFX` through `campaign::particle_markers` (the same bytes as BOB's); drawn by `wce_terrain_tool` `prop_models.rs` as
+  the props (their frame, the marker's scale: RenderDoc, the instance's scale the marker's), of the view's season, within 80 units
+  of the camera's target (ASSUMPTION: the game's activation rule not traced). `campaign_display_emitter_marker.markers` is unused
+  (no reader in the DLL; a leftover). DEVIATION: the snow / destruction zone flags not read. Left: the cloud banks and the rain /
+  storm / snow spots are `burst_rigid` carriers spawning library effects (`property_event OnRigidSpawn`), which the particle runtime
+  does not do yet, so they show nothing; their lightning (`library_campaign_stormclouds`).
 - Open: the fog-of-war switch (decision 2); the overlay camera's d from the game; the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
