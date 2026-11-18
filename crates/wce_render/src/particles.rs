@@ -543,6 +543,26 @@ fn game_rand(state: &mut u32) -> f32 {
     (*state >> 16) as f32 * 1.525_902_2e-5
 }
 
+/// A campaign map's placed effect plays within this many units of the eye and in view: its position within this many times the screen's
+/// half size from the centre, in front of the camera (RenderDoc, five campaign captures: every effect playing within 80 of the eye and
+/// in view, the farthest 79.3 / 75.6 / 80.8, those in view from 83 out stopped, those behind stopped, whatever their CullDistances; the
+/// game's per-frame test not traced: ASSUMPTION per effect, the game's is likely per node of its spatial tree). A stopped effect stops
+/// emitting and its particles live on. The effects rigids start keep playing.
+pub const CAMPAIGN_EFFECT_REACH: f32 = 80.0;
+const CAMPAIGN_EFFECT_SCREEN: f32 = 1.15;
+
+/// Whether a campaign map's placed effect at `p` (game units, from the render origin) plays: in view and within reach of the eye.
+fn campaign_effect_plays(view_proj: &Float4x4, eye: Float3, p: Float3) -> bool {
+    if length(p - eye) > CAMPAIGN_EFFECT_REACH {
+        return false;
+    }
+
+    let m = &view_proj.m;
+    let clip = |r: usize| m[r][0] * p.x + m[r][1] * p.y + m[r][2] * p.z + m[r][3];
+    let w = clip(3);
+    w > 0.0 && (clip(0) / w).abs() <= CAMPAIGN_EFFECT_SCREEN && (clip(1) / w).abs() <= CAMPAIGN_EFFECT_SCREEN
+}
+
 /// What a frame gives the particles.
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
@@ -552,6 +572,10 @@ pub struct Frame {
     pub view: Float4x4,
     pub time: f32,
     pub dt: f32,
+
+    /// A campaign map's view-projection (game units, from the render origin): its placed effects play only in view and near the eye
+    /// ([`CAMPAIGN_EFFECT_REACH`]); none: every placed effect plays.
+    pub campaign_view_proj: Option<Float4x4>,
 
     /// cb_vfx_game_simulation_data (see the wind).
     pub wind_velocity: Float3,
@@ -1982,11 +2006,14 @@ impl ParticleSystem {
                 inst.drift = inst.drift + step;
             }
 
-            // The emitter's culling distance (CullDistances.w): no spawning beyond it.
+            // The emitter's culling distance (CullDistances.w): no spawning beyond it. A campaign map's placed effect (not one a rigid
+            // started: their keys have the top bit) only in view and near the eye.
             let mut cull = [0.0f32; 4];
             d.vec("CullDistances", &mut cull);
             let dist = length(f.eye - inst.pos);
-            if cull[3] > 0.0 && dist > cull[3] {
+            let stopped =
+                inst.key >> 63 == 0 && f.campaign_view_proj.as_ref().is_some_and(|vp| !campaign_effect_plays(vp, f.eye, inst.pos));
+            if stopped || (cull[3] > 0.0 && dist > cull[3]) {
                 inst.st.rate_accum = 0.0;
                 inst.last_spawn = self.clock;
                 continue;

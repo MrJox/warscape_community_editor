@@ -122,9 +122,10 @@ const MARKER_KEY: u64 = 1 << 59;
 /// The key of a placed effect (its record in `particle_emitter_marker.markers`).
 const EFFECT_KEY: u64 = 1 << 58;
 
-/// A placed effect within this many campaign world units of the camera's target plays (RenderDoc, camp_attila: the game's within
-/// about 80 of the eye active, those 80 - 85 out dying; ASSUMPTION: its rule not traced, the target for the eye).
-const EFFECT_RADIUS: f64 = 80.0;
+/// The placed effects within this many campaign world units of the camera's target are handed to the renderer, which plays those in
+/// view within 80 units of the eye (`wce_render::particles::CAMPAIGN_EFFECT_REACH`): the eye is up to some 50 units from the target at
+/// the campaign's zooms.
+const EFFECT_RADIUS: f64 = 130.0;
 
 /// A campaign map's placed effect (`particle_emitter_marker.markers`: the packs', or what BOB makes of the `.terry`'s `ECVFX`): its
 /// effect (`vfx/<effect>.xml`), position and transform in the `.terry`'s frame, scale, seasons (spring 1, summer 2, autumn 4, winter 8).

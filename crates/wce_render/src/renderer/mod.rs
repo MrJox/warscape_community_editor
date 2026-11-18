@@ -2037,6 +2037,7 @@ impl Renderer {
             view: view_m,
             time: time_s,
             dt: self.clock.dt,
+            campaign_view_proj: scene.campaign.then_some(self.camera.cb_view_proj),
             wind_velocity: self.wind.vfx_velocity,
             wind_variance: self.wind.vfx_variance,
             target: self.gbuffer.scene_hdr_rtv(),
