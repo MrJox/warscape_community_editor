@@ -226,44 +226,33 @@ impl Tile {
     }
 
     /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
-    fn start_texture_rules(&mut self, signature: u64) -> Result<(), String> {
+    /// What working out the rules needs, taken now (owned copies): see [`Prepared`].
+    fn prepare_texture_rules(&mut self, rules: Vec<texture_rules::Rule>) -> Result<Prepared, String> {
         let groups = self.texture_group_slots();
         let inputs = self.texture_rules_inputs();
         let p = &mut self.project;
         p.load_blend()?;
-        let rules = p.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
         let (border, ex, ez, mx, mz, unit) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z(), p.unit_scale);
         let (Some(hf), Some(bf)) = (p.height.as_ref(), p.blend.as_ref()) else { return Err("the tile has no height map".to_owned()) };
         let fields = Fields::from_height_field(hf, (mx, mz), unit);
         let (bw, bh) = (bf.width(), bf.height());
         let ppm = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
-        let id = layers.new_id();
-        let mut blend = layers.blend.get_or_insert_with(|| Stack::new(bf)).clone();
-        let before = blend.clone();
+        let blend = layers.blend.get_or_insert_with(|| Stack::new(bf)).clone();
+        Ok(Prepared { rules, groups, inputs, fields, blend, size: (bw, bh), ppm, border })
+    }
+
+    /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
+    fn start_texture_rules(&mut self, signature: u64) -> Result<(), String> {
+        let rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
+        let prepared = self.prepare_texture_rules(rules)?;
+        let id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
+        let before = prepared.blend.clone();
         let job = super::jobs::Job::spawn("texture rules", move || {
             wce_foundation::wce_prof!("tile.texture_rules");
+            let (fields, mut blend) = prepared.fields();
+            let Prepared { rules, groups, size: (bw, bh), ppm, .. } = prepared;
             blend.layers.retain(|l| !l.owner.starts_with(OWNER));
-            let mut fields = fields;
-            if let Some(water) = &inputs.water {
-                let mask = texture_rules::water_mask(water, &fields, bw, bh, ppm, border);
-                fields = fields.with_distances(Feature::Water, Distances::from_mask(bw, bh, ppm, &mask));
-            }
-
-            if let Some(buildings) = &inputs.buildings {
-                let mask = texture_rules::disc_mask(buildings, bw, bh, ppm, border);
-                fields = fields.with_distances(Feature::Building, Distances::from_mask(bw, bh, ppm, &mask));
-            }
-
-            if Feature::Road.used(&rules) {
-                let empty = |p: &[u16]| p.iter().all(|&v| v == 0);
-                let mask = (0..bh)
-                    .flat_map(|y| (0..bw).map(move |x| (x, y)))
-                    .map(|(x, y)| blend.owned_at("road:", x, y, empty))
-                    .collect::<Vec<_>>();
-                fields = fields.with_distances(Feature::Road, Distances::from_mask(bw, bh, ppm, &mask));
-            }
-
             let id = blend.add(id, "Texture rules", &owner_of(signature));
             texture_rules::generate(&rules, &groups, &fields, ppm, [0, 0, bw, bh], &mut |x, y, px| blend.put(id, x, y, &px));
             blend
@@ -330,6 +319,61 @@ impl Tile {
     }
 }
 
+/// What working out the rules needs of a tile, taken on the editor's thread: the rules, the texture group slots, the scene's part of the
+/// distances, the heights, a copy of the blend stack (the roads' layers, and what the job makes the rules' layer in), the blend map's size,
+/// its pixels a metre and the border (metres from the map's corner to the tile's origin).
+struct Prepared {
+    rules: Vec<texture_rules::Rule>,
+    groups: Vec<String>,
+    inputs: Inputs,
+    fields: Fields,
+    blend: Stack<Blend>,
+    size: (u32, u32),
+    ppm: (f64, f64),
+    border: f64,
+}
+
+impl Prepared {
+    /// The heights with the distances the rules use worked out (on the blend map's grid), and the blend stack. Off the editor's thread.
+    fn fields(&self) -> (Fields, Stack<Blend>) {
+        let (bw, bh) = self.size;
+        let (ppm, border) = (self.ppm, self.border);
+        let mut fields = self.fields.clone();
+        if let Some(water) = &self.inputs.water {
+            let mask = texture_rules::water_mask(water, &fields, bw, bh, ppm, border);
+            fields = fields.with_distances(Feature::Water, Distances::from_mask(bw, bh, ppm, &mask));
+        }
+
+        if let Some(buildings) = &self.inputs.buildings {
+            let mask = texture_rules::disc_mask(buildings, bw, bh, ppm, border);
+            fields = fields.with_distances(Feature::Building, Distances::from_mask(bw, bh, ppm, &mask));
+        }
+
+        if Feature::Road.used(&self.rules) {
+            let empty = |p: &[u16]| p.iter().all(|&v| v == 0);
+            let blend = &self.blend;
+            let mask =
+                (0..bh).flat_map(|y| (0..bw).map(move |x| (x, y))).map(|(x, y)| blend.owned_at("road:", x, y, empty)).collect::<Vec<_>>();
+            fields = fields.with_distances(Feature::Road, Distances::from_mask(bw, bh, ppm, &mask));
+        }
+
+        (fields, self.blend.clone())
+    }
+}
+
+/// Where a rule lays its texture, on a grid over the tile without its border (`RuleArea::cells`: row by row along +z).
+pub struct RuleArea {
+    /// The world point of the first cell's centre, the cells' size (metres) and how many there are across (x) and down (z).
+    pub x0: f32,
+    pub z0: f32,
+    pub cell: f32,
+    pub nx: usize,
+    pub nz: usize,
+
+    /// The rule's weight at each cell's centre, 0 .. 1.
+    pub weights: Vec<f32>,
+}
+
 /// Where the rules' layers of two stacks hold samples.
 fn rules_rect(old: &Stack<Blend>, new: &Stack<Blend>) -> Option<[u32; 4]> {
     old.layers
@@ -369,6 +413,70 @@ impl TileDocument {
         let t = self.tile_mut();
         t.sync_terrain_layers();
         t.refresh_texture_rules_with(true);
+    }
+
+    /// Where one of a set of rules (`index`) lays its texture, at its own weight (as though it were alone; not what it shows under later
+    /// rules), on a grid of `cell` metres over the tile. Worked out now, on the editor's thread: the window's outline of the selected rule.
+    ///
+    /// # Errors
+    ///
+    /// No such rule, or the tile has no height or blend map.
+    pub fn texture_rule_area(&mut self, rules: &[texture_rules::Rule], index: usize, cell: f32) -> Result<RuleArea, String> {
+        let rule = rules.get(index).ok_or_else(|| format!("no rule {index}"))?.clone();
+        let t = self.tile_mut();
+        let (ex, ez) = (t.project.extent_x() as f32, t.project.extent_z() as f32);
+        let prepared = t.prepare_texture_rules(vec![rule.clone()])?;
+        let (fields, _) = prepared.fields();
+        let border = prepared.border;
+        let cell = cell.max(0.25);
+        let (nx, nz) = ((ex / cell).floor() as usize + 1, (ez / cell).floor() as usize + 1);
+        let weights = (0..nz)
+            .flat_map(|z| (0..nx).map(move |x| (x, z)))
+            .map(|(x, z)| {
+                let (wx, wz) = (f64::from(x as f32 * cell) + border, f64::from(z as f32 * cell) + border);
+                rule.weight(&fields, wx, wz) as f32
+            })
+            .collect();
+        Ok(RuleArea { x0: 0.0, z0: 0.0, cell, nx, nz, weights })
+    }
+
+    /// What the rules' layer holds: the share of the blend map it covers, and of that each texture group's share (by the tile's slot names),
+    /// the most first. `None` without the layer.
+    #[must_use]
+    pub fn texture_rules_summary(&self) -> Option<String> {
+        let s = self.project().layers.as_ref()?.blend.as_ref()?;
+        let id = s.layers.iter().find(|l| l.owner.starts_with(OWNER))?.id;
+        let (w, h) = s.size();
+        let mut px = [0u16; 16];
+        let (mut cover, mut groups) = (0.0f64, [0.0f64; 4]);
+        for y in 0..h {
+            for x in 0..w {
+                if s.get(id, x, y, &mut px) {
+                    for (c, &v) in px.iter().enumerate() {
+                        let v = f64::from(v) / 65535.0;
+                        cover += v;
+                        groups[c / 4] += v;
+                    }
+                }
+            }
+        }
+
+        let n = f64::from(w) * f64::from(h);
+        let slots = self.tile().texture_group_slots();
+        let mut parts = groups.iter().copied().enumerate().filter(|&(_, g)| g > 0.0).map(|(i, g)| (g, i)).collect::<Vec<_>>();
+        parts.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let parts = parts
+            .iter()
+            .map(|&(g, i)| format!("{} {:.1} %", slots.get(i).map_or("?", String::as_str), 100.0 * g / cover.max(1e-9)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("texture rules cover {:.1} % of the blend map ({parts})", 100.0 * cover / n.max(1.0)))
+    }
+
+    /// The tile's texture group slot names (red, green, blue, alpha), empty without an entry.
+    #[must_use]
+    pub fn texture_group_slots(&self) -> Vec<String> {
+        self.tile().texture_group_slots()
     }
 
     /// The rules whose texture group the tile does not have (they lay nothing), by name.
