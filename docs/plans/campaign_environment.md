@@ -258,9 +258,10 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   - **The snow masks' names corrected:** stage 0 is `snow_mask_<season>.dds`, stage n `snow_mask_<season><n>.dds` (the weather
     node, fn 0x118f6360; RenderDoc: the game's `s_mask_map` (R8G8 2032 x 1441) equals `snow_mask_wi` in the winter capture at
     stage 0, and is empty on turn 1 in spring: Attila ships no `snow_mask_sp`). The editor used stage + 1 (`snow_mask_sp1` on
-    turn 1): the spring Alps' mask snow is gone, their snowy peaks are the terrain's own. Open: the lighting names still use
-    stage + 1 (`season_candidates`; derived from the masks' old reading): main_attila is unaffected (spring all year, checked),
-    TDD's turn-1 lighting (`europe_sp1`...) would change; to settle with TDD's stage at its start.
+    turn 1): the spring Alps' mask snow is gone, their snowy peaks are the terrain's own. The lighting names now follow the same rule (stage 0 the season's own file, stage n `<season><n>`): TDD ships
+    `europe_sp` and `europe_sp1` to `sp4` (five stages per season, the plain file unreachable with stage + 1), and both its
+    startpos and Attila's start at stage 0 (`WORLD/CLIMATE`, now in the open log): TDD's turn 1 lights with `europe_sp`,
+    `med_sp`, `desert_sp` (was `_sp1`); Attila unchanged.
 - Open: the fog-of-war switch (decision 2); the overlay camera's d from the game; the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
