@@ -3,10 +3,11 @@
 //! - the target: 2048 x 1620 at a 1920 x 1080 screen (ASSUMPTION: 1.5 x the screen, at most 2048), cleared to (0, 0, 0, 1); colour
 //!   SrcAlpha / InvSrcAlpha, alpha Zero / InvSrcAlpha: rgb the overlay's colour over black, a the transmittance (1: nothing drawn); no
 //!   depth;
-//! - the camera: the view's rotation, field of view and aspect (the screen's, not the target's), its eye moved back by d (near + d, far
-//!   - d). The game's d: 1.012 at an eye 9.29 up, 1.690 at 4.85 (not derived; ASSUMPTION here: the eye's height over the sea times the
-//!   cotangent of the view's lowest ray, as far back as the ground the view's bottom edge meets, which fits the closer capture);
-//!   ASSUMPTION: back horizontally along the view (both captures look north: world -z and the view's back are the same);
+//! - the camera: the view's rotation, field of view and aspect (the screen's, not the target's), its eye moved back horizontally by d
+//!   (near + d, far - d): fn 0x11729930. The ray from the eye through the bottom edge's middle on the near plane meets two heights
+//!   ([this + 0x74], [this + 0x70]); the two points, projected on the view's axis (fn 0x116917a0, an unclamped line), are d / 0.7
+//!   apart (`overlay_camera_push`, 0.7). The heights' gap is 8 world units: fitted in five captures (d 0.35 - 1.69 at pitches 31 - 72
+//!   degrees: 7.97 - 8.05; the fields' writer not traced). A level bottom ray (|y| under 1e-6): d 0;
 //! - the rivers: `rigidriver.hlsl` vs30 / ps30 `main_river` (the shadowed pixel shader with shadows on), the tiles' river meshes,
 //!   their vertices (x, y, z, flow sign) (u, v, end fade, across 0 .. 1); the pixel shader lights and fogs the water, its alpha the
 //!   soft edges times the end fade; `s_lf_colour` the map's sea colour, `s_normal` `battleterrain/river/river_normal.dds`;
@@ -30,6 +31,10 @@ const OVERLAY_PS: &str = "dx11_sm_3_0_rigidriver.hlsl_ps_ps30_main_river";
 const OVERLAY_PS_SHADOWS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidriver.hlsl_ps_ps30_main_river";
 const RIVER_NORMAL: &str = "battleterrain/river/river_normal.dds";
 const OVERLAY_MAX: u32 = 2048;
+
+/// The overlay camera's push (`overlay_camera_push`, 0.7) and the gap of the two heights its ray meets (world units; fitted, 8).
+const OVERLAY_PUSH: f32 = 0.7;
+const OVERLAY_HEIGHTS: f32 = 8.0;
 const BORDER_VS: &str = "dx11_sm_3_0_campaignborder.hlsl_vs_vs30_border";
 const BORDER_PS: &str = "dx11_sm_3_0_campaignborder.hlsl_ps_ps30_border";
 
@@ -58,14 +63,17 @@ impl Renderer {
         wce_prof!("render.overlay");
         let (u, o) = (self.camera.units, self.camera.origin);
 
-        // The camera: back by d, horizontally along the view.
+        // The camera: back by d, horizontally along the view (fn 0x11729930): d = push x gap x |(ray_xz . forward_xz) / ray_y|, the ray
+        // from the eye to the near plane's bottom middle (forward - tan(fov / 2) up), in world units, then the scene's.
         let fwd = cam.target - cam.eye;
         let flat = Float3::new(fwd.x, 0.0, fwd.z);
         let len = (flat.x * flat.x + flat.z * flat.z).sqrt();
         let pitch = (-fwd.y).atan2(len);
-        let low = pitch + cam.fov_y * 0.5;
-        let height = (cam.eye.y - o.y).max(0.0);
-        let d = if low > 1.0e-3 && low < std::f32::consts::FRAC_PI_2 { (height / low.tan()).min(cam.zfar * 0.25) } else { 0.0 };
+        let (sin, cos) = pitch.sin_cos();
+        let k = (cam.fov_y * 0.5).tan();
+        // In the view's vertical plane: forward (cos, -sin), up (sin, cos); the ray forward - k up.
+        let (ray_h, ray_y) = (cos - k * sin, -sin - k * cos);
+        let d = if ray_y.abs() > 1.0e-6 { OVERLAY_PUSH * OVERLAY_HEIGHTS * (ray_h * cos / ray_y).abs() / u } else { 0.0 };
         let back = if len > 1.0e-6 { Float3::new(-flat.x / len, 0.0, -flat.z / len) * d } else { Float3::default() };
         let ov = Camera {
             eye: cam.eye + back,

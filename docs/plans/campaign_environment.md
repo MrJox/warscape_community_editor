@@ -262,7 +262,13 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
     `europe_sp` and `europe_sp1` to `sp4` (five stages per season, the plain file unreachable with stage + 1), and both its
     startpos and Attila's start at stage 0 (`WORLD/CLIMATE`, now in the open log): TDD's turn 1 lights with `europe_sp`,
     `med_sp`, `desert_sp` (was `_sp1`); Attila unchanged.
-- Open: the fog-of-war switch (decision 2); the overlay camera's d from the game; the sea-region borders and three land curves;
+- **The overlay camera's back-off, from the game (2026-11-18; fn 0x11729930, `overlay_camera_push` 0.7; scripts
+  `%TEMP%\wce_scratch\ovre`, `camprd\ovcam.py`):** the view's rotation and fov moved back horizontally by d, near + d, far - d;
+  d = 0.7 x 8 x |(ray_xz . forward_xz) / ray_y|, the ray from the eye to the near plane's bottom middle: the distance along the
+  view between where that ray meets two heights 8 apart (their fields' writer not traced: the 8 fitted, 7.97 - 8.05 in the
+  five captures, d 0.35 - 1.69 at pitches 31 - 72 degrees). Now `campaign_overlay.rs`'s (was a guess). The darker rectangular
+  block of sea south-east of Rome is unchanged by it: another cause, open.
+- Open: the fog-of-war switch (decision 2); the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
   15 % longer north to south); the view's lens (the game's 80 degrees); the view streams short of the horizon.
