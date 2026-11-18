@@ -901,9 +901,11 @@ pub fn scan_presets(root: &std::path::Path) -> Vec<Preset> {
     out
 }
 
-/// The kit's names of mud and of rock, the most usual first (its TILES entries).
-const MUD: &str = "mud|mud_a|mud_b";
-const ROCK: &str = "rock|rock_b|mountain";
+/// The kit's names of mud and of rock, the most usual first (its TILES entries). Settlement tiles name their textures `settlement_1..3`:
+/// in every climate's packs 1 is the base ground (grass, dry earth), 2 packed earth or sand, 3 rock, so 2 is their worn ground and 3
+/// their rock.
+const MUD: &str = "mud|mud_a|mud_b|settlement_2";
+const ROCK: &str = "rock|rock_b|mountain|settlement_3";
 
 /// The built-in set `Default`: mud by the water and in hollows, worn ground by roads and buildings, rock on steep ground. The groups are the kit's usual names; a tile without one lays nothing
 /// of that rule.
@@ -1205,5 +1207,13 @@ mod tests {
                 .iter()
                 .all(|r| slot_of(&["grass_a".into(), "grass_b".into(), "mud_a".into(), "rock_b".into()], &r.group).is_some())
         );
+    }
+
+    #[test]
+    fn settlement_groups() {
+        let groups = ["settlement_1", "settlement_2", "settlement_3", "forest"].map(str::to_owned);
+        assert!(missing_groups(&default_rules(), &groups).is_empty());
+        let slots = default_rules().iter().map(|r| slot_of(&groups, &r.group)).collect::<Vec<_>>();
+        assert_eq!(slots, [Some(1), Some(1), Some(1), Some(1), Some(2)]);
     }
 }
