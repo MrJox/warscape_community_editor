@@ -44,6 +44,12 @@ pub fn default_rpfm_schemas_dir() -> Option<PathBuf> {
     }
 
     folders.extend(config.map(|c| c.join("rpfm")));
+    // The Flatpak moves `XDG_CONFIG_HOME` into its own folder: rpfm's is the host's, or that of rpfm's own Flatpak.
+    if let Some(h) = &home {
+        folders.push(h.join(".config/rpfm"));
+        folders.push(h.join(".var/app/io.github.frodo45127.rpfm/config/rpfm"));
+    }
+
     folders.extend(home.map(|h| h.join("Library/Application Support/com.FrodoWazEre.rpfm")));
     folders.into_iter().map(|f| f.join("schemas")).find(|p| p.is_dir())
 }
@@ -60,6 +66,14 @@ static DB_SCHEMAS: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(N
 /// The editor's own schemas folder ([`Paths::schemas_dir`]: what the Update Manager downloads), for [`rpfm_schema_path`]; set by
 /// [`Settings::load`].
 static DOWNLOADED_SCHEMAS: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// The user's tables folder ([`Paths::tables_dir`]), for the tables' readers; set by [`Settings::load`].
+static USER_TABLES: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// The user's tables folder (`<data folder>/tables`: their files over the app's tables), once the settings are loaded.
+pub fn user_tables_dir() -> Option<PathBuf> {
+    USER_TABLES.read().ok().and_then(|d| d.clone())
+}
 
 /// The editor's own schemas folder (the Update Manager's downloads), once the settings are loaded.
 pub fn downloaded_schemas_dir() -> Option<PathBuf> {
@@ -146,6 +160,12 @@ impl Paths {
     /// The rpfm schemas the Update Manager downloads ([`downloaded_schemas_dir`]).
     pub fn schemas_dir(&self) -> PathBuf {
         self.data.join("schemas")
+    }
+
+    /// The user's tables (`tables/<game>/<table>_*.toml`), read over the app's own like the files beside them (`wce_tile::user_files`): the
+    /// place for them where the app's folder can't be written (the Flatpak) or is replaced by an update.
+    pub fn tables_dir(&self) -> PathBuf {
+        self.data.join("tables")
     }
 
     /// Files the editor can rebuild (indices, the map context's terrain).
@@ -626,6 +646,10 @@ impl Settings {
 
         if let Ok(mut dir) = DOWNLOADED_SCHEMAS.write() {
             *dir = Some(paths.schemas_dir());
+        }
+
+        if let Ok(mut dir) = USER_TABLES.write() {
+            *dir = Some(paths.tables_dir());
         }
 
         settings.paths = paths;

@@ -1,7 +1,8 @@
 //! The editor's tables in files (user 2026-11-16: buildings added without a rebuild; distributed with the app, read from its folder): the
 //! road types (`road_dirt`, `road_types.toml`), the road fences (`road_fences.toml`), the wall bases (`wce_walls::profile`, `walls.toml`)
 //! and the bridge bases (`wce_walls::bridge`, `bridges.toml`), one set per game (user 2026-11-16: a game's buildings are not another's):
-//! in the app's `tables/<game key>` folder ([`tables_dir`]; `attila`, `rome_2`, `thrones_of_britannia`).
+//! in the app's `tables/<game key>` folder ([`tables_dir`]; `attila`, `rome_2`, `thrones_of_britannia`). The user's files can also be in
+//! their own `<data folder>/tables/<game key>` (`wce_foundation::settings::user_tables_dir`; the Flatpak's app folder can't be written).
 //!
 //! Each table is its game's file (the vanilla one, `walls.toml`) and every file beside it whose name starts with its name's stem and `_`
 //! (`walls_tdd.toml`, `walls_mine.toml`; user 2026-11-16: a table per mod): each has a top-level `mod_key`, the start of a mod pack's
@@ -17,14 +18,18 @@ use std::sync::{OnceLock, RwLock};
 /// The tables' folder in the app's folder (and in the source tree).
 pub const TABLES_DIR: &str = "tables";
 
-/// The tables' folder: the app's (`<folder of wce.exe>/tables`, as a release has it) where it is there, else the source tree's (a build
-/// run from `target`, on the machine it was built on).
+/// The tables' folder: the app's (`<folder of wce.exe>/tables`, as a release has it; the Flatpak's `/app/share/wce/tables`, beside its
+/// `/app/bin`) where it is there, else the source tree's (a build run from `target`, on the machine it was built on).
 #[must_use]
 pub fn tables_dir() -> PathBuf {
-    let app = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.join(TABLES_DIR)));
+    let bin = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let app = bin.as_ref().map(|b| b.join(TABLES_DIR));
+    let share = bin.as_ref().map(|b| b.join("..").join("share").join("wce").join(TABLES_DIR)).filter(|s| s.is_dir());
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(TABLES_DIR);
-    match app {
-        Some(a) if a.is_dir() || !source.is_dir() => a,
+    match (app, share) {
+        (Some(a), _) if a.is_dir() => a,
+        (_, Some(s)) => s,
+        (Some(a), None) if !source.is_dir() => a,
         _ => source,
     }
 }
@@ -133,7 +138,13 @@ impl<T: Send + Sync + 'static> Registry<T> {
     pub fn load(&self, tables: &Path, game: &str, mods: &[String]) {
         let dir = tables.join(game);
         let vanilla = std::fs::read_to_string(dir.join(self.name)).ok();
-        let extras = extra_files(&dir, self.name, mods);
+        let mut extras = extra_files(&dir, self.name, mods);
+        // The user's own files, in their tables folder (the app's may not be writable), in the names' order with the app's.
+        if let Some(user) = wce_foundation::settings::user_tables_dir().map(|u| u.join(game)).filter(|u| *u != dir) {
+            extras.extend(extra_files(&user, self.name, mods));
+            extras.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+
         let texts = (game.to_owned(), vanilla, extras);
         let mut loaded = self.loaded.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         if loaded.as_ref().is_some_and(|(t, _)| *t == texts) {

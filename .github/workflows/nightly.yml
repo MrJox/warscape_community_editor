@@ -1,5 +1,5 @@
-# Builds a Windows nightly release every day at 02:00 UTC (if there are new commits on master)
-# or on demand via workflow_dispatch.
+# Builds a nightly release every day at 02:00 UTC (if there are new commits on master) or on demand via workflow_dispatch: the Windows zip
+# and the Linux Flatpak, as the release workflow does.
 #
 # Releases are tagged as `v<version>-nightly.YYYYMMDD` and marked as GitHub pre-releases,
 # matching the semver naming convention expected by `crates/wce_updater` when pre-releases are enabled.
@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
+      version: ${{ steps.version.outputs.version }}
+      base_version: ${{ steps.version.outputs.base_version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,27 +62,9 @@ jobs:
             echo "should_build=false" >> "$GITHUB_OUTPUT"
           fi
 
-  windows:
-    name: Windows build
-    needs: check
-    if: needs.check.outputs.should_build == 'true'
-    runs-on: windows-2022
-    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
-
-    env:
-      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
-      CARGO_TARGET_DIR: C:\t
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Compute nightly version and update Cargo.toml
+      - id: version
+        name: Compute the nightly version
+        if: steps.check.outputs.should_build == 'true'
         shell: bash
         run: |
           date=$(date -u +'%Y%m%d')
@@ -97,23 +82,47 @@ jobs:
             nightly_version="${base_version}-nightly.${date}"
           fi
 
-          tag_name="v${nightly_version}"
           echo "Base version: ${base_version}"
           echo "Nightly version: ${nightly_version}"
-          echo "Tag name: ${tag_name}"
+          echo "version=${nightly_version}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=v${nightly_version}" >> "$GITHUB_OUTPUT"
 
-          echo "VERSION=${nightly_version}" >> "$GITHUB_ENV"
-          echo "TAG_NAME=${tag_name}" >> "$GITHUB_ENV"
+      # The Flatpak builds offline: every crate of Cargo.lock as a source (packaging/flatpak/README.md).
+      - name: Make the Flatpak's cargo sources
+        if: steps.check.outputs.should_build == 'true'
+        run: .github/flatpak-cargo-sources.sh
 
-          # Update [workspace.package] version in root Cargo.toml so the built binary knows its nightly version
-          sed -i "s/^version = \"${base_version}\"/version = \"${nightly_version}\"/" Cargo.toml
+      - uses: actions/upload-artifact@v7
+        if: steps.check.outputs.should_build == 'true'
+        with:
+          name: cargo-sources
+          path: packaging/flatpak/cargo-sources.json
 
-          # Verify Cargo.toml was updated
-          updated_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "wce_app") | .version')
-          if [ "${updated_version}" != "${nightly_version}" ]; then
-            echo "::error::Cargo.toml version update failed: expected ${nightly_version}, got ${updated_version}"
-            exit 1
-          fi
+  windows:
+    name: Windows build
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: windows-2022
+    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
+
+    env:
+      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
+      CARGO_TARGET_DIR: C:\t
+      VERSION: ${{ needs.check.outputs.version }}
+      BASE_VERSION: ${{ needs.check.outputs.base_version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # [workspace.package] version, so that the built binary knows its nightly version.
+      - name: Write the nightly version into Cargo.toml
+        shell: bash
+        run: .github/nightly-version.sh "$BASE_VERSION" "$VERSION"
 
       - name: Build
         run: cargo build --release -p wce_app
@@ -125,15 +134,74 @@ jobs:
           $dist = New-Item -ItemType Directory -Force dist
           Copy-Item "$env:CARGO_TARGET_DIR\release\wce.exe" $dist
           Copy-Item README.md, THIRD_PARTY.md $dist
+          # The editor's tables (wall and bridge bases, road fences), read from its folder; users add *_custom.toml beside them.
+          Copy-Item -Recurse tables $dist
           Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
 
-      - name: Publish the nightly release
-        uses: softprops/action-gh-release@v3
+      - uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ env.TAG_NAME }}
+          name: windows
+          path: wce-${{ env.VERSION }}-windows-x64.zip
+
+  flatpak:
+    name: Linux Flatpak
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      BASE_VERSION: ${{ needs.check.outputs.base_version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: cargo-sources
+          path: packaging/flatpak
+
+      # The manifest builds this checkout: the version goes into Cargo.toml (the binary's) and the metainfo.
+      - name: Write the nightly version
+        run: |
+          .github/nightly-version.sh "$BASE_VERSION" "$VERSION"
+          sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"${VERSION}\" date=\"$(date -u +%Y-%m-%d)\"|" \
+            packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.metainfo.xml
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: wce-${{ env.VERSION }}-linux-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.yaml
+          cache-key: flatpak-builder-${{ github.sha }}
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flatpak
+          path: wce-${{ env.VERSION }}-linux-x86_64.flatpak
+
+  publish:
+    name: Publish the nightly release
+    needs: [check, windows, flatpak]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.check.outputs.tag_name }}
           target_commitish: ${{ github.sha }}
-          name: Warscape Community Editor Nightly ${{ env.VERSION }}
-          files: wce-${{ env.VERSION }}-windows-x64.zip
+          name: Warscape Community Editor Nightly ${{ needs.check.outputs.version }}
+          files: |
+            dist/wce-${{ needs.check.outputs.version }}-windows-x64.zip
+            dist/wce-${{ needs.check.outputs.version }}-linux-x86_64.flatpak
           prerelease: true
           make_latest: false
           generate_release_notes: true

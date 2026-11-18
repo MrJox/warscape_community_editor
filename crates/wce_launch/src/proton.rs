@@ -406,13 +406,13 @@ pub fn start(
         command.env_remove(name);
     }
 
-    let child = command
+    command
         .args(args)
         .args(["c:\\windows\\system32\\cmd.exe".to_owned(), "/c".to_owned(), windows_path(&bat)])
         .envs(&launcher.env)
-        .current_dir(game_dir)
-        .spawn()
-        .map_err(|e| format!("{program}: {e}"))?;
+        .current_dir(game_dir);
+    // From the Flatpak, Steam's runtime and Proton run on the host, as Steam runs them.
+    let child = wce_foundation::sandbox::on_host(command).spawn().map_err(|e| format!("{program}: {e}"))?;
     Ok((child, launcher))
 }
 
@@ -420,14 +420,8 @@ pub fn start(
 /// command line; `steam` is Steam's Linux client. None when `/proc` can't be read.
 pub fn processes_running(exes: &[&str]) -> Option<Vec<bool>> {
     let mut found = vec![false; exes.len()];
-    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
-        if !entry.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
-            continue;
-        }
-
-        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else { continue };
-        let Some(program) = cmdline.split(|&b| b == 0).next() else { continue };
-        let program = String::from_utf8_lossy(program).to_lowercase();
+    for program in programs()? {
+        let program = String::from_utf8_lossy(&program).to_lowercase();
         let name = program.rsplit(['/', '\\']).next().unwrap_or_default();
         for (i, exe) in exes.iter().enumerate() {
             let exe = exe.to_lowercase();
@@ -441,6 +435,31 @@ pub fn processes_running(exes: &[&str]) -> Option<Vec<bool>> {
     }
 
     Some(found)
+}
+
+/// The program (the first word of the command line) of every process. The Flatpak's `/proc` has only the sandbox's own: there the host's
+/// shell lists them, each program ended by a NUL as in `cmdline`.
+fn programs() -> Option<Vec<Vec<u8>>> {
+    if wce_foundation::sandbox::flatpak() {
+        let mut list = Command::new("sh");
+        list.args(["-c", r#"for f in /proc/[0-9]*/cmdline; do head -z -n 1 "$f" 2>/dev/null; done"#]);
+        let out = wce_foundation::sandbox::on_host(list).stderr(std::process::Stdio::null()).output().ok()?;
+        return out.status.success().then(|| out.stdout.split(|&b| b == 0).filter(|p| !p.is_empty()).map(<[u8]>::to_vec).collect());
+    }
+
+    let mut programs = Vec::new();
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        if !entry.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+
+        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else { continue };
+        if let Some(program) = cmdline.split(|&b| b == 0).next() {
+            programs.push(program.to_vec());
+        }
+    }
+
+    Some(programs)
 }
 
 #[cfg(test)]

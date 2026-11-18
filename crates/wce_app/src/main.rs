@@ -701,7 +701,7 @@ fn main() {
 
     // After an update: the new build, once this one has let go of its window and device.
     if let Some(exe) = restart
-        && let Err(e) = std::process::Command::new(&exe).spawn()
+        && let Err(e) = wce_editor::updates::restart_command(&exe).spawn()
     {
         log::error(format!("cannot restart {}: {e}", exe.display()));
     }

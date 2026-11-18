@@ -327,7 +327,8 @@ A plain interactive start opens the tool the last interactive session was in (`l
 | log (`last_run.log`) | `~/.local/state/wce` | `%LOCALAPPDATA%\wce\data` | `~/Library/Application Support/wce` |
 
 `$WCE_SETTINGS_DIR` puts everything in one folder instead (settings, data and log in it, caches in its `cache` folder): the scripts run with a throw-away copy that
-way. `$WCE_CACHE_DIR` moves the caches alone.
+way. `$WCE_CACHE_DIR` moves the caches alone. The Flatpak keeps them in its own folder, `~/.var/app/io.github.mrjox.WarscapeCommunityEditor`
+(`config/wce`, `data/wce`, `cache/wce`, `.local/state/wce`): a source build's settings are not shared with it.
 
 `settings.toml` is typed (`Settings`, every field has a default, so a missing key is never an error). Top level: `frame_cap`, `game` (the game being
 edited), `[appearance]` and `[autosave]` ([Autosave](#autosave)); `[games.<id>]` holds a game's `dir`, `assembly_kit` (the folder with `raw_data`; none: the kit found in the game folder), `projects` (none: `<data>/projects/<game>`: `assembly_kit/` holds the editor's tiles in the kit's layout, `loose/` the loose files read before every pack, the UI tool's skins, layouts and pictures), `mod_packs`, `overlay_folders` (until the release, an old `project_dir` is moved into them when the settings load) `export_dirs` (each File > Export entry's last destination) and, until the release, the old `output_dir` (an old top-level one becomes Attila's), kept until its files were offered to the project once (`output_dir_offered`); `[tools.<id>]` is a tool's own table, which

@@ -8,3 +8,5 @@ scratch/
 manifest/
 third_party/_dl/
 /target/
+/packaging/flatpak/cargo-sources.json
+/.flatpak-builder/

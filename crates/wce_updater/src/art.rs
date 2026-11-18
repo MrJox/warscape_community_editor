@@ -561,7 +561,8 @@ fn command(dir: Option<&Path>, args: &[&str]) -> Command {
         c.creation_flags(CREATE_NO_WINDOW);
     }
 
-    c
+    // The Flatpak has no git: the host's runs, with the user's credentials and keys.
+    wce_foundation::sandbox::on_host(c)
 }
 
 fn run(dir: Option<&Path>, args: &[&str], input: Option<&[u8]>) -> Result<String, String> {
