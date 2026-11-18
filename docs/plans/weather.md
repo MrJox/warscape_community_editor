@@ -22,9 +22,8 @@ weather and particle code: docs/plans/weather_current_state.md.
 
 ## Open
 
-1. **VFX editor** (Phase 2 item 4). The VFX tool is still a placeholder (`crates/wce_app/src/tools.rs`, feature `placeholders`); vfx
-   files open as XML documents of the weather tool. Wanted: a tree view of emitters and behaviour chains, a curve editor for
-   `ranged_property`, byte-identical UTF-16 save, a standalone preview scene.
+1. **VFX editor** (Phase 2 item 4): moved to a tool of its own, [vfx_tool.md](vfx_tool.md) (2026-11-18). The Weather tool no longer
+   lists or opens vfx files.
 2. **Campaign mode** (Phase 3): moved to docs/plans/campaign_environment.md (2026-11-16); the list below is its first draft.
    - A campaign camera rig and scale.
    - A campaign test map: a flat plane with random `rigidmodels/campaign` models.
@@ -40,6 +39,6 @@ weather and particle code: docs/plans/weather_current_state.md.
    (docs/re/renderer.md, "Battle fog").
 4. **One panel: everything from the Inspector** (user, 2026-11-13; how to do it is for later). Every edit the Properties panel makes
    reachable from the Inspector, each Inspector section collapsible, so the Properties panel can go. Today only Properties has: the tree
-   of `weather_definitions.xml` and VFX files (picking the element the Inspector edits), structural edits (add, duplicate, move, delete
+   of `weather_definitions.xml` (picking the element the Inspector edits), structural edits (add, duplicate, move, delete
    elements, e.g. a second cloud layer), the elements no section lists (cloud sprites, scene nodes), the attribute filter, the Changes
    tab (per-attribute revert) and Revert all; its Save button repeats File > Save.

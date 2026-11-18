@@ -4,13 +4,14 @@ A tool of its own for `vfx/*.xml` effects, edited visually: the effect plays on 
 spawn shapes and references are handles in the viewport, its curves and colours are drawn and dragged in the Inspector. Before it, VFX files
 were a category of the Weather tool's Files panel, edited as a raw XML tree (docs/plans/weather.md, "Open" item 1).
 
-State: planned 2026-11-18 with the user (decisions below), built on `feature/vfx_tool`. Behind the `vfx` feature of `wce_app`, off by
-default.
+State: planned and built 2026-11-18 with the user (decisions below) on `feature/vfx_tool`, steps 1 to 6 done; user review pending.
+Behind the `vfx` feature of `wce_app`, off by default. What the tool does: [docs/editor.md](../editor.md), "VFX tool".
 
 ## Decisions (user, 2026-11-18)
 
-- **Preview**: the Weather tool's sample map (or the open tile's ground), the effect played at a spot the user moves; lit by the previewed
-  weather (View > Weather preview / the editor's weather preview), else the default day. Camera-following effects play around the camera.
+- **Preview**: the Weather tool's sample map (or the open tile's ground), the effect played at a spot the user moves; lit by the editor's
+  weather preview (the Tile and Terrain tools' weather chips; else the Weather tool's open environment, taken when the tool
+  activates), else the default day. Camera-following effects play around the camera.
 - **Visual editing, all four in the first version**: live playback controls (play, pause, restart, speed, loop), viewport gizmos (the
   spawn area, ring and point, the references' offsets and scale, the spawn direction), curve and colour editors in the Inspector, emitter
   solo / mute (preview only, never written to the file).
@@ -44,8 +45,21 @@ default.
 5. Gizmos: spawn area box, ring, spawn point, emission direction cone; reference offsets and scale; drag to edit.
 6. Docs (docs/editor.md, weather.md, PLAN.md).
 
+## Checked (2026-11-18, scripted runs on vanilla Attila files)
+
+- `burning_entity` (a reference file) and `library_burning_entity` (ten emitters) open, play and list their parts; solo and mute change
+  what plays without touching the file.
+- An attribute edit and a curve edit, undone and redone, saved: the file differs from the pack's in those two spans only (UTF-16,
+  CRLF kept). Duplicate emitter (`embers_copy` with its own stack), delete emitter (its stack goes), a refused chain delete (in use),
+  duplicate chain, undo / redo of them: the saved file is whole.
+- Not checked by a script (no mouse drags in scripts): dragging the ring and box dots and curve keys in the app; the scaling they write
+  is unit-tested (`gizmos.rs`, `curves.rs`).
+
 ## Follow-ups
 
 - New effect from a template; adding a property the file lacks with the engine's default (needs the schema's defaults:
   docs/plans/weather_current_state.md item 5).
+- The box's y size has no handle (edit it in the Inspector).
+- Placed effects all read their definitions again when any open vfx file changes: on a big tile, a drag reloads every effect of the
+  map each frame; reloading only the changed file's would be cheaper.
 - Curve baking is not decoded (weather_current_state.md item 4): the curve editor draws keys joined linearly, as the runtime evaluates them.
