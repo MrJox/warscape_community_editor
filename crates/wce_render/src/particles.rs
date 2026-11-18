@@ -597,6 +597,14 @@ pub struct ParticleSystem {
     world_lights: Vec<WorldLight>,
     world_rigids: Vec<WorldRigid>,
 
+    /// The placed effects as the scene gave them, and the effects their rigids started (`property_event OnRigidSpawn`): per child its
+    /// parent's key and itself. A child stays while its parent does (ASSUMPTION: the game's removal not traced; its instance outlives
+    /// its emitters, docs in the campaign plan). Children of these effect names keep their emitters' LifeTime ([`Self::child_names`]).
+    placed: Vec<WorldEffect>,
+    children: Vec<(u64, WorldEffect)>,
+    child_names: std::collections::BTreeSet<String>,
+    child_seq: u64,
+
     /// The weather's rigid lights (at the camera) and their bursts.
     weather_lights: Vec<RigidBursts>,
 
@@ -705,6 +713,10 @@ impl ParticleSystem {
             world: vec![],
             world_lights: vec![],
             world_rigids: vec![],
+            placed: vec![],
+            children: vec![],
+            child_names: std::collections::BTreeSet::new(),
+            child_seq: 0,
             weather_lights: vec![],
             light_defs: None,
             light_models: BTreeMap::new(),
@@ -1020,7 +1032,23 @@ impl ParticleSystem {
         self.world_rigids.clear();
     }
 
+    /// The scene's placed effects (each frame they change): with the effects their rigids started, while their parent stays.
     pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
+        self.placed = effects.to_vec();
+        // Children in the order they started: a child's parent (a placed effect or an earlier child) is known when it is reached.
+        let mut keys: std::collections::BTreeSet<u64> = effects.iter().map(|fx| fx.key).collect();
+        self.children.retain(|(parent, c)| keys.contains(parent) && keys.insert(c.key));
+        self.apply_world_effects();
+    }
+
+    /// The placed effects and their children into the instances.
+    fn apply_world_effects(&mut self) {
+        let mut all = self.placed.clone();
+        all.extend(self.children.iter().map(|(_, c)| c.clone()));
+        self.load_world_effects(&all);
+    }
+
+    fn load_world_effects(&mut self, effects: &[WorldEffect]) {
         // Definitions no placed effect uses any more are unloaded (a map context's tiles, taken off): every frame's work and the
         // constants rows scale with the loaded ones. The instances, lights and debris of the kept ones follow their new indices.
         let used = effects.iter().map(|fx| fx.effect.as_str()).collect::<std::collections::BTreeSet<_>>();
@@ -1058,7 +1086,15 @@ impl ParticleSystem {
 
         for fx in effects {
             if !self.world_names.contains_key(&fx.effect) {
-                let effect = load_effect_with(&*self.reader, &fx.effect, &mut self.world_libs);
+                let mut effect = load_effect_with(&*self.reader, &fx.effect, &mut self.world_libs);
+                // A started effect's emitters end at their LifeTime (RenderDoc, camp_attila: the cloud children's emitters stopped
+                // after 1.5 - 2 s, their particles thinning, their instances still there 33 s on).
+                if self.child_names.contains(&fx.effect) {
+                    for em in &mut effect.emitters {
+                        em.infinite_life = false;
+                    }
+                }
+
                 for note in &effect.notes {
                     self.error(format!("{}: {note}", fx.effect));
                 }
@@ -1242,10 +1278,64 @@ impl ParticleSystem {
 
         let clock = self.clock;
         let mut out = vec![];
+        // The effects rigids start (`property_event OnRigidSpawn`, fn 0x1187aed0 -> 0x11863820): (parent key, effect, position).
+        let mut started: Vec<(u64, String, Float3)> = vec![];
         for wr in &mut self.world_rigids {
             let def = &self.world_effects[wr.effect].rigids[wr.rigid];
             let d = &def.def;
             wr.bursts.update(d, clock, wr.start);
+
+            // A carrier: each rigid born starts its effect once, at the rigid's spawn point (fn 0x1183fa30: the ring and box offset
+            // times the scale, turned by EmitterRotation, plus SpawnPosition times the scale, turned by the instance, plus its position),
+            // at scale 1 and unturned, not tied to the rigid (action 0; action 1 attaches it: taken as 0, the rigid barely moves). The
+            // carriers have no model: nothing of theirs is drawn.
+            if let Some(ev) = d.event("OnRigidSpawn") {
+                for &(birth, life) in &wr.bursts.rigids {
+                    if birth > clock || wr.live.iter().any(|r| r.birth == birth && r.life == life) {
+                        continue;
+                    }
+
+                    let rng = &mut wr.rng;
+                    let curve = |name: &str, sub: &str| d.curve(name, sub).map_or(0.0, |c| c.eval(0.0));
+                    let blend = game_rand(rng);
+                    let ring = |a: &str, b: &str| lerp(curve("SpawnAreaCurve", a), curve("SpawnAreaCurve", b), blend);
+                    let (inner, outer) = (ring("inner_radius_min", "inner_radius_max"), ring("outer_radius_min", "outer_radius_max"));
+                    let size = [["x_min", "x_max"], ["y_min", "y_max"], ["z_min", "z_max"]]
+                        .map(|[lo, hi]| lerp(curve("SpawnAreaBox", lo), curve("SpawnAreaBox", hi), blend));
+                    let mut arc = [0.0f32, 360.0];
+                    d.vec("SpawnArc", &mut arc);
+                    let angle = lerp(arc[0], arc[1], game_rand(rng)) * PI / 180.0;
+                    let r = lerp(inner, outer, game_rand(rng));
+                    let b = [game_rand(rng), game_rand(rng), game_rand(rng)];
+                    let area = Float3::new(
+                        angle.cos() * r + size[0] * (b[2] - 0.5),
+                        size[1] * (b[1] - 0.5),
+                        angle.sin() * r + size[2] * (b[0] - 0.5),
+                    );
+                    let mut er = [0.0f32; 3];
+                    d.vec("EmitterRotation", &mut er);
+                    let emitter_rot = rotation_z(er[2] * PI / 180.0) * rotation_y(er[1] * PI / 180.0) * rotation_x(er[0] * PI / 180.0);
+                    let mut sp = [0.0f32; 3];
+                    d.vec("SpawnPosition", &mut sp);
+                    let local = rotate(&emitter_rot, area * wr.scale) + Float3::new(sp[0], sp[1], sp[2]) * wr.scale;
+                    started.push((wr.key, ev.vfx_name.clone(), wr.pos + rotate(&wr.rot, local)));
+                    // Marks the rigid as handled.
+                    wr.live.push(RigidParticle {
+                        birth,
+                        life,
+                        pos: wr.pos,
+                        vel: Float3::new(0.0, 0.0, 0.0),
+                        gravity: 0.0,
+                        orientation: [0.0, 0.0, 0.0, 1.0],
+                        axis: Float3::new(0.0, 1.0, 0.0),
+                        spin: 0.0,
+                        scale: 0.0,
+                    });
+                }
+
+                wr.live.retain(|r| wr.bursts.rigids.iter().any(|&(b, l)| b == r.birth && l == r.life));
+                continue;
+            }
 
             // The rigids of new bursts are thrown; those the bursts dropped are gone.
             wr.live.retain(|r| wr.bursts.rigids.iter().any(|&(b, l)| b == r.birth && l == r.life));
@@ -1337,6 +1427,23 @@ impl ParticleSystem {
                 (world.m[0][3], world.m[1][3], world.m[2][3]) = (pos.x, pos.y, pos.z);
                 out.push(EffectRigid { model: def.model.clone(), world });
             }
+        }
+
+        if !started.is_empty() {
+            for (parent, effect, at) in started {
+                if effect.is_empty() {
+                    continue;
+                }
+
+                self.child_seq += 1;
+                let mut world = Float4x4::IDENTITY;
+                (world.m[0][3], world.m[1][3], world.m[2][3]) = (at.x, at.y, at.z);
+                self.child_names.insert(effect.clone());
+                let key = (1 << 63) | self.child_seq;
+                self.children.push((parent, WorldEffect { key, effect, world, scale: 1.0, mesh: None }));
+            }
+
+            self.apply_world_effects();
         }
 
         out

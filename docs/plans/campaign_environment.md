@@ -217,6 +217,15 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   (no reader in the DLL; a leftover). DEVIATION: the snow / destruction zone flags not read. Left: the cloud banks and the rain /
   storm / snow spots are `burst_rigid` carriers spawning library effects (`property_event OnRigidSpawn`), which the particle runtime
   does not do yet, so they show nothing; their lightning (`library_campaign_stormclouds`).
+- **Phase 5, the started effects (2026-11-18; Ghidra fns 0x1187aed0, 0x11863820, 0x1183fa30, 0x11895130):** `property_event`
+  parsed (`VfxProps::events`); a `burst_rigid` carrier with `OnRigidSpawn` starts its `vfx_name` once per rigid born, at the
+  rigid's spawn point (the ring and box offset and SpawnPosition, by the parent's scale and rotation), at scale 1 and unturned, not
+  tied to the rigid (action 0; 1 attaches it, taken as 0); its emitters end at their LifeTime and their particles finish (RenderDoc:
+  the children alive 33 s on, their emitters long stopped); it stays while its parent does (ASSUMPTION: the game's removal not
+  traced). Checked: the spring cloud banks over the Alps north of Rome. Left: the storm and rain clouds' drift (their library
+  `affected_by_wind`: the campaign's VFX wind (2, 0, 0) units / s in both captures, its direction not traced); the storm clouds'
+  `cloud_heavy` (`scene_view_type` 2, SeaColourOverlay: drawn into the overlay, not supported); OnParticleSpawn (the waterfall's
+  `vfx_name="3"` names no file: nothing).
 - Open: the fog-of-war switch (decision 2); the overlay camera's d from the game; the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
