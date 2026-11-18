@@ -118,11 +118,27 @@ fn parse_float4(s: &str, out: &mut [f32; 4]) {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VfxProps {
     pub props: BTreeMap<String, VfxProp>,
+
+    /// Its `<property_event>`s (an emitter's: `OnRigidSpawn`, `OnParticleSpawn`...), of the quality variant chosen, else the base's.
+    pub events: Vec<VfxEvent>,
+}
+
+/// A `<property_event name=".." action=".." vfx_name=".."/>`: an effect (`vfx_name`) the emitter starts on an event.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VfxEvent {
+    pub name: String,
+    pub action: i32,
+    pub vfx_name: String,
 }
 
 impl VfxProps {
     pub fn find(&self, name: &str) -> Option<&VfxProp> {
         self.props.get(name)
+    }
+
+    /// The event of this name.
+    pub fn event(&self, name: &str) -> Option<&VfxEvent> {
+        self.events.iter().find(|e| e.name == name)
     }
 
     /// A non-empty value of a property.
@@ -374,7 +390,22 @@ fn read_props(doc: &XmlDoc, e: usize) -> VfxProps {
     let want = QUALITY.load(std::sync::atomic::Ordering::Relaxed);
     let mut out = VfxProps::default();
     let mut chosen = std::collections::BTreeSet::new();
+    let mut events: Vec<(i32, VfxEvent)> = vec![];
     for &c in &doc.elements()[e].children {
+        if doc.elements()[c].name == "property_event" {
+            let quality = atoi(&doc.get(c, "quality").unwrap_or_else(|| "0".to_owned()));
+            let ev = VfxEvent {
+                name: doc.get(c, "name").unwrap_or_default(),
+                action: atoi(&doc.get(c, "action").unwrap_or_else(|| "0".to_owned())),
+                vfx_name: doc.get(c, "vfx_name").unwrap_or_default(),
+            };
+            if quality == 0 || quality == want {
+                events.push((quality, ev));
+            }
+
+            continue;
+        }
+
         if !matches!(doc.elements()[c].name.as_str(), "property" | "ranged_property" | "texture_property") {
             continue;
         }
@@ -390,6 +421,14 @@ fn read_props(doc: &XmlDoc, e: usize) -> VfxProps {
         }
 
         out.props.insert(name, read_prop(doc, c));
+    }
+
+    // An event of the chosen variant replaces the base's of its name.
+    for (q, ev) in &events {
+        let overridden = *q == 0 && want != 0 && events.iter().any(|(q2, e2)| *q2 == want && e2.name == ev.name);
+        if !overridden {
+            out.events.push(ev.clone());
+        }
     }
 
     out
@@ -512,6 +551,15 @@ mod tests {
     }
 
     /// The properties of the one modifier of a chain written around `body`.
+    #[test]
+    fn property_events() {
+        let f = vfx(r#"<vfx><emitters><emitter id="carrier" type="burst_rigid"><property name="P" quality="0" value="1"/>
+            <property_event name="OnRigidSpawn" quality="0" action="0" vfx_name="library_clouds"/></emitter></emitters></vfx>"#);
+        let ev = f.emitters[0].event("OnRigidSpawn").expect("the event");
+        assert_eq!((ev.action, ev.vfx_name.as_str()), (0, "library_clouds"));
+        assert!(f.emitters[0].event("OnParticleSpawn").is_none());
+    }
+
     fn modifier(body: &str) -> VfxProps {
         let f = vfx(&format!(
             "<vfx><behaviour_chains><behaviour_chain id=\"c\"><modifier fragment=\"m\">{body}</modifier></behaviour_chain></behaviour_chains></vfx>"
