@@ -136,6 +136,19 @@ pub trait Inspector {
     fn plot(&mut self, field: &str, label: &str, series: &[([f32; 4], Vec<f32>)], x_end: &str) {
         let _ = (field, label, series, x_end);
     }
+    /// A curve over 0..1 drawn full width under a label, its keys (t, value) handles: drag a key, double-click empty space to add one,
+    /// right-click a key to remove it (two stay). Values are drawn between `lo` and `hi`; `colour` is the line's RGBA. True on every frame
+    /// the keys changed; `gesture_ended` is true on the frame the drag ends. Nothing by default (false).
+    fn edit_curve(&mut self, field: &str, label: &str, keys: &mut Vec<(f32, f32)>, lo: f32, hi: f32, colour: [f32; 4]) -> bool {
+        let _ = (field, label, keys, lo, hi, colour);
+        false
+    }
+
+    /// A colour ramp under a label, full width: each stop is its position in 0..1 and its RGBA (alpha drawn over a checker). Read only.
+    /// Nothing by default.
+    fn gradient(&mut self, field: &str, label: &str, stops: &[(f32, [f32; 4])]) {
+        let _ = (field, label, stops);
+    }
     fn gesture_ended(&mut self) -> bool;
 
     /// A float in `[lo, hi]`: a number box and a slider (TEd's `DoubleBoxSlider`, the widget of every ranged float property).

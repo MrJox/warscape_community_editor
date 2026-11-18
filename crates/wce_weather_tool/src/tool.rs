@@ -1,10 +1,7 @@
 //! The tool: documents, lighting the scene, the sample map, the Files / Properties / Weather scene panels and the menus.
 
 use std::any::Any;
-use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use wce_editor::editor::Editor;
 use wce_editor::tool::Tool;
@@ -32,11 +29,11 @@ struct Category {
     ext: &'static str,
 }
 
-const CATEGORIES: [Category; 4] = [
+// VFX files are the VFX tool's (docs/plans/vfx_tool.md).
+const CATEGORIES: [Category; 3] = [
     Category { label: "Battle environments", prefix: "", ext: ".environment" },
     Category { label: "Lighting (campaign, porthole)", prefix: "", ext: ".lighting" },
     Category { label: "Weather definitions", prefix: "weather/", ext: ".xml" },
-    Category { label: "VFX", prefix: "vfx/", ext: ".xml" },
 ];
 
 const VIEWS: [(View, &str); 11] = [
@@ -87,9 +84,6 @@ pub(crate) struct Pending {
     value: String,
 }
 
-/// The in-pack files of open documents the particle system reads (vfx/ and weather definitions), so their edits show live.
-type Overlay = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-
 pub struct WeatherTool {
     tile_was_open: bool,
 
@@ -100,7 +94,7 @@ pub struct WeatherTool {
     pub(crate) env_doc: DocumentId,
 
     /// The environment that lit the scene last (its path, its parameters as the packs or the project have it): it goes on lighting the scene
-    /// while the tool's document is another kind of file (a VFX's, `weather_definitions.xml`).
+    /// while the tool's document is another kind of file (`weather_definitions.xml`).
     last_env: Option<(String, EnvironmentParams)>,
 
     /// The game's preferences.script.txt.
@@ -109,8 +103,6 @@ pub struct WeatherTool {
 
     /// What the viewport rendered last frame (menus read it).
     pub(crate) last_params: EnvironmentParams,
-    overlay: Overlay,
-    overlay_rev: Option<u64>,
 
     // File browser.
     category: usize,
@@ -162,8 +154,6 @@ impl Default for WeatherTool {
             output_gamma: 2.2,
             output_brightness: 1.0,
             last_params: EnvironmentParams::default(),
-            overlay: Overlay::default(),
-            overlay_rev: None,
             category: 0,
             filter: String::new(),
             listing: vec![],
@@ -997,19 +987,7 @@ impl Tool for WeatherTool {
             }
         }
 
-        // Precipitation reads open documents first, so edits to vfx/*.xml and weather_definitions.xml show live (`update` keeps the overlay).
-        if let Some(r) = e.renderer() {
-            let overlay = self.overlay.clone();
-            r.particles().set_reader(Box::new(move |path: &str| {
-                let p = normalize(path);
-                if let Some(bytes) = overlay.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&p) {
-                    return Ok(bytes.clone());
-                }
-
-                vfs.read(&p).map_err(|e| e.to_string())
-            }));
-        }
-
+        // Precipitation reads the open vfx/ and weather definitions documents first, whichever tool has them (the editor's particle overlay).
         self.ensure_sample_map(e);
     }
 
@@ -1026,7 +1004,7 @@ impl Tool for WeatherTool {
         let lit = env.is_some();
         let params = match env {
             Some((path, params)) => {
-                // Remembered as the packs (or the project) have it: unsaved edits are not what lights a VFX file opened after it.
+                // Remembered as the packs (or the project) have it: unsaved edits are not what lights another file opened after it.
                 if !path.is_empty() && self.last_env.as_ref().is_none_or(|(p, _)| *p != path) {
                     let saved = e.vfs().and_then(|v| v.read(&path).ok()).and_then(|b| XmlDoc::parse(b).ok()).map(|d| read_environment(&d));
                     self.last_env = saved.map(|p| (path, p));
@@ -1076,40 +1054,6 @@ impl Tool for WeatherTool {
         self.gallery.update(e);
         let shown = self.last_params.clone();
         self.sky.update(e, self.env_doc != 0, &shown);
-
-        // Edit state of the open documents the particle system reads (vfx/ and weather_definitions.xml).
-        let mut rev = 0u64;
-        let mut live = vec![];
-        for &id in e.docs.order() {
-            let Some(x) = e.docs.find_as::<XmlFileDocument>(id) else { continue };
-            let path = &x.source().vfs_path;
-            if path.starts_with("vfx/") || (path.starts_with("weather/") && x.kind() != "environment") {
-                let mut h = DefaultHasher::new();
-                path.hash(&mut h);
-                rev = rev
-                    .wrapping_mul(1_000_003)
-                    .wrapping_add(h.finish())
-                    .wrapping_add(x.history().version().wrapping_mul(7919))
-                    .wrapping_add(u64::from(x.modified()));
-                live.push(id);
-            }
-        }
-
-        if self.overlay_rev != Some(rev) {
-            let mut overlay = self.overlay.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            overlay.clear();
-            for id in live {
-                if let Some(x) = e.docs.find_as::<XmlFileDocument>(id) {
-                    overlay.insert(x.source().vfs_path.clone(), x.xml().save());
-                }
-            }
-
-            self.overlay_rev = Some(rev);
-        }
-
-        if let Some(r) = e.renderer() {
-            r.settings.vfx_revision = rev;
-        }
     }
 
     fn draw_panels(&mut self, e: &mut Editor) {
@@ -1162,6 +1106,10 @@ impl Tool for WeatherTool {
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {
+        if is_vfx_path(path) {
+            return Err("VFX files open in the VFX tool".to_owned());
+        }
+
         let (source, bytes) = if from_packs {
             // The project's loose copy (where Save writes it) wins over the packs: it is mounted before them.
             let vfs = e.vfs().ok_or("the game packs are not mounted")?;
@@ -1209,6 +1157,12 @@ impl Tool for WeatherTool {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// A `vfx/` file (in the packs, or a loose copy under a `vfx` folder): the VFX tool's, not this one's.
+fn is_vfx_path(path: &str) -> bool {
+    let p = normalize(path);
+    p.starts_with("vfx/") || p.contains("/vfx/")
 }
 
 /// Runs `f` on the weather tool (a command reaching its tool).

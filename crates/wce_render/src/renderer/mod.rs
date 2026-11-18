@@ -651,6 +651,9 @@ pub struct RenderSettings {
 
     /// Changes when an open vfx/ or weather/ XML is edited: the particles reload.
     pub vfx_revision: u64,
+
+    /// The particles' clock runs at this rate (1 the game's, 0 paused): the VFX tool's playback.
+    pub particle_time_scale: f32,
     pub cloud_seed: u32,
 
     /// The battle's wind (a key of `wind_levels_tables`, `calm_westerly` .. `storm_westerly`): it picks the sea's surfaces and whitecaps.
@@ -712,6 +715,7 @@ impl Default for RenderSettings {
             selection_colour: [1.0, 0.82, 0.24, 1.0],
             selection_outline_px: 2.0,
             vfx_revision: 0,
+            particle_time_scale: 1.0,
             cloud_seed: 1,
             sea_state: "calm_westerly".to_owned(),
             wind_dir_seed: 1,
@@ -1036,6 +1040,9 @@ pub struct Renderer {
 
     /// The scene (address, revision) the particles' placed effects were gathered from.
     pub(crate) vfx_scene: (usize, u64, u32, u32, u32, u32),
+
+    /// `RenderSettings::vfx_revision` the placed effects were read at.
+    pub(crate) vfx_world_revision: u64,
     pub(crate) editor: editor::EditorGpu,
     pub(crate) water: water::WaterGpu,
     pub(crate) terrain: terrain::TerrainGpuState,
@@ -1222,6 +1229,7 @@ impl Renderer {
             particles,
             vfx_rome2,
             vfx_scene: (0, u64::MAX, 0, 0, 0, 0),
+            vfx_world_revision: 0,
             editor: editor::EditorGpu::default(),
             water: water::WaterGpu::default(),
             terrain: terrain::TerrainGpuState::default(),
@@ -2043,7 +2051,7 @@ impl Renderer {
             eye: (eye - o) * self.camera.units,
             view: view_m,
             time: time_s,
-            dt: self.clock.dt,
+            dt: self.clock.dt * self.settings.particle_time_scale.max(0.0),
             campaign_view_proj: scene.campaign.then_some(self.camera.cb_view_proj),
             wind_velocity: self.wind.vfx_velocity,
             wind_variance: self.wind.vfx_variance,
@@ -2060,6 +2068,14 @@ impl Renderer {
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.
         let units = self.camera.units;
+
+        // An open vfx file edited: the placed effects read their definitions again (their particles carry on).
+        if self.vfx_world_revision != self.settings.vfx_revision && self.game != game::RenderGame::Rome2 {
+            self.vfx_world_revision = self.settings.vfx_revision;
+            self.particles.reload_world_definitions();
+            self.vfx_scene = (0, u64::MAX, 0, 0, 0, 0);
+        }
+
         let scene_key = (scene.uid(), scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
         if self.vfx_scene != scene_key {
             // A new origin moves the effects (the particles alive keep where they were).

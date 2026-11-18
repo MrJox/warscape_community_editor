@@ -1065,6 +1065,14 @@ impl ParticleSystem {
         self.world_rigids.clear();
     }
 
+    /// Reads the placed effects' definitions again on the next [`Self::set_world_effects`] (an open vfx file was edited): the instances
+    /// stay, so the particles in flight carry on.
+    pub fn reload_world_definitions(&mut self) {
+        self.world_effects.clear();
+        self.world_names.clear();
+        self.world_libs.clear();
+    }
+
     /// The scene's placed effects (each frame they change): with the effects their rigids started, while their parent stays.
     pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
         self.placed = effects.to_vec();

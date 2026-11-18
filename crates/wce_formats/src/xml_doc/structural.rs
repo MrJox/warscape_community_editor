@@ -250,6 +250,63 @@ impl XmlDoc {
         Ok((doc.rebuilt(&t)?, new_index))
     }
 
+    /// The text between an element's start and end tags as stored (entity-encoded). Empty for a self-closing element.
+    ///
+    /// # Errors
+    ///
+    /// Fails for an element with child elements, or one without its end tag.
+    pub fn inner_text(&self, elem: usize) -> Result<Vec<u8>> {
+        // Attribute edits never touch an element's text: the text as read is the text now.
+        let doc = self;
+        let el = &doc.elems[elem];
+        if el.self_closing {
+            return Ok(vec![]);
+        }
+
+        if !el.children.is_empty() {
+            return edit_error("element has child elements");
+        }
+
+        let end_tag = [b"</", el.name.as_bytes()].concat();
+        let Some(et) = rfind(&doc.text, &end_tag, el.end_off - 1) else { return edit_error("element has no end tag") };
+        Ok(doc.text[el.start_end..et].to_vec())
+    }
+
+    /// The document with an element's text replaced by `raw` (already entity-encoded), as a structural edit: a self-closing element gets
+    /// its end tag (`<a x='1'/>` -> `<a x='1'>raw</a>`); everything outside the element's text stays as it was.
+    ///
+    /// # Errors
+    ///
+    /// Fails for an element with child elements, one without its end tag, or if the result can't be read.
+    pub fn with_inner_text(&self, elem: usize, raw: &[u8]) -> Result<Self> {
+        let doc = self.baked()?;
+        let el = &doc.elems[elem];
+        let t0 = &doc.text;
+        let mut t = t0.clone();
+        if el.self_closing {
+            if raw.is_empty() {
+                return Ok(doc);
+            }
+
+            let body = [b">", raw, b"</", el.name.as_bytes(), b">"].concat();
+            t.splice(el.attrs_end..el.end_off, body);
+        } else {
+            if !el.children.is_empty() {
+                return edit_error("element has child elements");
+            }
+
+            let end_tag = [b"</", el.name.as_bytes()].concat();
+            let Some(et) = rfind(t0, &end_tag, el.end_off - 1) else { return edit_error("element has no end tag") };
+            if t0[el.start_end..et] == *raw {
+                return Ok(doc);
+            }
+
+            t.splice(el.start_end..et, raw.iter().copied());
+        }
+
+        doc.rebuilt(&t)
+    }
+
     /// The document with an attribute set (added after the others if missing), as a structural edit.
     ///
     /// # Errors

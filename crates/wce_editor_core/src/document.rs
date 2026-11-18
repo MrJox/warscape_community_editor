@@ -187,6 +187,17 @@ pub trait Document: Any {
         String::new()
     }
 
+    /// The in-pack file (normalized) the particle system should read from this document instead of the packs while it is open, so its
+    /// edits play live: an open `vfx/*.xml` or weather definitions file. None for every other document.
+    fn particle_file(&self) -> Option<String> {
+        None
+    }
+
+    /// The bytes of [`Self::particle_file`] as edited now (asked for only when the document's history moved).
+    fn particle_bytes(&self) -> Vec<u8> {
+        vec![]
+    }
+
     /// The file on disk the document was opened from and saves to, when it is one file outside the packs (Save as starts there).
     fn file_path(&self) -> Option<std::path::PathBuf> {
         None

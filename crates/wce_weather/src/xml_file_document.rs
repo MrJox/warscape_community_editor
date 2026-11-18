@@ -233,6 +233,44 @@ impl XmlFileDocument {
         Ok(sel)
     }
 
+    /// Replaces an element's text (entity-encoded `raw`), one undo entry: a `ranged_property`'s curves.
+    ///
+    /// # Errors
+    ///
+    /// The element has child elements or no end tag.
+    pub fn set_inner_text(&mut self, elem: usize, raw: &[u8], label: &str) -> Result<(), String> {
+        let xml = self.xml();
+        if elem >= xml.elements().len() {
+            return Err("no such element".to_owned());
+        }
+
+        if xml.inner_text(elem).map_err(|e| e.to_string())? == raw {
+            return Ok(());
+        }
+
+        let next = xml.with_inner_text(elem, raw).map_err(|e| e.to_string())?;
+        let before = Arc::new(xml.clone());
+        self.history.push(Box::new(XmlSnapshotCommand { name: label.to_owned(), before, after: Arc::new(next) }));
+        Ok(())
+    }
+
+    /// Sets an attribute by name, as typed text in the number style of the value it replaces; a missing attribute is added (a structural
+    /// edit). `gesture` merges a drag's edits of an existing attribute into one entry.
+    ///
+    /// # Errors
+    ///
+    /// The attribute could not be added.
+    pub fn set_named(&mut self, elem: usize, name: &str, value: &str, gesture: u64) -> Result<(), String> {
+        match self.xml().elements().get(elem).and_then(|_| self.xml().find_attr(elem, name)) {
+            Some(a) => {
+                self.set_attr_text(elem, a, value, gesture);
+                Ok(())
+            }
+
+            None => self.structural(Op::AddAttr, elem, 0, name, value).map(|_| ()),
+        }
+    }
+
     /// An autosave copy of the file (`Document::autosave`) taken back: its text as one undoable edit over the file as opened, so the
     /// document is modified and Save writes the copy's text where it saves.
     ///
@@ -307,6 +345,16 @@ impl Document for XmlFileDocument {
 
     fn modified(&self) -> bool {
         self.xml().modified()
+    }
+
+    /// vfx/ files and the weather definitions (the files the particle system reads), not .environment / .lighting.
+    fn particle_file(&self) -> Option<String> {
+        let path = &self.source.vfs_path;
+        (path.starts_with("vfx/") || (path.starts_with("weather/") && !self.is_environment())).then(|| path.clone())
+    }
+
+    fn particle_bytes(&self) -> Vec<u8> {
+        self.xml().save()
     }
 
     fn can_save(&self) -> bool {
