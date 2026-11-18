@@ -285,6 +285,9 @@ struct WorldInstance {
     /// The clock when it started.
     start: f32,
 
+    /// How far the VFX wind has moved it (its emitter `affected_by_wind`), in `pos` already.
+    drift: Float3,
+
     /// The last spawn time (fn 0x1188e240 spreads a frame's particles evenly from it).
     last_spawn: f32,
     st: EmitterState,
@@ -597,11 +600,12 @@ pub struct ParticleSystem {
     world_lights: Vec<WorldLight>,
     world_rigids: Vec<WorldRigid>,
 
-    /// The placed effects as the scene gave them, and the effects their rigids started (`property_event OnRigidSpawn`): per child its
-    /// parent's key and itself. A child stays while its parent does (ASSUMPTION: the game's removal not traced; its instance outlives
-    /// its emitters, docs in the campaign plan). Children of these effect names keep their emitters' LifeTime ([`Self::child_names`]).
+    /// The placed effects as the scene gave them, and the effects their rigids started (`property_event OnRigidSpawn`): per child
+    /// itself and the clock it started. A child outlives its parent (RenderDoc: children started over Britain still there 34 s after the
+    /// camera left) and ends when its emitters and their particles have (ASSUMPTION: the game's removal not traced; the instances
+    /// outlive their emitters). Children of these effect names keep their emitters' LifeTime ([`Self::child_names`]).
     placed: Vec<WorldEffect>,
-    children: Vec<(u64, WorldEffect)>,
+    children: Vec<(WorldEffect, f32)>,
     child_names: std::collections::BTreeSet<String>,
     child_seq: u64,
 
@@ -1035,16 +1039,13 @@ impl ParticleSystem {
     /// The scene's placed effects (each frame they change): with the effects their rigids started, while their parent stays.
     pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
         self.placed = effects.to_vec();
-        // Children in the order they started: a child's parent (a placed effect or an earlier child) is known when it is reached.
-        let mut keys: std::collections::BTreeSet<u64> = effects.iter().map(|fx| fx.key).collect();
-        self.children.retain(|(parent, c)| keys.contains(parent) && keys.insert(c.key));
         self.apply_world_effects();
     }
 
     /// The placed effects and their children into the instances.
     fn apply_world_effects(&mut self) {
         let mut all = self.placed.clone();
-        all.extend(self.children.iter().map(|(_, c)| c.clone()));
+        all.extend(self.children.iter().map(|(c, _)| c.clone()));
         self.load_world_effects(&all);
     }
 
@@ -1142,7 +1143,7 @@ impl ParticleSystem {
                 let reference = Float3::new(em.pos[0], em.pos[1], em.pos[2]);
                 let inst = match old.remove(&(fx.key, k)).filter(|inst| inst.effect == e) {
                     Some(mut inst) => {
-                        inst.pos = origin + rotate(&rot, reference * fx.scale);
+                        inst.pos = origin + rotate(&rot, reference * fx.scale) + inst.drift;
                         inst.rot = rot;
                         inst.quat = quat;
                         inst.mesh.clone_from(&fx.mesh);
@@ -1175,6 +1176,7 @@ impl ParticleSystem {
                             lifetime_bias: lerp(em.particle_lifetime_bias[0], em.particle_lifetime_bias[1], t_life),
                             emitter_life_bias: lerp(em.emitter_lifetime_bias[0], em.emitter_lifetime_bias[1], t_emitter),
                             start: clock,
+                            drift: Float3::default(),
                             last_spawn: clock,
                             st: EmitterState::default(),
                         }
@@ -1272,14 +1274,14 @@ impl ParticleSystem {
     /// or collisions: the destruction debris has EnableCollisions false); the scale is lerp(ParticleScaleStart.x, .y) per rigid (the
     /// debris' start, mid and end are equal); rigids beyond CullDistances.w are not drawn.
     pub fn effect_rigids(&mut self, eye: Float3) -> Vec<EffectRigid> {
-        if self.world_rigids.is_empty() || !self.enabled {
+        if (self.world_rigids.is_empty() && self.children.is_empty()) || !self.enabled {
             return vec![];
         }
 
         let clock = self.clock;
         let mut out = vec![];
         // The effects rigids start (`property_event OnRigidSpawn`, fn 0x1187aed0 -> 0x11863820): (parent key, effect, position).
-        let mut started: Vec<(u64, String, Float3)> = vec![];
+        let mut started: Vec<(String, Float3)> = vec![];
         for wr in &mut self.world_rigids {
             let def = &self.world_effects[wr.effect].rigids[wr.rigid];
             let d = &def.def;
@@ -1318,7 +1320,7 @@ impl ParticleSystem {
                     let mut sp = [0.0f32; 3];
                     d.vec("SpawnPosition", &mut sp);
                     let local = rotate(&emitter_rot, area * wr.scale) + Float3::new(sp[0], sp[1], sp[2]) * wr.scale;
-                    started.push((wr.key, ev.vfx_name.clone(), wr.pos + rotate(&wr.rot, local)));
+                    started.push((ev.vfx_name.clone(), wr.pos + rotate(&wr.rot, local)));
                     // Marks the rigid as handled.
                     wr.live.push(RigidParticle {
                         birth,
@@ -1429,8 +1431,31 @@ impl ParticleSystem {
             }
         }
 
-        if !started.is_empty() {
-            for (parent, effect, at) in started {
+        // The children whose emitters and particles have ended (their emitters' latest StartTime + LifeTime + bias, plus the longest
+        // particle life and bias).
+        let ended = |fx: &WorldEffect, born: f32| {
+            let Some(&e) = self.world_names.get(&fx.effect) else { return false };
+            let life = self.world_effects[e]
+                .emitters
+                .iter()
+                .map(|a| {
+                    let d = &a.def;
+                    d.range("StartTime", 0.0, 0.0).1.max(0.0)
+                        + d.range("LifeTime", 50.0, 50.0).1
+                        + a.emitter_lifetime_bias[1].max(0.0)
+                        + d.range("ParticleLifeTime", 1.0, 1.0).1
+                        + a.particle_lifetime_bias[1].max(0.0)
+                })
+                .fold(0.0f32, f32::max);
+            clock > born + life
+        };
+        let before = self.children.len();
+        let kept: Vec<(WorldEffect, f32)> = self.children.iter().filter(|(c, born)| !ended(c, *born)).cloned().collect();
+        let gone = kept.len() != before;
+        self.children = kept;
+
+        if !started.is_empty() || gone {
+            for (effect, at) in started {
                 if effect.is_empty() {
                     continue;
                 }
@@ -1440,7 +1465,7 @@ impl ParticleSystem {
                 (world.m[0][3], world.m[1][3], world.m[2][3]) = (at.x, at.y, at.z);
                 self.child_names.insert(effect.clone());
                 let key = (1 << 63) | self.child_seq;
-                self.children.push((parent, WorldEffect { key, effect, world, scale: 1.0, mesh: None }));
+                self.children.push((WorldEffect { key, effect, world, scale: 1.0, mesh: None }, clock));
             }
 
             self.apply_world_effects();
@@ -1949,7 +1974,13 @@ impl ParticleSystem {
             let a = &self.world_effects[e].emitters[k];
             let d = &a.def;
             let infinite = a.infinite_life;
+            let wind = a.affected_by_wind;
             let inst = &mut self.world[j];
+            if wind {
+                let step = f.wind_velocity * f.dt;
+                inst.pos = inst.pos + step;
+                inst.drift = inst.drift + step;
+            }
 
             // The emitter's culling distance (CullDistances.w): no spawning beyond it.
             let mut cull = [0.0f32; 4];

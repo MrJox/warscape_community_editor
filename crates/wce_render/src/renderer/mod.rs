@@ -1637,7 +1637,10 @@ impl Renderer {
         }
     }
 
-    fn update_weather(&mut self, env: &EnvironmentParams, time_s: f32) {
+    /// `campaign`: a campaign map, whose weather constants the game leaves at 0 (RenderDoc, five campaign captures, rain and winter
+    /// among them: `g_wind`, `wind_VS`, `g_weather_type`, `g_season_type` all 0; the snow is the map's masks) and whose effects' wind is
+    /// a fixed (2, 0, 0) units / s (`cb_vfx_game_simulation_data.wind_velocity` in all five, whatever the lighting's wind direction).
+    fn update_weather(&mut self, env: &EnvironmentParams, time_s: f32, campaign: bool) {
         // Rome 2's weather particles are not drawn yet (TODO(rome2) in the particle pass); its wind still moves the effects.
         if self.game != game::RenderGame::Rome2 {
             self.particles.set_weather(&env.weather_definition, self.settings.vfx_revision);
@@ -1647,11 +1650,17 @@ impl Renderer {
         // The wind's angle runs from +x towards +z: the scene's turn takes it the other way round.
         let degrees = self.wind_direction_degrees(env) - self.world_yaw;
         self.wind.update(Some(&def), degrees, time_s, self.clock.dt);
+        if campaign {
+            self.wind.vfx_velocity = Float3::new(2.0, 0.0, 0.0);
+            self.wind.smoothed = wce_foundation::math::Float2 { x: 0.0, y: 0.0 };
+            self.wind.direction = wce_foundation::math::Float2 { x: 0.0, y: 0.0 };
+        }
+
         let (w, cbs) = (&self.wind, &mut self.cbs);
         cbs.set_f("weather_shared", "g_wind", &[w.smoothed.x, w.smoothed.y]);
         cbs.set_f("weather_shared", "g_wind_offset", &[w.offset.x, w.offset.y]);
-        cbs.set_i("weather_shared", "g_weather_type", def.type_index());
-        cbs.set_i("weather_shared", "g_season_type", self.settings.season);
+        cbs.set_i("weather_shared", "g_weather_type", if campaign { 0 } else { def.type_index() });
+        cbs.set_i("weather_shared", "g_season_type", if campaign { 0 } else { self.settings.season });
         cbs.set_f("weather_shared", "g_snow_mask", &[if self.settings.snow_cover { 1.0 } else { 0.0 }]);
         cbs.set_f("wind_VS", "wind_direction", &[w.direction.x, w.direction.y]);
         cbs.set_f("wind_VS", "gust_start_time", &[w.gust_end]);
@@ -1838,7 +1847,7 @@ impl Renderer {
 
         self.clock.last_time = time_s;
         self.cloud_layer.dt = self.clock.dt;
-        self.update_weather(&env, time_s);
+        self.update_weather(&env, time_s, scene.campaign);
 
         // Attila's water leaves its reflection to the environment specular pass (the rivers' shader skips its cube reflection with this 1,
         // as in the game's captures); Rome 2 has no such pass.
@@ -1847,7 +1856,7 @@ impl Renderer {
         }
 
         // Snow regions: what lies in them (flagged instances, decals, snowy trees and ground) snows at their amount, the rest as the weather.
-        self.snow_weather = env.snowing_intensity;
+        self.snow_weather = if scene.campaign { 0.0 } else { env.snowing_intensity };
         self.snow_region = scene.snow().map(|s| s.amount.max(env.snowing_intensity));
         self.set_snowing(self.snow_region.unwrap_or(self.snow_weather));
 

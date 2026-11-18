@@ -226,6 +226,26 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   `affected_by_wind`: the campaign's VFX wind (2, 0, 0) units / s in both captures, its direction not traced); the storm clouds'
   `cloud_heavy` (`scene_view_type` 2, SeaColourOverlay: drawn into the overlay, not supported); OnParticleSpawn (the waterfall's
   `vfx_name="3"` names no file: nothing).
+- **Phase 5, settled by the user's captures (2026-11-18; `D:enderdoc\camp_attila_rain_frame64369.rdc` turn 1 over Londinium,
+  `_frame92544` winter over Britain, `_frame94246` winter over the Alps; dumps and scripts in `%TEMP%\wce_scratch\campvfxd2`):**
+  - The rain is `C_rain gusty`'s `rain_heavy_BTL` at the eye, scale 1, in the campaign world's units (drops 0.75 x 1.4, falling
+    20 - 30 a second, the 30-unit recycle box): as the editor draws it. Drops show only 5 - 20 units from the eye.
+  - main_attila_map's lighting is spring all year, as decision 1 has it: the winter captures fit `england_sp` / `europe_sp` /
+    `med_sp`, and it rains over snowy Britain in winter; the season changes the ground and snow masks only.
+  - The spheres' weights as the editor's (3D distance, the sphere's raw y, z x 1.1547): computed 0.959 / 0.953 / 0.448 against
+    the fitted 0.958 / 0.953 / 0.448. The sun colour blends linear (to the power 2.2): now `blend_weighted`'s.
+  - The campaign's weather constants are 0 (`g_snowing_intensity`, `g_weather_type`, `g_season_type`, `g_wind`, `wind_VS`) and
+    its VFX wind a fixed (2, 0, 0) units / s in all five captures (every main_attila file's wind_dir_degrees 14.4 would give
+    (1.94, 0, 0.5)): now the renderer's on a campaign map. `affected_by_wind` effects drift with it (the storm and rain clouds).
+  - Started effects outlive their parent (children started over Britain alive 34 s after the camera left): they now end when
+    their emitters and particles have (ASSUMPTION: the game's removal not traced).
+  - The `scene_view_type` 2 `cloud_heavy` is simulated but never drawn (each frame: the main and second particle views only):
+    the editor not drawing it is the game's. The dark patch under the Alps' clouds is the fog of war (`s_shroud`'s middle level,
+    in the G-buffer before lighting), not a cloud shadow (the clouds cast none).
+  - `g_fog_distance_start` is the file's less `fog_precipitation_distance_modifier` rain or not (as the editor's).
+  - Left: the placed effects' activation rule (the snow spots 65 units from the eye did not run); the snow / destruction zones.
+    One scripted run (900 frames) ended without its shot at the time limit; three runs after it (300, 600, 900 frames) took
+    37 - 42 s: not reproduced.
 - Open: the fog-of-war switch (decision 2); the overlay camera's d from the game; the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is

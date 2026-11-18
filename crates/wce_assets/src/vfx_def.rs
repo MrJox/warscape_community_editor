@@ -302,6 +302,11 @@ pub struct VfxFile {
 }
 
 impl VfxFile {
+    /// `affected_by_wind`: the effect's emitters move with the VFX wind (`wind_velocity`).
+    pub fn affected_by_wind(&self) -> bool {
+        self.vfx_attrs.get("affected_by_wind").is_some_and(|value| truthy(value))
+    }
+
     pub fn camera_following(&self) -> bool {
         self.vfx_attrs.get("camera_following").is_some_and(|value| truthy(value))
     }
