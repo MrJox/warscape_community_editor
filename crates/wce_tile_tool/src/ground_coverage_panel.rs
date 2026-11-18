@@ -33,6 +33,9 @@ pub struct CoverageUi {
     pub rocks: String,
     pub plants: String,
 
+    /// Around buildings: the clutter rules.
+    pub clutter: Vec<wce_tile::ground_coverage::ClutterDef>,
+
     /// The preset the values came from (they may have been changed since): `Default` for the kind's built-in one; empty: none known
     /// (a run of the first version's).
     pub preset: String,
@@ -160,7 +163,7 @@ impl TileTool {
         (self.coverage.save_as, self.coverage.delete_ask) = (None, false);
         if let Some(s) = document(e).and_then(|d| d.coverage_settings(kind)) {
             let c = &mut self.coverage;
-            (c.params, c.seed, c.rocks, c.plants, c.preset) = (s.params, s.seed, s.rocks, s.plants, s.preset);
+            (c.params, c.seed, c.rocks, c.plants, c.preset, c.clutter) = (s.params, s.seed, s.rocks, s.plants, s.preset, s.clutter);
             return;
         }
 
@@ -200,7 +203,8 @@ impl TileTool {
     /// The preset's values (not the seed), remembered as the kind's last. No preview.
     fn use_preset(&mut self, e: &mut Editor, p: &Preset) {
         let c = &mut self.coverage;
-        (c.params, c.rocks, c.plants, c.preset) = (p.params, p.rocks.clone(), p.plants.clone(), p.name.clone());
+        (c.params, c.rocks, c.plants, c.preset, c.clutter) =
+            (p.params, p.rocks.clone(), p.plants.clone(), p.name.clone(), p.clutter.clone());
         c.preview = None;
         self.remember_preset(e);
     }
@@ -246,6 +250,7 @@ impl TileTool {
             params: c.params,
             rocks: c.rocks.clone(),
             plants: c.plants.clone(),
+            clutter: c.clutter.clone(),
         };
         p.save()?;
         self.coverage.presets = None;
@@ -465,7 +470,7 @@ impl TileTool {
             }
         };
         let shown = match &current {
-            Some(p) if p.same_values(&c.params, &c.rocks, &c.plants) => label(p),
+            Some(p) if p.same_values(&c.params, &c.rocks, &c.plants, &c.clutter) => label(p),
             Some(p) => format!("{} (changed)", label(p)),
             None if c.preset.is_empty() => "none (the tile's last run)".to_owned(),
             None => format!("{} (not found)", c.preset),
@@ -686,8 +691,14 @@ impl TileTool {
     fn generate_coverage_into(&mut self, e: &mut Editor) -> Result<String, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
         let c = &self.coverage;
-        let settings =
-            CoverageSettings { params: c.params, seed: c.seed, rocks: c.rocks.clone(), plants: c.plants.clone(), preset: c.preset.clone() };
+        let settings = CoverageSettings {
+            params: c.params,
+            seed: c.seed,
+            rocks: c.rocks.clone(),
+            plants: c.plants.clone(),
+            preset: c.preset.clone(),
+            clutter: c.clutter.clone(),
+        };
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
         let id = document_id(e).ok_or("ground coverage: no tile is open")?;

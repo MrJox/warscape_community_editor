@@ -83,6 +83,7 @@ fn settings(seed: u64) -> CoverageSettings {
         rocks: "rocks".to_owned(),
         plants: "bushes".to_owned(),
         preset: "steep".to_owned(),
+        clutter: vec![],
     }
 }
 

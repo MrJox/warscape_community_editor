@@ -542,6 +542,93 @@ impl ClutterRule {
     }
 }
 
+/// A clutter rule as a preset and a tile keep it: its props by a building set's name, or by keys inline (the set then is made of them,
+/// each once). Resolved into a [`ClutterRule`] by whoever has the sets.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ClutterDef {
+    pub name: String,
+    pub patterns: String,
+    pub categories: String,
+    pub set: String,
+    pub keys: Vec<String>,
+}
+
+impl ClutterDef {
+    /// A list of rules as one attribute's text: a rule's fields (name, patterns, categories, set, keys separated by spaces) joined by `,`,
+    /// rules by `;`, those two and `%` written `%2C`, `%3B`, `%25`.
+    #[must_use]
+    pub fn list_to_text(defs: &[Self]) -> String {
+        let enc = |s: &str| s.replace('%', "%25").replace(',', "%2C").replace(';', "%3B");
+        defs.iter()
+            .map(|d| [enc(&d.name), enc(&d.patterns), enc(&d.categories), enc(&d.set), enc(&d.keys.join(" "))].join(","))
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
+    /// From [`Self::list_to_text`]; a rule of fewer fields has the rest empty.
+    #[must_use]
+    pub fn list_from_text(text: &str) -> Vec<Self> {
+        let dec = |s: &str| s.replace("%2C", ",").replace("%3B", ";").replace("%25", "%");
+        text.split(';')
+            .filter(|r| !r.trim().is_empty())
+            .map(|r| {
+                let f = r.split(',').map(dec).collect::<Vec<_>>();
+                let at = |i: usize| f.get(i).cloned().unwrap_or_default();
+                Self {
+                    name: at(0),
+                    patterns: at(1),
+                    categories: at(2),
+                    set: at(3),
+                    keys: at(4).split_whitespace().map(str::to_owned).collect(),
+                }
+            })
+            .collect()
+    }
+
+    /// The built-in rules (Attila's kit, its `incidental` keys): markets, docks, townhouses, barbarian houses, farms and villas.
+    #[must_use]
+    pub fn builtin() -> Vec<Self> {
+        let rule = |name: &str, patterns: &str, keys: &str| Self {
+            name: name.to_owned(),
+            patterns: patterns.to_owned(),
+            keys: keys.split_whitespace().map(str::to_owned).collect(),
+            ..Self::default()
+        };
+        vec![
+            rule(
+                "Markets",
+                "*agora*|*market*|*forum*|*bazaar*",
+                "market_stand_1 market_stand_2 market_stand_3 market_stand_4 market_stand_5 market_stand_6 barrel crate",
+            ),
+            rule(
+                "Persian markets",
+                "*persian*market*|*sassanid*market*",
+                "market_stand_persian_1 market_stand_persian_2 market_stand_persian_3 market_stand_persian_4 market_stand_persian_5 market_stand_persian_6",
+            ),
+            rule(
+                "Docks",
+                "*dock*|*port*|*harbour*|*harbor*|*pier*",
+                "dock_amphoras dock_barrels dock_wood_1 dock_wood_2 dock_wood_3 barrel crate",
+            ),
+            rule(
+                "Townhouses",
+                "*townhouse*|*apartment*|*storey*|*insula*|*slum*",
+                "washingline_ground_01 washingline_ground_02 washingline_ground_03 barrel crate pavements_treepot",
+            ),
+            rule(
+                "Barbarian houses",
+                "*barbarian*|*nordic*|*gaul*|*celt*|*germanic*|*hut*",
+                "hide_1 hide_2 hide_3 hide_4 woodpile barrel hay01 cart_2",
+            ),
+            rule(
+                "Farms and villas",
+                "*farm*|*barn*|*villa*|*domestic*|*house*|*granary*|*stable*",
+                "hay01 cart_1 cart_1_hay woodpile barrel crate kitchengarden_1 kitchengarden_2",
+            ),
+        ]
+    }
+}
+
 /// Whether a key matches a pattern of `*`s (any run, empty too) and plain text, any case.
 #[must_use]
 pub fn glob(pattern: &str, key: &str) -> bool {
@@ -1861,6 +1948,16 @@ mod tests {
     fn a_hull_is_counter_clockwise_and_convex() {
         let hull = convex_hull(vec![(0.0, 0.0), (2.0, 0.0), (1.0, 1.0), (2.0, 2.0), (0.0, 2.0), (1.0, 0.0)]);
         assert_eq!(hull, vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)]);
+    }
+
+    #[test]
+    fn clutter_definitions_read_back_from_their_text() {
+        let mut defs = ClutterDef::builtin();
+        defs[0].name = "Odd, name; 100%".to_owned();
+        defs[1].set = "my set".to_owned();
+        defs[1].categories = "gate|fort_tower".to_owned();
+        assert_eq!(ClutterDef::list_from_text(&ClutterDef::list_to_text(&defs)), defs);
+        assert!(ClutterDef::list_from_text("").is_empty());
     }
 
     #[test]
