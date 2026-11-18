@@ -513,6 +513,41 @@ fn rule_fields(r: &mut Rule, groups: &[String]) -> bool {
     edited |=
         range_row("building", "m", &mut r.building, (0.0, 3.0), 3.0, "Metres to the nearest real building (walls, towers, gates, houses)");
 
+    gui::separator_text("Ground type");
+    let names = wce_tile::ground_types::GROUND_TYPES;
+    let shown = r.ground.and_then(|g| names.get(usize::from(g.kind))).map_or("none (gameplay: off unless needed)", |(n, _)| n);
+    gui::set_next_item_width(240.0);
+    if gui::begin_combo("ground type", shown) {
+        if gui::selectable("none", r.ground.is_none(), 0) {
+            r.ground = None;
+            edited = true;
+        }
+
+        for (i, (n, _)) in names.iter().enumerate() {
+            if gui::selectable(n, r.ground.is_some_and(|g| usize::from(g.kind) == i), 0) {
+                r.ground = Some(wce_tile::texture_rules::GroundRule { kind: i as u8, threshold: r.ground.map_or(0.5, |g| g.threshold) });
+                edited = true;
+            }
+        }
+
+        gui::end_combo();
+    }
+
+    if gui::is_item_hovered() {
+        gui::set_tooltip(
+            "Also paints a ground type where the rule's weight is high enough: it changes sounds and how units move, so only when the \
+             texture means it (rock, mud, sand)",
+        );
+    }
+
+    if let Some(g) = r.ground.as_mut() {
+        gui::set_next_item_width(140.0);
+        edited |= gui::drag_float("from weight", &mut g.threshold, 0.01, 0.01, 1.0, "%.2f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Where the rule's weight is at least this; the latest rule that lays a ground type at a place wins there");
+        }
+    }
+
     gui::separator_text("Breakup");
     let mut on = r.breakup.is_some();
     if gui::checkbox("noise on the edges", &mut on) {

@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 5 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -112,7 +112,10 @@ earlier one, as blend layers go over each other).
    19 % of the tile, rock skipped: the tile has none), mediterranean_mountains/custom_pillar_hercules_a (8.6 % of the map, 76 % rock as
    `mountain`, 24 % mud; the rock band widens along the face), settlement_nordic_cities/nordic_city_a/medium (nothing: its groups are
    `settlement_1..3` and `forest`; settlements need their own preset).
-6. **Ground types per rule**.
+6. **Ground types per rule** (done). A rule may name a ground type and a weight threshold (`ground="rock" ground_threshold="0.5"`);
+   where its weight passes it, the type goes into a ground type layer the rules own, under the user's as their blend layer; the latest
+   rule laying one at a place wins. `Default` lays none (gameplay). A tile without a ground type map still gets its textures. The ground
+   brush with rules that lay ground types and no working layer goes into a `Painted` ground layer, as the paint brush does.
 7. **Check in the app** (the user): defaults of `Default` on a few kit tiles of different climates.
 
 ## B. Clutter around buildings (after A; questions to settle when it starts)

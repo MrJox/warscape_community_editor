@@ -358,22 +358,29 @@ impl TileDocument {
         Ok(id)
     }
 
-    /// Before paint goes on the blend map: when the tile has texture rules and the paint would go to the base (no working layer), which lies
-    /// under the rules' layer and would not show where they cover it, a layer of the user's [`PAINTED`] (the first of that name, else a new
-    /// one, its own undo entry) is made the working one (docs/plans/auto_detail.md, A: hand paint goes over the rules).
-    pub(crate) fn paint_over_texture_rules(&mut self) {
-        let rules = self.project().texture_rules.is_some();
-        let s = self.project().layers.as_ref().and_then(|l| l.blend.as_ref());
-        if s.is_some_and(|s| s.working.is_some())
-            || !(rules || s.is_some_and(|s| s.layers.iter().any(|l| wce_tile::terrain_layers::order_of(&l.owner) == 0)))
-        {
+    /// Before paint goes on the blend map (or the ground type map, `kind`): when the tile has texture rules and the paint would go to the
+    /// base (no working layer), which lies under the rules' layer and would not show where they cover it, a layer of the user's
+    /// [`PAINTED`] (the first of that name, else a new one, its own undo entry) is made the working one (docs/plans/auto_detail.md, A: hand
+    /// paint goes over the rules).
+    pub(crate) fn paint_over_texture_rules(&mut self, kind: LayerType) {
+        let rules = match kind {
+            LayerType::Blend => self.project().texture_rules.is_some(),
+            LayerType::Ground => self.project().texture_rules.as_ref().is_some_and(|r| wce_tile::texture_rules::lays_ground(&r.rules)),
+            LayerType::Height => return,
+        };
+        let layers = self.project().layers.as_ref();
+        let (working, under, painted) = match kind {
+            LayerType::Ground => under_state(layers.and_then(|l| l.ground.as_ref())),
+            _ => under_state(layers.and_then(|l| l.blend.as_ref())),
+        };
+        if working || !(rules || under) {
             return;
         }
 
-        match s.and_then(|s| s.layers.iter().find(|l| l.owner.is_empty() && l.name == PAINTED)).map(|l| l.id) {
-            Some(id) => self.set_working_layer(LayerType::Blend, Some(id)),
+        match painted {
+            Some(id) => self.set_working_layer(kind, Some(id)),
             None => {
-                let _ = self.add_terrain_layer(LayerType::Blend, PAINTED);
+                let _ = self.add_terrain_layer(kind, PAINTED);
             }
         }
     }
@@ -535,4 +542,15 @@ impl TileDocument {
             });
         });
     }
+}
+
+/// Of a stack: whether it has a working layer, whether a layer goes under the user's (the texture rules'), and the user's layer
+/// [`PAINTED`].
+fn under_state<K: wce_tile::terrain_layers::Kind>(s: Option<&Stack<K>>) -> (bool, bool, Option<u64>) {
+    let Some(s) = s else { return (false, false, None) };
+    (
+        s.working.is_some(),
+        s.layers.iter().any(|l| wce_tile::terrain_layers::order_of(&l.owner) == 0),
+        s.layers.iter().find(|l| l.owner.is_empty() && l.name == PAINTED).map(|l| l.id),
+    )
 }

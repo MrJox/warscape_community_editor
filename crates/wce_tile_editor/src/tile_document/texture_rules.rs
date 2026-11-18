@@ -12,16 +12,17 @@ use std::any::Any;
 
 use wce_editor_core::command::Command;
 use wce_tile::roads::WaterMap;
-use wce_tile::terrain_layers::{Blend, Stack, TerrainLayers};
+use wce_tile::terrain_layers::{Blend, Ground as TerrainGround, Stack, TerrainLayers};
 use wce_tile::texture_rules::{self, Distances, Feature, Fields, OWNER, RuleSet};
 
 use super::{TERRAIN, Tile, TileDocument};
 
 /// A job making the rules' layer, and what it was started from.
 pub(crate) struct TextureRulesJob {
-    job: super::jobs::Job<Stack<Blend>>,
+    job: super::jobs::Job<(Stack<Blend>, Option<Stack<TerrainGround>>)>,
     signature: u64,
     before: Stack<Blend>,
+    before_ground: Option<Stack<TerrainGround>>,
 }
 
 /// What the distance conditions measure to, taken from the scene (`Tile::texture_rules_inputs`), what the rules use of it only: the water
@@ -239,7 +240,26 @@ impl Tile {
         let ppm = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
         let blend = layers.blend.get_or_insert_with(|| Stack::new(bf)).clone();
-        Ok(Prepared { rules, groups, inputs, fields, blend, size: (bw, bh), ppm, border })
+
+        // The ground type map when a rule lays a ground type, or the rules' ground layer is to go.
+        let had_ground = layers.ground.as_ref().is_some_and(|s| s.layers.iter().any(|l| l.owner.starts_with(OWNER)));
+        // A tile without a ground type map still gets its textures.
+        let ground = if (texture_rules::lays_ground(&rules) || had_ground)
+            && let Ok(gf) = p.load_ground()
+        {
+            let (gw, gh) = (gf.width(), gf.height());
+            let gppm = (f64::from(gw) / (ex + 2.0 * border), f64::from(gh) / (ez + 2.0 * border));
+            let layers = p.layers.get_or_insert_with(TerrainLayers::default);
+            let stack = match layers.ground.as_ref() {
+                Some(s) => s.clone(),
+                None => Stack::new(p.ground.as_ref().expect("loaded above")),
+            };
+            Some((stack, (gw, gh), gppm))
+        } else {
+            None
+        };
+
+        Ok(Prepared { rules, groups, inputs, fields, blend, ground, size: (bw, bh), ppm, border })
     }
 
     /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
@@ -247,17 +267,30 @@ impl Tile {
         let rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
         let prepared = self.prepare_texture_rules(rules)?;
         let id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
+        let ground_id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
         let before = prepared.blend.clone();
+        let before_ground = prepared.ground.as_ref().map(|g| g.0.clone());
         let job = super::jobs::Job::spawn("texture rules", move || {
             wce_foundation::wce_prof!("tile.texture_rules");
             let (fields, mut blend) = prepared.fields();
-            let Prepared { rules, groups, size: (bw, bh), ppm, .. } = prepared;
+            let Prepared { rules, groups, ground, size: (bw, bh), ppm, .. } = prepared;
             blend.layers.retain(|l| !l.owner.starts_with(OWNER));
             let id = blend.add(id, "Texture rules", &owner_of(signature));
             texture_rules::generate(&rules, &groups, &fields, ppm, [0, 0, bw, bh], &mut |x, y, px| blend.put(id, x, y, &px));
-            blend
+            let ground = ground.map(|(mut stack, (gw, gh), gppm)| {
+                stack.layers.retain(|l| !l.owner.starts_with(OWNER));
+                if texture_rules::lays_ground(&rules) {
+                    let id = stack.add(ground_id, "Texture rules", &owner_of(signature));
+                    texture_rules::generate_ground(&rules, &groups, &fields, gppm, [0, 0, gw, gh], &mut |x, y, px| {
+                        stack.put(id, x, y, &px)
+                    });
+                }
+
+                stack
+            });
+            (blend, ground)
         });
-        self.texture_rules_job = Some(TextureRulesJob { job, signature, before });
+        self.texture_rules_job = Some(TextureRulesJob { job, signature, before, before_ground });
         Ok(())
     }
 
@@ -272,15 +305,34 @@ impl Tile {
         };
 
         let j = self.texture_rules_job.take().expect("a job");
-        let Some(blend) = made else {
+        let Some((blend, ground)) = made else {
             wce_foundation::log::warn("texture rules: their layer could not be made");
             return;
         };
 
         let p = &mut self.project;
         let (Some(bf), Some(layers)) = (p.blend.as_mut(), p.layers.as_mut()) else { return };
-        if !layers.blend.as_ref().is_some_and(|b| b.unchanged_since(&j.before)) {
+        let ground_same = match (&j.before_ground, layers.ground.as_ref()) {
+            (Some(b), Some(now)) => now.unchanged_since(b),
+            (Some(_), None) => true,
+            (None, _) => true,
+        };
+        if !layers.blend.as_ref().is_some_and(|b| b.unchanged_since(&j.before)) || !ground_same {
             return;
+        }
+
+        if let (Some(ground), Some(gf)) = (ground, p.ground.as_mut()) {
+            let rect = rules_rect(j.before_ground.as_ref().expect("taken with it"), &ground);
+            layers.ground = Some(ground);
+            if let Some(s) = layers.ground.as_mut() {
+                if let Some(r) = rect {
+                    s.apply(gf, r);
+                }
+
+                s.remember();
+            }
+
+            p.ground_dirty |= rect.is_some();
         }
 
         let rect = rules_rect(&j.before, &blend);
@@ -304,6 +356,17 @@ impl Tile {
     fn remove_texture_rules_layer(&mut self) {
         let p = &mut self.project;
         let (Some(bf), Some(layers)) = (p.blend.as_mut(), p.layers.as_mut()) else { return };
+        if let (Some(s), Some(gf)) = (layers.ground.as_mut(), p.ground.as_mut()) {
+            let before = s.clone();
+            s.layers.retain(|l| !l.owner.starts_with(OWNER));
+            if let Some(r) = rules_rect(&before, s) {
+                s.apply(gf, r);
+                p.ground_dirty = true;
+            }
+
+            s.remember();
+        }
+
         let Some(s) = layers.blend.as_mut() else { return };
         let before = s.clone();
         s.layers.retain(|l| !l.owner.starts_with(OWNER));
@@ -328,6 +391,10 @@ struct Prepared {
     inputs: Inputs,
     fields: Fields,
     blend: Stack<Blend>,
+
+    /// A copy of the ground type stack, its map's size and pixels a metre: when a rule lays a ground type, or the rules' ground layer
+    /// is to go.
+    ground: Option<(Stack<TerrainGround>, (u32, u32), (f64, f64))>,
     size: (u32, u32),
     ppm: (f64, f64),
     border: f64,
@@ -375,7 +442,7 @@ pub struct RuleArea {
 }
 
 /// Where the rules' layers of two stacks hold samples.
-fn rules_rect(old: &Stack<Blend>, new: &Stack<Blend>) -> Option<[u32; 4]> {
+fn rules_rect<K: wce_tile::terrain_layers::Kind>(old: &Stack<K>, new: &Stack<K>) -> Option<[u32; 4]> {
     old.layers
         .iter()
         .chain(&new.layers)
