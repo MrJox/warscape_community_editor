@@ -470,6 +470,7 @@ impl Renderer {
         let depth = if self.terrain.active { self.terrain.viewz.srv.clone() } else { self.res.white_srv.clone() };
 
         null_ps_srvs(&self.ctx, 16);
+        let fog = self.shroud_srv();
         {
             let ctx = &self.ctx;
             ps_samplers(ctx, ps, &self.states.s_wrap_aniso);
@@ -500,7 +501,7 @@ impl Renderer {
             bind_srv(ctx, ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
             bind_srv(ctx, ps, "s_mid_distance_detail_map", self.terrain.r2_detail.as_ref().or(detail_normal.as_ref()));
             bind_srv(ctx, ps, "s_noise_map", noise.as_ref().or(self.res.white_srv.as_ref()));
-            bind_srv(ctx, ps, "s_shroud", self.res.white_srv.as_ref());
+            bind_srv(ctx, ps, "s_shroud", fog.as_ref());
         }
     }
 

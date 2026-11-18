@@ -443,7 +443,8 @@ impl Renderer {
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), stencil);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
-        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+        let on = self.shroud_enabled();
+        self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[on]);
         // A campaign map's overlay (the rivers): over the terrain's pixels, through its camera.
         let overlay = self.overlay_for(Float3::default());
         let ovp = overlay.as_ref().map_or(Float4x4::IDENTITY, |o| o.0);
@@ -462,7 +463,7 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "s_environment", env.as_ref());
         let ov = overlay.and_then(|o| o.1).or_else(|| self.res.overlay_none_srv.clone());
         bind_srv(&self.ctx, &ps, "s_overlay", ov.as_ref());
-        bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        bind_srv(&self.ctx, &ps, "s_shroud", self.shroud_srv().as_ref());
         bind_srv(&self.ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_point);
         bind_sampler(&self.ctx, &ps, "s_environment", self.states.s_clamp_linear.as_ref());

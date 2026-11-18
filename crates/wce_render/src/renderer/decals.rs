@@ -458,7 +458,7 @@ impl Renderer {
         cbs.set_f("projected_decal_PS", "g_viewport_offset_scale", &[0.0, 0.0, 1.0, 1.0]);
         cbs.set_f("projected_decal_PS", "g_texture_ratio", &[1.0, 1.0]);
         cbs.set_i("projected_decal_PS", "g_is_campaign", i32::from(scene.campaign));
-        cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+        cbs.set_f("shroud_PS", "g_shroud_enabled", &[if self.shroud.fog_on { 1.0 } else { 0.0 }]);
         self.upload();
 
         let rtvs = self.gbuffer.scene_rtvs()[..3].to_vec();
@@ -493,8 +493,9 @@ impl Renderer {
                 bind_srv(ctx, &ps, "s_gbuffer_normal_wrap", self.decals.normal_copy.srv.as_ref());
                 bind_srv(ctx, &ps, "t_gbuffer_normal_ms", self.decals.normal_copy.srv.as_ref());
                 self.bind_gbuffer_ms(&ps);
+                let fog = self.shroud_srv();
                 let ctx = &self.ctx;
-                bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+                bind_srv(ctx, &ps, "s_shroud", fog.as_ref());
                 bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
                 ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);
                 for n in ["gbuffer_channel_4_sampler", "s_gbuffer_normal", "s_depth_buffer", "s_gbuffer_normal_wrap"] {

@@ -2177,11 +2177,15 @@ impl Renderer {
         cbs.set_f("vs_height_map_cb", "g_layer1_texture_index", &[0.0]);
         cbs.set_f("vs_height_map_cb", "g_layer2_texture_index", &[0.0]);
         cbs.set_f("ps_height_map_cb", "g_far_blend_range", &[1.0e9, 2.0e9]);
-        cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+        cbs.set_f("shroud_PS", "g_shroud_enabled", &[if self.shroud.fog_on { 1.0 } else { 0.0 }]);
         self.upload();
         self.bind(&res_vs);
         self.bind(&res_ps);
         null_ps_srvs(&self.ctx, 16);
+        // The fog of war darkens the resolved albedo (the shader's `s_shroud`).
+        let fog = self.shroud_srv();
+        bind_srv(&self.ctx, &res_ps, "s_shroud", fog.as_ref());
+        bind_sampler(&self.ctx, &res_ps, "s_shroud", self.states.s_clamp_linear.as_ref());
         let dc = if m.detail_colour.is_empty() { None } else { self.textures.get(&m.detail_colour, false) };
         let dn = if m.detail_normal.is_empty() { None } else { self.textures.get(&m.detail_normal, false) };
         let snow = self.snow_normals_srv();
