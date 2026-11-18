@@ -707,6 +707,20 @@ impl Tool for VfxTool {
     fn activated(&mut self, e: &mut Editor) {
         self.ensure_sample_map(e);
         self.listing_dirty = true;
+
+        // Lit by the environment the Weather tool has open (live while it is edited there), when nothing else is previewed.
+        if e.weather_preview().is_none()
+            && let Some(path) = e
+                .docs
+                .of_tool("weather")
+                .and_then(|id| e.docs.find(id))
+                .filter(|d| d.environment().is_some())
+                .map(|d| d.source_key())
+                .filter(|p| !p.is_empty())
+            && let Err(m) = e.set_weather_preview(Some(&path))
+        {
+            e.status(&m, true);
+        }
     }
 
     fn deactivated(&mut self, e: &mut Editor) {

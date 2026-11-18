@@ -11,11 +11,12 @@ shared scene and selectable tools. It replaced the two C++ editors (weather_edit
 
 | Tool | State |
 |---|---|
-| Weather / Lighting | built: `.environment`, `.lighting`, weather definitions and vfx files, the weather picker and variation database |
+| Weather / Lighting | built: `.environment`, `.lighting`, weather definitions, the weather picker and variation database |
+| VFX | built behind the `vfx` feature (off by default): vfx files edited visually ([vfx_tool.md](docs/plans/vfx_tool.md)) |
 | Tile | built: battle tiles (campaign tiles open and export with limits), TEd's authoring, the game's look, export to the game, procedural walls, siege AI generation |
 | UI | built: UI layouts (binary <-> XML), canvas, `wce-ui` CLI and MCP server |
 | Audio | built (browse and listen): sound banks with names, search, what an event plays, playback (docs/plans/audio.md) |
-| VFX, Unit, Terrain (battle map / Terry), Cinematic | placeholders (the `placeholders` feature of `wce_app`) |
+| Unit, Terrain (battle map / Terry), Cinematic | placeholders (the `placeholders` feature of `wce_app`) |
 
 ## The plans
 
@@ -32,8 +33,9 @@ Each open item lives in one plan; the others point to it.
 | [map_context_todo.md](docs/plans/map_context_todo.md) | map-level terrain: the neighbour tiles, the seams, far maps, the outfield, large-context performance | open |
 | [rendering_remaining.md](docs/plans/rendering_remaining.md) | the rendering gaps of the tile view (sea, water, shadows, engine details) | open |
 | [vegetation_remaining.md](docs/plans/vegetation_remaining.md) | the vegetation port's leftovers | small |
-| [weather.md](docs/plans/weather.md) | the Weather tool's leftovers: a VFX editor, campaign mode | open |
+| [weather.md](docs/plans/weather.md) | the Weather tool's leftovers: campaign mode | open |
 | [campaign_environment.md](docs/plans/campaign_environment.md) | the campaign map's lighting, sky, fog and weather: environment volumes, the skybox, the campaign frame | planned (2026-11-16), not started |
+| [vfx_tool.md](docs/plans/vfx_tool.md) | the VFX tool: vfx files edited visually (behind the `vfx` feature) | built; user review pending |
 | [weather_current_state.md](docs/plans/weather_current_state.md) | the particle and VFX engine items still approximated | open |
 | [editor_todo.md](docs/plans/editor_todo.md) | editor-wide ideas: a minimap with views, siege AI problems on save | open |
 | [autosave.md](docs/plans/autosave.md) | autosave into `<projects>/autosave/`, rotated copies, recovery at the next launch | built (2026-11-14); prefab stages left |
@@ -67,7 +69,7 @@ Each open item lives in one plan; the others point to it.
   (`variant_mesh::repair` reads them, but doesn't say what it changed: TDD has 11 of 8,507), references to definitions that don't exist (TDD's
   `rough_helm2_blond`), models and textures that don't exist. The editor only drops these without a word.
 - **Future tools** (seams only): Unit editor (skinned instances, bone palettes, anim / skeleton / variantmeshdefinition formats),
-  VFX editor (see weather.md), battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
+  battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
   (keyframed scenes, recording).
 
 ## Decisions that still hold

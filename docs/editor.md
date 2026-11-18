@@ -33,7 +33,7 @@ To add a tool: derive from `Tool`, give it an id and title, return the file exte
 
 ## Weather tool (`tools/weather`)
 
-Opens `.environment`, `.lighting` and `.xml` (weather definitions, vfx) from the packs or from disk (File > Open file, `--open`, `--open-disk`, double-click in Files). Each file is an
+Opens `.environment`, `.lighting` and `.xml` (weather definitions; `vfx/` files are the [VFX tool](#vfx-tool-wce_vfx_tool)'s and are refused here) from the packs or from disk (File > Open file, `--open`, `--open-disk`, double-click in Files). Each file is an
 `XmlFileDocument` around the lossless `XmlDoc`: attribute edits are `XmlAttrCommand`s (merge per drag gesture), structural edits (duplicate, delete, move, add child or attribute,
 remove attribute) are snapshot commands. Save writes a file of the packs as a loose file into the project's loose folder (`<projects>/loose/<its path in the packs>`, `Editor::loose_path`; the game's `data` folder is never touched; see [Saving and exporting](#saving-and-exporting)), re-reads it as
 the new baseline and clears the history, so the saved bytes differ from the pack file in the edited spans only.
@@ -46,7 +46,7 @@ The **Inspector** of an `.environment` / `.lighting` file groups its settings by
 | Properties tree with typed editors, search, per-attribute revert, add / remove | **Properties** panel (tree) and the shared **Inspector** (typed editors for bool, int, float, colour, variance, euler, string) |
 | Structural edits with snapshot undo | context menu in Properties; `xml_op`; Ctrl+Z / Ctrl+Y, History panel |
 | Changes tab | **Changes** tab of Properties (every modified attribute of the file, revert) |
-| Live preview on the sample map, orbit camera, battle lens | shared viewport; the tool's environment document lights `RenderScene::environment` every frame (while the tool has a VFX or `weather_definitions.xml` file open instead, the last environment it had, as saved; a default dry environment when none) |
+| Live preview on the sample map, orbit camera, battle lens | shared viewport; the tool's environment document lights `RenderScene::environment` every frame (while the tool has `weather_definitions.xml` open instead, the last environment it had, as saved; a default dry environment when none) |
 | View modes (HDR, albedo, normal, depth, ...) | **Weather scene** bar and `view <n>` |
 | Sample map seed and count, re-roll | **Weather scene** bar, `sample`, `reroll` |
 | Graphics options (gamma, brightness, SSAO, DOF, shadows, vignette, flare) | **Settings** menu (read from `preferences.script.txt`) |
@@ -56,6 +56,44 @@ The **Inspector** of an `.environment` / `.lighting` file groups its settings by
 **Visual editing** (`visual.rs`, an `.environment` / `.lighting` file open): the **sun** is a disc in the sky of the viewport where the game draws it; dragging it puts the sun under the cursor, and **Ctrl+L** held over the viewport turns it with the mouse's motion (sideways the azimuth, up and down the elevation, 0 to 90; Unreal's shortcut). The angles are the file's (a tile's battle frame turn taken off), to a tenth of a degree, and one drag is one undo entry (`XmlFileDocument::edit_setting`, `join_last`). The **Weather scene** panel has *Compare with saved* (also **C** held over the viewport, `weather_compare on|off`: the file as saved, the project's loose copy or the packs', lights the scene instead of the edits, with a banner; exposure adapts across the flip as in the game), *Pick focus* (`weather_pick_focus`: the next click sets DOF_focus to the view depth of the surface under it; ASSUMPTION: the shaders compare it with view depth) and *Tone curve and histogram* (`weather_tone_panel on|off`: the per-channel S-curve of low_tones_bias / high_tones_bias as the engine bakes it, the frame's brightness histogram with the clipped and crushed share, read back twice a second only while open, and the adapted black and white points). The **wind** is an arrow on the ground at the camera's target, the way it blows (grey while wind_dir_random lets each battle pick); dragging its head sets wind_dir_degrees to a degree (the scene's turn taken off, as `Renderer::wind_direction_degrees` adds it). *Mix with another file* (`mix.rs`, `weather_mix <file> <t> | off`, `weather_mix_save <path>`): while the section is open the viewport cross-fades the open file to another (`blend_environments`, the game's cross-fade), and *Save the mix* writes it as a new `.environment` of the project's loose folder: the nearer file's text (its switches, texts and cloud layers) with every number of the sections the mix's (`XmlFileDocument::write_numbers_of`); a name the packs or the project have already is refused, and the new file is opened when the open one has no unsaved edits. The sun and wind handles are off while comparing or mixing. *Fog distances* (`weather_fog_rings [on|off]`; no argument logs them) rings the ground around the point below the camera where the fog over it reaches 25, 50 and 75 %, from the fog shader's formula ([re/renderer.md](re/renderer.md), "Battle fog"): the distance fog, the height fog at the ground's height and the clear distance's fade-in; they follow the camera as the fog does, and show the game's fog (the camera chip's fog amount thins the drawn fog, not the rings). The sun handle: Ctrl+L held owns the sun (a click meanwhile is swallowed), and a drag of the disc keeps it until its release. `weather_sun_disc` and `weather_wind_tip` say where the handles are, for scripted drags. *Compare with saved* splits the viewport: the file as saved left of a line you drag, drawn by a **preview renderer** (`preview.rs`, `Renderer::new_sharing`: the main renderer's models and textures, its own exposure, cubes, wind and particles, so neither disturbs the other; shown without a copy, `ImageTextures::show_view`, under the compass, `Tool::viewport_underlay`; dropped after 10 s idle); holding C flips the whole view. *Preview without* (`weather_without <part> on|off`) takes fog, clouds, precipitation, the tone curve, colour grading or depth of field out of the viewport's light only, with a banner. The Inspector's **Fog** section ends with the fog's opacity over flat ground by distance (`Inspector::plot`), its **Sky** section with two **sky strips**, the game's sky looking up towards the sun and away from it through the whole pipeline (`sky_strip.rs`, `Inspector::images`, `inspect_environment_with`; `weather_sky_png`): each by a preview renderer of its own, drawn again once the light has been still for 0.3 s (not during a drag: each drawing makes the preview's cubes again) and shown from its target without a copy back. The Inspector's sections fold (`Inspector::open_section`, open by default). The histogram's copy of the frame comes back without waiting for the GPU (`image_io::Readback`). The **Weather gallery** (Files > Gallery, `weather_gallery on|off|refresh [filter]`, `gallery.rs`) draws the listed .environment files (60 at most) on the scene from the camera of when it opened, one per frame; a click opens one. A **reference screenshot** (`reference.rs`, `weather_reference <png> [over|corner|off] [opacity]`): a PNG fitted to the viewport keeping its proportions, over it at an opacity or in its corner; *Compare a spot* (`weather_reference_compare x y`) gives the screenshot's colour and the render's at a click, and how they differ in brightness and warmth (a guide: the files' colours are lit and tone-mapped, so a picked colour is not written into the file; the two must be framed alike). The keys are in Settings > Shortcuts (Weather). The ideas not done yet: [plans/weather.md](plans/weather.md), Open 3.
 
 Differences: the legacy app held one active file; here every open file is a document, and the one that lights the scene is the last active `.environment` / `.lighting`. `weather_editor.exe` was removed in Phase 8; the render regression is the `wce.exe` captures (`scripts/shots.sh`). `scripts/weather_check.sh` supersedes `variation_e2e.ps1`.
+
+## VFX tool (`wce_vfx_tool`)
+
+Behind the `vfx` feature of `wce_app` (off by default: `cargo run -p wce_app --features vfx`); the plan and its decisions are
+[plans/vfx_tool.md](plans/vfx_tool.md). It opens `vfx/*.xml` (`Tool::opens_under`: a file under `vfx/` comes here whichever tool is active)
+as an `XmlFileDocument`, so saving, autosave, undo and the byte-identical round trip are the Weather tool's: Save writes the project's loose
+copy, different from the pack's file in the edited spans only.
+
+- **Files**: the effects of the packs (and the project's loose copies), filtered; mod files in blue; double-click opens.
+- **Viewport**: the effect plays where the *spot* is (a `Payload::VfxEmitter` entity in the document's layer, the path tile VFXInstances
+  use), on the sample map or the open tile, lit by the editor's weather preview (else the Weather tool's open environment, taken when
+  the tool activates; else the default day). The spot is dropped on the ground where the
+  camera looks; *Here* moves it there again, the move gizmo drags it. The tool's own edits play live: the editor's **particle overlay**
+  (`wce_editor::particle_overlay`) feeds every open vfx / weather definitions document to the particle reader, whichever tool is active,
+  and placed effects read their definitions again when one changes (`ParticleSystem::reload_world_definitions`).
+- **VFX preview** panel: Play / Pause (**Space**), Restart (**R**), speed (`RenderSettings::particle_time_scale`: the particles' clock,
+  the weather's included), loop every N seconds, the spot, handles on or off, what the move gizmo moves (the spot, or the focused part's
+  `SpawnPosition` / the focused reference's `pos_*`, an edit of the file), and the **Parts**: each emitter and reference with Solo,
+  Mute and Focus. Solo and mute are preview-only bytes laid over the file in the overlay (`Editor::set_particle_override`), never
+  saved.
+- **Inspector** (the shared framework): *Effect* (the `<vfx>` attributes, the quality variant edited, a property filter, only the
+  focused part), then a section per emitter (its properties grouped Emission, Particles, Spawn shape, Motion, Culling, Rigid models,
+  Other; readable labels, what each does and its XML name in the tooltip; a property the chosen variant lacks shows the base one dim),
+  per behaviour chain (each modifier's properties; `vs_colour` with its colour ramp, `vs_vertex_alpha` with its opacity over life),
+  the render stacks, and per reference (position, scale, start time, and per library emitter enable, tint range, lifetime biases;
+  *Open the library*). Curves (`SpawnAreaCurve`, `SpawnAreaBox`, `EmissionRateCurve`...) are **curve editors**
+  (`Inspector::edit_curve`): drag a key, double-click to add one, right-click to remove one; the drag plays live and is written as one
+  undo entry when it ends, rewriting only that property's text (`XmlDoc::with_inner_text`). A drag over several attributes (a colour's
+  channels, min and max) is one undo entry (`XmlFileDocument::set_attrs`). Numbers keep the file's style (`0.00` stays two decimals
+  unless the value needs more). Duplicate an emitter (with a render stack of its own, so the copy draws), a chain or a reference;
+  delete an emitter (with its place in the stacks), an unused chain or a reference: one undo entry each.
+- **Handles** of the focused part: the emitter's spawn ring (inner and outer radius, its arc) and box drawn where particles are born,
+  turned by `EmitterRotation` and moved by `SpawnPosition`, its spawn directions (the `SpawnSpread` cone, or straight out); their dots
+  drag the ring's radius and the box's x / z size (the curves scaled; Ctrl to tenths; a shape of size 0 has a hollow dot to drag out).
+  References show where they play and their scale.
+- **Commands**: `vfx_play [on|off]`, `vfx_speed`, `vfx_restart`, `vfx_mute`, `vfx_solo`, `vfx_focus`, `vfx_only_focused`, `vfx_filter`,
+  `vfx_quality`, `vfx_set <emitter> <property> <attribute> <value>`, `vfx_curve <emitter> <property> <curve> <t,v;...>`,
+  `vfx_duplicate`, `vfx_delete`, `vfx_frame`, `vfx_info` (the parts, their curves, what plays, the particles and their errors).
 
 ## Tile tool (`tools/tile`)
 
