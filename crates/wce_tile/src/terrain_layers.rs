@@ -659,6 +659,20 @@ impl<K: Kind> Stack<K> {
         changed
     }
 
+    /// The base's pixel (under every layer), zeros where it holds nothing.
+    pub fn base_at(&self, x: u32, y: u32, out: &mut [K::Sample]) {
+        self.compose_with(x, y, 0, out, &|_| false);
+    }
+
+    /// Which samples the base holds: its blocks' identities (a block changed is a new one, an undo puts the old one back). Cheap.
+    #[must_use]
+    pub fn base_identity(&self) -> u64 {
+        self.base.blocks.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            let p = b.as_ref().map_or(0, |b| Arc::as_ptr(b) as usize as u64);
+            (h ^ p).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
     /// What lies under a layer at a pixel: what a procedural feature works from.
     pub fn below(&self, id: u64, x: u32, y: u32, out: &mut [K::Sample]) {
         self.compose(x, y, self.index_of(id).unwrap_or(self.layers.len()), out);

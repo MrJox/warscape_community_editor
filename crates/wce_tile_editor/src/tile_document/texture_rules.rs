@@ -149,8 +149,8 @@ impl Tile {
             .collect()
     }
 
-    /// What the rules' layer is made from, hashed: the rules' text, the texture groups, the heights as they show, what the distances
-    /// measure to (the water, the buildings, the roads' layers).
+    /// What the rules' layer is made from, hashed: the rules' text, the texture groups, the heights as they show, the blend map's base
+    /// (its main ground), what the distances measure to (the water, the buildings, the roads' layers).
     fn texture_rules_signature(&mut self) -> Option<u64> {
         let inputs = self.texture_rules_inputs();
         let (rules, masks) = self.all_texture_rules();
@@ -190,6 +190,11 @@ impl Tile {
         eat(&self.texture_rules_heights.1.to_le_bytes());
         eat(&self.project.unit_scale.to_le_bytes());
         eat(&inputs.hash.to_le_bytes());
+        if let Some(s) = self.project.layers.as_ref().and_then(|l| l.blend.as_ref()) {
+            // The rules lay their textures over the base's main ground only.
+            eat(&s.base_identity().to_le_bytes());
+        }
+
         if Feature::Road.used(&rules)
             && let Some(s) = self.project.layers.as_ref().and_then(|l| l.blend.as_ref())
         {
@@ -443,6 +448,14 @@ impl Prepared {
         let (bw, bh) = self.size;
         let (ppm, border) = (self.ppm, self.border);
         let mut fields = self.fields.clone();
+        // Only over the tile's main ground: what its own painting holds in other textures stays (a kit tile's artist's work).
+        let base = &self.blend;
+        let (_, share) = texture_rules::main_ground(bw, bh, |x, y| {
+            let mut px = [0u16; 16];
+            base.base_at(x, y, &mut px);
+            px
+        });
+        fields = fields.with_main_ground(bw, bh, ppm, share);
         if let Some(water) = &self.inputs.water {
             let mask = texture_rules::water_mask(water, &fields, bw, bh, ppm, border);
             fields = fields.with_distances(Feature::Water, Distances::from_mask(bw, bh, ppm, &mask));

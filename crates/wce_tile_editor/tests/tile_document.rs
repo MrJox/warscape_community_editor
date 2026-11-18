@@ -2520,13 +2520,14 @@ fn texture_rules_make_a_layer_that_hand_paint_goes_over() {
     let original = weights(&d);
     let size = d.history().size();
 
-    // Rock everywhere: no conditions.
+    // Rock everywhere (no conditions) over the tile's main ground, grass; the quarter its base has painted mud (x < 8) stays.
     let rock = Rule { name: "rock".to_owned(), group: "rock".to_owned(), ..Rule::default() };
     let set = RuleSet { preset: String::new(), rules: vec![rock] };
     d.set_texture_rules(Some(set.clone()));
     assert_eq!(d.history().size(), size + 1);
     d.finish_texture_rules();
-    assert!(weights(&d).chunks(16).all(|p| p[12] == u16::MAX), "all rock");
+    let rock_over_grass = |w: &[u16]| w.chunks(16).enumerate().all(|(i, p)| if i % 32 < 8 { p[5] == u16::MAX } else { p[12] == u16::MAX });
+    assert!(rock_over_grass(&weights(&d)), "rock over the grass, the mud kept");
     assert!(d.terrain_layers(LayerType::Blend).0.is_empty(), "the rules' layer is not the user's");
     assert!(d.texture_rules_missing_groups().is_empty());
 
@@ -2549,7 +2550,7 @@ fn texture_rules_make_a_layer_that_hand_paint_goes_over() {
     d.finish_texture_rules();
     d.history_mut().undo();
     d.finish_texture_rules();
-    assert!(weights(&d).chunks(16).all(|p| p[12] == u16::MAX), "rock again: {:?}", &weights(&d)[..16]);
+    assert!(rock_over_grass(&weights(&d)), "rock again");
     d.history_mut().undo();
     d.finish_texture_rules();
     assert!(d.terrain_layers(LayerType::Blend).0.is_empty());
