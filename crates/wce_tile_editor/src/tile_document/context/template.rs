@@ -202,6 +202,10 @@ pub struct Template {
     /// A custom-mesh tile's mesh (the cliffs), drawn instead of its heights' patches.
     pub custom: Option<Arc<wce_scene::render_scene::CustomTerrainMesh>>,
 
+    /// A custom-mesh tile's floor on a campaign map (`custom_floor`): a grid over its cells and which of its points the mesh covers (in
+    /// x, z); the map context raises the uncovered parts that lie against land (`Frame::place`).
+    pub floor: Option<(Grid, Arc<Vec<bool>>)>,
+
     /// Everything but the terrain, the markers and the grass; the first `mid` of them are drawn in the mid ring too (buildings, rivers).
     pub entities: Vec<(Float4x4, Payload)>,
     pub mid: usize,
@@ -483,6 +487,38 @@ pub fn load_any_template(
     }
 }
 
+/// The step of a custom-mesh tile's floor (tile units: 8 a cell).
+const FLOOR_STEP: f64 = 16.0;
+
+/// A custom-mesh tile's floor for a campaign map: a flat grid over its cells (and the `o` around them) and which of its points the mesh's
+/// first level covers in x, z. A cliff's mesh need not cover its tile (main_attila's `6x4_inner_right_t1_r3` south-east of Rome: 47 %
+/// of it, an inner cliff with land behind it).
+fn custom_floor(mesh: &wce_scene::render_scene::CustomTerrainMesh, ex: f64, ez: f64, o: f64) -> (Grid, Arc<Vec<bool>>) {
+    let (nx, nz) = (((ex + 2.0 * o) / FLOOR_STEP).round() as i32 + 1, ((ez + 2.0 * o) / FLOOR_STEP).round() as i32 + 1);
+    let grid = Grid::sample(nx, nz, -o, -o, FLOOR_STEP, &|_, _| 0.0);
+    // The triangles in the tile's frame (x, depth + z).
+    let tris: Vec<[[f32; 2]; 3]> = mesh.lods.first().map_or_else(Vec::new, |l| {
+        let at = |i: u32| {
+            let p = l.vertices[i as usize].position;
+            [p[0], mesh.depth + p[2]]
+        };
+        l.indices.chunks_exact(3).map(|f| [at(f[0]), at(f[1]), at(f[2])]).collect()
+    });
+    let inside = |x: f32, z: f32, t: &[[f32; 2]; 3]| {
+        let side = |a: [f32; 2], b: [f32; 2]| (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]);
+        let (d0, d1, d2) = (side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0]));
+        (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0) || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0)
+    };
+    let covered = (0..nz)
+        .flat_map(|j| (0..nx).map(move |i| (i, j)))
+        .map(|(i, j)| {
+            let (x, z) = ((-o + f64::from(i) * FLOOR_STEP) as f32, (-o + f64::from(j) * FLOOR_STEP) as f32);
+            tris.iter().any(|t| inside(x, z, t))
+        })
+        .collect();
+    (grid, Arc::new(covered))
+}
+
 /// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its mesh (the kit's CS2, else the packs' model), on the map's LF, with the material
 /// of its blend map projected onto it. Its heights are zero: they draw nothing (the game draws no patches for such a tile) but the floor
 /// under the sea beside the mesh (`Frame::place`).
@@ -517,6 +553,7 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     };
     let height = |_: f64, _: f64| 0.0f32;
     let own = Grid::sample(nx, nz, -o, -o, step, &height);
+    let floor = Some(custom_floor(&mesh, ex, ez, o));
 
     // The blend map is the bordered tile's (a cell around it), as a scene tile's. Some variations have none (Attila's `cliff_custom`
     // `6x2_l0_r0/ad`: only the mesh; the packs ship no blend for any of them): the mesh alone, no ground material.
@@ -526,6 +563,7 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
             own,
             material: None,
             custom: Some(Arc::new(mesh)),
+            floor,
             load_s: t0.elapsed().as_secs_f64(),
             ..Default::default()
         };
@@ -560,6 +598,7 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
         own,
         material: Some(material),
         custom: Some(Arc::new(mesh)),
+        floor,
         load_s: t0.elapsed().as_secs_f64(),
         ..Default::default()
     };

@@ -272,6 +272,18 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   340) and a few at (210 - 213, 283 - 286); `camprd\lakes.py`) and shows open sea; under it (`terrain_pick`: cell (628, 700))
   the land LF is 32 m above the sea under sea tiles. Suspects, not checked: the sea bed texture (`ocean_sea_bed`, built from the
   scene's terrains) or the far ground's chunks (off the land LF) where the game's sea pass has its sea LF.
+  **Settled (2026-11-18):** neither: it was the custom cliff tile `cliff_custom/6x4_inner_right_t1_r3` (cells (624 - 630, 699 -
+  703), turned 180 degrees), an inner cliff whose mesh covers 47 % of its cells; the rest showed the cliff floor, at the battle's
+  fixed depth under the sea, through the flat sea plane, where the game has land. A campaign map's cliff floor now
+  (`template.rs` `custom_floor`, `mod.rs` `custom_floor_heights`): on the land LF, its points the mesh leaves bare whose nearest
+  tile edge has a land tile beyond it 2 m under the LF, the rest twice the battle's depth under it. Checked against the user's
+  screenshot (the cliff line with land behind it) and the west coast's cliffs (unchanged). Tried and dropped: every campaign sea
+  tile and uncovered cell back on the land LF (the sand dome south of Rome rose again); the floor on the LF everywhere, at the
+  mesh's nearest vertex, or by connected bare regions (land shelves in front of the west coast's cliffs).
+- **Campaign maps' loading errors (2026-11-18, user):** none left on TDD and Attila: blank models (no LODs: `ap_ruin_blank_part`,
+  Rome's `roman_wall_12`...) are empty, not failed; placed effects naming no effect (TDD's
+  `gaul_campaign_vfx_blossom_vfx_autumn_leaves`) left out and listed once (info); the view-type-2 emitters not reported on a
+  campaign map (the game draws none there). Left as warnings: the game files' textures that are not powers of two.
 - Open: the fog-of-war switch (decision 2); the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
