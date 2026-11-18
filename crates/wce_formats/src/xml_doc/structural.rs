@@ -215,11 +215,21 @@ impl XmlDoc {
             return edit_error("invalid element name");
         }
 
+        self.with_child_text(parent, format!("<{name}/>").as_bytes())
+    }
+
+    /// The document with `raw` (one element's text, as the file would have it) as the last child of `parent`, on a line of its own
+    /// when the children have theirs. Returns it with the new element's index.
+    ///
+    /// # Errors
+    ///
+    /// Fails for a parent with text content, a `raw` that is not one element, or if the result can't be read.
+    pub fn with_child_text(&self, parent: usize, raw: &[u8]) -> Result<(Self, usize)> {
         let doc = self.baked()?;
         let p = &doc.elems[parent];
         let t0 = &doc.text;
         let eol = eol_of(t0);
-        let child = format!("<{name}/>").into_bytes();
+        let child = raw.to_vec();
         let pin = line_indent(t0, p.start_off);
         let unit: &[u8] = if pin.contains(&b'\t') { b"\t" } else { b"    " };
         let mut t = t0.clone();
@@ -247,7 +257,13 @@ impl XmlDoc {
         }
 
         let new_index = parent + doc.subtree_size(parent);
-        Ok((doc.rebuilt(&t)?, new_index))
+        let out = doc.rebuilt(&t)?;
+        let added = out.elems.get(new_index).filter(|e| e.parent == Some(parent));
+        if added.is_none_or(|e| out.elems[parent].children.len() != doc.elems[parent].children.len() + 1 || e.start_off == 0) {
+            return edit_error("not one element");
+        }
+
+        Ok((out, new_index))
     }
 
     /// The text between an element's start and end tags as stored (entity-encoded). Empty for a self-closing element.

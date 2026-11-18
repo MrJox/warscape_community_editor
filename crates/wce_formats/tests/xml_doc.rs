@@ -299,3 +299,13 @@ fn inner_text_edits_change_only_the_text() {
     // The same text again is no edit.
     assert_eq!(text(&d.with_inner_text(2, b"k,1;0,0").unwrap()), text(&d));
 }
+
+#[test]
+fn a_child_added_as_text_takes_its_siblings_line_layout() {
+    let d = doc("<v>\r\n\t<e>\r\n\t\t<p name='a'/>\r\n\t</e>\r\n</v>\r\n");
+    let (e, i) = d.with_child_text(1, b"<p name='b' value='1.00'/>").unwrap();
+    assert_eq!(text(&e), "<v>\r\n\t<e>\r\n\t\t<p name='a'/>\r\n\t\t<p name='b' value='1.00'/>\r\n\t</e>\r\n</v>\r\n");
+    assert_eq!(e.get(i, "name").as_deref(), Some("b"));
+    assert!(d.with_child_text(1, b"<p/><q/>").is_err());
+    assert!(d.with_child_text(1, b"text").is_err());
+}

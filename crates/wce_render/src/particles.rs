@@ -623,6 +623,9 @@ pub struct ParticleSystem {
     /// Per placed effect definition, its first constants row after the weather's (the sum of the earlier definitions' emitters).
     world_first_row: Vec<usize>,
     world_names: BTreeMap<String, usize>,
+
+    /// Definitions were read again in place (`reload_world_files`): the rows and the GPU constants are made again.
+    world_stale: bool,
     world_libs: BTreeMap<String, VfxFile>,
     world: Vec<WorldInstance>,
     world_lights: Vec<WorldLight>,
@@ -742,6 +745,7 @@ impl ParticleSystem {
             campaign: false,
             world_first_row: vec![],
             world_names: BTreeMap::new(),
+            world_stale: false,
             world_libs: BTreeMap::new(),
             world: vec![],
             world_lights: vec![],
@@ -1073,6 +1077,42 @@ impl ParticleSystem {
         self.world_libs.clear();
     }
 
+    /// Reads again, in place, the placed effects that read one of `changed` (effect names, `vfx/<name>.xml`): an open vfx file was
+    /// edited. The others keep their definitions; every instance keeps its state. Returns how many were read again.
+    pub fn reload_world_files(&mut self, changed: &[String]) -> usize {
+        for name in changed {
+            self.world_libs.remove(name);
+        }
+
+        let mut n = 0;
+        for i in 0..self.world_effects.len() {
+            if self.world_effects[i].files.iter().any(|f| changed.contains(f)) {
+                let name = self.world_effects[i].name.clone();
+                let mut effect = load_effect_with(&*self.reader, &name, &mut self.world_libs);
+                // As in `load_world_effects`: a started effect's emitters end at their LifeTime.
+                if self.child_names.contains(&name) {
+                    for em in &mut effect.emitters {
+                        em.infinite_life = false;
+                    }
+                }
+
+                for note in &effect.notes {
+                    if self.campaign && note.contains("scene_view_type 2 ") {
+                        continue;
+                    }
+
+                    self.error(format!("{name}: {note}"));
+                }
+
+                self.world_effects[i] = effect;
+                n += 1;
+            }
+        }
+
+        self.world_stale |= n > 0;
+        n
+    }
+
     /// The scene's placed effects (each frame they change): with the effects their rigids started, while their parent stays.
     pub fn set_world_effects(&mut self, effects: &[WorldEffect]) {
         self.placed = effects.to_vec();
@@ -1147,7 +1187,7 @@ impl ParticleSystem {
             }
         }
 
-        if loaded_new {
+        if loaded_new || std::mem::take(&mut self.world_stale) {
             self.world_first_row = self
                 .world_effects
                 .iter()

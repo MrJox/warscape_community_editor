@@ -64,13 +64,17 @@ Behind the `vfx` feature of `wce_app` (off by default: `cargo run -p wce_app --f
 as an `XmlFileDocument`, so saving, autosave, undo and the byte-identical round trip are the Weather tool's: Save writes the project's loose
 copy, different from the pack's file in the edited spans only.
 
-- **Files**: the effects of the packs (and the project's loose copies), filtered; mod files in blue; double-click opens.
+- **Files**: the effects of the packs (and the project's loose copies), filtered; mod files in blue; double-click opens. *New...*
+  writes a new effect into the project and opens it (`new.rs`): a copy of the open one (its edits included), or one that plays a library
+  effect as the game's own do (an empty `<vfx>` and one reference enabling every emitter of the library, in the game's text layout:
+  UTF-16 with a BOM, CRLF, tabs). A name the packs or the project have is refused.
 - **Viewport**: the effect plays where the *spot* is (a `Payload::VfxEmitter` entity in the document's layer, the path tile VFXInstances
   use), on the sample map or the open tile, lit by the editor's weather preview (else the Weather tool's open environment, taken when
   the tool activates; else the default day). The spot is dropped on the ground where the
   camera looks; *Here* moves it there again, the move gizmo drags it. The tool's own edits play live: the editor's **particle overlay**
   (`wce_editor::particle_overlay`) feeds every open vfx / weather definitions document to the particle reader, whichever tool is active,
-  and placed effects read their definitions again when one changes (`ParticleSystem::reload_world_definitions`).
+  and the placed effects that read a changed file (their own or a library they play) read their definitions again, in place, the
+  others not (`RenderSettings::vfx_changed`, `ParticleSystem::reload_world_files`).
 - **VFX preview** panel: Play / Pause (**Space**), Restart (**R**), speed (`RenderSettings::particle_time_scale`: the particles' clock,
   the weather's included), loop every N seconds, the spot, handles on or off, what the move gizmo moves (the spot, or the focused part's
   `SpawnPosition` / the focused reference's `pos_*`, an edit of the file), and the **Parts**: each emitter and reference with Solo,
@@ -86,14 +90,21 @@ copy, different from the pack's file in the edited spans only.
   undo entry when it ends, rewriting only that property's text (`XmlDoc::with_inner_text`). A drag over several attributes (a colour's
   channels, min and max) is one undo entry (`XmlFileDocument::set_attrs`). Numbers keep the file's style (`0.00` stays two decimals
   unless the value needs more). Duplicate an emitter (with a render stack of its own, so the copy draws), a chain or a reference;
-  delete an emitter (with its place in the stacks), an unused chain or a reference: one undo entry each.
+  delete an emitter (with its place in the stacks), an unused chain or a reference: one undo entry each. *Add a property* (per emitter
+  and modifier) lists the properties the game's own emitters of its type (or modifiers of its fragment) have and this one lacks, and
+  adds one as they most often write it (`defaults.rs`: the engine's defaults are not decoded, so vanilla's files, read once on a thread
+  of their own, are the defaults); with a lower quality variant edited, it also adds that variant of a property the emitter has only in
+  the base (a copy of the base line). Editing a dim row (the base shown for a variant) edits the base.
 - **Handles** of the focused part: the emitter's spawn ring (inner and outer radius, its arc) and box drawn where particles are born,
   turned by `EmitterRotation` and moved by `SpawnPosition`, its spawn directions (the `SpawnSpread` cone, or straight out); their dots
-  drag the ring's radius and the box's x / z size (the curves scaled; Ctrl to tenths; a shape of size 0 has a hollow dot to drag out).
+  drag the ring's radius and the box's x, z and y size (the curves scaled; Ctrl to tenths; a shape of size 0 has a hollow dot to drag
+  out). A dot under the mouse hides the move gizmo, whose arrows it may sit on.
   References show where they play and their scale.
 - **Commands**: `vfx_play [on|off]`, `vfx_speed`, `vfx_restart`, `vfx_mute`, `vfx_solo`, `vfx_focus`, `vfx_only_focused`, `vfx_filter`,
   `vfx_quality`, `vfx_set <emitter> <property> <attribute> <value>`, `vfx_curve <emitter> <property> <curve> <t,v;...>`,
-  `vfx_duplicate`, `vfx_delete`, `vfx_frame`, `vfx_info` (the parts, their curves, what plays, the particles and their errors).
+  `vfx_duplicate`, `vfx_delete`, `vfx_new <name> copy | plays <library>`, `vfx_add_property <emitter> [property [quality]]`,
+  `vfx_handles` (the handles' pixels and values), `vfx_drag_handle <handle> <dx> <dy>` (a mouse drag from where it is), `vfx_frame`,
+  `vfx_info` (the parts, their curves, what plays, the particles and their errors).
 
 ## Tile tool (`tools/tile`)
 

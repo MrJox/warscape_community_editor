@@ -4,7 +4,7 @@ A tool of its own for `vfx/*.xml` effects, edited visually: the effect plays on 
 spawn shapes and references are handles in the viewport, its curves and colours are drawn and dragged in the Inspector. Before it, VFX files
 were a category of the Weather tool's Files panel, edited as a raw XML tree (docs/plans/weather.md, "Open" item 1).
 
-State: planned and built 2026-11-18 with the user (decisions below) on `feature/vfx_tool`, steps 1 to 6 done; user review pending.
+State: planned and built 2026-11-18 with the user (decisions below) on `feature/vfx_tool`, steps 1 to 7 done; user review pending.
 Behind the `vfx` feature of `wce_app`, off by default. What the tool does: [docs/editor.md](../editor.md), "VFX tool".
 
 ## Decisions (user, 2026-11-18)
@@ -44,6 +44,9 @@ Behind the `vfx` feature of `wce_app`, off by default. What the tool does: [docs
 4. Playback and solo / mute.
 5. Gizmos: spawn area box, ring, spawn point, emission direction cone; reference offsets and scale; drag to edit.
 6. Docs (docs/editor.md, weather.md, PLAN.md).
+7. The follow-ups of the first version (2026-11-18): new effects (a copy, or one that plays a library), adding a property with
+   vanilla's value and a quality variant, the box's height handle, placed effects reloaded only when their files change, scripted
+   handle drags (`vfx_handles`, `vfx_drag_handle`).
 
 ## Checked (2026-11-18, scripted runs on vanilla Attila files)
 
@@ -52,14 +55,18 @@ Behind the `vfx` feature of `wce_app`, off by default. What the tool does: [docs
 - An attribute edit and a curve edit, undone and redone, saved: the file differs from the pack's in those two spans only (UTF-16,
   CRLF kept). Duplicate emitter (`embers_copy` with its own stack), delete emitter (its stack goes), a refused chain delete (in use),
   duplicate chain, undo / redo of them: the saved file is whole.
-- Not checked by a script (no mouse drags in scripts): dragging the ring and box dots and curve keys in the app; the scaling they write
-  is unit-tested (`gizmos.rs`, `curves.rs`).
+- Handle drags by script (`vfx_drag_handle`): the ring's outer radius 0 -> 3.37 m and the box's height 0 -> 4.71 m on `embers`, each
+  one undo entry. Found and fixed with it: a size-0 shape's dots sat on the move gizmo's arrows, and the gizmo took the press.
+- New effects: `test_fire` (plays `library_burning_entity`) reads and plays as one reference of it, its text the game's layout but the
+  reference's name; a copy is the open file byte for byte; taken names are refused.
+- Adding properties: vanilla's continuous_mesh emitters all have the same set but the sound events; `SoundEventStart` added to
+  `smoke` and a quality 1 `LifeTime`, saved: two lines in the emitter, in the file's indentation and line ends, nothing else.
+- A placed effect follows its file: `ParticleLifeTime` 0.1 against 10 on a soloed `fire`: 3 particles against 92.
+- Not checked by a script: curve keys dragged in the Inspector (the mouse command reaches the viewport only); what they write is
+  unit-tested (`curves.rs`).
 
-## Follow-ups
+## Left elsewhere
 
-- New effect from a template; adding a property the file lacks with the engine's default (needs the schema's defaults:
-  docs/plans/weather_current_state.md item 5).
-- The box's y size has no handle (edit it in the Inspector).
-- Placed effects all read their definitions again when any open vfx file changes: on a big tile, a drag reloads every effect of the
-  map each frame; reloading only the changed file's would be cheaper.
-- Curve baking is not decoded (weather_current_state.md item 4): the curve editor draws keys joined linearly, as the runtime evaluates them.
+- The engine's own defaults for a property (docs/plans/weather_current_state.md item 5): until they are decoded, *Add a property* uses
+  vanilla's most common value.
+- Curve baking (weather_current_state.md item 4): the curve editor draws keys joined linearly, as the runtime evaluates them.

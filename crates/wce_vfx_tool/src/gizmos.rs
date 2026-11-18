@@ -37,6 +37,9 @@ pub enum Handle {
     /// The box's size along its x and z.
     BoxX,
     BoxZ,
+
+    /// The box's height (y).
+    BoxY,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +162,7 @@ impl Shape {
             Handle::Inner => self.inner,
             Handle::BoxX => self.size[0],
             Handle::BoxZ => self.size[2],
+            Handle::BoxY => self.size[1],
         }
     }
 
@@ -170,6 +174,7 @@ impl Shape {
             Handle::Outer | Handle::Inner => self.ring_point(v, mid_arc),
             Handle::BoxX => self.local(Float3::new(v * 0.5, 0.0, 0.0)),
             Handle::BoxZ => self.local(Float3::new(0.0, 0.0, v * 0.5)),
+            Handle::BoxY => self.local(Float3::new(0.0, v * 0.5, 0.0)),
         }
     }
 
@@ -183,7 +188,7 @@ impl Shape {
         }
 
         if self.box_elem.is_some() {
-            out.extend([Handle::BoxX, Handle::BoxZ]);
+            out.extend([Handle::BoxX, Handle::BoxZ, Handle::BoxY]);
         }
 
         out
@@ -215,9 +220,19 @@ fn handle_px(t: &VfxTool, e: &Editor, s: &Shape, h: Handle) -> Option<(f32, f32)
     e.viewport.project(to_scene(t, e, s.handle(h)))
 }
 
-pub fn draw(t: &mut VfxTool, e: &mut Editor, origin: gui::Vec2, _size: gui::Vec2) {
+pub fn draw(t: &mut VfxTool, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
     if !t.show_handles || e.viewport.game_view {
+        t.hot_handle = None;
         return;
+    }
+
+    // The handle under the mouse, found here (screen points) rather than from the viewport's hover: a handle over the move gizmo's arrows
+    // hides the gizmo (`gizmo_frame`), so the press is the handle's.
+    if t.drag.is_none() {
+        let m = gui::mouse_pos();
+        let inside = m.x >= origin.x && m.y >= origin.y && m.x < origin.x + size.x && m.y < origin.y + size.y;
+        let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+        t.hot_handle = if inside { hit(t, e, (m.x - origin.x) * density, (m.y - origin.y) * density).map(|h| h.0) } else { None };
     }
 
     let Some(d) = document(e) else { return };
@@ -311,6 +326,7 @@ pub fn draw(t: &mut VfxTool, e: &mut Editor, origin: gui::Vec2, _size: gui::Vec2
                     Handle::Inner => "Spawn ring, inner radius (SpawnAreaCurve inner_radius_min / max): drag to scale it.",
                     Handle::BoxX => "Spawn box, x size (SpawnAreaBox x_min / x_max): drag to scale it.",
                     Handle::BoxZ => "Spawn box, z size (SpawnAreaBox z_min / z_max): drag to scale it.",
+                    Handle::BoxY => "Spawn box, height (SpawnAreaBox y_min / y_max): drag to scale it.",
                 });
             }
         }
@@ -341,6 +357,13 @@ pub fn draw(t: &mut VfxTool, e: &mut Editor, origin: gui::Vec2, _size: gui::Vec2
     }
 }
 
+/// The focused emitter's handles and where they are in the viewport image (pixels), with their values: for scripts (`vfx_handles`).
+pub fn handle_list(t: &VfxTool, e: &Editor) -> Vec<(Handle, Option<(f32, f32)>, f32)> {
+    let (Some(d), Some(em)) = (document(e), focused_emitter(t)) else { return vec![] };
+    let sh = shape(t, d, em);
+    sh.handles().into_iter().map(|h| (h, handle_px(t, e, &sh, h), sh.value(h))).collect()
+}
+
 /// The handle under the cursor (image pixels), if any.
 fn hit(t: &VfxTool, e: &Editor, x: f32, y: f32) -> Option<(Handle, usize, f32)> {
     let d = document(e)?;
@@ -355,7 +378,7 @@ fn hit(t: &VfxTool, e: &Editor, x: f32, y: f32) -> Option<(Handle, usize, f32)> 
 
         let elem = match h {
             Handle::Outer | Handle::Inner => sh.ring_elem?,
-            Handle::BoxX | Handle::BoxZ => sh.box_elem?,
+            Handle::BoxX | Handle::BoxZ | Handle::BoxY => sh.box_elem?,
         };
         Some((h, elem, sh.value(h)))
     })
@@ -369,7 +392,15 @@ fn value_at(t: &VfxTool, e: &Editor, h: Handle, x: i32, y: i32) -> Option<f32> {
     let (o, dir) = e.viewport.ray(x, y)?;
     let u = units(e);
     let centre = to_scene(t, e, sh.centre);
-    let normal = normalize(turn(&sh.rot, Float3::new(0.0, 1.0, 0.0)));
+    let up = normalize(turn(&sh.rot, Float3::new(0.0, 1.0, 0.0)));
+
+    // The ring's plane; for the height, the plane through the box's y axis that faces the camera.
+    let normal = if h == Handle::BoxY {
+        let facing = dir - up * dot(dir, up);
+        if length(facing) < 1e-4 { return None } else { normalize(facing) }
+    } else {
+        up
+    };
     let denom = dot(dir, normal);
     let along = if denom.abs() > 1e-4 { dot(centre - o, normal) / denom } else { -1.0 };
     let p = if along > 0.0 {
@@ -386,6 +417,7 @@ fn value_at(t: &VfxTool, e: &Editor, h: Handle, x: i32, y: i32) -> Option<f32> {
         Handle::Outer | Handle::Inner => length(in_plane),
         Handle::BoxX => 2.0 * dot(in_plane, normalize(turn(&sh.rot, Float3::new(1.0, 0.0, 0.0)))).abs(),
         Handle::BoxZ => 2.0 * dot(in_plane, normalize(turn(&sh.rot, Float3::new(0.0, 0.0, 1.0)))).abs(),
+        Handle::BoxY => 2.0 * dot(rel, up).abs(),
     })
 }
 
@@ -397,6 +429,7 @@ fn scaled(text: &str, h: Handle, from: f32, to: f32) -> String {
         Handle::Inner => &["inner_radius_min", "inner_radius_max"],
         Handle::BoxX => &["x_min", "x_max"],
         Handle::BoxZ => &["z_min", "z_max"],
+        Handle::BoxY => &["y_min", "y_max"],
     };
     for name in names {
         let Some(curve) = c.find_mut(name) else { continue };
@@ -444,7 +477,7 @@ pub fn input(t: &mut VfxTool, e: &mut Editor, ev: &ViewportEvent) -> bool {
             {
                 let what = match dr.handle {
                     Handle::Outer | Handle::Inner => "spawn ring",
-                    Handle::BoxX | Handle::BoxZ => "spawn box",
+                    Handle::BoxX | Handle::BoxZ | Handle::BoxY => "spawn box",
                 };
                 if let Err(m) = d.set_inner_text(dr.elem, &encode_entities(p.text.as_bytes(), b'"'), &format!("Scale the {what}")) {
                     e.status(&m, true);
@@ -462,6 +495,11 @@ pub fn input(t: &mut VfxTool, e: &mut Editor, ev: &ViewportEvent) -> bool {
 pub fn gizmo_frame(t: &VfxTool, e: &Editor, dragging: bool) -> Option<Float4x4> {
     if GIZMO_DRAGGING.with(Cell::get) && !dragging {
         GIZMO_DRAGGING.with(|g| g.set(false));
+    }
+
+    // A handle under the mouse or being dragged: no gizmo meanwhile (the handles sit on its arrows).
+    if !dragging && (t.hot_handle.is_some() || t.drag.is_some()) {
+        return None;
     }
 
     let spot = t.spot?;

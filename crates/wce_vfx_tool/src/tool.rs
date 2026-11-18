@@ -150,6 +150,14 @@ pub struct VfxTool {
     tile_was_open: bool,
     camera_set: bool,
     open_after: Option<String>,
+
+    /// Vanilla's properties, for adding one a file lacks.
+    pub(crate) defaults: crate::defaults::Defaults,
+
+    /// The New effect popup: the name, copy (false) or plays a library (true), the library.
+    new_name: String,
+    new_plays: bool,
+    new_library: String,
 }
 
 impl Default for VfxTool {
@@ -180,6 +188,10 @@ impl Default for VfxTool {
             tile_was_open: false,
             camera_set: false,
             open_after: None,
+            defaults: Default::default(),
+            new_name: String::new(),
+            new_plays: true,
+            new_library: String::new(),
         }
     }
 }
@@ -412,6 +424,25 @@ impl VfxTool {
         }
 
         gui::text_colored(theme::dim(), &format!("{} effects", self.listing.len()));
+        gui::same_line();
+        if gui::small_button("New...") {
+            // The open library by default, else the one the open effect plays first.
+            self.new_library = match document(e) {
+                Some(d) if !self.ix.emitters.is_empty() => effect_name(&preview_path(d)),
+                Some(_) => self.ix.refs.first().map(|r| r.library.clone()).unwrap_or_default(),
+                None => String::new(),
+            };
+            self.new_plays = document(e).is_none() || !self.new_library.is_empty();
+            gui::open_popup("new_effect");
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "A new effect in the project: a copy of the open one, or one that plays a library effect (as the game's own do).",
+            );
+        }
+
+        self.draw_new_popup(e);
         gui::begin_child("list", gui::v2(0.0, 0.0), 0, 0);
         let mut open = None;
         let listing = &self.listing;
@@ -648,9 +679,64 @@ impl VfxTool {
         }
     }
 
+    fn draw_new_popup(&mut self, e: &mut Editor) {
+        if !gui::begin_popup("new_effect") {
+            return;
+        }
+
+        gui::text("New effect");
+        gui::set_next_item_width(260.0);
+        gui::input_text("##name", Some("name (vfx/<name>.xml)"), &mut self.new_name, 128, 0);
+        let open = document(e).is_some();
+        gui::begin_disabled(!open);
+        if gui::radio_button("a copy of the open effect", !self.new_plays) {
+            self.new_plays = false;
+        }
+
+        gui::end_disabled();
+        if gui::radio_button("plays the library", self.new_plays) {
+            self.new_plays = true;
+        }
+
+        gui::same_line();
+        gui::set_next_item_width(220.0);
+        gui::input_text("##lib", Some("library effect"), &mut self.new_library, 128, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A library effect: one with emitters of its own (vfx/<library>.xml). The new effect enables all of them.");
+        }
+
+        if gui::button("Create") {
+            let start = if self.new_plays { crate::new::Start::Plays(self.new_library.trim().to_owned()) } else { crate::new::Start::Copy };
+            match crate::new::create(e, &self.new_name, &start) {
+                Ok(path) => {
+                    e.status(&format!("created {path} in the project"), false);
+                    self.listing_dirty = true;
+                    self.open_after = Some(path);
+                    self.new_name.clear();
+                    gui::close_current_popup();
+                }
+
+                Err(m) => e.status(&m, true),
+            }
+        }
+
+        gui::same_line();
+        if gui::button("Cancel") {
+            gui::close_current_popup();
+        }
+
+        gui::end_popup();
+    }
+
     /// Opens `vfx/<library>.xml` (a reference's library).
     pub(crate) fn open_library(&mut self, library: &str) {
         self.open_after = Some(format!("vfx/{library}.xml"));
+    }
+
+    /// Opens a file once the panels are drawn.
+    pub(crate) fn open_later(&mut self, path: String) {
+        self.listing_dirty = true;
+        self.open_after = Some(path);
     }
 }
 
