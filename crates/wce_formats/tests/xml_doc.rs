@@ -277,3 +277,25 @@ fn many_removals_across_containers_are_one_splice_that_undoes_and_redoes() {
     fast.apply_splice(&record[0]).unwrap();
     assert_eq!(fast.elements(), reread.elements(), "redo");
 }
+
+#[test]
+fn inner_text_edits_change_only_the_text() {
+    let d = doc("<v>\r\n\t<p name='a' min='0'/>\r\n\t<p name='b' min='1'>k,1;0,0</p>\r\n</v>\r\n");
+    assert_eq!(d.inner_text(1).unwrap(), b"");
+    assert_eq!(d.inner_text(2).unwrap(), b"k,1;0,0");
+    assert!(d.inner_text(0).is_err());
+
+    // A self-closing element gets its end tag; an attribute edit pending before stays in the text.
+    let mut d2 = d.clone();
+    d2.set(1, "min", "2");
+    let e = d2.with_inner_text(1, b"c,1;0,1").unwrap();
+    assert_eq!(text(&e), "<v>\r\n\t<p name='a' min='2'>c,1;0,1</p>\r\n\t<p name='b' min='1'>k,1;0,0</p>\r\n</v>\r\n");
+    assert_eq!(e.inner_text(1).unwrap(), b"c,1;0,1");
+
+    let e = d.with_inner_text(2, b"k,1;0,0.5").unwrap();
+    assert_eq!(text(&e), "<v>\r\n\t<p name='a' min='0'/>\r\n\t<p name='b' min='1'>k,1;0,0.5</p>\r\n</v>\r\n");
+    assert!(e.structural_edits() > 0);
+
+    // The same text again is no edit.
+    assert_eq!(text(&d.with_inner_text(2, b"k,1;0,0").unwrap()), text(&d));
+}

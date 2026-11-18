@@ -9,6 +9,11 @@ use crate::gui::{self, label_column};
 
 // ---- ImGuiInspector
 
+thread_local! {
+    /// The curve key being dragged (`Inspector::edit_curve`): the row's property path and the key's index. The inspector is made each frame.
+    static CURVE_DRAG: std::cell::RefCell<Option<(String, usize)>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Draws one property per call as a Dear ImGui row. `edit_*` return true on every frame the value changed; `gesture_ended` is true on the frame
 /// an edit is finished (the widget lost focus after a change).
 #[derive(Debug, Default)]
@@ -214,6 +219,151 @@ impl Inspector for ImGuiInspector {
         let dim = crate::theme::u32(crate::theme::dim());
         dl.text(gui::v2(lo.x + 4.0, hi.y - 16.0), dim, "0");
         dl.text(gui::v2(hi.x - gui::calc_text_width(x_end) - 4.0, hi.y - 16.0), dim, x_end);
+        gui::dummy(size);
+        self.show_hint();
+    }
+
+    fn edit_curve(&mut self, field: &str, label: &str, keys: &mut Vec<(f32, f32)>, lo: f32, hi: f32, colour: [f32; 4]) -> bool {
+        const GRAB: f32 = 7.0;
+        self.draw_label(field, label, false);
+        let path = self.path(field).to_string();
+        let w = gui::content_region_avail().x.max(80.0);
+        let (min, size) = (gui::cursor_screen_pos(), gui::v2(w, 96.0));
+        let max = gui::v2(min.x + size.x, min.y + size.y);
+        let span = if hi - lo > 1e-6 { hi - lo } else { 1.0 };
+        let to_px = |(t, v): (f32, f32)| gui::v2(min.x + t.clamp(0.0, 1.0) * size.x, max.y - ((v - lo) / span).clamp(0.0, 1.0) * size.y);
+        let from_px = |p: gui::Vec2| (((p.x - min.x) / size.x).clamp(0.0, 1.0), lo + ((max.y - p.y) / size.y).clamp(0.0, 1.0) * span);
+
+        gui::invisible_button(&self.id(field), size, gui::BUTTON_LEFT | gui::BUTTON_RIGHT);
+        let (hovered, active) = (gui::is_item_hovered(), gui::is_item_active());
+        let mouse = gui::mouse_pos();
+        let near = keys.iter().position(|&k| {
+            let p = to_px(k);
+            (p.x - mouse.x).hypot(p.y - mouse.y) <= GRAB
+        });
+
+        let mut changed = false;
+        let dragging = CURVE_DRAG.with(|d| d.borrow().as_ref().filter(|(f, _)| *f == path).map(|(_, k)| *k));
+        if active && gui::is_mouse_clicked(0) {
+            if let Some(k) = near {
+                CURVE_DRAG.with(|d| *d.borrow_mut() = Some((path.clone(), k)));
+            }
+        }
+
+        if let Some(k) = dragging.filter(|&k| k < keys.len()) {
+            if active && gui::is_mouse_down(0) {
+                // A key stays between its neighbours; the ends keep their t.
+                let (mut t, v) = from_px(mouse);
+                let first_or_last = k == 0 || k + 1 == keys.len();
+                if first_or_last {
+                    t = keys[k].0;
+                } else {
+                    t = t.clamp(keys[k - 1].0, keys[k + 1].0);
+                }
+
+                if keys[k] != (t, v) {
+                    keys[k] = (t, v);
+                    changed = true;
+                }
+            } else {
+                CURVE_DRAG.with(|d| *d.borrow_mut() = None);
+                self.ended = true;
+            }
+        } else if hovered && gui::is_mouse_double_clicked(0) && near.is_none() {
+            let (t, v) = from_px(mouse);
+            let at = keys.iter().position(|k| k.0 > t).unwrap_or(keys.len());
+            keys.insert(at, (t, v));
+            changed = true;
+            self.ended = true;
+        } else if hovered && gui::is_mouse_clicked(1) && keys.len() > 2 {
+            if let Some(k) = near {
+                keys.remove(k);
+                changed = true;
+                self.ended = true;
+            }
+        }
+
+        let dl = gui::window_draw_list();
+        dl.rect_filled(min, max, gui::col32(18, 18, 20, 255), 2.0);
+        let grid = gui::col32(255, 255, 255, 18);
+        for i in 1..4 {
+            let x = min.x + size.x * i as f32 / 4.0;
+            dl.line(gui::v2(x, min.y), gui::v2(x, max.y), grid, 1.0);
+            let y = min.y + size.y * i as f32 / 4.0;
+            dl.line(gui::v2(min.x, y), gui::v2(max.x, y), grid, 1.0);
+        }
+
+        if !keys.is_empty() {
+            // Flat before the first key and after the last (the runtime clamps).
+            let mut pts = vec![to_px((0.0, keys[0].1))];
+            pts.extend(keys.iter().map(|&k| to_px(k)));
+            pts.push(to_px((1.0, keys[keys.len() - 1].1)));
+            dl.polyline(&pts, crate::theme::u32(colour), false, 1.5);
+        }
+
+        let held = CURVE_DRAG.with(|d| d.borrow().as_ref().filter(|(f, _)| *f == path).map(|(_, k)| *k));
+        for (i, &k) in keys.iter().enumerate() {
+            let p = to_px(k);
+            let hot = held == Some(i) || (held.is_none() && hovered && near == Some(i));
+            dl.circle_filled(p, if hot { 5.0 } else { 3.5 }, if hot { gui::col32(255, 255, 255, 255) } else { crate::theme::u32(colour) });
+        }
+
+        let dim = crate::theme::u32(crate::theme::dim());
+        dl.text(gui::v2(min.x + 4.0, min.y + 2.0), dim, &format!("{hi:.3}"));
+        dl.text(gui::v2(min.x + 4.0, max.y - 16.0), dim, &format!("{lo:.3}"));
+        if let Some(k) = held.or(near.filter(|_| hovered)).and_then(|k| keys.get(k)) {
+            gui::set_tooltip(&format!("t {:.3}, {:.4}", k.0, k.1));
+        } else if hovered {
+            let tip = "Drag a key to move it, double-click to add one, right-click a key to remove it.";
+            gui::set_tooltip(&if self.row_hint.is_empty() { tip.to_owned() } else { format!("{}\n\n{tip}", self.row_hint) });
+        }
+
+        changed
+    }
+
+    fn gradient(&mut self, field: &str, label: &str, stops: &[(f32, [f32; 4])]) {
+        self.draw_label(field, label, true);
+        gui::same_line_at(label_column());
+        let w = gui::content_region_avail().x.max(40.0);
+        let (min, size) = (gui::cursor_screen_pos(), gui::v2(w, gui::frame_height()));
+        let dl = gui::window_draw_list();
+        let cell = size.y * 0.5;
+        let mut x = 0.0;
+        while x < size.x {
+            for row in 0..2 {
+                let dark = ((x / cell) as i32 + row) % 2 == 0;
+                let c = if dark { gui::col32(70, 70, 70, 255) } else { gui::col32(110, 110, 110, 255) };
+                let y0 = min.y + row as f32 * cell;
+                dl.rect_filled(gui::v2(min.x + x, y0), gui::v2(min.x + (x + cell).min(size.x), y0 + cell), c, 0.0);
+            }
+
+            x += cell;
+        }
+
+        let colour_at = |t: f32| -> [f32; 4] {
+            let Some(first) = stops.first() else { return [0.0; 4] };
+            if t <= first.0 {
+                return first.1;
+            }
+
+            for pair in stops.windows(2) {
+                let ((t0, c0), (t1, c1)) = (pair[0], pair[1]);
+                if t <= t1 {
+                    let a = if t1 > t0 { (t - t0) / (t1 - t0) } else { 1.0 };
+                    return std::array::from_fn(|i| c0[i] + (c1[i] - c0[i]) * a);
+                }
+            }
+
+            stops.last().map_or([0.0; 4], |s| s.1)
+        };
+
+        let n = (size.x / 3.0).ceil().max(1.0) as usize;
+        for i in 0..n {
+            let (x0, x1) = (size.x * i as f32 / n as f32, size.x * (i + 1) as f32 / n as f32);
+            let c = colour_at((i as f32 + 0.5) / n as f32).map(|v| v.clamp(0.0, 1.0));
+            dl.rect_filled(gui::v2(min.x + x0, min.y), gui::v2(min.x + x1 + 0.5, min.y + size.y), crate::theme::u32(c), 0.0);
+        }
+
         gui::dummy(size);
         self.show_hint();
     }

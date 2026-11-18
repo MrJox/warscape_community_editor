@@ -96,6 +96,9 @@ struct ToolInfo {
     icon: String,
     opens: Vec<String>,
 
+    /// `Tool::opens_under`.
+    opens_under: Vec<String>,
+
     /// `Tool::project_folder`.
     folder: &'static str,
 }
@@ -140,6 +143,12 @@ pub struct Editor {
     status_error: bool,
     pub(crate) first_run: bool,
     pub(crate) weather_preview: Option<WeatherPreview>,
+
+    /// The open files the particle system reads, as edited (particle_overlay.rs).
+    pub(crate) particle_overlay: crate::particle_overlay::ParticleOverlay,
+
+    /// Counts the renderers made (the particle overlay's reader goes on each new one).
+    pub(crate) renderer_generation: u64,
     pub(crate) cam_mark: Option<Camera>,
     output_gamma: f32,
     output_brightness: f32,
@@ -273,6 +282,8 @@ impl Editor {
             status_error: false,
             first_run: false,
             weather_preview: None,
+            particle_overlay: Default::default(),
+            renderer_generation: 0,
             cam_mark: None,
             output_gamma: 2.2,
             output_brightness: 1.0,
@@ -485,6 +496,7 @@ impl Editor {
             title: tool.title().to_owned(),
             icon: tool.icon().to_owned(),
             opens: tool.opens(),
+            opens_under: tool.opens_under(),
             folder: tool.project_folder(),
         });
         self.fixes.list.extend(tool.fixes());
@@ -933,6 +945,7 @@ impl Editor {
                 Ok(mut r) => {
                     r.settings = old.settings.clone();
                     self.renderer = Some(r);
+                    self.renderer_generation += 1;
                 }
 
                 Err(e) => {
@@ -976,6 +989,7 @@ impl Editor {
 
                 self.vfs = Some(vfs);
                 self.renderer = Some(renderer);
+                self.renderer_generation += 1;
                 self.apply_graphics_settings();
                 self.status(&msg, false);
                 true
@@ -1377,11 +1391,18 @@ impl Editor {
     fn open_path_with(&mut self, me: Option<&mut dyn Tool>, path: &str, from_packs: bool, switch_tool: bool) -> Result<String, String> {
         let ext = path.rfind('.').map(|d| path[d..].to_lowercase()).unwrap_or_default();
         let claims = |i: usize| self.tool_supported(i) && self.tool_info[i].opens.contains(&ext);
-        let tool = if claims(self.active_tool) { Some(self.active_tool) } else { (0..self.tool_info.len()).find(|&i| claims(i)) };
+
+        // A tool that takes the file's folder first (the VFX tool's vfx/), then the active tool, then the first that opens the extension.
+        let key = normalize(path);
+        let under = |i: usize| {
+            claims(i) && self.tool_info[i].opens_under.iter().any(|f| key.starts_with(f.as_str()) || key.contains(&format!("/{f}")))
+        };
+        let tool = (0..self.tool_info.len()).find(|&i| under(i));
+        let tool =
+            tool.or_else(|| if claims(self.active_tool) { Some(self.active_tool) } else { (0..self.tool_info.len()).find(|&i| claims(i)) });
         let Some(tool) = tool else { return Err(format!("no tool opens '{ext}' files")) };
 
         // Already open: just show it (in its tool).
-        let key = normalize(path);
         let open = self.docs.order().iter().copied().find(|&id| {
             self.docs.find(id).is_some_and(|d| !d.stand_in() && if from_packs { d.source_key() == key } else { d.opened_from(path) })
         });
@@ -1896,6 +1917,7 @@ impl Editor {
         if self.renderer.is_some() {
             wce_prof!("editor.tool_update");
             self.with_tool_at(self.active_tool, |t, e| t.update(e));
+            self.update_particle_overlay();
             self.update_lighting();
         }
 

@@ -96,6 +96,13 @@ pub trait Tool: Any {
         vec![]
     }
 
+    /// In-pack folders (normalized, with the trailing `/`) whose files of an extension in [`Self::opens`] this tool takes before any other
+    /// tool that opens that extension: the VFX tool's `vfx/` among the `.xml` files. A file on disk matches when its path has the folder
+    /// as a component.
+    fn opens_under(&self) -> Vec<String> {
+        vec![]
+    }
+
     /// The tool's folder in the game's projects folder (relative to it, `/` separated; empty: the projects folder itself). The editor
     /// makes it when it mounts the game's files, and the tool's Save as and Open file dialogs start in it.
     fn project_folder(&self) -> &'static str {
