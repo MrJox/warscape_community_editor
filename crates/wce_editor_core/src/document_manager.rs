@@ -14,6 +14,13 @@ struct Entry {
     published_version: u64,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SavePolicy {
+    Prompt,
+    RefuseChanges,
+    Overwrite,
+}
+
 #[derive(Clone)]
 pub struct ChangedSave {
     pub id: DocumentId,
@@ -24,6 +31,7 @@ pub struct ChangedSave {
 #[derive(Default)]
 pub struct DocumentManager {
     pending_save: Option<ChangedSave>,
+    pending_save_all: bool,
     entries: Vec<Entry>,
     order: Vec<DocumentId>,
 
@@ -79,6 +87,10 @@ impl DocumentManager {
         let Some(i) = self.entries.iter().position(|e| e.doc.id() == id) else { return false };
         scene.remove_layer(self.entries[i].layer);
         self.entries.remove(i);
+        if self.pending_save.as_ref().is_some_and(|pending| pending.id == id) {
+            self.pending_save = None;
+            self.pending_save_all = false;
+        }
         self.order.retain(|&d| d != id);
         self.apply_stand_ins(scene);
         true
@@ -222,19 +234,31 @@ impl DocumentManager {
     }
     pub fn answer_changed_save(&mut self, overwrite: bool) -> Result<String, String> {
         let pending = self.pending_save.take().ok_or("no changed-file Save awaiting a choice")?;
-        if overwrite {
-            self.save_with_policy(pending.id, &pending.target, true)
+        let continue_all = std::mem::take(&mut self.pending_save_all);
+        let result = if overwrite {
+            self.save_with_policy(pending.id, &pending.target, SavePolicy::Overwrite)
         } else {
             Ok("Save cancelled; document and files unchanged".into())
+        };
+        if overwrite
+            && continue_all
+            && let Ok(message) = result
+        {
+            let mut messages = vec![message];
+            let all = self.save_all(&mut messages);
+            let message = messages.join("; ");
+            if all { Ok(message) } else { Err(message) }
+        } else {
+            result
         }
     }
     pub fn save_to(&mut self, id: DocumentId, target: &SaveTarget) -> Result<String, String> {
-        self.save_with_policy(id, target, false)
+        self.save_with_policy(id, target, SavePolicy::Prompt)
     }
     pub fn save_to_overwrite(&mut self, id: DocumentId, target: &SaveTarget) -> Result<String, String> {
-        self.save_with_policy(id, target, true)
+        self.save_with_policy(id, target, SavePolicy::Overwrite)
     }
-    fn save_with_policy(&mut self, id: DocumentId, target: &SaveTarget, overwrite: bool) -> Result<String, String> {
+    fn save_with_policy(&mut self, id: DocumentId, target: &SaveTarget, policy: SavePolicy) -> Result<String, String> {
         let d = self.find(id).ok_or("no such document")?;
         let destination =
             if target.path.as_os_str().is_empty() { d.save_destination() } else { d.save_destination().map(|_| target.path.clone()) };
@@ -243,8 +267,12 @@ impl DocumentManager {
         {
             return Err(format!("Cannot save: {} is already owned by open document {owner}", path.display()));
         }
-        if !overwrite && let Some(reason) = d.save_changes(target)? {
-            self.pending_save = Some(ChangedSave { id, target: target.clone(), reason: reason.clone() });
+        if policy != SavePolicy::Overwrite
+            && let Some(reason) = d.save_changes(target)?
+        {
+            if policy == SavePolicy::Prompt {
+                self.pending_save = Some(ChangedSave { id, target: target.clone(), reason: reason.clone() });
+            }
             return Err(reason);
         }
         let Some(e) = self.entry_mut(id) else { return Err("no such document".to_owned()) };
@@ -252,7 +280,7 @@ impl DocumentManager {
             return Err(format!("{} cannot be saved", e.doc.title()));
         }
 
-        if overwrite {
+        if policy == SavePolicy::Overwrite {
             e.doc.save_overwrite(target)?;
         } else {
             e.doc.save(target)?;
@@ -282,16 +310,30 @@ impl DocumentManager {
 
     /// Saves every modified document that can be saved. The messages say what was saved and explain each failure; true when nothing failed.
     pub fn save_all(&mut self, messages: &mut Vec<String>) -> bool {
+        let all = self.save_all_with_policy(messages, SavePolicy::Prompt);
+        self.pending_save_all = self.pending_save.is_some();
+        all
+    }
+
+    /// Best-effort Save when no UI can answer a conflict. Attempts every document,
+    /// refuses unreviewed outside changes, and leaves failed edits dirty for recovery.
+    pub fn save_all_without_prompt(&mut self, messages: &mut Vec<String>) -> bool {
+        self.pending_save = None;
+        self.pending_save_all = false;
+        self.save_all_with_policy(messages, SavePolicy::RefuseChanges)
+    }
+
+    fn save_all_with_policy(&mut self, messages: &mut Vec<String>, policy: SavePolicy) -> bool {
         let mut ok = true;
         for id in self.order.clone() {
             let Some(e) = self.entry(id).filter(|e| e.doc.modified() && e.doc.can_save()) else { continue };
             let title = e.doc.title();
-            match self.save_one(id) {
+            match self.save_with_policy(id, &SaveTarget::default(), policy) {
                 Ok(message) => messages.push(message),
                 Err(message) => {
                     ok = false;
                     messages.push(format!("cannot save {title}: {message}"));
-                    if self.pending_save.is_some() {
+                    if policy == SavePolicy::Prompt && self.pending_save.is_some() {
                         break;
                     }
                 }

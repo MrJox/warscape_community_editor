@@ -1,5 +1,33 @@
 // Included as a child of publication_tests to reuse its accepted synthetic fixtures.
 #[test]
+fn save_as_overwrite_keeps_outside_source_changes_unreviewed_for_plain_save() {
+    let root = Scratch::new();
+    let source = root.0.join("source");
+    fixture().write_to(&source).unwrap();
+    let mut d = doc(built::read("test", &MapFiles::from_dir(&source).unwrap()).unwrap());
+    d.save_dir = Some(source.clone());
+    changed(&mut d);
+    let mut docs = DocumentManager::default();
+    let mut scene = wce_scene::render_scene::RenderScene::default();
+    let id = docs.add(&mut scene, Box::new(d), "terrain").unwrap();
+    std::fs::write(source.join("normals/normal_0.dds"), b"TEd changed the original while this document was open").unwrap();
+    let original = disk(&source);
+    let before = state(docs.find_as::<MapDocument>(id).unwrap());
+    let copy = SaveTarget { path: root.0.join("copy") };
+    assert!(docs.save_to(id, &copy).is_err());
+    docs.answer_changed_save(true).unwrap();
+    assert!(copy.path.join("lf_height_map.dds").is_file());
+    assert_eq!(disk(&source), original);
+    assert_eq!(state(docs.find_as::<MapDocument>(id).unwrap()), before);
+    assert_eq!(docs.find(id).unwrap().save_destination(), Some(source.clone()));
+    assert!(docs.save_one(id).is_err(), "a copy must not approve overwriting TEd's changes to the original");
+    assert_eq!(docs.pending_changed_save().unwrap().target, SaveTarget::default());
+    docs.answer_changed_save(false).unwrap();
+    assert_eq!(disk(&source), original);
+    assert_eq!(state(docs.find_as::<MapDocument>(id).unwrap()), before);
+}
+
+#[test]
 fn save_as_copy_cannot_authorize_the_unrelated_active_destination() {
     let root = Scratch::new();
     let active = root.0.join("active");
