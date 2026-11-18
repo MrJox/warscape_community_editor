@@ -157,6 +157,7 @@ fn read_input(input: &Input, entry: &TileEntry) -> Result<Read, String> {
             || lower == TED_FILE
             || lower == crate::terrain_layers::FILE
             || lower == crate::texture_rules::FILE
+            || lower == crate::biomes::FILE
             || lower.ends_with(".bak")
             || MAPS.contains(&lower.as_str())
             || BOB_FILES.contains(&lower.as_str())

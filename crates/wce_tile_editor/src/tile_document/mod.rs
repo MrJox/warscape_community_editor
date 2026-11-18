@@ -15,6 +15,7 @@
 //! which scene it published into by its address only.
 
 mod baked_river;
+pub mod biomes;
 pub mod brush;
 pub mod building_splines;
 mod collapse;

@@ -224,6 +224,10 @@ pub struct TileProject {
     /// since saved (or taken away, the file to remove).
     pub texture_rules: Option<crate::texture_rules::RuleSet>,
     pub texture_rules_dirty: bool,
+
+    /// The biomes the tile's areas use (`biomes`, their own file); `biomes_dirty`: changed since saved.
+    pub biomes: Vec<crate::biomes::Biome>,
+    pub biomes_dirty: bool,
     pub height_png: Option<PngFile>,
     pub height: Option<HeightField>,
     pub height_dirty: bool,
@@ -469,7 +473,16 @@ impl TileProject {
             view: None,
             texture_rules: None,
             texture_rules_dirty: false,
+            biomes: vec![],
+            biomes_dirty: false,
         };
+
+        let biomes_file = project.dir.join(crate::biomes::FILE);
+        if biomes_file.exists() {
+            project.biomes = std::fs::read(&biomes_file)
+                .map_err(|error| format!("{}: {error}", biomes_file.display()))
+                .and_then(|b| crate::biomes::parse(&b).map_err(|e| format!("{}: {e}", biomes_file.display())))?;
+        }
 
         let rules_file = project.dir.join(crate::texture_rules::FILE);
         if rules_file.exists() {
@@ -952,6 +965,20 @@ impl TileProject {
 
         self.texture_rules_dirty = false;
 
+        // The biomes, as the rules.
+        let biomes_file = out_dir.join(crate::biomes::FILE);
+        if !self.biomes.is_empty() && (self.biomes_dirty || elsewhere) {
+            wce_foundation::files::write_replacing(&biomes_file, crate::biomes::text(&self.biomes))
+                .map_err(|_| format!("could not write {}", biomes_file.display()))?;
+            msg += "biomes saved. ";
+            wrote = true;
+        } else if self.biomes.is_empty() && self.biomes_dirty && biomes_file.exists() {
+            std::fs::remove_file(&biomes_file).map_err(|_| format!("could not remove {}", biomes_file.display()))?;
+            wrote = true;
+        }
+
+        self.biomes_dirty = false;
+
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
     }
 
@@ -1234,6 +1261,7 @@ impl TileProject {
                 || name == WCE_FILE
                 || name == crate::terrain_layers::FILE
                 || name == crate::texture_rules::FILE
+                || name == crate::biomes::FILE
                 || name == "height_map_0.png"
                 || (name == "blend_map.tif" && self.blend.is_some())
                 || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some())
@@ -1449,6 +1477,7 @@ impl TileProject {
                     || name == WCE_FILE
                     || name == crate::terrain_layers::FILE
                     || name == crate::texture_rules::FILE
+                    || name == crate::biomes::FILE
                     || name == "height_map_0.png"
                     || (name == "blend_map.tif" && self.blend.is_some())
                     || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some())

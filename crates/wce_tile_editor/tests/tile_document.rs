@@ -2634,3 +2634,46 @@ fn texture_rules_lay_ground_types_under_the_users() {
     assert!(all.iter().all(|&c| c != [170, 170, 170]), "no rock left of the rules");
     assert!(all.iter().all(|&c| c == mud || c == [0, 0, 0]), "the stroke's mud, or nothing");
 }
+
+#[test]
+fn a_biome_area_is_an_exclusion_polygon_whose_biome_the_tile_keeps() {
+    use wce_editor_core::document::SaveTarget;
+    use wce_tile::biomes::{AREA_TYPE, BIOME_ATTR, SEED_ATTR, builtin};
+
+    let (dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let pine = builtin().into_iter().find(|b| b.name == "Pine forest").unwrap();
+    let size = d.history().size();
+    d.adopt_biome(&pine);
+    d.adopt_biome(&pine);
+    assert_eq!(d.history().size(), size + 1, "taken in once");
+
+    let attrs = BTreeMap::from([(BIOME_ATTR.to_owned(), pine.name.clone()), (SEED_ATTR.to_owned(), "42".to_owned())]);
+    let square = Create::Line(vec![
+        Float3::new(0.0, 0.0, 0.0),
+        Float3::new(30.0, 0.0, 0.0),
+        Float3::new(30.0, 0.0, 30.0),
+        Float3::new(0.0, 0.0, 30.0),
+    ]);
+    let area = d.create_with(AREA_TYPE, layer, &square, "", &attrs).unwrap();
+    let areas = d.tile().biome_areas();
+    assert_eq!(areas.len(), 1);
+    assert_eq!((areas[0].elem, areas[0].biome.as_str(), areas[0].seed), (area, "Pine forest", 42));
+    assert_eq!(areas[0].points.len(), 4);
+    assert!(areas[0].points.iter().any(|&(x, z)| (x - 30.0).abs() < 1e-3 && (z - 30.0).abs() < 1e-3), "{:?}", areas[0].points);
+    assert_eq!(d.tile().biome_named("Pine forest"), Some(pine.clone()));
+
+    // Saved beside the tile; the scene keeps the area with its attributes; TEd gets a plain exclusion polygon.
+    d.save(&SaveTarget { path: std::path::PathBuf::new() }).unwrap();
+    let file = dir.path().join(wce_tile::biomes::FILE);
+    assert_eq!(wce_tile::biomes::parse(&std::fs::read(&file).unwrap()).unwrap(), vec![pine]);
+    let (ted, _) = wce_tile::project_files::to_ted(d.tile().tscene().save()).unwrap();
+    let ted = String::from_utf8(ted).unwrap();
+    assert!(ted.contains("VegetationExclusionPolygonInstance") && !ted.contains("wce_biome"));
+
+    // Back: the area goes, then the biome.
+    d.history_mut().undo();
+    assert!(d.tile().biome_areas().is_empty());
+    d.history_mut().undo();
+    assert!(d.tile_biomes().is_empty());
+}

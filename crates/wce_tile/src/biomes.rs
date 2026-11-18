@@ -27,6 +27,14 @@ use crate::vegetation_sets::{SetEntry, VegetationSet};
 /// The biomes of a tile, beside its `tile.wce`.
 pub const FILE: &str = "biomes.wce";
 
+/// An area of a biome is a `VegetationExclusionPolygonInstance` with these (docs/plans/auto_detail.md, C): the biome's name and the area's
+/// seed. TEd and BOB get a plain exclusion polygon (`project_files::to_ted` drops them).
+pub const BIOME_ATTR: &str = "wce_biome";
+pub const SEED_ATTR: &str = "wce_biome_seed";
+
+/// The type an area is.
+pub const AREA_TYPE: &str = "VegetationExclusionPolygonInstance";
+
 /// The built-in biomes' folder name in the preset list: they have no file.
 pub const BUILTIN_FOLDER: &str = "(built in)";
 
