@@ -88,7 +88,7 @@ impl Renderer {
         self.overlay.view_proj = Some(ovp);
 
         // The target, 1.5 x the screen at most 2048 a side.
-        let size = (((screen.0 as f32 * 1.5) as u32).min(OVERLAY_MAX).max(8), ((screen.1 as f32 * 1.5) as u32).min(OVERLAY_MAX).max(8));
+        let size = (((screen.0 as f32 * 1.5) as u32).clamp(8, OVERLAY_MAX), ((screen.1 as f32 * 1.5) as u32).clamp(8, OVERLAY_MAX));
         if self.overlay.size != size || self.overlay.tex.is_none() {
             let target = super::targets::make_target(&self.dev, size.0, size.1, DXGI_FORMAT_R16G16B16A16_FLOAT);
             (self.overlay.tex, self.overlay.rtv, self.overlay.srv) = (target.tex, target.rtv, target.srv);
@@ -179,7 +179,7 @@ impl Renderer {
         let colour = srv(self.textures.get(&sea.colour, false)).or_else(|| self.res.white_srv.clone());
         let (env, sky) = (self.env_srv(), self.sky_srv());
         let ctx = &self.ctx;
-        ctx.set_render_targets(&[self.overlay.rtv.clone()], None);
+        ctx.set_render_targets(std::slice::from_ref(&self.overlay.rtv), None);
         ctx.set_viewports(&[viewport(0.0, 0.0, size.0 as f32, size.1 as f32)]);
         ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
         ctx.set_blend_state(self.overlay.bs.as_ref());
