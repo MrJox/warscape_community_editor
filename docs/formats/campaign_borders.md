@@ -2,16 +2,19 @@
 
 What the campaign map's overlay draws at the start: the region borders coloured by the diplomacy of a chosen faction, and that faction's
 trade routes. Read by `wce_terrain_io::attila::{borders, border_fit, trade_routes, diplomacy, overlay}`; checked against a RenderDoc
-capture of the game (`main_attila`, the Western Roman Empire, turn 1) by the `borders_check` example. Addresses are empire.retail.dll's.
+capture of the game (`main_attila`, the Western Roman Empire, turn 1) and later ones by the `borders_check` example. Addresses are
+empire.retail.dll's.
 
 ## Frame
 
 The hex grid of `map_data.esf` (`REGIONS_DATA/theatres/CAMPAIGN_THEATRE/HEX_MAP_DATA`: 1016 x 720 on `main_attila_map`) over the
-world's width (`REGIONS_DATA`'s second `Coord2d`: 678.5). Flat-top hexes, odd columns half a row up (fn 0x10950410):
+world's **height** (`REGIONS_DATA`'s second `Coord2d`, its y: 556.1439208984375). Flat-top hexes, odd columns half a row up
+(fn 0x10950410). In single precision:
 
-- `colw` = width / (columns - 1) (0.668473), R = `colw` / 1.5 (the hexes' radius, 0.445649), `rowh` = √3 · R (0.771887);
+- `rowh` = height / (rows + 0.5) (0.77188605), R = `rowh` / √3 (the hexes' radius, 0.44564864), `colw` = 1.5 · R (0.66847295),
+  half a row `rowh` / 2. (The width's 678.5 / 1015 = 0.668473 is 1 to 2 ulps off: enough to move a few fitted curves 0.15.)
 - a cell's centre: x = column · `colw`, z = row · `rowh` (+ `rowh` / 2 on odd columns); row 0 at z = 0 (the south edge), the grid
-  678.5 x 555.6. All in single precision; column and row clamped to the grid.
+  678.5 x 555.8. Column and row clamped to the grid.
 - Neighbours (fn 0x10b760a0), index 0 the next row then clockwise, q = row + (column & 1): (c, r+1), (c+1, q), (c+1, q-1), (c, r-1),
   (c-1, q-1), (c-1, q). Hex distance (fn 0x10b9d4c0): dx = a.c - b.c, dy = ((a.c+1) >> 1) - ((b.c+1) >> 1) - b.r + a.r,
   max(|dx|, |dy|, |dy - dx|).
@@ -31,7 +34,7 @@ Little-endian.
 A segment's line is the region's edge cells towards that neighbour; the pairs are symmetric (each side has its own line). 839 segments,
 808 of one line, 31 of two.
 
-## Chains (fns 0x10afda10, 0x10b22e10, 0x10ad5750)
+## Land chains (fns 0x10afda10, 0x10b22e10, 0x10ad5750)
 
 Over the startpos's regions in order (`WORLD/REGION_MANAGER/REGIONS_ARRAY`; the sea regions are not there), each region's lines in the
 file's order:
@@ -50,6 +53,21 @@ file's order:
   0x10af92b0), and its own external chains take each other the same way.
 
 `main_attila`: 145 chains.
+
+## Sea chains (fns 0x10afdb40, 0x10b233a0, 0x10ad5ba0)
+
+After the land, over the startpos's sea regions in order (`WORLD/SEA_REGION_MANAGER/SEA_REGIONS_BLOCK`: per group the sea's key and
+its `SEA_REGION`). A sea's factions (its +0x2c count, +0x30 list): its `FACTION_SEA_REGION_MANAGER_BLOCK/FACTION_SEA_REGION_MANAGER`s
+in order (`^+1` an id, `^+2` the faction's runtime id, `^+3` its regions). The pbd's sea entries list sea neighbours only.
+
+- every line is kept: **internal** when both seas have exactly one faction and it is the same (fns 0x10aaef10, 0x10aad530), else
+  external; the pseudo-seas without a sea record (`att_sea_nilos`, `att_sea_rhenus`, `att_sea_danuvius`) have none, so external;
+- lines join chains as on land (fn 0x10b233a0);
+- then per sea, until nothing merges (fn 0x10ad5ba0): its chains take the touching chains of the seas related so (one faction, the
+  same), external with external, internal with internal (no province test), sharing no region pair; then its own external chains
+  take each other.
+
+Drawn as the land's: half-width 0.225, fades 0.75, the outer / inner textures. `main_attila`: 72 chains.
 
 ## The fit (fn 0x10aae0b0)
 
@@ -79,7 +97,7 @@ inner for internal ones.
 
 ## Colours (fn 0x10946810)
 
-For the chosen faction P and a chain's owner F (its region's owner), the first that holds:
+For the chosen faction P and a land chain's owner F (its region's owner), the first that holds:
 
 | Class | When | RGB |
 | --- | --- | --- |
@@ -92,6 +110,11 @@ For the chosen faction P and a chain's owner F (its region's owner), the first t
 Stances: `FACTION/OLD_DIPLOMACY_MANAGER/DIPLOMACY_RELATIONSHIPS_ARRAY/OLD_DIPLOMACY_RELATIONSHIP`, `^+1` the other faction's runtime
 id, `^+4` the stance: `war` 0, `neutral` 1, `defensive_allies` 2, `military_allies` 3, `protector` 4, `client_state` 5, `master` 6,
 `vassal` 7; no record is neutral. Values / 255 for the shader.
+
+A sea chain (fn 0x10b99a80, on its sea's factions): at war with P (fn 0x10715ff0: F ≠ P and F or P is the rebels, or P's stance to F
+is war) counted; the list exactly [P] own; none at war: allied when a faction other than P is allied (fn 0x10715bb0: neither the
+rebels, stance 2 to 7), else neutral (an empty list neutral); else war. One exception not traced: a single at-war rebel faction whose
++0x54 items all have +0x628 set is neutral in the game; the editor says war.
 
 The faction list: `CAMPAIGN_PREOPEN_MAP_INFO/FACTION_INFOS`, per faction its key, two flags (the second: playable), its list order and
 its regions at the start. No default is in the data read; the editor picks the playable faction with the most regions (the Western
@@ -107,26 +130,29 @@ Roman Empire on `main_attila`, the captures' player).
 | 2 x route table | `u32 n` x (`u32 region A`, `u32 region B`, `u32 n` + n x `u32` refs = 2 · segment + reversed); table 0 the land legs (1137), 1 the sea legs (1739) |
 | `u32` | CRC-32 of every byte before it (not read by the loader) |
 
-A point: x = (X / 4 - 1) · R, z = (Z / 4 - 1) · R · √3 / 2; P1 = P0 + 0.01 · (dx1 / 4 · R, dz1 / 4 · R · √3 / 2), P2 = P3 + the same
-of (dx2, dz2).
+A point (fns 0x108445f0, 0x1083a780, 0x1083a740; single precision): x = X · a · 0.25 - a, z = Z · b · 0.25 - b, with a = width /
+(1.5 (columns - 1)) (678.5 / 1522.5) and b = height / (2 rows + 1) (the grid's +0x64, +0x68); a handle (dx · a · 0.25, dz · b · 0.25),
+P1 = 0.01 · handle 1 + P0, P2 = 0.01 · handle 2 + P3. Bit-exact on the captures.
 
 The drawn routes: the startpos's `CAMPAIGN_MODEL/CAMPAIGN_TRADE_MANAGER/INTERNATIONAL_TRADE_ROUTES`, per group the owner's runtime id
 and its `INTERNATIONAL_TRADE_ROUTE`s (`^+1` the partner, `^+2` the path of region runtime ids, `^+3` a sea leg, then its two path
 indices). The chosen faction's routes, each leg looked up both ways round in table 1 when it is the sea leg, else table 0; each
-segment once, in the file's direction. A segment is one draw: its curves' lengths as above, uv in world units scaled so the
+segment once, in the file's direction. Only segments whose flag byte 0 is 0 are drawn (fn 0x10aba960 makes no draw object for 1),
+whichever table named them (segment 567, the Bosporus crossing, is a sea-leg segment with byte 0 set). A segment is one draw: its curves' lengths as above, uv in world units scaled so the
 segment's total is a whole number (uv offset = length before · ⌈L⌉ / L, scale = length · ⌈L⌉ / L); 16 vertices a curve by arc
 length as the borders', the last curve 17. Half-width 0.05, colour (240, 200, 20).
 
-## Check (`borders_check`, capture A)
+## Check (`borders_check`)
 
-- Borders: 982 captured curves in 27 draws; 947 within 1e-3 (max control-point error 4.3e-4, uv 4.7e-6, vertex t 7.2e-5).
-- Trade routes: the 19 draws are segments 1707-1713, 1856-1859, 2100-2107 (max error 3.1e-5, uv 3.3e-5, t 5.7e-6).
+Capture A (turn 1, the Western Roman Empire):
+
+- land borders: 950 curves in 23 draws, all exact to the dump's precision (uv 3e-7, vertex t 3.9e-6), colours 23 / 23;
+- sea borders: 32 curves in 4 draws, exact, colours 4 / 4;
+- trade routes: the 19 draws are segments 1707-1713, 1856-1859, 2100-2107, exact (uv 2.9e-6, t 4.4e-6).
+
+The later captures, all curves: B 555 + 12 sea, rain 67 + 7, w1 58 + 7.
 
 ## Known gaps
 
-- Three land curves (draws 15805, 15825, 15839, one curve each, 0.13 to 0.15 off): not explained. Untraced too: a leading or
-  trailing run of short segments, and closed chains' wrap-around, are kept as they are.
-- The sea borders (draws 15858, 15865, 15872, 15879, 32 curves): not built; the chains here are the land regions' only.
-- Trade routes: capture A drew only the sea legs' segments of the player's routes; land legs' segments in view (615, 696-699,
-  2096-2099) were not drawn, the rule is not known. The reader returns both, flagged (`sea_leg`).
+- The sea colour's rebel exception (see Colours) is not traced.
 - The default faction: no data names it (see Colours).

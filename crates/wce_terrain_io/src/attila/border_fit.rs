@@ -2,11 +2,11 @@
 //! (empire.retail.dll: the fit fn 0x10aae0b0 and its callees; docs/formats/campaign_borders.md).
 //!
 //! The game computes in single precision (x87 and SSE floats); this port keeps every value an `f32` stored in an `f64` and rounds where
-//! the game stores a float ([`f`]), so its results match the game's to the last bits where the reference matched (947 of 950 land curves
-//! of capture A within 4.3e-4, the difference the x87's extended-precision intermediates).
+//! the game stores a float ([`f`]), so its results match the game's to the last bits (capture A's 950 land curves within 5e-7, the
+//! difference the x87's extended-precision intermediates).
 //!
-//! The frame: the hex grid's world, x = column · `colw` (`colw` = the world's width / (columns - 1)), z = row · `rowh` (+ `rowh` / 2 on
-//! odd columns), `rowh` = √3 · R, R = `colw` / 1.5 the hexes' radius (flat-top hexes, odd columns half a row up).
+//! The frame: the hex grid's world, x = column · `colw`, z = row · `rowh` (+ `rowh` / 2 on odd columns), `rowh` = the world's height /
+//! (rows + 0.5), R = `rowh` / √3 the hexes' radius, `colw` = 1.5 R (flat-top hexes, odd columns half a row up).
 
 /// A cell (column, row); signed, a neighbour of an edge cell may be off the grid.
 pub type Cell = (i32, i32);
@@ -33,16 +33,23 @@ pub struct Grid {
     pub radius: f64,
     pub rowh: f64,
     half: f64,
+    /// The trade routes' point scales (the grid's +0x64, +0x68): width / (1.5 (columns - 1)), height / (2 rows + 1).
+    pub trade_x: f64,
+    pub trade_z: f64,
 }
 
 impl Grid {
-    /// A grid of `cols` x `rows` cells across a world `world_w` wide (`main_attila_map`: 1016 x 720, 678.5).
+    /// A grid of `cols` x `rows` cells over a world `world_w` x `world_h` (`main_attila_map`: 1016 x 720, 678.5 x 556.14392; the
+    /// world's size `REGIONS_DATA`'s second `Coord2d`). The cells come from the height: `rowh` = height / (rows + 0.5), R = `rowh` / √3,
+    /// `colw` = 1.5 R (single precision; the width's 678.5 / 1015 is 1 to 2 ulps off).
     #[must_use]
-    pub fn new(cols: u32, rows: u32, world_w: f64) -> Self {
-        let colw = f(world_w / f64::from(cols.saturating_sub(1).max(1)));
-        let radius = f(colw / 1.5);
-        let rowh = f(radius * 3f64.sqrt());
-        Self { cols: cols as i32, rows: rows as i32, colw, radius, rowh, half: f(rowh * 0.5) }
+    pub fn new(cols: u32, rows: u32, world_w: f64, world_h: f64) -> Self {
+        let rowh = f(world_h / (f64::from(rows) + 0.5));
+        let radius = f(rowh / f(3f64.sqrt()));
+        let colw = f(radius * f(1.5));
+        let trade_x = f(world_w / (1.5 * f64::from(cols.saturating_sub(1).max(1))));
+        let trade_z = f(world_h / (2.0 * f64::from(rows) + 1.0));
+        Self { cols: cols as i32, rows: rows as i32, colw, radius, rowh, half: f(rowh * 0.5), trade_x, trade_z }
     }
 
     /// A cell's centre (the column and row clamped to the grid's last).
@@ -706,7 +713,8 @@ mod tests {
 
     #[test]
     fn fits_a_short_chain() {
-        let g = Grid::new(1016, 720, 678.5);
+        let g = Grid::new(1016, 720, 678.5, 556.1439208984375);
+        assert_eq!((g.rowh as f32, g.radius as f32, g.colw as f32), (0.77188605, 0.44564864, 0.66847295));
         let mut cells = vec![(400, 390)];
         for d in [1, 1, 0, 1, 2, 1, 0, 0, 5] {
             let last = cells[cells.len() - 1];

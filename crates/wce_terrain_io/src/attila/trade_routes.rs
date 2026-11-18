@@ -7,14 +7,15 @@
 //! u32 P3 }; two route tables (0 land legs, 1 sea legs), each u32 n records of { u32 region A, u32 region B, u32 n + n segment refs
 //! (2 · segment + reversed) }; u32 CRC-32 of everything before it (not read by the loader).
 //!
-//! A point: x = (X / 4 - 1) · R, z = (Z / 4 - 1) · R · √3 / 2 (R the hexes' radius); a handle: P1 = P0 + 0.01 · (dx / 4 · R,
-//! dz / 4 · R · √3 / 2), P2 = P3 + the same of H2.
+//! A point (fns 0x108445f0, 0x1083a780, 0x1083a740, single precision): x = X · a · 0.25 - a, z = Z · b · 0.25 - b, a = width /
+//! (1.5 (columns - 1)), b = height / (2 rows + 1) (the hex grid's +0x64, +0x68); a handle: P1 = 0.01 · (dx · a · 0.25, dz · b · 0.25)
+//! + P0, P2 = the same of H2 + P3. A segment whose flag byte 0 is 1 gets no draw object (fn 0x10aba960).
 
 use std::collections::{BTreeMap, HashMap};
 
 use rpfm_lib::files::esf::{NodeType, RecordNode};
 
-use super::border_fit::{Cubic, curve_length, f, vertex_ts};
+use super::border_fit::{Cubic, Grid, curve_length, f, vertex_ts};
 use super::borders::{BorderCurve, Reader, crc32, curve};
 use super::cities::{as_record, child, leaf, u32_of};
 use super::diplomacy::Diplomacy;
@@ -99,18 +100,21 @@ pub fn decode_ptd(d: &[u8]) -> Result<Ptd, String> {
 }
 
 impl Ptd {
-    /// A segment's curves in the world (`radius`: the hexes' radius, the world's width / (columns - 1) / 1.5).
+    /// A segment's curves in the world, as the game decodes them (`a`, `b`: the grid's [`Grid::trade_x`], [`Grid::trade_z`]).
     #[must_use]
-    pub fn curves(&self, segment: usize, radius: f64) -> Vec<Cubic> {
-        let (sx, sz) = (radius, radius * 3f64.sqrt() / 2.0);
+    pub fn curves(&self, segment: usize, a: f64, b: f64) -> Vec<Cubic> {
+        let q = f(0.25);
+        let c01 = f(0.01);
         let Some(s) = self.segments.get(segment) else { return vec![] };
         s.curves
             .iter()
             .map(|c| {
-                let p = |x: i32, z: i32| (f((f64::from(x) / 4.0 - 1.0) * sx), f((f64::from(z) / 4.0 - 1.0) * sz));
+                let p = |x: i32, z: i32| (f(f(f(f64::from(x) * a) * q) - a), f(f(f(f64::from(z) * b) * q) - b));
                 let (p0, p3) = (p(c[0], c[1]), p(c[6], c[7]));
-                let h =
-                    |o: (f64, f64), dx: i32, dz: i32| (f(o.0 + 0.01 * f64::from(dx) / 4.0 * sx), f(o.1 + 0.01 * f64::from(dz) / 4.0 * sz));
+                let h = |o: (f64, f64), dx: i32, dz: i32| {
+                    let (hx, hz) = (f(f(f64::from(dx) * a) * q), f(f(f64::from(dz) * b) * q));
+                    (f(f(hx * c01) + o.0), f(f(hz * c01) + o.1))
+                };
                 [p0, h(p0, c[2], c[3]), h(p3, c[4], c[5]), p3]
             })
             .collect()
@@ -178,8 +182,10 @@ pub fn start_routes(root: &RecordNode) -> Vec<StartRoute> {
 pub struct TradeSegment {
     /// Its index in the file.
     pub segment: usize,
-    /// From the sea legs' table (capture A draws these; the land legs' segments were not drawn there, see the doc's known gaps).
+    /// From the sea legs' table (the route's sea leg).
     pub sea_leg: bool,
+    /// The game draws it: its flag byte 0 is 0 (fn 0x10aba960 makes no draw object for 1).
+    pub drawn: bool,
     pub flags: [u8; 4],
     /// The curves in the file's direction; uv in world units rounded up to a whole number per segment (offset + t' · scale).
     pub curves: Vec<BorderCurve>,
@@ -188,9 +194,9 @@ pub struct TradeSegment {
 }
 
 /// The trade-route segments of the routes `player` holds in the startpos (each leg's table: the route's sea leg the sea table, the
-/// others the land table), each once, by index. `radius`: the hexes' radius. Also the legs not found in the file.
+/// others the land table), each once, by index; drawn or not ([`TradeSegment::drawn`]). Also the legs not found in the file.
 #[must_use]
-pub fn segments(ptd: &Ptd, routes: &[StartRoute], diplomacy: &Diplomacy, player: u32, radius: f64) -> (Vec<TradeSegment>, Vec<String>) {
+pub fn segments(ptd: &Ptd, routes: &[StartRoute], diplomacy: &Diplomacy, player: u32, grid: &Grid) -> (Vec<TradeSegment>, Vec<String>) {
     let region: HashMap<u32, &str> = diplomacy.regions.iter().map(|r| (r.id, r.key.as_str())).collect();
     let mut used: BTreeMap<usize, bool> = BTreeMap::new();
     let mut missing = vec![];
@@ -213,7 +219,7 @@ pub fn segments(ptd: &Ptd, routes: &[StartRoute], diplomacy: &Diplomacy, player:
         .into_iter()
         .filter(|&(s, _)| s < ptd.segments.len())
         .map(|(s, sea_leg)| {
-            let cps = ptd.curves(s, radius);
+            let cps = ptd.curves(s, grid.trade_x, grid.trade_z);
             let lens: Vec<f64> = cps.iter().map(|c| curve_length(c, 0.0, 1.0)).collect();
             let total = lens.iter().fold(0.0, |a, l| f(a + l));
             let scale = if total > 0.0 { total.ceil() / total } else { 1.0 };
@@ -227,7 +233,8 @@ pub fn segments(ptd: &Ptd, routes: &[StartRoute], diplomacy: &Diplomacy, player:
                     c
                 })
                 .collect();
-            TradeSegment { segment: s, sea_leg, flags: ptd.segments[s].flags, curves, length: total as f32 }
+            let flags = ptd.segments[s].flags;
+            TradeSegment { segment: s, sea_leg, drawn: flags[0] == 0, flags, curves, length: total as f32 }
         })
         .collect();
     (out, missing)
@@ -264,8 +271,8 @@ mod tests {
         assert_eq!(p.tables[1][0].refs, [1]);
         assert!(p.crc_ok);
         assert_eq!(p.leg(0, "r1", "r0"), Some([0u32].as_slice()));
-        let c = p.curves(0, 1.0);
-        assert_eq!(c[0][0], (1.0, f(3f64.sqrt() / 2.0)));
+        let c = p.curves(0, 1.0, 2.0);
+        assert_eq!((c[0][0], c[0][1].0), ((1.0, 2.0), f(1.0 - 0.25)));
         assert!(decode_ptd(&d[..d.len() - 1]).is_err());
     }
 }
