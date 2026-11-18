@@ -2677,3 +2677,38 @@ fn a_biome_area_is_an_exclusion_polygon_whose_biome_the_tile_keeps() {
     d.history_mut().undo();
     assert!(d.tile_biomes().is_empty());
 }
+
+#[test]
+fn a_biome_area_is_filled_and_exported_with_its_contents() {
+    use wce_tile::biomes::{AREA_TYPE, BIOME_ATTR, SEED_ATTR, builtin};
+
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let pine = builtin().into_iter().find(|b| b.name == "Pine forest").unwrap();
+    d.adopt_biome(&pine);
+    let attrs = BTreeMap::from([(BIOME_ATTR.to_owned(), pine.name.clone()), (SEED_ATTR.to_owned(), "5".to_owned())]);
+    let square = Create::Line(vec![
+        Float3::new(2.0, 0.0, 2.0),
+        Float3::new(60.0, 0.0, 2.0),
+        Float3::new(60.0, 0.0, 60.0),
+        Float3::new(2.0, 0.0, 60.0),
+    ]);
+    let area = d.create_with(AREA_TYPE, layer, &square, "", &attrs).unwrap();
+    d.finish_biomes();
+    let (trees, rocks) = d.tile().biome_item_counts();
+    assert!(trees > 20, "{trees} trees and undergrowth");
+    assert!(rocks > 0, "{rocks} rocks");
+
+    // The export: a layer of their own, the area a plain exclusion polygon.
+    let text = String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
+    assert!(text.contains(wce_tile_editor::tile_document::biomes::EXPORT_LAYER), "the layer");
+    assert!(text.matches("<VEGETATION_INSTANCE").count() >= trees);
+    assert!(text.contains("key=\"gaul_rock_01\"") || text.contains("key=\"gaul_rock_02\""));
+
+    // The same again: nothing is made anew; the area gone: nothing.
+    d.finish_biomes();
+    assert_eq!(d.tile().biome_item_counts(), (trees, rocks));
+    assert!(d.remove(area));
+    d.finish_biomes();
+    assert_eq!(d.tile().biome_item_counts(), (0, 0));
+}
