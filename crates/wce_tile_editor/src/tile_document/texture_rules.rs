@@ -59,8 +59,24 @@ impl Tile {
     }
 
     /// What the distance conditions need of the scene, worked out again only when the scene or its models changed.
+    /// Every rule the layer lays: the tile's, then each biome area's biome's bound to it (docs/plans/auto_detail.md, C), with the areas'
+    /// masks (metres from the map's corner).
+    pub(crate) fn all_texture_rules(&self) -> (Vec<texture_rules::Rule>, Vec<texture_rules::AreaMask>) {
+        let mut rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
+        let border = self.project.border_m() as f32;
+        let mut masks = vec![];
+        for a in self.biome_areas() {
+            let Some(b) = self.biome_named(&a.biome).filter(|b| !b.rules.is_empty()) else { continue };
+            let i = masks.len();
+            masks.push(texture_rules::AreaMask { points: a.points.iter().map(|&(x, z)| (x + border, z + border)).collect(), edge: b.edge });
+            rules.extend(b.rules.into_iter().map(|r| texture_rules::Rule { area: Some(i), seed: r.seed ^ (a.seed as u32), ..r }));
+        }
+
+        (rules, masks)
+    }
+
     fn texture_rules_inputs(&mut self) -> Inputs {
-        let rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
+        let rules = self.all_texture_rules().0;
         let key = {
             let mut h = 0xcbf2_9ce4_8422_2325u64;
             for v in [self.history_version, self.structure_version, self.models.len() as u64, self.unresolved.len() as u64] {
@@ -137,7 +153,11 @@ impl Tile {
     /// measure to (the water, the buildings, the roads' layers).
     fn texture_rules_signature(&mut self) -> Option<u64> {
         let inputs = self.texture_rules_inputs();
-        let rules = self.project.texture_rules.as_ref()?;
+        let (rules, masks) = self.all_texture_rules();
+        if rules.is_empty() {
+            return None;
+        }
+
         let hf = self.project.height.as_ref()?;
         let version = hf.version();
         if self.texture_rules_heights.0 != version {
@@ -150,7 +170,18 @@ impl Tile {
                 h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
             }
         };
-        eat(&texture_rules::text(&RuleSet { preset: String::new(), rules: rules.rules.clone() }));
+        eat(&texture_rules::text(&RuleSet { preset: String::new(), rules: rules.clone() }));
+        for m in &masks {
+            eat(&m.edge.to_le_bytes());
+            for &(x, z) in &m.points {
+                eat(&x.to_le_bytes());
+                eat(&z.to_le_bytes());
+            }
+        }
+
+        for r in &rules {
+            eat(&r.area.map_or(u64::MAX, |a| a as u64).to_le_bytes());
+        }
         for g in self.texture_group_slots() {
             eat(g.as_bytes());
             eat(b"/");
@@ -159,7 +190,7 @@ impl Tile {
         eat(&self.texture_rules_heights.1.to_le_bytes());
         eat(&self.project.unit_scale.to_le_bytes());
         eat(&inputs.hash.to_le_bytes());
-        if Feature::Road.used(&rules.rules)
+        if Feature::Road.used(&rules)
             && let Some(s) = self.project.layers.as_ref().and_then(|l| l.blend.as_ref())
         {
             // A road's layer is named by what it was made from (`roads.rs`): its owner says when it changed.
@@ -191,7 +222,7 @@ impl Tile {
             .and_then(|l| l.blend.as_ref())
             .and_then(|s| s.layers.iter().find(|l| l.owner.starts_with(OWNER)))
             .map(|l| signature_of(&l.owner));
-        if self.project.texture_rules.is_none() {
+        if self.project.texture_rules.is_none() && self.all_texture_rules().0.is_empty() {
             self.texture_rules_job = None;
             if made.is_some() {
                 self.remove_texture_rules_layer();
@@ -269,8 +300,9 @@ impl Tile {
 
     /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
     fn start_texture_rules(&mut self, signature: u64) -> Result<(), String> {
-        let rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
-        let prepared = self.prepare_texture_rules(rules)?;
+        let (rules, masks) = self.all_texture_rules();
+        let mut prepared = self.prepare_texture_rules(rules)?;
+        prepared.fields = prepared.fields.with_areas(masks);
         let id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
         let ground_id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
         let before = prepared.blend.clone();
