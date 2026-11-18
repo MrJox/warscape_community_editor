@@ -161,7 +161,8 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
-    /// Another tool was switched to: what this one changed in the shared scene for itself (other tools' documents hidden) is put back.
+    /// Another tool was switched to: what this one changed in the shared scene for itself (other tools' documents hidden) is put back,
+    /// and what it shows only while active goes (the VFX tool's preview effect).
     fn deactivated(&mut self, editor: &mut Editor) {
         let _ = editor;
     }

@@ -11,6 +11,9 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[cfg(feature = "weather")]
     tools.push(Box::new(wce_weather_tool::WeatherTool::default()));
 
+    #[cfg(feature = "vfx")]
+    tools.push(Box::new(wce_vfx_tool::VfxTool::default()));
+
     #[cfg(feature = "prefab")]
     tools.push(Box::new(wce_tile_tool::PrefabTool::default()));
 
@@ -35,19 +38,13 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     tools
 }
 
-/// The future tools: no features yet.
+/// The future tools: no features yet (the Terrain, Unit and VFX tools are features of their own).
 #[cfg(feature = "placeholders")]
 fn placeholders() -> Vec<Box<dyn Tool>> {
     use wce_editor::icons;
     use wce_editor::tool::PlaceholderTool;
 
     vec![
-        Box::new(PlaceholderTool::new(
-            "vfx",
-            "VFX",
-            icons::SPARKLES,
-            "Particle and effect editor on the existing particle system and vfx definitions: emitter graph, standalone preview scene, vfx XML export.",
-        )),
         Box::new(PlaceholderTool::new(
             "cinematic",
             "Cinematic",
