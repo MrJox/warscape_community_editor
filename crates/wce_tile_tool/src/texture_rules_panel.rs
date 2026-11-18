@@ -453,7 +453,7 @@ impl TileTool {
 }
 
 /// A rule's fields; whether any changed.
-fn rule_fields(r: &mut Rule, groups: &[String]) -> bool {
+pub(crate) fn rule_fields(r: &mut Rule, groups: &[String]) -> bool {
     let mut edited = false;
     gui::set_next_item_width(240.0);
     edited |= gui::input_text("name", None, &mut r.name, 128, 0);

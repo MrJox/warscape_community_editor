@@ -536,6 +536,157 @@ pub fn polygon_area(poly: &[(f32, f32)]) -> f32 {
     ((0..n).map(|i| poly[i].0 * poly[(i + 1) % n].1 - poly[(i + 1) % n].0 * poly[i].1).sum::<f32>() * 0.5).abs()
 }
 
+/// An area touched up by a brush stroke: the area's polygon (none: a new area) with circles of `radius` at `dabs` added (or taken away,
+/// `erase`), on a grid of `cell` metres; the outlines of what is left, the largest first, simplified (no point off the cells' outline by
+/// more than about a cell). Holes are left out (an area is one polygon), and so are pieces under four cells.
+#[must_use]
+pub fn stroke_outline(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, erase: bool, cell: f32) -> Vec<Vec<(f32, f32)>> {
+    let cell = cell.max(0.1);
+    let (mut x0, mut x1, mut z0, mut z1) = (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY);
+    for &(x, z) in area {
+        (x0, x1, z0, z1) = (x0.min(x), x1.max(x), z0.min(z), z1.max(z));
+    }
+
+    if !erase {
+        for &(x, z) in dabs {
+            (x0, x1, z0, z1) = (x0.min(x - radius), x1.max(x + radius), z0.min(z - radius), z1.max(z + radius));
+        }
+    }
+
+    if !x0.is_finite() {
+        return vec![];
+    }
+
+    // A cell of margin all round, so that every outline closes inside the grid.
+    let (ox, oz) = (x0 - 2.0 * cell, z0 - 2.0 * cell);
+    let nx = (((x1 - ox) / cell).ceil() as usize + 2).min(4096);
+    let nz = (((z1 - oz) / cell).ceil() as usize + 2).min(4096);
+    let centre = |i: usize, j: usize| (ox + (i as f32 + 0.5) * cell, oz + (j as f32 + 0.5) * cell);
+    let mut filled = vec![false; nx * nz];
+    if area.len() >= 3 {
+        for j in 0..nz {
+            for i in 0..nx {
+                let (x, z) = centre(i, j);
+                filled[j * nx + i] = inside(area, x, z);
+            }
+        }
+    }
+
+    for &(dx, dz) in dabs {
+        let (i0, i1) =
+            (((dx - radius - ox) / cell).floor().max(0.0) as usize, (((dx + radius - ox) / cell).ceil().max(0.0) as usize).min(nx));
+        let (j0, j1) =
+            (((dz - radius - oz) / cell).floor().max(0.0) as usize, (((dz + radius - oz) / cell).ceil().max(0.0) as usize).min(nz));
+        for j in j0..j1 {
+            for i in i0..i1 {
+                let (x, z) = centre(i, j);
+                if (x - dx).hypot(z - dz) <= radius {
+                    filled[j * nx + i] = !erase;
+                }
+            }
+        }
+    }
+
+    // The cells' boundary as directed edges between grid corners, the filled cell on their left (counter-clockwise round a filled region
+    // seen from above with x right and z up): outer outlines run counter-clockwise, holes clockwise.
+    let at = |i: isize, j: isize| i >= 0 && j >= 0 && (i as usize) < nx && (j as usize) < nz && filled[j as usize * nx + i as usize];
+    let mut next: std::collections::HashMap<(isize, isize), Vec<(isize, isize)>> = std::collections::HashMap::new();
+    for j in 0..nz as isize {
+        for i in 0..nx as isize {
+            if !at(i, j) {
+                continue;
+            }
+
+            if !at(i, j - 1) {
+                next.entry((i, j)).or_default().push((i + 1, j));
+            }
+
+            if !at(i + 1, j) {
+                next.entry((i + 1, j)).or_default().push((i + 1, j + 1));
+            }
+
+            if !at(i, j + 1) {
+                next.entry((i + 1, j + 1)).or_default().push((i, j + 1));
+            }
+
+            if !at(i - 1, j) {
+                next.entry((i, j + 1)).or_default().push((i, j));
+            }
+        }
+    }
+
+    let mut loops = vec![];
+    while let Some(&start) = next.keys().next() {
+        let mut pts = vec![start];
+        let mut cur = start;
+        while let Some(outs) = next.get_mut(&cur) {
+            let to = outs.pop().expect("an edge");
+            if outs.is_empty() {
+                next.remove(&cur);
+            }
+
+            cur = to;
+            if cur == start {
+                break;
+            }
+
+            pts.push(cur);
+        }
+
+        let world = pts.iter().map(|&(i, j)| (ox + i as f32 * cell, oz + j as f32 * cell)).collect::<Vec<_>>();
+        let signed = signed_area(&world);
+        if signed > 4.0 * cell * cell {
+            loops.push((signed, simplify(&world, cell * 0.75)));
+        }
+    }
+
+    loops.sort_by(|a, b| b.0.total_cmp(&a.0));
+    loops.into_iter().map(|(_, l)| l).filter(|l| l.len() >= 3).collect()
+}
+
+/// A polygon's area, counter-clockwise (x right, z up) positive.
+fn signed_area(poly: &[(f32, f32)]) -> f32 {
+    let n = poly.len();
+    (0..n).map(|i| poly[i].0 * poly[(i + 1) % n].1 - poly[(i + 1) % n].0 * poly[i].1).sum::<f32>() * 0.5
+}
+
+/// A closed outline simplified (Douglas and Peucker, from its two farthest points): no point of the original further than `tolerance`.
+fn simplify(poly: &[(f32, f32)], tolerance: f32) -> Vec<(f32, f32)> {
+    fn dp(pts: &[(f32, f32)], tol: f32, out: &mut Vec<(f32, f32)>) {
+        let (a, b) = (pts[0], pts[pts.len() - 1]);
+        let (dx, dz) = (b.0 - a.0, b.1 - a.1);
+        let len = dx.hypot(dz).max(1e-6);
+        let (far, d) = pts[1..pts.len() - 1]
+            .iter()
+            .enumerate()
+            .map(|(k, p)| (k + 1, ((p.0 - a.0) * dz - (p.1 - a.1) * dx).abs() / len))
+            .fold((0, 0.0f32), |m, c| if c.1 > m.1 { c } else { m });
+        if d > tol {
+            dp(&pts[..=far], tol, out);
+            dp(&pts[far..], tol, out);
+        } else {
+            out.push(a);
+        }
+    }
+
+    if poly.len() < 4 {
+        return poly.to_vec();
+    }
+
+    let far = (1..poly.len())
+        .max_by(|&i, &j| {
+            let d = |k: usize| (poly[k].0 - poly[0].0).hypot(poly[k].1 - poly[0].1);
+            d(i).total_cmp(&d(j))
+        })
+        .unwrap_or(poly.len() / 2);
+    let mut out = vec![];
+    dp(&poly[..=far], tolerance, &mut out);
+    let mut back = poly[far..].to_vec();
+    back.push(poly[0]);
+    dp(&back, tolerance, &mut out);
+    out
+}
+
 /// A small random sequence (xorshift, seeded through splitmix), as the ground coverage's.
 struct Random(u64);
 
@@ -649,6 +800,42 @@ mod tests {
         assert_eq!(listed.len(), builtin().len() + 1);
         assert_eq!(listed.last().unwrap(), &Biome { folder: "north".to_owned(), ..p });
         assert!(listed[0].folder == BUILTIN_FOLDER && listed[0].save().is_err());
+    }
+
+    #[test]
+    fn a_stroke_grows_shrinks_and_splits_an_area() {
+        let sq = square(20.0);
+        // A new area from a stroke: a blob round the dabs, about their circles' area.
+        let blob = stroke_outline(&[], &[(50.0, 50.0), (56.0, 50.0)], 5.0, false, 0.5);
+        assert_eq!(blob.len(), 1);
+        let a = polygon_area(&blob[0]);
+        assert!((125.0..145.0).contains(&a), "{a}: two circles of 78.5 m2 overlapping by 22");
+        assert!(inside(&blob[0], 53.0, 50.0) && !inside(&blob[0], 53.0, 56.0));
+
+        // Circles well apart are two pieces.
+        assert_eq!(stroke_outline(&[], &[(50.0, 50.0), (70.0, 50.0)], 5.0, false, 1.0).len(), 2);
+
+        // Grown: the square and a circle beyond its side.
+        let grown = stroke_outline(&sq, &[(22.0, 10.0)], 4.0, false, 0.5);
+        assert_eq!(grown.len(), 1);
+        assert!(inside(&grown[0], 24.5, 10.0) && inside(&grown[0], 5.0, 5.0));
+
+        // Cut through: two areas, the larger first.
+        let line = (-5..=25).map(|z| (8.0, z as f32)).collect::<Vec<_>>();
+        let cut = stroke_outline(&sq, &line, 2.0, true, 0.5);
+        assert_eq!(cut.len(), 2, "{cut:?}");
+        assert!(polygon_area(&cut[0]) > polygon_area(&cut[1]));
+        assert!(inside(&cut[0], 15.0, 10.0) && inside(&cut[1], 2.0, 10.0));
+
+        // A hole is no area: what is left is the outline without it.
+        let holed = stroke_outline(&sq, &[(10.0, 10.0)], 3.0, true, 0.5);
+        assert_eq!(holed.len(), 1);
+        assert!(inside(&holed[0], 10.0, 10.0), "the hole is left out");
+
+        // All taken away: nothing.
+        assert!(stroke_outline(&sq, &[(10.0, 10.0)], 30.0, true, 1.0).is_empty());
+        // A simplified square keeps about its corners.
+        assert!(grown[0].len() < 60, "{}", grown[0].len());
     }
 
     #[test]
