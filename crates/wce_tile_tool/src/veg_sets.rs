@@ -85,7 +85,13 @@ impl TileTool {
         set.path = Self::sets_folder(e).join(format!("{name}.wce"));
         set.save()?;
         self.rescan_vegetation_sets();
-        Ok(format!("set {name}: {} kind(s) of {} from {} instance(s) ({})", set.entries.len(), kind.things(), keys.len(), set.path.display()))
+        Ok(format!(
+            "set {name}: {} kind(s) of {} from {} instance(s) ({})",
+            set.entries.len(),
+            kind.things(),
+            keys.len(),
+            set.path.display()
+        ))
     }
 
     /// Asks for the name of a new set from the selected trees (the dialog opens on the next frame).
@@ -116,7 +122,9 @@ impl TileTool {
             return;
         };
 
-        gui::text_wrapped("A set of the selected trees, or buildings (each kind weighted by how many there are), saved in the projects' vegetation sets.");
+        gui::text_wrapped(
+            "A set of the selected trees, or buildings (each kind weighted by how many there are), saved in the projects' vegetation sets.",
+        );
         gui::set_next_item_width(320.0);
         let enter = gui::input_text("Name", Some("the set's file name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
         self.veg_sets.new_name = Some(name.clone());
@@ -188,7 +196,8 @@ impl TileTool {
             self.start_new_set(e);
         }
 
-        self.status = format!("the new set has {kinds} kind(s) of {} (the Inspector); click the terrain to place, Esc stops", kind.things());
+        self.status =
+            format!("the new set has {kinds} kind(s) of {} (the Inspector); click the terrain to place, Esc stops", kind.things());
     }
 
     /// The new set (not saved), in its box at the top of the Inspector: its trees, a name to save it with, placing with it, dropping it.

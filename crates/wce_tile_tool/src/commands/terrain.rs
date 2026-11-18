@@ -556,27 +556,45 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("ground_coverage", "ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]", "the ground coverage's window from a script: a kind's preset (Default: the built-in one; -: the tile's last run, else the kind's last preset), then Preview (prints the summary, draws it) or Generate (replaces the kind's group in \"(AUTOGEN) Ground Coverage\" without asking)", |e, a| {
-        let (Some(what), Some(kind), Some(preset)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
-            return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]");
-        };
+    c.add(
+        "ground_coverage",
+        "ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]",
+        "the ground coverage's window from a script: a kind's preset (Default: the built-in one; -: the tile's last run, else the kind's last preset), then Preview (prints the summary, draws it) or Generate (replaces the kind's group in \"(AUTOGEN) Ground Coverage\" without asking)",
+        |e, a| {
+            let (Some(what), Some(kind), Some(preset)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
+                return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]");
+            };
 
-        let Some(kind) = wce_tile::ground_coverage::Kind::from_name(&kind) else { return fail("the kind is cliffs, coast or riverbank") };
-        let seed = a.get(3).and_then(|s| s.parse::<u64>().ok());
-        with_tile(e, |t, e| t.coverage_for_script(e, &what, kind, &preset, seed).map_or_else(fail, ok))
-    });
+            let Some(kind) = wce_tile::ground_coverage::Kind::from_name(&kind) else {
+                return fail("the kind is cliffs, coast or riverbank");
+            };
 
-    c.add("ground_coverage_brush", "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...", "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away", |e, a| {
-        let usage = "usage: ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...";
-        let (Some(what), Some(radius)) = (a.first().cloned(), a.get(1).and_then(|v| number(v))) else { return fail(usage) };
-        let pts = a[2..].chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
-        if pts.is_empty() || a.len() % 2 != 0 || pts.iter().any(|p| p.0.is_none() || p.1.is_none()) || !matches!(what.as_str(), "paint" | "erase") {
-            return fail(usage);
-        }
+            let seed = a.get(3).and_then(|s| s.parse::<u64>().ok());
+            with_tile(e, |t, e| t.coverage_for_script(e, &what, kind, &preset, seed).map_or_else(fail, ok))
+        },
+    );
 
-        let pts = pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).collect::<Vec<_>>();
-        with_tile(e, |t, e| t.coverage_stroke_for_script(e, what == "erase", radius, &pts).map_or_else(fail, ok))
-    });
+    c.add(
+        "ground_coverage_brush",
+        "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
+        "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",
+        |e, a| {
+            let usage = "usage: ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...";
+            let (Some(what), Some(radius)) = (a.first().cloned(), a.get(1).and_then(|v| number(v))) else { return fail(usage) };
+            let pts =
+                a[2..].chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
+            if pts.is_empty()
+                || a.len() % 2 != 0
+                || pts.iter().any(|p| p.0.is_none() || p.1.is_none())
+                || !matches!(what.as_str(), "paint" | "erase")
+            {
+                return fail(usage);
+            }
+
+            let pts = pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).collect::<Vec<_>>();
+            with_tile(e, |t, e| t.coverage_stroke_for_script(e, what == "erase", radius, &pts).map_or_else(fail, ok))
+        },
+    );
 
     c.add("veg_set_save", "veg_set_save <name>", "save the new vegetation set under a name", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: veg_set_save <name>") };

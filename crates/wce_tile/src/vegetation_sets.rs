@@ -137,7 +137,8 @@ impl VegetationSet {
     /// The file's text.
     pub fn text(&self) -> Vec<u8> {
         let kind = if self.kind == SetKind::Building { " kind=\"building\"" } else { "" };
-        let mut out = format!("<VEGETATION_SET {}=\"{}\"{kind}>\n", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
+        let mut out =
+            format!("<VEGETATION_SET {}=\"{}\"{kind}>\n", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
         for e in &self.entries {
             out += &format!("    <entry key=\"{}\" weight=\"{}\"", e.key, crate::ted_scene::format_number(f64::from(e.weight)));
             if let Some((lo, hi)) = e.scale {

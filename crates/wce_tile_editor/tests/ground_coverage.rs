@@ -47,7 +47,15 @@ fn open_with(ted: &str) -> (tempfile::TempDir, TileDocument) {
     std::fs::File::create(dir.path().join("tile.ted")).unwrap().write_all(ted.as_bytes()).unwrap();
     let (w, h) = (64u32, 64u32);
     let pixels = (0..h).flat_map(|y| (0..w).flat_map(move |x| ((x * 300 + y * 200) as u16).to_be_bytes())).collect();
-    let png = wce_formats::png_file::PngFile { width: w, height: h, bit_depth: 16, color_type: 0, pixels, pixels_edited: true, ..Default::default() };
+    let png = wce_formats::png_file::PngFile {
+        width: w,
+        height: h,
+        bit_depth: 16,
+        color_type: 0,
+        pixels,
+        pixels_edited: true,
+        ..Default::default()
+    };
     std::fs::write(dir.path().join("height_map_0.png"), png.write().unwrap()).unwrap();
     let doc = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
     (dir, doc)
@@ -69,7 +77,13 @@ fn slope(number: usize, x: f32) -> Differential {
 }
 
 fn settings(seed: u64) -> CoverageSettings {
-    CoverageSettings { params: Params { min_rise: 5.0, ..Default::default() }, seed, rocks: "rocks".to_owned(), plants: "bushes".to_owned(), preset: "steep".to_owned() }
+    CoverageSettings {
+        params: Params { min_rise: 5.0, ..Default::default() },
+        seed,
+        rocks: "rocks".to_owned(),
+        plants: "bushes".to_owned(),
+        preset: "steep".to_owned(),
+    }
 }
 
 /// The names of an element's children.
@@ -96,8 +110,10 @@ fn the_coverage_fills_its_layer_replaces_it_and_undoes() {
     let cliffs = d.coverage_group(Kind::Cliffs).unwrap();
     let groups = sc.children(cliffs);
     assert_eq!(names(&d, cliffs), ["Slope 1", "Slope 2"]);
-    assert_eq!(sc.children(groups[0]).iter().map(|&e| sc.type_of(e).to_owned()).collect::<Vec<_>>(),
-        ["BUILDING_INSTANCE", "BUILDING_INSTANCE", "VEGETATION_INSTANCE", "VegetationExclusionPolygonInstance"]);
+    assert_eq!(
+        sc.children(groups[0]).iter().map(|&e| sc.type_of(e).to_owned()).collect::<Vec<_>>(),
+        ["BUILDING_INSTANCE", "BUILDING_INSTANCE", "VEGETATION_INSTANCE", "VegetationExclusionPolygonInstance"]
+    );
     assert_eq!(d.coverage_items(Kind::Cliffs), 8);
 
     // A rock is freeform at its height, scaled when it is not at 1; the world positions are the generator's.
@@ -171,7 +187,10 @@ const BRUSHED_LAYER: &str = r#"<LayerInstance flags=" OIF_VISIBLE|OIF_ACTIVE" ex
 
 /// The tile with `layer` at the end of its scene graph.
 fn with_layer(layer: &str) -> String {
-    let ted = TED.replace("            </children>\n        </SCENE_GRAPH>", &format!("                {layer}            </children>\n        </SCENE_GRAPH>"));
+    let ted = TED.replace(
+        "            </children>\n        </SCENE_GRAPH>",
+        &format!("                {layer}            </children>\n        </SCENE_GRAPH>"),
+    );
     assert_ne!(ted, TED);
     ted
 }
