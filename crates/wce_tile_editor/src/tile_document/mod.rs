@@ -629,6 +629,16 @@ pub struct Tile {
     pub(crate) texture_rules_heights: ((usize, u64), u64),
     pub(crate) texture_rules_inputs: Option<(u64, texture_rules::Inputs)>,
 
+    /// The biome areas' contents (`biomes.rs`): made, being made, their entities, whether shown, the signature of what was made and of
+    /// what was last looked at, and the sets their named props are looked for in.
+    pub(crate) biome_items: Vec<biomes::BiomeItem>,
+    pub(crate) biome_job: Option<biomes::BiomeJob>,
+    pub(crate) biome_entities: Vec<wce_scene::render_scene::EntityId>,
+    pub(crate) biome_items_shown: bool,
+    pub(crate) biome_made: u64,
+    pub(crate) biome_seen: u64,
+    pub(crate) biome_sets: std::sync::Arc<Vec<wce_tile::vegetation_sets::VegetationSet>>,
+
     /// The prefabs' ground (`prefab_ground.rs`): the history's version the document last gave (any edit, undo or redo changes it), what
     /// the references were last looked at for, and whether their prefabs' layers changed (made again whatever).
     pub(crate) history_version: u64,
@@ -1000,6 +1010,13 @@ impl TileDocument {
             texture_rules_seen: 0,
             texture_rules_heights: ((0, u64::MAX), 0),
             texture_rules_inputs: None,
+            biome_items: vec![],
+            biome_job: None,
+            biome_entities: vec![],
+            biome_items_shown: false,
+            biome_made: 0,
+            biome_seen: 0,
+            biome_sets: Default::default(),
             history_version: 0,
             prefab_ground_seen: 0,
             prefab_ground_stale: false,
@@ -1204,6 +1221,7 @@ impl TileDocument {
         t.refresh_prefab_ground();
         t.refresh_roads();
         t.refresh_texture_rules();
+        t.refresh_biomes(false);
     }
 
     /// Per frame: the tile's view (`Tile::update_view`), knowing of the edits.

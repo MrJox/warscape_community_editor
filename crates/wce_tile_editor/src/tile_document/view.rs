@@ -1628,6 +1628,8 @@ impl Tile {
         self.wall_preview_cleared();
         self.road_entities.clear();
         self.road_items_shown = false;
+        self.biome_entities.clear();
+        self.biome_items_shown = false;
         self.building_splines_cleared();
         self.last_highlight = None;
         let pieces = self.instances.iter().filter_map(|&e| self.model_of(e).filter(|m| m.ok)).map(|m| m.pieces.len()).sum::<usize>();
@@ -1994,6 +1996,7 @@ impl Tile {
         self.refresh_prefab_ground();
         self.refresh_roads();
         self.refresh_texture_rules();
+        self.refresh_biomes(false);
 
         // What the layers wrote is no edit of the history's, which is what the terrain follows otherwise.
         // The polygons lie on it too (a kit wall's own layer raised the ground over its line, which was left under it).
@@ -2032,6 +2035,7 @@ impl Tile {
         self.follow_vegetation_inputs();
         self.update_list_trees(scene, layer, false);
         self.update_grass(scene, layer, false);
+        self.show_biome_items(scene);
 
         // A type that has markers now but had none when the tile was published (buildings whose models turned out not to load) needs its
         // overlay entity.

@@ -5,9 +5,53 @@
 use std::any::Any;
 
 use wce_editor_core::command::Command;
+use wce_foundation::math::Double3;
+use wce_scene::render_scene::{EntityId, Payload, RenderScene};
 use wce_tile::biomes::{AREA_TYPE, BIOME_ATTR, Biome, SEED_ATTR};
+use wce_tile::ted_scene::TedScene;
+use wce_tile::vegetation_sets::VegetationSet;
 
+use super::draft::{turned, with_root_attr};
+use super::edits::point_instance;
 use super::{TERRAIN, Tile, TileDocument};
+
+/// The layer an export puts the areas' contents in.
+pub const EXPORT_LAYER: &str = "WCE biomes";
+
+/// Metres the contents keep from a road's texture and from a real building's footprint.
+const KEEP_OFF_ROAD: f64 = 1.5;
+const KEEP_OFF_BUILDING: f32 = 1.0;
+
+/// A tree, a plant of the undergrowth or a rock of an area: its element's text (its world position in it, scene units) and that position.
+#[derive(Clone, Debug)]
+pub(crate) struct BiomeItem {
+    area: usize,
+    text: Vec<u8>,
+    position: [f64; 3],
+}
+
+/// The areas' contents being made off the editor's thread, and the signature of what they are made from.
+pub(crate) struct BiomeJob {
+    job: super::jobs::Job<Vec<BiomeItem>>,
+    signature: u64,
+}
+
+/// What the contents keep off (world metres): the real buildings (x, z, radius) and the roads' pixels on the blend map (from its corner;
+/// `ppm` pixels a metre, `border` metres from its corner to the tile's origin).
+#[derive(Clone, Default)]
+struct KeepOff {
+    buildings: Vec<[f64; 3]>,
+    roads: Option<(wce_tile::texture_rules::Distances, (f64, f64), f64)>,
+}
+
+impl KeepOff {
+    fn blocked(&self, x: f32, z: f32) -> bool {
+        let near_building =
+            self.buildings.iter().any(|&[bx, bz, r]| (f64::from(x) - bx).hypot(f64::from(z) - bz) < r + f64::from(KEEP_OFF_BUILDING));
+        let on_road = self.roads.as_ref().is_some_and(|(d, _, border)| d.at(f64::from(x) + border, f64::from(z) + border) < KEEP_OFF_ROAD);
+        near_building || on_road
+    }
+}
 
 /// An area: its element, its biome's name, its seed and its polygon (world metres, x and z).
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +90,251 @@ impl Tile {
     }
 }
 
+impl Tile {
+    /// What the areas' contents are made from, hashed: the areas (their points, biome and seed), the biomes, the heights, the real
+    /// buildings, the roads' layers, the sets given (`biome_sets`).
+    fn biome_signature(&mut self, areas: &[BiomeArea]) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        let mut eat = |bytes: &[u8]| {
+            for &b in bytes {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        for a in areas {
+            eat(a.biome.as_bytes());
+            eat(&a.seed.to_le_bytes());
+            for &(x, z) in &a.points {
+                eat(&x.to_le_bytes());
+                eat(&z.to_le_bytes());
+            }
+
+            if let Some(b) = self.biome_named(&a.biome) {
+                eat(b.element_text("").as_bytes());
+            }
+        }
+
+        if let Some(hf) = self.project.height.as_ref() {
+            let version = hf.version();
+            if self.texture_rules_heights.0 != version {
+                self.texture_rules_heights = (version, hf.region_hash(0.0, 0.0, f64::from(hf.width()), f64::from(hf.height())));
+            }
+
+            eat(&self.texture_rules_heights.1.to_le_bytes());
+        }
+
+        for v in [self.history_version, self.structure_version, self.models.len() as u64] {
+            eat(&v.to_le_bytes());
+        }
+
+        for s in self.biome_sets.iter() {
+            eat(s.name.as_bytes());
+            for e in &s.entries {
+                eat(e.key.as_bytes());
+            }
+        }
+
+        h
+    }
+
+    /// Makes the areas' contents again when what they are made from changed and stayed so for a look; `wait`: now, waiting (an export).
+    pub(super) fn refresh_biomes(&mut self, wait: bool) {
+        if self.stroke_open {
+            return;
+        }
+
+        self.take_biomes(wait);
+        let areas = self.biome_areas();
+        if areas.is_empty() {
+            if !self.biome_items.is_empty() {
+                self.biome_items.clear();
+                self.biome_items_shown = false;
+            }
+
+            self.biome_made = 0;
+            return;
+        }
+
+        let signature = self.biome_signature(&areas);
+        if signature == self.biome_made {
+            return;
+        }
+
+        if signature != self.biome_seen && !wait {
+            self.biome_seen = signature;
+            return;
+        }
+
+        if self.biome_job.as_ref().is_some_and(|j| j.signature == signature) {
+            if wait {
+                self.take_biomes(true);
+            }
+
+            return;
+        }
+
+        self.biome_seen = signature;
+        self.start_biomes(areas, signature);
+        if wait {
+            self.take_biomes(true);
+        }
+    }
+
+    fn start_biomes(&mut self, areas: Vec<BiomeArea>, signature: u64) {
+        let unit = self.unit();
+        let sets = self.biome_sets.clone();
+        let biomes = areas.iter().map(|a| self.biome_named(&a.biome)).collect::<Vec<_>>();
+        let p = &mut self.project;
+        let (mx, mz) = (p.mpp_x(), p.mpp_z());
+        let fields = p.height.as_ref().map(|hf| wce_tile::texture_rules::Fields::from_height_field(hf, (mx, mz), unit));
+        let border = p.border_m();
+        let roads = p.blend.as_ref().zip(p.layers.as_ref().and_then(|l| l.blend.as_ref())).and_then(|(bf, stack)| {
+            let (bw, bh) = (bf.width(), bf.height());
+            let ppm = (f64::from(bw) / (p.extent_x() + 2.0 * border), f64::from(bh) / (p.extent_z() + 2.0 * border));
+            let empty = |px: &[u16]| px.iter().all(|&v| v == 0);
+            let mask =
+                (0..bh).flat_map(|y| (0..bw).map(move |x| (x, y))).map(|(x, y)| stack.owned_at("road:", x, y, empty)).collect::<Vec<_>>();
+            mask.iter().any(|&m| m).then(|| (wce_tile::texture_rules::Distances::from_mask(bw, bh, ppm, &mask), ppm, border))
+        });
+        let keep_off = KeepOff { buildings: self.texture_rules_buildings(), roads };
+        let job = super::jobs::Job::spawn("biomes", move || {
+            wce_foundation::wce_prof!("tile.biomes");
+            let height = |x: f32, z: f32| fields.as_ref().map_or(0.0, |f| f.height(f64::from(x) + border, f64::from(z) + border) as f32);
+            let mut out = vec![];
+            for (a, biome) in areas.iter().zip(&biomes) {
+                let Some(biome) = biome else { continue };
+                let made =
+                    wce_tile::biomes::generate(biome, &biome.resolve(&sets), &a.points, &height, &|x, z| keep_off.blocked(x, z), a.seed);
+                for (kind, list) in
+                    [("VEGETATION_INSTANCE", &made.trees), ("VEGETATION_INSTANCE", &made.undergrowth), ("BUILDING_INSTANCE", &made.rocks)]
+                {
+                    for p in list {
+                        let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
+                        let Some(text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
+                        out.push(BiomeItem { area: a.elem, text, position: [at.x, at.y, at.z] });
+                    }
+                }
+            }
+
+            out
+        });
+        self.biome_job = Some(BiomeJob { job, signature });
+    }
+
+    fn take_biomes(&mut self, wait: bool) {
+        let Some(j) = &self.biome_job else { return };
+        let made = match if wait { j.job.wait() } else { j.job.poll() } {
+            super::jobs::Poll::Running => return,
+            super::jobs::Poll::Done(m) => Some(m),
+            super::jobs::Poll::Failed => None,
+        };
+
+        let j = self.biome_job.take().expect("a job");
+        let Some(items) = made else {
+            wce_foundation::log::warn("biomes: the areas' contents could not be made");
+            return;
+        };
+
+        self.biome_items = items;
+        self.biome_made = j.signature;
+        self.biome_items_shown = false;
+    }
+
+    /// The areas' contents in the viewport, again when they were made again (locked: they are the areas', not tile.ted's).
+    pub(super) fn show_biome_items(&mut self, scene: &mut RenderScene) {
+        if self.biome_items_shown {
+            return;
+        }
+
+        self.biome_items_shown = true;
+        for id in std::mem::take(&mut self.biome_entities) {
+            scene.remove(id);
+        }
+
+        let unit = self.unit();
+        let mut ids: Vec<EntityId> = vec![];
+        for item in &self.biome_items {
+            let source = self.source(super::item_of(item.area));
+            let [x, y, z] = item.position;
+            for (local, payload) in self.preview_payloads(&item.text) {
+                let mut world = local;
+                world.m[0][3] += (x / unit) as f32;
+                world.m[1][3] += (y / unit) as f32;
+                world.m[2][3] += (z / unit) as f32;
+                let tree = matches!(payload, Payload::MeshInstance(_)) && item.text.starts_with(b"<VEGETATION_INSTANCE");
+                // A tree leans with the ground as the game draws it (as the tree list's): tilted about its foot, in the world's frame.
+                let world = if tree {
+                    let foot = wce_foundation::math::Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]);
+                    let tilt = self.terrain_tilt((x / unit) as f32, (z / unit) as f32);
+                    wce_foundation::math::translation(foot) * tilt * wce_foundation::math::translation(foot * -1.0) * world
+                } else {
+                    world
+                };
+                let id = scene.add(self.layer, world, payload, source);
+                if let Some(en) = scene.find_mut(id) {
+                    en.locked = true;
+                }
+
+                ids.push(id);
+            }
+        }
+
+        self.biome_entities = ids;
+    }
+
+    /// The layer of the areas' contents an export adds, as TEd and the game read it.
+    pub(super) fn with_biome_items(&self, text: Vec<u8>) -> Result<Vec<u8>, String> {
+        if self.biome_items.is_empty() {
+            return Ok(text);
+        }
+
+        let mut scene = TedScene::parse_any(text)?;
+        let layer = scene.add_layer(scene.scene_graph(), EXPORT_LAYER)?;
+        for item in &self.biome_items {
+            scene.insert_element_text(layer, &item.text)?;
+        }
+
+        Ok(scene.save())
+    }
+
+    /// How many trees, plants and rocks the areas hold now.
+    #[must_use]
+    pub fn biome_item_counts(&self) -> (usize, usize) {
+        let trees = self.biome_items.iter().filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE")).count();
+        (trees, self.biome_items.len() - trees)
+    }
+}
+
+/// An item's element text at a point (scene units), scaled (a tree; a building stays at 1: the game ignores its scale) and turned.
+fn item_text(kind: &str, key: &str, at: Double3, scale: f32, yaw: f32, unit: f64) -> Option<Vec<u8>> {
+    let n = if kind == "BUILDING_INSTANCE" {
+        wce_tile::new_instances::NewInstance::new(kind).position(at).attr("key", key).attr("name", key)
+    } else {
+        point_instance(kind, at, key, unit).ok()?
+    };
+    let mut text = wce_tile::new_instances::element_text(&n).ok()?;
+    if kind == "BUILDING_INSTANCE" {
+        text = with_root_attr(&text, "surface_mode", "MSM_FREEFORM");
+    } else {
+        text = with_root_attr(&text, "scale", &scale.to_string());
+    }
+
+    Some(turned(&text, yaw))
+}
+
 impl TileDocument {
+    /// The vegetation and building sets the biomes' named props are looked for in (the tool's: the projects' sets).
+    pub fn set_biome_sets(&mut self, sets: std::sync::Arc<Vec<VegetationSet>>) {
+        let t = self.tile_mut();
+        if !std::sync::Arc::ptr_eq(&t.biome_sets, &sets) {
+            t.biome_sets = sets;
+        }
+    }
+
+    /// The areas' contents made now, waiting for those being made (an export; scripts).
+    pub fn finish_biomes(&mut self) {
+        self.tile_mut().refresh_biomes(true);
+    }
+
     /// The biomes the tile keeps.
     #[must_use]
     pub fn tile_biomes(&self) -> &[Biome] {
