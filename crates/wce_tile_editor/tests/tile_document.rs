@@ -2584,3 +2584,53 @@ fn texture_rules_are_saved_beside_the_tile() {
     d.save(&here).unwrap();
     assert!(!file.exists(), "taken away with the rules");
 }
+
+#[test]
+fn texture_rules_lay_ground_types_under_the_users() {
+    use wce_tile::texture_rules::{GroundRule, Rule, RuleSet};
+    use wce_tile_editor::tile_document::layers::{LayerType, PAINTED};
+
+    let (dir, _) = open_with_texture_groups();
+    // A ground type map with nothing on it.
+    let png = wce_formats::png_file::PngFile {
+        width: 32,
+        height: 32,
+        bit_depth: 8,
+        color_type: 2,
+        pixels: vec![0; 32 * 32 * 3],
+        pixels_edited: true,
+        ..Default::default()
+    };
+    std::fs::write(dir.path().join("ground_type_map.png"), png.write().unwrap()).unwrap();
+    let mut p = TileProject::open(dir.path()).unwrap();
+    let entry = "<TILE serialise_version='3' location='terrain\\tiles\\battle\\test\\1x1' tile_set='test' width='1' height='1'>\
+                 <TEXTURE_GROUP red='grass' green='mud' blue='forest' alpha='rock'/><VARIATIONS/></TILE>";
+    p.entry = Some(wce_formats::tile_entry::TileEntry::parse(entry.as_bytes().to_vec()).unwrap());
+    let mut d = TileDocument::new(p, None);
+    d.tile_mut().load_blend().unwrap();
+    let rgb = |d: &TileDocument, x, y| d.project().ground.as_ref().unwrap().rgb(x, y);
+
+    let rock =
+        Rule { name: "rock".to_owned(), group: "rock".to_owned(), ground: Some(GroundRule { kind: 5, threshold: 0.5 }), ..Rule::default() };
+    d.set_texture_rules(Some(RuleSet { preset: String::new(), rules: vec![rock] }));
+    d.finish_texture_rules();
+    assert_eq!(rgb(&d, 10, 10), [170, 170, 170], "rock's ground type");
+    assert!(d.terrain_layers(LayerType::Ground).0.is_empty());
+
+    // The ground brush goes over them, in a layer of the user's.
+    let s = BrushSettings { radius_m: 400.0, ..BrushSettings::default() };
+    d.brush_step(BrushKind::Ground(2), 0.0, 0.0, s, 0.05);
+    d.end_stroke();
+    d.finish_texture_rules();
+    assert_eq!(d.terrain_layers(LayerType::Ground).0.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), [PAINTED]);
+    let mud = wce_tile::ground_types::GROUND_COLOURS[2];
+    assert_eq!(rgb(&d, 0, 0), mud, "the stroke shows over the rules");
+
+    // Without the rules, their ground types go; the stroke stays.
+    d.set_texture_rules(None);
+    d.finish_texture_rules();
+    assert_eq!(rgb(&d, 0, 0), mud);
+    let all = (0..32).flat_map(|y| (0..32).map(move |x| (x, y))).map(|(x, y)| rgb(&d, x, y)).collect::<Vec<_>>();
+    assert!(all.iter().all(|&c| c != [170, 170, 170]), "no rock left of the rules");
+    assert!(all.iter().all(|&c| c == mud || c == [0, 0, 0]), "the stroke's mud, or nothing");
+}

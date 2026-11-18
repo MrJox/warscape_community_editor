@@ -17,8 +17,12 @@ impl TileDocument {
             return;
         }
 
-        if matches!(kind, BrushKind::Paint(_)) && !self.tile().stroke_open {
-            self.paint_over_texture_rules();
+        if !self.tile().stroke_open {
+            match kind {
+                BrushKind::Paint(_) => self.paint_over_texture_rules(super::super::layers::LayerType::Blend),
+                BrushKind::Ground(_) => self.paint_over_texture_rules(super::super::layers::LayerType::Ground),
+                _ => {}
+            }
         }
 
         // A stroke goes on only while its entry is the last change: after another edit the next step would be a new entry sharing the height
@@ -219,7 +223,7 @@ impl TileDocument {
         let BrushKind::Paint(channel) = kind else { return Err("not a paint brush".to_owned()) };
         self.end_stroke();
         self.tile_mut().project.load_blend()?;
-        self.paint_over_texture_rules();
+        self.paint_over_texture_rules(super::super::layers::LayerType::Blend);
         let t = self.tile_mut();
         let depth = t.project.blend.as_ref().map_or(0, wce_tile::blend_field::BlendField::edit_depth);
         t.paint_blend(usize::from(channel), None, settings, f64::from(settings.opacity).clamp(0.0, 1.0));

@@ -113,6 +113,10 @@ pub struct Rule {
     pub road: Option<Range>,
     pub building: Option<Range>,
 
+    /// A ground type (`ground_types::GROUND_TYPES`' index) laid where the rule's weight is at least `threshold` (sounds, unit speed:
+    /// gameplay, so off unless asked). The latest rule that lays one at a place wins there.
+    pub ground: Option<GroundRule>,
+
     /// Noise over the conditions (features `scale` metres across): each condition's value moved by up to `amount` times its fade, so
     /// that the rule's edges are not contour lines. Inside a range, past its fades, nothing changes.
     pub breakup: Option<Breakup>,
@@ -134,10 +138,17 @@ impl Default for Rule {
             water: None,
             road: None,
             building: None,
+            ground: None,
             breakup: None,
             seed: 0,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundRule {
+    pub kind: u8,
+    pub threshold: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -577,6 +588,43 @@ pub fn generate(
     }
 }
 
+/// Whether any rule that lays something lays a ground type.
+#[must_use]
+pub fn lays_ground(rules: &[Rule]) -> bool {
+    rules.iter().any(|r| r.enabled && r.strength > 0.0 && r.ground.is_some())
+}
+
+/// The rules' ground type layer over a rectangle of a ground type map (as [`generate`] the blend map's: `ppm` its pixels a metre): `put`
+/// gets each pixel a rule lays a ground type at (its colour, alpha 255), the latest such rule's. A rule whose texture group the tile has
+/// not lays no ground type either.
+pub fn generate_ground(
+    rules: &[Rule],
+    groups: &[String],
+    fields: &Fields,
+    ppm: (f64, f64),
+    rect: [u32; 4],
+    put: &mut dyn FnMut(u32, u32, [u8; 4]),
+) {
+    let live = rules
+        .iter()
+        .filter(|r| r.enabled && r.strength > 0.0 && slot_of(groups, &r.group).is_some())
+        .filter_map(|r| Some((r, r.ground?, crate::ground_types::GROUND_COLOURS.get(usize::from(r.ground?.kind))?)))
+        .collect::<Vec<_>>();
+    if live.is_empty() {
+        return;
+    }
+
+    let [x0, y0, x1, y1] = rect;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (wx, wz) = ((f64::from(x) + 0.5) / ppm.0, (f64::from(y) + 0.5) / ppm.1);
+            if let Some(&(_, _, c)) = live.iter().rev().find(|(r, g, _)| r.weight(fields, wx, wz) >= f64::from(g.threshold.max(1e-6))) {
+                put(x, y, [c[0], c[1], c[2], 255]);
+            }
+        }
+    }
+}
+
 /// A layer's pixel from weights summing to at most 1: `None` when it holds nothing.
 fn pixel(acc: &[f64; 16]) -> Option<[u16; 16]> {
     let mut out = [0u16; 16];
@@ -639,6 +687,12 @@ pub fn text(set: &RuleSet) -> Vec<u8> {
             out += &format!(" hollow_radius=\"{}\"", num(r.hollow_radius));
         }
 
+        if let Some(g) = r.ground
+            && let Some((name, _)) = crate::ground_types::GROUND_TYPES.get(usize::from(g.kind))
+        {
+            out += &format!(" ground=\"{name}\" ground_threshold=\"{}\"", num(g.threshold));
+        }
+
         if let Some(b) = r.breakup {
             out += &format!(" breakup=\"{} {}\"", num(b.scale), num(b.amount));
         }
@@ -688,6 +742,10 @@ pub fn parse(bytes: &[u8]) -> Result<RuleSet, String> {
                 water: range(e, "water"),
                 road: range(e, "road"),
                 building: range(e, "building"),
+                ground: doc.get(e, "ground").and_then(|name| {
+                    let kind = crate::ground_types::GROUND_TYPES.iter().position(|(n, _)| n.eq_ignore_ascii_case(name.trim()))?;
+                    Some(GroundRule { kind: kind as u8, threshold: num(e, "ground_threshold").unwrap_or(0.5) })
+                }),
                 hollow_radius: num(e, "hollow_radius").unwrap_or(d.hollow_radius),
                 breakup: doc.get(e, "breakup").and_then(|v| {
                     let mut p = v.split_whitespace().map(str::parse::<f32>);
@@ -1019,6 +1077,24 @@ mod tests {
     }
 
     #[test]
+    fn ground_types_where_the_weight_is_enough() {
+        // A ramp from flat to 45 degrees: rock past 30 at full weight, the fade 20 wide.
+        let f = field(64, |x, _| (x - 32.0).max(0.0));
+        let rock = Rule {
+            slope: Some(Range { lo: Some(30.0), hi: None, fade: 0.0 }),
+            ground: Some(GroundRule { kind: 5, threshold: 0.5 }),
+            ..rock()
+        };
+        let mut out = vec![None; 64 * 64];
+        generate_ground(std::slice::from_ref(&rock), &groups(), &f, (1.0, 1.0), [0, 0, 64, 64], &mut |x, y, p| {
+            out[(y * 64 + x) as usize] = Some(p)
+        });
+        assert_eq!(out[32 * 64 + 50], Some([170, 170, 170, 255]), "rock's colour on the steep part");
+        assert_eq!(out[32 * 64 + 10], None, "nothing on the flat");
+        assert!(lays_ground(&[rock]) && !lays_ground(&default_rules()), "Default lays no ground type");
+    }
+
+    #[test]
     fn text_round_trip() {
         let mut set = RuleSet { preset: "Default".to_owned(), rules: default_rules() };
         set.rules[0].enabled = false;
@@ -1027,6 +1103,7 @@ mod tests {
         set.rules[1].water = Some(Range { lo: Some(2.0), hi: Some(30.0), fade: 4.0 });
         set.rules[1].road = Some(Range { lo: None, hi: Some(3.0), fade: 0.0 });
         set.rules[1].building = Some(Range { lo: Some(1.0), hi: None, fade: 2.0 });
+        set.rules[1].ground = Some(GroundRule { kind: 5, threshold: 0.75 });
         let bytes = text(&set);
         assert_eq!(parse(&bytes).unwrap(), set, "{}", String::from_utf8_lossy(&bytes));
         let unnamed = RuleSet { preset: String::new(), rules: vec![] };
