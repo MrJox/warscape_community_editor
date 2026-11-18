@@ -101,20 +101,33 @@ impl EnvironmentCollection {
 
 /// The weighted sum of environments (weights summing to 1; those of 0 left out), as a chain of the cross-fade: each next one blended in
 /// by its share of the weight so far, which for the numeric fields is the weighted sum. ASSUMPTION: the sun's azimuth goes the shorter
-/// way round (the cross-fade's), and switches and names are the heaviest's.
+/// way round (the cross-fade's), and switches and names are the heaviest's. The sun colour is blended linear (each file's to the power
+/// 2.2, the sum back to 1 / 2.2: RenderDoc, camp_attila over Britain, england_sp 0.958 + europe_sp 0.042).
 pub fn blend_weighted(items: &[(f64, &EnvironmentParams)]) -> Option<EnvironmentParams> {
     let mut items: Vec<(f64, &EnvironmentParams)> = items.iter().copied().filter(|(w, _)| *w > 1e-6).collect();
     items.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let (&(w0, first), rest) = items.split_first()?;
-    let mut acc = first.clone();
-    let mut total = w0;
-    for &(w, p) in rest {
+    let gamma = |c: wce_foundation::math::Float3, k: f32| {
+        wce_foundation::math::Float3::new(c.x.max(0.0).powf(k), c.y.max(0.0).powf(k), c.z.max(0.0).powf(k))
+    };
+    let linear: Vec<(f64, EnvironmentParams)> = items
+        .iter()
+        .map(|&(w, p)| {
+            let mut p = p.clone();
+            p.sun_colour = gamma(p.sun_colour, 2.2);
+            (w, p)
+        })
+        .collect();
+    let (first, rest) = linear.split_first()?;
+    let mut acc = first.1.clone();
+    let mut total = first.0;
+    for (w, p) in rest {
         total += w;
         let t = (w / total) as f32;
         // The heaviest's switches and names: blend_environments takes the nearer side's, and t stays below a half here.
         acc = blend_environments(&acc, p, t);
     }
 
+    acc.sun_colour = gamma(acc.sun_colour, 1.0 / 2.2);
     Some(acc)
 }
 

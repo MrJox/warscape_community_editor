@@ -33,6 +33,10 @@ pub struct ActiveEmitter {
     pub pos: [f32; 3],
     pub camera_following: bool,
 
+    /// Its library's or the effect's `affected_by_wind`: the emitter moves with the VFX wind (RenderDoc, camp_attila: the storm and
+    /// rain clouds' `library_campaign_rainclouds_base` moved by `wind_velocity` x dt a frame, fn 0x11896b80).
+    pub affected_by_wind: bool,
+
     /// The reference's infinite_life (the emitter keeps emitting past its LifeTime).
     pub infinite_life: bool,
 }
@@ -345,6 +349,7 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
                 scale_range: [vfx_ref.scale_min, vfx_ref.scale_max],
                 pos: vfx_ref.pos,
                 camera_following: lib.camera_following() || top.camera_following(),
+                affected_by_wind: lib.affected_by_wind() || top.affected_by_wind(),
                 infinite_life: vfx_ref.infinite_life,
             });
         }
