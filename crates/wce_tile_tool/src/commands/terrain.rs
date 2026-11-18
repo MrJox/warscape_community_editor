@@ -575,6 +575,80 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "texture_rules",
+        "texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>",
+        "the tile's texture rules: off (taken away with their layer), a preset's (Default: the built-in one), a rule set's file (a preset's or a tile's texture_rules.wce), the window open; area: how much of the tile a rule (by number, from 1) covers as though alone; wait: the layer made now, and what it covers",
+        |e, a| {
+            let usage = "usage: texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>";
+            match (a.first().map(String::as_str), a.get(1)) {
+                (Some("off"), None) => {
+                    let Some(d) = document(e) else { return fail("no tile is open") };
+                    d.set_texture_rules(None);
+                    ok("texture rules off")
+                }
+
+                (Some("load"), Some(name)) => with_tile(e, |t, e| t.load_rules_preset(e, name).map_or_else(fail, ok)),
+                (Some("file"), Some(path)) => {
+                    let set = match std::fs::read(path).map_err(|err| err.to_string()).and_then(|b| wce_tile::texture_rules::parse(&b)) {
+                        Ok(set) => set,
+                        Err(err) => return fail(format!("{path}: {err}")),
+                    };
+                    let Some(d) = document(e) else { return fail("no tile is open") };
+                    let n = set.rules.len();
+                    d.set_texture_rules(Some(set));
+                    ok(format!("texture rules: {n} from {path}"))
+                }
+
+                (Some("window"), None) => with_tile(e, |t, _| {
+                    t.open_texture_rules();
+                    ok("texture rules' window open")
+                }),
+
+                (Some("area"), Some(n)) => {
+                    let Some(i) = n.parse::<usize>().ok().and_then(|n| n.checked_sub(1)) else { return fail(usage) };
+                    let Some(d) = document(e) else { return fail("no tile is open") };
+                    let Some(rules) = d.texture_rules().map(|r| r.rules.clone()) else { return fail("the tile has no texture rules") };
+                    match d.texture_rule_area(&rules, i, 2.0) {
+                        Ok(area) => {
+                            let on = area.weights.iter().filter(|&&w| w >= 0.5).count();
+                            let mean = area.weights.iter().map(|&w| f64::from(w)).sum::<f64>() / area.weights.len().max(1) as f64;
+                            ok(format!(
+                                "rule {} '{}': {:.1} % of the tile (without its border) at least half, mean weight {mean:.3}",
+                                i + 1,
+                                rules[i].name,
+                                100.0 * on as f64 / area.weights.len().max(1) as f64
+                            ))
+                        }
+
+                        Err(err) => fail(err),
+                    }
+                }
+
+                (Some("wait"), None) => {
+                    let Some(d) = document(e) else { return fail("no tile is open") };
+                    d.finish_texture_rules();
+                    let missing = d.texture_rules_missing_groups();
+                    let p = d.project();
+                    let mut msg = format!(
+                        "{} (the tile {:.0} x {:.0} m, its border {:.0} m)",
+                        d.texture_rules_summary().unwrap_or_else(|| "no texture rules' layer".to_owned()),
+                        p.extent_x(),
+                        p.extent_z(),
+                        p.border_m()
+                    );
+                    if !missing.is_empty() {
+                        msg += &format!("; not in this tile: {}", missing.join(", "));
+                    }
+
+                    ok(msg)
+                }
+
+                _ => fail(usage),
+            }
+        },
+    );
+
+    c.add(
         "ground_coverage_brush",
         "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
         "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",

@@ -606,6 +606,9 @@ pub struct TileTool {
     /// The ground coverage's window.
     pub(crate) coverage: crate::ground_coverage_panel::CoverageUi,
 
+    /// The texture rules' window.
+    pub(crate) rules_ui: crate::texture_rules_panel::RulesUi,
+
     /// The last bridge check (`Tile::check_bridges`), for the tile and the edit it was made at; whether the viewport shows its edges.
     pub(crate) bridge_check: Option<((DocumentId, u64, u64), wce_tile_editor::tile_document::BridgeReport)>,
     pub(crate) bridge_overlay: bool,
@@ -998,6 +1001,7 @@ impl Default for TileTool {
             scratch_set: None,
             scratch_name: String::new(),
             coverage: Default::default(),
+            rules_ui: Default::default(),
             snap_outlines: Default::default(),
             bridge_check: None,
             bridge_overlay: true,
@@ -2348,6 +2352,7 @@ impl TileTool {
         }
 
         self.coverage_overlay(d, &mut o);
+        self.rules_overlay(d, &mut o);
         self.coverage_brush_overlay(d, e.viewport.hovered, &mut o);
 
         if t.display().show_border {
@@ -2971,6 +2976,15 @@ impl TileTool {
         self.draw_links_section(e, id);
         gui::separator();
         self.draw_problems_section(e, id);
+        gui::separator();
+        if gui::button(&format!("{}  Texture rules...", icons::LAYERS)) {
+            self.open_texture_rules();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Textures laid by the terrain (slope, height, hollows, water, roads, buildings), under what you paint");
+        }
+
         gui::separator();
         if gui::collapsing_header("Experimental", 0) {
             if gui::button(&format!("{}  Ground coverage...", icons::MOUNTAIN)) {
@@ -5246,6 +5260,7 @@ impl Tool for TileTool {
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
         self.draw_coverage_window(e);
+        self.draw_texture_rules_window(e);
     }
 
     fn fixes(&self) -> Vec<std::sync::Arc<dyn wce_editor::fixes::Fix>> {

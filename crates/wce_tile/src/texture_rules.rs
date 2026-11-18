@@ -86,7 +86,8 @@ pub struct Rule {
     pub name: String,
     pub enabled: bool,
 
-    /// The texture group, by name (`rock`, `mud`, ...: the climates' `texture_set`s, as the tile's TEXTURE_GROUP names them).
+    /// The texture group, by name (`rock`, `mud`, ...: the climates' `texture_set`s, as the tile's TEXTURE_GROUP names them); several
+    /// separated by `|`, the first the tile has (the kit names the same ground `rock`, `rock_b` or `mountain` in different tiles).
     pub group: String,
 
     /// The group's variation, 0 .. 3, continuous: 1.3 is 70 % of variation 1 and 30 % of 2 (as TEd's Normal (Grouped)).
@@ -147,6 +148,7 @@ pub struct Breakup {
 
 /// The terrain the rules look at: the heights in metres (the editor's, the sea at 0), `w` x `h` samples `mpp` metres apart across and
 /// down, from the map's corner (border included, as the blend map's).
+#[derive(Clone)]
 pub struct Fields {
     w: u32,
     h: u32,
@@ -180,6 +182,7 @@ impl Feature {
 
 /// The distance in metres from every pixel of a grid to the nearest marked one (exact Euclidean, by the pixels' centres), `ppm` pixels a
 /// metre across and down, from the map's corner. Endless without any marked pixel.
+#[derive(Clone)]
 pub struct Distances {
     w: u32,
     h: u32,
@@ -473,8 +476,8 @@ pub fn missing_groups<'a>(rules: &'a [Rule], groups: &[String]) -> Vec<&'a Rule>
     rules.iter().filter(|r| r.enabled && slot_of(groups, &r.group).is_none()).collect()
 }
 
-fn slot_of(groups: &[String], name: &str) -> Option<usize> {
-    groups.iter().take(4).position(|g| g.eq_ignore_ascii_case(name))
+fn slot_of(groups: &[String], names: &str) -> Option<usize> {
+    names.split('|').map(str::trim).filter(|n| !n.is_empty()).find_map(|n| groups.iter().take(4).position(|g| g.eq_ignore_ascii_case(n)))
 }
 
 impl Rule {
@@ -697,14 +700,135 @@ pub fn parse(bytes: &[u8]) -> Result<RuleSet, String> {
     Ok(RuleSet { preset: doc.get(0, "preset").unwrap_or_default(), rules })
 }
 
-/// The built-in set `Default`: rock on steep ground, mud in hollows. The groups are the kit's usual names; a tile without one lays nothing
+/// The built-in preset's name.
+pub const BUILTIN: &str = "Default";
+
+/// A preset of rules: its name (the file's), the folder below `texture_rule_sets` it is in, its file (none: built in) and its rules.
+/// The editor's files, like the vegetation sets: `<name>.wce` in the projects' `raw_data/art/texture_rule_sets` (folders below it are
+/// kept), the text of a rule set ([`text`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Preset {
+    pub name: String,
+    pub folder: String,
+    pub path: Option<std::path::PathBuf>,
+    pub rules: Vec<Rule>,
+}
+
+/// The folder of the presets in a raw_data folder (the projects').
+#[must_use]
+pub fn presets_root(raw_data: &std::path::Path) -> std::path::PathBuf {
+    raw_data.join("art").join("texture_rule_sets")
+}
+
+impl Preset {
+    /// The built-in preset.
+    #[must_use]
+    pub fn builtin() -> Self {
+        Self { name: BUILTIN.to_owned(), rules: default_rules(), ..Self::default() }
+    }
+
+    #[must_use]
+    pub fn is_builtin(&self) -> bool {
+        self.path.is_none()
+    }
+
+    /// Reads a preset file.
+    ///
+    /// # Errors
+    ///
+    /// The file can't be read or is not a rule set.
+    pub fn load(path: &std::path::Path, root: &std::path::Path) -> Result<Self, String> {
+        let set =
+            parse(&std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("{}: {e}", path.display()))?;
+        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let folder =
+            path.parent().and_then(|p| p.strip_prefix(root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        Ok(Self { name, folder, path: Some(path.to_path_buf()), rules: set.rules })
+    }
+
+    /// Writes the preset to its file (its folders too).
+    ///
+    /// # Errors
+    ///
+    /// A built-in preset (no file), or the file can't be written.
+    pub fn save(&self) -> Result<(), String> {
+        let path = self.path.as_ref().ok_or("a built-in preset has no file")?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+
+        wce_foundation::files::write_replacing(path, text(&RuleSet { preset: String::new(), rules: self.rules.clone() }))
+            .map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// The built-in preset, then every preset below `root` (`.wce` files) by folder and name; ones that don't read are left out.
+#[must_use]
+pub fn scan_presets(root: &std::path::Path) -> Vec<Preset> {
+    let mut out = vec![];
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else { continue };
+        for path in read.flatten().map(|e| e.path()) {
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|x| x == "wce")
+                && let Ok(p) = Preset::load(&path, root)
+            {
+                out.push(p);
+            }
+        }
+    }
+
+    out.sort_by_cached_key(|p| (p.folder.to_lowercase(), p.name.to_lowercase()));
+    out.insert(0, Preset::builtin());
+    out
+}
+
+/// The kit's names of mud and of rock, the most usual first (its TILES entries).
+const MUD: &str = "mud|mud_a|mud_b";
+const ROCK: &str = "rock|rock_b|mountain";
+
+/// The built-in set `Default`: mud by the water and in hollows, worn ground by roads and buildings, rock on steep ground. The groups are the kit's usual names; a tile without one lays nothing
 /// of that rule.
 #[must_use]
 pub fn default_rules() -> Vec<Rule> {
     vec![
         Rule {
+            name: "Mud by the water".to_owned(),
+            group: MUD.to_owned(),
+            variation: 0.0,
+            strength: 0.9,
+            slope: Some(Range { lo: None, hi: Some(25.0), fade: 8.0 }),
+            water: Some(Range { lo: None, hi: Some(4.0), fade: 4.0 }),
+            breakup: Some(Breakup { scale: 8.0, amount: 0.7 }),
+            seed: 3,
+            ..Rule::default()
+        },
+        Rule {
+            name: "Worn ground by roads".to_owned(),
+            group: MUD.to_owned(),
+            variation: 2.0,
+            strength: 0.6,
+            road: Some(Range { lo: None, hi: Some(2.0), fade: 3.0 }),
+            breakup: Some(Breakup { scale: 6.0, amount: 0.8 }),
+            seed: 4,
+            ..Rule::default()
+        },
+        Rule {
+            name: "Worn ground round buildings".to_owned(),
+            group: MUD.to_owned(),
+            variation: 2.0,
+            strength: 0.5,
+            slope: Some(Range { lo: None, hi: Some(25.0), fade: 8.0 }),
+            building: Some(Range { lo: None, hi: Some(3.0), fade: 3.0 }),
+            breakup: Some(Breakup { scale: 6.0, amount: 0.8 }),
+            seed: 5,
+            ..Rule::default()
+        },
+        Rule {
             name: "Mud in hollows".to_owned(),
-            group: "mud".to_owned(),
+            group: MUD.to_owned(),
             variation: 1.0,
             strength: 0.8,
             slope: Some(Range { lo: None, hi: Some(20.0), fade: 8.0 }),
@@ -716,7 +840,7 @@ pub fn default_rules() -> Vec<Rule> {
         },
         Rule {
             name: "Rock on slopes".to_owned(),
-            group: "rock".to_owned(),
+            group: ROCK.to_owned(),
             variation: 0.0,
             slope: Some(Range { lo: Some(35.0), hi: None, fade: 12.0 }),
             breakup: Some(Breakup { scale: 25.0, amount: 0.5 }),
@@ -816,7 +940,11 @@ mod tests {
 
         let snow = Rule { group: "snow".to_owned(), ..Rule::default() };
         assert!(layer(std::slice::from_ref(&snow), &f, 16).iter().all(Option::is_none));
-        assert_eq!(missing_groups(&[faint, snow], &groups()).len(), 1);
+        assert_eq!(missing_groups(&[faint, snow.clone()], &groups()).len(), 1);
+
+        // Alternatives: the first the tile has.
+        let either = Rule { group: "snow | forest|rock".to_owned(), ..Rule::default() };
+        assert_eq!(layer(std::slice::from_ref(&either), &f, 16)[0].unwrap()[8], 65535, "forest, slot 2");
     }
 
     #[test]
@@ -907,8 +1035,29 @@ mod tests {
     }
 
     #[test]
+    fn presets_are_saved_read_and_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = presets_root(dir.path());
+        let mut p = Preset::builtin();
+        p.name = "dry".to_owned();
+        p.path = Some(root.join("south").join("dry.wce"));
+        p.rules.truncate(1);
+        p.save().unwrap();
+        let all = scan_presets(&root);
+        assert_eq!(all.len(), 2);
+        assert!(all[0].is_builtin());
+        assert_eq!(all[1], Preset { folder: "south".to_owned(), ..p });
+        assert!(Preset::builtin().save().is_err());
+    }
+
+    #[test]
     fn reach_of_the_hollows() {
         assert_eq!(reach(&[rock()], (1.0, 1.0)), 2.0);
         assert_eq!(reach(&default_rules(), (0.5, 0.5)), 12.5);
+        assert!(
+            default_rules()
+                .iter()
+                .all(|r| slot_of(&["grass_a".into(), "grass_b".into(), "mud_a".into(), "rock_b".into()], &r.group).is_some())
+        );
     }
 }

@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 4 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 5 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -101,7 +101,17 @@ earlier one, as blend layers go over each other).
    (rivers' ribbons and lake planes over the ground, the sea under 0 in the sea's sets), not stage B's (live, without a compile); roads
    are the road-owned blend layers' pixels; buildings are the real ones by the kits' categories (the coverage's), discs of their models'
    radius. Only what an enabled rule uses is worked out; the scene's part is cached by the scene's and the models' versions.
-5. **Presets and the window**, the rule weight view.
+5. **Presets and the window** (done), the rule weight view. Done as: `texture_rules::Preset` / `scan_presets` (the built-in `Default` and
+   the files), groups by alternatives (`mud|mud_a|mud_b`: the kit names the same ground differently), a fuller `Default` (mud by the
+   water and in hollows, worn ground by roads and by buildings, rock on slopes); the window (`texture_rules_panel.rs`, Tile panel >
+   Texture rules...): on / off, preset combo with Save, Save as, Delete, the tile's groups and the rules that lay nothing, the list
+   (on / off, add, duplicate, remove, up, down) and the selected rule's fields, an edit given to the tile as one undo entry once no field
+   is active. The rule weight view became an **outline in the viewport** of where the selected rule's weight is at least a half (on a
+   grid of a 256th of the tile, 1 m at least): a debug terrain view would have touched the bake, the minimap and the view. Script
+   command `texture_rules`. Checked on kit tiles (2026-11-18, `~/wce_re/scratch/auto_detail/check`): river/2x2_lt_rb (mud by the water
+   19 % of the tile, rock skipped: the tile has none), mediterranean_mountains/custom_pillar_hercules_a (8.6 % of the map, 76 % rock as
+   `mountain`, 24 % mud; the rock band widens along the face), settlement_nordic_cities/nordic_city_a/medium (nothing: its groups are
+   `settlement_1..3` and `forest`; settlements need their own preset).
 6. **Ground types per rule**.
 7. **Check in the app** (the user): defaults of `Default` on a few kit tiles of different climates.
 
