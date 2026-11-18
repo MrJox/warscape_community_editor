@@ -118,6 +118,19 @@ pub struct Diplomacy {
     /// (faction, other) -> the faction's stance to the other.
     pub stances: HashMap<(u32, u32), Stance>,
     pub regions: Vec<StartRegion>,
+    /// The sea regions in the startpos's order (`WORLD/SEA_REGION_MANAGER/SEA_REGIONS_BLOCK`): the key and the factions with a
+    /// `FACTION_SEA_REGION_MANAGER` there (`^+2`, in order).
+    pub seas: Vec<(String, Vec<u32>)>,
+}
+
+/// Every record named `name` under `r`, depth first in order.
+fn records_deep<'a>(r: &'a RecordNode, name: &str, out: &mut Vec<&'a RecordNode>) {
+    for c in r.children().iter().flatten().filter_map(as_record) {
+        if c.name() == name {
+            out.push(c);
+        }
+        records_deep(c, name, out);
+    }
 }
 
 fn records<'a>(r: &'a RecordNode, name: &'a str) -> impl Iterator<Item = &'a RecordNode> + 'a {
@@ -178,6 +191,21 @@ impl Diplomacy {
             }
         }
 
+        for m in records(world, "SEA_REGION_MANAGER") {
+            for block in records(m, "SEA_REGIONS_BLOCK") {
+                for g in block.children() {
+                    let Some(key) = leaf(g, None, 1).and_then(str_of) else { continue };
+                    let mut managers = vec![];
+                    for sea in g.iter().filter_map(as_record) {
+                        records_deep(sea, "FACTION_SEA_REGION_MANAGER", &mut managers);
+                    }
+                    let factions =
+                        managers.iter().flat_map(|r| r.children().iter()).filter_map(|mg| leaf(mg, None, 2).and_then(u32_of)).collect();
+                    d.seas.push((key.to_owned(), factions));
+                }
+            }
+        }
+
         Ok(d)
     }
 
@@ -216,6 +244,25 @@ impl Diplomacy {
         } else if owner == player {
             ColourClass::Own
         } else if self.stance(player, owner).is_allied() {
+            ColourClass::Allied
+        } else {
+            ColourClass::Neutral
+        }
+    }
+
+    /// The colour class of a sea region's borders for `player` (fn 0x10b99a80), from the sea's factions (`factions`): only the player's
+    /// own; none at war with the player (a rebel at war with everyone, fn 0x10715ff0) allied when one other is allied (fn 0x10715bb0),
+    /// else neutral (no factions: neutral); else war. Not traced: one at-war rebel faction whose +0x54 items all have +0x628 set is
+    /// neutral in the game; here war.
+    #[must_use]
+    pub fn sea_colour_class(&self, player: u32, factions: &[u32]) -> ColourClass {
+        let at_war = |f: u32| f != player && (self.is_rebel(f) || self.is_rebel(player) || self.stance(player, f) == Stance::War);
+        let ally = |f: u32| !self.is_rebel(f) && !self.is_rebel(player) && (f == player || self.stance(player, f).is_allied());
+        if factions == [player] {
+            ColourClass::Own
+        } else if factions.iter().any(|&f| at_war(f)) {
+            ColourClass::War
+        } else if factions.iter().any(|&f| f != player && ally(f)) {
             ColourClass::Allied
         } else {
             ColourClass::Neutral

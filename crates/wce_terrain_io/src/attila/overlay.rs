@@ -2,9 +2,9 @@
 //! routes ([`super::borders`], [`super::trade_routes`], [`super::diplomacy`]; docs/formats/campaign_borders.md).
 //!
 //! The frame of every point: the campaign world as the game's border and trade-route shaders receive it, x along the hex grid's columns
-//! (x = column · `colw`, `colw` = the world's width / (columns - 1): 678.5 / 1015 on `main_attila_map`), z along its rows (z = row ·
-//! √3 · R, + half that on odd columns, R = `colw` / 1.5; row 0 at z = 0, the map's south edge), so the grid spans 678.5 x 555.6 there.
-//! Units are world units.
+//! (x = column · `colw`), z along its rows (z = row · `rowh`, + half that on odd columns; row 0 at z = 0, the map's south edge), from
+//! the world's height: `rowh` = height / (rows + 0.5), R = `rowh` / √3, `colw` = 1.5 R (`main_attila_map`: 556.14392 / 720.5 =
+//! 0.77188605, 0.44564864, 0.66847295). Units are world units.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -50,12 +50,12 @@ pub fn ptd_path(map: &str) -> String {
 /// The hex grid of a map's `map_data.esf` (`REGIONS_DATA`'s world and `theatres/CAMPAIGN_THEATRE/HEX_MAP_DATA`'s size).
 #[must_use]
 pub fn grid_of(map_data: &[u8]) -> Option<Grid> {
-    let [x0, _, x1, _] = world_bounds(map_data)?;
+    let [_, _, x1, y1] = world_bounds(map_data)?;
     let md = ESF::decode(&mut Cursor::new(map_data), &None).ok()?;
     let root = as_record(md.root_node())?;
     let hex = ["REGIONS_DATA", "theatres", "CAMPAIGN_THEATRE", "HEX_MAP_DATA"].iter().try_fold(root, |r, n| child(r, n))?;
     let v: Vec<u32> = hex.children().first()?.iter().filter_map(u32_of).take(2).collect();
-    (v.len() == 2).then(|| Grid::new(v[0], v[1], x1 - x0))
+    (v.len() == 2).then(|| Grid::new(v[0], v[1], x1, y1))
 }
 
 /// The db's region -> province (`region_to_province_junctions`).
@@ -113,7 +113,7 @@ pub fn build(
     if let Some(ptd) = ptd {
         let ptd = decode_ptd(ptd).map_err(|e| format!("trade_routes.ptd: {e}"))?;
         let routes = start_routes(root);
-        let (s, missing) = segments(&ptd, &routes, &diplomacy, player, grid.radius);
+        let (s, missing) = segments(&ptd, &routes, &diplomacy, player, &grid);
         notes.push(format!("{} trade-route segments of {} routes", s.len(), routes.iter().filter(|r| r.owner == player).count()));
         if !missing.is_empty() {
             notes.push(format!("trade-route legs not in the file: {}", missing.join(", ")));

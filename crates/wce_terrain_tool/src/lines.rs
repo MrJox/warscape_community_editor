@@ -75,7 +75,7 @@ impl CampaignLinesView {
                     "terrain: the campaign's borders for {}: {} chains, {} trade route segments{}",
                     o.faction,
                     o.borders.len(),
-                    o.trade_routes.iter().filter(|s| s.sea_leg).count(),
+                    o.trade_routes.iter().filter(|s| s.drawn).count(),
                     if o.notes.is_empty() { String::new() } else { format!(" ({})", o.notes.join("; ")) }
                 ));
                 self.factions = infos;
@@ -97,8 +97,8 @@ impl CampaignLinesView {
 }
 
 /// The overlay in the view's frame: x as the game's (from the map's west edge), z the game's over `CAMPAIGN_Z_SCALE` (the editor's
-/// cells are square; the game's hex world is 2 / sqrt 3 longer north to south). The trade routes drawn are their sea legs, as the game
-/// drew them in the capture (its rule for the land legs not found).
+/// cells are square; the game's hex world is 2 / sqrt 3 longer north to south). The trade routes drawn are the segments the game makes a
+/// draw for (flag byte 0 is 0, fn 0x10aba960).
 fn scene_lines(o: &CampaignOverlay, map: &str, id: u64) -> CampaignLines {
     let k = (1.0 / CAMPAIGN_Z_SCALE) as f32;
     let curves = |cs: &[BorderCurve]| -> Vec<OverlayCurve> {
@@ -108,7 +108,7 @@ fn scene_lines(o: &CampaignOverlay, map: &str, id: u64) -> CampaignLines {
     let mut lines: Vec<OverlayLine> = o
         .trade_routes
         .iter()
-        .filter(|s| s.sea_leg)
+        .filter(|s| s.drawn)
         .map(|s| OverlayLine {
             texture: format!("{dir}/trade/textures/dotted_line_trade.dds"),
             colour: ROUTE_COLOUR,

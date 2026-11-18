@@ -189,17 +189,19 @@ impl Chain {
     }
 }
 
-/// The chains of each land region, in `order` (fn 0x10b22e10, then fn 0x10ad5750 per region until nothing merges).
-///
-/// `owner` and `province`: a region key's owner and province (a region of `order` has both); `order`: the regions in the startpos's
-/// order. A region's line towards a neighbour is kept when the owners differ (or the neighbour has none: the sea, off the map),
-/// external, or the owner is one and the provinces differ, internal; it joins the region's first chain of its kind it touches.
-fn build_chains(
-    pbd: &Pbd,
-    owner: &HashMap<String, String>,
-    province: &HashMap<String, String>,
-    order: &[String],
-) -> Vec<(String, Vec<Chain>)> {
+/// The rules a set of regions' chains are built by.
+struct Rules<'a> {
+    /// A line from a region towards a neighbour: kept internal (`Some(true)`), external, or dropped.
+    kind: &'a dyn Fn(&str, &str) -> Option<bool>,
+    /// Two regions whose chains may merge.
+    related: &'a dyn Fn(&str, &str) -> bool,
+    /// Whether a chain (internal or not) of the first region takes one of the second's.
+    takes: &'a dyn Fn(&str, &str, bool, bool) -> bool,
+}
+
+/// The chains of each region of `order` (in that order): each line the rules keep joins the region's first chain of its kind it
+/// touches, else starts one; then per region, until nothing merges, [`merge_pass`].
+fn build_chains(pbd: &Pbd, order: &[String], rules: &Rules) -> Vec<(String, Vec<Chain>)> {
     let mut lines: HashMap<&str, Vec<(&str, Vec<Cell>)>> = HashMap::new();
     let key = |i: u32| pbd.keys.get(i as usize).map_or("", String::as_str);
     for e in &pbd.entries {
@@ -219,13 +221,7 @@ fn build_chains(
             if cells.is_empty() {
                 continue;
             }
-            let same_owner = owner.get(*nk).is_some_and(|o| Some(o) == owner.get(rk));
-            let internal = same_owner && province.get(*nk) != province.get(rk);
-            let external = !owner.contains_key(*nk) || !same_owner;
-            if !(internal || external) {
-                continue;
-            }
-
+            let Some(internal) = (rules.kind)(rk, nk) else { continue };
             let p = pair(rk, nk);
             if let Some(ch) = lst.iter_mut().find(|ch| ch.internal == internal && ch.touch(cells)) {
                 ch.join(cells);
@@ -237,23 +233,16 @@ fn build_chains(
         chains.push((rk.clone(), lst));
     }
 
-    let land: Vec<&String> = order.iter().collect();
     for ri in 0..chains.len() {
-        while merge_pass(ri, &mut chains, owner, province, &land) {}
+        while merge_pass(ri, &mut chains, order, rules) {}
     }
 
     chains
 }
 
-/// One pass of fn 0x10ad5750 for a region: its chains take the touching chains of the owner's other regions (external with external,
-/// internal with internal of the same province), then its external chains take each other.
-fn merge_pass(
-    ri: usize,
-    chains: &mut [(String, Vec<Chain>)],
-    owner: &HashMap<String, String>,
-    province: &HashMap<String, String>,
-    land: &[&String],
-) -> bool {
+/// One pass of fn 0x10ad5750 (land) / 0x10ad5ba0 (seas) for a region: its chains take the touching chains of the related regions that
+/// the rules allow and that share no region pair with them (fn 0x10af92b0), then its external chains take each other.
+fn merge_pass(ri: usize, chains: &mut [(String, Vec<Chain>)], order: &[String], rules: &Rules) -> bool {
     if chains[ri].1.is_empty() {
         return false;
     }
@@ -262,18 +251,17 @@ fn merge_pass(
     let index: HashMap<String, usize> = chains.iter().enumerate().map(|(i, c)| (c.0.clone(), i)).collect();
     let mut mine = std::mem::take(&mut chains[ri].1);
     let mut merged = false;
-    for ok in land {
-        if **ok == rk || owner.get(*ok) != owner.get(&rk) {
+    for ok in order {
+        if *ok == rk || !(rules.related)(&rk, ok) {
             continue;
         }
-        let Some(&oi) = index.get(*ok) else { continue };
+        let Some(&oi) = index.get(ok) else { continue };
         for ch in &mut mine {
             let others = &mut chains[oi].1;
             let mut i = 0;
             while i < others.len() {
                 let o = &others[i];
-                let ok_flag = (!ch.internal && !o.internal) || (ch.internal && o.internal && province.get(*ok) == province.get(&rk));
-                if ok_flag && !ch.shares_pair(o) && ch.touch(&o.cells) {
+                if (rules.takes)(&rk, ok, ch.internal, o.internal) && !ch.shares_pair(o) && ch.touch(&o.cells) {
                     let o = others.remove(i);
                     ch.join(&o.cells);
                     ch.absorb_pairs(&o.pairs);
@@ -320,12 +308,15 @@ pub struct BorderCurve {
     pub uv_scale: f32,
 }
 
-/// A border chain: one region's border towards other owners (external) or its owner's other provinces (internal), as the game draws it.
+/// A border chain as the game draws it: a land region's border towards other owners (external) or its owner's other provinces
+/// (internal), or a sea region's towards other seas (internal when both have one faction, the same).
 #[derive(Clone, Debug, PartialEq)]
 pub struct BorderChain {
-    /// The region whose list holds the chain (its owner colours it).
+    /// The region whose list holds the chain (its owner, for a sea its factions, colour it).
     pub region: String,
-    /// The owner's faction key (empty: the rebels).
+    /// A sea region's chain.
+    pub sea: bool,
+    /// The owner's faction key (empty: the rebels; a sea: its single faction's, else empty).
     pub owner: String,
     pub internal: bool,
     pub colour: ColourClass,
@@ -338,7 +329,15 @@ pub struct BorderChain {
     pub cells: Vec<(i32, i32)>,
 }
 
-/// The border chains of a campaign for a chosen faction, in the game's order (the startpos's regions, each region's chains).
+/// The border chains of a campaign for a chosen faction, in the game's order: the land regions' (the startpos's regions, fn 0x10afda10
+/// -> 0x10b22e10 each, then 0x10ad5750), then the sea regions' (the startpos's sea regions, fn 0x10afdb40 -> 0x10b233a0 each, then
+/// 0x10ad5ba0).
+///
+/// Land: a line towards another owner (or none: the sea, off the map) is external, towards the owner's other province internal, the same
+/// province dropped; chains of one owner's regions merge, external with external, internal with internal of one province. Seas (their
+/// pbd entries list sea neighbours only): every line, internal when both seas have exactly one faction and it is the same (fns
+/// 0x10aaef10, 0x10aad530; a sea without a startpos record, the rivers, has none), else external; chains of seas so related merge, kind
+/// with kind.
 ///
 /// `grid`: the map's hex grid; `provinces`: region key -> province key (the db's `region_to_province_junctions`). A chain that does not
 /// fit (cells not neighbours) is left out and counted in the returned notes.
@@ -371,11 +370,26 @@ pub fn chains(
         order.push(r.key.clone());
     }
 
+    let land_kind = |rk: &str, nk: &str| {
+        let same_owner = owner.get(nk).is_some_and(|o| Some(o) == owner.get(rk));
+        let internal = same_owner && province.get(nk) != province.get(rk);
+        let external = !owner.contains_key(nk) || !same_owner;
+        (internal || external).then_some(internal)
+    };
+    let land_related = |rk: &str, ok: &str| owner.get(ok) == owner.get(rk);
+    let land_takes = |rk: &str, ok: &str, a: bool, b: bool| (!a && !b) || (a && b && province.get(ok) == province.get(rk));
+    let land = build_chains(pbd, &order, &Rules { kind: &land_kind, related: &land_related, takes: &land_takes });
+
+    let seas: HashMap<&str, &[u32]> = diplomacy.seas.iter().map(|(k, f)| (k.as_str(), f.as_slice())).collect();
+    let sea_order: Vec<String> = diplomacy.seas.iter().map(|s| s.0.clone()).collect();
+    let one = |a: &str, b: &str| matches!((seas.get(a), seas.get(b)), (Some([x]), Some([y])) if x == y);
+    let sea_kind = |rk: &str, nk: &str| Some(one(rk, nk));
+    let sea_takes = |_: &str, _: &str, a: bool, b: bool| a == b;
+    let sea = build_chains(pbd, &sea_order, &Rules { kind: &sea_kind, related: &one, takes: &sea_takes });
+
     let mut out = vec![];
     let mut failed = vec![];
-    for (rk, list) in build_chains(pbd, &owner, &province, &order) {
-        let oid = owner_id.get(&rk).copied().unwrap_or(0);
-        let colour = diplomacy.colour_class(player, oid);
+    let mut fit_all = |rk: &str, list: Vec<Chain>, is_sea: bool, colour: ColourClass, owner: String| {
         for ch in list {
             let curves = match border_fit::fit(grid, &ch.cells) {
                 Ok(c) => c,
@@ -390,8 +404,9 @@ pub fn chains(
             }
 
             out.push(BorderChain {
-                region: rk.clone(),
-                owner: diplomacy.faction_key(oid).to_owned(),
+                region: rk.to_owned(),
+                sea: is_sea,
+                owner: owner.clone(),
                 internal: ch.internal,
                 colour,
                 rgb: colour.rgb(),
@@ -400,9 +415,22 @@ pub fn chains(
                 cells: ch.cells,
             });
         }
+    };
+    for (rk, list) in land {
+        let oid = owner_id.get(&rk).copied().unwrap_or(0);
+        fit_all(&rk, list, false, diplomacy.colour_class(player, oid), diplomacy.faction_key(oid).to_owned());
+    }
+    for (rk, list) in sea {
+        let factions = seas.get(rk.as_str()).copied().unwrap_or_default();
+        let owner = match factions {
+            [f] => diplomacy.faction_key(*f).to_owned(),
+            _ => String::new(),
+        };
+        fit_all(&rk, list, true, diplomacy.sea_colour_class(player, factions), owner);
     }
 
-    let mut notes = vec![format!("{} border chains", out.len())];
+    let n_sea = out.iter().filter(|c| c.sea).count();
+    let mut notes = vec![format!("{} border chains ({} land, {n_sea} sea)", out.len(), out.len() - n_sea)];
     if !failed.is_empty() {
         notes.push(format!("{} chains not fitted: {}", failed.len(), failed.join("; ")));
     }
