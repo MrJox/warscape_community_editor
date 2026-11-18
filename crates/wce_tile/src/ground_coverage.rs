@@ -523,12 +523,17 @@ impl Target {
     }
 }
 
-/// A clutter rule: the buildings it matches (key patterns with `*`, several separated by `|`, any case; or categories, `|` too) and the
-/// props it puts around them (a building set: the caller's from a set file or from keys). The first rule matching a building is its.
+/// A clutter rule: the buildings it matches and the props it puts around them (a building set: the caller's from a set file or from keys).
+/// The first rule matching a building is its.
+///
+/// What it matches: key patterns (`*`, several separated by `|`, any case), less the keys of `except` (the same), among the buildings of
+/// its categories (`|`; none: the ordinary ones, `generic`: not walls, towers, gates or bridges unless named). Without patterns, every
+/// building of its categories (less `except`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClutterRule {
     pub name: String,
     pub patterns: String,
+    pub except: String,
     pub categories: String,
     pub set: VegetationSet,
 }
@@ -537,8 +542,18 @@ impl ClutterRule {
     /// Whether it matches a building.
     #[must_use]
     pub fn matches(&self, key: &str, category: &str) -> bool {
-        let any = |list: &str, f: &dyn Fn(&str) -> bool| list.split('|').map(str::trim).filter(|p| !p.is_empty()).any(f);
-        any(&self.patterns, &|p| glob(p, key)) || any(&self.categories, &|c| c.eq_ignore_ascii_case(category))
+        let list = |l: &str| l.split('|').map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned).collect::<Vec<_>>();
+        let (patterns, except, categories) = (list(&self.patterns), list(&self.except), list(&self.categories));
+        let in_category = if categories.is_empty() {
+            category.eq_ignore_ascii_case("generic")
+        } else {
+            categories.iter().any(|c| c.eq_ignore_ascii_case(category))
+        };
+        if !in_category || except.iter().any(|p| glob(p, key)) {
+            return false;
+        }
+
+        if patterns.is_empty() { !categories.is_empty() } else { patterns.iter().any(|p| glob(p, key)) }
     }
 }
 
@@ -548,19 +563,20 @@ impl ClutterRule {
 pub struct ClutterDef {
     pub name: String,
     pub patterns: String,
+    pub except: String,
     pub categories: String,
     pub set: String,
     pub keys: Vec<String>,
 }
 
 impl ClutterDef {
-    /// A list of rules as one attribute's text: a rule's fields (name, patterns, categories, set, keys separated by spaces) joined by `,`,
-    /// rules by `;`, those two and `%` written `%2C`, `%3B`, `%25`.
+    /// A list of rules as one attribute's text: a rule's fields (name, patterns, categories, set, keys separated by spaces, except)
+    /// joined by `,`, rules by `;`, those two and `%` written `%2C`, `%3B`, `%25`.
     #[must_use]
     pub fn list_to_text(defs: &[Self]) -> String {
         let enc = |s: &str| s.replace('%', "%25").replace(',', "%2C").replace(';', "%3B");
         defs.iter()
-            .map(|d| [enc(&d.name), enc(&d.patterns), enc(&d.categories), enc(&d.set), enc(&d.keys.join(" "))].join(","))
+            .map(|d| [enc(&d.name), enc(&d.patterns), enc(&d.categories), enc(&d.set), enc(&d.keys.join(" ")), enc(&d.except)].join(","))
             .collect::<Vec<_>>()
             .join(";")
     }
@@ -580,49 +596,61 @@ impl ClutterDef {
                     categories: at(2),
                     set: at(3),
                     keys: at(4).split_whitespace().map(str::to_owned).collect(),
+                    except: at(5),
                 }
             })
             .collect()
     }
 
-    /// The built-in rules (Attila's kit, its `incidental` keys): markets, docks, townhouses, barbarian houses, farms and villas.
+    /// The built-in rules, from Attila's kit: its `generic` keys and its `incidental` props. Eastern markets, markets, docks, barbarian
+    /// and nordic houses, nomad camps, townhouses, farms and villas; the parts of buildings (walls, doors, towers, corners) left out.
     #[must_use]
     pub fn builtin() -> Vec<Self> {
-        let rule = |name: &str, patterns: &str, keys: &str| Self {
+        let rule = |name: &str, patterns: &str, except: &str, keys: &str| Self {
             name: name.to_owned(),
             patterns: patterns.to_owned(),
+            except: except.to_owned(),
             keys: keys.split_whitespace().map(str::to_owned).collect(),
             ..Self::default()
         };
+        let parts = "*_wall*|*_door*|*_pillar*|*tower*|*corner*|*colonade*|*fort*";
         vec![
             rule(
+                "Eastern markets",
+                "eastern_agora*|*persian*agora*|*sassanid*agora*",
+                &format!("{parts}|*bath*"),
+                "market_stand_persian_1 market_stand_persian_2 market_stand_persian_3 market_stand_persian_4 market_stand_persian_5 \
+                 market_stand_persian_6 barrel crate",
+            ),
+            rule(
                 "Markets",
-                "*agora*|*market*|*forum*|*bazaar*",
+                "*agora*|*market*|*forum*|*tabernae*",
+                &format!("{parts}|*bath*|*church*"),
                 "market_stand_1 market_stand_2 market_stand_3 market_stand_4 market_stand_5 market_stand_6 barrel crate",
             ),
             rule(
-                "Persian markets",
-                "*persian*market*|*sassanid*market*",
-                "market_stand_persian_1 market_stand_persian_2 market_stand_persian_3 market_stand_persian_4 market_stand_persian_5 market_stand_persian_6",
-            ),
-            rule(
                 "Docks",
-                "*dock*|*port*|*harbour*|*harbor*|*pier*",
+                "dock_*|short_dock_*|*harbour*|*harbor*|*pier*",
+                &format!("{parts}|*platform*"),
                 "dock_amphoras dock_barrels dock_wood_1 dock_wood_2 dock_wood_3 barrel crate",
             ),
             rule(
+                "Barbarian and nordic houses",
+                "barbarian_*house*|nordic_*house*|viking_house*|*longhouse*|*roundhouse*|*turf*house*|*_hut*|*grain_store*",
+                &format!("{parts}|*court*|*church*"),
+                "hide_1 hide_2 hide_3 hide_4 woodpile barrel hay01 cart_2",
+            ),
+            rule("Nomad camps", "*yurt*|*huns*tent*", parts, "hide_1 hide_2 hide_3 hide_4 woodpile barbarian_marchingcamp_table"),
+            rule(
                 "Townhouses",
-                "*townhouse*|*apartment*|*storey*|*insula*|*slum*",
+                "*townhouse*|*apartment*|*insula*|west_house_*|*_ahouse_*",
+                parts,
                 "washingline_ground_01 washingline_ground_02 washingline_ground_03 barrel crate pavements_treepot",
             ),
             rule(
-                "Barbarian houses",
-                "*barbarian*|*nordic*|*gaul*|*celt*|*germanic*|*hut*",
-                "hide_1 hide_2 hide_3 hide_4 woodpile barrel hay01 cart_2",
-            ),
-            rule(
                 "Farms and villas",
-                "*farm*|*barn*|*villa*|*domestic*|*house*|*granary*|*stable*",
+                "*villa*|*farm*|*barn*|*stables*",
+                parts,
                 "hay01 cart_1 cart_1_hay woodpile barrel crate kitchengarden_1 kitchengarden_2",
             ),
         ]
@@ -1956,6 +1984,7 @@ mod tests {
         defs[0].name = "Odd, name; 100%".to_owned();
         defs[1].set = "my set".to_owned();
         defs[1].categories = "gate|fort_tower".to_owned();
+        defs[2].except = "*a,b;c*".to_owned();
         assert_eq!(ClutterDef::list_from_text(&ClutterDef::list_to_text(&defs)), defs);
         assert!(ClutterDef::list_from_text("").is_empty());
     }
@@ -1966,9 +1995,36 @@ mod tests {
         assert!(glob("roman_*_1", "roman_villa_1") && !glob("roman_*_1", "roman_villa_2"));
         assert!(glob("barrel", "BARREL") && !glob("barrel", "barrels"));
         assert!(glob("*", "anything") && glob("a*b*c", "axxbyyc") && !glob("a*b*c", "axxc"));
-        let rule = ClutterRule { patterns: "*agora*| *market*".to_owned(), categories: "gate".to_owned(), ..ClutterRule::default() };
+        let rule = ClutterRule { patterns: "*agora*| *market*".to_owned(), except: "*tower*".to_owned(), ..ClutterRule::default() };
         assert!(rule.matches("greek_agora_2", "generic") && rule.matches("roman_market", "generic"));
-        assert!(rule.matches("wall_gate_a", "gate") && !rule.matches("roman_house", "generic"));
+        assert!(!rule.matches("roman_agora_tower", "generic"), "except");
+        assert!(!rule.matches("agora_wall", "fort_wall"), "patterns alone: ordinary buildings only");
+        let gates = ClutterRule { categories: "gate|fort_tower".to_owned(), ..ClutterRule::default() };
+        assert!(gates.matches("wall_gate_a", "gate") && gates.matches("x", "fort_tower") && !gates.matches("house", "generic"));
+        let houses_and_walls =
+            ClutterRule { patterns: "*barbarian*".to_owned(), categories: "generic|fort_wall".to_owned(), ..ClutterRule::default() };
+        assert!(houses_and_walls.matches("barbarian_fort_straight", "fort_wall") && !houses_and_walls.matches("roman_wall", "fort_wall"));
+
+        // The built-in rules on the kit's own keys: a nordic townhouse is a nordic house, a palisade and a rock nothing.
+        let builtin = ClutterDef::builtin()
+            .into_iter()
+            .map(|d| ClutterRule {
+                name: d.name,
+                patterns: d.patterns,
+                except: d.except,
+                categories: d.categories,
+                set: VegetationSet::default(),
+            })
+            .collect::<Vec<_>>();
+        let first = |key: &str, category: &str| builtin.iter().find(|r| r.matches(key, category)).map(|r| r.name.as_str());
+        assert_eq!(first("nordic_townhouse_2", "generic"), Some("Barbarian and nordic houses"));
+        assert_eq!(first("barbarian_fort_straight", "fort_wall"), None);
+        assert_eq!(first("gaul_rock_01", "generic"), None);
+        assert_eq!(first("roman_villa_wall_door", "generic"), None);
+        assert_eq!(first("roman_villa_house01", "generic"), Some("Farms and villas"));
+        assert_eq!(first("eastern_agora_main", "generic"), Some("Eastern markets"));
+        assert_eq!(first("dock_fishing_shed_1", "generic"), Some("Docks"));
+        assert_eq!(first("carport_stable", "incidental"), None);
     }
 
     #[test]

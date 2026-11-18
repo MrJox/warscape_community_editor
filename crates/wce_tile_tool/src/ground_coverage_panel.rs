@@ -333,15 +333,20 @@ impl TileTool {
 
         self.preset_rows(e);
         let sets = self.vegetation_sets(e);
-        set_combo("rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
-        set_combo("plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
-        if !sets.iter().any(|s| s.kind == SetKind::Building) {
-            gui::push_text_wrap_pos(0.0);
-            gui::text_disabled("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
-            gui::pop_text_wrap_pos();
+        let mut changed = false;
+        if self.coverage.kind == Kind::Buildings {
+            changed |= clutter_rows(&mut self.coverage.clutter, &sets);
+        } else {
+            set_combo("rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
+            set_combo("plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
+            if !sets.iter().any(|s| s.kind == SetKind::Building) {
+                gui::push_text_wrap_pos(0.0);
+                gui::text_disabled("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
+                gui::pop_text_wrap_pos();
+            }
         }
 
-        let changed = params_rows(self.coverage.kind, &mut self.coverage.params);
+        changed |= params_rows(self.coverage.kind, &mut self.coverage.params);
 
         gui::separator_text("Where");
         let mut brush = i32::from(self.coverage.brush);
@@ -576,11 +581,53 @@ impl TileTool {
         let sets = self.vegetation_sets(e);
         let find = |name: &str, kind: SetKind| sets.iter().find(|s| s.name == name && s.kind == kind).cloned().unwrap_or_default();
         let (rocks, plants) = (find(&self.coverage.rocks, SetKind::Building), find(&self.coverage.plants, SetKind::Vegetation));
+        if self.coverage.kind == Kind::Buildings {
+            return Ok((rocks, plants));
+        }
+
         if rocks.entries.is_empty() && plants.entries.is_empty() {
             return Err("ground coverage: choose a set of rocks or of plants (or both)".to_owned());
         }
 
         Ok((rocks, plants))
+    }
+
+    /// Around buildings: the window's clutter rules with their props (a building set by name, else the keys inline); empty for the other
+    /// kinds.
+    ///
+    /// # Errors
+    ///
+    /// A rule names a set that is not there, or no rule has any props.
+    pub(crate) fn clutter_rules(&mut self, e: &mut Editor) -> Result<Vec<wce_tile::ground_coverage::ClutterRule>, String> {
+        if self.coverage.kind != Kind::Buildings {
+            return Ok(vec![]);
+        }
+
+        let sets = self.vegetation_sets(e);
+        let mut out = vec![];
+        for d in &self.coverage.clutter {
+            let set = if d.set.is_empty() {
+                VegetationSet::from_keys(&d.name, d.keys.iter().map(String::as_str))
+            } else {
+                sets.iter()
+                    .find(|s| s.name == d.set && s.kind == SetKind::Building)
+                    .cloned()
+                    .ok_or_else(|| format!("around buildings: the rule '{}' names the set '{}', which is not there", d.name, d.set))?
+            };
+            out.push(wce_tile::ground_coverage::ClutterRule {
+                name: d.name.clone(),
+                patterns: d.patterns.clone(),
+                except: d.except.clone(),
+                categories: d.categories.clone(),
+                set,
+            });
+        }
+
+        if out.iter().all(|r| r.set.entries.is_empty()) {
+            return Err("around buildings: no rule has any props".to_owned());
+        }
+
+        Ok(out)
     }
 
     /// The buildings' categories of the packs' `battlefield_buildings` tables (read once for the game, its packs and the schema; empty
@@ -657,15 +704,16 @@ impl TileTool {
     /// Finds the differentials and what goes on them, with the lines that show it.
     fn compute_coverage(&mut self, e: &mut Editor) -> Result<Preview, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
+        let clutter = self.clutter_rules(e)?;
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
         let doc = document_id(e).ok_or("no tile is open")?;
         let d = document(e).ok_or("no tile is open")?;
         let (result, grid, unknown) =
-            run(d, self.coverage.kind, &context, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
+            run(d, self.coverage.kind, &context, &rocks, &plants, &clutter, &categories, self.coverage.params, self.coverage.seed);
         let lines = preview_lines(d, &grid, &result);
         let owner = owners(&grid, &result);
-        let mut summary = summary_of(&result);
+        let mut summary = if self.coverage.kind == Kind::Buildings { buildings_summary(&result, &clutter) } else { summary_of(&result) };
         if !self.coverage.categories_note.is_empty() {
             summary += &format!("\n{}", self.coverage.categories_note);
         }
@@ -690,6 +738,7 @@ impl TileTool {
 
     fn generate_coverage_into(&mut self, e: &mut Editor) -> Result<String, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
+        let clutter = self.clutter_rules(e)?;
         let c = &self.coverage;
         let settings = CoverageSettings {
             params: c.params,
@@ -703,7 +752,7 @@ impl TileTool {
         let context = self.coverage_context(e)?;
         let id = document_id(e).ok_or("ground coverage: no tile is open")?;
         let d = document(e).ok_or("ground coverage: no tile is open")?;
-        let (result, _, _) = run(d, self.coverage.kind, &context, &rocks, &plants, &categories, settings.params, settings.seed);
+        let (result, _, _) = run(d, self.coverage.kind, &context, &rocks, &plants, &clutter, &categories, settings.params, settings.seed);
         let before = d.history().version();
         let c = d.apply_coverage(self.coverage.kind, &result, &settings).map_err(|err| format!("ground coverage failed: {err}"))?;
         let after = d.history().version();
@@ -713,6 +762,13 @@ impl TileTool {
         self.coverage.preview = None;
         e.selection.clear();
         let group = kind_group_name(self.coverage.kind);
+        if self.coverage.kind == Kind::Buildings {
+            return Ok(format!(
+                "ground coverage: {} prop(s) around {} building(s) in \"{COVERAGE_LAYER}\" > \"{group}\"",
+                c.rocks, c.slopes
+            ));
+        }
+
         Ok(format!(
             "ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\" > \"{group}\"",
             c.slopes, c.rocks, c.plants, c.exclusions
@@ -797,11 +853,13 @@ fn run(
     context: &Context,
     rocks: &VegetationSet,
     plants: &VegetationSet,
+    clutter: &[wce_tile::ground_coverage::ClutterRule],
     categories: &std::collections::BTreeMap<String, String>,
     params: Params,
     seed: u64,
 ) -> (Vec<Differential>, Grid, Vec<String>) {
-    let (grid, blockers, sizes, unknown) = tile_base(d, rocks, categories);
+    let (grid, blockers, sizes, unknown) = tile_base(d, &with_clutter(rocks, clutter), categories);
+    let targets = if kind == Kind::Buildings { d.coverage_targets(&|k: &str| categories.get(&k.to_lowercase()).cloned()) } else { vec![] };
     let keep_off = d
         .coverage_footprints(kind)
         .into_iter()
@@ -820,10 +878,49 @@ fn run(
         rock_size: &size,
         params,
         seed,
-        targets: &[],
-        clutter: &[],
+        targets: &targets,
+        clutter,
     });
     (result, grid, unknown)
+}
+
+/// The rock set with every clutter rule's props: the keys whose sizes the generator asks for.
+pub(crate) fn with_clutter(rocks: &VegetationSet, clutter: &[wce_tile::ground_coverage::ClutterRule]) -> VegetationSet {
+    let mut all = rocks.clone();
+    for e in clutter.iter().flat_map(|r| &r.set.entries) {
+        if !all.entries.iter().any(|a| a.key == e.key) {
+            all.entries.push(e.clone());
+        }
+    }
+
+    all
+}
+
+/// Around buildings: "251 building(s) matched (Barbarian houses 200, Markets 3, ...): 242 with 1068 prop(s), 9 with no room; the most
+/// placed: hay01 210, barrel 190, ...".
+fn buildings_summary(result: &[Differential], clutter: &[wce_tile::ground_coverage::ClutterRule]) -> String {
+    let mut by_rule = std::collections::BTreeMap::<usize, usize>::new();
+    let mut by_key = HashMap::<&str, usize>::new();
+    for d in result {
+        *by_rule.entry(d.rule.unwrap_or(usize::MAX)).or_default() += 1;
+        for r in &d.rocks {
+            *by_key.entry(r.key.as_str()).or_default() += 1;
+        }
+    }
+
+    let rules =
+        by_rule.iter().map(|(&r, &n)| format!("{} {n}", clutter.get(r).map_or("?", |c| c.name.as_str()))).collect::<Vec<_>>().join(", ");
+    let mut keys = by_key.into_iter().collect::<Vec<_>>();
+    keys.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let keys = keys.iter().take(8).map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(", ");
+    let kept = result.iter().filter(|d| d.kept() && !d.rocks.is_empty()).count();
+    let props = result.iter().map(|d| d.rocks.len()).sum::<usize>();
+    format!(
+        "{} building(s) matched ({rules}): {kept} with {props} prop(s), {} with none (no room, or the rule has no props); the most placed: \
+         {keys}.",
+        result.len(),
+        result.len() - kept
+    )
 }
 
 /// "12 slopes: 9 covered (...), 3 left alone (...)".
@@ -1008,6 +1105,39 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
         }
     };
 
+    if kind == Kind::Buildings {
+        gui::separator_text("Ring");
+        f(
+            "gap",
+            &mut p.ring_gap,
+            0.05,
+            0.0,
+            20.0,
+            "%.1f m",
+            "Metres between a building's footprint and its ring; also kept from every other building",
+        );
+        f("width", &mut p.ring_width, 0.05, 0.5, 50.0, "%.1f m", "How wide the ring of props is");
+        let mut d = p.rock_density_foot * 100.0;
+        gui::set_next_item_width(160.0);
+        if gui::drag_float("props", &mut d, 0.05, 0.0, 100.0, "%.2f / 100 m2") {
+            p.rock_density_foot = d / 100.0;
+            changed = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Props per 100 square metres of a ring");
+        }
+
+        let mut cap = p.max_per_building as i32;
+        gui::set_next_item_width(160.0);
+        if gui::input_int("most a building", &mut cap) {
+            p.max_per_building = cap.max(0) as f32;
+            changed = true;
+        }
+
+        return changed;
+    }
+
     gui::separator_text("Slopes");
     if kind.by_water() {
         gui::push_text_wrap_pos(0.0);
@@ -1160,6 +1290,96 @@ fn range_row(label: &str, r: &mut (f32, f32)) -> bool {
     let changed = gui::drag_float2(label, &mut v, 0.01, "%.2f");
     if changed {
         (r.0, r.1) = (v[0].clamp(0.05, 20.0), v[1].clamp(0.05, 20.0));
+    }
+
+    changed
+}
+
+/// Around buildings: the clutter rules, each a collapsing row (name, the buildings it matches, its props: a building set or keys); whether
+/// any changed.
+fn clutter_rows(defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[VegetationSet]) -> bool {
+    let mut changed = false;
+    gui::separator_text("Rules (the first that matches a building is its)");
+    gui::push_text_wrap_pos(0.0);
+    gui::text_disabled(
+        "A rule matches ordinary buildings by their key (patterns with *, several separated by |), less its exceptions, or the buildings of its categories; its props go all around them.",
+    );
+    gui::pop_text_wrap_pos();
+    let (mut remove, mut up) = (None, None);
+    for (i, d) in defs.iter_mut().enumerate() {
+        gui::push_id_int(i as i32);
+        let title = format!("{}###rule", if d.name.is_empty() { "(no name)" } else { &d.name });
+        if gui::collapsing_header(&title, 0) {
+            gui::set_next_item_width(240.0);
+            changed |= gui::input_text("name", None, &mut d.name, 128, 0);
+            gui::set_next_item_width(240.0);
+            changed |= gui::input_text("keys like", Some("*villa*|*farm*"), &mut d.patterns, 256, 0);
+            gui::set_next_item_width(240.0);
+            changed |= gui::input_text("except", Some("*_wall*|*tower*"), &mut d.except, 256, 0);
+            gui::set_next_item_width(240.0);
+            changed |= gui::input_text("categories", Some("generic (none: ordinary buildings)"), &mut d.categories, 256, 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "The categories the rule looks among (gate|fort_tower ...); none: ordinary buildings, not walls, towers, gates or bridges",
+                );
+            }
+            let preview = if d.set.is_empty() { "the keys below".to_owned() } else { d.set.clone() };
+            gui::set_next_item_width(240.0);
+            if gui::begin_combo("props", &preview) {
+                if gui::selectable("the keys below", d.set.is_empty(), 0) {
+                    d.set.clear();
+                    changed = true;
+                }
+
+                for s in sets.iter().filter(|s| s.kind == SetKind::Building) {
+                    if gui::selectable(&s.name, d.set == s.name, 0) {
+                        d.set.clone_from(&s.name);
+                        changed = true;
+                    }
+                }
+
+                gui::end_combo();
+            }
+
+            if d.set.is_empty() {
+                let mut keys = d.keys.join(" ");
+                gui::set_next_item_width(240.0);
+                if gui::input_text("keys", Some("barrel crate woodpile"), &mut keys, 2048, 0) {
+                    d.keys = keys.split_whitespace().map(str::to_owned).collect();
+                    changed = true;
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Building keys separated by spaces, each as likely as the others");
+                }
+            }
+
+            if gui::small_button("Up") && i > 0 {
+                up = Some(i);
+            }
+
+            gui::same_line();
+            if gui::small_button(&format!("{}  Remove", icons::X)) {
+                remove = Some(i);
+            }
+        }
+
+        gui::pop_id();
+    }
+
+    if let Some(i) = up {
+        defs.swap(i, i - 1);
+        changed = true;
+    }
+
+    if let Some(i) = remove {
+        defs.remove(i);
+        changed = true;
+    }
+
+    if gui::small_button(&format!("{}  Add a rule", icons::PLUS)) {
+        defs.push(wce_tile::ground_coverage::ClutterDef { name: "New rule".to_owned(), ..Default::default() });
+        changed = true;
     }
 
     changed

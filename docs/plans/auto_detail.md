@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 and 2 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left) (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -153,9 +153,17 @@ gates, 10 bridges: the category alone can't tell a farm from a temple.
    footprint, a ring round a matched house clear of its unmatched neighbour, the cap.
 2. **Rules in the presets** (done: `ClutterDef`, one attribute `clutter` in a preset's file and `wce_autogen_clutter` on the kind's group) and the built-in ones (markets, docks, townhouses, barbarian houses, farms and villas, from the kit's own
    incidental keys).
-3. **The tile's side and the window's tab**: the targets from the scene (the real buildings by the kits' categories, their models'
-   bounds, their world turn), the rules' editor, the sets resolved; Fill and Brush.
-4. **Check on kit settlement tiles** (a few, `--filter`-sized), then the user's look.
+3. **The tile's side and the window's tab** (done): `TileDocument::coverage_targets` (the real buildings by the packs' categories, else
+   the kits', their models' bounds through their world matrices, a mirrored one's rectangle flipped), the rules' editor in the Around
+   buildings tab (name, keys like, except, categories, props: a building set or keys), the ring's parameters, the rules resolved into
+   sets (`clutter_rules`), the props' sizes with the rocks', Fill and Brush; a summary by rule and by key.
+   Changed while building: a rule's key patterns look among the **ordinary buildings** (`generic`) unless it names categories, and a
+   rule has **exceptions** (`except`): the kit's houses come in pieces (`*_wall*`, `*_door*`, `*tower*`, corners) and `*barbarian*`
+   caught the palisades, `*gaul*` the `gaul_rock_*`s (which the kit files as `generic`). The built-in rules were tuned on the kit's 190
+   generic keys of houses, markets, docks and villas, the nordic and barbarian houses before the townhouses.
+4. **Check on kit settlement tiles** (done 2026-11-18): settlement_nordic_cities/nordic_city_a/medium, Default, seed 7: 159 buildings
+   matched (Docks 48: its fishing sheds; Barbarian and nordic houses 111), 667 props around 151 (8 with no room); hay, hides, carts and
+   woodpiles stand round the turf houses (`~/wce_re/scratch/auto_detail/check/turf_after.png`). Left: the user's look, other cultures.
 
 ## C. Biome brush (after B; questions to settle when it starts)
 

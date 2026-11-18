@@ -196,6 +196,51 @@ impl TileDocument {
             .collect()
     }
 
+    /// The buildings the clutter around buildings measures from (`Kind::Buildings`): those `coverage_blockers` takes (the real ones, by
+    /// `category`, else the kits'), each with its key and category, where it stands, its turn and its footprint as a rectangle in its own
+    /// frame (its model's bounds through its world matrix: scaled; a model not loaded yet takes its files' radius as a square).
+    pub fn coverage_targets(&self, category: &dyn Fn(&str) -> Option<String>) -> Vec<wce_tile::ground_coverage::Target> {
+        let t = self.tile();
+        let sc = t.tscene();
+        let layer = self.coverage_layer();
+        let kit = t.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project().dir));
+        let mut sizes = std::collections::HashMap::<String, Option<RockSize>>::new();
+        sc.find_all("BUILDING_INSTANCE")
+            .into_iter()
+            .filter(|&e| sc.doc().elements()[e].children.is_empty() && layer.is_none_or(|l| !sc.is_descendant(e, l)))
+            .filter_map(|e| {
+                let key = sc.doc().get(e, "key").unwrap_or_default();
+                let cat = category(&key).or_else(|| kit.category(&key).map(str::to_owned))?;
+                if !AVOIDED_CATEGORIES.contains(&cat.as_str()) {
+                    return None;
+                }
+
+                let w = t.world_matrix(e);
+                let o = w.transform_point(Float3::new(0.0, 0.0, 0.0));
+                let ex = w.transform_point(Float3::new(1.0, 0.0, 0.0)) - o;
+                let ez = w.transform_point(Float3::new(0.0, 0.0, 1.0)) - o;
+                let (lx, lz) = (ex.x.hypot(ex.z).max(1e-6), ez.x.hypot(ez.z).max(1e-6));
+                let axis = (ex.x / lx, ex.z / lx);
+                // The rectangle's z runs along the x axis turned a quarter (`Target::distance`): a mirrored building's the other way.
+                let flip = (-axis.1 * ez.x + axis.0 * ez.z) < 0.0;
+                let rect = match t.model_of(e).filter(|m| m.ok && m.resolved) {
+                    Some(m) => {
+                        let (z0, z1) = (m.bmin.z * lz, m.bmax.z * lz);
+                        [m.bmin.x * lx, m.bmax.x * lx, if flip { -z1 } else { z0 }, if flip { -z0 } else { z1 }]
+                    }
+
+                    None => {
+                        let s = sc.scale(e).map_or(1.0, |s| s.x.abs().max(s.z.abs()) as f32);
+                        let r = sizes.entry(key.clone()).or_insert_with(|| self.rock_size(&key)).map_or(0.5, |z| z.radius * s);
+                        [-r, r, -r, r]
+                    }
+                };
+
+                Some(wce_tile::ground_coverage::Target { key, category: cat, x: o.x, z: o.z, axis, rect })
+            })
+            .collect()
+    }
+
     /// The size of a building's model (metres, at scale 1): its loaded bounds, else its pieces' file bounds read now; `None` when it has no
     /// model.
     pub fn rock_size(&self, key: &str) -> Option<RockSize> {
