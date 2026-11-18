@@ -196,7 +196,11 @@ impl Tile {
     /// A file of `dir` by its name, whatever its case (the lists are named by lower case names, `ROME_Med.tree_list.bin` is `rome_med`'s).
     pub(crate) fn read_local(dir: &std::path::Path, file: &str) -> Option<Vec<u8>> {
         let file = file.to_lowercase();
-        let path = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && p.file_name().is_some_and(|f| f.to_string_lossy().to_lowercase() == file))?;
+        let path = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.is_file() && p.file_name().is_some_and(|f| f.to_string_lossy().to_lowercase() == file))?;
         std::fs::read(path).ok()
     }
 

@@ -57,7 +57,8 @@ impl Preset {
     ///
     /// The file can't be read, is not a preset, or its kind is unknown.
     pub fn load(path: &Path, root: &Path) -> Result<Self, String> {
-        let doc = XmlDoc::parse(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("{}: {e}", path.display()))?;
+        let doc = XmlDoc::parse(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         if doc.elements().first().is_none_or(|e| e.name != "GROUND_COVERAGE_PRESET") {
             return Err(format!("{}: not a ground coverage preset", path.display()));
         }
@@ -80,7 +81,11 @@ impl Preset {
     pub fn text(&self) -> Vec<u8> {
         format!(
             "<GROUND_COVERAGE_PRESET {}=\"{}\" kind=\"{}\" rocks=\"{}\" plants=\"{}\" params=\"{}\"/>\n",
-            crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION, self.kind.name(), escape(&self.rocks), escape(&self.plants),
+            crate::project_files::WCE_VERSION_ATTR,
+            crate::project_files::WCE_VERSION,
+            self.kind.name(),
+            escape(&self.rocks),
+            escape(&self.plants),
             escape(&self.params.to_text()),
         )
         .into_bytes()

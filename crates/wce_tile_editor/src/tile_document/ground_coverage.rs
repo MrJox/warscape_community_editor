@@ -15,15 +15,15 @@ use std::io::Cursor;
 use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_foundation::math::{Double3, Float3};
-use wce_tile::new_instances::NewInstance;
 use wce_tile::ground_coverage::{AVOIDED_CATEGORIES, Blocker, Differential, Grid, Kind, Params, Placed, RockSize, State};
+use wce_tile::new_instances::NewInstance;
 use wce_tile::world_transform::{set_world_position, world_transform};
 
+use super::TileDocument;
+use super::brush::Footprint;
 use super::draft::{turned, with_root_attr};
 use super::edits::{point_instance, scene_point};
 use super::index::{destruct_number, static_piece};
-use super::TileDocument;
-use super::brush::Footprint;
 
 /// The layer the coverage goes into.
 pub const COVERAGE_LAYER: &str = "(AUTOGEN) Ground Coverage";
@@ -94,13 +94,18 @@ impl TileDocument {
     /// A kind's group in the coverage layer.
     pub fn coverage_group(&self, kind: Kind) -> Option<usize> {
         let sc = self.tile().tscene();
-        sc.children(self.coverage_layer()?).into_iter().find(|&g| sc.type_of(g) == "UserInstanceGroup" && sc.name(g) == kind_group_name(kind))
+        sc.children(self.coverage_layer()?)
+            .into_iter()
+            .find(|&g| sc.type_of(g) == "UserInstanceGroup" && sc.name(g) == kind_group_name(kind))
     }
 
     /// What a run of the kind replaces: its group's children but its brushed group, and for the cliffs the first version's groups.
     fn coverage_replaced(&self, kind: Kind) -> Vec<usize> {
         let sc = self.tile().tscene();
-        let mut out: Vec<usize> = self.coverage_group(kind).map(|g| sc.children(g).into_iter().filter(|&c| sc.name(c) != BRUSHED_GROUP).collect()).unwrap_or_default();
+        let mut out: Vec<usize> = self
+            .coverage_group(kind)
+            .map(|g| sc.children(g).into_iter().filter(|&c| sc.name(c) != BRUSHED_GROUP).collect())
+            .unwrap_or_default();
         if kind == Kind::Cliffs {
             out.extend(self.coverage_old());
         }
@@ -112,7 +117,9 @@ impl TileDocument {
     fn coverage_old(&self) -> Vec<usize> {
         let sc = self.tile().tscene();
         let Some(l) = self.coverage_layer() else { return vec![] };
-        let old = |c: usize| sc.type_of(c) == "UserInstanceGroup" && sc.name(c).strip_prefix("Slope ").is_some_and(|n| n.parse::<usize>().is_ok());
+        let old = |c: usize| {
+            sc.type_of(c) == "UserInstanceGroup" && sc.name(c).strip_prefix("Slope ").is_some_and(|n| n.parse::<usize>().is_ok())
+        };
         sc.children(l).into_iter().filter(|&c| old(c)).collect()
     }
 
@@ -156,7 +163,8 @@ impl TileDocument {
         let kit = self.tile().building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project().dir));
         let mut sizes = std::collections::HashMap::<String, Option<RockSize>>::new();
         // The scene's buildings as they are now (the tile's index of its instances is rebuilt once a frame: an edit just made is not in it).
-        sc.find_all("BUILDING_INSTANCE").into_iter()
+        sc.find_all("BUILDING_INSTANCE")
+            .into_iter()
             .filter(|&e| sc.doc().elements()[e].children.is_empty() && layer.is_none_or(|l| !sc.is_descendant(e, l)))
             .map(|e| self.footprint(e))
             .filter_map(|f| {
@@ -205,7 +213,10 @@ impl TileDocument {
                 continue;
             }
 
-            let Ok(model) = files.read(&path).and_then(|b| RigidModel::decode(&mut Cursor::new(&b), &Some(DecodeableExtraData::default())).map_err(|e| e.to_string())) else {
+            let Ok(model) = files
+                .read(&path)
+                .and_then(|b| RigidModel::decode(&mut Cursor::new(&b), &Some(DecodeableExtraData::default())).map_err(|e| e.to_string()))
+            else {
                 continue;
             };
 
@@ -291,7 +302,13 @@ impl TileDocument {
 
     /// A group (at the middle of what it holds: its pivot) in `parent` with the items (text at the origin, world point) and the polygons
     /// (world points).
-    fn add_item_group(&mut self, parent: usize, name: &str, items: &[(Vec<u8>, Float3)], polygons: &[Vec<Float3>]) -> Result<usize, String> {
+    fn add_item_group(
+        &mut self,
+        parent: usize,
+        name: &str,
+        items: &[(Vec<u8>, Float3)],
+        polygons: &[Vec<Float3>],
+    ) -> Result<usize, String> {
         let unit = self.tile().unit();
         let n = items.len().max(1) as f32;
         let mid = items.iter().fold(Float3::new(0.0, 0.0, 0.0), |a, (_, p)| Float3::new(a.x + p.x / n, a.y + p.y / n, a.z + p.z / n));
@@ -325,7 +342,11 @@ impl TileDocument {
     fn coverage_item_groups(&self, kind: Kind) -> Vec<usize> {
         let sc = self.tile().tscene();
         let Some(group) = self.coverage_group(kind) else { return vec![] };
-        sc.children(group).into_iter().flat_map(|c| if sc.name(c) == BRUSHED_GROUP { sc.children(c) } else { vec![c] }).filter(|&c| sc.is_layer(c)).collect()
+        sc.children(group)
+            .into_iter()
+            .flat_map(|c| if sc.name(c) == BRUSHED_GROUP { sc.children(c) } else { vec![c] })
+            .filter(|&c| sc.is_layer(c))
+            .collect()
     }
 
     /// The kind's rocks and plants (filled and brushed) and whether each is brushed. A footprint whose model has not loaded yet counts
@@ -355,7 +376,13 @@ impl TileDocument {
     /// # Errors
     ///
     /// The tile has no scene graph, or a text does not read (nothing changes).
-    pub fn add_coverage_stroke(&mut self, kind: Kind, rocks: Vec<Placed>, plants: Vec<Placed>, exclusions: Polygons) -> Result<CoverageCounts, String> {
+    pub fn add_coverage_stroke(
+        &mut self,
+        kind: Kind,
+        rocks: Vec<Placed>,
+        plants: Vec<Placed>,
+        exclusions: Polygons,
+    ) -> Result<CoverageCounts, String> {
         let root = self.tile().tscene().scene_graph().ok_or("this tile has no scene graph")?;
         let counts = CoverageCounts { slopes: 1, rocks: rocks.len(), plants: plants.len(), exclusions: exclusions.len() };
         let stroke = Differential { state: Some(State::Kept), rocks, plants, exclusions, ..Default::default() };
@@ -385,7 +412,13 @@ impl TileDocument {
             };
 
             let sc = self.tile().tscene();
-            let number = sc.children(brushed).iter().filter_map(|&c| sc.name(c).strip_prefix("Stroke ").and_then(|n| n.parse::<usize>().ok())).max().unwrap_or(0) + 1;
+            let number = sc
+                .children(brushed)
+                .iter()
+                .filter_map(|&c| sc.name(c).strip_prefix("Stroke ").and_then(|n| n.parse::<usize>().ok()))
+                .max()
+                .unwrap_or(0)
+                + 1;
             self.add_item_group(brushed, &format!("Stroke {number}"), &items, &polygons)?;
             Ok(())
         })();
@@ -425,13 +458,24 @@ impl TileDocument {
             }
 
             erased += hit;
-            let kept = children.iter().copied().filter(|c| !gone.contains(c) && sc.type_of(*c) != "VegetationExclusionPolygonInstance").collect::<Vec<_>>();
-            let plants = kept.iter().filter(|&&c| sc.type_of(c) == "VEGETATION_INSTANCE").map(|&c| {
-                let p = self.tile().world_position(c);
-                Placed { x: p.x, y: p.y, z: p.z, ..Default::default() }
-            }).collect::<Vec<_>>();
+            let kept = children
+                .iter()
+                .copied()
+                .filter(|c| !gone.contains(c) && sc.type_of(*c) != "VegetationExclusionPolygonInstance")
+                .collect::<Vec<_>>();
+            let plants = kept
+                .iter()
+                .filter(|&&c| sc.type_of(c) == "VEGETATION_INSTANCE")
+                .map(|&c| {
+                    let p = self.tile().world_position(c);
+                    Placed { x: p.x, y: p.y, z: p.z, ..Default::default() }
+                })
+                .collect::<Vec<_>>();
             let t = self.tile();
-            let polygons = exclusions(&plants).into_iter().map(|poly| poly.into_iter().map(|(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect()).collect::<Vec<_>>();
+            let polygons = exclusions(&plants)
+                .into_iter()
+                .map(|poly| poly.into_iter().map(|(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect())
+                .collect::<Vec<_>>();
             let text = kept.iter().flat_map(|&c| sc.element_text(c)).collect::<Vec<u8>>();
             touched.push((group, kept.is_empty(), text, polygons));
         }
@@ -522,7 +566,8 @@ impl TileDocument {
                 items.push((turned(&s, p.yaw), Float3::new(p.x, p.y, p.z)));
             }
 
-            let polygons = d.exclusions.iter().map(|poly| poly.iter().map(|&(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect()).collect();
+            let polygons =
+                d.exclusions.iter().map(|poly| poly.iter().map(|&(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect()).collect();
             out.push((items, polygons));
         }
 

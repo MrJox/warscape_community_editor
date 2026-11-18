@@ -103,7 +103,14 @@ impl TileTool {
     /// # Errors
     ///
     /// Not `preview` or `generate`, no such preset, no set, or the generation failed.
-    pub fn coverage_for_script(&mut self, e: &mut Editor, what: &str, kind: Kind, preset: &str, seed: Option<u64>) -> Result<String, String> {
+    pub fn coverage_for_script(
+        &mut self,
+        e: &mut Editor,
+        what: &str,
+        kind: Kind,
+        preset: &str,
+        seed: Option<u64>,
+    ) -> Result<String, String> {
         self.open_coverage();
         self.load_coverage_values(e);
         if kind != self.coverage.kind {
@@ -224,11 +231,22 @@ impl TileTool {
                 path
             }
 
-            None => self.find_preset(e, kind, &self.coverage.preset.clone()).and_then(|p| p.path).ok_or("the built-in preset can't be saved: Save as")?,
+            None => self
+                .find_preset(e, kind, &self.coverage.preset.clone())
+                .and_then(|p| p.path)
+                .ok_or("the built-in preset can't be saved: Save as")?,
         };
 
         let c = &self.coverage;
-        let p = Preset { name: String::new(), folder: String::new(), path: Some(path.clone()), kind, params: c.params, rocks: c.rocks.clone(), plants: c.plants.clone() };
+        let p = Preset {
+            name: String::new(),
+            folder: String::new(),
+            path: Some(path.clone()),
+            kind,
+            params: c.params,
+            rocks: c.rocks.clone(),
+            plants: c.plants.clone(),
+        };
         p.save()?;
         self.coverage.presets = None;
         self.coverage.preset = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -239,7 +257,8 @@ impl TileTool {
     /// Deletes the preset in use (a file); the built-in one is used then.
     fn delete_preset(&mut self, e: &mut Editor) -> Result<String, String> {
         let kind = self.coverage.kind;
-        let path = self.find_preset(e, kind, &self.coverage.preset.clone()).and_then(|p| p.path).ok_or("the built-in preset can't be deleted")?;
+        let path =
+            self.find_preset(e, kind, &self.coverage.preset.clone()).and_then(|p| p.path).ok_or("the built-in preset can't be deleted")?;
         std::fs::remove_file(&path).map_err(|err| format!("{}: {err}", path.display()))?;
         self.coverage.presets = None;
         self.use_preset(e, &Preset::builtin(kind));
@@ -337,7 +356,9 @@ impl TileTool {
 
         if self.coverage.brush {
             gui::push_text_wrap_pos(0.0);
-            gui::text_disabled("Left drag in the viewport (Select mode) puts the kind's rocks and plants on its terrain under the circle; Ctrl + drag takes the kind's coverage away. The bands show around the mouse once a stroke worked them out.");
+            gui::text_disabled(
+                "Left drag in the viewport (Select mode) puts the kind's rocks and plants on its terrain under the circle; Ctrl + drag takes the kind's coverage away. The bands show around the mouse once a stroke worked them out.",
+            );
             gui::pop_text_wrap_pos();
             let mut radius = self.coverage_radius();
             gui::set_next_item_width(160.0);
@@ -434,7 +455,15 @@ impl TileTool {
         let presets = of_kind(&self.coverage_presets(e), kind);
         let current = presets.iter().find(|p| p.name == self.coverage.preset).cloned();
         let c = &self.coverage;
-        let label = |p: &Preset| if p.is_builtin() { format!("{} (built in)", p.name) } else if p.folder.is_empty() { p.name.clone() } else { format!("{}   {}", p.name, p.folder) };
+        let label = |p: &Preset| {
+            if p.is_builtin() {
+                format!("{} (built in)", p.name)
+            } else if p.folder.is_empty() {
+                p.name.clone()
+            } else {
+                format!("{}   {}", p.name, p.folder)
+            }
+        };
         let shown = match &current {
             Some(p) if p.same_values(&c.params, &c.rocks, &c.plants) => label(p),
             Some(p) => format!("{} (changed)", label(p)),
@@ -562,14 +591,17 @@ impl TileTool {
         let mut out = std::collections::BTreeMap::new();
         match (files, schema) {
             (Some(files), Some(schema)) => {
-                let tables = files.list("db/battlefield_buildings_tables/", "").into_iter().filter_map(|p| files.read(&p).ok()).collect::<Vec<_>>();
+                let tables =
+                    files.list("db/battlefield_buildings_tables/", "").into_iter().filter_map(|p| files.read(&p).ok()).collect::<Vec<_>>();
                 match wce_tile_io::attila::game_data::building_categories(&tables, &schema) {
                     Ok(c) => out = c,
                     Err(err) => self.coverage.categories_note = err,
                 }
             }
 
-            (_, None) => self.coverage.categories_note = "no rpfm schema (schema_att.ron): only the kit's building categories are known".to_owned(),
+            (_, None) => {
+                self.coverage.categories_note = "no rpfm schema (schema_att.ron): only the kit's building categories are known".to_owned()
+            }
             (None, _) => self.coverage.categories_note = "no game files: only the kit's building categories are known".to_owned(),
         }
 
@@ -594,7 +626,8 @@ impl TileTool {
         let game = self.exported_game(e).ok();
         let d = document(e).ok_or("no tile is open")?;
         let started = std::time::Instant::now();
-        let (f, raw) = crate::water_view::stage_b_fields(d, game.as_deref()).map_err(|err| format!("ground coverage: the tile's water and no-go areas: {err}"))?;
+        let (f, raw) = crate::water_view::stage_b_fields(d, game.as_deref())
+            .map_err(|err| format!("ground coverage: the tile's water and no-go areas: {err}"))?;
         let (sx, sz) = crate::water_view::vertex_spacing(d, &f);
         // Stage B's heights, so its water's depth, are in scene units (`unit` per metre).
         let unit = d.tile().unit() as f32;
@@ -605,7 +638,10 @@ impl TileTool {
         let (no_go, wet) = (c.no_go.iter().filter(|&&b| b).count(), c.water_depth.iter().filter(|&&d| d > 0.0).count());
         wce_foundation::log::info(format!(
             "ground coverage: the tile's water and no-go areas worked out in {:.2} s ({:.0} m2 no-go, {:.0} m2 under rivers and water planes, {})",
-            started.elapsed().as_secs_f64(), m2(no_go), m2(wet), if c.has_sea { "by the sea" } else { "no sea" },
+            started.elapsed().as_secs_f64(),
+            m2(no_go),
+            m2(wet),
+            if c.has_sea { "by the sea" } else { "no sea" },
         ));
 
         let c = std::sync::Arc::new(c);
@@ -620,7 +656,8 @@ impl TileTool {
         let context = self.coverage_context(e)?;
         let doc = document_id(e).ok_or("no tile is open")?;
         let d = document(e).ok_or("no tile is open")?;
-        let (result, grid, unknown) = run(d, self.coverage.kind, &context, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
+        let (result, grid, unknown) =
+            run(d, self.coverage.kind, &context, &rocks, &plants, &categories, self.coverage.params, self.coverage.seed);
         let lines = preview_lines(d, &grid, &result);
         let owner = owners(&grid, &result);
         let mut summary = summary_of(&result);
@@ -649,7 +686,8 @@ impl TileTool {
     fn generate_coverage_into(&mut self, e: &mut Editor) -> Result<String, String> {
         let (rocks, plants) = self.coverage_sets(e)?;
         let c = &self.coverage;
-        let settings = CoverageSettings { params: c.params, seed: c.seed, rocks: c.rocks.clone(), plants: c.plants.clone(), preset: c.preset.clone() };
+        let settings =
+            CoverageSettings { params: c.params, seed: c.seed, rocks: c.rocks.clone(), plants: c.plants.clone(), preset: c.preset.clone() };
         let categories = self.building_categories(e);
         let context = self.coverage_context(e)?;
         let id = document_id(e).ok_or("ground coverage: no tile is open")?;
@@ -664,7 +702,10 @@ impl TileTool {
         self.coverage.preview = None;
         e.selection.clear();
         let group = kind_group_name(self.coverage.kind);
-        Ok(format!("ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\" > \"{group}\"", c.slopes, c.rocks, c.plants, c.exclusions))
+        Ok(format!(
+            "ground coverage: {} slope(s), {} rock(s), {} plant(s), {} exclusion polygon(s) in \"{COVERAGE_LAYER}\" > \"{group}\"",
+            c.slopes, c.rocks, c.plants, c.exclusions
+        ))
     }
 
     /// The preview's lines, into the tool's overlay (only over the tile it was made for).
@@ -692,11 +733,18 @@ impl TileTool {
             let pr = &self.coverage.params;
             gui::set_tooltip(&match d.state {
                 Some(State::Kept) => format!(
-                    "Slope {}: rise {:.1} m, {:.0} m2; {} rock(s), {} plant(s){}", d.number, d.rise, d.area, d.rocks.len(), d.plants.len(),
+                    "Slope {}: rise {:.1} m, {:.0} m2; {} rock(s), {} plant(s){}",
+                    d.number,
+                    d.rise,
+                    d.area,
+                    d.rocks.len(),
+                    d.plants.len(),
                     if d.avoided == 0 { String::new() } else { format!("; goes around {} building(s)", d.avoided) },
                 ),
                 Some(State::TooLow(r)) => format!("Slope {}: left alone, too low ({r:.1} m, the least is {:.1} m)", d.number, pr.min_rise),
-                Some(State::TooSmall(a)) => format!("Slope {}: left alone, too small ({a:.0} m2, the least is {:.0} m2)", d.number, pr.min_area),
+                Some(State::TooSmall(a)) => {
+                    format!("Slope {}: left alone, too small ({a:.0} m2, the least is {:.0} m2)", d.number, pr.min_area)
+                }
                 Some(State::ByWater) => format!("Slope {}: left alone, its foot is at the sea or in a river (Coast, Riverbanks)", d.number),
                 None => String::new(),
             });
@@ -707,18 +755,24 @@ impl TileTool {
 /// What the generator needs of the tile for a rock set: its grid, the buildings it goes around (of the avoided categories, by `categories`:
 /// the packs' tables, else the kit's), the rocks' sizes and the rock keys whose model was not found.
 pub(crate) fn tile_base(
-    d: &TileDocument, rocks: &VegetationSet, categories: &std::collections::BTreeMap<String, String>,
+    d: &TileDocument,
+    rocks: &VegetationSet,
+    categories: &std::collections::BTreeMap<String, String>,
 ) -> (Grid, Vec<Blocker>, HashMap<String, RockSize>, Vec<String>) {
     let grid = d.coverage_grid();
     let blockers = d.coverage_blockers(&|k: &str| categories.get(&k.to_lowercase()).cloned());
     let mut unknown = vec![];
-    let sizes = rocks.entries.iter().map(|en| {
-        let s = d.rock_size(&en.key).unwrap_or_else(|| {
-            unknown.push(en.key.clone());
-            UNKNOWN_ROCK
-        });
-        (en.key.clone(), s)
-    }).collect::<HashMap<_, _>>();
+    let sizes = rocks
+        .entries
+        .iter()
+        .map(|en| {
+            let s = d.rock_size(&en.key).unwrap_or_else(|| {
+                unknown.push(en.key.clone());
+                UNKNOWN_ROCK
+            });
+            (en.key.clone(), s)
+        })
+        .collect::<HashMap<_, _>>();
 
     (grid, blockers, sizes, unknown)
 }
@@ -727,14 +781,35 @@ pub(crate) fn tile_base(
 /// whose model was not found.
 #[allow(clippy::too_many_arguments)]
 fn run(
-    d: &TileDocument, kind: Kind, context: &Context, rocks: &VegetationSet, plants: &VegetationSet, categories: &std::collections::BTreeMap<String, String>, params: Params, seed: u64,
+    d: &TileDocument,
+    kind: Kind,
+    context: &Context,
+    rocks: &VegetationSet,
+    plants: &VegetationSet,
+    categories: &std::collections::BTreeMap<String, String>,
+    params: Params,
+    seed: u64,
 ) -> (Vec<Differential>, Grid, Vec<String>) {
     let (grid, blockers, sizes, unknown) = tile_base(d, rocks, categories);
-    let keep_off = d.coverage_footprints(kind).into_iter().filter(|(_, brushed)| *brushed).map(|(f, _)| {
-        Blocker { x: f.x, z: f.z, radius: if f.tree { params.plant_radius } else { f.radius } }
-    }).collect::<Vec<_>>();
+    let keep_off = d
+        .coverage_footprints(kind)
+        .into_iter()
+        .filter(|(_, brushed)| *brushed)
+        .map(|(f, _)| Blocker { x: f.x, z: f.z, radius: if f.tree { params.plant_radius } else { f.radius } })
+        .collect::<Vec<_>>();
     let size = |k: &str| sizes.get(k).copied().unwrap_or(UNKNOWN_ROCK);
-    let result = generate(&Input { kind, grid: &grid, context: Some(context), blockers: &blockers, keep_off: &keep_off, rocks, plants, rock_size: &size, params, seed });
+    let result = generate(&Input {
+        kind,
+        grid: &grid,
+        context: Some(context),
+        blockers: &blockers,
+        keep_off: &keep_off,
+        rocks,
+        plants,
+        rock_size: &size,
+        params,
+        seed,
+    });
     (result, grid, unknown)
 }
 
@@ -745,7 +820,13 @@ fn summary_of(result: &[Differential]) -> String {
     let (low, small) = (count(|s| matches!(s, State::TooLow(_))), count(|s| matches!(s, State::TooSmall(_))));
 
     // How low the too low ones are (what "rise at least" would have to come down to), from the lowest to the highest.
-    let mut rises = result.iter().filter_map(|d| match d.state { Some(State::TooLow(r)) => Some(r), _ => None }).collect::<Vec<_>>();
+    let mut rises = result
+        .iter()
+        .filter_map(|d| match d.state {
+            Some(State::TooLow(r)) => Some(r),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     rises.sort_unstable_by(f32::total_cmp);
     let low = match (rises.first(), rises.get(rises.len() / 2), rises.last()) {
         (Some(a), Some(m), Some(b)) if rises.len() > 1 => format!("{low} too low ({a:.1} .. {b:.1} m, half under {m:.1} m)"),
@@ -759,7 +840,10 @@ fn summary_of(result: &[Differential]) -> String {
     format!(
         "{} slope(s): {} covered with {} rock(s), {} plant(s) and {} exclusion polygon(s), {around} of them around buildings; left alone: {low}, \
          {small} too small{by_water}.",
-        result.len(), kept.len(), kept.iter().map(|d| d.rocks.len()).sum::<usize>(), kept.iter().map(|d| d.plants.len()).sum::<usize>(),
+        result.len(),
+        kept.len(),
+        kept.iter().map(|d| d.rocks.len()).sum::<usize>(),
+        kept.iter().map(|d| d.plants.len()).sum::<usize>(),
         kept.iter().map(|d| d.exclusions.len()).sum::<usize>(),
     )
 }
@@ -780,7 +864,8 @@ fn owners(g: &Grid, result: &[Differential]) -> Vec<u32> {
 /// differentials and of the ones left alone (red), a cross where each rock (grey) and plant (green) goes, and the exclusion polygons (blue).
 fn preview_lines(d: &TileDocument, g: &Grid, result: &[Differential]) -> Vec<OverlayVertex> {
     let mut o = Overlay::default();
-    let (green, orange, red) = (overlay_colour(0.3, 0.9, 0.3, 1.0), overlay_colour(1.0, 0.6, 0.15, 1.0), overlay_colour(0.95, 0.2, 0.2, 1.0));
+    let (green, orange, red) =
+        (overlay_colour(0.3, 0.9, 0.3, 1.0), overlay_colour(1.0, 0.6, 0.15, 1.0), overlay_colour(0.95, 0.2, 0.2, 1.0));
     let (grey, blue, cyan) = (overlay_colour(0.8, 0.8, 0.8, 1.0), overlay_colour(0.3, 0.6, 1.0, 1.0), overlay_colour(0.3, 0.95, 0.95, 1.0));
     let t = d.tile();
     let up = 0.3;
@@ -865,7 +950,9 @@ fn kind_title(kind: Kind) -> &'static str {
 fn kind_tip(kind: Kind) -> &'static str {
     match kind {
         Kind::Cliffs => "Inland slopes and cliffs steeper than the angle, whose foot is over the sea and out of the rivers",
-        Kind::Coast => "The ground by the sea (under 0 m, reached from the tile's edge) that units can't walk; its bands measured from the sea",
+        Kind::Coast => {
+            "The ground by the sea (under 0 m, reached from the tile's edge) that units can't walk; its bands measured from the sea"
+        }
         Kind::Riverbank => "The ground by a river or a water plane that units can't walk; its bands measured from the water's surface",
     }
 }
@@ -915,7 +1002,15 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
         f("under the water", &mut p.water_below, 0.05, 0.0, 10.0, "%.1f m", "How deep into the water the waterline band goes (rocks only)");
     } else {
         f("steeper than", &mut p.slope_deg, 0.2, 5.0, 85.0, "%.1f deg", "A slope steeper than this is a differential");
-        f("foot over the sea", &mut p.sea_margin, 0.05, 0.0, 50.0, "%.1f m", "A slope whose foot is lower is the coast's (and one whose foot is in a river, the banks')");
+        f(
+            "foot over the sea",
+            &mut p.sea_margin,
+            0.05,
+            0.0,
+            50.0,
+            "%.1f m",
+            "A slope whose foot is lower is the coast's (and one whose foot is in a river, the banks')",
+        );
     }
 
     f("rise at least", &mut p.min_rise, 0.05, 0.0, 100.0, "%.1f m", "A lower one (a ramp, a bump) is left alone");
@@ -944,7 +1039,9 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
     per100("on the face", &mut p.rock_density_face, "Rocks per 100 square metres of the face band");
     changed |= gui::checkbox("scale the rocks", &mut p.scale_rocks);
     if gui::is_item_hovered() {
-        gui::set_tooltip("A building's scale is the editor's: TEd has none, and whether Attila honours it is not known. Off: every rock at scale 1.");
+        gui::set_tooltip(
+            "A building's scale is the editor's: TEd has none, and whether Attila honours it is not known. Off: every rock at scale 1.",
+        );
     }
 
     if p.scale_rocks {
@@ -961,7 +1058,9 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
     }
 
     if gui::is_item_hovered() {
-        gui::set_tooltip("The ground a rock's base is put on. The lowest never lets its downhill side float, but buries big rocks on steep faces.");
+        gui::set_tooltip(
+            "The ground a rock's base is put on. The lowest never lets its downhill side float, but buries big rocks on steep faces.",
+        );
     }
 
     let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
@@ -976,7 +1075,15 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
     f("sunk", &mut sink, 0.5, 0.0, 90.0, "%.0f %% of its height", "How much of each rock goes under the ground it stands on");
     p.sink = sink / 100.0;
     let mut visible = p.min_visible * 100.0;
-    f("at least visible", &mut visible, 0.5, 0.0, 100.0, "%.0f %% of its height", "How much of each rock stays over the ground at its centre, whatever the rest says");
+    f(
+        "at least visible",
+        &mut visible,
+        0.5,
+        0.0,
+        100.0,
+        "%.0f %% of its height",
+        "How much of each rock stays over the ground at its centre, whatever the rest says",
+    );
     p.min_visible = visible / 100.0;
 
     gui::separator_text("Plants");
@@ -1009,8 +1116,24 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
         }
     };
 
-    f("clump: plants within", &mut p.cluster_distance, 0.1, 0.0, 100.0, "%.1f m", "Plants this near are one clump, with one polygon around it");
-    f("clump: at most", &mut p.max_cluster, 0.5, 1.0, 500.0, "%.0f m across", "No clump gets wider (its polygon would cover the land between)");
+    f(
+        "clump: plants within",
+        &mut p.cluster_distance,
+        0.1,
+        0.0,
+        100.0,
+        "%.1f m",
+        "Plants this near are one clump, with one polygon around it",
+    );
+    f(
+        "clump: at most",
+        &mut p.max_cluster,
+        0.5,
+        1.0,
+        500.0,
+        "%.0f m across",
+        "No clump gets wider (its polygon would cover the land between)",
+    );
     f("margin", &mut p.exclusion_margin, 0.05, 0.0, 50.0, "%.1f m", "Around each plant (and its own radius) in the polygon");
     changed
 }

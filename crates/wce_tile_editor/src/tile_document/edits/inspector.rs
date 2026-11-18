@@ -545,7 +545,12 @@ impl TileDocument {
 
                     // A building's scale: the editor's (TEd has none), for the game's building list; whether Attila honours it is not known.
                     if self.tile().tscene().type_of(e) == "BUILDING_INSTANCE" {
-                        const SCALE: Prop = Prop { attr: wce_tile::project_files::SCALE_ATTR, kind: Kind::Float, rule: wce_tile::properties::Rule::Normal, twin: None };
+                        const SCALE: Prop = Prop {
+                            attr: wce_tile::project_files::SCALE_ATTR,
+                            kind: Kind::Float,
+                            rule: wce_tile::properties::Rule::Normal,
+                            twin: None,
+                        };
                         let mut v = self.tile().tscene().get(e, SCALE.attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
                         if ins.edit_float("wce_scale", "scale (editor)", &mut v, 0.01, 0.05, 20.0) && editable {
                             self.set_property(e, &SCALE, &format_float(v), base + 6);

@@ -175,7 +175,14 @@ impl Params {
     pub fn for_kind(kind: Kind) -> Self {
         match kind {
             Kind::Cliffs => Self::default(),
-            Kind::Coast => Self { min_rise: 1.0, foot_up: 2.0, foot_out: 3.0, rock_density_foot: 1.0 / 8.0, plant_density: 1.0 / 30.0, ..Self::default() },
+            Kind::Coast => Self {
+                min_rise: 1.0,
+                foot_up: 2.0,
+                foot_out: 3.0,
+                rock_density_foot: 1.0 / 8.0,
+                plant_density: 1.0 / 30.0,
+                ..Self::default()
+            },
             Kind::Riverbank => Self { min_rise: 0.5, min_area: 10.0, foot_up: 1.5, foot_out: 2.0, water_reach: 4.0, ..Self::default() },
         }
     }
@@ -235,10 +242,32 @@ impl Params {
     }
 
     const NAMES: [&'static str; 26] = [
-        "slope_deg", "min_rise", "min_area", "foot_up", "foot_out", "top_margin", "rock_density_foot", "rock_density_face", "plant_density",
-        "plant_spacing", "rock_scale_foot_min", "rock_scale_foot_max", "rock_scale_face_min", "rock_scale_face_max", "plant_scale_min",
-        "plant_scale_max", "sink", "min_visible", "building_clearance", "cluster_distance", "max_cluster", "plant_radius", "exclusion_margin",
-        "sea_margin", "water_reach", "water_below",
+        "slope_deg",
+        "min_rise",
+        "min_area",
+        "foot_up",
+        "foot_out",
+        "top_margin",
+        "rock_density_foot",
+        "rock_density_face",
+        "plant_density",
+        "plant_spacing",
+        "rock_scale_foot_min",
+        "rock_scale_foot_max",
+        "rock_scale_face_min",
+        "rock_scale_face_max",
+        "plant_scale_min",
+        "plant_scale_max",
+        "sink",
+        "min_visible",
+        "building_clearance",
+        "cluster_distance",
+        "max_cluster",
+        "plant_radius",
+        "exclusion_margin",
+        "sea_margin",
+        "water_reach",
+        "water_below",
     ];
 
     fn numbers(&self) -> Vec<(&'static str, f32)> {
@@ -618,7 +647,11 @@ pub fn classify(input: &Input) -> Classified {
             if (x - sx).hypot(z - sz) <= reach && (h - f).abs() < (h - t).abs() && h >= f - floor {
                 ring[nb] = r;
                 source[nb] = s;
-                if wet(h, f) { regions[r].wet.push(nb) } else { regions[r].foot.push(nb) }
+                if wet(h, f) {
+                    regions[r].wet.push(nb)
+                } else {
+                    regions[r].foot.push(nb)
+                }
                 queue.push_back(nb);
             }
         }
@@ -681,7 +714,16 @@ pub fn classify(input: &Input) -> Classified {
 /// counting what is there (`rocks`, `plants`: the tile's coverage and the stroke's, their radius): a dab over a covered place adds
 /// nothing. Clear of the buildings and of what is there.
 #[allow(clippy::too_many_arguments)]
-pub fn scatter(input: &Input, c: &Classified, at: (f32, f32), radius: f32, factor: f32, rocks: &[Blocker], plants: &[Blocker], seed: u64) -> (Vec<Placed>, Vec<Placed>) {
+pub fn scatter(
+    input: &Input,
+    c: &Classified,
+    at: (f32, f32),
+    radius: f32,
+    factor: f32,
+    rocks: &[Blocker],
+    plants: &[Blocker],
+    seed: u64,
+) -> (Vec<Placed>, Vec<Placed>) {
     let g = input.grid;
     let p = &input.params;
     if c.band.len() != g.nx * g.nz {
@@ -695,7 +737,15 @@ pub fn scatter(input: &Input, c: &Classified, at: (f32, f32), radius: f32, facto
     let cells = |bands: &[Band]| {
         let (x0, x1) = (g.index_x(at.0 - radius), g.index_x(at.0 + radius));
         let (z0, z1) = (g.index_z(at.1 - radius), g.index_z(at.1 + radius));
-        (z0..=z1).flat_map(|z| (x0..=x1).map(move |x| z * g.nx + x)).filter(|&i| bands.contains(&c.band[i]) && { let (x, z) = g.at(i); in_circle(x, z) }).collect::<Vec<_>>()
+        (z0..=z1)
+            .flat_map(|z| (x0..=x1).map(move |x| z * g.nx + x))
+            .filter(|&i| {
+                bands.contains(&c.band[i]) && {
+                    let (x, z) = g.at(i);
+                    in_circle(x, z)
+                }
+            })
+            .collect::<Vec<_>>()
     };
 
     // How many more a band's cells take: its area times the density, less those already in it.
@@ -706,7 +756,10 @@ pub fn scatter(input: &Input, c: &Classified, at: (f32, f32), radius: f32, facto
 
     let mut out_rocks = vec![];
     if !input.rocks.entries.is_empty() {
-        for (bands, density, range) in [(&[Band::Foot, Band::Wet][..], p.rock_density_foot, p.rock_scale_foot), (&[Band::Face][..], p.rock_density_face, p.rock_scale_face)] {
+        for (bands, density, range) in [
+            (&[Band::Foot, Band::Wet][..], p.rock_density_foot, p.rock_scale_foot),
+            (&[Band::Face][..], p.rock_density_face, p.rock_scale_face),
+        ] {
             let cells = cells(bands);
             if cells.is_empty() {
                 continue;
@@ -748,7 +801,14 @@ pub fn scatter(input: &Input, c: &Classified, at: (f32, f32), radius: f32, facto
 
 /// A rock at a point (a draw of the key, the scale and the turn), unless it reaches into a building's clearance or onto what it keeps off,
 /// or is off the tile.
-fn throw_rock(input: &Input, buildings: &Buildings, keep_off: &Buildings, rnd: &mut Random, (x, z): (f32, f32), range: (f32, f32)) -> Option<Placed> {
+fn throw_rock(
+    input: &Input,
+    buildings: &Buildings,
+    keep_off: &Buildings,
+    rnd: &mut Random,
+    (x, z): (f32, f32),
+    range: (f32, f32),
+) -> Option<Placed> {
     let g = input.grid;
     let p = &input.params;
     let entry = input.rocks.pick(rnd.unit())?;
@@ -782,7 +842,14 @@ fn throw_rock(input: &Input, buildings: &Buildings, keep_off: &Buildings, rnd: &
 
 /// A plant at a point (a draw of the key, the scale and the turn), unless it is under the water (by the water), near a building, on what it
 /// keeps off, or off the tile. The spacing from the other plants is the caller's.
-fn throw_plant(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[f32], rnd: &mut Random, (x, z): (f32, f32)) -> Option<Placed> {
+fn throw_plant(
+    input: &Input,
+    buildings: &Buildings,
+    keep_off: &Buildings,
+    base: &[f32],
+    rnd: &mut Random,
+    (x, z): (f32, f32),
+) -> Option<Placed> {
     let g = input.grid;
     let p = &input.params;
     let pick = rnd.unit();
@@ -1036,10 +1103,12 @@ impl<'a> Buildings<'a> {
     /// Whether something of radius `r` at (x, z) keeps the clearance from every building.
     fn clear(&self, x: f32, z: f32, r: f32) -> bool {
         let key = ((x / Self::BUCKET).floor() as i32, (z / Self::BUCKET).floor() as i32);
-        self.buckets.get(&key).is_none_or(|bs| bs.iter().all(|&b| {
-            let bl = &self.list[b];
-            (bl.x - x).hypot(bl.z - z) >= bl.radius + self.clearance + r.min(Self::ITEM)
-        }))
+        self.buckets.get(&key).is_none_or(|bs| {
+            bs.iter().all(|&b| {
+                let bl = &self.list[b];
+                (bl.x - x).hypot(bl.z - z) >= bl.radius + self.clearance + r.min(Self::ITEM)
+            })
+        })
     }
 }
 
@@ -1069,7 +1138,11 @@ fn populate(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[
     // Plants: at the foot, apart from each other and off the rocks.
     if !d.foot.is_empty() && !input.plants.entries.is_empty() {
         let count = (area(&d.foot) * p.plant_density).round() as usize;
-        let rocks = d.rocks.iter().map(|r| Blocker { x: r.x, z: r.z, radius: (input.rock_size)(&r.key).radius * r.scale * 0.8 }).collect::<Vec<_>>();
+        let rocks = d
+            .rocks
+            .iter()
+            .map(|r| Blocker { x: r.x, z: r.z, radius: (input.rock_size)(&r.key).radius * r.scale * 0.8 })
+            .collect::<Vec<_>>();
         let rocks = Buildings::new(&rocks, 0.0);
         let mut tries = count * 30;
         while d.plants.len() < count && tries > 0 {
@@ -1223,7 +1296,18 @@ mod tests {
 
     fn run(g: &Grid, blockers: &[Blocker], seed: u64) -> Vec<Differential> {
         let (rocks, plants) = sets();
-        generate(&Input { kind: Kind::Cliffs, grid: g, context: None, blockers, rocks: &rocks, plants: &plants, rock_size: &size, keep_off: &[], params: Params::default(), seed })
+        generate(&Input {
+            kind: Kind::Cliffs,
+            grid: g,
+            context: None,
+            blockers,
+            rocks: &rocks,
+            plants: &plants,
+            rock_size: &size,
+            keep_off: &[],
+            params: Params::default(),
+            seed,
+        })
     }
 
     #[test]
@@ -1306,7 +1390,14 @@ mod tests {
 
     #[test]
     fn the_parameters_read_back_from_their_text() {
-        let p = Params { slope_deg: 40.5, scale_rocks: true, rock_scale_face: (0.25, 0.75), seat: Seat::Lowest, min_visible: 0.3, ..Default::default() };
+        let p = Params {
+            slope_deg: 40.5,
+            scale_rocks: true,
+            rock_scale_face: (0.25, 0.75),
+            seat: Seat::Lowest,
+            min_visible: 0.3,
+            ..Default::default()
+        };
         assert_eq!(Params::from_text(&p.to_text()), p);
         assert_eq!(Params::from_text("min_rise=7 nonsense nope=1"), Params { min_rise: 7.0, ..Default::default() });
     }
@@ -1317,7 +1408,18 @@ mod tests {
         assert!(run(&g, &[], 5).iter().flat_map(|d| &d.rocks).all(|r| r.scale == 1.0));
         let (rocks, plants) = sets();
         let params = Params { scale_rocks: true, ..Default::default() };
-        let out = generate(&Input { kind: Kind::Cliffs, grid: &g, context: None, blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, keep_off: &[], params, seed: 5 });
+        let out = generate(&Input {
+            kind: Kind::Cliffs,
+            grid: &g,
+            context: None,
+            blockers: &[],
+            rocks: &rocks,
+            plants: &plants,
+            rock_size: &size,
+            keep_off: &[],
+            params,
+            seed: 5,
+        });
         assert!(out.iter().flat_map(|d| &d.rocks).any(|r| r.scale != 1.0));
     }
 
@@ -1334,7 +1436,18 @@ mod tests {
     fn run_kind(kind: Kind, g: &Grid, c: &Context) -> Vec<Differential> {
         let (rocks, plants) = sets();
         let params = Params::for_kind(kind);
-        generate(&Input { kind, grid: g, context: Some(c), blockers: &[], rocks: &rocks, plants: &plants, rock_size: &size, keep_off: &[], params, seed: 3 })
+        generate(&Input {
+            kind,
+            grid: g,
+            context: Some(c),
+            blockers: &[],
+            rocks: &rocks,
+            plants: &plants,
+            rock_size: &size,
+            keep_off: &[],
+            params,
+            seed: 3,
+        })
     }
 
     fn kept(out: &[Differential]) -> Vec<&Differential> {
@@ -1420,7 +1533,18 @@ mod tests {
     }
 
     fn cliff_input<'a>(g: &'a Grid, rocks: &'a VegetationSet, plants: &'a VegetationSet, keep_off: &'a [Blocker]) -> Input<'a> {
-        Input { kind: Kind::Cliffs, grid: g, context: None, blockers: &[], keep_off, rocks, plants, rock_size: &size, params: Params::default(), seed: 1 }
+        Input {
+            kind: Kind::Cliffs,
+            grid: g,
+            context: None,
+            blockers: &[],
+            keep_off,
+            rocks,
+            plants,
+            rock_size: &size,
+            params: Params::default(),
+            seed: 1,
+        }
     }
 
     fn blockers(items: &[Placed]) -> Vec<Blocker> {

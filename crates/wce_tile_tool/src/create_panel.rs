@@ -1889,9 +1889,8 @@ impl TileTool {
     /// What an entry adds to the new set: a tree or a building, or a set's; `None` for anything else.
     fn set_entries_of(&mut self, e: &mut Editor, en: &Entry) -> Option<(SetKind, Vec<wce_tile::vegetation_sets::SetEntry>)> {
         match &en.make {
-            Make::Place { kind, key } if !key.is_empty() => {
-                SetKind::of_type(kind).map(|k| (k, vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]))
-            }
+            Make::Place { kind, key } if !key.is_empty() => SetKind::of_type(kind)
+                .map(|k| (k, vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }])),
 
             Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| (s.kind, s.entries.clone())),
             _ => None,

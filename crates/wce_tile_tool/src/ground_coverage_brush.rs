@@ -14,7 +14,9 @@ use wce_editor::editor::Editor;
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, overlay_colour};
-use wce_tile::ground_coverage::{Band, Blocker, Classified, Context, Grid, Input, Kind, Params, Placed, RockSize, classify, exclusions, scatter};
+use wce_tile::ground_coverage::{
+    Band, Blocker, Classified, Context, Grid, Input, Kind, Params, Placed, RockSize, classify, exclusions, scatter,
+};
 use wce_tile::vegetation_sets::VegetationSet;
 use wce_tile_editor::tile_document::TileDocument;
 
@@ -79,7 +81,12 @@ impl TileTool {
     /// Whether a left drag in the viewport is the coverage brush's: the window is open in Brush mode and nothing else is being placed or
     /// drawn (Select mode).
     pub(crate) fn coverage_brushing(&self, e: &Editor) -> bool {
-        self.coverage.open && self.coverage.brush && self.mode == TileMode::Select && self.placing.is_none() && !self.drawing && document_id(e).is_some()
+        self.coverage.open
+            && self.coverage.brush
+            && self.mode == TileMode::Select
+            && self.placing.is_none()
+            && !self.drawing
+            && document_id(e).is_some()
     }
 
     /// The brush's radius (metres).
@@ -103,7 +110,18 @@ impl TileTool {
         let d = document(e).ok_or("no tile is open")?;
         let started = std::time::Instant::now();
         let (grid, blockers, sizes, _) = crate::ground_coverage_panel::tile_base(d, &rocks, &categories);
-        let mut base = BrushBase { key, kind: self.coverage.kind, grid, context, blockers, rocks, plants, sizes, params: self.coverage.params, classified: Classified::default() };
+        let mut base = BrushBase {
+            key,
+            kind: self.coverage.kind,
+            grid,
+            context,
+            blockers,
+            rocks,
+            plants,
+            sizes,
+            params: self.coverage.params,
+            classified: Classified::default(),
+        };
         let size = |k: &str| base.size(k);
         let classified = classify(&base.input(&size));
         base.classified = classified;
@@ -197,8 +215,9 @@ impl TileTool {
         } else {
             let base = self.coverage.base.as_ref().ok_or("ground coverage: the brush has nothing worked out")?;
             let polygons = exclusions(&base.grid, &stroke.plants, &base.params);
-            d.add_coverage_stroke(kind, stroke.rocks, stroke.plants, polygons)
-                .map(|c| format!("ground coverage: {} rock(s), {} plant(s), {} exclusion polygon(s) brushed", c.rocks, c.plants, c.exclusions))
+            d.add_coverage_stroke(kind, stroke.rocks, stroke.plants, polygons).map(|c| {
+                format!("ground coverage: {} rock(s), {} plant(s), {} exclusion polygon(s) brushed", c.rocks, c.plants, c.exclusions)
+            })
         };
 
         let after = e.docs.find_as::<TileDocument>(id).map_or(before, |d| d.history().version());
@@ -214,7 +233,8 @@ impl TileTool {
         }
 
         let t = d.tile();
-        let (green, orange, cyan) = (overlay_colour(0.3, 0.9, 0.3, 1.0), overlay_colour(1.0, 0.6, 0.15, 1.0), overlay_colour(0.3, 0.95, 0.95, 1.0));
+        let (green, orange, cyan) =
+            (overlay_colour(0.3, 0.9, 0.3, 1.0), overlay_colour(1.0, 0.6, 0.15, 1.0), overlay_colour(0.3, 0.95, 0.95, 1.0));
         let (grey, red) = (overlay_colour(0.8, 0.8, 0.8, 1.0), overlay_colour(1.0, 0.25, 0.2, 1.0));
         let cross = |o: &mut Overlay, x: f32, y: f32, z: f32, c: u32| {
             o.line(Float3::new(x - 0.5, y, z), Float3::new(x + 0.5, y, z), c);
@@ -264,7 +284,13 @@ impl TileTool {
     /// # Errors
     ///
     /// No tile, no set, or the stroke failed.
-    pub fn coverage_stroke_for_script(&mut self, e: &mut Editor, erase: bool, radius: f32, points: &[(f32, f32)]) -> Result<String, String> {
+    pub fn coverage_stroke_for_script(
+        &mut self,
+        e: &mut Editor,
+        erase: bool,
+        radius: f32,
+        points: &[(f32, f32)],
+    ) -> Result<String, String> {
         self.open_coverage();
         if !self.coverage.brush {
             // As the window's Brush button: a preview of a fill goes.

@@ -593,7 +593,11 @@ pub fn to_ted_keeping(wce: Vec<u8>, keep: &[&str]) -> Result<(Vec<u8>, TedReport
                 // Many of them (the ground coverage's rocks): one line.
                 if a.name == SCALE_ATTR {
                     scales += 1;
-                } else if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) && !unset_mark {
+                } else if a.name != WCE_VERSION_ATTR
+                    && a.name != EXTRACTED_ATTR
+                    && !POLYFILLED_ATTRS.contains(&a.name.as_str())
+                    && !unset_mark
+                {
                     report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
                 }
 
