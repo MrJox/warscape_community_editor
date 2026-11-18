@@ -603,7 +603,8 @@ impl ClutterDef {
     }
 
     /// The built-in rules, from Attila's kit: its `generic` keys and its `incidental` props. Eastern markets, markets, docks, barbarian
-    /// and nordic houses, nomad camps, townhouses, farms and villas; the parts of buildings (walls, doors, towers, corners) left out.
+    /// and nordic houses, nomad camps, townhouses, stables and farms; the parts of buildings (walls, doors, towers, corners) left out. The
+    /// kit's `*_villa_*` keys are the cities' houses (`eastern_villa_house01`, `_straight01`, `_angled02`, `_atrium`), so townhouses.
     #[must_use]
     pub fn builtin() -> Vec<Self> {
         let rule = |name: &str, patterns: &str, except: &str, keys: &str| Self {
@@ -643,13 +644,13 @@ impl ClutterDef {
             rule("Nomad camps", "*yurt*|*huns*tent*", parts, "hide_1 hide_2 hide_3 hide_4 woodpile barbarian_marchingcamp_table"),
             rule(
                 "Townhouses",
-                "*townhouse*|*apartment*|*insula*|west_house_*|*_ahouse_*",
+                "*townhouse*|*apartment*|*insula*|west_house_*|*_ahouse_*|*villa_house*|*villa_straight*|*villa_angled*|*villa_atrium*",
                 parts,
                 "washingline_ground_01 washingline_ground_02 washingline_ground_03 barrel crate pavements_treepot",
             ),
             rule(
-                "Farms and villas",
-                "*villa*|*farm*|*barn*|*stables*",
+                "Stables and farms",
+                "*stables*|*farm*|*barn*",
                 parts,
                 "hay01 cart_1 cart_1_hay woodpile barrel crate kitchengarden_1 kitchengarden_2",
             ),
@@ -2021,7 +2022,10 @@ mod tests {
         assert_eq!(first("barbarian_fort_straight", "fort_wall"), None);
         assert_eq!(first("gaul_rock_01", "generic"), None);
         assert_eq!(first("roman_villa_wall_door", "generic"), None);
-        assert_eq!(first("roman_villa_house01", "generic"), Some("Farms and villas"));
+        assert_eq!(first("roman_villa_house01", "generic"), Some("Townhouses"));
+        assert_eq!(first("eastern_villa_straight01", "generic"), Some("Townhouses"));
+        assert_eq!(first("eastern_villa_stables", "generic"), Some("Stables and farms"));
+        assert_eq!(first("roman_villa_ivy", "generic"), None);
         assert_eq!(first("eastern_agora_main", "generic"), Some("Eastern markets"));
         assert_eq!(first("dock_fishing_shed_1", "generic"), Some("Docks"));
         assert_eq!(first("carport_stable", "incidental"), None);

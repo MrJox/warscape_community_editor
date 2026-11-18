@@ -153,7 +153,7 @@ gates, 10 bridges: the category alone can't tell a farm from a temple.
 1. **The kind in `wce_tile::ground_coverage`** (done): `Kind::Buildings`, `Target`, `ClutterRule`, `glob`, the ring classification,
    the props per region's rule in the fill and the brush (`Classified::owner`), the three parameters. Tests: patterns, a turned
    footprint, a ring round a matched house clear of its unmatched neighbour, the cap.
-2. **Rules in the presets** (done: `ClutterDef`, one attribute `clutter` in a preset's file and `wce_autogen_clutter` on the kind's group) and the built-in ones (markets, docks, townhouses, barbarian houses, farms and villas, from the kit's own
+2. **Rules in the presets** (done: `ClutterDef`, one attribute `clutter` in a preset's file and `wce_autogen_clutter` on the kind's group) and the built-in ones (markets, docks, townhouses, barbarian houses, stables and farms, from the kit's own
    incidental keys).
 3. **The tile's side and the window's tab** (done): `TileDocument::coverage_targets` (the real buildings by the packs' categories, else
    the kits', their models' bounds through their world matrices, a mirrored one's rectangle flipped), the rules' editor in the Around
@@ -165,7 +165,13 @@ gates, 10 bridges: the category alone can't tell a farm from a temple.
    generic keys of houses, markets, docks and villas, the nordic and barbarian houses before the townhouses.
 4. **Check on kit settlement tiles** (done 2026-11-18): settlement_nordic_cities/nordic_city_a/medium, Default, seed 7: 159 buildings
    matched (Docks 48: its fishing sheds; Barbarian and nordic houses 111), 667 props around 151 (8 with no room); hay, hides, carts and
-   woodpiles stand round the turf houses (`~/wce_re/scratch/auto_detail/check/turf_after.png`). Left: the user's look, other cultures.
+   woodpiles stand round the turf houses (`~/wce_re/scratch/auto_detail/check/turf_after.png`). Other cultures (2026-11-18): the kit's
+   `*_villa_*` keys are the cities' houses (`eastern_villa_house01`, `_straight01`, `_angled02`, `_atrium`), so they moved from
+   "Farms and villas" (hay and carts round every city house) to Townhouses, and the rule became "Stables and farms" (`*stables*`,
+   `*farm*`, `*barn*`). eastern_city_a/medium: 661 matched (Eastern markets 74, Markets 94, Docks 2, Townhouses 402, Stables and farms
+   89), 1336 props round 501; western_city_a/medium: 730 (Markets 182, Docks 46, Townhouses 422, Stables and farms 80), 1625 round 525
+   (`check/east_pair.png`). The streets of decals are not roads to the rule: a prop may stand in one (all around, the user clears it).
+   Left: the user's look.
 
 ## C. Biome areas and brush
 
