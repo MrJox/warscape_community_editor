@@ -7,20 +7,36 @@
 //! tile:
 //!
 //! ```text
-//! <TEXTURE_RULES wce_version="1">
+//! <TEXTURE_RULES wce_version="1" preset="Default">
 //!     <rule name="Rock on slopes" group="rock" variation="0" slope="35 -" slope_fade="10" breakup="25 0.5" seed="1"/>
 //!     <rule name="Mud in hollows" group="mud" variation="1.5" hollow="0.4 -" hollow_radius="12" hollow_fade="0.3"/>
 //! </TEXTURE_RULES>
 //! ```
 //!
 //! A range is two numbers, `-` for an open end; its fade is how far its edges blend, centred on them. `enabled="0"` turns a rule off.
+//! `preset` is the preset the rules were last loaded from or saved as (a name only: the rules are the tile's own copy).
+//!
+//! A tile keeps its rules in [`FILE`] beside its `tile.wce`, as its terrain layers: the editor's alone, never in the kit or the packs.
 
 use wce_formats::xml_doc::XmlDoc;
 
 use crate::height_field::{HeightField, fractal_noise};
 
+/// The owner of the rules' blend layer (`terrain_layers`): it goes under the user's layers, so what they paint goes over it.
+pub const OWNER: &str = "texture_rules";
+
 /// The root element of a rule set's text.
 pub const ROOT: &str = "TEXTURE_RULES";
+
+/// The tile's rules, beside its `tile.wce`.
+pub const FILE: &str = "texture_rules.wce";
+
+/// Rules and the preset they came from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RuleSet {
+    pub preset: String,
+    pub rules: Vec<Rule>,
+}
 
 /// A range of a condition, either end open, its edges blended over `fade` (centred on them).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -329,10 +345,15 @@ fn pixel(acc: &[f64; 16]) -> Option<[u16; 16]> {
 
 /// A rule set's text.
 #[must_use]
-pub fn text(rules: &[Rule]) -> Vec<u8> {
+pub fn text(set: &RuleSet) -> Vec<u8> {
     let num = |v: f32| crate::ted_scene::format_number(f64::from(v));
-    let mut out = format!("<{ROOT} {}=\"{}\">\n", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
-    for r in rules {
+    let mut out = format!("<{ROOT} {}=\"{}\"", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
+    if !set.preset.is_empty() {
+        out += &format!(" preset=\"{}\"", escape(&set.preset));
+    }
+
+    out += ">\n";
+    for r in &set.rules {
         out += &format!("    <rule name=\"{}\" group=\"{}\" variation=\"{}\"", escape(&r.name), escape(&r.group), num(r.variation));
         if !r.enabled {
             out += " enabled=\"0\"";
@@ -379,7 +400,7 @@ fn escape(s: &str) -> String {
 /// # Errors
 ///
 /// It is not XML, or not a rule set.
-pub fn parse(bytes: &[u8]) -> Result<Vec<Rule>, String> {
+pub fn parse(bytes: &[u8]) -> Result<RuleSet, String> {
     let doc = XmlDoc::parse(bytes.to_vec()).map_err(|e| e.to_string())?;
     let els = doc.elements();
     if els.first().is_none_or(|e| e.name != ROOT) {
@@ -388,7 +409,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Rule>, String> {
 
     let num = |e: usize, n: &str| doc.get(e, n).and_then(|v| v.trim().parse::<f32>().ok());
     let range = |e: usize, n: &str| doc.get(e, n).and_then(|v| Range::parse(&v, num(e, &format!("{n}_fade"))));
-    Ok((0..els.len())
+    let rules = (0..els.len())
         .filter(|&e| els[e].name == "rule")
         .map(|e| {
             let d = Rule::default();
@@ -409,7 +430,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Rule>, String> {
                 seed: doc.get(e, "seed").and_then(|v| v.trim().parse().ok()).unwrap_or(0),
             }
         })
-        .collect())
+        .collect();
+    Ok(RuleSet { preset: doc.get(0, "preset").unwrap_or_default(), rules })
 }
 
 /// The built-in set `Default`: rock on steep ground, mud in hollows. The groups are the kit's usual names; a tile without one lays nothing
@@ -553,12 +575,14 @@ mod tests {
 
     #[test]
     fn text_round_trip() {
-        let mut rules = default_rules();
-        rules[0].enabled = false;
-        rules[1].height = Some(Range { lo: None, hi: Some(120.5), fade: 0.0 });
-        rules[1].name = "Rock \"high\" & dry".to_owned();
-        let bytes = text(&rules);
-        assert_eq!(parse(&bytes).unwrap(), rules, "{}", String::from_utf8_lossy(&bytes));
+        let mut set = RuleSet { preset: "Default".to_owned(), rules: default_rules() };
+        set.rules[0].enabled = false;
+        set.rules[1].height = Some(Range { lo: None, hi: Some(120.5), fade: 0.0 });
+        set.rules[1].name = "Rock \"high\" & dry".to_owned();
+        let bytes = text(&set);
+        assert_eq!(parse(&bytes).unwrap(), set, "{}", String::from_utf8_lossy(&bytes));
+        let unnamed = RuleSet { preset: String::new(), rules: vec![] };
+        assert_eq!(parse(&text(&unnamed)).unwrap(), unnamed);
         assert!(parse(b"<VEGETATION_SET/>").is_err());
     }
 

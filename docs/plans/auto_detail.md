@@ -11,7 +11,8 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's step 1 done (`wce_tile::texture_rules`); the ground coverage's rebase onto this branch under way.
+Status (2026-11-18): A's steps 1 to 3 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
 
@@ -62,8 +63,10 @@ earlier one, as blend layers go over each other).
 - A **preset** is a file under the projects' `raw_data/art/texture_rule_sets/<name>.wce` (beside `vegetation_sets` and the coverage's
   presets), XML as they are. Built in: `Default` (rock on slopes, mud in hollows and by water, worn ground by roads and buildings) and a few
   by climate if the group names allow.
-- **The tile keeps its own copy** of the rules (a `WceTextureRules` element in tile.wce, TEd never sees it), and the preset's name: a tile
-  is shareable without the preset, and editing a preset does not change tiles until they load it again.
+- **The tile keeps its own copy** of the rules and the preset's name, in `texture_rules.wce` beside its `tile.wce` (as
+  `terrain_layers.wcl`; changed while building from an element in tile.wce: a file of its own needs nothing of the TEd conversion, the
+  variations' scene or the splices): a tile is shareable without the preset, and editing a preset does not change tiles until they load
+  it again. A kit save, an export and a variation's build leave the file out; Save as writes it.
 
 ### UI
 
@@ -80,10 +83,19 @@ earlier one, as blend layers go over each other).
    rule holds. Done as planned, plus a built-in `Default` (mud in hollows, rock on slopes) and the rules' reach (how far past an edit the
    result can change). The breakup moves each condition's value by up to its fade times the amount, so the inside of a range never changes
    and no spots appear far from an edge.
-2. **The owned layer under the user's**: the stack's ordering (an owned layer that goes under), the roads' sort, painting with no working
+2. **The owned layer under the user's** (done): the stack's ordering (an owned layer that goes under), the roads' sort, painting with no working
    layer into `Painted`. Tests: hand paint over the rules shows; roads stay on top; undo of a stroke and of the rules' change.
-3. **Live regeneration in the editor**: the job, the triggers, the reach-widened rectangle, combined projects. Script command
+   Done: `terrain_layers::order_of` (0 under the user's, 1 theirs, 2 on top), `UNDER_OWNERS`, `Stack::first_on_top`; the roads' and the
+   prefabs' ground follow it. Merge down stops at the rules' layer (it would go when the layer is made again). Painting with texture rules
+   and no working layer makes or picks `Painted` first (its own undo entry), for strokes, strokes along a line and Paint the whole tile.
+3. **Live regeneration in the editor** (done, but the command and the reach-widened rectangle): the job, the triggers, the reach-widened rectangle, combined projects. Script command
    `texture_rules <on|off|regenerate|load <preset>>`; a check script on a kit tile (a few tiles with `--filter`, no corpus run).
+   Done: `tile_document/texture_rules.rs`. The layer's owner is `texture_rules#<signature>`, the signature a hash of the rules, the texture
+   group slots and the heights' content (hashed again only when the field's version moves): a tile opened again does not remake it. A
+   change waits a look (a drag, a stroke), then a job remakes the **whole map** (the rectangle widened by the reach is left for when it is
+   measured to be needed); it goes in when the blend stack is as it was taken, no undo entry (an undo puts back what it is made from).
+   Edits of the rules are undo entries (`set_texture_rules`); exports wait for it after the roads (`finish_road_jobs`). Grass follows.
+   Left for step 5: the script command and the check on kit tiles.
 4. **Distances**: water (stage B's water map), roads, buildings.
 5. **Presets and the window**, the rule weight view.
 6. **Ground types per rule**.

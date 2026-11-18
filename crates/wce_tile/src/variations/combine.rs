@@ -156,6 +156,7 @@ fn read_input(input: &Input, entry: &TileEntry) -> Result<Read, String> {
         if lower == WCE_FILE
             || lower == TED_FILE
             || lower == crate::terrain_layers::FILE
+            || lower == crate::texture_rules::FILE
             || lower.ends_with(".bak")
             || MAPS.contains(&lower.as_str())
             || BOB_FILES.contains(&lower.as_str())

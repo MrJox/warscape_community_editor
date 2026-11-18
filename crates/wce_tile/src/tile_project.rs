@@ -219,6 +219,11 @@ pub struct TileProject {
     pub scene: TedScene,
     /// The terrain layers (`terrain_layers`), when the tile has any; `height`, `blend` and `ground` hold what they compose.
     pub layers: Option<crate::terrain_layers::TerrainLayers>,
+
+    /// The texture rules (`texture_rules`), when the tile has them; their layer is in `layers`' blend stack. `texture_rules_dirty`: changed
+    /// since saved (or taken away, the file to remove).
+    pub texture_rules: Option<crate::texture_rules::RuleSet>,
+    pub texture_rules_dirty: bool,
     pub height_png: Option<PngFile>,
     pub height: Option<HeightField>,
     pub height_dirty: bool,
@@ -462,7 +467,18 @@ impl TileProject {
             game_kit: None,
             variations: vec![],
             view: None,
+            texture_rules: None,
+            texture_rules_dirty: false,
         };
+
+        let rules_file = project.dir.join(crate::texture_rules::FILE);
+        if rules_file.exists() {
+            project.texture_rules = Some(
+                std::fs::read(&rules_file)
+                    .map_err(|error| format!("{}: {error}", rules_file.display()))
+                    .and_then(|b| crate::texture_rules::parse(&b).map_err(|e| format!("{}: {e}", rules_file.display())))?,
+            );
+        }
 
         let layers_file = project.dir.join(crate::terrain_layers::FILE);
         if layers_file.exists() {
@@ -916,6 +932,26 @@ impl TileProject {
             _ => {}
         }
 
+        // The texture rules, the editor's as the layers are.
+        let rules_file = out_dir.join(crate::texture_rules::FILE);
+        match &self.texture_rules {
+            Some(rules) if self.texture_rules_dirty || elsewhere => {
+                wce_foundation::files::write_replacing(&rules_file, crate::texture_rules::text(rules))
+                    .map_err(|_| format!("could not write {}", rules_file.display()))?;
+                msg += "texture rules saved. ";
+                wrote = true;
+            }
+
+            None if self.texture_rules_dirty && rules_file.exists() => {
+                std::fs::remove_file(&rules_file).map_err(|_| format!("could not remove {}", rules_file.display()))?;
+                wrote = true;
+            }
+
+            _ => {}
+        }
+
+        self.texture_rules_dirty = false;
+
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))
     }
 
@@ -1197,6 +1233,7 @@ impl TileProject {
             let skip = name == TED_FILE
                 || name == WCE_FILE
                 || name == crate::terrain_layers::FILE
+                || name == crate::texture_rules::FILE
                 || name == "height_map_0.png"
                 || (name == "blend_map.tif" && self.blend.is_some())
                 || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some())
@@ -1411,6 +1448,7 @@ impl TileProject {
                 let ours = name == TED_FILE
                     || name == WCE_FILE
                     || name == crate::terrain_layers::FILE
+                    || name == crate::texture_rules::FILE
                     || name == "height_map_0.png"
                     || (name == "blend_map.tif" && self.blend.is_some())
                     || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some())

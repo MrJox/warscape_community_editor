@@ -263,7 +263,7 @@ impl Tile {
 
         // Each over the ones before it, all under what other features own (the roads). On a stage, under its prefab's own layer too: in a
         // tile, a prefab's layer goes over the ones nested in it.
-        let mut first = height.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(height.layers.len());
+        let mut first = height.first_on_top();
         if self.stage_layer_last
             && let Some(i) = height.layers.iter().position(|l| l.owner.is_empty() && l.name == super::stage::STAGE_LAYER)
         {

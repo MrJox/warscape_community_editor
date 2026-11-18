@@ -13,6 +13,9 @@ use wce_tile::terrain_layers::{AnyState, Stack, TerrainLayers};
 
 use super::{Tile, TileDocument};
 
+/// The layer of the user's that paint goes to when the tile has texture rules and no working layer ([`TileDocument::paint_over_texture_rules`]).
+pub const PAINTED: &str = "Painted";
+
 /// A map layers go over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerType {
@@ -355,6 +358,26 @@ impl TileDocument {
         Ok(id)
     }
 
+    /// Before paint goes on the blend map: when the tile has texture rules and the paint would go to the base (no working layer), which lies
+    /// under the rules' layer and would not show where they cover it, a layer of the user's [`PAINTED`] (the first of that name, else a new
+    /// one, its own undo entry) is made the working one (docs/plans/auto_detail.md, A: hand paint goes over the rules).
+    pub(crate) fn paint_over_texture_rules(&mut self) {
+        let rules = self.project().texture_rules.is_some();
+        let s = self.project().layers.as_ref().and_then(|l| l.blend.as_ref());
+        if s.is_some_and(|s| s.working.is_some())
+            || !(rules || s.is_some_and(|s| s.layers.iter().any(|l| wce_tile::terrain_layers::order_of(&l.owner) == 0)))
+        {
+            return;
+        }
+
+        match s.and_then(|s| s.layers.iter().find(|l| l.owner.is_empty() && l.name == PAINTED)).map(|l| l.id) {
+            Some(id) => self.set_working_layer(LayerType::Blend, Some(id)),
+            None => {
+                let _ = self.add_terrain_layer(LayerType::Blend, PAINTED);
+            }
+        }
+    }
+
     /// Sets the layer edits go to (none: the base). Not an undo entry: a choice, as the brush is.
     pub fn set_working_layer(&mut self, kind: LayerType, id: Option<u64>) {
         let t = self.tile_mut();
@@ -430,7 +453,11 @@ impl TileDocument {
     pub fn merge_terrain_layer(&mut self, kind: LayerType, id: u64) {
         self.change_stack("Merge layer", kind, |p| {
             with_stack!(p, kind, |s, _f| {
-                if let Some(i) = s.user_index(id) {
+                // Not into what a procedural feature owns (the texture rules' layer, under the user's): it would go when that is made
+                // again, and merging it into the base would put it under the rules.
+                if let Some(i) = s.user_index(id)
+                    && i.checked_sub(1).is_none_or(|j| s.layers[j].owner.is_empty())
+                {
                     s.merge_down(i);
                 }
             });

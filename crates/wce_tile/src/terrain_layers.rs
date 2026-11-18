@@ -45,6 +45,23 @@ const BLOCK: u32 = 64;
 /// The states a stack keeps, past which the oldest go (their edits then undo only as far as the field's records say).
 const STATES: usize = 512;
 
+/// The owners whose layers go **under** the user's, right over the base, instead of over them: what the user paints goes over what they
+/// make (the texture rules, docs/plans/auto_detail.md). An owner is one of them when it starts with one of these.
+pub const UNDER_OWNERS: &[&str] = &[crate::texture_rules::OWNER];
+
+/// Where a layer goes in its stack by its owner: 0 under the user's layers ([`UNDER_OWNERS`]), 1 the user's (no owner), 2 the procedural
+/// features' on top (roads, walls, prefabs).
+#[must_use]
+pub fn order_of(owner: &str) -> u8 {
+    if owner.is_empty() {
+        1
+    } else if UNDER_OWNERS.iter().any(|o| owner.starts_with(o)) {
+        0
+    } else {
+        2
+    }
+}
+
 /// What a layer of a type does to a pixel, and how a pixel of a field is read and written.
 pub trait Kind {
     type Sample: Copy + Default + PartialEq;
@@ -537,14 +554,12 @@ impl<K: Kind> Stack<K> {
         self.view_hidden.contains(&id)
     }
 
-    /// A new layer; its id. A layer of the user's goes on top of theirs, under what procedural features own: those apply last.
+    /// A new layer; its id. A layer of the user's goes on top of theirs, under what procedural features own: those apply last, but for
+    /// the owners that go under the user's layers ([`UNDER_OWNERS`]), whose layers go on top of those under.
     pub fn add(&mut self, id: u64, name: &str, owner: &str) -> u64 {
         let samples = Blocks::new(self.w, self.h);
-        let at = if owner.is_empty() {
-            self.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(self.layers.len())
-        } else {
-            self.layers.len()
-        };
+        let rank = order_of(owner);
+        let at = self.layers.iter().position(|l| order_of(&l.owner) > rank).unwrap_or(self.layers.len());
         self.layers.insert(
             at,
             Layer {
@@ -568,15 +583,22 @@ impl<K: Kind> Stack<K> {
         self.index_of(id).filter(|&i| self.layers[i].owner.is_empty())
     }
 
-    /// Whether what procedural features own applies after everything else.
+    /// Whether what procedural features own applies after everything else, but for what goes under the user's layers, which applies
+    /// before them ([`order_of`]).
     #[must_use]
     pub fn owned_on_top(&self) -> bool {
-        !self.layers.windows(2).any(|w| !w[0].owner.is_empty() && w[1].owner.is_empty())
+        self.layers.windows(2).all(|w| order_of(&w[0].owner) <= order_of(&w[1].owner))
     }
 
-    /// Makes it so.
+    /// Makes it so, keeping the order within each part.
     pub fn put_owned_on_top(&mut self) {
-        self.layers.sort_by_key(|l| !l.owner.is_empty());
+        self.layers.sort_by_key(|l| order_of(&l.owner));
+    }
+
+    /// Where the layers procedural features own on top begin (the end without any): the user's layers and those under them go before.
+    #[must_use]
+    pub fn first_on_top(&self) -> usize {
+        self.layers.iter().position(|l| order_of(&l.owner) == 2).unwrap_or(self.layers.len())
     }
 
     #[must_use]
@@ -1678,6 +1700,24 @@ mod tests {
         assert!(!s.owned_on_top());
         s.put_owned_on_top();
         assert!(s.owned_on_top());
+    }
+
+    #[test]
+    fn the_texture_rules_go_under_the_users_layers() {
+        let (_, mut s) = stack();
+        s.add(1, "road", "road:1#0");
+        s.add(2, "mine", "");
+        s.add(3, "rules", crate::texture_rules::OWNER);
+        s.add(4, "mine too", "");
+        assert_eq!(s.layers.iter().map(|l| l.id).collect::<Vec<_>>(), [3, 2, 4, 1]);
+        assert!(s.owned_on_top());
+        assert_eq!(s.first_on_top(), 3);
+        assert_eq!(s.user_index(3), None);
+
+        s.layers.swap(0, 3);
+        assert!(!s.owned_on_top());
+        s.put_owned_on_top();
+        assert_eq!(s.layers.iter().map(|l| l.id).collect::<Vec<_>>(), [3, 2, 4, 1]);
     }
 
     #[test]

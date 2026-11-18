@@ -16,7 +16,7 @@ use wce_tile::road_pieces::{BASE, MAX_VARIANT, PIECES, Piece, key, read, variant
 use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_handled, sharp_points};
 use wce_tile::ted_scene::TedScene;
 
-use wce_tile::terrain_layers::{Blend, Ground as TerrainGround, Height, Kind, Stack, TerrainLayers};
+use wce_tile::terrain_layers::{Blend, Ground as TerrainGround, Height, Kind, Stack, TerrainLayers, order_of};
 
 use super::Tile;
 pub use wce_tile::new_instances::ROAD_SPLINE;
@@ -844,6 +844,9 @@ impl Tile {
         }
 
         self.take_road_items(true);
+
+        // The texture rules read the heights the roads made, and an export composes the blend map with their layer.
+        self.refresh_texture_rules_with(true);
     }
 
     /// How many destruction levels a building has: its piece files' `_destructNN` (1: one, intact).
@@ -1202,9 +1205,9 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
             parse_owner(o).filter(|o| o.variation == variation).and_then(|o| roads.iter().position(|r| r.id == o.id)).unwrap_or(0)
         }
     };
-    height.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
-    blend.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
-    ground.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
+    height.layers.sort_by_key(|l| (order_of(&l.owner), rank(&l.owner)));
+    blend.layers.sort_by_key(|l| (order_of(&l.owner), rank(&l.owner)));
+    ground.layers.sort_by_key(|l| (order_of(&l.owner), rank(&l.owner)));
 
     let (bpx, bpz) = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
     let (gpx, gpz) = (f64::from(gw) / (ex + 2.0 * border), f64::from(gh) / (ez + 2.0 * border));
