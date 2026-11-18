@@ -39,6 +39,7 @@ pub mod sources;
 pub mod splines;
 pub mod ted_scene;
 pub mod terrain_layers;
+pub mod texture_rules;
 pub mod tile_project;
 pub mod tile_sets;
 pub mod user_files;
