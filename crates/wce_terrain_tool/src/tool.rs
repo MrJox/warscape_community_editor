@@ -621,11 +621,13 @@ fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::C
     match r {
         Ok(roads) => {
             log::info(format!(
-                "terrain open {}: roads at the start, regions a level {:?}; farmland areas {} of {} ({:.1} s)",
+                "terrain open {}: roads at the start, regions a level {:?}; farmland areas {} of {}; season {:?}, climate stage {:?} ({:.1} s)",
                 i.name,
                 roads.level_counts(),
                 roads.areas_on,
                 roads.areas_on + roads.areas_off,
+                roads.start_season,
+                roads.climate_stage,
                 started.elapsed().as_secs_f64()
             ));
             Some(Arc::new(roads))
@@ -1019,8 +1021,9 @@ impl TerrainTool {
         {
             let dir = format!("terrain/campaigns/{name}");
             let frame = d.terry_frame;
-            // The climate stage's number, as the snow masks': the stage + 1 (`campaign_snow`).
-            let n = d.view_roads.as_ref().and_then(|r| r.climate_stage).unwrap_or(0) + 1;
+            // The climate stage as the snow masks' (`campaign_snow`): 0 the season's own file, n its `<season><n>` one (TDD ships
+            // `europe_sp` and `europe_sp1` to `sp4`: five stages; both its startpos and Attila's start at 0).
+            let n = d.view_roads.as_ref().and_then(|r| r.climate_stage).unwrap_or(0);
             let season = ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
             if self.weather.is_none()
                 && let Some(mut l) = crate::lighting::CampaignLighting::load(&*files, &dir, season, n, frame)

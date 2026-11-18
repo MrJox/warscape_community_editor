@@ -60,11 +60,20 @@ pub fn read_collection(doc: &XmlDoc) -> Option<EnvironmentCollection> {
     Some(EnvironmentCollection { global: doc.get(root, "global_lighting").map(path).unwrap_or_default(), spheres })
 }
 
-/// The files the engine tries for a lighting name in a season (`season`: 0 to 3) and climate stage number `n`, in order.
-pub fn season_candidates(name: &str, season: usize, n: u32) -> [String; 3] {
+/// The files the engine tries for a lighting name in a season (`season`: 0 to 3) and climate stage `n`, in order: stage 0 the season's
+/// own (`europe_sp`), stage n its numbered one (`europe_sp2`), as the snow masks (fn 0x118f6360; RenderDoc: `snow_mask_wi` at stage 0),
+/// then the season's own, then the name.
+pub fn season_candidates(name: &str, season: usize, n: u32) -> Vec<String> {
     let s = SEASONS[season.min(3)];
     let stem = name.strip_suffix(".lighting").unwrap_or(name);
-    [format!("{stem}_{s}{n}.lighting"), format!("{stem}_{s}.lighting"), name.to_owned()]
+    let mut out = vec![];
+    if n > 0 {
+        out.push(format!("{stem}_{s}{n}.lighting"));
+    }
+
+    out.push(format!("{stem}_{s}.lighting"));
+    out.push(name.to_owned());
+    out
 }
 
 /// A sphere's weight at a squared distance (fn 0x1173d760).
@@ -143,6 +152,8 @@ mod tests {
         assert_eq!(c[2], "terrain/campaigns/m/lighting/europe.lighting");
         // Attila's names already carry a season: never found with another, so spring all year.
         assert_eq!(season_candidates("l/europe_sp.lighting", 1, 1)[0], "l/europe_sp_su1.lighting");
+        // Stage 0: the season's own file first.
+        assert_eq!(season_candidates("l/europe.lighting", 0, 0), ["l/europe_sp.lighting", "l/europe.lighting"]);
     }
 
     #[test]
