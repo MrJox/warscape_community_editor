@@ -647,18 +647,13 @@ fn pixel(acc: &[f64; 16]) -> Option<[u16; 16]> {
     Some(out)
 }
 
-/// A rule set's text.
+/// The rules as `<rule .../>` lines, each after `indent`: what a rule set's file and a biome's hold.
 #[must_use]
-pub fn text(set: &RuleSet) -> Vec<u8> {
+pub fn rule_lines(rules: &[Rule], indent: &str) -> String {
     let num = |v: f32| crate::ted_scene::format_number(f64::from(v));
-    let mut out = format!("<{ROOT} {}=\"{}\"", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
-    if !set.preset.is_empty() {
-        out += &format!(" preset=\"{}\"", escape(&set.preset));
-    }
-
-    out += ">\n";
-    for r in &set.rules {
-        out += &format!("    <rule name=\"{}\" group=\"{}\" variation=\"{}\"", escape(&r.name), escape(&r.group), num(r.variation));
+    let mut out = String::new();
+    for r in rules {
+        out += &format!("{indent}<rule name=\"{}\" group=\"{}\" variation=\"{}\"", escape(&r.name), escape(&r.group), num(r.variation));
         if !r.enabled {
             out += " enabled=\"0\"";
         }
@@ -704,6 +699,19 @@ pub fn text(set: &RuleSet) -> Vec<u8> {
         out += "/>\n";
     }
 
+    out
+}
+
+/// A rule set's text.
+#[must_use]
+pub fn text(set: &RuleSet) -> Vec<u8> {
+    let mut out = format!("<{ROOT} {}=\"{}\"", crate::project_files::WCE_VERSION_ATTR, crate::project_files::WCE_VERSION);
+    if !set.preset.is_empty() {
+        out += &format!(" preset=\"{}\"", escape(&set.preset));
+    }
+
+    out += ">\n";
+    out += &rule_lines(&set.rules, "    ");
     out += &format!("</{ROOT}>\n");
     out.into_bytes()
 }
@@ -724,9 +732,16 @@ pub fn parse(bytes: &[u8]) -> Result<RuleSet, String> {
         return Err("not a texture rule set".to_owned());
     }
 
+    Ok(RuleSet { preset: doc.get(0, "preset").unwrap_or_default(), rules: rules_in(&doc) })
+}
+
+/// Every `<rule>` element of a document as a rule: a rule set's file's, a biome's.
+#[must_use]
+pub fn rules_in(doc: &XmlDoc) -> Vec<Rule> {
+    let els = doc.elements();
     let num = |e: usize, n: &str| doc.get(e, n).and_then(|v| v.trim().parse::<f32>().ok());
     let range = |e: usize, n: &str| doc.get(e, n).and_then(|v| Range::parse(&v, num(e, &format!("{n}_fade"))));
-    let rules = (0..els.len())
+    (0..els.len())
         .filter(|&e| els[e].name == "rule")
         .map(|e| {
             let d = Rule::default();
@@ -754,8 +769,7 @@ pub fn parse(bytes: &[u8]) -> Result<RuleSet, String> {
                 seed: doc.get(e, "seed").and_then(|v| v.trim().parse().ok()).unwrap_or(0),
             }
         })
-        .collect();
-    Ok(RuleSet { preset: doc.get(0, "preset").unwrap_or_default(), rules })
+        .collect()
 }
 
 /// The built-in preset's name.

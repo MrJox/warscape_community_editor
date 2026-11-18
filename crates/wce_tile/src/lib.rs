@@ -2,6 +2,7 @@
 //! a tile opened for editing with its tile database entry.
 
 pub mod battle_map;
+pub mod biomes;
 pub mod blend_field;
 pub mod brush_image;
 pub mod building_db;

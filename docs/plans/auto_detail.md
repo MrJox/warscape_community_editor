@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left) (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left). C designed, its step 1 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -165,12 +165,46 @@ gates, 10 bridges: the category alone can't tell a farm from a temple.
    matched (Docks 48: its fishing sheds; Barbarian and nordic houses 111), 667 props around 151 (8 with no room); hay, hides, carts and
    woodpiles stand round the turf houses (`~/wce_re/scratch/auto_detail/check/turf_after.png`). Left: the user's look, other cultures.
 
-## C. Biome brush (after B; questions to settle when it starts)
+## C. Biome areas and brush
 
-A preset of a biome: texture rules (A), a tree set and an undergrowth set (vegetation sets), a rock set, densities and an edge band. Painted
-with a brush or filled into a polygon: the texture into the rules' layer masked by the biome's area, the trees and rocks as coverage
-(exclusion polygons around the trees, as the coverage makes them); towards the edge, smaller trees and denser undergrowth.
+A biome is a preset of a kind of ground: its trees, undergrowth and rocks (sets, or keys inline), their densities, an edge band (smaller,
+sparser trees and denser undergrowth towards the edge) and texture rules. It is laid in **areas**: polygons drawn on the tile (and
+touched up with a brush), kept live.
 
-To settle with the user: brush, polygon or both; whether a biome area stays editable (a polygon that is made again when moved) or is laid
-once; how biomes meet BOB's procedural trees (`tree_list`) and grass (which follow the blend map, so the texture rules already steer the
-grass).
+### Decisions (user, 2026-11-18)
+
+| Question | Answer |
+|---|---|
+| How it is put on | **Polygon + brush**: an area for big regions; a brush that adds to or takes from the nearest area |
+| Editable | **Live**: an area is an editor element (as a procedural road); move a point or change its biome and its contents are made again |
+| BOB's trees | **The area is an exclusion zone**: it exports as a `VegetationExclusionPolygonInstance`, so BOB's procedural trees go there and the biome's own trees are kept |
+| Texture | **Texture rules in the area**: the biome's rules (A's) apply inside its areas only, fading out at the edge; hand paint still goes over them |
+
+### Design
+
+- `wce_tile::biomes`: the `Biome` (its props by set name or keys, densities, spacing, scale ranges, edge band, texture rules), its file
+  text (`<BIOME>` with the rules' `<rule>` children), the built-in ones from the kit's vegetation (broadleaf wood, pine forest, olive
+  grove, reeds and marsh, palm grove), and `generate` (an area's trees, undergrowth and rocks: deterministic by the area's seed, the
+  edge band by the distance to the polygon's boundary, spacing between trees, clear of what it is told to keep off).
+- A tile keeps the biomes its areas use in `biomes.wce` beside `tile.wce` (as `texture_rules.wce`): self-contained and shareable; the
+  presets are files in the projects' `raw_data/art/biomes`.
+- An area is a `WceBiomeArea` element (a closed polygon of the editor's own type, `biome` and `seed` attributes). Its contents are made
+  in the session, drawn as the tree list's trees and the roads' generated buildings are (locked, not tile.ted's), and added in a layer
+  of their own by an export (as `with_road_items`); `to_ted` turns the area into a `VegetationExclusionPolygonInstance`. The editor's
+  preview of BOB's trees takes the areas as exclusion polygons too.
+- The texture: the rules' job (A) also lays every area's biome rules, each weighted by the area's mask (1 inside past the edge band,
+  fading to 0 at the boundary).
+- The brush: a stroke's circles rasterised with the nearest area's mask on a 1 m grid (added, or taken away with Ctrl), the outline
+  traced again and simplified (one undo entry); a stroke away from every area makes a new one.
+
+### Steps (a commit per step)
+
+1. **The biome and its generation in `wce_tile`** (done: `biomes.rs`; `texture_rules::rule_lines` and `rules_in` shared with it): model, text, built-ins, `generate`. Tests: inside the polygon only, the edge band
+   (sparser, smaller trees and denser undergrowth there), the spacing, the same seed the same result, the text read back.
+2. **The area element**: Create panel entry and drawing (as the other polygons), `biomes.wce`, the `to_ted` polyfill, the exclusion in
+   the tree preview. Tests: an area exports as an exclusion polygon; the file round trip.
+3. **Live contents**: made off the editor's thread when an area or its biome changed, drawn, added by the exports.
+4. **The texture** through A's rules job with the areas' masks.
+5. **The window** (biome presets, the selected area's biome and seed) and the **brush**; script commands.
+6. **Check on kit tiles**, then the user's look.
+
