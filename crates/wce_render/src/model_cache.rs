@@ -997,8 +997,10 @@ impl ModelInner {
             return Err(format!("rmv2: version {} (expected 5 or 6)", model.version()));
         }
 
+        // A model without LODs is a blank placeholder (a 140-byte header: Attila's `ap_ruin_blank_part`, Rome's `roman_wall_12` and other
+        // wall pieces its settlements name): nothing to draw, as in the game; not an error.
         if model.lods().is_empty() {
-            return Err("no LODs".to_owned());
+            return Ok(None);
         }
 
         let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| self.mesh_of(path, block, ropes, skinned, snow);

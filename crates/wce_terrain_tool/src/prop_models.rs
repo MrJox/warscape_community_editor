@@ -438,7 +438,28 @@ impl PropModels {
                     .and_then(|f| f.read(&format!("terrain/campaigns/{name}/particle_emitter_marker.markers")).ok())
                     .map(|b| b.to_vec()),
             };
-            self.effects = Some((doc, terry_rev, bytes.map_or_else(Vec::new, |b| marker_effects(&b))));
+            let mut list = bytes.map_or_else(Vec::new, |b| marker_effects(&b));
+            // Effects the packs do not have (TDD names `gaul_campaign_vfx_blossom_vfx_autumn_leaves`): the game finds nothing and shows
+            // nothing; left out, listed once.
+            if let Some(files) = e.files() {
+                let mut missing: Vec<String> = vec![];
+                list.retain(|fx| {
+                    let found = files.exists(&format!("vfx/{}.xml", fx.effect));
+                    if !found && !missing.contains(&fx.effect) {
+                        missing.push(fx.effect.clone());
+                    }
+
+                    found
+                });
+                if !missing.is_empty() {
+                    wce_foundation::log::info(format!(
+                        "terrain {name}: placed effects naming no effect in the packs, not drawn (as in the game): {}",
+                        missing.join(", ")
+                    ));
+                }
+            }
+
+            self.effects = Some((doc, terry_rev, list));
         }
 
         let r = self.radius_cells * tf.cell;

@@ -2049,6 +2049,8 @@ impl Renderer {
             height,
         };
 
+        self.particles.campaign = scene.campaign;
+
         // The placed effects (tile VFX instances), gathered again when the scene changes.
         let units = self.camera.units;
         let scene_key = (scene.uid(), scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
