@@ -168,7 +168,10 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   10 mips: the top mip dropped by the texture setting); no sky cube, no environment cube, no engine ambient read-back (161 of 163
   campaign files have their own ambient). The projection's far plane 500 world units on a campaign map (the streaming keeps its own).
   DEVIATION, for review (the user, 2026-11-17: not settled): the skybox casts no shadow (the game's casts into every cascade;
-  outside their slices). To review: draw it into the cascades as the game does and compare (stray shadows if the editor's fit differs). Checked against the screenshots:
+  outside their slices). To review: draw it into the cascades as the game does and compare (stray shadows if the editor's fit differs).
+  Compared (2026-11-18, the view's captures `%TEMP%\wce_scratch\ce\sky_shadow.png` / `sky_noshadow.png` over Rome, `skyt_b.png` /
+  `skyt_a.png` at TDD's Rauros): casting as the game does changes nothing over Rome (mean pixel difference 0.22) but lays horizontal
+  stripes of shadow over all of Rauros' ground (the editor's cascades are not the game's): kept off, for the user's decision. Checked against the screenshots:
   the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
 - **Phase 4, the shroud plane (2026-11-17):** `wce_render` `renderer/shroud.rs`, after the fog: the game's grid (256 x 256 over +-500
   world units, the camera quantised by 1000 / 255), draped 1.1 units over a low-res map of the land LF (every 8th sample on Attila:
