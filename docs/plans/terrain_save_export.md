@@ -39,11 +39,17 @@ Keep the document open, release Busy/permission conflicts, review genuine extern
 
 **Continuity limitation:** the cache is not persisted. Repeated native LF edits, close/reopen and process/power-failure recovery have no newly established normal-baseline continuity contract. No baseline sidecar/persistence implementation is included. Retain a known original generation when evaluating those cases. This limitation is separate from the tested single-operation, open-document retry behavior.
 
-Copies retain the active folder's observations and outstanding overwrite choice. A copy cannot approve an unrelated populated active folder. Repeat Save and Undo/Redo remain relative to the owned Save generation.
+Copies retain the active folder's observations and outstanding overwrite choice, including outside edits to the original source. Choosing Overwrite for Save As approves that copy operation only; a later Save still asks about unreviewed outside changes to the original. A copy cannot approve an unrelated populated active folder. Repeat Save and Undo/Redo remain relative to the owned Save generation.
+
+When Save is part of closing, opening a replacement or quitting, the existing unsaved-changes modal shows the disk-change choice in the same window. Overwrite saves that document and resumes the waiting action, asking about any later conflicts in turn. Cancel, Escape or the modal's X aborts the waiting action and keeps the remaining edits open. Documents already saved earlier in a multi-document action stay saved. Standalone Save All also resumes its remaining documents after each Overwrite.
+
+If the graphics device is lost, the emergency Save attempts every modified, saveable document without waiting for an editor modal. It refuses unreviewed outside changes and continues with later documents. Any documents still unsaved receive recovery copies through the existing autosave system, even when periodic autosave is disabled; the native error dialog reports Save failures, recovery-copy results and the recovery folder. A device-loss exit preserves these copies for the next launch. This is best-effort recovery: a failed copy is reported, and successful ordinary Saves remain saved.
 
 Restoring an autosave reads from its recovery copy. If the owned project folder already contains files, review the Overwrite/Cancel choice before saving there. Save As can write a separate copy while that choice remains pending; it neither approves the project overwrite nor clears the restored document's unsaved status.
 
 ## Focused tests
+
+The [prompted and emergency Save contracts](../investigations/save_review_corrections.md) describe the maintainer-review corrections and their focused regression commands.
 
 Use the [README](../../README.md#build), checked-out lockfile and existing caches. Synthetic tests need no game assets or environment setup. Native-preservation tests create a fresh per-case directory under the operating system's temporary directory. Optionally set `P004_SCRATCH` to choose a different writable disposable output parent; for example in PowerShell:
 

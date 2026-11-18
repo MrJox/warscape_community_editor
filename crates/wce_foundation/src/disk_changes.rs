@@ -178,7 +178,6 @@ impl Changes {
     /// Remember a completed copy without changing the active Save destination or its
     /// outstanding overwrite choice. Source stamps include only our own publications.
     pub fn finish_copy(&mut self, attempt: Attempt) {
-        self.sources = attempt.sources;
         self.partial = Some(attempt.target);
     }
 
