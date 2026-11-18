@@ -1,6 +1,7 @@
-# A release per version tag: `vX.Y.Z` (the workspace's version) builds the editor for Windows and publishes it as
-# `wce-X.Y.Z-windows-x64.zip`, the files at the zip's root: the name and layout the self-updater (crates/wce_updater) looks for. A tag with
-# a pre-release part (`v0.2.0-beta.1`) makes a GitHub pre-release, offered only to users who ask for betas.
+# A release per version tag: `vX.Y.Z` (the workspace's version) builds the editor for Windows and as a Linux Flatpak and publishes them as
+# `wce-X.Y.Z-windows-x64.zip` (the files at the zip's root) and `wce-X.Y.Z-linux-x86_64.flatpak`: the names and layouts the self-updater
+# (crates/wce_updater) looks for. A tag with a pre-release part (`v0.2.0-beta.1`) makes a GitHub pre-release, offered only to users who ask
+# for betas.
 
 name: Release
 
@@ -17,29 +18,49 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    name: Windows build
-    runs-on: windows-2022
-    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
-
-    env:
-      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
-      CARGO_TARGET_DIR: C:\t
+  prepare:
+    name: Version and Flatpak sources
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Check the tag against the workspace version
-        shell: bash
+      - id: version
+        name: Check the tag against the workspace version
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "wce_app") | .version')
           if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
             echo "::error::the tag ${GITHUB_REF_NAME} is not the workspace version (v${version}): bump [workspace.package] version first"
             exit 1
           fi
-          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # The Flatpak builds offline: every crate of Cargo.lock as a source (packaging/flatpak/README.md).
+      - name: Make the Flatpak's cargo sources
+        run: .github/flatpak-cargo-sources.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cargo-sources
+          path: packaging/flatpak/cargo-sources.json
+
+  windows:
+    name: Windows build
+    needs: prepare
+    runs-on: windows-2022
+    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
+
+    env:
+      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
+      CARGO_TARGET_DIR: C:\t
+      VERSION: ${{ needs.prepare.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Build
         run: cargo build --release --locked -p wce_app
@@ -55,11 +76,65 @@ jobs:
           Copy-Item -Recurse tables $dist
           Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
 
-      - name: Publish the release
-        uses: softprops/action-gh-release@v3
+      - uses: actions/upload-artifact@v7
         with:
-          name: Warscape Community Editor ${{ env.VERSION }}
-          files: wce-${{ env.VERSION }}-windows-x64.zip
+          name: windows
+          path: wce-${{ env.VERSION }}-windows-x64.zip
+
+  flatpak:
+    name: Linux Flatpak
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: cargo-sources
+          path: packaging/flatpak
+
+      - name: Write the version into the metainfo
+        run: |
+          sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"${VERSION}\" date=\"$(date -u +%Y-%m-%d)\"|" \
+            packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.metainfo.xml
+
+      # The bundle names Flathub as its runtime's source: installing it adds Flathub for the runtime when it is missing.
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: wce-${{ env.VERSION }}-linux-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.yaml
+          cache-key: flatpak-builder-${{ github.sha }}
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flatpak
+          path: wce-${{ env.VERSION }}-linux-x86_64.flatpak
+
+  publish:
+    name: Publish the release
+    needs: [prepare, windows, flatpak]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Warscape Community Editor ${{ needs.prepare.outputs.version }}
+          files: |
+            dist/wce-${{ needs.prepare.outputs.version }}-windows-x64.zip
+            dist/wce-${{ needs.prepare.outputs.version }}-linux-x86_64.flatpak
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           fail_on_unmatched_files: true

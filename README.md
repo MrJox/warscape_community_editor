@@ -56,15 +56,20 @@ Each editor is a Cargo feature of `wce_app`, so a release builds only the editor
 ## Releases and updates
 
 Pushing a tag `vX.Y.Z` that matches the workspace version (`[workspace.package] version` in `Cargo.toml`) runs
-`.github/workflows/release.yml`: it builds `wce.exe` for Windows and publishes a GitHub release with `wce-X.Y.Z-windows-x64.zip`. A tag with a
-pre-release part (`v0.2.0-beta.1`) is published as a pre-release. Nightly builds run daily at 02:00 UTC (whenever new commits
-land on master) and on demand via `.github/workflows/nightly.yml`, publishing pre-releases tagged `v<version>-nightly.YYYYMMDD`
-with `wce-<version>-nightly.YYYYMMDD-windows-x64.zip`.
+`.github/workflows/release.yml`: it builds `wce.exe` for Windows and the Linux Flatpak, and publishes a GitHub release with
+`wce-X.Y.Z-windows-x64.zip` and `wce-X.Y.Z-linux-x86_64.flatpak`. A tag with a pre-release part (`v0.2.0-beta.1`) is published as a
+pre-release. Nightly builds run daily at 02:00 UTC (whenever new commits land on master) and on demand via `.github/workflows/nightly.yml`,
+publishing pre-releases tagged `v<version>-nightly.YYYYMMDD` with the same two files.
+
+On Linux, `flatpak install --user wce-X.Y.Z-linux-x86_64.flatpak` installs the release (it adds Flathub for the runtime when it is missing),
+and `flatpak run io.github.mrjox.WarscapeCommunityEditor` (or the menu entry) starts it. `scripts/flatpak.sh` builds the bundle locally; see
+[packaging/flatpak/README.md](packaging/flatpak/README.md).
 
 Help > Update Manager manages the editor's updates and rpfm's schemas. It looks for a newer release when an interactive session starts
 (release builds; Settings > General > Updates turns it off or includes pre-releases). On Windows it downloads the zip with a progress bar,
 puts its files over the running build (the replaced files are renamed `*.wce-old` and deleted on the next start) and offers to restart.
-Elsewhere it links to the release page.
+In the Flatpak it downloads the release's `.flatpak` and installs it with the host's `flatpak` over the running one, then restarts into it.
+Elsewhere (a source build) it links to the release page.
 
 rpfm's schemas (`schema_att.ron`...) are needed to read the games' db tables (the buildings' data, the climate phases, the procedural
 walls). The Update Manager compares the schemas in use with the newest commit of `Frodo45127/rpfm-schemas` and downloads every supported

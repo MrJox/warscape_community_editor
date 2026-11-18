@@ -1,0 +1,99 @@
+# The Linux release: the editor as a Flatpak, published as `wce-X.Y.Z-linux-x86_64.flatpak` beside the Windows zip (.github/workflows/release.yml,
+# nightly.yml). Built offline from this checkout: the crates from cargo-sources.json (generated from Cargo.lock, not in git: scripts/flatpak.sh
+# and the workflows make it), DXVK-native, vkd3d and SPIRV-Headers fetched here and built by cmake/linux_deps.cmake as on any Linux machine.
+#
+# The editor's updates are its own (Help > Update Manager downloads the next release's bundle and installs it with the host's `flatpak`): the
+# bundle has no repository to update from. See packaging/flatpak/README.md.
+
+app-id: io.github.mrjox.WarscapeCommunityEditor
+runtime: org.freedesktop.Platform
+# SDL3 3.4 (the editor's sdl3-sys); 25.08 has 3.2.
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: wce
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # The renderer: DXVK-native on Vulkan.
+  - --device=dri
+  # Updates, rpfm's schemas, the art resources' git remote.
+  - --share=network
+  # The games (any Steam library), the Assembly Kits and the projects, wherever they are.
+  - --filesystem=host
+  # `host` leaves out the other Flatpaks' folders: the games of Steam's Flatpak and the like, rpfm's schemas in its Flatpak.
+  - --filesystem=~/.var/app/com.valvesoftware.Steam
+  - --filesystem=~/.var/app/com.heroicgameslauncher.hgl
+  - --filesystem=~/.var/app/net.lutris.Lutris
+  - --filesystem=~/.var/app/com.usebottles.bottles
+  - --filesystem=~/.var/app/io.github.frodo45127.rpfm:ro
+  # `flatpak-spawn --host` (wce_foundation::sandbox): Launch in game runs Proton as Steam does, the art resources use the host's git and
+  # credentials, the Update Manager installs the next bundle, and the game's process is looked for in the host's process list.
+  - --talk-name=org.freedesktop.Flatpak
+  # The window's Wayland app id (SDL reads its hints from the environment): the desktop file's name, for its icon and name in the shell.
+  - --env=SDL_APP_ID=io.github.mrjox.WarscapeCommunityEditor
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/wce/cargo
+    CARGO_NET_OFFLINE: 'true'
+
+modules:
+  - name: wce
+    buildsystem: simple
+    build-commands:
+      # The sources below are where cmake/linux_deps.cmake would clone them: marked as cloned, it builds them as they are.
+      - echo v3.1.1 > build/_deps/dxvk/.wce_cloned
+      - echo vkd3d-2.1 > build/_deps/vkd3d/.wce_cloned
+      - echo vulkan-sdk-1.4.321.0 > build/_deps/spirv-headers/.wce_cloned
+      - cmake -S . -B build -G Ninja
+      # Not --locked: a nightly writes its version into Cargo.toml, which the workspace's own entries in Cargo.lock follow.
+      - cargo build --release --offline -p wce_app
+      - install -Dm755 target/release/wce /app/bin/wce
+      # DXVK-native and vkd3d-utils (with vkd3d-shader, which it needs): /app/lib is in the runtime's library path.
+      - mkdir -p /app/lib && cp -a build/_deps/prefix/lib/libdxvk_*.so* build/_deps/prefix/lib/libvkd3d*.so* /app/lib/
+      # The editor's tables (wce_tile::user_files::tables_dir finds them beside /app/bin).
+      - mkdir -p /app/share/wce && cp -r tables /app/share/wce/
+      - install -Dm644 -t /app/share/doc/wce README.md THIRD_PARTY.md
+      - install -Dm644 packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.desktop -t /app/share/applications
+      - install -Dm644 packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 packaging/flatpak/io.github.mrjox.WarscapeCommunityEditor.svg -t /app/share/icons/hicolor/scalable/apps
+    sources:
+      # This checkout, without what was built on the machine (build/ has the host's DXVK and vkd3d; they are built here against the SDK).
+      - type: dir
+        path: ../..
+        skip:
+          - .flatpak-builder
+          - .git
+          # flatpak-github-actions' build folder and repository, in the checkout.
+          - flatpak_app
+          - repo
+          - build
+          - out
+          - target
+          - scratch
+          - manifest
+
+      - type: git
+        url: https://github.com/doitsujin/dxvk.git
+        tag: v3.1.1
+        commit: b1a1c99ab52b687cf950d62c88bc2fa316b41663
+        dest: build/_deps/dxvk
+
+      # The release tarball, not git: it has the headers that a git checkout makes with Wine's widl, which the SDK does not have.
+      - type: archive
+        url: https://dl.winehq.org/vkd3d/source/vkd3d-2.1.tar.xz
+        sha256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
+        dest: build/_deps/vkd3d
+
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Headers.git
+        tag: vulkan-sdk-1.4.321.0
+        commit: 2a611a970fdbc41ac2e3e328802aed9985352dca
+        dest: build/_deps/spirv-headers
+
+      - cargo-sources.json

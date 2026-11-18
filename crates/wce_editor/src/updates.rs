@@ -105,6 +105,11 @@ impl Updates {
     }
 }
 
+/// The command that starts the editor again after an update (`exe`, or the Flatpak's `flatpak run`): `wce_updater::restart_command`.
+pub fn restart_command(exe: &Path) -> std::process::Command {
+    wce_updater::restart_command(exe)
+}
+
 /// Opens a web page in the system's browser.
 fn open_url(url: &str) {
     let opener = if cfg!(windows) {
@@ -115,7 +120,10 @@ fn open_url(url: &str) {
         "xdg-open"
     };
 
-    if let Err(e) = std::process::Command::new(opener).arg(url).spawn() {
+    // From the Flatpak, the host's opener: it shows the host's folders as they are.
+    let mut command = std::process::Command::new(opener);
+    command.arg(url);
+    if let Err(e) = wce_foundation::sandbox::on_host(command).spawn() {
         log::error(format!("cannot open {url}: {e}"));
     }
 }
@@ -199,7 +207,10 @@ impl Editor {
     /// An interactive session's start: deletes what the last update left, then checks quietly (when the settings ask for it; not under the
     /// first-run dialog). Without the current game's schema the check is made whatever the settings say: features need it.
     pub fn updates_at_start(&mut self) {
-        if let Ok(dir) = wce_updater::install_dir() {
+        // The Flatpak's folder can't be written, and its updates leave nothing there.
+        if !wce_foundation::sandbox::flatpak()
+            && let Ok(dir) = wce_updater::install_dir()
+        {
             wce_updater::remove_leftovers(&dir);
         }
 
@@ -231,13 +242,23 @@ impl Editor {
         let (tx, rx) = channel();
         let shared = progress.clone();
         std::thread::spawn(move || {
-            let result = wce_updater::install_dir().and_then(|dir| {
-                let zip = std::env::temp_dir().join(&asset.name);
-                wce_updater::download(&asset, &zip, &shared)?;
-                let installed = wce_updater::install(&zip, &dir);
-                let _ = std::fs::remove_file(&zip);
-                installed.map(|files| log::info(format!("Update: installed {} files into {}", files.len(), dir.display())))
-            });
+            // The Flatpak: its bundle, installed by the host's flatpak (`/app` can't be written).
+            let result = if wce_foundation::sandbox::flatpak() {
+                let bundle = wce_updater::download_dir().join(&asset.name);
+                wce_updater::download(&asset, &bundle, &shared).and_then(|()| {
+                    let installed = wce_updater::install_bundle(&bundle);
+                    let _ = std::fs::remove_file(&bundle);
+                    installed.map(|()| log::info(format!("Update: installed {}", asset.name)))
+                })
+            } else {
+                wce_updater::install_dir().and_then(|dir| {
+                    let zip = wce_updater::download_dir().join(&asset.name);
+                    wce_updater::download(&asset, &zip, &shared)?;
+                    let installed = wce_updater::install(&zip, &dir);
+                    let _ = std::fs::remove_file(&zip);
+                    installed.map(|files| log::info(format!("Update: installed {} files into {}", files.len(), dir.display())))
+                })
+            };
 
             let _ = tx.send(result);
         });

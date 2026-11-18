@@ -163,7 +163,10 @@ fn open_folder(path: &Path) {
         "xdg-open"
     };
 
-    if let Err(e) = std::process::Command::new(opener).arg(path).spawn() {
+    // From the Flatpak, the host's opener: it shows the host's folders as they are.
+    let mut command = std::process::Command::new(opener);
+    command.arg(path);
+    if let Err(e) = wce_foundation::sandbox::on_host(command).spawn() {
         log::error(format!("cannot open {}: {e}", path.display()));
     }
 }

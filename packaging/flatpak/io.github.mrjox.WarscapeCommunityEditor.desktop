@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Warscape Community Editor
+GenericName=Total War editor
+Comment=Edit weather, battle and campaign tiles, terrain and UI for Total War games
+Exec=wce
+Icon=io.github.mrjox.WarscapeCommunityEditor
+Terminal=false
+Categories=Development;Game;
+Keywords=Total War;Attila;Warscape;modding;map;editor;

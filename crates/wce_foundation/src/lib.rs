@@ -11,5 +11,6 @@ pub mod log;
 pub mod math;
 pub mod profile;
 pub mod samples;
+pub mod sandbox;
 pub mod settings;
 pub mod std_random;

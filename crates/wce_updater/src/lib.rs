@@ -17,6 +17,7 @@ use std::time::Duration;
 
 pub use semver::Version;
 use serde::Deserialize;
+use wce_foundation::sandbox;
 
 /// The GitHub repository the releases come from.
 pub const REPO: &str = "MrJox/warscape_community_editor";
@@ -39,9 +40,56 @@ pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("the workspace version is semver")
 }
 
-/// The release asset with this platform's build of `version`; none where no build is published (the editor is built from source there).
+/// The release asset with this platform's build of `version`: the Windows zip, or on Linux the Flatpak bundle when the editor runs as the
+/// Flatpak; none where no build is published (the editor is built from source there).
 pub fn asset_name(version: &Version) -> Option<String> {
-    (cfg!(windows) && cfg!(target_arch = "x86_64")).then(|| format!("wce-{version}-windows-x64.zip"))
+    if cfg!(windows) && cfg!(target_arch = "x86_64") {
+        Some(format!("wce-{version}-windows-x64.zip"))
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") && sandbox::flatpak() {
+        Some(format!("wce-{version}-linux-x86_64.flatpak"))
+    } else {
+        None
+    }
+}
+
+/// Where an update is downloaded to: the system's temporary folder, or in the Flatpak its cache folder (`~/.var/app/<id>/cache`, the
+/// same path on the host, where `flatpak` reads the bundle; the sandbox's `/tmp` is its own).
+pub fn download_dir() -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME").filter(|_| sandbox::flatpak()).map_or_else(std::env::temp_dir, PathBuf::from)
+}
+
+/// Installs the Flatpak bundle `bundle` over the running Flatpak, with the host's `flatpak` into the installation it came from (the
+/// user's or the system's: the system's asks for a password). A newer bundle of the same app updates it in place; the running editor
+/// keeps its files until it quits, and [`restart_command`] starts the new one.
+///
+/// # Errors
+///
+/// `flatpak` can't be run or refuses the bundle (its message).
+pub fn install_bundle(bundle: &Path) -> Result<(), String> {
+    let mut c = std::process::Command::new("flatpak");
+    c.arg("install").arg(if sandbox::flatpak_user_install() { "--user" } else { "--system" });
+    c.args(["-y", "--noninteractive", "--bundle"]).arg(bundle);
+    let out = sandbox::on_host(c).output().map_err(|e| format!("cannot run flatpak: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+
+    let message = String::from_utf8_lossy(&out.stderr);
+    Err(format!("flatpak could not install {}: {}", bundle.display(), message.trim()))
+}
+
+/// The command that starts the editor again after an update: `exe` (the running build's executable), or in the Flatpak `flatpak run`
+/// of its app on the host (the new version; the sandbox ends with this editor).
+pub fn restart_command(exe: &Path) -> std::process::Command {
+    match sandbox::flatpak_app_id() {
+        Some(id) => {
+            let mut c = std::process::Command::new("flatpak");
+            c.args(["run", &id]);
+            sandbox::on_host(c)
+        }
+
+        None => std::process::Command::new(exe),
+    }
 }
 
 /// A release newer than the running build.

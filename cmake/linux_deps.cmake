@@ -3,6 +3,7 @@
 # Needs: git, meson + ninja, glslang, a C/C++ compiler, autotools + bison + flex + widl (wine), perl, and the SDL3 and Vulkan
 # development files.
 
+# The Flatpak (packaging/flatpak) fetches the same releases itself: a new tag here goes into its manifest too.
 set(WCE_DXVK_TAG "v3.1.1" CACHE STRING "DXVK-native release to build")
 set(WCE_VKD3D_TAG "vkd3d-2.1" CACHE STRING "vkd3d release to build")
 set(WCE_SPIRV_HEADERS_TAG "vulkan-sdk-1.4.321.0" CACHE STRING "SPIRV-Headers tag (vkd3d needs them)")
@@ -105,7 +106,10 @@ if(NOT EXISTS "${WCE_VKD3D_STAMP}")
     elseif(NOT vkd3d_windows MATCHES "patched by warscape_community_editor")
         message(FATAL_ERROR "vkd3d ${WCE_VKD3D_TAG}: include/vkd3d_windows.h no longer has the ms_abi line cmake/linux_deps.cmake patches")
     endif()
-    wce_dep_run("vkd3d autogen" ${CMAKE_COMMAND} -E chdir "${src}" ${CMAKE_COMMAND} -E env ${perl_env} ./autogen.sh)
+    # A release tarball (the Flatpak's) has its configure script and the headers widl makes: autogen is for a git checkout.
+    if(NOT EXISTS "${src}/configure")
+        wce_dep_run("vkd3d autogen" ${CMAKE_COMMAND} -E chdir "${src}" ${CMAKE_COMMAND} -E env ${perl_env} ./autogen.sh)
+    endif()
     file(REMOVE_RECURSE "${src}/build")
     file(MAKE_DIRECTORY "${src}/build")
     wce_dep_run("vkd3d configure" ${CMAKE_COMMAND} -E chdir "${src}/build" ${CMAKE_COMMAND} -E env ${perl_env}

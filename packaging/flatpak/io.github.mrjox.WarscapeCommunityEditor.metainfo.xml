@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mrjox.WarscapeCommunityEditor</id>
+  <name>Warscape Community Editor</name>
+  <summary>All-in-one editor for Total War games</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.mrjox">
+    <name>MrJox</name>
+  </developer>
+  <description>
+    <p>
+      One editor for Total War: Attila (Warscape engine) content: weather and lighting, battle and campaign tiles, terrain and UI
+      layouts, rendered with the game's own shaders.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.mrjox.WarscapeCommunityEditor.desktop</launchable>
+  <url type="homepage">https://github.com/MrJox/warscape_community_editor</url>
+  <url type="bugtracker">https://github.com/MrJox/warscape_community_editor/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <!-- scripts/flatpak.sh and the workflows write the version being built here. -->
+    <release version="0.0.1" date="2026-11-18"/>
+  </releases>
+</component>

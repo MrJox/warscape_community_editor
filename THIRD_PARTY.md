@@ -39,7 +39,8 @@ The second exception to "nothing is vendored", agreed for the render scale (2026
 ## Linux build dependencies (not vendored)
 
 The Linux build keeps the D3D11 renderer and runs it on a D3D11 implementation over Vulkan. `cmake/linux_deps.cmake` fetches and builds these at
-configure time into `<build>/_deps` (nothing is committed or redistributed); `wce` links them dynamically.
+configure time into `<build>/_deps` (nothing is committed); `wce` links them dynamically. The Flatpak (below) redistributes the built
+libraries.
 
 | Component | Version | Licence | Used for |
 |---|---|---|---|
@@ -70,3 +71,11 @@ rustls-webpki and untrusted (ISC), subtle (BSD-3-Clause) and webpki-roots (CDLA-
 
 The release zip (`.github/workflows/release.yml`) ships `wce.exe` (with README.md and this file): SDL3, which sdl3-sys builds from SDL's
 source (zlib licence), is linked into it statically, so there is no `SDL3.dll` beside it.
+
+## Linux Flatpak release
+
+The Flatpak bundle (`packaging/flatpak`, built by the release and nightly workflows) ships `wce` with `libdxvk_d3d11.so`,
+`libdxvk_dxgi.so` (zlib licence) and `libvkd3d-utils.so` with `libvkd3d-shader.so` and `libvkd3d.so` (**LGPL-2.1-or-later**: their source is
+vkd3d's release tarball the manifest names, with the one change above), built in the Flatpak from the releases listed under "Linux build
+dependencies". It runs on the freedesktop.org runtime (org.freedesktop.Platform, from Flathub), which provides SDL3, the Vulkan loader and
+the rest of the system libraries; nothing of the runtime is in the bundle. The crates are those of `Cargo.lock`, as above.
