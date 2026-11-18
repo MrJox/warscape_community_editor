@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use wce_formats::xml_doc::XmlDoc;
 
-use crate::ground_coverage::{Kind, Params};
+use crate::ground_coverage::{ClutterDef, Kind, Params};
 
 /// The built-in presets' name.
 pub const BUILTIN: &str = "Default";
@@ -29,6 +29,9 @@ pub struct Preset {
     /// The sets' names (empty: none).
     pub rocks: String,
     pub plants: String,
+
+    /// Around buildings: the clutter rules (`clutter` in the file, `ClutterDef::list_to_text`).
+    pub clutter: Vec<ClutterDef>,
 }
 
 /// The folder of the presets in a raw_data folder (the projects').
@@ -39,7 +42,8 @@ pub fn presets_root(raw_data: &Path) -> PathBuf {
 impl Preset {
     /// A kind's built-in preset: its default parameters, no sets.
     pub fn builtin(kind: Kind) -> Self {
-        Self { name: BUILTIN.to_owned(), kind, params: Params::for_kind(kind), ..Default::default() }
+        let clutter = if kind == Kind::Buildings { ClutterDef::builtin() } else { vec![] };
+        Self { name: BUILTIN.to_owned(), kind, params: Params::for_kind(kind), clutter, ..Default::default() }
     }
 
     pub fn is_builtin(&self) -> bool {
@@ -47,8 +51,8 @@ impl Preset {
     }
 
     /// Whether the values are the preset's.
-    pub fn same_values(&self, params: &Params, rocks: &str, plants: &str) -> bool {
-        self.params == *params && self.rocks == rocks && self.plants == plants
+    pub fn same_values(&self, params: &Params, rocks: &str, plants: &str, clutter: &[ClutterDef]) -> bool {
+        self.params == *params && self.rocks == rocks && self.plants == plants && self.clutter == clutter
     }
 
     /// Reads a preset file.
@@ -74,13 +78,19 @@ impl Preset {
             params,
             rocks: doc.get(0, "rocks").unwrap_or_default(),
             plants: doc.get(0, "plants").unwrap_or_default(),
+            clutter: doc.get(0, "clutter").map(|t| ClutterDef::list_from_text(&t)).unwrap_or_default(),
         })
     }
 
     /// The file's text.
     pub fn text(&self) -> Vec<u8> {
+        let clutter = if self.clutter.is_empty() {
+            String::new()
+        } else {
+            format!(" clutter=\"{}\"", escape(&ClutterDef::list_to_text(&self.clutter)))
+        };
         format!(
-            "<GROUND_COVERAGE_PRESET {}=\"{}\" kind=\"{}\" rocks=\"{}\" plants=\"{}\" params=\"{}\"/>\n",
+            "<GROUND_COVERAGE_PRESET {}=\"{}\" kind=\"{}\" rocks=\"{}\" plants=\"{}\" params=\"{}\"{clutter}/>\n",
             crate::project_files::WCE_VERSION_ATTR,
             crate::project_files::WCE_VERSION,
             self.kind.name(),
@@ -150,6 +160,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clutter_rules_are_kept_in_a_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = presets_root(dir.path());
+        let mut p = Preset::builtin(Kind::Buildings);
+        assert!(!p.clutter.is_empty(), "the built-in rules");
+        assert!(Preset::builtin(Kind::Coast).clutter.is_empty());
+        p.name = "town".to_owned();
+        p.path = Some(root.join("town.wce"));
+        p.clutter.truncate(2);
+        p.clutter[1].set = "dock goods".to_owned();
+        p.save().unwrap();
+        let back = Preset::load(p.path.as_ref().unwrap(), &root).unwrap();
+        assert_eq!(back, p);
+        assert!(back.same_values(&p.params, &p.rocks, &p.plants, &p.clutter));
+        assert!(!back.same_values(&p.params, &p.rocks, &p.plants, &[]));
+    }
+
+    #[test]
     fn a_preset_is_saved_read_and_listed_by_kind() {
         let dir = tempfile::tempdir().unwrap();
         let root = presets_root(dir.path());
@@ -172,7 +200,7 @@ mod tests {
         assert_eq!((back.kind, back.folder.as_str()), (Kind::Coast, "north"));
         assert_eq!((back.rocks.as_str(), back.plants.as_str()), ("rocks & stones", "<reeds>"), "escaped and read back");
         assert_eq!(back.params, p.params);
-        assert!(back.same_values(&p.params, &p.rocks, &p.plants));
+        assert!(back.same_values(&p.params, &p.rocks, &p.plants, &p.clutter));
         assert!(coast[0].is_builtin() && !back.is_builtin());
         assert_eq!(of_kind(&all, Kind::Riverbank).len(), 1, "only the built-in");
     }

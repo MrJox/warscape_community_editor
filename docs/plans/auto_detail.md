@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's step 1 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 and 2 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -151,7 +151,7 @@ gates, 10 bridges: the category alone can't tell a farm from a temple.
 1. **The kind in `wce_tile::ground_coverage`** (done): `Kind::Buildings`, `Target`, `ClutterRule`, `glob`, the ring classification,
    the props per region's rule in the fill and the brush (`Classified::owner`), the three parameters. Tests: patterns, a turned
    footprint, a ring round a matched house clear of its unmatched neighbour, the cap.
-2. **Rules in the presets** and the built-in ones (markets, docks, townhouses, barbarian houses, farms and villas, from the kit's own
+2. **Rules in the presets** (done: `ClutterDef`, one attribute `clutter` in a preset's file and `wce_autogen_clutter` on the kind's group) and the built-in ones (markets, docks, townhouses, barbarian houses, farms and villas, from the kit's own
    incidental keys).
 3. **The tile's side and the window's tab**: the targets from the scene (the real buildings by the kits' categories, their models'
    bounds, their world turn), the rules' editor, the sets resolved; Fill and Brush.

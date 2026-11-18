@@ -62,6 +62,9 @@ pub const ROCKS_ATTR: &str = "wce_autogen_rocks";
 pub const PLANTS_ATTR: &str = "wce_autogen_plants";
 pub const PRESET_ATTR: &str = "wce_autogen_preset";
 
+/// Around buildings: the clutter rules of the last run (`ClutterDef::list_to_text`).
+pub const CLUTTER_ATTR: &str = "wce_autogen_clutter";
+
 /// What a run used, as kept on the layer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CoverageSettings {
@@ -72,6 +75,9 @@ pub struct CoverageSettings {
 
     /// The preset the values came from (they may have been changed since); empty: none known (the first version's).
     pub preset: String,
+
+    /// Around buildings: the clutter rules.
+    pub clutter: Vec<wce_tile::ground_coverage::ClutterDef>,
 }
 
 /// What a run put in.
@@ -147,6 +153,7 @@ impl TileDocument {
             rocks: doc.get(l, ROCKS_ATTR).unwrap_or_default(),
             plants: doc.get(l, PLANTS_ATTR).unwrap_or_default(),
             preset: doc.get(l, PRESET_ATTR).unwrap_or_default(),
+            clutter: doc.get(l, CLUTTER_ATTR).map(|t| wce_tile::ground_coverage::ClutterDef::list_from_text(&t)).unwrap_or_default(),
         })
     }
 
@@ -265,6 +272,9 @@ impl TileDocument {
             sc.set_attr(group, ROCKS_ATTR, &settings.rocks);
             sc.set_attr(group, PLANTS_ATTR, &settings.plants);
             sc.set_attr(group, PRESET_ATTR, &settings.preset);
+            if kind == Kind::Buildings {
+                sc.set_attr(group, CLUTTER_ATTR, &wce_tile::ground_coverage::ClutterDef::list_to_text(&settings.clutter));
+            }
             let brushed = sc.children(group).into_iter().find(|&c| sc.name(c) == BRUSHED_GROUP).map(|b| sc.element_text(b));
             sc.set_children_text(group, b"")?;
             if let Some(text) = brushed {
