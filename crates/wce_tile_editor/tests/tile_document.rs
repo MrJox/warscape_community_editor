@@ -2712,3 +2712,29 @@ fn a_biome_area_is_filled_and_exported_with_its_contents() {
     d.finish_biomes();
     assert_eq!(d.tile().biome_item_counts(), (0, 0));
 }
+
+#[test]
+fn a_biome_lays_its_texture_inside_its_area_only() {
+    use wce_tile::biomes::{AREA_TYPE, BIOME_ATTR, SEED_ATTR, builtin};
+
+    let (_dir, mut d) = open_with_texture_groups();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    // The forest floor, laid at full weight with a narrow edge: forest is slot 2, variation 1 (channel 9).
+    let mut pine = builtin().into_iter().find(|b| b.name == "Pine forest").unwrap();
+    pine.edge = 1.0;
+    pine.rules[0].strength = 1.0;
+    d.adopt_biome(&pine);
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let (x1, z1) = (ex * 0.5, ez * 0.5);
+    let attrs = BTreeMap::from([(BIOME_ATTR.to_owned(), pine.name.clone()), (SEED_ATTR.to_owned(), "1".to_owned())]);
+    let quarter =
+        Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(x1, 0.0, 0.0), Float3::new(x1, 0.0, z1), Float3::new(0.0, 0.0, z1)]);
+    d.create_with(AREA_TYPE, layer, &quarter, "", &attrs).unwrap();
+    d.finish_texture_rules();
+
+    // A blend pixel at a point of the tile (metres).
+    let at = |d: &TileDocument, x: f32, z: f32| d.tile().blend_pixel_at(x, z).unwrap();
+    assert_eq!(at(&d, x1 * 0.5, z1 * 0.5)[9], u16::MAX, "the forest floor inside");
+    assert_eq!(at(&d, ex * 0.9, ez * 0.9)[9], 0, "nothing outside");
+    assert!(d.texture_rules().is_none(), "no rules of the tile's own: the biome's alone");
+}

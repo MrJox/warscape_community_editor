@@ -121,6 +121,10 @@ pub struct Rule {
     /// that the rule's edges are not contour lines. Inside a range, past its fades, nothing changes.
     pub breakup: Option<Breakup>,
     pub seed: u32,
+
+    /// Only inside an area ([`Fields::with_areas`]' index): a biome's rule (docs/plans/auto_detail.md, C). Not in the text: the
+    /// editor sets it when it lays a biome's rules in its areas.
+    pub area: Option<usize>,
 }
 
 impl Default for Rule {
@@ -141,7 +145,32 @@ impl Default for Rule {
             ground: None,
             breakup: None,
             seed: 0,
+            area: None,
         }
+    }
+}
+
+/// An area a rule may be bound to: its polygon (metres from the map's corner, x and z) and its edge band (metres: the rule fades out
+/// over it towards the boundary).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AreaMask {
+    pub points: Vec<(f32, f32)>,
+    pub edge: f32,
+}
+
+impl AreaMask {
+    /// 1 inside past the edge band, 0 outside, smoothly between.
+    #[must_use]
+    pub fn weight(&self, x: f32, z: f32) -> f64 {
+        if self.points.len() < 3 || !crate::ground_coverage::inside(&self.points, x, z) {
+            return 0.0;
+        }
+
+        if self.edge <= 0.0 {
+            return 1.0;
+        }
+
+        smooth(f64::from(crate::biomes::boundary_distance(&self.points, x, z) / self.edge))
     }
 }
 
@@ -171,6 +200,9 @@ pub struct Fields {
 
     /// How far each place is from water, roads and buildings ([`Feature`]), when worked out.
     distances: [Option<Distances>; 3],
+
+    /// The areas rules may be bound to ([`Rule::area`]).
+    areas: Vec<AreaMask>,
 }
 
 /// What a distance condition measures to.
@@ -405,7 +437,7 @@ impl Fields {
             }
         }
 
-        Self { w, h, mpp, heights, sums, distances: [None, None, None] }
+        Self { w, h, mpp, heights, sums, distances: [None, None, None], areas: vec![] }
     }
 
     /// From a tile's height field, its samples `mpp` metres apart; `unit`, the tile's scene units a metre (the editor's metres are the
@@ -440,6 +472,13 @@ impl Fields {
         let gx = (self.height(wx + mx, wz) - self.height(wx - mx, wz)) / (2.0 * mx);
         let gz = (self.height(wx, wz + mz) - self.height(wx, wz - mz)) / (2.0 * mz);
         gx.hypot(gz).atan().to_degrees()
+    }
+
+    /// Gives the areas rules may be bound to.
+    #[must_use]
+    pub fn with_areas(mut self, areas: Vec<AreaMask>) -> Self {
+        self.areas = areas;
+        self
     }
 
     /// Gives the distances to a feature.
@@ -513,6 +552,10 @@ impl Rule {
 
         let cond = |r: &Option<Range>, v: &dyn Fn() -> f64| r.map_or(1.0, |r| r.weight(v() + n * f64::from(r.fade)));
         let mut w = f64::from(self.strength.clamp(0.0, 1.0));
+        if let Some(a) = self.area {
+            w *= fields.areas.get(a).map_or(0.0, |m| m.weight(wx as f32, wz as f32));
+        }
+
         for (range, value) in [
             (&self.height, &(|| fields.height(wx, wz)) as &dyn Fn() -> f64),
             (&self.slope, &|| fields.slope(wx, wz)),
@@ -767,6 +810,7 @@ pub fn rules_in(doc: &XmlDoc) -> Vec<Rule> {
                     Some(Breakup { scale: p.next()?.ok()?, amount: p.next()?.ok()? })
                 }),
                 seed: doc.get(e, "seed").and_then(|v| v.trim().parse().ok()).unwrap_or(0),
+                area: None,
             }
         })
         .collect()
@@ -1106,6 +1150,17 @@ mod tests {
         assert_eq!(out[32 * 64 + 50], Some([170, 170, 170, 255]), "rock's colour on the steep part");
         assert_eq!(out[32 * 64 + 10], None, "nothing on the flat");
         assert!(lays_ground(&[rock]) && !lays_ground(&default_rules()), "Default lays no ground type");
+    }
+
+    #[test]
+    fn a_rule_bound_to_an_area_fades_out_at_its_edge() {
+        let f = field(64, |_, _| 0.0)
+            .with_areas(vec![AreaMask { points: vec![(10.0, 10.0), (50.0, 10.0), (50.0, 50.0), (10.0, 50.0)], edge: 8.0 }]);
+        let r = Rule { group: "forest".to_owned(), area: Some(0), ..Rule::default() };
+        assert_eq!(r.weight(&f, 30.0, 30.0), 1.0, "inside past the edge band");
+        assert_eq!(r.weight(&f, 5.0, 30.0), 0.0, "outside");
+        assert!((r.weight(&f, 14.0, 30.0) - 0.5).abs() < 1e-6, "half way through the band");
+        assert_eq!(Rule { area: Some(3), ..r }.weight(&f, 30.0, 30.0), 0.0, "no such area");
     }
 
     #[test]

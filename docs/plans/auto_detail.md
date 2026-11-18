@@ -11,7 +11,7 @@ they are, and whole biomes painted at once. Three features, in this order, on `f
 B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
 layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left). C designed, its steps 1 to 3 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
+Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left). C designed, its steps 1 to 4 done (the rules, their layer under the user's, made live; no UI yet but the document's API). The
 ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
 
 ## Decisions (user, 2026-11-18)
@@ -208,7 +208,9 @@ touched up with a brush), kept live.
    (a content signature; a change waits a look), clear of the real buildings and the roads' texture, drawn locked through
    `preview_payloads` (trees leaning with the ground as the tree list's), added by the exports in a layer `WCE biomes`
    (`with_biome_items`, after `finish_road_jobs`). Named sets come from the tool (`set_biome_sets`).
-4. **The texture** through A's rules job with the areas' masks.
+4. **The texture** (done) through A's rules job: `Rule::area` binds a rule to an `AreaMask` of `Fields`; the job lays the tile's rules,
+   then each area's biome's (its seed mixed into theirs), each weighted by its area's mask (the biome's edge band). The layer is made
+   for areas alone too (a tile without rules of its own).
 5. **The window** (biome presets, the selected area's biome and seed) and the **brush**; script commands.
 6. **Check on kit tiles**, then the user's look.
 

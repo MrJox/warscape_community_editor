@@ -364,7 +364,7 @@ impl TileDocument {
     /// paint goes over the rules).
     pub(crate) fn paint_over_texture_rules(&mut self, kind: LayerType) {
         let rules = match kind {
-            LayerType::Blend => self.project().texture_rules.is_some(),
+            LayerType::Blend => !self.tile().all_texture_rules().0.is_empty(),
             LayerType::Ground => self.project().texture_rules.as_ref().is_some_and(|r| wce_tile::texture_rules::lays_ground(&r.rules)),
             LayerType::Height => return,
         };
