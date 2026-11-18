@@ -203,9 +203,10 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   `lines.rs` (read on a worker for the faction picked in the Terrain panel, `borders for`; default the playable faction holding the
   most regions: ASSUMPTION, nothing marks the game's) and `wce_render` `campaign_overlay.rs` (`campaignborder.hlsl` border, a strip
   of 16 columns a curve into the overlay after the rivers; the game's z over `CAMPAIGN_Z_SCALE` into the editor's square cells).
-  Checked: WRE's trade route dashed yellow in the sea west of Rome, its own border orange over the Alps. Left: the sea-region
-  borders and three land curves (docs/formats/campaign_borders.md, known gaps); the trade routes' land legs (only the sea legs drawn,
-  as the capture shows; the rule not found); a darker block of sea at the overlay's edge near the horizon (the overlay camera's d).
+  Checked: WRE's trade route dashed yellow in the sea west of Rome, its own border orange over the Alps. **Closed (2026-11-18,
+  4f7d14d4):** the grid from the world's height (REGIONS_DATA, 556.144: the three land curves), the sea-region borders and their
+  colours, the trade routes' drawn flag (land legs never drawn) and their exact decoding: capture A 950 / 950 land, 32 / 32 sea,
+  19 / 19 trade curves and 27 / 27 colours (docs/formats/campaign_borders.md). The dark block of sea: a cliff tile's floor (below).
 - **Phase 5, the weather VFX (2026-11-18; investigation and scripts in `%TEMP%\wce_scratch\campvfx`):** the precipitation is the
   lighting's: each campaign `.lighting` names a `WEATHER definition_name` (`C_rain gusty`, `C_snow stormy`, `dry desert`...; no db
   table), and the sphere blend (fn 0x11721160) takes the definition of the heaviest input (strict >, the first of a tie; the global's
@@ -287,9 +288,15 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   Rome's `roman_wall_12`...) are empty, not failed; placed effects naming no effect (TDD's
   `gaul_campaign_vfx_blossom_vfx_autumn_leaves`) left out and listed once (info); the view-type-2 emitters not reported on a
   campaign map (the game draws none there). Left as warnings: the game files' textures that are not powers of two.
-- Open: the fog-of-war switch (decision 2); the sea-region borders and three land curves;
-  the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
-  overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
+- **The fog of war (decision 2; 2026-11-18):** `wce_terrain_io::attila::shroud` (docs/formats/campaign_shroud.md: the startpos's
+  quadtree bitmaps and lines of sight, the fitted turn-1 model, the game's fill and blur; `shroud_check`: 97.5 % of capture A's
+  texels exact, 99.05 % within 16) read with the borders for the faction picked; the Terrain panel's `fog of war at the start`
+  (`terrain_fog on|off`; off by default: revealed). The renderer binds it to every reader of `s_shroud` (the bind helper, and the
+  passes that clear their textures: the terrain resolve, the cliffs, the decals, grass, the sea and lakes, borders, the light, the
+  shroud plane) with the game's constants. Checked: Italy unchanged (all seen on turn 1, as the user's screenshot), Germania beyond
+  the Danube darkened (x 0.81 over that band). Not compared with the game's at the same camera yet.
+- Open: the skybox's shadow (for the user's review: compared above); the sea colour's rebel exception (campaign_borders.md); the
+  fog of war against the game at the same camera. Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
   15 % longer north to south); the view's lens (the game's 80 degrees); the view streams short of the horizon.
 
 ## Decisions (user, 2026-11-16)

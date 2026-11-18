@@ -254,7 +254,7 @@ impl Renderer {
         self.upload();
         null_ps_srvs(&self.ctx, 16);
         self.bind(&ps);
-        bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        bind_srv(&self.ctx, &ps, "s_shroud", self.shroud_srv().as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
         bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
         let (cull, clip) = (self.camera.main_view_proj, self.camera.cb_view_proj);
@@ -280,7 +280,7 @@ impl Renderer {
         self.upload();
         null_ps_srvs(&self.ctx, 16);
         self.bind(&ps);
-        bind_srv(&self.ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        bind_srv(&self.ctx, &ps, "s_shroud", self.shroud_srv().as_ref());
         ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
         bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
         let (cull, clip) = (self.camera.main_view_proj, self.camera.cb_view_proj);

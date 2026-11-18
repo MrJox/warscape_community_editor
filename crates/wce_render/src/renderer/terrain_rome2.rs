@@ -368,7 +368,7 @@ impl Renderer {
         bind_srv(&ctx, &res_ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
         bind_srv(&ctx, &res_ps, "s_mid_distance_detail_map", detail.as_ref());
         bind_srv(&ctx, &res_ps, "s_noise_map", noise.as_ref());
-        bind_srv(&ctx, &res_ps, "s_shroud", self.res.white_srv.as_ref());
+        bind_srv(&ctx, &res_ps, "s_shroud", self.shroud_srv().as_ref());
         (self.terrain.r2_detail, self.terrain.r2_resolved) = (detail, true);
         ctx.set_vertex_buffers(0, std::slice::from_ref(&self.terrain.resolve_vb), &[24], &[0]);
         ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

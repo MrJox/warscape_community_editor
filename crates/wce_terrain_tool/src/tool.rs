@@ -1244,6 +1244,22 @@ impl TerrainTool {
                         "The faction the campaign map's borders are drawn for, as the game draws the player's: own orange, allied blue, at war red, neutral grey, rebels black (the startpos's diplomacy). The view only.",
                     );
                 }
+
+                let mut fog = self.lines.fog_on;
+                if gui::checkbox("fog of war at the start##terrain_fog", &mut fog) {
+                    self.lines.fog_on = fog;
+                    let name = e.docs.find_as::<MapDocument>(id).map(|d| map_kind(&d.name).1.to_owned());
+                    if let Some(name) = name {
+                        let pick = self.lines.faction.clone();
+                        self.lines.start(e, id, &name, pick);
+                    }
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "The faction's fog of war on the campaign's first turn, as the game builds it from the startpos (hidden land dark, explored land darkened, what it sees lit; the shroud's clouds over the hidden). Off: all revealed. The view only.",
+                    );
+                }
             }
 
             // The automatic lighting's files at the camera, with their weights.
@@ -2881,6 +2897,38 @@ impl Tool for TerrainTool {
 
                     let snow = e.scene.campaign_snow.as_ref().map_or("no snow mask".to_owned(), |s| format!("snow {}", s.mask));
                     CommandResult::success(format!("season {} ({snow}, as of the last view)", t.season))
+                })
+            },
+        );
+
+        c.add(
+            "terrain_fog",
+            "terrain_fog [on|off]",
+            "the Terrain tool: a campaign map's fog of war at the start for the borders' faction (read on a worker); then whether it is shown",
+            |e, a| {
+                with_terrain(e, |t, e| {
+                    let on = match a.first().map(String::as_str) {
+                        Some("on") => Some(true),
+                        Some("off") => Some(false),
+                        None => None,
+                        Some(_) => return CommandResult::fail("usage: terrain_fog [on|off]"),
+                    };
+                    if let Some(on) = on
+                        && on != t.lines.fog_on
+                    {
+                        t.lines.fog_on = on;
+                        let name = e.docs.find_as::<MapDocument>(t.shown).map(|d| map_kind(&d.name).1.to_owned());
+                        if let Some(name) = name {
+                            let pick = t.lines.faction.clone();
+                            t.lines.start(e, t.shown, &name, pick);
+                        }
+                    }
+
+                    CommandResult::success(format!(
+                        "fog of war {} (loaded: {}, as of the last view)",
+                        if t.lines.fog_on { "on" } else { "off" },
+                        t.lines.fog.is_some()
+                    ))
                 })
             },
         );
