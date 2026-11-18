@@ -191,6 +191,124 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "vfx_handles",
+        "vfx_handles",
+        "VFX: the focused emitter's handles, where they are in the viewport image (pixels) and their values (metres)",
+        |e, _| {
+            with_vfx(e, |t, e| {
+                t.refresh_index(e);
+                let list = crate::gizmos::handle_list(t, e);
+                if list.is_empty() {
+                    return ok("no handles (focus an emitter with a spawn ring or box)");
+                }
+
+                let lines = list
+                    .iter()
+                    .map(|(h, px, v)| match px {
+                        Some((x, y)) => format!("{h:?} {x:.0} {y:.0} {v:.3}"),
+                        None => format!("{h:?} off-screen {v:.3}"),
+                    })
+                    .collect::<Vec<_>>();
+                ok(lines.join("\n"))
+            })
+        },
+    );
+
+    c.add(
+        "vfx_drag_handle",
+        "vfx_drag_handle Outer|Inner|BoxX|BoxZ|BoxY <dx> <dy>",
+        "VFX test: drag a handle of the focused emitter by (dx, dy) image pixels with the mouse, from where it is",
+        |e, a| {
+            let [name, dx, dy] = a else { return fail("usage: vfx_drag_handle <handle> <dx> <dy>") };
+            let (Ok(dx), Ok(dy)) = (dx.parse::<f32>(), dy.parse::<f32>()) else { return fail("dx and dy are numbers") };
+            let at = with_vfx(e, |t, e| {
+                t.refresh_index(e);
+                match crate::gizmos::handle_list(t, e).into_iter().find(|(h, _, _)| format!("{h:?}") == *name) {
+                    Some((_, Some((x, y)), _)) => ok(format!("{x} {y}")),
+                    _ => fail(format!("no handle {name} on screen")),
+                }
+            });
+            if !at.ok {
+                return at;
+            }
+
+            let mut xy = at.message.split(' ').filter_map(|v| v.parse::<f32>().ok());
+            let (Some(x), Some(y)) = (xy.next(), xy.next()) else { return fail("no position") };
+            let args = ["drag", &x.to_string(), &y.to_string(), &(x + dx).to_string(), &(y + dy).to_string(), "12"].map(str::to_owned);
+            CommandRegistry::run_args(e, "mouse", &args)
+        },
+    );
+
+    c.add("vfx_new", "vfx_new <name> copy | vfx_new <name> plays <library>", "VFX: a new effect in the project, opened", |e, a| {
+        let (Some(name), Some(how)) = (a.first().cloned(), a.get(1)) else { return fail("usage: vfx_new <name> copy | plays <library>") };
+        let start = match (how.as_str(), a.get(2)) {
+            ("copy", _) => crate::new::Start::Copy,
+            ("plays", Some(lib)) => crate::new::Start::Plays(lib.clone()),
+            _ => return fail("usage: vfx_new <name> copy | plays <library>"),
+        };
+        with_vfx(e, |t, e| match crate::new::create(e, &name, &start) {
+            Ok(path) => {
+                t.open_later(path.clone());
+                ok(format!("created {path}"))
+            }
+
+            Err(m) => fail(m),
+        })
+    });
+
+    c.add(
+        "vfx_add_property",
+        "vfx_add_property <emitter> [property [quality]]",
+        "VFX: add a property an emitter lacks, as vanilla writes it (no property: list them); a quality 1 or 2 adds that variant of one it has",
+        |e, a| {
+            let Some(em) = a.first().cloned() else { return fail("usage: vfx_add_property <emitter> [property [quality]]") };
+            let name = a.get(1).cloned();
+            let q = a.get(2).and_then(|x| x.parse::<i32>().ok()).unwrap_or(0);
+            with_vfx(e, |t, e| {
+                t.refresh_index(e);
+                let Some(table) = t.defaults.get(e.vfs()) else { return fail("still reading the game's effects: try again") };
+                let Some(emitter) = t.ix.emitter(&em).cloned() else { return fail(format!("no emitter {em}")) };
+                let Some(d) = crate::tool::document_mut(e) else { return fail("no effect open") };
+                let has = |n: &str, q: i32| emitter.props.iter().any(|p| p.name == n && p.quality == q);
+                let missing = table
+                    .get(&crate::defaults::emitter_scope(&emitter.kind))
+                    .into_iter()
+                    .flatten()
+                    .filter(|tpl| !has(&tpl.name, 0))
+                    .collect::<Vec<_>>();
+                let Some(name) = name else {
+                    if missing.is_empty() {
+                        return ok(format!("{em} has every property vanilla's {} emitters have", emitter.kind));
+                    }
+
+                    return ok(missing.iter().map(|t| format!("{} ({} uses): {}", t.name, t.uses, t.text)).collect::<Vec<_>>().join("\n"));
+                };
+
+                let text = if q > 0 {
+                    let Some(base) = emitter.props.iter().find(|p| p.name == name && p.quality == 0) else {
+                        return fail(format!("{em} has no {name} to make a variant of"));
+                    };
+                    if has(&name, q) {
+                        return fail(format!("{em} has a quality {q} {name} already"));
+                    }
+
+                    crate::defaults::with_quality(&crate::defaults::element_text(d.xml(), base.elem), q)
+                } else {
+                    let Some(tpl) = missing.iter().find(|t| t.name == name) else {
+                        return fail(format!("{name}: {em} has it, or no vanilla emitter of its type does"));
+                    };
+                    tpl.text.clone()
+                };
+
+                match d.add_child_text(emitter.elem, text.as_bytes(), &format!("Add {name}")) {
+                    Ok(_) => ok(text),
+                    Err(m) => fail(m),
+                }
+            })
+        },
+    );
+
     c.add("vfx_frame", "vfx_frame", "VFX preview: the camera on the effect", |e, _| {
         with_vfx(e, |t, e| {
             t.frame_camera(e);
@@ -218,6 +336,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                         let c = crate::curves::Curves::parse(&String::from_utf8_lossy(&text));
                         let names = c.curves.iter().map(|c| format!("{} ({} keys)", c.name(), c.keys.len())).collect::<Vec<_>>();
                         out += &format!("  {}: {}\n", pr.name, names.join(", "));
+                        let text = c.write();
+                        out += &format!("    {}\n", text.chars().take(160).collect::<String>());
                     }
                 }
             }

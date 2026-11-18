@@ -652,6 +652,11 @@ pub struct RenderSettings {
     /// Changes when an open vfx/ or weather/ XML is edited: the particles reload.
     pub vfx_revision: u64,
 
+    /// The effects whose files changed since the renderer last looked (`vfx/<name>.xml` -> `name`), with `vfx_revision`: only the
+    /// placed effects that read them are read again. `vfx_changed_all`: not known, all are. The renderer empties both.
+    pub vfx_changed: Vec<String>,
+    pub vfx_changed_all: bool,
+
     /// The particles' clock runs at this rate (1 the game's, 0 paused): the VFX tool's playback.
     pub particle_time_scale: f32,
     pub cloud_seed: u32,
@@ -716,6 +721,8 @@ impl Default for RenderSettings {
             selection_outline_px: 2.0,
             vfx_revision: 0,
             particle_time_scale: 1.0,
+            vfx_changed: vec![],
+            vfx_changed_all: false,
             cloud_seed: 1,
             sea_state: "calm_westerly".to_owned(),
             wind_dir_seed: 1,
@@ -2072,7 +2079,13 @@ impl Renderer {
         // An open vfx file edited: the placed effects read their definitions again (their particles carry on).
         if self.vfx_world_revision != self.settings.vfx_revision && self.game != game::RenderGame::Rome2 {
             self.vfx_world_revision = self.settings.vfx_revision;
-            self.particles.reload_world_definitions();
+            let changed = std::mem::take(&mut self.settings.vfx_changed);
+            if std::mem::take(&mut self.settings.vfx_changed_all) {
+                self.particles.reload_world_definitions();
+            } else {
+                self.particles.reload_world_files(&changed);
+            }
+
             self.vfx_scene = (0, u64::MAX, 0, 0, 0, 0);
         }
 

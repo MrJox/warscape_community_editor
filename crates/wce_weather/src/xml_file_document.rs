@@ -307,6 +307,23 @@ impl XmlFileDocument {
         Ok(sel)
     }
 
+    /// Adds `raw` (one element's text) as the last child of `parent`, one undo entry named `label`. Returns the new element.
+    ///
+    /// # Errors
+    ///
+    /// `raw` is not one element, or the parent has text content.
+    pub fn add_child_text(&mut self, parent: usize, raw: &[u8], label: &str) -> Result<usize, String> {
+        let xml = self.xml();
+        if parent >= xml.elements().len() {
+            return Err("no such element".to_owned());
+        }
+
+        let (next, sel) = xml.with_child_text(parent, raw).map_err(|e| e.to_string())?;
+        let before = Arc::new(xml.clone());
+        self.history.push(Box::new(XmlSnapshotCommand { name: label.to_owned(), before, after: Arc::new(next) }));
+        Ok(sel)
+    }
+
     /// Replaces an element's text (entity-encoded `raw`), one undo entry: a `ranged_property`'s curves.
     ///
     /// # Errors

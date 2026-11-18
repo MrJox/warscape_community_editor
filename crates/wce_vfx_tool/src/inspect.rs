@@ -352,6 +352,7 @@ impl VfxTool {
 
 /// The Inspector of the open vfx file.
 pub fn inspect(t: &mut VfxTool, e: &mut Editor, ins: &mut dyn Inspector) {
+    let table = t.defaults.get(e.vfs());
     let Some(d) = document_mut(e) else { return };
     let ix = t.ix.clone();
     let mut action: Option<Action> = None;
@@ -452,6 +453,10 @@ pub fn inspect(t: &mut VfxTool, e: &mut Editor, ins: &mut dyn Inspector) {
                 t.prop_rows(ins, d, p, p.quality != t.quality);
             }
         }
+
+        if let Some(a) = add_row(ins, d, table.as_ref(), &crate::defaults::emitter_scope(&em.kind), em.elem, &em.props, t.quality) {
+            action = Some(a);
+        }
     }
 
     // Behaviour chains (with the focused part only: the focused emitter's).
@@ -494,6 +499,12 @@ pub fn inspect(t: &mut VfxTool, e: &mut Editor, ins: &mut dyn Inspector) {
 
             for p in props {
                 t.prop_rows(ins, d, p, false);
+            }
+
+            if needle.is_empty()
+                && let Some(a) = add_row(ins, d, table.as_ref(), &crate::defaults::modifier_scope(&m.fragment), m.elem, &m.props, 0)
+            {
+                action = Some(a);
             }
         }
     }
@@ -573,6 +584,13 @@ pub fn inspect(t: &mut VfxTool, e: &mut Editor, ins: &mut dyn Inspector) {
         }
         Some(Action::Focus(p)) => t.focus = if t.focus.as_ref() == Some(&p) { None } else { Some(p) },
         Some(Action::OpenLibrary(lib)) => t.open_library(&lib),
+        Some(Action::AddProperty { parent, text, label }) => {
+            let Some(d) = document_mut(e) else { return };
+            match d.add_child_text(parent, text.as_bytes(), &label) {
+                Ok(_) => e.status(&label, false),
+                Err(m) => e.status(&format!("{label}: {m}"), true),
+            }
+        }
         Some(a) => {
             let Some(d) = document_mut(e) else { return };
             let result = match &a {
@@ -602,6 +620,13 @@ enum Action {
     Duplicate(Part),
     Delete(Part),
     DuplicateChain(String),
+
+    /// A property's element added to an emitter or modifier.
+    AddProperty {
+        parent: usize,
+        text: String,
+        label: String,
+    },
     DeleteChain(String),
     OpenLibrary(String),
 }
@@ -637,6 +662,63 @@ fn part_buttons(t: &VfxTool, ins: &mut dyn Inspector, part: &Part, elem: usize) 
         3 => Some(Action::Duplicate(part.clone())),
         _ => Some(Action::Delete(part.clone())),
     }
+}
+
+/// The "Add a property" row of an emitter or modifier: the properties vanilla's of its kind have and it lacks, written as vanilla's most
+/// common text; with a lower quality variant edited, also a variant of a property it has only in the base.
+fn add_row(
+    ins: &mut dyn Inspector,
+    d: &XmlFileDocument,
+    table: Option<&crate::defaults::Table>,
+    scope: &str,
+    parent: usize,
+    props: &[Prop],
+    quality: i32,
+) -> Option<Action> {
+    let field = format!("{parent}.add");
+    let Some(table) = table else {
+        ins.text(&field, "Add a property", "reading the game's effects...");
+        return None;
+    };
+
+    let has = |name: &str, q: i32| props.iter().any(|p| p.name == name && p.quality == q);
+    let mut offers = vec![];
+    if quality > 0 {
+        for p in props.iter().filter(|p| p.quality == 0 && !has(&p.name, quality)) {
+            let text = crate::defaults::with_quality(&crate::defaults::element_text(d.xml(), p.elem), quality);
+            offers.push((
+                format!("{} (quality {quality} variant)", p.name),
+                text,
+                format!("Add the quality {quality} variant of {}", p.name),
+            ));
+        }
+    }
+
+    for tpl in table.get(scope).into_iter().flatten().filter(|tpl| !has(&tpl.name, 0)) {
+        offers.push((
+            format!("{}  ({} of vanilla's {} have it)", tpl.name, tpl.uses, scope.split(':').nth(1).unwrap_or_default()),
+            tpl.text.clone(),
+            format!("Add {}", tpl.name),
+        ));
+    }
+
+    if offers.is_empty() {
+        return None;
+    }
+
+    let mut choices = vec![format!("add one of {}...", offers.len())];
+    choices.extend(offers.iter().map(|o| o.0.clone()));
+    let tips = std::iter::once(String::new()).chain(offers.iter().map(|o| format!("Added as:\n{}", o.1))).collect::<Vec<_>>();
+    ins.hint(
+        "A property this one lacks, as the game's own effects of its kind write it (their most common value: the engine's own defaults          are not decoded). With a lower quality variant edited, a variant of a property it has only in the base.",
+    );
+    let mut i = 0;
+    if ins.edit_choice_tips(&field, "Add a property", &mut i, &choices, &tips) && i > 0 {
+        let (_, text, label) = offers.swap_remove(i as usize - 1);
+        return Some(Action::AddProperty { parent, text, label });
+    }
+
+    None
 }
 
 /// A reference's override of one library emitter: on or off, its tint range, its lifetime biases.

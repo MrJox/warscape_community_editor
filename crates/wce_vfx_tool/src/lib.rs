@@ -4,9 +4,11 @@
 
 pub mod commands;
 pub mod curves;
-mod gizmos;
+pub mod defaults;
+pub mod gizmos;
 mod inspect;
 pub mod model;
+pub mod new;
 pub mod ops;
 pub mod props;
 pub mod tool;

@@ -2,7 +2,7 @@
 //! live whichever tool is active (`Document::particle_file`). A tool can lay preview-only bytes over a file (the VFX tool's muted emitters,
 //! a curve while it is dragged): they win over the document's and are never saved.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,14 @@ pub struct ParticleOverlay {
 
     /// Preview-only bytes by in-pack path, with the revision their owner gave them.
     overrides: HashMap<String, (u64, Vec<u8>)>,
+
+    /// Each file's revision when the overlay was gathered last: what changed since is told to the renderer.
+    per_file: BTreeMap<String, u64>,
+}
+
+/// `vfx/a/b.xml` -> `a/b`, the name the particle system loads; None for a file that is not an effect.
+fn effect_name(path: &str) -> Option<String> {
+    Some(path.strip_prefix("vfx/")?.strip_suffix(".xml")?.to_owned())
 }
 
 impl ParticleOverlay {
@@ -69,27 +77,28 @@ impl Editor {
             self.particle_overlay.installed = Some(key);
         }
 
-        let mut rev = 0u64;
+        // Each file's revision: its document's edits, then an override over it.
+        let mut per_file = BTreeMap::<String, u64>::new();
         let mut live = vec![];
         for &id in self.docs.order() {
             let Some(d) = self.docs.find(id) else { continue };
             let Some(path) = d.particle_file() else { continue };
-            let mut h = DefaultHasher::new();
-            path.hash(&mut h);
-            rev = rev
-                .wrapping_mul(1_000_003)
-                .wrapping_add(h.finish())
-                .wrapping_add(d.history().version().wrapping_mul(7919))
-                .wrapping_add(u64::from(d.modified()));
+            let r = d.history().version().wrapping_mul(7919).wrapping_add(u64::from(d.modified())).wrapping_add(u64::from(id) << 32);
+            per_file.insert(path.clone(), r);
             live.push((id, path));
         }
 
-        let mut overrides = self.particle_overlay.overrides.iter().collect::<Vec<_>>();
-        overrides.sort_by(|a, b| a.0.cmp(b.0));
+        let overrides = self.particle_overlay.overrides.iter().collect::<Vec<_>>();
         for (path, (r, _)) in &overrides {
+            let e = per_file.entry((*path).clone()).or_default();
+            *e = e.wrapping_mul(1_000_033) ^ r.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5157;
+        }
+
+        let mut rev = 0u64;
+        for (path, r) in &per_file {
             let mut h = DefaultHasher::new();
-            path.hash(&mut h);
-            rev = rev.wrapping_mul(1_000_033).wrapping_add(h.finish() ^ r.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            (path, r).hash(&mut h);
+            rev = rev.wrapping_mul(1_000_003).wrapping_add(h.finish());
         }
 
         if self.particle_overlay.rev != Some(rev) {
@@ -107,6 +116,24 @@ impl Editor {
 
             drop(files);
             self.particle_overlay.rev = Some(rev);
+
+            // The effects whose files changed (added, edited, closed): only the placed effects that read them are read again.
+            let old = std::mem::take(&mut self.particle_overlay.per_file);
+            let changed = per_file
+                .iter()
+                .filter(|(p, r)| old.get(*p) != Some(r))
+                .map(|(p, _)| p)
+                .chain(old.keys().filter(|p| !per_file.contains_key(*p)))
+                .filter_map(|p| effect_name(p))
+                .collect::<Vec<_>>();
+            self.particle_overlay.per_file = per_file;
+            if let Some(r) = self.renderer.as_mut() {
+                for name in changed {
+                    if !r.settings.vfx_changed.contains(&name) {
+                        r.settings.vfx_changed.push(name);
+                    }
+                }
+            }
         }
 
         if let Some(r) = self.renderer.as_mut() {

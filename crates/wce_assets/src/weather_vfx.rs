@@ -69,6 +69,9 @@ pub struct Effect {
 
     /// Skipped emitters and missing files.
     pub notes: Vec<String>,
+
+    /// The vfx files it was read from (names, as `vfx/<name>.xml`): its own and its references' libraries.
+    pub files: Vec<String>,
 }
 
 /// `weather/weather_definitions.xml` WEATHER_DEFINITION. The defaults are the engine's constructor's; the comments give the field
@@ -237,7 +240,7 @@ pub fn load_effect(read: &VfxReader, name: &str) -> Effect {
 
 /// [`load_effect`] with a cache of the library files read so far.
 pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String, VfxFile>) -> Effect {
-    let mut out = Effect { name: name.to_owned(), ..Default::default() };
+    let mut out = Effect { name: name.to_owned(), files: vec![name.to_owned()], ..Default::default() };
     let top = match load_vfx(read, name) {
         Ok(top) => top,
         Err(error) => {
@@ -264,6 +267,10 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
 
     let refs = if top.refs.is_empty() { std::slice::from_ref(&own) } else { &top.refs[..] };
     for vfx_ref in refs {
+        if !out.files.contains(&vfx_ref.library) {
+            out.files.push(vfx_ref.library.clone());
+        }
+
         if !libs.contains_key(&vfx_ref.library) {
             match load_vfx(read, &vfx_ref.library) {
                 Ok(lib) => {
