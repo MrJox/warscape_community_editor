@@ -136,7 +136,48 @@ struct PlacedEffect {
     matrix: [f32; 16],
     scale: f32,
     seasons: u32,
+
+    /// `visible_inside_snow_zone`, `visible_outside_snow_zone`.
+    snow: [bool; 2],
 }
+
+/// A campaign snow mask (`snow_mask_*.dds`: L8, row 0 the map's north edge) for the placed effects' snow zone.
+struct SnowGrid {
+    width: usize,
+    height: usize,
+    values: Vec<u8>,
+}
+
+impl SnowGrid {
+    /// An uncompressed 8-bit DDS (the masks' format); None for another.
+    fn parse(b: &[u8]) -> Option<Self> {
+        let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+        if b.get(..4)? != b"DDS " || u32_at(88)? != 8 {
+            return None;
+        }
+
+        let (height, width) = (u32_at(12)? as usize, u32_at(16)? as usize);
+        let values = b.get(128..128 + width * height)?.to_vec();
+        Some(Self { width, height, values })
+    }
+
+    /// The mask at a `.terry` point (x east, z north from the map's south-west corner) over a map `size` wide: the weather node's reading
+    /// (row from the north; RenderDoc: only the flipped reading fits the captures' snow and rain spots).
+    fn at(&self, x: f64, z: f64, size: f64) -> u8 {
+        let cell = size / self.width as f64;
+        let col = (x / cell).floor();
+        let row = self.height as f64 - 1.0 - (z / cell).floor();
+        if col < 0.0 || row < 0.0 || col >= self.width as f64 || row >= self.height as f64 {
+            return 0;
+        }
+
+        self.values[row as usize * self.width + col as usize]
+    }
+}
+
+/// A placed effect is in the snow zone where the season's mask reaches this (ASSUMPTION: the game's test not traced; in the captures
+/// a rain spot at 255 was off and a snow spot at 0 off, none at the values between).
+const SNOW_ZONE: u8 = 128;
 
 /// The effects of a `particle_emitter_marker.markers` (their group's key the effect).
 fn marker_effects(bytes: &[u8]) -> Vec<PlacedEffect> {
@@ -168,8 +209,10 @@ fn marker_effects(bytes: &[u8]) -> Vec<PlacedEffect> {
                 Some(Value::U32(s)) => *s,
                 _ => 15,
             };
+            let flag = |name: &str| !matches!(get(name), Some(Value::U8(0)));
+            let snow = [flag("visible_inside_snow_zone"), flag("visible_outside_snow_zone")];
             let at = [f64::from(matrix[12]), f64::from(matrix[13]), f64::from(matrix[14])];
-            Some(PlacedEffect { key: EFFECT_KEY | i as u64, at, effect, matrix: *matrix, scale, seasons })
+            Some(PlacedEffect { key: EFFECT_KEY | i as u64, at, effect, matrix: *matrix, scale, seasons, snow })
         })
         .collect()
 }
@@ -244,6 +287,9 @@ pub struct PropModels {
     /// summer 2, autumn 4, winter 8; the tool sets it); those of the season near the camera are drawn.
     effects: Option<(DocumentId, u64, Vec<PlacedEffect>)>,
     pub season_bit: u32,
+
+    /// The scene's snow mask (its path) read for the effects' snow zone; none: no mask (nothing in the snow zone).
+    snow: Option<(String, Option<SnowGrid>)>,
     pub effect_count: usize,
 
     /// The drawn effect nearest the camera's target: its effect and position in the view (`terrain_props`).
@@ -266,6 +312,7 @@ impl Default for PropModels {
             trees: None,
             tree_count: 0,
             effects: None,
+            snow: None,
             season_bit: 2,
             effect_count: 0,
             effect_near: None,
@@ -299,6 +346,16 @@ impl PropModels {
         // Again as tiles come (in steps: each brings the ground its props stand on).
         let revision = revision * 1_000_003 + (loaded / LOADED_STEP) as u64;
         let revision = revision * 16 + u64::from(self.season_bit & 15);
+        // The season's snow mask (the scene's), which decides the effects' snow zone.
+        let mask = e.scene.campaign_snow.as_ref().map(|s| s.mask.clone());
+        if self.snow.as_ref().map(|s| &s.0) != mask.as_ref() {
+            self.snow = mask.map(|m| {
+                let grid = e.files().and_then(|f| f.read(&m).ok()).and_then(|b| SnowGrid::parse(&b));
+                (m, grid)
+            });
+            self.built = None;
+        }
+
         let key = (doc, revision, ((tx / quarter).floor() as i64, (tz / quarter).floor() as i64));
         if self.built == Some(key) {
             return;
@@ -425,8 +482,8 @@ impl PropModels {
         }
 
         // The placed effects of the season near the camera, in the props' frame; their scale in the shaders' units (the renderer's
-        // `scale * units`) is the marker's, as the game's instances (RenderDoc: the instance's scale the marker's). DEVIATION: their snow
-        // and destruction zone flags are not read (every one shows; the snow zone's test not traced).
+        // `scale * units`) is the marker's, as the game's instances (RenderDoc: the instance's scale the marker's). The destruction zone's
+        // flags are not read: every vanilla marker shows inside and outside it.
         self.effect_count = 0;
         self.effect_near = None;
         let mut near = f64::MAX;
@@ -434,6 +491,16 @@ impl PropModels {
         for fx in effects {
             let w = fx.at;
             if fx.seasons & self.season_bit == 0 || (w[0] - tx).hypot(w[2] - tz) > EFFECT_RADIUS {
+                continue;
+            }
+
+            // The snow zone: the season's mask at the marker (fn 0x10b053d0's flag bits 2 / 4; no mask: outside).
+            let inside = self
+                .snow
+                .as_ref()
+                .and_then(|s| s.1.as_ref())
+                .is_some_and(|g| g.at(w[0], w[2], f64::from(frame.map.width) * tf.cell) >= SNOW_ZONE);
+            if !fx.snow[usize::from(!inside)] {
                 continue;
             }
 

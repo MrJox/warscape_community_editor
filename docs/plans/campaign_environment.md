@@ -246,6 +246,21 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   - Left: the placed effects' activation rule (the snow spots 65 units from the eye did not run); the snow / destruction zones.
     One scripted run (900 frames) ended without its shot at the time limit; three runs after it (300, 600, 900 frames) took
     37 - 42 s: not reproduced.
+- **Phase 5, the placed effects' rules (2026-11-18; Ghidra fns 0x10af7dc0, 0x10b053d0, 0x10acca10; the five captures):**
+  - Activation: an effect plays while in view (within 1.15 of the screen's half size, in front) and within 80 units of the eye,
+    whatever its CullDistances (every playing one in all five captures; those in view from 83 out, and all behind, stopped);
+    stopped, it stops emitting and its particles live on; started children keep playing (`wce_render::particles`
+    `CAMPAIGN_EFFECT_REACH`). ASSUMPTION: per effect (the game's per-frame test, likely per node of its spatial tree, not found).
+    `autoplay` and `use_in_outfield` are never read on the campaign.
+  - Snow zone: the season's snow mask at the marker (L8, row 0 the north edge); inside at >= 128 (ASSUMPTION: no capture has a
+    marker between 0 and 255); no mask: outside. Checked: the rain spot west of Britain shows in spring, not in winter
+    (`snow_mask_wi` 255 there, the game's W1 capture). The destruction zone: every vanilla marker shows inside and outside it.
+  - **The snow masks' names corrected:** stage 0 is `snow_mask_<season>.dds`, stage n `snow_mask_<season><n>.dds` (the weather
+    node, fn 0x118f6360; RenderDoc: the game's `s_mask_map` (R8G8 2032 x 1441) equals `snow_mask_wi` in the winter capture at
+    stage 0, and is empty on turn 1 in spring: Attila ships no `snow_mask_sp`). The editor used stage + 1 (`snow_mask_sp1` on
+    turn 1): the spring Alps' mask snow is gone, their snowy peaks are the terrain's own. Open: the lighting names still use
+    stage + 1 (`season_candidates`; derived from the masks' old reading): main_attila is unaffected (spring all year, checked),
+    TDD's turn-1 lighting (`europe_sp1`...) would change; to settle with TDD's stage at its start.
 - Open: the fog-of-war switch (decision 2); the overlay camera's d from the game; the sea-region borders and three land curves;
   the trade routes' land legs; the skybox's shadow (for review). Done since: TDD's lakes and rivers (the lakes' shaders, the
   overlay). Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is

@@ -190,23 +190,23 @@ fn campaign_sea(e: &Editor, id: DocumentId, s: &Streamer) -> Option<wce_scene::r
     (size[0] > 0.0 && size[1] > 0.0).then_some(wce_scene::render_scene::CampaignSea { colour, corner: [sw.0 as f32, sw.1 as f32], size })
 }
 
-/// A campaign map's season snow (`terrain/campaigns/<map>/snow_mask_<season><climate stage + 1>.dds`, else `snow_mask_<season>.dds`, in
-/// the packs: Attila ships spring's 1 to 4, autumn's 3 and 4, winter's 1 and 3 and plain) over the map's
+/// A campaign map's season snow (`terrain/campaigns/<map>/snow_mask_<season>.dds` at climate stage 0, `snow_mask_<season><stage>.dds`
+/// after, in the packs: Attila ships spring's 1 to 4, autumn's 3 and 4, winter's 1 and 3 and plain) over the map's
 /// cells in the view's frame, with the campaign climates' `snow` group (`terrain/textures/campaign/default/snow`) at the kit's
 /// `blend_pixel_scale` for it (620 without the kit's `_settings.xml`). None for a battle map, or a season without a mask.
 fn campaign_snow(e: &Editor, id: DocumentId, s: &Streamer, season: &str) -> Option<wce_scene::render_scene::CampaignSnow> {
     let d = e.docs.find_as::<MapDocument>(id)?;
     let (MapKind::Campaign, name) = map_kind(&d.name) else { return None };
-    // The climate stage's mask (Attila: `snow_mask_<season><stage + 1>`: turn 1, spring at stage 0, is `snow_mask_sp1`, the mountains'
-    // peaks, as the game shows them), else the season's own (`snow_mask_wi`).
+    // The climate stage's mask as the weather node names them (fn 0x118f6360, code 0x1191d1e0 - 0x1191d4a0): stage 0 the season's own
+    // (`snow_mask_wi`), stage n after it `snow_mask_<season><n>`. RenderDoc (the user's captures, 2026-11-18): the game's mask texture
+    // (`s_mask_map`, R8G8 2032 x 1441) is `snow_mask_wi` exactly in a winter turn at stage 0, and empty on turn 1 in spring (Attila
+    // ships no `snow_mask_sp`): the snowy peaks of its spring are the terrain's own textures. (Before: stage + 1, `snow_mask_sp1` on
+    // turn 1.) ASSUMPTION: a stage's missing mask falls back to the season's own.
     let stage = d.view_roads.as_ref().and_then(|r| r.climate_stage).unwrap_or(0);
     let files = e.files()?;
-    let mask = [
-        format!("terrain/campaigns/{name}/snow_mask_{season}{}.dds", stage + 1),
-        format!("terrain/campaigns/{name}/snow_mask_{season}.dds"),
-    ]
-    .into_iter()
-    .find(|m| files.exists(m))?;
+    let own = format!("terrain/campaigns/{name}/snow_mask_{season}.dds");
+    let names = if stage == 0 { vec![own] } else { vec![format!("terrain/campaigns/{name}/snow_mask_{season}{stage}.dds"), own] };
+    let mask = names.into_iter().find(|m| files.exists(m))?;
     let pixel_scale = kit_roots(e)
         .iter()
         .find_map(|r| wce_formats::tile_climate::ClimateList::load(&r.join(database_dir(MapKind::Campaign)).join("_settings.xml")).ok())
