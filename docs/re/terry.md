@@ -337,8 +337,14 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   startpos): a port's is the first direction i (fn 0x10a67bc0's order: (c, r+1), (c+1, r+odd), (c+1, r-1+odd), (c, r-1), (c-1,
   r-1+odd), (c-1, r+odd)) whose neighbour and the next are water sprawl cells, else 0 (9 of 9 of capture A's ports); a main or
   secondary slot's is a draw of the campaign model's shared state (+0x1c7c, `x * 0x343fd + 0x269ec3`, `min((x >> 16) * 6 / 0xffff,
-  5)`; main, then the secondaries, in each settlement's order), seeded by the startpos's `RandSeed` and shared with every other draw
-  of the campaign's start: random in practice (a save holds the drawn turns). The
+  5)`; main, then the secondaries, in each settlement's order), seeded by the startpos's `RandSeed` (a normal new single-player campaign
+  takes no other seed: fn 0x10768f50, its override only from replay / debug starts) and shared with every other draw of the campaign's
+  start: defined by the startpos, but not reproducible from it (an unknown number of draws before the first settlement, and between
+  settlements draws whose number depends on the game's data: fns 0x10a7cda0, 0x10a56c50). A save holds the drawn turns. Per
+  settlement (fn 0x10a7d1e0): first every sprawl hex in its map data's hash order draws once (+0x5c, 0 .. 20) and, without a road
+  shape, once more for its turn (fn 0x10a315f0; a hex with one keeps its road rotation), then the slots as above. Seen and not
+  explained: two turn-1 captures of one campaign (frames 6628 and 64369) show Londinium's and Lindum's settlements turned differently
+  (the whole model: flag, buildings, trees). The
   walls and gatehouses are as the editor turns them (72 of 73); the connecting towers half a turn from the reading above (204 of
   204: corrected); `sprawl_edge_0` (no shape, stored turn 0) stands at every angle too, as the land slots.
 - **Sprawl pieces at run time** (2026-11-05, `FUN_10af6ae0`, from `FUN_10b29d90`): a runtime sprawl hex with a level (0: none) gets
