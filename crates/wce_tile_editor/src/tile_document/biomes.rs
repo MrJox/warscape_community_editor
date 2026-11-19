@@ -6,7 +6,7 @@ use std::any::Any;
 
 use wce_editor_core::command::Command;
 use wce_foundation::math::Double3;
-use wce_scene::render_scene::{EntityId, Payload, RenderScene};
+use wce_scene::render_scene::{EntityId, MeshInstance, Payload, RenderScene};
 use wce_tile::biomes::{AREA_TYPE, BIOME_ATTR, Biome, SEED_ATTR};
 use wce_tile::ted_scene::TedScene;
 use wce_tile::vegetation_sets::VegetationSet;
@@ -261,13 +261,18 @@ impl Tile {
                 world.m[1][3] += (y / unit) as f32;
                 world.m[2][3] += (z / unit) as f32;
                 let tree = matches!(payload, Payload::MeshInstance(_)) && item.text.starts_with(b"<VEGETATION_INSTANCE");
-                // A tree leans with the ground as the game draws it (as the tree list's): tilted about its foot, in the world's frame.
-                let world = if tree {
-                    let foot = wce_foundation::math::Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]);
-                    let tilt = self.terrain_tilt((x / unit) as f32, (z / unit) as f32);
-                    wce_foundation::math::translation(foot) * tilt * wce_foundation::math::translation(foot * -1.0) * world
-                } else {
-                    world
+                // A tree as the game draws it (as the tree list's): tilted about its foot to the ground, its untilted matrix in
+                // POSITION5..7 so that the shaders keep the trunk upright and only the roots follow the slope.
+                let (world, payload) = match payload {
+                    Payload::MeshInstance(mi) if tree => {
+                        let foot = wce_foundation::math::Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]);
+                        let tilt = self.terrain_tilt((x / unit) as f32, (z / unit) as f32);
+                        let [p5, p6, p7] = super::vegetation::untilted_rows(&world);
+                        let tilted =
+                            wce_foundation::math::translation(foot) * tilt * wce_foundation::math::translation(foot * -1.0) * world;
+                        (tilted, Payload::MeshInstance(MeshInstance { p5, p6, p7, ..mi }))
+                    }
+                    payload => (world, payload),
                 };
                 let id = scene.add(self.layer, world, payload, source);
                 if let Some(en) = scene.find_mut(id) {
