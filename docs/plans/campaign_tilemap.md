@@ -29,6 +29,7 @@ cubemap, `light_grid.xml`, sprawl models missing from the packs, no aqueducts) i
    and the G-buffer and final (pre-UI) images match per region (ground, sea, forests, buildings, sky) within thresholds set from the
    first baseline and reviewed with the user; then the user's side-by-side look.
 3. **Attila and TDD, then Thrones.** Rome 2 later.
+4. **The skybox casts its shadow**, as the game's (into every cascade), the Rauros stripes included until the cascades match.
 
 ## Where it stands (2026-11-19)
 
@@ -50,7 +51,8 @@ Never done: a whole frame compared at the same camera. Known gaps (V, from the c
 - **Settlements:** buildings unturned (the turn is not in the startpos, not found in the DLL); sprawl levels, walls around zones
   without a building, the farmland rule and the road cap are ASSUMPTIONS. Seen 2026-11-18: in scripted runs Rome's settlement buildings
   were not drawn (their models never requested).
-- **Environment leftovers:** the skybox casts no shadow (the game's does; the editor's cascades stripe Rauros); the shroud plane reads
+- **Environment leftovers:** the skybox casts as the game's (decision 4), but lays stripes over TDD's Rauros where the game shows none
+  (the editor's cascades differ from the game's there); the shroud plane reads
   depth but does not write it; the overlay's size (1.5 x the screen) and the rivers' half-width are ASSUMPTIONS; the sea border's rebel
   exception, the placed effects' activation granularity, the storm clouds' drift direction and the started effects' removal are not
   traced; the fog of war and the shroud at the map's edge are not compared with the game.
@@ -124,8 +126,8 @@ The first baseline over captures A (6628, 7363) and the rain ones sets the thres
    maps checked, memory note of 2026-11-06).
 6. **Settlements**: the buildings' turns from the capture's instances (the rule, or the display slot's field once found); sprawl,
    walls, ports, farmland and road levels against capture C's close view; each ASSUMPTION replaced or kept with its evidence.
-7. **Skybox shadow** (the user's decision, pending): once the shadow constants match the game's, cast it as the game does and compare
-   at Rauros; the stripes then point at a remaining cascade difference.
+7. **Skybox shadow stripes over Rauros** (it casts, decision 4): the cascades' constants against a TDD capture at Rauros; the
+   stripes go when the editor's cascade fit is the game's.
 8. **Shroud plane depth write**, the overlay's size (a capture at another resolution) and the rivers' half-width (their pixels in the
    overlay target): the game's.
 9. **Map**: the far ground's colour rule (one tile per climate, fixed); the horizon (Phase 2's reach).

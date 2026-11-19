@@ -171,7 +171,8 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   outside their slices). To review: draw it into the cascades as the game does and compare (stray shadows if the editor's fit differs).
   Compared (2026-11-18, the view's captures `%TEMP%\wce_scratch\ce\sky_shadow.png` / `sky_noshadow.png` over Rome, `skyt_b.png` /
   `skyt_a.png` at TDD's Rauros): casting as the game does changes nothing over Rome (mean pixel difference 0.22) but lays horizontal
-  stripes of shadow over all of Rauros' ground (the editor's cascades are not the game's): kept off, for the user's decision. Checked against the screenshots:
+  stripes of shadow over all of Rauros' ground (the editor's cascades are not the game's). **Settled (user, 2026-11-19): it casts, as
+  the game's**; the Rauros stripes are a cascade difference, followed in docs/plans/campaign_tilemap.md (Phase 4). Checked against the screenshots:
   the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
 - **Phase 4, the shroud plane (2026-11-17):** `wce_render` `renderer/shroud.rs`, after the fog: the game's grid (256 x 256 over +-500
   world units, the camera quantised by 1000 / 255), draped 1.1 units over a low-res map of the land LF (every 8th sample on Attila:
@@ -295,7 +296,7 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   passes that clear their textures: the terrain resolve, the cliffs, the decals, grass, the sea and lakes, borders, the light, the
   shroud plane) with the game's constants. Checked: Italy unchanged (all seen on turn 1, as the user's screenshot), Germania beyond
   the Danube darkened (x 0.81 over that band). Not compared with the game's at the same camera yet.
-- Open: the skybox's shadow (for the user's review: compared above); the sea colour's rebel exception (campaign_borders.md); the
+- Open: the sea colour's rebel exception (campaign_borders.md); the
   fog of war against the game at the same camera. Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
   15 % longer north to south); the view's lens (the game's 80 degrees); the view streams short of the horizon.
 
