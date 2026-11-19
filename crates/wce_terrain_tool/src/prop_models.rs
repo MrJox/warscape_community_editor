@@ -579,24 +579,24 @@ impl PropModels {
             let (cx, cy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
             let rc = self.radius_cells as f32;
             let (a, b) = (frame.from_map.apply(0.0, 0.0), frame.from_map.apply(1.0, 0.0));
-            // A model unit (after the model cache's 0.4) a cell: a clump (tree_clump_1: 5.5 x 3.6 model units) is then 0.74 of the list's
-            // units across, about the spacing of the forest's trees (nearest neighbour 0.47 / 0.61 / 0.80 units at 10 / 50 / 90 %), and a
-            // little under a cell tall, as the game's screenshots have them. ASSUMPTION: in the list's units (2.2 across) the clumps
-            // overlapped three to four times and stood four cells tall. Their positions are the list's (their heights agree with the LF's
-            // to the thousandth: `terrain_props`).
+            // Drawn by the game's `rigidcampaignvegetation` (the renderer's `MeshKind::CampaignVegetation`): its instance is the list's
+            // position (plus 0.4 x the mesh's pivot, the draw set's) and the turn, its vertices 0.4 of the world's units a model unit, as
+            // the game's (RenderDoc, capture A: docs/re/terry.md "Forests"). The matrix's scale is that, for the culling's bounds; its
+            // turn about y is what the draw set reads as the angle (the list's byte times 60 degrees).
             let k = (b.0 - a.0).hypot(b.1 - a.1) as f32;
             let unit = trees.cells_per_unit * k;
+            let size = 0.4 / e.scene.game_units.max(1e-9);
             let (cx, cy) = (cx as f32, cy as f32);
             for i in trees.near(cx, cy, rc) {
                 let (m, x, y, turn, file_y) = trees.trees[i as usize];
                 let (fx, fz) = frame.from_map.apply(f64::from(x), f64::from(y));
                 let (s, c) = (f32::from(turn) * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
-                world.m[0] = [c * k, 0.0, s * k, fx as f32];
+                world.m[0] = [c * size, 0.0, s * size, fx as f32];
                 // At the list's own height, as the props at their markers'.
                 let gy = file_y * unit;
-                world.m[1] = [0.0, k, 0.0, gy];
-                world.m[2] = [-s * k, 0.0, c * k, fz as f32];
+                world.m[1] = [0.0, size, 0.0, gy];
+                world.m[2] = [-s * size, 0.0, c * size, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
                     model: trees.models[usize::from(m)].clone(),

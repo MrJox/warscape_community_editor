@@ -240,3 +240,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   `commontextures/dissolve.dds` (docs/re/terry.md, "Forests"). `campaign_frame --textures <prefix>...` names a capture's textures
   (163 of capture A's 701 under the common, campaign model and map folders). Left: the clumps through `rigidcampaignvegetation`
   (their own mesh kind, the raw Uk12 vertices, the instance's (x, y, z, angle) in `p4`).
+- **Phase 4 item 1, the forests (2026-11-19):** the clumps are drawn by the game's `rigidcampaignvegetation` (G-buffer `vs30_main` +
+  `ps30_gbuffer` / `ps41_gbuffer_ms`, shadows `vs30_shadow` + `ps30_shadow`): `MeshKind::CampaignVegetation` keeps their Uk12 vertices
+  (16 bytes, as capture A binds them), the draw set writes the instance's (x, y, z, angle) into POSITION4's place (the position plus
+  0.4 x the pivot, the turn's angle), two-sided, the season's diffuse (`vegetation_diffuse`) and `commontextures/dissolve.dds`; left
+  out of the rigid shadows and the pick pass. At capture A's camera the forests stand where and as large as the game's (they were a
+  third of its size). Left: their colour (more olive than the game's green): the season's diffuse, the lighting or the PS's inputs
+  to compare (Phase 3).

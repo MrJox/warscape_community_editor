@@ -108,6 +108,9 @@ pub const CINEMATIC_STRIDE: u32 = 32;
 /// The Uk8 vertex format of water meshes: position (f16 x 4) and uv (f16 x 2).
 pub const WATER_STRIDE: u32 = 12;
 
+/// A campaign tree clump's vertex (`MeshKind::CampaignVegetation`): f16 (position, u), f16 (normal, v).
+pub const CAMPAIGN_VEGETATION_STRIDE: u32 = 16;
+
 /// A rope's vertex (`rope.hlsl` vs30_main_rigid, f32; docs/re/cloth.md, "Rope drawing"): POSITION0 its node (model space), NORMAL0 the rope's
 /// way there, TEXCOORD0 the uv (x across the rope: 0, 1; y the node's own texture coordinate), TEXCOORD1 (how far to the side, signed: the
 /// shader turns it to the camera; 1), TEXCOORD2 (the game's parity values; no technique reads them).
@@ -155,6 +158,11 @@ pub enum MeshKind {
 
     /// Grass (vertex format Grass, [`GRASS_STRIDE`] bytes): rigidgrass, drawn by the grass pass from the scene's grass entities.
     Grass,
+
+    /// CampaignVegetation (a campaign's tree clumps; vertex format Uk12 of version 6, [`CAMPAIGN_VEGETATION_STRIDE`] bytes: f16 (position,
+    /// u), f16 (normal, v)): `rigidcampaignvegetation.hlsl`, its instance one float4 (x, y, z, angle) in the world's units (the draw set
+    /// writes it into POSITION4: `DrawSet::gather`); the shader scales the vertex by 0.4, turns it by the angle and leans it to the camera.
+    CampaignVegetation,
 
     /// TreeBillboardMaterial (vertex format Billboard, [`BILLBOARD_STRIDE`] bytes): a tree's farthest LOD, a quad turned to the camera
     /// showing one of four views (rigidtreebillboard); its diffuse in the diffuse slot, the normal and displacement map in the normal slot.
@@ -1125,8 +1133,8 @@ impl ModelInner {
             (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
             (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
             (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
-            // A campaign's tree clumps (`rigidcampaignvegetation.hlsl`): drawn as static meshes, see below.
-            (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::Standard, VertexFormat::Static),
+            // A campaign's tree clumps: their own vertices and shaders (`rigidcampaignvegetation.hlsl`).
+            (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::CampaignVegetation, VertexFormat::Uk12),
             _ => return None,
         };
 
@@ -1142,29 +1150,17 @@ impl ModelInner {
             VertexFormat::Billboard => BILLBOARD_STRIDE,
             VertexFormat::Grass => GRASS_STRIDE,
             VertexFormat::Uk8 => WATER_STRIDE,
+            VertexFormat::Uk12 => CAMPAIGN_VEGETATION_STRIDE,
             VertexFormat::Weighted => WEIGHTED_STRIDE,
             VertexFormat::Cinematic => CINEMATIC_STRIDE,
             _ => 32,
         };
 
-        // A campaign tree clump's vertex (version 6 `Uk12`) is (position, u) and (normal, v), f16; its vertex shader draws the
-        // position times 0.4 (`rigidcampaignvegetation.hlsl` vs30_main), turned by the instance's angle and leaning towards the camera
-        // (not done here), and its pixel shader cuts the diffuse's alpha at 0.5 (the material's alpha mode 1).
-        let clump = *mesh.material_type() == MaterialType::CampaignVegetation;
+        // A campaign tree clump's vertex (version 6 `Uk12`: f16 (position, u), (normal, v)) is written back as the file has it, the
+        // layout its vertex shader reads (RenderDoc, capture A: POSITION0 and NORMAL f16 x 4, 16 bytes).
         let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
         for vertex in mesh.vertices() {
             let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
-            if clump {
-                let mut v = vertex.clone();
-                let (p, n) = (*vertex.position(), *vertex.normal());
-                (v.texture_coordinate_mut().x, v.texture_coordinate_mut().y) = (p.w, n.w);
-                let q = v.position_mut();
-                (q.x, q.y, q.z, q.w) = (p.x * 0.4, p.y * 0.4, p.z * 0.4, 1.0);
-                v.normal_mut().w = 0.0;
-                v.write(&mut vertices, 6, format, mtype).ok()?;
-                continue;
-            }
-
             vertex.write(&mut vertices, 6, format, mtype).ok()?;
         }
 

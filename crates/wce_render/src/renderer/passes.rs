@@ -62,6 +62,8 @@ impl Renderer {
         let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
         let rope_layout = self.optional_shader(ROPE_VS).and_then(|rvs| self.layout(&rvs, "rope", &rope_layout()));
+        let vegetation_layout =
+            self.shader(CAMPAIGN_VEGETATION_VS).and_then(|cvs| self.layout(&cvs, "campaign_vegetation", &campaign_vegetation_layout()));
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -177,6 +179,7 @@ impl Renderer {
                     MeshKind::TreeBranch | MeshKind::TreeLeaf => tree_layout.as_ref(),
                     MeshKind::TreeBillboard => billboard_layout.as_ref(),
                     MeshKind::Rope => rope_layout.as_ref(),
+                    MeshKind::CampaignVegetation => vegetation_layout.as_ref(),
                     _ => Some(&layout),
                 };
 
@@ -185,15 +188,20 @@ impl Renderer {
 
                 // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE); a rope's strip, turned to
                 // the camera, faces it either way round.
-                let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::Rope);
+                let two_sided = matches!(
+                    GBUFFER_PASSES[pass].0,
+                    MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::Rope | MeshKind::CampaignVegetation
+                );
                 self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
 
                 // Buildings and props take projected decals, as the ground does: with decals drawn, the game's G-buffer writes 0x81 for
                 // them too (RenderDoc 2026-11-15, Attila, wce_decal_test: a bridge and a house `REPLACE` 129, and at the decals' `EQUAL`
                 // 129 every pixel but the grass's 0x41 passes; docs/re/renderer.md). What keeps their upper parts clean is the decals'
                 // boxes, refitted to the ground (`wce_tile::decal_refit`). Trees and ropes were not in those frames: 1, as before.
-                let decals =
-                    !matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::TreeBillboard | MeshKind::Rope);
+                let decals = !matches!(
+                    GBUFFER_PASSES[pass].0,
+                    MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::TreeBillboard | MeshKind::Rope | MeshKind::CampaignVegetation
+                );
                 self.ctx.set_depth_stencil_state(
                     self.states.ds_gbuffer.as_ref(),
                     if decals { 1 | u32::from(super::DECAL_RECEIVER) } else { 1 },
@@ -254,6 +262,15 @@ impl Renderer {
                         }
 
                         r.bind_mesh_material(&ps, &slots, m);
+                        // A campaign tree clump: its season's diffuse (`<base>_sp_diffuse.dds` in spring, as capture A's) and the
+                        // game's dissolve map.
+                        if m.kind == MeshKind::CampaignVegetation {
+                            let diffuse = r.vegetation_diffuse(m);
+                            bind_srv(&r.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
+                            let dissolve =
+                                r.textures.get(CAMPAIGN_DISSOLVE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+                            bind_srv(&r.ctx, &ps, "s_dissolve_map", dissolve.or_else(|| r.res.white_srv.clone()).as_ref());
+                        }
                         true
                     });
 
@@ -852,6 +869,8 @@ impl Renderer {
             let tree_shaders = TREE_SHADOW_PASSES.map(|(kind, tvs, tps)| (kind, self.shader(tvs).zip(self.shader(tps))));
             let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
             let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
+            let vegetation_layout =
+                self.shader(CAMPAIGN_VEGETATION_VS).and_then(|cvs| self.layout(&cvs, "campaign_vegetation", &campaign_vegetation_layout()));
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             let terrain_material = self.terrain.active && !self.env.active;
@@ -908,7 +927,7 @@ impl Renderer {
                 self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
                 // A model's static ropes (`#ropes`) cast none here: their vertices aren't the rigid layout. The moving ropes cast theirs below.
                 let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| {
-                    !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope)
+                    !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope | MeshKind::CampaignVegetation)
                 });
                 self.draw_skinned_shadow();
                 self.draw_ropes_shadow();
@@ -932,7 +951,11 @@ impl Renderer {
                 // The trees, with their own vertex format and shaders, alpha-tested on their diffuse map.
                 for (kind, pair) in &tree_shaders {
                     let Some((tvs, tps)) = pair else { continue };
-                    let kind_layout = if *kind == MeshKind::TreeBillboard { &billboard_layout } else { &tree_layout };
+                    let kind_layout = match kind {
+                        MeshKind::TreeBillboard => &billboard_layout,
+                        MeshKind::CampaignVegetation => &vegetation_layout,
+                        _ => &tree_layout,
+                    };
                     let Some(kind_layout) = kind_layout else { continue };
                     self.ctx.set_input_layout(Some(kind_layout));
                     self.bind(tvs);
