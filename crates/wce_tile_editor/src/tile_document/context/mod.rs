@@ -1389,35 +1389,24 @@ impl Frame {
         // A texel's point in the frame and its map cell.
         let frame_of = |i: usize, j: usize| (sw.0 + (i as f64 + 0.5) / n as f64 * fw, ne.1 - (j as f64 + 0.5) / n as f64 * fh);
 
-        // Which placement draws each cell: the first tile over it (not a cliff, not a sea tile).
-        let mut owner = vec![u32::MAX; (w * h) as usize];
-        for (i, p) in self.map.placements.iter().enumerate() {
-            if (source.is_custom)(i) || self.on_sea_lf(i) {
-                continue;
-            }
-            let r = p.rect();
-            for y in r[1].max(0)..r[3].min(h) {
-                for x in r[0].max(0)..r[2].min(w) {
-                    let at = (y * w + x) as usize;
-                    if owner[at] == u32::MAX && self.owner[at] > 1 {
-                        owner[at] = i as u32;
-                    }
-                }
-            }
-        }
+        // The tiles drawn: not a cliff, not a sea tile. A cell takes the highest of their own heights over it, as `ground_at` does (a
+        // masked tile's ground slopes down where another lies: Attila's `large_oval_60_r` over the grass tiles in its mask's holes,
+        // taken alone, sank them 256 m).
+        let drawn = |i: usize| !(source.is_custom)(i) && !self.on_sea_lf(i);
 
         let mut diffuse = vec![0u8; n * n * 4];
         let mut heights = vec![f32::NAN; n * n];
         let mut relief = vec![0.0f32; n * n];
         let mut painted = vec![false; n * n];
+        let mut best = vec![f32::NEG_INFINITY; n * n];
         for (i, p) in self.map.placements.iter().enumerate() {
             if stop() {
                 return None;
             }
-            let r = p.rect();
-            if !(r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| x >= 0 && y >= 0 && x < w && y < h && owner[(y * w + x) as usize] == i as u32)) {
+            if !drawn(i) {
                 continue;
             }
+            let r = p.rect();
             let Some(t) = (source.template)(i) else { continue };
             let inverse = p.to_map().inverse();
             // The texels whose cells lie in its rectangle.
@@ -1430,17 +1419,25 @@ impl Frame {
                     let (x, z) = frame_of(k as usize, j as usize);
                     let (mx, my) = self.to_map.apply(x, z);
                     let (cx, cy) = (mx.floor() as i32, my.floor() as i32);
-                    if cx < 0 || cy < 0 || cx >= w || cy >= h || owner[(cy * w + cx) as usize] != i as u32 {
+                    if cx < r[0] || cy < r[1] || cx >= r[2] || cy >= r[3] || cx < 0 || cy < 0 || cx >= w || cy >= h {
+                        continue;
+                    }
+                    if self.owner[(cy * w + cx) as usize] <= 1 {
                         continue;
                     }
                     let at = j as usize * n + k as usize;
                     let (lx, lz) = inverse.apply(mx, my);
+                    let own = t.own.height(lx, lz);
+                    if own <= best[at] {
+                        continue;
+                    }
+                    best[at] = own;
                     if let Some(c) = t.far_colour(lx, lz) {
                         diffuse[at * 4..at * 4 + 4].copy_from_slice(&c);
                         painted[at] = true;
                     }
-                    relief[at] = t.own.height(lx, lz);
-                    heights[at] = relief[at] + self.lift(x, z);
+                    relief[at] = own;
+                    heights[at] = own + self.lift(x, z);
                 }
             }
         }
@@ -1552,7 +1549,8 @@ impl Frame {
                 }
             }
 
-            out.extend(self.owned(key, &cut, true).into_iter().map(|(r, c)| self.ground(r, true, c)));
+            // The tiles' ground with their relief from the far material, once there is one (a campaign map's mountains past the rings).
+            out.extend(self.owned(key, &cut, true).into_iter().map(|(r, c)| self.ground_with(r, true, c, Some(source))));
             out.extend(self.owned(key, &cut, false).into_iter().map(|(r, c)| self.uncovered_ground(r, true, c)));
             return out;
         }

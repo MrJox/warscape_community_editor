@@ -2535,6 +2535,50 @@ impl Tool for TerrainTool {
         });
 
         c.add(
+            "terrain_far_relief",
+            "terrain_far_relief <x> <y> [x1 y1 steps]",
+            "the Terrain tool: a campaign map's far material's relief (the tiles' own heights over the LF, metres) at a map cell point, or \
+             along a line of them",
+            |e, a| {
+                let v: Vec<f64> = a.iter().filter_map(|x| x.parse().ok()).collect();
+                if v.len() != 2 && v.len() != 5 {
+                    return CommandResult::fail("usage: terrain_far_relief <x> <y> [x1 y1 steps]");
+                }
+                with_terrain(e, |t, _| {
+                    let (Some(s), Some(frame)) = (t.view.streamer.as_ref(), t.view.frame()) else {
+                        return CommandResult::fail("no map shown");
+                    };
+                    let Some(far) = s.far_map() else { return CommandResult::fail("no far material yet") };
+                    let (w, h) = (frame.map.width, frame.map.height);
+                    let steps = if v.len() == 5 { v[4].max(1.0) as usize } else { 0 };
+                    let (x1, y1) = if steps > 0 { (v[2], v[3]) } else { (v[0], v[1]) };
+                    let mut out = vec![];
+                    for k in 0..=steps {
+                        let f = if steps == 0 { 0.0 } else { k as f64 / steps as f64 };
+                        let (x, y) = (v[0] + (x1 - v[0]) * f, v[1] + (y1 - v[1]) * f);
+                        let metres = f64::from(far.relief_at(x, y, w, h)) * frame.unit;
+                        out.push(format!("({x:.1}, {y:.1}) {metres:.1}"));
+                    }
+                    // At one point, the placements over it: their tile, size, turn, flip and the point in their own frame.
+                    if steps == 0 {
+                        let (cx, cy) = (v[0].floor() as i32, v[1].floor() as i32);
+                        for p in &frame.map.placements {
+                            let r = p.rect();
+                            if (r[0]..r[2]).contains(&cx) && (r[1]..r[3]).contains(&cy) {
+                                let (lx, lz) = p.to_map().inverse().apply(v[0], v[1]);
+                                out.push(format!(
+                                    "{} {} at {},{} {}x{} turn {:#x} flipped {} local ({lx:.1}, {lz:.1})",
+                                    p.location, p.variation, p.x, p.y, p.w, p.h, p.rotation, p.flipped
+                                ));
+                            }
+                        }
+                    }
+                    CommandResult::success(out.join("; "))
+                })
+            },
+        );
+
+        c.add(
             "terrain_far_wait",
             "terrain_far_wait [seconds]",
             "the Terrain tool: wait (scripts; default 900 s) until a campaign map's far material is made (every tile read)",
