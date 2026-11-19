@@ -558,11 +558,23 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "ground_coverage",
-        "ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]",
+        "ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed] | window [simple | advanced]",
         "the ground coverage's window from a script: a kind's preset (Default: the built-in one; -: the tile's last run, else the kind's last preset), then Preview (prints the summary, draws it) or Generate (replaces the kind's group in \"(AUTOGEN) Ground Coverage\" without asking)",
         |e, a| {
+            if a.first().is_some_and(|w| w == "window") {
+                let mode = a.get(1).cloned();
+                return with_tile(e, |t, _| {
+                    t.open_coverage();
+                    if let Some(m) = mode {
+                        t.coverage.advanced = m == "advanced";
+                    }
+
+                    ok("ground coverage's window open")
+                });
+            }
+
             let (Some(what), Some(kind), Some(preset)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
-                return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed]");
+                return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed] | window [simple | advanced]");
             };
 
             let Some(kind) = wce_tile::ground_coverage::Kind::from_name(&kind) else {
