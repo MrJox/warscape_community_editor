@@ -107,7 +107,8 @@ The vorb block (fmt + 0x18, 0x2A bytes), named after Wwise's runtime header and 
 | 0x28, 0x29 | blocksize exponents | from the Vorbis identification header |
 
 The `fmt` before it: codec 0xFFFF, channels, rate, average bytes per second = data size x rate / frames, block align 0, bits 0,
-cbSize 0x30, a u16 0, the channel mask (mono 4). Data: [seek table], the setup packet (u16 size + payload), then audio packets (u16
+cbSize 0x30, a u16 (0 from Wwise 2014 for 16-bit WAVs; vanilla 5, 4 and 6 channel files have 16 or 24, apparently the source's
+bit depth: metadata), the channel mask: mono 0x4, stereo 0x3, quad 0x603, 5 channels 0x607, 5.1 0x60F. Data: [seek table], the setup packet (u16 size + payload), then audio packets (u16
 size + payload).
 
 Conversion from a standard Vorbis stream (ww2ogg's rebuild, reversed): the setup drops the 'vorbis' header, the time section, floor
@@ -158,12 +159,26 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       5. Synthetic comparison with Wwise (3 s mono tone + noise, q0.4 vs Voice): same setup, same packet count, audio not
          bit-identical (encoder decisions differ from bit 2 of the first packet), size +0.08 %, SNR 20.48 dB vs Wwise's 20.22 dB.
          **done**
-      6. Realistic comparison: decoded vanilla WEMs (mono VO/SFX, stereo music, 5.1) re-encoded by Wwise and by aoTuV at matching
-         quality: size, SNR, setups. Also try input scaling (/32767 vs /32768) for bit-exact output. **todo**
-      7. Packet sizes exact: Wwise keeps the exact bit count; ours rounds up from the Ogg packet (up to 1 byte per packet). Needs
-         aoTuV's bit count (we build it from source) or the native encoder. **todo**
-      8. In-game test: replace a vanilla sound with our WEM (bank DIDX/DATA or loose WEM), the user listens. **todo**
-      9. Verdict: aoTuV (`THIRD_PARTY.md`, built from source like SDL3) or a native encoder; record it here. **todo**
+      6. Realistic comparison (`tools\compare.sh 0.4`): 7 vanilla WEMs decoded (mono 28/32/44.1 kHz, stereo 28/44.1 kHz, 5 and 6
+         channels), re-encoded by Wwise (Voice preset) and by aoTuV q0.4. Every file: **the same setup as Wwise's** (hash and alloc
+         sizes); size -0.1 % to -3.1 % against Wwise's; channel order kept; SNR against the source equal or higher (Wwise's output
+         is noisier, gain 0.89 to 0.98: stronger noise normalisation in its encoder). Bit-exact audio: no, at any input scaling
+         (/32767, /32768, /65536) or nearby quality; Wwise's encoder is a modified aoTuV, and matching it bit for bit would need its
+         encoder reverse engineered (a native encoder would not be closer). **done**
+      7. Exact packet sizes: aoTuV's exact bit count per packet is `oggpack_bits(&vorbis_block.opb)` right after
+         `vorbis_analysis` (public, no patch); a packet is ceil((bits - 1 - 2 for long blocks) / 8) bytes. With it 38 % of our
+         packets end in a 0x00 byte, as Wwise's (37 %); decoding stays identical to aoTuV's own Ogg. **done**
+      8. In-game test. `269336611.wem` is the 177 s quad stream `frontend.bnk` plays (the main menu's ambience; streamed, not in any
+         bank's DIDX; TDD does not override `frontend.bnk`). Test signal `spike\ingame\src\beeps_quad.wav`: 30 s of beeps stepping
+         FL 440 Hz, FR 660, RL 880, RR 1100, every 0.5 s. Packs in `spike\ingame\packs\`: `wce_audio_test_ours.pack` (aoTuV q0.4,
+         converted) and `wce_audio_test_wwise.pack` (the control: Wwise's own encode of the same WAV). Test: one pack at a time in
+         `data\`, enabled in the launcher, start the game, listen on the main menu; remove the pack after. **in progress: waiting on
+         the user** (ours first; the control only if ours is silent or broken).
+      9. Verdict: recommended **aoTuV** (built from source like SDL3, `THIRD_PARTY.md`), pending 8: same setups and headers as Wwise,
+         equal or better quality, slightly smaller; not bit-identical, which no encoder short of Wwise's own would be. **todo
+         (the user's call after 8)**
+      10. Decoder alloc sizes for setups not seen yet: they depend only on the setup (the same for mono and quad); the table covers
+          the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo**
 2. **Formats** with the round-trip gates; `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
 3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **todo**
 4. **Replace and add variations**: the encoder, the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties.
