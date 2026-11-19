@@ -609,6 +609,9 @@ pub struct TileTool {
     /// The texture rules' window.
     pub(crate) rules_ui: crate::texture_rules_panel::RulesUi,
 
+    /// The key lists' pictures and picker (`key_picker.rs`).
+    pub(crate) key_picker: crate::key_picker::KeyPicker,
+
     /// The biomes' window.
     pub(crate) biomes: crate::biomes_panel::BiomesUi,
 
@@ -1008,6 +1011,7 @@ impl Default for TileTool {
             scratch_name: String::new(),
             coverage: Default::default(),
             rules_ui: Default::default(),
+            key_picker: Default::default(),
             biome_presets: None,
             biomes: Default::default(),
             snap_outlines: Default::default(),

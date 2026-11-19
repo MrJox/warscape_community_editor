@@ -139,7 +139,9 @@ rock on slopes). The window outlines the selected rule's area in the viewport. T
 **Simple** (named choices: a condition's Flat / Gentle / Steep / Cliffs, a strength's Faint ... Full, the edges' Clean ... Very patchy) or
 **Advanced** (every number), in a label column and a value column that keep their places; a condition is a check box and a bar that draws
 the weight it gives (its fades as ramps; drag an end, onto the bar's end for no limit, Shift + drag for its softness); the texture is
-picked from the tile's groups' and variations' swatches.
+picked from the tile's groups' and variations' swatches. Keys a biome grows or a clutter rule lays (when not a set) are picked from the game's own (`key_picker.rs`):
+shown as their thumbnails (a key the game's files lack framed red), a click takes one out, the + cell opens a searchable grid of the
+kind's keys (buildings by category too) where a click adds or takes out one.
 
 **Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, the window `biomes_panel.rs` from the Tile panel's Experimental section's *Biomes...*, the Create
 panel's Vegetation > Biomes; `biome_area`, `biome_brush`, `biomes_wait`; [plans/auto_detail.md](plans/auto_detail.md), C): a biome is

@@ -24,6 +24,7 @@ pub mod ground_coverage_panel;
 pub mod ground_views;
 mod height_import_dialog;
 mod image_brush;
+mod key_picker;
 pub mod kit_copy_prompt;
 pub mod kit_prompt;
 mod launch_climate;
