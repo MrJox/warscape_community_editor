@@ -172,11 +172,12 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
          bank's DIDX; TDD does not override `frontend.bnk`). Test signal `spike\ingame\src\beeps_quad.wav`: 30 s of beeps stepping
          FL 440 Hz, FR 660, RL 880, RR 1100, every 0.5 s. Packs in `spike\ingame\packs\`: `wce_audio_test_ours.pack` (aoTuV q0.4,
          converted) and `wce_audio_test_wwise.pack` (the control: Wwise's own encode of the same WAV). Test: one pack at a time in
-         `data\`, enabled in the launcher, start the game, listen on the main menu; remove the pack after. **in progress: waiting on
-         the user** (ours first; the control only if ours is silent or broken).
-      9. Verdict: recommended **aoTuV** (built from source like SDL3, `THIRD_PARTY.md`), pending 8: same setups and headers as Wwise,
-         equal or better quality, slightly smaller; not bit-identical, which no encoder short of Wwise's own would be. **todo
-         (the user's call after 8)**
+         `data\`, enabled in the launcher, start the game, listen on the main menu; remove the pack after. **done** (user,
+         2026-11-19: our pack plays; the beeps replace the horse-sound ambience layered under the main menu music; the other layer,
+         vanilla's throat-singing music, is a different stream). The control pack was not needed.
+      9. Verdict: recommended **aoTuV** (built from source like SDL3, `THIRD_PARTY.md`): plays in game, same setups and headers as
+         Wwise, equal or better quality, slightly smaller; not bit-identical, which no encoder short of Wwise's own would be.
+         **waiting on the user's decision**
       10. Decoder alloc sizes for setups not seen yet: they depend only on the setup (the same for mono and quad); the table covers
           the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo**
 2. **Formats** with the round-trip gates; `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
@@ -190,7 +191,8 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
 
 ## Open questions and risks
 
-- Whether Attila's Wwise runtime accepts our Vorbis streams is only known once one plays in game (step 1.4).
+- Attila's Wwise runtime plays our aoTuV-encoded Vorbis WEMs (step 1.4.8, a streamed WEM replaced by a mod pack). Not yet tested:
+  media held in a bank's DIDX/DATA (needs the bank writer, step 4).
 - `event_data.dat`: the meaning of the events' f32 value and the difference between state groups A and B are still open.
 - Music editing is the hardest part to keep byte-identical; the oracle can generate reference objects for it.
 - pywarscape-sound (MIT) reports v112
