@@ -1300,6 +1300,15 @@ impl Editor {
         self.in_script
     }
 
+    fn step_script(&mut self, script: &mut ScriptRunner) -> bool {
+        self.in_script = true;
+        let prompts = self.docs.set_save_prompts(false);
+        let ok = script.step(self);
+        self.docs.set_save_prompts(prompts);
+        self.in_script = false;
+        ok
+    }
+
     /// Scripted (fixed-step) runs ignore the real mouse; the `mouse` commands drive the same Dear ImGui events.
     pub fn scripted_input(&self) -> bool {
         self.clock.fixed_step()
@@ -1458,6 +1467,12 @@ impl Editor {
     ///
     /// The document manager refused it (it should not: the old one is closed first).
     pub fn replace_document(&mut self, tool: &str, doc: Box<dyn Document>) -> Result<DocumentId, String> {
+        let old = (!doc.stand_in()).then(|| self.docs.of_tool(tool)).flatten();
+        if let Some(path) = doc.save_destination()
+            && let Some(owner) = self.docs.destination_owner(&path, old)?
+        {
+            return Err(format!("Save destination is already owned by open document {owner}"));
+        }
         if !doc.stand_in()
             && let Some(old) = self.docs.of_tool(tool)
         {
@@ -1725,11 +1740,11 @@ impl Editor {
 
         let kind = self.prompt;
         self.prompt_error.clear();
+        if matches!(a, Answer::Cancel | Answer::Discard) && self.docs.pending_changed_save().is_some() {
+            let _ = self.docs.answer_changed_save(false);
+        }
         let message = match a {
             Answer::Cancel => {
-                if self.docs.pending_changed_save().is_some() {
-                    let _ = self.docs.answer_changed_save(false);
-                }
                 self.cancel_restart();
                 self.prompt = PromptKind::None;
                 self.prompt_game = None;
@@ -1967,9 +1982,7 @@ impl Editor {
 
         if !self.script.done() && !self.script.failed() {
             let mut script = std::mem::take(&mut self.script);
-            self.in_script = true;
-            let ok = script.step(self);
-            self.in_script = false;
+            let ok = self.step_script(&mut script);
             self.script = script;
             if !ok {
                 self.request_quit(1);

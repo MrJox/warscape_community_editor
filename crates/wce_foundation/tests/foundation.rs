@@ -391,3 +391,62 @@ fn two_editors_saving_keep_each_others_changes() {
     assert_eq!(again.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
     assert_eq!((again.frame_cap, again.tool::<ToolSettings>("tile").kits), (144, vec!["/kit".to_owned()]));
 }
+
+#[test]
+fn export_observes_its_map_and_pack_while_other_projects_and_autosaves_change() {
+    use wce_foundation::disk_changes::Changes;
+    let root = tempfile::tempdir().unwrap();
+    let map = root.path().join("terrain/battles/map");
+    std::fs::create_dir_all(&map).unwrap();
+    std::fs::write(map.join("native.bin"), b"native").unwrap();
+    let pack = root.path().join("terrain_map.pack");
+    std::fs::write(&pack, b"pack").unwrap();
+    let changes = Changes::default();
+    let attempt = changes.begin_export_scoped(root.path(), &["terrain/battles/map", "terrain_map.pack"]).unwrap();
+    std::fs::create_dir_all(root.path().join("autosave/session")).unwrap();
+    std::fs::write(root.path().join("autosave/session/draft"), b"new draft").unwrap();
+    std::fs::create_dir_all(root.path().join("terrain/battles/other")).unwrap();
+    std::fs::write(root.path().join("terrain/battles/other/native.bin"), b"another map").unwrap();
+    attempt.recheck().unwrap();
+    std::fs::write(&pack, b"changed pack").unwrap();
+    assert!(attempt.recheck().is_err());
+    let attempt = changes.begin_export_scoped(root.path(), &["terrain/battles/map", "terrain_map.pack"]).unwrap();
+    std::fs::write(map.join("new native.bin"), b"outside map change").unwrap();
+    assert!(attempt.recheck().is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn folder_observations_skip_dangling_and_directory_links_but_watch_file_links() {
+    use wce_foundation::disk_changes::Folder;
+    let root = tempfile::tempdir().unwrap();
+    let resources = root.path().join("map");
+    std::fs::create_dir(&resources).unwrap();
+    let file = root.path().join("outside.bin");
+    std::fs::write(&file, b"original").unwrap();
+    std::os::unix::fs::symlink(&file, resources.join("file.bin")).unwrap();
+    std::os::unix::fs::symlink(root.path().join("missing"), resources.join("broken")).unwrap();
+    std::os::unix::fs::symlink(&resources, resources.join("cycle")).unwrap();
+    let before = Folder::capture(&resources).unwrap();
+    assert_eq!(before.files.len(), 1);
+    std::fs::write(&file, b"longer outside edit").unwrap();
+    assert_ne!(Folder::capture(&resources).unwrap().files, before.files);
+}
+
+#[cfg(windows)]
+#[test]
+fn folder_observations_do_not_descend_into_directory_junctions() {
+    use wce_foundation::disk_changes::Folder;
+    let root = tempfile::tempdir().unwrap();
+    let resources = root.path().join("map");
+    let outside = root.path().join("outside");
+    std::fs::create_dir(&resources).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("not-a-map-resource.bin"), b"outside").unwrap();
+    let link = resources.join("linked-folder");
+    let result = std::process::Command::new("cmd.exe").args(["/C", "mklink", "/J"]).arg(&link).arg(&outside).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert!(Folder::capture(&resources).unwrap().files.is_empty());
+    std::fs::remove_dir(&link).unwrap();
+    assert_eq!(std::fs::read(outside.join("not-a-map-resource.bin")).unwrap(), b"outside");
+}

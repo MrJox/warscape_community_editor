@@ -923,31 +923,9 @@ impl TerrainTool {
         })
     }
 
-    /// Reuse the current map before upstream's replacement/unsaved prompt clears it.
-    fn reuse_open_map(&mut self, e: &mut Editor, name: &str) -> Result<Option<String>, String> {
-        let Some(d) = e.docs.of_tool(TERRAIN_TOOL_ID).and_then(|id| e.docs.find_as::<MapDocument>(id)) else { return Ok(None) };
-        if !d.name.eq_ignore_ascii_case(name) {
-            return Ok(None);
-        }
-        let Some(path) = save_dir(e, d) else { return Ok(None) };
-        if e.docs.destination_owner(&path, None)?.is_none() {
-            return Ok(None);
-        }
-        self.status = format!("already open: {}", d.name);
-        Ok(Some(self.status.clone()))
-    }
-
     /// Starts reading a map (the open map gives way: asked about first when it has unsaved changes, the read starts after the prompt's Save
     /// or Discard).
     fn start_open(&mut self, e: &mut Editor, name: &str) {
-        match self.reuse_open_map(e, name) {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(err) => {
-                self.status = err;
-                return;
-            }
-        }
         let again = name.to_owned();
         let retry = Box::new(move |e: &mut Editor| {
             e.with_tool::<Self, _>(|t, e| {
@@ -1067,8 +1045,12 @@ impl TerrainTool {
             self.status = err;
             return;
         }
+        self.adopt_prepared(e, d);
+    }
+
+    fn adopt_prepared(&mut self, e: &mut Editor, mut d: Box<MapDocument>) {
         if let Some(path) = &d.save_dir {
-            match e.docs.destination_owner(path, None) {
+            match e.docs.destination_owner(path, e.docs.of_tool(TERRAIN_TOOL_ID)) {
                 Ok(Some(id)) => {
                     self.status = format!("already open: {}", e.docs.find(id).map(|d| d.title()).unwrap_or_default());
                     return;
@@ -1087,7 +1069,7 @@ impl TerrainTool {
             let retry = Box::new(move |e: &mut Editor| {
                 let Some(d) = waiting.borrow_mut().take() else { return Err("the map was opened already".to_owned()) };
                 let name = d.name.clone();
-                e.with_tool::<Self, _>(|t, e| t.adopt(e, d))
+                e.with_tool::<Self, _>(|t, e| t.adopt_prepared(e, d))
                     .map(|()| format!("opened {name}"))
                     .ok_or_else(|| "the Terrain tool is busy".to_owned())
             });
@@ -1108,7 +1090,6 @@ impl TerrainTool {
 
         self.status = format!("{}: {}", d.name, d.summary());
         self.take_start_season(&d);
-        d.save_dir = save_dir(e, &d);
         match e.replace_document(TERRAIN_TOOL_ID, d) {
             Ok(id) => self.start_view(e, id),
             Err(err) => e.status(&format!("Terrain: {err}"), true),
@@ -1472,9 +1453,6 @@ impl TerrainTool {
 
     /// Opens a map and waits for its view (scripts).
     fn open_now(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
-        if let Some(message) = self.reuse_open_map(e, name)? {
-            return Ok(message);
-        }
         let again = name.to_owned();
         let retry = Box::new(move |e: &mut Editor| {
             e.with_tool::<Self, _>(|t, e| t.open_now(e, &again)).unwrap_or_else(|| Err("the Terrain tool is busy".to_owned()))

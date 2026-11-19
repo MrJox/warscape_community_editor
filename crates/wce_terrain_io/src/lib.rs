@@ -59,11 +59,13 @@ fn collect(
             continue;
         }
         let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-        if e.file_type()?.is_dir() {
-            collect(&e.path(), &rel, out, disk)?;
-        } else {
-            disk.record(&e.path()).map_err(std::io::Error::other)?;
-            out.insert(rel, Blob::File(e.path()));
+        match wce_foundation::disk_changes::resource_entry(&e)? {
+            wce_foundation::disk_changes::ResourceEntry::Directory => collect(&e.path(), &rel, out, disk)?,
+            wce_foundation::disk_changes::ResourceEntry::File => {
+                disk.record(&e.path()).map_err(std::io::Error::other)?;
+                out.insert(rel, Blob::File(e.path()));
+            }
+            wce_foundation::disk_changes::ResourceEntry::Ignore => {}
         }
     }
 
