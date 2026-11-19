@@ -7,6 +7,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
 use wce_audio::decode::{Pcm, decode_wem};
+use wce_audio::edit::EditSet;
+use wce_audio::encode::{DEFAULT_QUALITY, QUALITIES, encode_wem};
+use wce_audio::import::read_sound;
 use wce_audio::library::{MediaRef, PlayNode, SoundLibrary, action_name};
 use wce_audio_format::bank::kind_name;
 use wce_audio_format::hirc::{NodeBase, Object};
@@ -24,7 +27,27 @@ enum Request {
     PlayAny(Arc<PlayNode>),
     Select(u32),
     Stop,
+    /// Replace a media file's audio with a sound file the user picks.
+    Replace(u32),
+    /// Add a sound file the user picks to a random/sequence container.
+    AddVariation(u32),
+    RemoveVariation(u32, u32),
+    SetProperty(u32, u8, Option<f32>),
+    Save,
+    Revert,
+    Undo,
+    Redo,
 }
+
+/// What an encoded import goes to.
+#[derive(Clone, Copy)]
+enum ImportTarget {
+    Replace(u32),
+    Add(u32),
+}
+
+/// The undo steps kept (each a copy of the edited banks).
+const UNDO_STEPS: usize = 20;
 
 /// A bank's lists, made once.
 #[derive(Default)]
@@ -58,6 +81,14 @@ pub struct AudioTool {
     scroll_to_expanded: bool,
     /// What the script commands asked for, applied once the banks are read: (bank, search, select, expand).
     pending: (Option<String>, Option<String>, Option<String>, Option<String>),
+    /// Unsaved edits, and the undo and redo steps.
+    edits: EditSet,
+    undo: Vec<EditSet>,
+    redo: Vec<EditSet>,
+    /// The import quality (Wwise's 0 to 10), `None` for the default.
+    quality: Option<u8>,
+    /// A sound file being encoded on a worker: its name, the result, and what it goes to.
+    encoding: Option<(String, Receiver<Result<Vec<u8>, String>>, ImportTarget)>,
 }
 
 impl AudioTool {
@@ -91,6 +122,24 @@ impl AudioTool {
 
         if let Some(lib) = self.library.clone() {
             self.apply_pending(&lib, e);
+        }
+
+        if let Some((name, rx, target)) = &self.encoding
+            && let Ok(result) = rx.try_recv()
+        {
+            let (name, target) = (name.clone(), *target);
+            self.encoding = None;
+            match result {
+                Ok(wem) => match target {
+                    ImportTarget::Replace(media) => self.edit(e, &format!("replaced #{media} with {name}"), |edits, lib, files| {
+                        edits.replace_media(lib, files, media, &wem).map(|()| String::new())
+                    }),
+                    ImportTarget::Add(container) => self.edit(e, &format!("added {name}"), |edits, lib, _| {
+                        edits.add_variation(lib, container, &wem).map(|id| format!(" as #{id}"))
+                    }),
+                },
+                Err(why) => e.status(&format!("Audio: cannot import {name}: {why}"), true),
+            }
         }
 
         if let Some((label, rx)) = &self.decoding
@@ -179,13 +228,122 @@ impl AudioTool {
                 },
                 Request::Select(id) => self.selected = Some(id),
                 Request::Stop => self.player.stop(),
+                Request::Replace(media) => self.import(e, ImportTarget::Replace(media)),
+                Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
+                Request::RemoveVariation(container, child) => self
+                    .edit(e, "removed a variation", |edits, lib, _| edits.remove_variation(lib, container, child).map(|()| String::new())),
+                Request::SetProperty(id, property, value) => {
+                    self.edit(e, "set a property", |edits, lib, _| edits.set_property(lib, id, property, value).map(|()| String::new()))
+                }
+                Request::Save => self.save(e),
+                Request::Revert => {
+                    if !self.edits.is_empty() {
+                        self.undo.push(std::mem::take(&mut self.edits));
+                        e.status("Audio: unsaved edits reverted (Undo brings them back)", false);
+                    }
+                }
+                Request::Undo => {
+                    if let Some(previous) = self.undo.pop() {
+                        self.redo.push(std::mem::replace(&mut self.edits, previous));
+                    }
+                }
+                Request::Redo => {
+                    if let Some(next) = self.redo.pop() {
+                        self.undo.push(std::mem::replace(&mut self.edits, next));
+                    }
+                }
             }
         }
     }
 
+    /// Applies an edit with an undo step; reports its result.
+    fn edit(
+        &mut self,
+        e: &mut Editor,
+        what: &str,
+        apply: impl FnOnce(&mut EditSet, &SoundLibrary, &dyn Files) -> wce_audio::Result<String>,
+    ) {
+        let (Some(lib), Some(files)) = (self.library.clone(), self.files.clone()) else { return };
+        let mut next = self.edits.clone();
+        match apply(&mut next, &lib, files.as_ref()) {
+            Ok(note) => {
+                self.undo.push(std::mem::replace(&mut self.edits, next));
+                if self.undo.len() > UNDO_STEPS {
+                    self.undo.remove(0);
+                }
+                self.redo.clear();
+                e.status(&format!("Audio: {what}{note} (not saved yet)"), false);
+            }
+            Err(err) => e.status(&format!("Audio: cannot {}: {err}", what.trim_start_matches("removed ").trim_start_matches("set ")), true),
+        }
+    }
+
+    /// Asks for a sound file and encodes it on a worker.
+    fn import(&mut self, e: &mut Editor, target: ImportTarget) {
+        let filters = [("Sound files".to_owned(), "*.wav *.ogg *.wem".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
+        let Some(path) = wce_vfs::steam_detect::file_dialog(false, std::path::Path::new(""), &filters) else { return };
+        let quality = self.quality.unwrap_or(DEFAULT_QUALITY);
+        let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let result = std::fs::read(&path)
+                .map_err(|err| err.to_string())
+                .and_then(|bytes| read_sound(&bytes).map_err(|err| err.to_string()))
+                .and_then(|pcm| encode_wem(&pcm, quality).map_err(|err| err.to_string()));
+            let _ = tx.send(result);
+        });
+        e.status(&format!("Audio: encoding {name}..."), false);
+        self.encoding = Some((name, rx, target));
+    }
+
+    /// Writes the edited banks and sound files into the project's loose folder (read before the packs).
+    fn save(&mut self, e: &mut Editor) {
+        let Some(lib) = self.library.clone() else { return };
+        let mut written = vec![];
+        let files: Vec<(String, Vec<u8>)> = self
+            .edits
+            .banks
+            .iter()
+            .map(|(b, bank)| (lib.banks[*b].path.clone(), bank.write()))
+            .chain(self.edits.loose.iter().map(|(p, bytes)| (p.clone(), bytes.clone())))
+            .collect();
+        for (path, bytes) in files {
+            let disk = e.loose_path(&path);
+            if let Some(dir) = disk.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            match wce_foundation::files::write_replacing(&disk, &bytes) {
+                Ok(()) => written.push(path),
+                Err(err) => {
+                    e.status(&format!("Audio: cannot write {}: {err}", disk.display()), true);
+                    return;
+                }
+            }
+        }
+        for path in &written {
+            e.loose_changed(path);
+        }
+        self.edits = EditSet::default();
+        self.undo.clear();
+        self.redo.clear();
+        e.status(&format!("Audio: saved {} files into the project's loose folder", written.len()), false);
+    }
+
+    /// The bytes of a media file as edited (an unsaved replace or addition first).
+    fn media_bytes(&self, media: &MediaRef) -> Option<Vec<u8>> {
+        let (lib, files) = (self.library.as_ref()?, self.files.as_ref()?);
+        let id = media.id();
+        if let Some(bytes) = self.edits.loose.get(&format!("audio/{id}.wem")) {
+            return Some(bytes.clone());
+        }
+        if let Some(bytes) = self.edits.banks.values().find_map(|b| b.media(id)) {
+            return Some(bytes.to_vec());
+        }
+        lib.media_bytes(media, files.as_ref())
+    }
+
     fn start_decode(&mut self, e: &mut Editor, media: &MediaRef, label: &str) {
-        let (Some(lib), Some(files)) = (&self.library, &self.files) else { return };
-        let Some(bytes) = lib.media_bytes(media, files.as_ref()) else {
+        let Some(bytes) = self.media_bytes(media) else {
             e.status(&format!("{label}: the media #{} is in no bank and no pack", media.id()), true);
             return;
         };
@@ -250,6 +408,51 @@ impl AudioTool {
             gui::progress_bar(p, -1.0, &format!("{} ({:.1} s)", self.player.label, self.player.seconds));
         } else {
             gui::text_disabled("Nothing playing.");
+        }
+        gui::separator();
+
+        // Edits: what is unsaved, and the import quality.
+        if let Some((name, _, _)) = &self.encoding {
+            gui::text_disabled(&format!("Encoding {name}..."));
+        }
+        let (banks, sounds) = (self.edits.banks.len(), self.edits.loose.len());
+        if banks + sounds > 0 {
+            gui::text(&format!("Unsaved: {banks} bank(s), {sounds} sound file(s)"));
+            if gui::small_button("Save") {
+                requests.push(Request::Save);
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Writes the edited banks and sound files into the project's loose folder, read before the game's packs.");
+            }
+            gui::same_line();
+            if gui::small_button("Revert") {
+                requests.push(Request::Revert);
+            }
+        }
+        if !self.undo.is_empty() {
+            gui::same_line();
+            if gui::small_button("Undo") {
+                requests.push(Request::Undo);
+            }
+        }
+        if !self.redo.is_empty() {
+            gui::same_line();
+            if gui::small_button("Redo") {
+                requests.push(Request::Redo);
+            }
+        }
+        let labels: Vec<String> = QUALITIES
+            .iter()
+            .map(|q| format!("Import quality {q}{}", if *q == DEFAULT_QUALITY { " (Wwise's default)" } else { "" }))
+            .collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let mut current = QUALITIES.iter().position(|q| *q == self.quality.unwrap_or(DEFAULT_QUALITY)).unwrap_or(0) as i32;
+        gui::set_next_item_width(-1.0);
+        if gui::combo("##quality", &mut current, &labels) {
+            self.quality = QUALITIES.get(current as usize).copied();
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Vorbis quality of imported sounds, as Wwise's (vanilla mostly uses 0 to 4). Higher is larger and clearer.");
         }
         gui::separator();
 
@@ -530,16 +733,29 @@ impl AudioTool {
         }
         gui::separator();
 
-        match typed {
+        // The object as edited (an unsaved edit shows here at once).
+        let edited = self.edits.object(&lib, id);
+        if edited.is_some() && self.edits.banks.keys().any(|b| lib.banks_of(id).contains(b)) {
+            gui::text_colored([1.0, 0.8, 0.3, 1.0], "Edited, not saved");
+        }
+        match edited.as_ref().or(typed) {
             None => gui::text_disabled("Not read field by field (this bank version or kind is kept as bytes)."),
             Some(object) => {
                 fields(object, &lib, requests);
+                edit_fields(id, object, requests);
                 if let Some(node) = object.node() {
                     node_fields(node, &lib, requests);
                 }
+                let random = matches!(object, Object::RandomSequence(_));
                 if !object.children().is_empty() && gui::collapsing_header(&format!("Children ({})", object.children().len()), 0) {
                     for c in object.children() {
-                        let kind = lib.object(*c).map_or(0, |(_, o, _)| o.kind);
+                        let kind = self.edits.object(&lib, *c).map_or_else(|| lib.object(*c).map_or(0, |(_, o, _)| o.kind), |o| o.kind());
+                        if random {
+                            if gui::small_button(&format!("Remove##rm{c}")) {
+                                requests.push(Request::RemoveVariation(id, *c));
+                            }
+                            gui::same_line();
+                        }
                         if gui::selectable(&format!("{}##c{c}", lib.label(*c, kind)), false, 0) {
                             requests.push(Request::Select(*c));
                         }
@@ -643,6 +859,43 @@ fn fields(object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
     }
 }
 
+/// The edits an object offers: replace a sound's audio, add a variation to a random container, its volume and pitch.
+fn edit_fields(id: u32, object: &Object, requests: &mut Vec<Request>) {
+    match object {
+        Object::Sound(s) => {
+            if gui::button("Replace audio...") {
+                requests.push(Request::Replace(s.source.source_id));
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Picks a WAV, Ogg Vorbis or WEM file and encodes it as the game's sounds are (Wwise Vorbis).\nEvery sound using this audio plays the new one.",
+                );
+            }
+        }
+        Object::RandomSequence(_) => {
+            if gui::button("Add variation...") {
+                requests.push(Request::AddVariation(id));
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Picks a WAV, Ogg Vorbis or WEM file and adds it as one more sound of this container\n(set up like its first sound).",
+                );
+            }
+        }
+        _ => {}
+    }
+
+    let Some(node) = object.node() else { return };
+    for (property, label, lo, hi, format) in [(0u8, "Volume", -96.0, 12.0, "%.1f dB"), (2, "Pitch", -2400.0, 2400.0, "%.0f cents")] {
+        let mut value = node.props.iter().find(|(p, _)| *p == property).map_or(0.0, |(_, v)| *v);
+        gui::set_next_item_width(160.0);
+        gui::drag_float(&format!("{label}##p{property}"), &mut value, if property == 0 { 0.1 } else { 10.0 }, lo, hi, format);
+        if gui::is_item_deactivated_after_edit() {
+            requests.push(Request::SetProperty(id, property, Some(value)));
+        }
+    }
+}
+
 /// The node parameters: parent, bus, properties.
 fn node_fields(node: &NodeBase, lib: &SoundLibrary, requests: &mut Vec<Request>) {
     if node.parent_id != 0 {
@@ -708,8 +961,8 @@ impl Tool for AudioTool {
         let commands: [(&str, &str, &str, Slot); 4] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
-            ("audio_select", "audio_select <name | #id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
-            ("audio_expand", "audio_expand <event name | #id>", "Selects an event and opens what it plays", |t| &mut t.pending.3),
+            ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
+            ("audio_expand", "audio_expand <event name | id>", "Selects an event and opens what it plays", |t| &mut t.pending.3),
         ];
         for (name, usage, help, slot) in commands {
             c.add(name, usage, help, move |e, args| {
@@ -733,6 +986,14 @@ impl Tool for AudioTool {
         self.bank_panel(&mut requests);
         self.object_panel(&mut requests);
         self.handle(e, requests);
+    }
+
+    fn unsaved_work(&self) -> Vec<String> {
+        if self.edits.is_empty() {
+            vec![]
+        } else {
+            vec![format!("Audio: {} bank(s) and {} sound file(s) edited, not saved", self.edits.banks.len(), self.edits.loose.len())]
+        }
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
