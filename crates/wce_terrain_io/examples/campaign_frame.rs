@@ -1,0 +1,157 @@
+//! A campaign map frame read from a RenderDoc capture by `scripts/re/rd_campaign_frame.py`, named and summarised
+//! (docs/plans/campaign_tilemap.md, Phase 1):
+//! - `shader_names.csv`: each shader of the capture named by the game's `fxc/*.fxc` file whose DXBC checksum it has;
+//! - `passes.txt`: the frame's draws in runs of the same targets and shaders, with the shaders' names;
+//! - `mask.png`: the pixels the skinned draws (armies, agents) change in the G-buffer, white (out of the comparison's scope).
+//!
+//!   cargo run --release -p wce_terrain_io --example campaign_frame -- <the script's folder>
+//!
+//! `WCE_ATTILA_DIR` the game whose shaders name the capture's (default this machine's Steam folder); the profile from `WCE_GAME`.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use wce_formats::png_file::PngFile;
+use wce_vfs::{Config, GameProfile, Vfs};
+
+fn read_csv(path: &Path) -> Vec<Vec<String>> {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    text.lines().skip(1).filter(|l| !l.is_empty()).map(|l| l.split(',').map(str::to_owned).collect()).collect()
+}
+
+/// Every DXBC checksum in the game's fxc files and the files that hold it.
+fn fxc_names(vfs: &Vfs) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let files: Vec<String> = vfs.list("fxc/", "fxc").iter().map(|s| (*s).to_owned()).collect();
+    for path in &files {
+        let Ok(b) = vfs.read(path) else { continue };
+        let name = path.trim_start_matches("fxc/").trim_end_matches(".fxc").to_owned();
+        let mut i = 0;
+        while let Some(k) = b[i..].windows(4).position(|w| w == b"DXBC") {
+            let at = i + k;
+            if at + 20 <= b.len() {
+                let chk: String = b[at + 4..at + 20].iter().map(|x| format!("{x:02x}")).collect();
+                out.entry(chk).or_default().push(name.clone());
+            }
+            i = at + 4;
+        }
+    }
+    println!("{} fxc files, {} shaders", files.len(), out.len());
+    out
+}
+
+/// A DDS's size and pixel bytes (RenderDoc's save: one mip, the target's format).
+fn dds_pixels(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
+    let b = std::fs::read(path).ok()?;
+    if b.len() < 128 || &b[..4] != b"DDS " {
+        return None;
+    }
+    let u = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    let (h, w) = (u(12), u(16));
+    let start = if &b[84..88] == b"DX10" { 148 } else { 128 };
+    Some((w, h, b[start..].to_vec()))
+}
+
+fn mask(dir: &Path) {
+    let t = dir.join("targets");
+    let mut masked: Option<(u32, u32, Vec<bool>)> = None;
+    for i in 0.. {
+        let (Some(a), Some(b)) =
+            (dds_pixels(&t.join(format!("skinned_before{i}.dds"))), dds_pixels(&t.join(format!("skinned_after{i}.dds"))))
+        else {
+            break;
+        };
+        let (w, h) = (a.0, a.1);
+        let n = (w * h) as usize;
+        let bpp = a.2.len() / n.max(1);
+        if bpp == 0 || a.2.len() != b.2.len() {
+            println!("mask: target {i} unreadable ({} / {} bytes for {w} x {h})", a.2.len(), b.2.len());
+            continue;
+        }
+        let m = masked.get_or_insert_with(|| (w, h, vec![false; n]));
+        for (k, px) in m.2.iter_mut().enumerate() {
+            *px |= a.2[k * bpp..(k + 1) * bpp] != b.2[k * bpp..(k + 1) * bpp];
+        }
+    }
+    let Some((w, h, m)) = masked else {
+        println!("mask: no skinned draws' targets (nothing masked)");
+        return;
+    };
+    let count = m.iter().filter(|&&x| x).count();
+    let png = PngFile {
+        width: w,
+        height: h,
+        bit_depth: 8,
+        color_type: 0,
+        pixels: m.iter().map(|&x| if x { 255 } else { 0 }).collect(),
+        ..Default::default()
+    };
+    std::fs::write(dir.join("mask.png"), png.encode().expect("png")).expect("mask.png");
+    println!("mask: {count} pixels ({:.2} %) changed by the skinned draws", 100.0 * count as f64 / m.len() as f64);
+}
+
+fn main() {
+    let dir = PathBuf::from(std::env::args().nth(1).expect("usage: campaign_frame <folder>"));
+    let game_dir = std::env::var_os("WCE_ATTILA_DIR")
+        .map_or_else(|| PathBuf::from("D:/Juegos/Steam/steamapps/common/Total War Attila"), PathBuf::from);
+    let game = GameProfile::from_env().clone();
+    let mut cfg = Config::new(&game_dir, game);
+    cfg.mod_packs = Some(vec![]);
+    let vfs = Vfs::mount(&cfg).expect("vfs");
+
+    // The shaders' names.
+    let fxc = fxc_names(&vfs);
+    let mut names: HashMap<String, String> = HashMap::new();
+    let mut out = String::from("id,stage,dxbc,name,files\n");
+    let (mut named, mut total) = (0, 0);
+    for r in read_csv(&dir.join("shaders.csv")) {
+        let (id, stage, chk) = (&r[0], &r[1], &r[2]);
+        total += 1;
+        let files = fxc.get(chk.as_str());
+        // The shortest of the files with that bytecode (the variants with fewer defines).
+        let name = files.and_then(|f| f.iter().min_by_key(|n| n.len())).cloned().unwrap_or_else(|| format!("?{stage}{id}"));
+        if files.is_some() {
+            named += 1;
+        }
+        out += &format!("{id},{stage},{chk},{name},{}\n", files.map_or(0, Vec::len));
+        names.insert(id.clone(), name);
+    }
+    std::fs::write(dir.join("shader_names.csv"), out).expect("shader_names.csv");
+    println!("shaders named: {named} of {total}");
+
+    // The passes: runs of draws with the same targets and shaders.
+    let name = |id: &str| if id == "0" { "-".to_owned() } else { names.get(id).cloned().unwrap_or_else(|| format!("#{id}")) };
+    let mut lines = Vec::new();
+    let mut run: Option<(String, String, u32, u32, u32)> = None; // key, text, first, last, count
+    for r in read_csv(&dir.join("events.csv")) {
+        if r.len() < 17 || r[1] == "clear" {
+            continue;
+        }
+        let ev: u32 = r[0].parse().unwrap_or(0);
+        let text = if r[1] == "dispatch" {
+            format!("CS {}", name(&r[9]))
+        } else {
+            format!("RT [{}] D {} | VS {} | PS {} | depth {} blend {}", r[5], r[6], name(&r[7]), name(&r[8]), r[15], r[16])
+        };
+        let key = text.clone();
+        match &mut run {
+            Some((k, _, _, last, n)) if *k == key => {
+                *last = ev;
+                *n += 1;
+            }
+            _ => {
+                if let Some((_, t, a, b, n)) = run.take() {
+                    lines.push(format!("{a}-{b} x{n} {t}"));
+                }
+                run = Some((key, text, ev, ev, 1));
+            }
+        }
+    }
+    if let Some((_, t, a, b, n)) = run {
+        lines.push(format!("{a}-{b} x{n} {t}"));
+    }
+    std::fs::write(dir.join("passes.txt"), lines.join("\n") + "\n").expect("passes.txt");
+    println!("passes.txt: {} runs", lines.len());
+
+    mask(&dir);
+}

@@ -171,3 +171,20 @@ The rain and winter captures (64369, 92544, 94246) are kept as extra baselines.
 
 1, 2, 3 (the baseline), then 4 in its order (re-ranked by the baseline's errors), 5, 6; Phase 7's docs with each phase. Captures C and
 F are wanted when Phase 3's baseline is ready; G, E, T and V when their items come up.
+
+## Progress
+
+**2026-11-19.**
+- Phase 1 done: `scripts/re/rd_campaign_frame.py` (the capture's draws, shaders, instances, texture keys, constants by group, camera,
+  key events and targets as DDS) and `wce_terrain_io`'s `campaign_frame` example (`shader_names.csv`: the shaders named by the
+  game's `fxc/` files' DXBC checksums, 127 of 127 on capture A; `passes.txt`; `mask.png`: 0.10 % of capture A). Capture A read in
+  about 5 minutes; its frame written up in docs/re/renderer.md, "The campaign frame".
+- Phase 2's first question settled (V, capture A's instances): the tiles, cliff meshes, sea tiles and river meshes carry z x 1.1548
+  (applied in the world, after a tile's turn); buildings, props, decals and units are uniform, at their places in the stretched world;
+  the tree clumps are (x, y, z, angle), the angle in sixths. So the view stretches the terrain's geometry and moves the models,
+  without stretching them.
+- Phase 4 items settled for Attila by capture A's pass list: no coast strip (`ps30_main_coast` not drawn: item 3 closed, nothing
+  to draw), no grass pass (item 4: off on Attila; TDD's reeds wait for its capture).
+- The prerequisite: the settlement buildings are drawn in scripted runs once the startpos is read (a thread): 0 right after
+  `terrain_settle`, 304 at Rome 240 frames later. The 2026-11-18 run took its shot too early. To do in Phase 2: `terrain_settle`
+  waits for the startpos, the forests and the props too.
