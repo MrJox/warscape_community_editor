@@ -66,6 +66,10 @@ pub struct CitySlot {
 
     /// The model the display tables give the building for the region's owner (a packs path, lower case, `/`).
     pub model: Option<String>,
+
+    /// Its building's turn in sixths, clockwise seen from above as the sprawl's: a port's is its anchor hex's coast rotation (RenderDoc,
+    /// capture A: 9 of 9 ports); the others' is not known yet (0; their anchor hexes hold no rotation: docs/re/terry.md).
+    pub turn: u32,
 }
 
 /// A campaign's settlements.
@@ -87,6 +91,11 @@ pub struct Cities {
 
     /// The settlements' sprawl at the start (ASSUMPTION: every sprawl cell in the zone of a slot with a building, at a level from its tier).
     pub sprawl: Vec<SprawlPiece>,
+
+    /// Every sprawl hex record of the startpos (`SPRAWL_HEX_MAP_DATA`) by its cell: in a footprint, in a zone, water, the road shape and
+    /// rotation, the coast shape and rotation, the map's road and river edge masks, the road mask (the slots' own cells included: what
+    /// their buildings' turns are looked for in).
+    pub hexes: HashMap<(u16, u16), [i64; 10]>,
 
     /// What was not found (counts by reason).
     pub notes: Vec<String>,
@@ -583,7 +592,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     tiers.insert(i, tier_of(b));
                 }
 
-                cities.slots.push(CitySlot { region: key.to_owned(), index, kind, cell, world: centre(cell), building, model });
+                cities.slots.push(CitySlot { region: key.to_owned(), index, kind, cell, world: centre(cell), building, model, turn: 0 });
             }
 
             // The sprawl: the cells of the zones of slots with a building (their bit in `zone_slots`: the startpos's slot index), the
@@ -620,7 +629,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         road_edges,
                         river_edges,
                         water,
-                        _,
+                        road_mask,
                         road_shape,
                         road_turn,
                         zone_slots,
@@ -632,6 +641,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         continue;
                     };
                     cell_info.insert((c as u16, r as u16), (zone_slots, road_edges, river_edges));
+                    cities.hexes.insert(
+                        (c as u16, r as u16),
+                        [in_footprint, in_zone, water, road_shape, road_turn, coast_shape, coast_turn, road_edges, river_edges, road_mask],
+                    );
                     if in_zone == 0 || in_footprint != 0 {
                         continue;
                     }
@@ -656,6 +669,13 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     let cell = (c as u16, r as u16);
                     let model = tables.sprawl_model(&piece, level, &faction).map(str::to_owned);
                     cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: centre(cell), piece, level, turn, model });
+                }
+            }
+
+            // A port's building faces as its anchor hex's coast (its rotation: capture A's nine ports).
+            for slot in cities.slots.iter_mut().filter(|s| s.region == key && s.kind == "port") {
+                if let Some(h) = cities.hexes.get(&slot.cell) {
+                    slot.turn = h[6].rem_euclid(6) as u32;
                 }
             }
 
@@ -715,12 +735,13 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     }
 
                     // A connecting tower between each two cells of the walk (`FUN_10aecb70`: halfway, turned by the step's direction, half a
-                    // turn more when the edge before it leads out of the zone; `FUN_10af7610` names it `tower`).
+                    // turn more when the edge before it leads out of the zone; `FUN_10af7610` names it `tower`). The game's are half a turn
+                    // from that reading (RenderDoc, capture A: 204 of 204 towers): turned by three sixths more.
                     for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
                         let next = walk[(i + 1) % n];
                         let Some(d) = hex_direction(cell, next).filter(|_| on_wall.contains(&next)) else { continue };
                         let zone_mask = (0..6).filter(|&e| hex_neighbour(cell, e).is_some_and(inside)).fold(0u32, |m, e| m | (1 << e));
-                        let turn = if zone_mask & (1 << ((d + 5) % 6)) == 0 { (d + 3) % 6 } else { d };
+                        let turn = if zone_mask & (1 << ((d + 5) % 6)) == 0 { d } else { (d + 3) % 6 };
                         let (a, b) = (centre(cell), centre(next));
                         let model = tables.sprawl_model("tower", level, &faction).map(str::to_owned);
                         cities.sprawl.push(SprawlPiece {

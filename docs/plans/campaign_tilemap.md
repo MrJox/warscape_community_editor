@@ -247,3 +247,6 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   out of the rigid shadows and the pick pass. At capture A's camera the forests stand where and as large as the game's (they were a
   third of its size). Their colour: the Terrain tool never set `scene.vegetation_season`, so the plain diffuse was drawn; now the
   view's season (spring's `_sp`, green with blossom, as capture A's).
+- **Phase 4 item 6, the settlements' turns (2026-11-19, capture A):** ports turned by their anchor hex's coast rotation (9 of 9),
+  the walls' connecting towers half a turn more (204 of 204), walls and gatehouses already right. Left: the main and secondary
+  slots' turn (and `sprawl_edge_0`'s): not in their hexes; its writer in the DLL being traced.
