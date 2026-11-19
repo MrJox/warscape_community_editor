@@ -302,3 +302,8 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   level's per-chunk LF ground with the relief too (dark walls along chunk edges where it met tiles drawn otherwise). Left: holes
   beside some mountain tiles seen from high up (their own edges against the flat ring; not traced, may be older), the blue patch
   north-east of Rome at capture A's camera (cell (695, 680), a sea tile).
+- **The holes beside the mountains (2026-11-19):** traced with `terrain_far_relief` (relief along a line of cells, and the
+  placements over a cell): the bake took each cell's first placement, and a big mountain tile (`large_oval_60_r`, 36 x 23) leaves
+  out of its mask the cells where grass tiles lie; its ground there slopes down (the mask's drop), so the bake sank them 256 m:
+  holes near, walls far. A cell now takes the highest of the tiles' own heights over it, as `Frame::ground_at` does. The far
+  level's chunks take the relief again (the walls were the same sinks). Capture A's ground 22.07 -> 21.87.
