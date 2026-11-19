@@ -249,7 +249,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    - Follow-ups (later steps): property IDs beyond volume (0), pitch (2) and low-pass (3) to name (check with the oracle);
      labels set by the user (UI); DB tables as a names source; Wwise-faithful playback (blend layers mixed, sequences in order)
      is the Cinematic layer's (not chosen for v1).
-4. **Replace and add variations**. **in progress**
+4. **Replace and add variations**. **in progress** (4.7: the in-game check)
    1. Decoder alloc sizes (1.4.10): oracle grid (scratch `tools\setup_grid.py`: Wwise at qualities 0 to 10 x 1, 2, 4, 5, 6
       channels x 8 rates, 440 conversions, against aoTuV at Q/10): Wwise uses one setup per quality and channel layout at any
       rate (chosen as for 44.1 kHz); ours matches for qualities 0 and 2 to 10 with 1 to 5 channels; quality 1 and 5.1 differ
@@ -281,7 +281,12 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       quality), Add variation... (a random/sequence container), Remove (each child of such a container), Volume and Pitch
       (any node); edited objects show at once ("Edited, not saved"), the trees after Save; Play plays the edited audio. Seen in the
       app (2026-11-19, `audio_select 715511747`). **done**; follow-ups: weights and mode, edits shown in the trees before Save.
-   7. In game: a replaced in-bank sound and an added variation heard in game (the user). **todo**
+   7. In game: an in-bank replace. `grp_gw_generic_button` (global_ui, the generic button) plays media #25654632 (click) and
+      #13563058 (mouse-over), held in `battle_ui_data` and copied in `campaign_ui_data` and `global_ui_data`; both replaced through
+      `EditSet` with test tones (click: 660 then 990 Hz; mouse-over: a short 1,760 Hz blip). 6 banks edited (the 3 data banks
+      and `battle_ui`, `campaign_ui`, `global_ui`, whose offsets moved). Pack: scratch `spike\ingame2\wce_audio_test_ui.pack`
+      (vanilla banks; TDD overrides `campaign_ui`, so test without TDD). **in progress: waiting on the user** (hover and click
+      the main menu's buttons). An added variation in game: todo.
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
