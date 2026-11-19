@@ -34,7 +34,7 @@ pub fn cache_dir() -> PathBuf {
 pub fn clear(dir: &Path) -> usize {
     let mut n = 0;
     for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        if e.path().extension().is_some_and(|x| x == "bin") && std::fs::remove_file(e.path()).is_ok() {
+        if e.path().extension().is_some_and(|x| x == "bin" || x == "far") && std::fs::remove_file(e.path()).is_ok() {
             n += 1;
         }
     }
@@ -538,6 +538,70 @@ pub fn decode(bytes: &[u8]) -> Result<Template, String> {
         Template { extent, own: Grid { nx, nz, ox, oz, step, heights: Arc::new(heights) }, material, entities, mid, ..Default::default() };
     t.finish();
     Ok(t)
+}
+
+/// A campaign map's far material on disk (`<key>.far`: "WCEFAR" + u16 version, then lz4 of its side, colour, normal and relief), keyed
+/// by the streamer (`Shared::far_key`): its bake reads every tile of the map, half a minute on main_attila.
+const FAR_MAGIC: &[u8; 6] = b"WCEFAR";
+// 1: the first.
+const FAR_VERSION: u16 = 1;
+
+/// How many far materials the cache keeps (the newest; each some tens of MB).
+const FAR_KEEP: usize = 4;
+
+fn far_path(dir: &Path, key: u64) -> PathBuf {
+    dir.join(format!("{key:016x}.far"))
+}
+
+/// Reads a cached far material of `size` texels a side.
+pub fn read_far(dir: &Path, key: u64, size: u32) -> Option<super::FarMap> {
+    let bytes = std::fs::read(far_path(dir, key)).ok()?;
+    if bytes.len() < 8 || &bytes[..6] != FAR_MAGIC || u16::from_le_bytes([bytes[6], bytes[7]]) != FAR_VERSION {
+        return None;
+    }
+    let body = lz4_flex::decompress_size_prepended(&bytes[8..]).ok()?;
+    let n = size as usize * size as usize;
+    if body.len() != 4 + n * 12 || u32::from_le_bytes(body[..4].try_into().ok()?) != size {
+        return None;
+    }
+    let (diffuse, rest) = body[4..].split_at(n * 4);
+    let (normal, relief) = rest.split_at(n * 4);
+    let relief = relief.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+    Some(super::FarMap { size, diffuse: Arc::new(diffuse.to_vec()), normal: Arc::new(normal.to_vec()), relief: Arc::new(relief) })
+}
+
+/// Writes a far material (through a temporary file), and drops the cache's older ones past the newest few.
+pub fn write_far(dir: &Path, key: u64, far: &super::FarMap) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut body = Vec::with_capacity(4 + far.diffuse.len() + far.normal.len() + far.relief.len() * 4);
+    body.extend(far.size.to_le_bytes());
+    body.extend_from_slice(&far.diffuse);
+    body.extend_from_slice(&far.normal);
+    body.extend(far.relief.iter().flat_map(|v| v.to_le_bytes()));
+    let mut out = FAR_MAGIC.to_vec();
+    out.extend(FAR_VERSION.to_le_bytes());
+    out.extend(lz4_flex::compress_prepend_size(&body));
+    let (to, tmp) = (far_path(dir, key), dir.join(format!("{key:016x}.far.{}.tmp", std::process::id())));
+    std::fs::write(&tmp, out).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &to).map_err(|e| e.to_string())?;
+
+    let mut fars: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "far"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    fars.sort_by_key(|f| std::cmp::Reverse(f.0));
+    for (_, p) in fars.into_iter().skip(FAR_KEEP) {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(())
+}
+
+/// FNV-1a over bytes (the far material's key).
+pub fn hash(h: u64, bytes: &[u8]) -> u64 {
+    fnv(h, bytes)
 }
 
 /// Reads a cached template.

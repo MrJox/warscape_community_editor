@@ -130,9 +130,19 @@ struct Shared {
     clock: std::sync::atomic::AtomicU64,
     stop: AtomicBool,
 
-    /// A campaign map's far material, once made (`Frame::far_map`, on a thread of its own).
+    /// A campaign map's far material, once made (`Frame::far_map`, on a thread of its own), and the cells its last bake covered (none: the
+    /// whole map).
     far: Mutex<Option<Arc<FarMap>>>,
+    far_region: Mutex<Option<[i32; 4]>>,
+
+    /// The cells an edit changed since the far material was last baked (x0, y0, x1, y1), which the far bake's thread takes once the
+    /// edits pause (`far_wake`).
+    far_dirty: Mutex<Option<[i32; 4]>>,
+    far_wake: Condvar,
 }
+
+/// How long the edits must pause for the far material to be baked again over their cells.
+const FAR_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// The side of a campaign map's far material (the game's is 8192: `FarMap`).
 pub const FAR_MAP_SIZE: u32 = 4096;
@@ -163,6 +173,55 @@ impl Shared {
             wce_tile::sources::find_tile_folder(&roots, &key.0, &key.1).is_some_and(|d| wce_tile::sources::custom_mesh(&d).is_some());
         lock(&self.custom_tiles).insert(key, custom);
         custom
+    }
+
+    /// A campaign map's far material's cache key: every placement's tile (its folder's `cache::key` for its look) and place, the climates,
+    /// the LF's samples and the frame's numbers. None when a tile is not on disk (the provider makes the packs' on demand: the bake opens
+    /// them).
+    fn far_key(&self, frame: &Frame) -> Option<u64> {
+        let roots: Vec<PathBuf> =
+            self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
+        let mut keys: HashMap<(String, String, String), u64> = HashMap::new();
+        let mut h = cache::hash(0xCBF2_9CE4_8422_2325, b"far 1");
+        h = cache::hash(h, &FAR_MAP_SIZE.to_le_bytes());
+        for (i, p) in frame.map.placements.iter().enumerate() {
+            let climate = frame.climate_name(i);
+            let id = (p.location.clone(), p.variation.clone(), climate.clone());
+            let tile = match keys.get(&id) {
+                Some(&k) => k,
+                None => {
+                    let dir = wce_tile::sources::find_tile(&roots, &id.0, &id.1)?;
+                    let own_root = wce_tile::tile_project::kit_raw_root(&dir).unwrap_or_else(|| self.rq.raw_root.clone());
+                    let own_params = own_root.parent().and_then(wce_tile::vegetation::kit_params_dir).is_some();
+                    let game_kit = self.rq.game_kit.as_deref().filter(|_| !own_params);
+                    let look = TerrainLook { climate, ..self.rq.look.clone() };
+                    let k = cache::key(&dir, &look, self.rq.trees, game_kit);
+                    keys.insert(id, k);
+                    k
+                }
+            };
+            h = cache::hash(h, &tile.to_le_bytes());
+            for v in [p.x, p.y, p.w, p.h, i32::from(p.rotation), i32::from(p.flipped), i32::from(p.climate)] {
+                h = cache::hash(h, &v.to_le_bytes());
+            }
+        }
+        h = cache::hash(h, &frame.climate);
+        let numbers = [frame.z_stretch, frame.unit, frame.lf_level, frame.map.lf_height, frame.map.vertical_offset];
+        for v in numbers {
+            h = cache::hash(h, &v.to_le_bytes());
+        }
+        h = cache::hash(h, &[frame.map.width, frame.map.height].map(u32::to_le_bytes).concat());
+        // The LF: its samples, a word at a time (190 million on main_attila).
+        if let Some(lf) = &frame.map.lf {
+            let v = lf.values.read();
+            let mut x = h ^ u64::from(lf.w) << 32 ^ u64::from(lf.h);
+            for c in v.chunks(4) {
+                let word = c.iter().enumerate().fold(0u64, |a, (k, &s)| a | u64::from(s) << (16 * k));
+                x = (x ^ word).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29);
+            }
+            h = cache::hash(h, &x.to_le_bytes());
+        }
+        Some(h)
     }
 
     /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
@@ -423,28 +482,80 @@ impl Streamer {
             clock: Default::default(),
             stop: AtomicBool::new(false),
             far: Mutex::default(),
+            far_region: Mutex::default(),
+            far_dirty: Mutex::default(),
+            far_wake: Condvar::new(),
         });
 
-        // A campaign map's far material, made once every tile is read (minutes on a whole map the first time: the cache's later).
+        // A campaign map's far material, made once every tile is read (minutes on a whole map the first time: the cache's later), then
+        // again over the cells of each edit once the edits pause (`refresh_far`).
         if shared.frame().0.is_campaign() {
             let s = shared.clone();
             std::thread::spawn(move || {
                 wce_foundation::jobs::lower_thread_priority();
-                let t0 = std::time::Instant::now();
-                let (frame, _) = s.frame();
-                let source = BlockSource {
-                    template: &|i| s.template(&frame, i),
-                    is_custom: &|i| s.is_custom(&frame, i),
-                    mean: &|path| s.mean_colour(path),
-                    in_block: &|_| false,
-                    relief: &|_, _| None,
-                };
-                if let Some(far) = frame.far_map(FAR_MAP_SIZE, &source, &|| s.stop.load(Ordering::Relaxed)) {
+                let stop = || s.stop.load(Ordering::Relaxed);
+                let mut cells: Option<[i32; 4]> = None;
+                loop {
+                    let t0 = std::time::Instant::now();
+                    let (frame, _) = s.frame();
+                    let source = BlockSource {
+                        template: &|i| s.template(&frame, i),
+                        is_custom: &|i| s.is_custom(&frame, i),
+                        mean: &|path| s.mean_colour(path),
+                        in_block: &|_| false,
+                        relief: &|_, _| None,
+                    };
+                    let base = lock(&s.far).clone();
+                    let mut how = String::new();
+                    let made = match (&base, cells) {
+                        (Some(base), Some(c)) => {
+                            how = format!(" again over cells {c:?}");
+                            frame.far_map_over(base, c, &source, &stop)
+                        }
+                        // The whole map: from the cache when its tiles and LF are as they were.
+                        _ => {
+                            let key = s.rq.cache.as_ref().and_then(|c| Some((c.clone(), s.far_key(&frame)?)));
+                            match key.as_ref().and_then(|(c, k)| cache::read_far(c, *k, FAR_MAP_SIZE)) {
+                                Some(far) => {
+                                    how = " (read from the cache)".to_owned();
+                                    Some(far)
+                                }
+                                None => {
+                                    let far = frame.far_map(FAR_MAP_SIZE, &source, &stop);
+                                    if let (Some(f), Some((c, k))) = (&far, &key)
+                                        && let Err(e) = cache::write_far(c, *k, f)
+                                    {
+                                        wce_foundation::log::info(format!("map context: the far material not cached: {e}"));
+                                    }
+                                    far
+                                }
+                            }
+                        }
+                    };
+                    let Some(far) = made else { return };
                     wce_foundation::log::info(format!(
-                        "map context: the campaign's far material made, {FAR_MAP_SIZE} a side, in {:.1?}",
+                        "map context: the campaign's far material made{how}, {FAR_MAP_SIZE} a side, in {:.1?}",
                         t0.elapsed()
                     ));
+                    *lock(&s.far_region) = cells.filter(|_| base.is_some());
                     *lock(&s.far) = Some(Arc::new(far));
+
+                    // The next edit's cells, once the edits pause.
+                    let mut dirty = lock(&s.far_dirty);
+                    while dirty.is_none() && !stop() {
+                        dirty = s.far_wake.wait(dirty).unwrap_or_else(std::sync::PoisonError::into_inner);
+                    }
+                    loop {
+                        let (d, wait) = s.far_wake.wait_timeout(dirty, FAR_SETTLE).unwrap_or_else(std::sync::PoisonError::into_inner);
+                        dirty = d;
+                        if stop() {
+                            return;
+                        }
+                        if wait.timed_out() {
+                            break;
+                        }
+                    }
+                    cells = dirty.take();
                 }
             });
         }
@@ -463,6 +574,21 @@ impl Streamer {
     /// A campaign map's far material, once made (`Frame::far_map`).
     pub fn far_map(&self) -> Option<Arc<FarMap>> {
         lock(&self.shared.far).clone()
+    }
+
+    /// The cells the far material's last bake covered (none: the whole map).
+    pub fn far_region(&self) -> Option<[i32; 4]> {
+        *lock(&self.shared.far_region)
+    }
+
+    /// A campaign map's far material is baked again over these map cells (x0, y0, x1, y1) once the edits pause: an edit changed them.
+    pub fn refresh_far(&self, cells: [i32; 4]) {
+        if !self.frame().is_campaign() {
+            return;
+        }
+        let mut dirty = lock(&self.shared.far_dirty);
+        *dirty = Some(dirty.map_or(cells, |d| [d[0].min(cells[0]), d[1].min(cells[1]), d[2].max(cells[2]), d[3].max(cells[3])]));
+        self.shared.far_wake.notify_all();
     }
 
     /// New rings (cells): the next update moves the chunks to their levels.
@@ -511,6 +637,16 @@ impl Streamer {
         let shown = &self.shown;
         self.wanted.retain(|k, l| shown.get(k) == Some(l) && !changed.contains(k));
         lock(&self.shared.queue).clear();
+
+        // The far material over the changed chunks' tiles (by their origins: up to the largest tile past them).
+        let r = self.frame().reach();
+        let cells = changed.iter().fold(None, |a: Option<[i32; 4]>, &k| {
+            let c = [k.0 * CHUNK, k.1 * CHUNK, (k.0 + 1) * CHUNK + r, (k.1 + 1) * CHUNK + r];
+            Some(a.map_or(c, |a| [a[0].min(c[0]), a[1].min(c[1]), a[2].max(c[2]), a[3].max(c[3])]))
+        });
+        if let Some(c) = cells {
+            self.refresh_far(c);
+        }
     }
 
     /// The open tile's centre in its frame (the focus before there is a camera).
@@ -661,12 +797,25 @@ impl Streamer {
     /// (the Terrain tool's brushes), and their objects stand on it. A chunk owns the placements whose origin it holds, so the chunks up to
     /// the largest tile's size before the rectangle too. What they show stays until the new version is built.
     pub fn rebuild(&mut self, cells: [i32; 4]) {
+        self.refresh_far(cells);
         let reach = self.frame().reach();
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
         self.wanted.retain(|&(cx, cy), l| {
             let side = if l.is_block() { BLOCK - 1 } else { 0 };
             cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
+        });
+    }
+
+    /// The blocks and the far chunks over a rectangle of map cells made again at the next update: the far material was baked again
+    /// there (their relief). Not `rebuild`: that asks for another bake.
+    pub fn rebuild_blocks_over(&mut self, cells: [i32; 4]) {
+        let reach = self.frame().reach();
+        let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
+        let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
+        self.wanted.retain(|&(cx, cy), l| {
+            let side = if l.is_block() { BLOCK - 1 } else { 0 };
+            !(l.is_block() || *l == Lod::Far) || cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
         });
     }
 
@@ -743,6 +892,7 @@ impl Drop for Streamer {
         self.shared.stop.store(true, Ordering::Release);
         lock(&self.shared.queue).clear();
         self.shared.work.notify_all();
+        self.shared.far_wake.notify_all();
 
         // A worker in the middle of a tile finishes it on its own (the threads are not joined: closing the context must not wait for a tile).
         self.workers.clear();

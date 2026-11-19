@@ -2400,11 +2400,12 @@ impl Tool for TerrainTool {
 
         wce_foundation::wce_prof!("terrain_tool.props");
         self.props.season_bit = 1 << ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
-        // A campaign map's far material, once the streamer has made it (every tile read: a while after the map opens).
+        // A campaign map's far material, once the streamer has made it (every tile read: a while after the map opens), and each time it
+        // bakes it again over an edit's cells.
         let mut far_ready = false;
         if e.scene.campaign
-            && e.scene.campaign_far.is_none()
             && let Some(far) = self.view.streamer.as_ref().and_then(|s| s.far_map())
+            && e.scene.campaign_far.as_ref().is_none_or(|f| f.id != Arc::as_ptr(&far) as u64)
             && let Some(frame) = self.view.frame()
         {
             let (sw, ne) = frame.corners();
@@ -2419,9 +2420,12 @@ impl Tool for TerrainTool {
             e.scene.touch();
             far_ready = true;
         }
-        // The blocks again, with the tiles' relief it carries.
+        // The blocks again, with the tiles' relief it carries: all of them the first time, those over the cells baked again after an edit.
         if far_ready && let Some(s) = self.view.streamer.as_mut() {
-            s.rebuild_far();
+            match s.far_region() {
+                Some(cells) => s.rebuild_blocks_over(cells),
+                None => s.rebuild_far(),
+            }
         }
 
         // A campaign map's vegetation takes the view's season (its forests' `<base>_<season>_diffuse.dds`: spring's `_sp` in the game's
