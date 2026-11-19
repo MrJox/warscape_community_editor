@@ -67,6 +67,10 @@ impl<'a> Reader<'a> {
         Ok(f32::from_le_bytes(self.array()?))
     }
 
+    pub fn f64(&mut self) -> Result<f64, FormatError> {
+        Ok(f64::from_le_bytes(self.array()?))
+    }
+
     /// A count of items each at least `min_item` bytes long, checked against what is left so a bad count fails early.
     pub fn count(&mut self, min_item: usize) -> Result<usize, FormatError> {
         let n = self.u32()? as usize;
@@ -84,6 +88,7 @@ pub(crate) trait Put {
     fn put_u16(&mut self, v: u16);
     fn put_u32(&mut self, v: u32);
     fn put_f32(&mut self, v: f32);
+    fn put_f64(&mut self, v: f64);
 }
 
 impl Put for Vec<u8> {
@@ -100,6 +105,10 @@ impl Put for Vec<u8> {
     }
 
     fn put_f32(&mut self, v: f32) {
+        self.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn put_f64(&mut self, v: f64) {
         self.extend_from_slice(&v.to_le_bytes());
     }
 }
