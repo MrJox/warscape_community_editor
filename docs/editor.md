@@ -135,7 +135,11 @@ base blend map is): what the tile's own painting holds in other textures stays (
 layers (hand paint goes over it; painting with no working layer goes into a `Painted` layer), made again off the editor's thread when
 the terrain, the scene or the rules change. The tile keeps its rules in `texture_rules.wce` beside `tile.wce`; presets are files in the
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
-rock on slopes). The window outlines the selected rule's area in the viewport.
+rock on slopes). The window outlines the selected rule's area in the viewport. Both this window and the biomes' (`styled.rs`) show
+**Simple** (named choices: a condition's Flat / Gentle / Steep / Cliffs, a strength's Faint ... Full, the edges' Clean ... Very patchy) or
+**Advanced** (every number), in a label column and a value column that keep their places; a condition is a chip and a bar that draws
+the weight it gives (its fades as ramps; drag an end, onto the bar's end for no limit, Shift + drag for its softness); the texture is
+picked from the tile's groups' and variations' swatches.
 
 **Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, the window `biomes_panel.rs` from the Tile panel's Experimental section's *Biomes...*, the Create
 panel's Vegetation > Biomes; `biome_area`, `biome_brush`, `biomes_wait`; [plans/auto_detail.md](plans/auto_detail.md), C): a biome is

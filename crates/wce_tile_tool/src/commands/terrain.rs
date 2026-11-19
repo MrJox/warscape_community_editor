@@ -646,20 +646,29 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} biome area(s): {trees} tree(s) and plant(s), {rocks} rock(s)", d.tile().biome_areas().len()))
     });
 
-    c.add("biomes", "biomes window", "the biomes' window open", |e, a| match a.first().map(String::as_str) {
-        Some("window") => with_tile(e, |t, _| {
-            t.open_biomes();
-            ok("biomes' window open")
-        }),
-        _ => fail("usage: biomes window"),
-    });
+    c.add(
+        "biomes",
+        "biomes window [simple | advanced]",
+        "the biomes' window open, showing the plain choices or every number",
+        |e, a| match (a.first().map(String::as_str), a.get(1).map(String::as_str)) {
+            (Some("window"), mode @ (None | Some("simple" | "advanced"))) => with_tile(e, |t, _| {
+                t.open_biomes();
+                if let Some(m) = mode {
+                    t.biomes.advanced = m == "advanced";
+                }
+
+                ok("biomes' window open")
+            }),
+            _ => fail("usage: biomes window [simple | advanced]"),
+        },
+    );
 
     c.add(
         "texture_rules",
-        "texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>",
+        "texture_rules <off | load <preset> | file <path> | window [simple | advanced] | area <rule> | wait>",
         "the tile's texture rules: off (taken away with their layer), a preset's (Default: the built-in one), a rule set's file (a preset's or a tile's texture_rules.wce), the window open; area: how much of the tile a rule (by number, from 1) covers as though alone; wait: the layer made now, and what it covers",
         |e, a| {
-            let usage = "usage: texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>";
+            let usage = "usage: texture_rules <off | load <preset> | file <path> | window [simple | advanced] | area <rule> | wait>";
             match (a.first().map(String::as_str), a.get(1)) {
                 (Some("off"), None) => {
                     let Some(d) = document(e) else { return fail("no tile is open") };
@@ -679,8 +688,12 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                     ok(format!("texture rules: {n} from {path}"))
                 }
 
-                (Some("window"), None) => with_tile(e, |t, _| {
+                (Some("window"), mode) if mode.is_none_or(|m| m == "simple" || m == "advanced") => with_tile(e, |t, _| {
                     t.open_texture_rules();
+                    if let Some(m) = mode {
+                        t.rules_ui.advanced = m == "advanced";
+                    }
+
                     ok("texture rules' window open")
                 }),
 
