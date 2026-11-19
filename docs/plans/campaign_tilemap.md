@@ -245,5 +245,5 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   (16 bytes, as capture A binds them), the draw set writes the instance's (x, y, z, angle) into POSITION4's place (the position plus
   0.4 x the pivot, the turn's angle), two-sided, the season's diffuse (`vegetation_diffuse`) and `commontextures/dissolve.dds`; left
   out of the rigid shadows and the pick pass. At capture A's camera the forests stand where and as large as the game's (they were a
-  third of its size). Left: their colour (more olive than the game's green): the season's diffuse, the lighting or the PS's inputs
-  to compare (Phase 3).
+  third of its size). Their colour: the Terrain tool never set `scene.vegetation_season`, so the plain diffuse was drawn; now the
+  view's season (spring's `_sp`, green with blossom, as capture A's).
