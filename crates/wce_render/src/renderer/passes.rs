@@ -961,7 +961,8 @@ impl Renderer {
             self.draw_lists.vis = vis;
         }
 
-        if shadows_on {
+        // No grass on a campaign map (the game's campaign frame has none).
+        if shadows_on && !scene.campaign {
             self.ctx.set_render_targets(&[], self.shadow_map.dsv.as_ref());
             self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 0);
             self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

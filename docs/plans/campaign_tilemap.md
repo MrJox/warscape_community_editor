@@ -188,3 +188,25 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
 - The prerequisite: the settlement buildings are drawn in scripted runs once the startpos is read (a thread): 0 right after
   `terrain_settle`, 304 at Rome 240 frames later. The 2026-11-18 run took its shot too early. Fixed: `terrain_settle` on a
   campaign map waits for the settlements' and the borders' workers and builds the props (304 buildings right after it).
+- Phase 2, the lens: a campaign map's lens is the game's campaign camera's: vertical fov 1.4 radians (80.2 degrees; projection [1][1]
+  1.18724 in all five captures, every zoom) and near 1 world unit (`Lens::CAMPAIGN_FOV_Y`, `Viewport::set_campaign_lens`, set by
+  the map view each frame); battle maps keep the battle camera's.
+- No grass on campaign maps (the renderer skips the grass pass and its shadows when `scene.campaign`): capture A's frame has none.
+  No visible change at capture A's camera. To check with TDD's capture: the marsh reeds (the 2026-11-16 note kept the grass for
+  them; if the game shows reeds, they come from something other than a grass pass).
+- **First side by side** (capture A's camera, `cam_look -50489 3562 763 -50489 -959 6763`, `capture 1920x1080` with
+  `view_mode game`; `%TEMP%\wce_scratch\campcmp\run\edA*.png` against `campcmp\a6628\screen.png`), the largest differences first:
+  1. the distance: the game draws full tiles (forests, the snowy Alps, coasts) to the horizon; the editor's far ring is plain
+     olive ground and the view ends short of the horizon, with sea beyond;
+  2. orange clumps over the land, none in the game: from `prop_models` (gone with `terrain_props off`; not the grass), most
+     likely the forest clumps drawn without `rigidcampaignvegetation` (Phase 4 item 1); the game's forests are dense green clumps;
+  3. the geometry: the editor's features sit lower in the frame (the z squash, Phase 2);
+  4. the sky: the game has a low cloud band and haze at the horizon; the editor's placed cloud banks show as puffs higher up.
+  So Phase 4 item 1 (forests) and the horizon (Phase 2's reach) come right after the stretch.
+- **The stretch's design** (an inventory of every place, 2026-11-19): no single place all positions pass through. A per-scene
+  stretch next to `game_units` / `terrain_units` (`RenderScene`), applied by the renderer by kind: the terrain (tile patches,
+  custom meshes, sea tiles, the overlay's river meshes) and the water meshes get the full S = diag(1, 1, 1.1547) after their turn;
+  models, decals, effects and lights only their position's z x 1.1547. Every LF read at world xz (the CPU ground probes, picking,
+  `lf_draw`, `g_world_dimensions`, the shroud's and sea's bounds, `g_wp_world_size`, the snow masks) takes z / 1.1547 or an
+  anisotropic step; the camera, the Map panel, the overlays and the gizmo convert at the view's edge (`TerryFrame`); the
+  borders stop dividing by `CAMPAIGN_Z_SCALE`. Battle maps keep a stretch of 1.

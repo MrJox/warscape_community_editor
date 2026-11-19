@@ -1967,8 +1967,11 @@ impl Renderer {
 
         // The grass is G-buffer content like the rest; the decals are the first step of the game's "DEFERRED LIGHTING" stage (fn 0x118c2750:
         // DEFERRED DECAL, then POINTLIGHT, REFRACTION, FOG, the water views), so they paint over the grass inside their boxes too.
+        // No grass on a campaign map: the game's campaign frame has no grass pass (RenderDoc, docs/re/renderer.md "The campaign frame").
         self.gpu_timer.mark("grass");
-        self.in_tile_units(|r| r.pass_grass(scene));
+        if !scene.campaign {
+            self.in_tile_units(|r| r.pass_grass(scene));
+        }
         self.gpu_timer.mark("decals");
         self.pass_decals(scene);
         self.resolve_scene_depth();

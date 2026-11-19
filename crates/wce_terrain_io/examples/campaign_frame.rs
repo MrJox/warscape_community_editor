@@ -2,7 +2,8 @@
 //! (docs/plans/campaign_tilemap.md, Phase 1):
 //! - `shader_names.csv`: each shader of the capture named by the game's `fxc/*.fxc` file whose DXBC checksum it has;
 //! - `passes.txt`: the frame's draws in runs of the same targets and shaders, with the shaders' names;
-//! - `mask.png`: the pixels the skinned draws (armies, agents) change in the G-buffer, white (out of the comparison's scope).
+//! - `mask.png`: the pixels the skinned draws (armies, agents) change in the G-buffer, white (out of the comparison's scope);
+//! - `screen.png`, `gbuffer0.png`: the screen before the UI and the G-buffer's first target (8-bit targets as RGB, to look at).
 //!
 //!   cargo run --release -p wce_terrain_io --example campaign_frame -- <the script's folder>
 //!
@@ -38,6 +39,28 @@ fn fxc_names(vfs: &Vfs) -> HashMap<String, Vec<String>> {
     }
     println!("{} fxc files, {} shaders", files.len(), out.len());
     out
+}
+
+/// An 8-bit RGBA or BGRA target as an RGB PNG (its DDS's DXGI format: 28 R8G8B8A8, 87 B8G8R8A8; a legacy header by its red mask).
+fn rgb_png(dds: &Path, png: &Path) {
+    let Ok(b) = std::fs::read(dds) else { return };
+    let Some((w, h, px)) = dds_pixels(dds) else { return };
+    if px.len() != (w * h * 4) as usize {
+        println!("{}: not an 8-bit target", dds.display());
+        return;
+    }
+    let u = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    let bgra = if &b[84..88] == b"DX10" { matches!(u(128), 87 | 91) } else { u(92) == 0x00ff_0000 };
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for p in px.chunks_exact(4) {
+        if bgra {
+            rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+        } else {
+            rgb.extend_from_slice(&p[..3]);
+        }
+    }
+    let png_file = PngFile { width: w, height: h, bit_depth: 8, color_type: 2, pixels: rgb, ..Default::default() };
+    std::fs::write(png, png_file.encode().expect("png")).expect("png");
 }
 
 /// A DDS's size and pixel bytes (RenderDoc's save: one mip, the target's format).
@@ -154,4 +177,6 @@ fn main() {
     println!("passes.txt: {} runs", lines.len());
 
     mask(&dir);
+    rgb_png(&dir.join("targets/screen.dds"), &dir.join("screen.png"));
+    rgb_png(&dir.join("targets/gbuffer0.dds"), &dir.join("gbuffer0.png"));
 }
