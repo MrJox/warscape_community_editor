@@ -23,6 +23,9 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[cfg(feature = "ui")]
     tools.push(Box::new(wce_ui_tool::UiTool::default()));
 
+    #[cfg(feature = "audio")]
+    tools.push(Box::new(wce_audio_tool::AudioTool::default()));
+
     #[cfg(feature = "placeholders")]
     tools.extend(placeholders());
 

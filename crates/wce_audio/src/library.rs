@@ -181,7 +181,8 @@ impl SoundLibrary {
         match typed {
             Some(Object::Event(e)) => node.children = e.actions.iter().map(|a| child(*a, stack)).collect(),
             Some(Object::Action(a)) => {
-                node.label = format!("{} {}", action_name(a.action_type), self.label(a.target_id, 0));
+                let target_kind = self.object(a.target_id).map_or(0, |(_, o, _)| o.kind);
+                node.label = format!("{} {}", action_name(a.action_type), self.label(a.target_id, target_kind));
                 if a.action_type >> 8 == 0x04 {
                     node.children.push(child(a.target_id, stack));
                 }
@@ -217,7 +218,8 @@ impl SoundLibrary {
     }
 }
 
-/// An action type's name (its high byte).
+/// An action type's name (its high byte; the low byte is its scope). Wwise's action list; checked in the games' banks for Play
+/// (0x04, 951 in Attila), Stop (0x01) and Set game parameter (0x13, whose targets are game parameters such as `Fire_Intensity`).
 pub fn action_name(action_type: u16) -> &'static str {
     match action_type >> 8 {
         0x01 => "Stop",
@@ -225,19 +227,28 @@ pub fn action_name(action_type: u16) -> &'static str {
         0x03 => "Resume",
         0x04 => "Play",
         0x05 => "Play and continue",
-        0x06 | 0x07 => "Mute",
-        0x08..=0x0A => "Set pitch",
-        0x0B | 0x0C => "Set low-pass",
-        0x0D..=0x11 => "Set volume",
+        0x06 => "Mute",
+        0x07 => "Unmute",
+        0x08 => "Set pitch",
+        0x09 => "Reset pitch",
+        0x0A => "Set volume",
+        0x0B => "Reset volume",
+        0x0C => "Set bus volume",
+        0x0D => "Reset bus volume",
+        0x0E => "Set low-pass",
+        0x0F => "Reset low-pass",
+        0x10 => "Use state",
+        0x11 => "Unuse state",
         0x12 => "Set state",
+        0x13 => "Set game parameter",
+        0x14 => "Reset game parameter",
         0x19 => "Set switch",
-        0x1C => "Seek",
+        0x1A => "Bypass effect",
+        0x1B => "Reset bypass effect",
+        0x1C => "Break",
         0x1D => "Trigger",
-        0x1E => "Set game parameter",
-        0x20 | 0x30 => "Set effect",
-        0x21 => "Bypass effect",
-        0x22 => "Break",
-        0x23 => "Trigger",
+        0x1E => "Seek",
+        0x1F => "Release",
         _ => "Action",
     }
 }

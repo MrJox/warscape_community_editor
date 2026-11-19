@@ -14,6 +14,7 @@ shared scene and selectable tools. It replaced the two C++ editors (weather_edit
 | Weather / Lighting | built: `.environment`, `.lighting`, weather definitions and vfx files, the weather picker and variation database |
 | Tile | built: battle tiles (campaign tiles open and export with limits), TEd's authoring, the game's look, export to the game, procedural walls, siege AI generation |
 | UI | built: UI layouts (binary <-> XML), canvas, `wce-ui` CLI and MCP server |
+| Audio | built (browse and listen): sound banks with names, search, what an event plays, playback (docs/plans/audio.md) |
 | VFX, Unit, Terrain (battle map / Terry), Cinematic | placeholders (the `placeholders` feature of `wce_app`) |
 
 ## The plans
