@@ -273,10 +273,14 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       source into a changed media bank). Gate `audio_edit_check` (`audio_edit`) on Attila + TDD: 0 inconsistent sources as
       shipped; replace by the same bytes changes nothing; replace by a new sound edits 8 banks, stays consistent, decodes; add then
       remove a variation gives the banks back byte for byte; a property reads back. **done**
-   5. Documents: an edited bank is a document (undo/redo, Save to `<projects>/loose/audio/...`, revert); replacing a loose WEM
-      writes `<projects>/loose/audio/<id>.wem`. **todo**
-   6. Tool: Replace (on a sound or media), Add variation (to a random/sequence container), properties of containers (volume,
-      pitch, weights, mode); remove a variation. **todo**
+   5. Saving: the Audio tool keeps an edit session (`EditSet`) with Undo / Redo (20 steps), Revert, and Save, which writes the
+      edited banks and sound files to `<projects>/loose/<path>` (read before the packs) and tells the editor
+      (`loose_changed`, so the library reads them again); unsaved edits are listed on exit (`unsaved_work`). **done**; follow-up:
+      the editor's Document / History (File > Save, autosave, the History panel) instead of the tool's own session.
+   6. Tool: Audio Object offers Replace audio... (a sound: WAV, Ogg Vorbis or WEM, encoded on a worker at the chosen import
+      quality), Add variation... (a random/sequence container), Remove (each child of such a container), Volume and Pitch
+      (any node); edited objects show at once ("Edited, not saved"), the trees after Save; Play plays the edited audio. Seen in the
+      app (2026-11-19, `audio_select 715511747`). **done**; follow-ups: weights and mode, edits shown in the trees before Save.
    7. In game: a replaced in-bank sound and an added variation heard in game (the user). **todo**
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
