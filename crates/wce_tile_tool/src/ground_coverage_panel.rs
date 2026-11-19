@@ -21,6 +21,7 @@ use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::ground_coverage::{COVERAGE_LAYER, CoverageSettings, GRID_CELL, kind_group_name};
 
 use crate::settings::{SETTINGS_ID, TileSettings};
+use crate::styled;
 use crate::tool::{TileTool, document, document_id};
 
 /// The window's state.
@@ -49,6 +50,9 @@ pub struct CoverageUi {
 
     /// The kind changed from elsewhere (a script): the tab bar selects its tab on the next frame.
     select_tab: bool,
+
+    /// Every number (advanced) or the plain choices.
+    pub advanced: bool,
 
     /// Brush mode (else Fill the tile), the brush's radius (metres; 0: the default) and the factor on the preset's densities (0: 1).
     pub brush: bool,
@@ -331,69 +335,62 @@ impl TileTool {
             _ => {}
         }
 
+        let row = styled::row("Show", "The plain choices, or every number");
+        if let Some(i) = styled::segmented("mode", &["Simple", "Advanced"], Some(usize::from(self.coverage.advanced)), row.width) {
+            self.coverage.advanced = i == 1;
+        }
+
         self.preset_rows(e);
         let sets = self.vegetation_sets(e);
         let mut changed = false;
         if self.coverage.kind == Kind::Buildings {
             changed |= clutter_rows(&mut self.coverage.clutter, &sets);
         } else {
-            set_combo("rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
-            set_combo("plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
+            gui::separator_text("What it lays");
+            set_row("Rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
+            set_row("Plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
             if !sets.iter().any(|s| s.kind == SetKind::Building) {
-                gui::push_text_wrap_pos(0.0);
-                gui::text_disabled("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
-                gui::pop_text_wrap_pos();
+                note("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
             }
         }
 
-        changed |= params_rows(self.coverage.kind, &mut self.coverage.params);
+        changed |= params_rows(self.coverage.kind, &mut self.coverage.params, self.coverage.advanced);
 
-        gui::separator_text("Where");
-        let mut brush = i32::from(self.coverage.brush);
-        if gui::radio_button("Fill the tile", brush == 0) {
-            brush = 0;
-        }
-
-        gui::same_line();
-        if gui::radio_button("Brush", brush == 1) {
-            brush = 1;
-        }
-
-        if (brush == 1) != self.coverage.brush {
-            self.coverage.brush = brush == 1;
+        gui::separator_text("Lay it");
+        let row = styled::row("Where", "The whole tile at once, or where you brush");
+        if let Some(i) = styled::segmented("where", &["Fill the tile", "Brush"], Some(usize::from(self.coverage.brush)), row.width)
+            && (i == 1) != self.coverage.brush
+        {
+            self.coverage.brush = i == 1;
             self.coverage.preview = None;
         }
 
         if self.coverage.brush {
-            gui::push_text_wrap_pos(0.0);
-            gui::text_disabled(
+            note(
                 "Left drag in the viewport (Select mode) puts the kind's rocks and plants on its terrain under the circle; Ctrl + drag takes the kind's coverage away. The bands show around the mouse once a stroke worked them out.",
             );
-            gui::pop_text_wrap_pos();
+            let row = styled::row("Radius", "The brush's radius (Ctrl + click to type)");
             let mut radius = self.coverage_radius();
-            gui::set_next_item_width(160.0);
-            if gui::drag_float("radius", &mut radius, 0.2, 1.0, 200.0, "%.1f m") {
+            gui::set_next_item_width(row.width);
+            if gui::slider_float("##radius", &mut radius, 1.0, 100.0, "%.1f m") {
                 self.coverage.brush_radius = radius;
             }
 
+            let row = styled::row("Density", "A factor on the preset's densities, for the brush only");
             let mut density = if self.coverage.brush_density > 0.0 { self.coverage.brush_density } else { 1.0 };
-            gui::set_next_item_width(160.0);
-            if gui::drag_float("density", &mut density, 0.01, 0.05, 4.0, "x %.2f") {
+            gui::set_next_item_width(row.width);
+            if gui::slider_float("##density", &mut density, 0.05, 4.0, "x %.2f") {
                 self.coverage.brush_density = density;
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip("A factor on the preset's densities, for the brush only");
             }
         }
 
-        gui::separator_text("Seed");
         // The field holds an i32: a bigger seed (a script's) is shown capped, and kept unless edited.
+        let row = styled::row("Seed", "Another seed, another layout of the same values");
         let mut seed = self.coverage.seed.min(i32::MAX as u64) as i32;
-        gui::set_next_item_width(140.0);
+        gui::set_next_item_width(row.width - gui::button_width(icons::REFRESH_CW) - gui::item_spacing().x);
         let mut reseeded = gui::input_int("##seed", &mut seed);
         gui::same_line();
-        if gui::button(&format!("{}  Reroll", icons::REFRESH_CW)) {
+        if styled::icon_button(icons::REFRESH_CW, "reroll", "Another seed") {
             seed = (self.random.unit() * 1.0e6) as i32;
             reseeded = true;
         }
@@ -402,21 +399,23 @@ impl TileTool {
             self.coverage.seed = seed.max(0) as u64;
         }
 
-        gui::separator();
         let (mut preview, mut generate_now, mut clear) = (false, false, false);
         if !self.coverage.brush {
-            if gui::button(&format!("{}  Preview", icons::EYE)) {
+            gui::spacing();
+            let n = if self.coverage.preview.is_some() { 3.0 } else { 2.0 };
+            let w = (gui::content_region_avail().x - gui::item_spacing().x * (n - 1.0)) / n;
+            if gui::button_sized(&format!("{}  Preview", icons::EYE), gui::v2(w, 0.0)) {
                 preview = true;
             }
 
             gui::same_line();
-            if gui::button(&format!("{}  Generate", icons::SPARKLES)) {
+            if gui::button_sized(&format!("{}  Generate", icons::SPARKLES), gui::v2(w, 0.0)) {
                 generate_now = true;
             }
 
             if self.coverage.preview.is_some() {
                 gui::same_line();
-                clear = gui::button("Clear preview");
+                clear = gui::button_sized("Clear preview", gui::v2(w, 0.0));
             }
         }
 
@@ -482,8 +481,11 @@ impl TileTool {
         };
 
         let mut pick = None;
-        gui::set_next_item_width(260.0);
-        if gui::begin_combo("preset", &shown) {
+        let row = styled::row("Preset", "The built-in preset of the kind and the projects' (raw_data/art/ground_coverage_presets)");
+        let buttons =
+            [icons::SAVE, icons::FILE_PLUS, icons::TRASH_2].iter().map(|i| gui::button_width(i)).sum::<f32>() + 3.0 * gui::item_spacing().x;
+        gui::set_next_item_width((row.width - buttons).max(100.0));
+        if gui::begin_combo("##preset", &shown) {
             for p in &presets {
                 if gui::selectable(&label(p), p.name == c.preset, 0) {
                     pick = Some(p.clone());
@@ -493,14 +495,47 @@ impl TileTool {
             gui::end_combo();
         }
 
+        let file = current.as_ref().is_some_and(|p| !p.is_builtin());
+        let mut result = None;
+        if self.coverage.save_as.is_none() && !self.coverage.delete_ask {
+            gui::same_line();
+            gui::begin_disabled(!file);
+            if gui::button(&format!("{}##savepreset", icons::SAVE)) {
+                result = Some(self.save_preset(e, None));
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Save the values into their preset (a built-in one has no file: Save as)");
+            }
+
+            gui::same_line();
+            if gui::button(&format!("{}##saveas", icons::FILE_PLUS)) {
+                self.coverage.save_as = Some(String::new());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Save as a new preset...");
+            }
+
+            gui::same_line();
+            gui::begin_disabled(!file);
+            if gui::button(&format!("{}##deletepreset", icons::TRASH_2)) {
+                self.coverage.delete_ask = true;
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Delete the preset's file");
+            }
+        }
+
         if let Some(p) = pick {
             self.use_preset(e, &p);
         }
 
-        let file = current.as_ref().is_some_and(|p| !p.is_builtin());
-        let mut result = None;
         if let Some(mut name) = self.coverage.save_as.take() {
-            gui::set_next_item_width(200.0);
+            gui::set_next_item_width(gui::content_region_avail().x - gui::button_width("Save") - gui::button_width("Cancel") - 24.0);
             let enter = gui::input_text("##presetname", Some("the new preset's name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
             gui::same_line();
             let ok = gui::small_button("Save") || enter;
@@ -522,25 +557,6 @@ impl TileTool {
             if gui::small_button("Cancel") {
                 self.coverage.delete_ask = false;
             }
-        } else {
-            gui::begin_disabled(!file);
-            if gui::small_button(&format!("{}  Save", icons::SAVE)) {
-                result = Some(self.save_preset(e, None));
-            }
-
-            gui::end_disabled();
-            gui::same_line();
-            if gui::small_button("Save as...") {
-                self.coverage.save_as = Some(String::new());
-            }
-
-            gui::same_line();
-            gui::begin_disabled(!file);
-            if gui::small_button(&format!("{}  Delete", icons::X)) {
-                self.coverage.delete_ask = true;
-            }
-
-            gui::end_disabled();
         }
 
         if let Some(r) = result {
@@ -1069,11 +1085,19 @@ fn kind_tip(kind: Kind) -> &'static str {
     }
 }
 
-/// A combo of the sets of a kind (and none).
-fn set_combo(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, chosen: &mut String) {
-    let preview = if chosen.is_empty() { format!("none ({hint})") } else { chosen.clone() };
-    gui::set_next_item_width(260.0);
-    if gui::begin_combo(label, &preview) {
+/// A row of the sets of a kind (and none) to pick from.
+fn set_row(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, chosen: &mut String) {
+    let row = styled::row(label, "");
+    let missing = !chosen.is_empty() && !sets.iter().any(|s| s.kind == kind && s.name == *chosen);
+    let preview = if chosen.is_empty() {
+        format!("none ({hint})")
+    } else if missing {
+        format!("{chosen} (not found)")
+    } else {
+        chosen.clone()
+    };
+    gui::set_next_item_width(row.width);
+    if gui::begin_combo(&format!("##{label}"), &preview) {
         if gui::selectable("none", chosen.is_empty(), 0) {
             chosen.clear();
         }
@@ -1087,52 +1111,121 @@ fn set_combo(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, cho
 
         gui::end_combo();
     }
+}
 
-    if !chosen.is_empty() && !sets.iter().any(|s| s.kind == kind && s.name == *chosen) {
-        gui::same_line();
-        gui::text_colored(theme::warning(), "(not found)");
+/// Plain choices of a value: names and values.
+type Choices = [(&'static str, f32); 4];
+const SLOPES: Choices = [("Gentle", 25.0), ("Steep", 35.0), ("Very steep", 45.0), ("Cliffs", 60.0)];
+const ROCKS_FOOT: Choices = [("None", 0.0), ("Few", 1.0 / 25.0), ("Some", 1.0 / 10.0), ("Many", 1.0 / 5.0)];
+const ROCKS_FACE: Choices = [("None", 0.0), ("Few", 1.0 / 50.0), ("Some", 1.0 / 25.0), ("Many", 1.0 / 12.0)];
+const PLANTS: Choices = [("None", 0.0), ("Few", 1.0 / 30.0), ("Some", 1.0 / 15.0), ("Many", 1.0 / 8.0)];
+const PROPS: Choices = [("Few", 1.0 / 25.0), ("Some", 1.0 / 12.0), ("Many", 1.0 / 6.0), ("Packed", 1.0 / 3.0)];
+const RINGS: Choices = [("Tight", 1.5), ("Medium", 3.0), ("Wide", 6.0), ("Very wide", 10.0)];
+
+/// A value's row: its plain choices, or (advanced) a slider. `per100`: a density per square metre, shown per 100.
+#[allow(clippy::too_many_arguments)]
+fn value_row(
+    id: &str,
+    label: &str,
+    tip: &str,
+    v: &mut f32,
+    choices: Option<&Choices>,
+    range: (f32, f32),
+    format: &str,
+    advanced: bool,
+) -> bool {
+    let per100 = format.contains("100 m2");
+    let row = styled::row(label, tip);
+    match choices.filter(|_| !advanced) {
+        Some(c) => {
+            let names = c.map(|c| c.0);
+            let current = c.iter().position(|c| (c.1 - *v).abs() < 1e-5);
+            match styled::segmented(id, &names, current, row.width) {
+                Some(i) => {
+                    *v = c[i].1;
+                    true
+                }
+                None => false,
+            }
+        }
+
+        None => {
+            let mut shown = if per100 { *v * 100.0 } else { *v };
+            gui::set_next_item_width(row.width);
+            let changed = gui::slider_float(&format!("##{id}"), &mut shown, range.0, range.1, format);
+            if changed {
+                *v = if per100 { shown / 100.0 } else { shown };
+            }
+
+            changed
+        }
     }
 }
 
-/// The parameters' rows; whether one changed.
-fn params_rows(kind: Kind, p: &mut Params) -> bool {
-    let mut changed = false;
-    let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
-        gui::set_next_item_width(160.0);
-        changed |= gui::drag_float(label, v, speed, lo, hi, format);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-    };
+/// A size range (smallest to largest) as a bar with two ends.
+fn size_row(id: &str, label: &str, tip: &str, v: &mut (f32, f32)) -> bool {
+    let row = styled::row(label, tip);
+    let bar = styled::Bar { domain: (0.2, 3.0), step: 0.05, unit: "x", open_ends: false, fade: false };
+    let mut r = wce_tile::texture_rules::Range { lo: Some(v.0), hi: Some(v.1), fade: 0.0 };
+    let (changed, _) = styled::range_bar(id, &mut r, &bar, row.width, true);
+    if changed {
+        *v = (r.lo.unwrap_or(v.0), r.hi.unwrap_or(v.1));
+    }
 
+    changed
+}
+
+/// A note under a section, in the value column's width.
+fn note(text: &str) {
+    gui::push_text_wrap_pos(0.0);
+    gui::text_disabled(text);
+    gui::pop_text_wrap_pos();
+}
+
+/// The parameters' rows (plain choices, or every number when advanced); whether one changed.
+fn params_rows(kind: Kind, p: &mut Params, advanced: bool) -> bool {
+    let mut changed = false;
     if kind == Kind::Buildings {
         gui::separator_text("Ring");
-        f(
-            "gap",
-            &mut p.ring_gap,
-            0.05,
-            0.0,
-            20.0,
+        changed |= value_row(
+            "ringwidth",
+            "Width",
+            "How wide the ring of props is",
+            &mut p.ring_width,
+            Some(&RINGS),
+            (0.5, 30.0),
             "%.1f m",
-            "Metres between a building's footprint and its ring; also kept from every other building",
+            advanced,
         );
-        f("width", &mut p.ring_width, 0.05, 0.5, 50.0, "%.1f m", "How wide the ring of props is");
-        let mut d = p.rock_density_foot * 100.0;
-        gui::set_next_item_width(160.0);
-        if gui::drag_float("props", &mut d, 0.05, 0.0, 100.0, "%.2f / 100 m2") {
-            p.rock_density_foot = d / 100.0;
-            changed = true;
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Props per 100 square metres of a ring");
-        }
-
+        changed |= value_row(
+            "props",
+            "Props",
+            "Props per 100 square metres of a ring",
+            &mut p.rock_density_foot,
+            Some(&PROPS),
+            (0.0, 100.0),
+            "%.2f / 100 m2",
+            advanced,
+        );
+        let row = styled::row("Most a building", "No building gets more props than this");
         let mut cap = p.max_per_building as i32;
-        gui::set_next_item_width(160.0);
-        if gui::input_int("most a building", &mut cap) {
+        gui::set_next_item_width(row.width);
+        if gui::slider_int("##cap", &mut cap, 0, 40) {
             p.max_per_building = cap.max(0) as f32;
             changed = true;
+        }
+
+        if advanced {
+            changed |= value_row(
+                "gap",
+                "Gap",
+                "Metres between a building's footprint and its ring; also kept from every other building",
+                &mut p.ring_gap,
+                None,
+                (0.0, 10.0),
+                "%.1f m",
+                true,
+            );
         }
 
         return changed;
@@ -1140,156 +1233,242 @@ fn params_rows(kind: Kind, p: &mut Params) -> bool {
 
     gui::separator_text("Slopes");
     if kind.by_water() {
-        gui::push_text_wrap_pos(0.0);
-        gui::text_disabled("Where units can't walk (the game's no-go areas, steeper than 30 deg), by the water.");
-        gui::pop_text_wrap_pos();
-        f("from the water", &mut p.water_reach, 0.1, 0.0, 50.0, "%.1f m", "How far from the water the no-go ground may be to count");
-        f("under the water", &mut p.water_below, 0.05, 0.0, 10.0, "%.1f m", "How deep into the water the waterline band goes (rocks only)");
+        note("Where units can't walk (the game's no-go areas, steeper than 30 deg), by the water.");
+        if advanced {
+            changed |= value_row(
+                "reach",
+                "From the water",
+                "How far from the water the no-go ground may be to count",
+                &mut p.water_reach,
+                None,
+                (0.0, 30.0),
+                "%.1f m",
+                true,
+            );
+            changed |= value_row(
+                "below",
+                "Under the water",
+                "How deep into the water the waterline band goes (rocks only)",
+                &mut p.water_below,
+                None,
+                (0.0, 5.0),
+                "%.1f m",
+                true,
+            );
+        }
     } else {
-        f("steeper than", &mut p.slope_deg, 0.2, 5.0, 85.0, "%.1f deg", "A slope steeper than this is a differential");
-        f(
-            "foot over the sea",
-            &mut p.sea_margin,
-            0.05,
-            0.0,
-            50.0,
-            "%.1f m",
-            "A slope whose foot is lower is the coast's (and one whose foot is in a river, the banks')",
+        changed |= value_row(
+            "slope",
+            "Steeper than",
+            "A slope steeper than this is a differential",
+            &mut p.slope_deg,
+            Some(&SLOPES),
+            (5.0, 85.0),
+            "%.1f deg",
+            advanced,
         );
+        if advanced {
+            changed |= value_row(
+                "seamargin",
+                "Foot over the sea",
+                "A slope whose foot is lower is the coast's (and one whose foot is in a river, the banks')",
+                &mut p.sea_margin,
+                None,
+                (0.0, 20.0),
+                "%.1f m",
+                true,
+            );
+        }
     }
 
-    f("rise at least", &mut p.min_rise, 0.05, 0.0, 100.0, "%.1f m", "A lower one (a ramp, a bump) is left alone");
-    f("area at least", &mut p.min_area, 1.0, 0.0, 10000.0, "%.0f m2", "A smaller one is left alone");
+    if advanced {
+        changed |= value_row(
+            "rise",
+            "Rise at least",
+            "A lower one (a ramp, a bump) is left alone",
+            &mut p.min_rise,
+            None,
+            (0.0, 30.0),
+            "%.1f m",
+            true,
+        );
+        changed |= value_row("area", "Area at least", "A smaller one is left alone", &mut p.min_area, None, (0.0, 1000.0), "%.0f m2", true);
 
-    gui::separator_text("Bands");
-    f("foot: up the slope", &mut p.foot_up, 0.05, 0.0, 50.0, "%.1f m", "How far up the slope the foot band goes (rocks and plants)");
-    f("foot: out on the flat", &mut p.foot_out, 0.05, 0.0, 50.0, "%.1f m", "How far out from the slope the foot band goes");
-    f("face: under the top", &mut p.top_margin, 0.05, 0.0, 50.0, "%.1f m", "The face band (rocks only) stops this far under the top");
+        gui::separator_text("Bands");
+        changed |= value_row(
+            "footup",
+            "Foot: up the slope",
+            "How far up the slope the foot band goes (rocks and plants)",
+            &mut p.foot_up,
+            None,
+            (0.0, 20.0),
+            "%.1f m",
+            true,
+        );
+        changed |= value_row(
+            "footout",
+            "Foot: out on the flat",
+            "How far out from the slope the foot band goes",
+            &mut p.foot_out,
+            None,
+            (0.0, 20.0),
+            "%.1f m",
+            true,
+        );
+        changed |= value_row(
+            "top",
+            "Face: under the top",
+            "The face band (rocks only) stops this far under the top",
+            &mut p.top_margin,
+            None,
+            (0.0, 20.0),
+            "%.1f m",
+            true,
+        );
+    }
 
     gui::separator_text("Rocks");
-    let mut per100 = |label: &str, v: &mut f32, tip: &str| {
-        let mut d = *v * 100.0;
-        gui::set_next_item_width(160.0);
-        if gui::drag_float(label, &mut d, 0.05, 0.0, 100.0, "%.2f / 100 m2") {
-            *v = d / 100.0;
-            changed = true;
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-    };
-
-    per100("at the foot", &mut p.rock_density_foot, "Rocks per 100 square metres of the foot band");
-    per100("on the face", &mut p.rock_density_face, "Rocks per 100 square metres of the face band");
-    changed |= gui::checkbox("scale the rocks", &mut p.scale_rocks);
-    if gui::is_item_hovered() {
-        gui::set_tooltip(
-            "The game ignores a building's scale unless it is exported as a prop, so a scaled rock is marked Export as prop: plain models, \
-             with no collision. Off: every rock a building at scale 1.",
-        );
-    }
-
-    if p.scale_rocks {
-        changed |= range_row("scale at the foot", &mut p.rock_scale_foot);
-        changed |= range_row("scale on the face", &mut p.rock_scale_face);
-        gui::text_colored(theme::warning(), "Experimental: the game may show them at scale 1.");
-    }
-
-    let mut seat = Seat::ALL.iter().position(|&s| s == p.seat).unwrap_or(1) as i32;
-    gui::set_next_item_width(160.0);
-    if gui::combo("stands on", &mut seat, &["the ground at its centre", "the mean ground under it", "the lowest ground under it"]) {
-        p.seat = Seat::ALL[seat as usize];
+    changed |= value_row(
+        "rocksfoot",
+        "At the foot",
+        "Rocks per 100 square metres of the foot band",
+        &mut p.rock_density_foot,
+        Some(&ROCKS_FOOT),
+        (0.0, 50.0),
+        "%.2f / 100 m2",
+        advanced,
+    );
+    changed |= value_row(
+        "rocksface",
+        "On the face",
+        "Rocks per 100 square metres of the face band",
+        &mut p.rock_density_face,
+        Some(&ROCKS_FACE),
+        (0.0, 50.0),
+        "%.2f / 100 m2",
+        advanced,
+    );
+    let row = styled::row("Scale", "");
+    let mut scale = p.scale_rocks;
+    if styled::toggle_chip(
+        "scalerocks",
+        "Scale the rocks",
+        scale,
+        row.width,
+        "The game ignores a building's scale unless it is exported as a prop, so a scaled rock is marked Export as prop: plain models, \
+         with no collision. Off: every rock a building at scale 1.",
+    ) {
+        scale = !scale;
+        p.scale_rocks = scale;
         changed = true;
     }
 
-    if gui::is_item_hovered() {
-        gui::set_tooltip(
-            "The ground a rock's base is put on. The lowest never lets its downhill side float, but buries big rocks on steep faces.",
-        );
+    if p.scale_rocks {
+        changed |= size_row("scalefoot", "Sizes at the foot", "The rocks' sizes at the foot, smallest to largest", &mut p.rock_scale_foot);
+        changed |= size_row("scaleface", "Sizes on the face", "The rocks' sizes on the face, smallest to largest", &mut p.rock_scale_face);
+        let row = styled::row("", "");
+        gui::set_cursor_pos_x(row.x);
+        gui::text_colored(theme::warning(), "Experimental: the game may show them at scale 1.");
     }
 
-    let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
-        gui::set_next_item_width(160.0);
-        changed |= gui::drag_float(label, v, speed, lo, hi, format);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
+    if advanced {
+        let row = styled::row(
+            "Stands on",
+            "The ground a rock's base is put on. The lowest never lets its downhill side float, but buries big rocks on steep faces.",
+        );
+        let names = ["Centre", "Mean", "Lowest"];
+        let current = Seat::ALL.iter().position(|&s| s == p.seat);
+        if let Some(i) = styled::segmented("seat", &names, current, row.width) {
+            p.seat = Seat::ALL[i];
+            changed = true;
         }
-    };
 
-    let mut sink = p.sink * 100.0;
-    f("sunk", &mut sink, 0.5, 0.0, 90.0, "%.0f %% of its height", "How much of each rock goes under the ground it stands on");
-    p.sink = sink / 100.0;
-    let mut visible = p.min_visible * 100.0;
-    f(
-        "at least visible",
-        &mut visible,
-        0.5,
-        0.0,
-        100.0,
-        "%.0f %% of its height",
-        "How much of each rock stays over the ground at its centre, whatever the rest says",
-    );
-    p.min_visible = visible / 100.0;
+        let mut sink = p.sink * 100.0;
+        changed |= value_row(
+            "sink",
+            "Sunk",
+            "How much of each rock goes under the ground it stands on",
+            &mut sink,
+            None,
+            (0.0, 90.0),
+            "%.0f %% of its height",
+            true,
+        );
+        p.sink = sink / 100.0;
+        let mut visible = p.min_visible * 100.0;
+        changed |= value_row(
+            "visible",
+            "At least visible",
+            "How much of each rock stays over the ground at its centre, whatever the rest says",
+            &mut visible,
+            None,
+            (0.0, 100.0),
+            "%.0f %% of its height",
+            true,
+        );
+        p.min_visible = visible / 100.0;
+    }
 
     gui::separator_text("Plants");
-    let mut density = p.plant_density * 100.0;
-    f("at the foot##plants", &mut density, 0.05, 0.0, 100.0, "%.2f / 100 m2", "Plants per 100 square metres of the foot band");
-    p.plant_density = density / 100.0;
-    f("apart", &mut p.plant_spacing, 0.05, 0.1, 50.0, "%.1f m", "The least distance between two plants");
-    changed |= range_row("scale##plants", &mut p.plant_scale);
-
-    gui::separator_text("Buildings");
-    let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
-        gui::set_next_item_width(160.0);
-        changed |= gui::drag_float(label, v, speed, lo, hi, format);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-    };
-
-    f("clearance", &mut p.building_clearance, 0.05, 0.0, 50.0, "%.1f m", "What every rock and plant keeps from a building's footprint");
-    gui::push_text_wrap_pos(0.0);
-    gui::text_disabled("Gone around: houses, fort walls, towers, gates, bridges. Not rocks, props or ground pieces.");
-    gui::pop_text_wrap_pos();
-
-    gui::separator_text("Vegetation exclusion");
-    let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
-        gui::set_next_item_width(160.0);
-        changed |= gui::drag_float(label, v, speed, lo, hi, format);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-    };
-
-    f(
-        "clump: plants within",
-        &mut p.cluster_distance,
-        0.1,
-        0.0,
-        100.0,
-        "%.1f m",
-        "Plants this near are one clump, with one polygon around it",
+    changed |= value_row(
+        "plants",
+        "At the foot",
+        "Plants per 100 square metres of the foot band",
+        &mut p.plant_density,
+        Some(&PLANTS),
+        (0.0, 50.0),
+        "%.2f / 100 m2",
+        advanced,
     );
-    f(
-        "clump: at most",
-        &mut p.max_cluster,
-        0.5,
-        1.0,
-        500.0,
-        "%.0f m across",
-        "No clump gets wider (its polygon would cover the land between)",
-    );
-    f("margin", &mut p.exclusion_margin, 0.05, 0.0, 50.0, "%.1f m", "Around each plant (and its own radius) in the polygon");
-    changed
-}
+    changed |= size_row("plantscale", "Sizes", "The plants' sizes, smallest to largest", &mut p.plant_scale);
+    if advanced {
+        changed |=
+            value_row("apart", "Apart", "The least distance between two plants", &mut p.plant_spacing, None, (0.1, 20.0), "%.1f m", true);
 
-fn range_row(label: &str, r: &mut (f32, f32)) -> bool {
-    let mut v = [r.0, r.1];
-    gui::set_next_item_width(160.0);
-    let changed = gui::drag_float2(label, &mut v, 0.01, "%.2f");
-    if changed {
-        (r.0, r.1) = (v[0].clamp(0.05, 20.0), v[1].clamp(0.05, 20.0));
+        gui::separator_text("Buildings");
+        changed |= value_row(
+            "clearance",
+            "Clearance",
+            "What every rock and plant keeps from a building's footprint. Gone around: houses, fort walls, towers, gates, bridges; not \
+             rocks, props or ground pieces.",
+            &mut p.building_clearance,
+            None,
+            (0.0, 20.0),
+            "%.1f m",
+            true,
+        );
+
+        gui::separator_text("Vegetation exclusion");
+        changed |= value_row(
+            "clump",
+            "Clump: plants within",
+            "Plants this near are one clump, with one polygon around it",
+            &mut p.cluster_distance,
+            None,
+            (0.0, 50.0),
+            "%.1f m",
+            true,
+        );
+        changed |= value_row(
+            "clumpmax",
+            "Clump: at most",
+            "No clump gets wider (its polygon would cover the land between)",
+            &mut p.max_cluster,
+            None,
+            (1.0, 200.0),
+            "%.0f m across",
+            true,
+        );
+        changed |= value_row(
+            "margin",
+            "Margin",
+            "Around each plant (and its own radius) in the polygon",
+            &mut p.exclusion_margin,
+            None,
+            (0.0, 20.0),
+            "%.1f m",
+            true,
+        );
     }
 
     changed
@@ -1300,33 +1479,37 @@ fn range_row(label: &str, r: &mut (f32, f32)) -> bool {
 fn clutter_rows(defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[VegetationSet]) -> bool {
     let mut changed = false;
     gui::separator_text("Rules (the first that matches a building is its)");
-    gui::push_text_wrap_pos(0.0);
-    gui::text_disabled(
-        "A rule matches ordinary buildings by their key (patterns with *, several separated by |), less its exceptions, or the buildings of its categories; its props go all around them.",
+    note(
+        "A rule matches ordinary buildings by their key (patterns with *, several separated by |), less its exceptions, or the buildings \
+         of its categories; its props go all around them.",
     );
-    gui::pop_text_wrap_pos();
-    let (mut remove, mut up) = (None, None);
+    let (mut remove, mut up, mut down) = (None, None, None);
+    let n = defs.len();
     for (i, d) in defs.iter_mut().enumerate() {
         gui::push_id_int(i as i32);
         let title = format!("{}###rule", if d.name.is_empty() { "(no name)" } else { &d.name });
         if gui::collapsing_header(&title, 0) {
-            gui::set_next_item_width(240.0);
-            changed |= gui::input_text("name", None, &mut d.name, 128, 0);
-            gui::set_next_item_width(240.0);
-            changed |= gui::input_text("keys like", Some("*villa*|*farm*"), &mut d.patterns, 256, 0);
-            gui::set_next_item_width(240.0);
-            changed |= gui::input_text("except", Some("*_wall*|*tower*"), &mut d.except, 256, 0);
-            gui::set_next_item_width(240.0);
-            changed |= gui::input_text("categories", Some("generic (none: ordinary buildings)"), &mut d.categories, 256, 0);
-            if gui::is_item_hovered() {
-                gui::set_tooltip(
-                    "The categories the rule looks among (gate|fort_tower ...); none: ordinary buildings, not walls, towers, gates or bridges",
-                );
-            }
-            let preview = if d.set.is_empty() { "the keys below".to_owned() } else { d.set.clone() };
-            gui::set_next_item_width(240.0);
-            if gui::begin_combo("props", &preview) {
-                if gui::selectable("the keys below", d.set.is_empty(), 0) {
+            let mut text = |label: &str, id: &str, v: &mut String, hint: &str, tip: &str| {
+                let row = styled::row(label, tip);
+                gui::set_next_item_width(row.width);
+                changed |= gui::input_text(&format!("##{id}"), Some(hint), v, 256, 0);
+            };
+            text("Name", "name", &mut d.name, "", "");
+            text("Keys like", "patterns", &mut d.patterns, "*villa*|*farm*", "Building keys with * for any run, several separated by |");
+            text("Except", "except", &mut d.except, "*_wall*|*tower*", "Keys left out, as above");
+            text(
+                "Categories",
+                "categories",
+                &mut d.categories,
+                "generic (none: ordinary buildings)",
+                "The categories the rule looks among (gate|fort_tower ...); none: ordinary buildings, not walls, towers, gates or bridges",
+            );
+
+            let row = styled::row("Props", "A set of buildings of the projects, or keys of their own");
+            let preview = if d.set.is_empty() { format!("keys ({})", d.keys.len()) } else { d.set.clone() };
+            gui::set_next_item_width(row.width);
+            if gui::begin_combo("##props", &preview) {
+                if gui::selectable("keys", d.set.is_empty(), 0) {
                     d.set.clear();
                     changed = true;
                 }
@@ -1342,9 +1525,10 @@ fn clutter_rows(defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[V
             }
 
             if d.set.is_empty() {
+                row.next_line();
                 let mut keys = d.keys.join(" ");
-                gui::set_next_item_width(240.0);
-                if gui::input_text("keys", Some("barrel crate woodpile"), &mut keys, 2048, 0) {
+                gui::set_next_item_width(row.width);
+                if gui::input_text("##keys", Some("barrel crate woodpile"), &mut keys, 2048, 0) {
                     d.keys = keys.split_whitespace().map(str::to_owned).collect();
                     changed = true;
                 }
@@ -1354,12 +1538,23 @@ fn clutter_rows(defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[V
                 }
             }
 
-            if gui::small_button("Up") && i > 0 {
+            let row = styled::row("", "");
+            gui::set_cursor_pos_x(row.x);
+            gui::begin_disabled(i == 0);
+            if styled::icon_button(icons::ARROW_BIG_UP, "up", "Earlier: tried before the rules after it") {
                 up = Some(i);
             }
 
+            gui::end_disabled();
             gui::same_line();
-            if gui::small_button(&format!("{}  Remove", icons::X)) {
+            gui::begin_disabled(i + 1 == n);
+            if styled::icon_button(icons::ARROW_BIG_DOWN, "down", "Later: tried after the rules before it") {
+                down = Some(i);
+            }
+
+            gui::end_disabled();
+            gui::same_line();
+            if styled::icon_button(icons::TRASH_2, "remove", "Remove the rule") {
                 remove = Some(i);
             }
         }
@@ -1367,8 +1562,13 @@ fn clutter_rows(defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[V
         gui::pop_id();
     }
 
-    if let Some(i) = up {
+    if let Some(i) = up.filter(|&i| i > 0) {
         defs.swap(i, i - 1);
+        changed = true;
+    }
+
+    if let Some(i) = down.filter(|&i| i + 1 < defs.len()) {
+        defs.swap(i, i + 1);
         changed = true;
     }
 
