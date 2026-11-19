@@ -181,7 +181,23 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       10. Decoder alloc sizes for setups not seen yet: they depend only on the setup (the same for mono and quad); the table covers
           the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo,
           moved to step 4** (the encoder needs it, nothing before it does)
-2. **Formats** with the round-trip gates; `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
+2. **Formats** with the round-trip gates (crate `wce_audio_format`). **in progress**
+   1. Crate, FNV-1 IDs (`fnv::id`, `fnv::bytes`), bank chunks (`BKHD`, `DIDX`, `DATA`, `HIRC` objects as kind + ID + raw body,
+      `STID`, others raw), WEM RIFF chunks + the `fmt`/Wwise Vorbis header view, `event_data.dat` typed; unit tests. **done**
+   2. Gate `audio_formats_check <game> [mod packs]` (in `scripts/gates.sh`: `audio_formats`, `rome2_audio_formats`): every copy of
+      every bank, WEM and `event_data.dat`, written back and compared; Vorbis codebook hash vs setup. **done**: Attila + TDD v1.2.0
+      134 banks (all v112, the encrypted music packs too), 44,802 WEMs, 1 `event_data.dat`, 0 failures, all hashes match (53 s);
+      Rome 2 159 banks (42 v88, 117 v112), 42,371 WEMs, 2 `event_data.dat`, 0 failures. HIRC object counts (Attila + TDD): Sound
+      95,259, Random/Sequence 12,514, Action 3,318, Event 2,308, Switch 2,123, Music Segment 624, Music Track 600, Attenuation 546,
+      Blend 289, Dialogue Event 220, Music Playlist 206, Effect 200, Actor-Mixer 199, Bus 198, Effect ShareSet 136, State 103,
+      Music Switch 58, Aux Bus 14.
+   3. Typed HIRC objects, v112, one kind at a time, each gated (parse consumes the body exactly, writes it back identically):
+      Event, Action, Sound, Random/Sequence, Switch, Blend, Actor-Mixer, Dialogue Event, Music Segment/Track/Switch/Playlist,
+      Attenuation, Bus/Aux Bus, State, Effect/ShareSet. Unknown or failing kinds stay raw. **todo**
+   4. `.snd.meta` (next to the animations in `data.pack`; `wce_formats::anim_meta` may share its layout). **todo**
+   5. Campaign `.amb` + `.xml` (`audio/*_map.amb`). **todo**
+   6. `sound_animation_triggers.csv` (text, kept as is; columns read). **todo**
+   7. `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
 3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **todo**
 4. **Replace and add variations**: the encoder (aoTuV built in, the conversion from `tools\wwvorbis.py` ported to Rust, the alloc
    sizes of 1.4.10), the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties; an in-game check of media

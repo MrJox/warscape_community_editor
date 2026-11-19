@@ -2348,6 +2348,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_audio_format"
+version = "0.0.1"
+dependencies = [
+ "thiserror",
+ "wce_vfs",
+]
+
+[[package]]
 name = "wce_d3d11"
 version = "0.0.1"
 dependencies = [
