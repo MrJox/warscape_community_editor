@@ -7,8 +7,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use wce_audio_format::amb::Ambience;
 use wce_audio_format::bank::{Bank, kind_name};
 use wce_audio_format::event_data::EventData;
+use wce_audio_format::triggers::Triggers;
 use wce_audio_format::wem::Wem;
 use wce_audio_format::{fnv, hirc};
 use wce_vfs::{Config, GameProfile, Vfs};
@@ -141,6 +143,35 @@ fn main() {
         }
     }
 
+    let mut ambience = Tally::default();
+    for path in vfs.list("", ".amb") {
+        for (pack, bytes) in copies(&vfs, path) {
+            ambience.read += 1;
+            match Ambience::read(&bytes) {
+                Ok(amb) if amb.write() == bytes => {
+                    let points: usize = amb.emitters.iter().map(|e| e.points.len()).sum();
+                    println!("  {pack}: {path}: {} emitters, {points} points", amb.emitters.len());
+                }
+                Ok(_) => ambience.failed.push(format!("{pack}: {path}: written bytes differ")),
+                Err(e) => ambience.failed.push(format!("{pack}: {path}: {e}")),
+            }
+        }
+    }
+
+    let mut triggers = Tally::default();
+    for path in vfs.list("", ".csv").into_iter().filter(|p| p.ends_with("sound_animation_triggers.csv")) {
+        for (pack, bytes) in copies(&vfs, path) {
+            triggers.read += 1;
+            match Triggers::read(&bytes) {
+                Ok(t) if t.rows.iter().all(|r| r.len() == t.header.len()) => {
+                    println!("  {pack}: {path}: {} triggers, {} columns", t.rows.len(), t.header.len());
+                }
+                Ok(_) => triggers.failed.push(format!("{pack}: {path}: a row's field count differs from the header's")),
+                Err(e) => triggers.failed.push(format!("{pack}: {path}: {e}")),
+            }
+        }
+    }
+
     println!("bank versions: {versions:?}");
     println!("chunks: {chunk_tags:?}");
     for (kind, n) in &kinds {
@@ -156,7 +187,15 @@ fn main() {
         println!("  {f}");
     }
 
-    let ok = [banks.report("banks"), wems.report("WEMs"), event_data.report("event_data.dat")].iter().all(|&ok| ok)
+    let ok = [
+        banks.report("banks"),
+        wems.report("WEMs"),
+        event_data.report("event_data.dat"),
+        ambience.report("campaign ambience (.amb)"),
+        triggers.report("sound_animation_triggers.csv"),
+    ]
+    .iter()
+    .all(|&ok| ok)
         && hash_bad.is_empty()
         && typed_failed.is_empty();
     std::process::exit(if ok { 0 } else { 1 });

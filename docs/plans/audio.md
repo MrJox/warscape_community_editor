@@ -181,7 +181,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       10. Decoder alloc sizes for setups not seen yet: they depend only on the setup (the same for mono and quad); the table covers
           the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo,
           moved to step 4** (the encoder needs it, nothing before it does)
-2. **Formats** with the round-trip gates (crate `wce_audio_format`). **in progress**
+2. **Formats** with the round-trip gates (crate `wce_audio_format`). **done** (2026-11-19)
    1. Crate, FNV-1 IDs (`fnv::id`, `fnv::bytes`), bank chunks (`BKHD`, `DIDX`, `DATA`, `HIRC` objects as kind + ID + raw body,
       `STID`, others raw), WEM RIFF chunks + the `fmt`/Wwise Vorbis header view, `event_data.dat` typed; unit tests. **done**
    2. Gate `audio_formats_check <game> [mod packs]` (in `scripts/gates.sh`: `audio_formats`, `rome2_audio_formats`): every copy of
@@ -203,10 +203,17 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
         206 (`hirc/music.rs`). Every v112 kind the games use is typed.
       - **todo** (later, when editing needs it): Action parameters per action type (kept as bytes), the music transition rules'
         source/destination/transition blocks (kept as bytes), Effect plug-in parameters per plug-in.
-   4. `.snd.meta` (next to the animations in `data.pack`; `wce_formats::anim_meta` may share its layout). **todo**
-   5. Campaign `.amb` + `.xml` (`audio/*_map.amb`). **todo**
-   6. `sound_animation_triggers.csv` (text, kept as is; columns read). **todo**
-   7. `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
+   4. `.snd.meta`: the `.meta` layout, already read and written byte for byte by `wce_formats::anim_meta` (gate
+      `unit_formats_check`); its `SOUND_TRIGGER` entries hold a 0-based row index into `sound_animation_triggers.csv` (checked: a
+      bird's 84 is `50_Bird_Wing_Flaps`, a boar's 92 to 94 footsteps). The audio layer joins them (step 7). **done**
+   5. Campaign `.amb` (`amb::Ambience`: emitters = event ID + polyline; IDs are `campaign_spot_ambience_*` events): all 3
+      Attila and 14 Rome 2 copies byte for byte. The `.xml` beside it is plain settings XML (listener scaling, climate blends),
+      read with `wce_formats`' XML when the tool needs it. **done**
+   6. `sound_animation_triggers.csv` (`triggers::Triggers`: kept as bytes, columns read): Attila 168 rows x 24 columns, Rome 2
+      163 x 18 and 20; every row has the header's field count. **done**
+   7. Format docs: [wwise_bank.md](../formats/wwise_bank.md) (chunks, every HIRC layout), [wem.md](../formats/wem.md) (RIFF,
+      the Wwise Vorbis header, the packing and encoding), [sound_data.md](../formats/sound_data.md) (`event_data.dat`,
+      `.snd.meta` + triggers, `.amb` + `.xml`). **done**
 3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **todo**
 4. **Replace and add variations**: the encoder (aoTuV built in, the conversion from `tools\wwvorbis.py` ported to Rust, the alloc
    sizes of 1.4.10), the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties; an in-game check of media
