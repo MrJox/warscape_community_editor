@@ -75,7 +75,7 @@ fn flag(p: &TerryProject, e: &TerryEntity, component: &str, attr: &str) -> u8 {
 }
 
 /// `ECSeasonMask`'s seasons as the markers' bits (spring 1, summer 2, autumn 4, winter 8); without one every season.
-fn seasons(p: &TerryProject, e: &TerryEntity) -> u32 {
+pub fn seasons(p: &TerryProject, e: &TerryEntity) -> u32 {
     if p.component(e, "ECSeasonMask").is_none() {
         return 15;
     }
