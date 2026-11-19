@@ -762,7 +762,17 @@ impl DrawSet {
                 p6 = [world[0][2], params[0], world[2][2], size];
             }
 
-            *r = RigidInstance { world, p4: p(0), p5, p6, p7 };
+            // A campaign tree clump (rigidcampaignvegetation vs30_main) reads one float4 (x, y, z, angle), its layout POSITION4's place:
+            // the entity's position in the shaders' units plus 0.4 x its mesh's pivot, unturned (the shader scales the vertices by 0.4;
+            // RenderDoc, capture A: the game's instance is the tree list's position plus that), and the angle of its turn about y.
+            let mut p4 = p(0);
+            if mesh.kind == crate::model_cache::MeshKind::CampaignVegetation {
+                let o = if mesh.has_offset { [mesh.offset.x, mesh.offset.y, mesh.offset.z] } else { [0.0; 3] };
+                let at = |r: usize| w[r][3] * units - origin[r] + 0.4 * o[r];
+                p4 = [at(0), at(1), at(2), w[0][2].atan2(w[0][0])];
+            }
+
+            *r = RigidInstance { world, p4, p5, p6, p7 };
         });
     }
 

@@ -111,7 +111,7 @@ pub(crate) const FIRE_MAP: &str = "commontextures/vfx_fire_diffuse.dds";
 /// timer label. rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's. A burning instance (the
 /// engine's render flag 0x200: a building on fire, or TEd's `burn`) draws with its material's fire variant, which chars the colour by
 /// POSITION6.x (the burn amount) with embers from `s_fire_map`.
-pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 21] = [
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 22] = [
     (MeshKind::Standard, false, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
     (MeshKind::Standard, true, false, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
     (MeshKind::TiledDirtmap, false, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
@@ -131,6 +131,7 @@ pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 21] 
     (MeshKind::TreeBranch, false, false, TREE_BRANCH_VS, TREE_BRANCH_PS, "gbuffer tree branches"),
     (MeshKind::TreeLeaf, false, false, TREE_LEAF_VS, TREE_LEAF_PS, "gbuffer tree leaves"),
     (MeshKind::TreeBillboard, false, false, TREE_BILLBOARD_VS, TREE_BILLBOARD_PS, "gbuffer tree billboards"),
+    (MeshKind::CampaignVegetation, false, false, CAMPAIGN_VEGETATION_VS, CAMPAIGN_VEGETATION_PS, "gbuffer campaign forests"),
     (MeshKind::TerrainBlend, false, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
     (MeshKind::Rope, false, false, ROPE_VS, ROPE_GBUFFER_PS, "gbuffer ropes"),
 ];
@@ -222,6 +223,7 @@ pub(crate) fn gbuffer_ms_ps(kind: MeshKind, alpha_tested: bool, ps: &str) -> Opt
         MeshKind::TreeLeaf => Some("dx11_sm_5_0_rigidleaf_v3.hlsl_ps_ps50_gbuffer_ms".to_owned()),
         MeshKind::TreeBranch => Some("dx11_sm_5_0_rigidbranch_v3.hlsl_ps_ps50_gbuffer_ms".to_owned()),
         MeshKind::TreeBillboard => Some("dx11_sm_5_0_rigidtreebillboard.hlsl_ps_ps50_gbuffer_ms".to_owned()),
+        MeshKind::CampaignVegetation => Some("dx11_sm_4_1_rigidcampaignvegetation.hlsl_ps_ps41_gbuffer_ms".to_owned()),
         _ => alpha_tested.then(|| ms_name(ps)),
     }
 }
@@ -296,10 +298,22 @@ pub(crate) const CLOUD_PS: &str = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 pub(crate) const SHADOW_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 
 /// The tree casters: their vertex shaders (wind, LOD blend) and alpha-tested pixel shaders (the leaves' also dissolve).
-pub(crate) const TREE_SHADOW_PASSES: [(MeshKind, &str, &str); 3] = [
+/// A campaign's tree clumps (`MeshKind::CampaignVegetation`): the game's G-buffer pair (capture A draws `ps41_gbuffer_ms` with MSAA).
+pub(crate) const CAMPAIGN_VEGETATION_VS: &str = "dx11_sm_3_0_rigidcampaignvegetation.hlsl_vs_vs30_main";
+pub(crate) const CAMPAIGN_VEGETATION_PS: &str = "dx11_sm_3_0_rigidcampaignvegetation.hlsl_ps_ps30_gbuffer";
+
+/// The dissolve map the game binds for the campaign's tree clumps (capture A, `campaign_frame --textures`).
+pub(crate) const CAMPAIGN_DISSOLVE_MAP: &str = "commontextures/dissolve.dds";
+
+pub(crate) const TREE_SHADOW_PASSES: [(MeshKind, &str, &str); 4] = [
     (MeshKind::TreeBranch, "dx11_sm_3_0_rigidbranchcommon_v3.hlsl_vs_vs30_shadow", "dx11_sm_3_0_rigidbranchcommon_v3.hlsl_ps_ps30_shadow"),
     (MeshKind::TreeLeaf, "dx11_sm_3_0_rigidleafcommon_v3.hlsl_vs_vs30_shadow", "dx11_sm_3_0_rigidleafcommon_v3.hlsl_ps_ps30_shadow"),
     (MeshKind::TreeBillboard, "dx11_sm_3_0_rigidtreebillboard.hlsl_vs_vs30_shadow", "dx11_sm_3_0_rigidtreebillboard.hlsl_ps_ps30_shadow"),
+    (
+        MeshKind::CampaignVegetation,
+        "dx11_sm_3_0_rigidcampaignvegetation.hlsl_vs_vs30_shadow",
+        "dx11_sm_3_0_rigidcampaignvegetation.hlsl_ps_ps30_shadow",
+    ),
 ];
 
 /// Memory dump: sun_VS.g_world_view translation = view rotation * to_sun * 7600.
@@ -460,6 +474,16 @@ pub(crate) fn billboard_layout() -> Vec<InputElement> {
         element(c"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 64, true),
         element(c"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 80, true),
         element(c"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 96, true),
+    ]
+}
+
+/// The campaign tree clumps' layout (`rigidcampaignvegetation` vs30_main / vs30_shadow, as capture A binds it): the vertex's f16 (position,
+/// u) and (normal, v), the instance's (x, y, z, angle) from POSITION4's place in the rigid instance (`DrawSet::gather` writes it).
+pub(crate) fn campaign_vegetation_layout() -> Vec<InputElement> {
+    vec![
+        element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false),
+        element(c"NORMAL", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 8, false),
+        element(c"POSITION", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, true),
     ]
 }
 

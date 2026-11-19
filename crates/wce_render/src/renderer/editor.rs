@@ -1449,8 +1449,9 @@ impl Renderer {
             for &b in &vis.active {
                 let m = set.batch_mesh(b);
 
-                // A rope's vertex isn't the f16 position the pick layout reads (and is a line a click would hardly find).
-                if m.kind == crate::model_cache::MeshKind::Rope {
+                // A rope's vertex isn't the f16 position the pick layout reads (and is a line a click would hardly find); a campaign tree
+                // clump's is placed by its own vertex shader (scaled and turned there), and no clump is an item to pick.
+                if matches!(m.kind, crate::model_cache::MeshKind::Rope | crate::model_cache::MeshKind::CampaignVegetation) {
                     continue;
                 }
 
