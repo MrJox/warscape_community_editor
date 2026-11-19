@@ -285,8 +285,12 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       #13563058 (mouse-over), held in `battle_ui_data` and copied in `campaign_ui_data` and `global_ui_data`; both replaced through
       `EditSet` with test tones (click: 660 then 990 Hz; mouse-over: a short 1,760 Hz blip). 6 banks edited (the 3 data banks
       and `battle_ui`, `campaign_ui`, `global_ui`, whose offsets moved). Pack: scratch `spike\ingame2\wce_audio_test_ui.pack`
-      (vanilla banks; TDD overrides `campaign_ui`, so test without TDD). **in progress: waiting on the user** (hover and click
-      the main menu's buttons). An added variation in game: todo.
+      (vanilla banks; TDD overrides `campaign_ui`, so test without TDD). Result (user, 2026-11-19): **the original button sounds**,
+      with the pack enabled alone (`used_mods.txt`). The main menu layout (`frontend ui/main`) does use
+      `grp_gw_generic_button_small`, whose `lclick` / `mouse_on` play exactly the replaced media; every copy of them was
+      replaced. Next: `spike\ingame2\wce_audio_test_ui2.pack` = the same banks + the main menu ambience WEM that worked in 1.4.8,
+      to tell "the pack does not load" from "the game does not take the edited banks". **blocked: waiting on the user's run**. An
+      added variation in game: todo.
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
