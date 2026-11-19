@@ -191,23 +191,10 @@ impl TileTool {
         );
         gui::spacing();
 
-        let row = styled::row("Show", "The plain choices, or every number");
-        if let Some(i) = styled::segmented("mode", &["Simple", "Advanced"], Some(usize::from(self.biomes.advanced)), row.width) {
-            self.biomes.advanced = i == 1;
-        }
-
         self.biome_preset_rows(e);
         let mut draft = self.biome_draft(e);
-        let sets = self.vegetation_sets(e);
-        let swatches = self.ground_swatches(e);
-        let (groups, heights) =
-            document(e).map(|d| (d.texture_group_slots(), crate::texture_rules_panel::tile_heights(d))).unwrap_or((vec![], (0.0, 10.0)));
-        let view = RuleView { groups: &groups, swatches: &swatches, heights, advanced: self.biomes.advanced };
-        let changed = self.biome_fields(e, &mut draft, &sets, &view);
-        if changed {
-            self.biomes.draft = Some(draft.clone());
-        }
 
+        // Laying it first: the settings below are long.
         gui::separator_text("Lay it");
         let half = (gui::content_region_avail().x - gui::item_spacing().x) * 0.5;
         if gui::button_sized(&format!("{}  Draw an area", icons::PLUS), gui::v2(half, 0.0)) {
@@ -255,6 +242,22 @@ impl TileTool {
             let areas = d.tile().biome_areas().len();
             gui::spacing();
             gui::text_disabled(&format!("{areas} area(s): {trees} tree(s) and plant(s), {rocks} rock(s)"));
+        }
+
+        gui::separator_text("Settings");
+        let row = styled::row("Show", "The plain choices, or every number");
+        if let Some(i) = styled::segmented("mode", &["Simple", "Advanced"], Some(usize::from(self.biomes.advanced)), row.width) {
+            self.biomes.advanced = i == 1;
+        }
+
+        let sets = self.vegetation_sets(e);
+        let swatches = self.ground_swatches(e);
+        let (groups, heights) =
+            document(e).map(|d| (d.texture_group_slots(), crate::texture_rules_panel::tile_heights(d))).unwrap_or((vec![], (0.0, 10.0)));
+        let view = RuleView { groups: &groups, swatches: &swatches, heights, advanced: self.biomes.advanced };
+        let changed = self.biome_fields(e, &mut draft, &sets, &view);
+        if changed {
+            self.biomes.draft = Some(draft.clone());
         }
 
         gui::end();
