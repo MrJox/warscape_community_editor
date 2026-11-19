@@ -1007,6 +1007,34 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "cb_dump",
+        "cb_dump <file>",
+        "write every game constant buffer's variables as the last frame set them to a file, a line each: buffer.variable values \
+         (floats; for scripts/campaign_compare.py against a capture's constants)",
+        |e, a| {
+            let Some(path) = a.first() else { return fail("usage: cb_dump <file>") };
+            let Some(r) = e.renderer() else { return fail("no renderer") };
+            let mut out = String::new();
+            let mut buffers: Vec<_> = r.constant_buffers().buffers().collect();
+            buffers.sort_by(|x, y| x.name.cmp(&y.name));
+            for b in buffers {
+                let mut vars: Vec<_> = b.vars.iter().collect();
+                vars.sort_by_key(|(_, v)| v.offset);
+                for (var, v) in vars {
+                    let bytes = &b.cpu[(v.offset as usize).min(b.cpu.len())..((v.offset + v.size) as usize).min(b.cpu.len())];
+                    let vals: Vec<String> =
+                        bytes.as_chunks::<4>().0.iter().map(|c| format!("{}", f32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect();
+                    out += &format!("{}.{var} {}\n", b.name, vals.join(" "));
+                }
+            }
+            match std::fs::write(path, out) {
+                Ok(()) => ok(format!("constant buffers written to {path}")),
+                Err(err) => fail(format!("{path}: {err}")),
+            }
+        },
+    );
+
+    c.add(
         "luma",
         "luma",
         "log the auto exposure's black and white points as the GPU last computed them (the game's: its 1x1 points target)",
