@@ -191,9 +191,15 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       95,259, Random/Sequence 12,514, Action 3,318, Event 2,308, Switch 2,123, Music Segment 624, Music Track 600, Attenuation 546,
       Blend 289, Dialogue Event 220, Music Playlist 206, Effect 200, Actor-Mixer 199, Bus 198, Effect ShareSet 136, State 103,
       Music Switch 58, Aux Bus 14.
-   3. Typed HIRC objects, v112, one kind at a time, each gated (parse consumes the body exactly, writes it back identically):
-      Event, Action, Sound, Random/Sequence, Switch, Blend, Actor-Mixer, Dialogue Event, Music Segment/Track/Switch/Playlist,
-      Attenuation, Bus/Aux Bus, State, Effect/ShareSet. Unknown or failing kinds stay raw. **todo**
+   3. Typed HIRC objects, v112 (`hirc::parse`, `Object::write`), one kind at a time, each gated (parse consumes the body
+      exactly, writes it back identically); the bank keeps bodies raw, so untyped kinds still round-trip. Layouts learnt from
+      pywarscape-sound's models (MIT), written anew. **in progress**
+      - **done** (Attila + TDD, 0 failures): State 103, Sound 95,259, Action 3,318 (type + target typed, parameters raw), Event
+        2,308, Random/Sequence 12,514, Switch 2,123, Actor-Mixer 199, Blend 289. Rome 2's v112 banks: 0 failures too (Sound
+        83,677, Random/Sequence 13,103...). `hirc::parse` takes the bank version: v88 banks (Rome 2's release packs, all
+        overridden) are not typed, they round-trip as chunks.
+      - **todo**: Dialogue Event, Attenuation, Bus + Aux Bus, Effect + Effect ShareSet, Music Segment/Track/Switch/Playlist,
+        Action parameters per action type.
    4. `.snd.meta` (next to the animations in `data.pack`; `wce_formats::anim_meta` may share its layout). **todo**
    5. Campaign `.amb` + `.xml` (`audio/*_map.amb`). **todo**
    6. `sound_animation_triggers.csv` (text, kept as is; columns read). **todo**

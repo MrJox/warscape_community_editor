@@ -10,6 +10,7 @@
 pub mod bank;
 pub mod event_data;
 pub mod fnv;
+pub mod hirc;
 mod io;
 pub mod wem;
 
