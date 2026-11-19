@@ -257,8 +257,13 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       6 channels: todo (force the uncoupled template, or downmix). **done**
    2. Encoder in `wce_audio::encode`: `aotuv_lancer_vorbis_sys` 0.1.6 (crates.io, BSD-3; user 2026-11-19), set up for 44.1 kHz
       whatever the rate, exact packet bits from `vorbis_block.opb`, the Ogg -> Wwise conversion of `tools\wwvorbis.py` (setup,
-      duplicate-ID rule, packets, header fields). Gate: re-encoding test material gives Wwise's setups and decodes back. **todo**
-   3. Audio import: WAV (PCM 16/24/32-bit, float) and Ogg Vorbis read; resampling not needed (any rate). **todo**
+      duplicate-ID rule, packets, header fields): `wce_audio::encode::encode_wem(pcm, quality)`, `QUALITIES` (0, 2 to 10),
+      `DEFAULT_QUALITY` 4. The crate's (Lancer) aoTuV gives Wwise's Voice setup byte for byte (test). Gate `audio_encode_check`
+      (`scripts/gates.sh`: `audio_encode`): 10 qualities x 1, 2, 4, 5 channels x 8 rates = 320 encodes, every setup known, one
+      setup per quality and channels over the rates, all decode back to their frame count. Mono 44.1 kHz: 53 kbps (quality 0)
+      to 252 (10); quality 4: 77. **done**
+   3. Audio import (`wce_audio::import::read_sound`): WAV (PCM 8/16/24/32-bit, float 32/64, extensible), Ogg Vorbis (pages read
+      here, lewton decodes), WEM; any rate (no resampling: the WEM keeps the rate). **done**
    4. Bank writer: DIDX/DATA rebuilt (media alignment as the game's), HIRC objects replaced; a Sound's source sizes updated;
       round trip unchanged when nothing changes. **todo**
    5. Documents: an edited bank is a document (undo/redo, Save to `<projects>/loose/audio/...`, revert); replacing a loose WEM

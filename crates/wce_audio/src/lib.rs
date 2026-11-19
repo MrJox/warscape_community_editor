@@ -10,6 +10,8 @@
 pub mod bits;
 pub mod codebooks;
 pub mod decode;
+pub mod encode;
+pub mod import;
 pub mod library;
 pub mod names;
 pub mod setup_allocs;

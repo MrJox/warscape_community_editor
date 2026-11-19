@@ -23,7 +23,7 @@ pub fn library() -> &'static [&'static [u8]] {
 }
 
 /// The number of values a lookup-type-1 codebook stores: the largest r with r^dimensions <= entries.
-fn lookup1_values(entries: u32, dimensions: u32) -> u32 {
+pub(crate) fn lookup1_values(entries: u32, dimensions: u32) -> u32 {
     if dimensions == 0 {
         return 0;
     }

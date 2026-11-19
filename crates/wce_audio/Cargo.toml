@@ -8,6 +8,9 @@ license.workspace = true
 [dependencies]
 # Pure Rust Vorbis decoding of the packets rebuilt from Wwise Vorbis (no Ogg container, so no default features).
 lewton = { version = "0.10", default-features = false }
+# Encoding: libvorbis with aoTuV's encoder (and the Lancer speed patches), built from the crate's bundled C source (BSD-3; user 2026-11-19).
+aotuv_lancer_vorbis_sys = "0.1.6"
+ogg_next_sys = "0.1.5"
 thiserror = "2"
 wce_audio_format = { path = "../wce_audio_format" }
 wce_vfs = { path = "../wce_vfs" }
