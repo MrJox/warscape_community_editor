@@ -32,6 +32,8 @@ fn normal_map_of(albedo: &str) -> Option<String> {
 const STRIDE: u32 = 32;
 
 /// The vertex (slot 0) and the instance's three world rows (slot 1).
+static BOX_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+
 pub(crate) fn custom_layout() -> [InputElement; 8] {
     [
         element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
@@ -143,6 +145,7 @@ impl Renderer {
         // The drawn levels: (mesh, level) -> instance rows.
         let (eye, units, origin) = (self.terrain.lod_eye, self.camera.units, self.camera.origin);
         let mut batches: Vec<((u64, usize), Vec<f32>)> = vec![];
+        let boxes = wce_foundation::profile::Scope::new(BOX_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.custom.boxes")));
         for e in ents {
             let Payload::Terrain(t) = &e.payload else { continue };
             let Some(m) = &t.custom else { continue };
@@ -180,6 +183,7 @@ impl Renderer {
             }
         }
 
+        drop(boxes);
         if batches.is_empty() {
             return 0;
         }
@@ -199,11 +203,39 @@ impl Renderer {
             self.bind(vs);
         }
 
+        // The rows of every batch in one upload a buffer's worth (a cliff tile's mesh is its own: thousands of small batches, each
+        // mapping the buffer for its few rows cost 10 ms a frame on a campaign map's far coasts), each batch drawn from its first row.
         let capacity = super::terrain::INSTANCE_BYTES / 48;
         let mut triangles = 0;
+        let mut pending: Vec<(u64, usize, u32, u32)> = vec![];
+        let mut upload: Vec<f32> = Vec::with_capacity(capacity * 12);
+        let mut flush = |me: &mut Self, upload: &mut Vec<f32>, pending: &mut Vec<(u64, usize, u32, u32)>| {
+            if !upload.is_empty() && me.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, upload)) {
+                for &(mesh, lod, first, n) in pending.iter() {
+                    triangles += me.draw_custom_batch(mesh, lod, how, &inst_vb, first, n);
+                }
+            }
+            upload.clear();
+            pending.clear();
+        };
         for ((mesh, lod), rows) in batches {
-            let Some(g) = self.terrain.custom.get(&mesh).cloned() else { continue };
-            let Some(l) = g.lods.get(lod) else { continue };
+            for chunk in rows.chunks(capacity * 12) {
+                if upload.len() + chunk.len() > capacity * 12 {
+                    flush(self, &mut upload, &mut pending);
+                }
+                pending.push((mesh, lod, (upload.len() / 12) as u32, (chunk.len() / 12) as u32));
+                upload.extend_from_slice(chunk);
+            }
+        }
+        flush(self, &mut upload, &mut pending);
+        triangles
+    }
+
+    /// One batch of [`Self::draw_custom_meshes`]: `n` instances of a mesh's level from row `first` of the uploaded instance buffer.
+    fn draw_custom_batch(&mut self, mesh: u64, lod: usize, how: CustomDraw, inst_vb: &ID3D11Buffer, first: u32, n: u32) -> u64 {
+        {
+            let Some(g) = self.terrain.custom.get(&mesh).cloned() else { return 0 };
+            let Some(l) = g.lods.get(lod) else { return 0 };
             if matches!(how, CustomDraw::Material)
                 && let Some(ps) = self.shader(CUSTOM_MAT_PS)
             {
@@ -218,19 +250,10 @@ impl Renderer {
 
             self.ctx.set_vertex_buffers(0, &[l.vb.clone(), Some(inst_vb.clone())], &[STRIDE, 48], &[0, 0]);
             self.ctx.set_index_buffer(l.ib.as_ref(), DXGI_FORMAT_R32_UINT, 0);
-            for chunk in rows.chunks(capacity * 12) {
-                if !self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, chunk)) {
-                    continue;
-                }
-
-                let n = (chunk.len() / 12) as u32;
-                self.ctx.draw_indexed_instanced(l.count, n, 0, 0, 0);
-                self.draw_stats.draw_calls += 1;
-                triangles += u64::from(l.count / 3) * u64::from(n);
-            }
+            self.ctx.draw_indexed_instanced(l.count, n, 0, 0, first);
+            self.draw_stats.draw_calls += 1;
+            u64::from(l.count / 3) * u64::from(n)
         }
-
-        triangles
     }
 
     /// Rome 2's cliffs' own material, after the terrain resolve: `vs30_custom_geom_mat` + `ps30_custom_geom_mat` write the G-buffer

@@ -1877,6 +1877,8 @@ impl Renderer {
         let campaign = all.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.material.as_ref().is_some_and(|m| m.campaign)));
 
         // The boxes in view by material and LF map (a context's placements of one tile share their material): one bind, the boxes as instances.
+        let gather =
+            wce_foundation::profile::Scope::new(BLEND_GATHER.get_or_init(|| wce_foundation::profile::slot("terrain.blend.gather")));
         let mut by_material: Vec<MaterialBoxes> = vec![];
         let mut slot: HashMap<(u64, u64, bool), usize> = HashMap::new();
         let (u, view_proj) = (self.camera.units, self.camera.main_view_proj);
@@ -1922,6 +1924,7 @@ impl Renderer {
             }
         }
 
+        drop(gather);
         // The baked materials last: they change the shader once.
         by_material.sort_by_key(|(m, _, _, _)| m.baked);
         let baked_ps = if by_material.iter().any(|(m, _, _, _)| m.baked) {
@@ -2033,6 +2036,10 @@ impl Renderer {
             }
         };
         let mut baked_world = None;
+        // The last constants uploaded for a tile material: most of a map's tiles share their LF's size and their climate's scales, and
+        // uploading the 6 KB texture-array cbuffer for each of two thousand tiles cost 30 ms a frame on a campaign map's far view.
+        let mut uploaded: Option<([f32; 2], [f32; 16])> = None;
+        let _draws = wce_foundation::profile::Scope::new(BLEND_DRAWS.get_or_init(|| wce_foundation::profile::slot("terrain.blend.draws")));
         for (k, (m, lf, boxes, snow)) in by_material.into_iter().enumerate() {
             if m.baked && baked_ps.is_none() {
                 break;
@@ -2067,6 +2074,7 @@ impl Renderer {
                         }
 
                         baked_world = Some(world);
+                        uploaded = None;
                         self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
                         self.upload();
                     }
@@ -2080,7 +2088,6 @@ impl Renderer {
                 }
 
                 None => {
-                    self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
                     let mut arr = [0.0f32; 16];
                     for l in 0..4 {
                         arr[l * 4] = super::tiling(m.pixel_scale[l] * self.tile_scale(), super::ORIGIN_REACH * u);
@@ -2088,9 +2095,13 @@ impl Renderer {
                         arr[l * 4 + 2] = m.mid_strength[l];
                     }
 
-                    // Elements 0 .. 3 (the rest stays zero).
-                    self.cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
-                    self.upload();
+                    // Elements 0 .. 3 (the rest stays zero); uploaded when they or the LF's size change.
+                    if uploaded != Some((world, arr)) {
+                        self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
+                        self.cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
+                        self.upload();
+                        uploaded = Some((world, arr));
+                    }
                     let ctx = &self.ctx;
                     bind_srv(ctx, &blend_ps, "s_alpha_map", g.alpha.srv.as_ref());
                     bind_srv(ctx, &blend_ps, "s_blend_map", g.blend.srv.as_ref());
@@ -2738,6 +2749,8 @@ unsafe impl Sync for FlatPatches {}
 
 /// The patch batching's profile slot (a scope ended before the function's end).
 static BATCH_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+static BLEND_GATHER: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+static BLEND_DRAWS: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
 
 /// Which terrain entities a frame draws (their ids hashed): the materials are brought up to date when these change, not on every structural
 /// change of the scene (a campaign's prop models and trees coming and going as the camera moved cost 11 ms a frame).
