@@ -2544,7 +2544,7 @@ impl Tool for TerrainTool {
                 if v.len() != 2 && v.len() != 5 {
                     return CommandResult::fail("usage: terrain_far_relief <x> <y> [x1 y1 steps]");
                 }
-                with_terrain(e, |t, _| {
+                with_terrain(e, |t, e| {
                     let (Some(s), Some(frame)) = (t.view.streamer.as_ref(), t.view.frame()) else {
                         return CommandResult::fail("no map shown");
                     };
@@ -2565,11 +2565,30 @@ impl Tool for TerrainTool {
                         let (fx, fz) = frame.from_map.apply(v[0], v[1]);
                         let m = |y: f32| (f64::from(y) - f64::from(frame.sea_y())) * frame.unit;
                         let sea = frame.sea_lf.as_ref().map(|s| m(s.height_at(fx as f32, fz as f32)));
+                        let cliff = |i: usize| frame.map.placements[i].location.to_ascii_lowercase().contains("cliff");
+                        out.push(frame.cell_note(v[0].floor() as i32, v[1].floor() as i32, &cliff));
                         out.push(format!(
                             "land LF {:.1} m, sea LF {sea:.1?} m, ground {:.1} m",
                             m(frame.lift(fx, fz)),
                             m(s.ground_at(&frame, fx, fz))
                         ));
+                        // The scene's terrains over it: the height each draws there (metres), the sea pass's, the far ones' (baked).
+                        for en in e.scene.entities().iter().filter(|en| e.scene.drawable(en)) {
+                            let wce_scene::render_scene::Payload::Terrain(tr) = &en.payload else { continue };
+                            if let Some(y) = tr.ground_in(&en.world, fx as f32, fz as f32, None) {
+                                out.push(format!(
+                                    "terrain {} {}x{} step {:.0} at {:.1} m{}{}{}",
+                                    en.id,
+                                    tr.nx,
+                                    tr.nz,
+                                    tr.step,
+                                    m(y),
+                                    if tr.sea_floor { " sea floor" } else { "" },
+                                    if tr.custom.is_some() { " custom" } else { "" },
+                                    if tr.material.as_ref().is_some_and(|mt| mt.baked) { " baked" } else { "" },
+                                ));
+                            }
+                        }
                         let (cx, cy) = (v[0].floor() as i32, v[1].floor() as i32);
                         for p in &frame.map.placements {
                             let r = p.rect();

@@ -318,3 +318,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   the far level (the rings centre on the pivot, 37 cells ahead: the bottom of the frame 31 cells off; wider rings, `terrain_view 13000
   40 48 96 48`, give the coast tiles' sand as the game's); the bay there shows less water than the game's (the sea LF is the game's
   coarser 1016 x 720 read, not ported; the 1/16 cell left); a streaming race once left dark shadows in a capture (not reproduced).
+- **The green flats by the islands (2026-11-19):** not the cells first suspected ((603, 686) has no tile and draws as sea): the flat by
+  the island west of capture A's coast lay over `sea/8x8` tiles on land LF up to 52 m. `terrain_far_relief` now lists the cell's owner
+  and placements (`Frame::cell_note`) and the scene's terrains over the point with the height each draws: a block drew those cells at
+  the land's LF. The blocks' grid rows were a frame unit apart where the world matrix stretches them by the hex z (1.1547): each row
+  read the map further south than it was drawn (six cells at a block's north edge, every block 15 % taller than its square). Rows now
+  z_stretch apart; the blocks take a coast cell (a land tile under a sea tile) as land, as the chunks do; the far bake paints sea-tile
+  cells as sea bed (it baked the climate's green where the LF under them is land).
