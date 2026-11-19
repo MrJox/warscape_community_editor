@@ -14,7 +14,7 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
 |---|---|
 | Games | Attila and Rome 2 (both Wwise bank v112). Every parser is keyed on game and bank version, so later games (ToB, Warhammer...) slot in. |
 | Decode | `lewton` (pure Rust Vorbis decoder, MIT/Apache) after our own Wwise-Vorbis -> Vorbis packet rebuild. Output through SDL3's audio (already linked). |
-| Encode | Wwise Vorbis, as vanilla. aoTuV/libvorbis (C, BSD-3) is used only if the spike shows its output matches Wwise's (structure, codebook IDs, size, quality); otherwise a native Rust encoder. |
+| Encode | Wwise Vorbis, as vanilla, with aoTuV (libvorbis + aoTuV's encoder, C, BSD-3, built from source like SDL3) and our own Ogg -> Wwise Vorbis conversion: chosen after the spike (user, 2026-11-19; step 1.4). |
 | Reference | Wwise 2014.1.3 (on the user's machine) is a dev-only oracle: tests compare our WEMs and banks with its output and are skipped without it. WCE never needs Wwise. |
 | Output | Whole-bank override, as the game loads banks by name (TDD already ships overriding banks). Save writes the bank, WEMs and other files to `<projects>/loose/<path>` like every tool; a round trip is byte-identical and an edit changes only its spans. |
 | UI | Bank-centric: banks open as documents with a readable object tree (names, not IDs); a global search over banks, WEMs, DB rows and VO jumps into the right bank; cross-bank links are clickable. A raw object inspector for the rest. |
@@ -142,11 +142,11 @@ ww2ogg), `build\prefix` the built static libs, `tools\` (`build_vorbis.bat`, `vt
 the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` the oracle project and its outputs, `audio\` vanilla
 `sound.pack` audio, `rome2own\` Rome 2's banks.
 
-1. **Spikes.** **in progress**
+1. **Spikes.** **done** (1.4.10 carried into step 4)
    1. Rome 2's banks' version: v112 wherever the game loads them (its v88 release banks are all overridden). **done**
    2. The vanilla WEM survey (above). **done**
    3. The Wwise 2014.1.3 oracle (above). **done**
-   4. The encoder (aoTuV vs native). **in progress**
+   4. The encoder (aoTuV vs native). **done: aoTuV**
       1. Downloads (aoTuV `AO-Yumi/vorbis_aotuv` ef858ad, libogg `xiph/ogg` 06a5e02, ww2ogg `hcs64/ww2ogg` 14ed9b0 for
          `packed_codebooks_aoTuV_603.bin`; all BSD; user approved 2026-11-19) and an MSVC build of both libraries. **done**
       2. Wwise header fields understood (see "Wwise Vorbis encoding" below): codebook hash = FNV-1 of the setup packet (1,480 of
@@ -175,15 +175,17 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
          `data\`, enabled in the launcher, start the game, listen on the main menu; remove the pack after. **done** (user,
          2026-11-19: our pack plays; the beeps replace the horse-sound ambience layered under the main menu music; the other layer,
          vanilla's throat-singing music, is a different stream). The control pack was not needed.
-      9. Verdict: recommended **aoTuV** (built from source like SDL3, `THIRD_PARTY.md`): plays in game, same setups and headers as
-         Wwise, equal or better quality, slightly smaller; not bit-identical, which no encoder short of Wwise's own would be.
-         **waiting on the user's decision**
+      9. Verdict: **aoTuV** (user, 2026-11-19). Built from source like SDL3 (libogg + aoTuV, BSD; `THIRD_PARTY.md` when it goes
+         in, step 4): plays in game, same setups and headers as Wwise, equal or better quality, slightly smaller; not bit-identical,
+         which no encoder short of Wwise's own would be. **done**
       10. Decoder alloc sizes for setups not seen yet: they depend only on the setup (the same for mono and quad); the table covers
-          the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo**
+          the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo,
+          moved to step 4** (the encoder needs it, nothing before it does)
 2. **Formats** with the round-trip gates; `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
 3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **todo**
-4. **Replace and add variations**: the encoder, the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties.
-   **todo**
+4. **Replace and add variations**: the encoder (aoTuV built in, the conversion from `tools\wwvorbis.py` ported to Rust, the alloc
+   sizes of 1.4.10), the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties; an in-game check of media
+   inside a bank. **todo**
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
