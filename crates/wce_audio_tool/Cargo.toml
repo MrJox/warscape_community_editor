@@ -1,0 +1,23 @@
+[package]
+name = "wce_audio_tool"
+description = "The Audio tool: the game's sound banks as readable trees (names instead of IDs), a search across every bank, and playback."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_audio = { path = "../wce_audio" }
+wce_audio_format = { path = "../wce_audio_format" }
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_vfs = { path = "../wce_vfs" }
+
+# Playback through SDL3's audio streams (SDL is already linked for the window; the same build as wce_imgui's).
+[target.'cfg(windows)'.dependencies]
+sdl3-sys = { version = "0.7", default-features = false, features = ["build-from-source", "link-static"] }
+
+[target.'cfg(not(windows))'.dependencies]
+sdl3-sys = "0.7"
+
+[lints]
+workspace = true

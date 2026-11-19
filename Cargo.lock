@@ -2337,6 +2337,7 @@ version = "0.0.1"
 dependencies = [
  "dear-imgui-rs",
  "sdl3-sys",
+ "wce_audio_tool",
  "wce_d3d11",
  "wce_editor",
  "wce_foundation",
@@ -2372,6 +2373,18 @@ name = "wce_audio_format"
 version = "0.0.1"
 dependencies = [
  "thiserror",
+ "wce_vfs",
+]
+
+[[package]]
+name = "wce_audio_tool"
+version = "0.0.1"
+dependencies = [
+ "sdl3-sys",
+ "wce_audio",
+ "wce_audio_format",
+ "wce_editor",
+ "wce_editor_core",
  "wce_vfs",
 ]
 

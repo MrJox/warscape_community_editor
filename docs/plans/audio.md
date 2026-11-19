@@ -214,7 +214,8 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    7. Format docs: [wwise_bank.md](../formats/wwise_bank.md) (chunks, every HIRC layout), [wem.md](../formats/wem.md) (RIFF,
       the Wwise Vorbis header, the packing and encoding), [sound_data.md](../formats/sound_data.md) (`event_data.dat`,
       `.snd.meta` + triggers, `.amb` + `.xml`). **done**
-3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **in progress**
+3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **done** (2026-11-19; the
+   user to hear playback)
    1. Crate `wce_audio` (headless): the Wwise codebook library (ww2ogg's `packed_codebooks_aoTuV_603.bin`, BSD-3, vendored in
       `third_party/ww2ogg`; user 2026-11-19), the Wwise Vorbis -> Vorbis packet rebuild (`tools\wwvorbis.py`'s `wem2ogg`, in Rust,
       no Ogg container), decoding with `lewton` 0.10 (no default features; user-approved). `wce_audio::decode::decode_wem` ->
@@ -234,10 +235,20 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       sounds -> media in a bank's `DATA` or a loose `audio/<id>.wem`). All 1,629 events in 0.1 s: 215,360 sound leaves, 204,360
       in banks, 9,635 loose, 1,365 missing (195 sound objects whose media is in no bank or pack: the game's own leftovers,
       silent in game too); 280 events play nothing (stop, set state...). **done**
-   5. Playback: SDL3 audio streams (SDL already linked; SDL converts rate and channels), play / stop, position. **todo**
-   6. The Audio tool (`wce_audio_tool`, feature `audio`): banks list, a bank document with its readable object tree, an object's
-      fields, the global search, play buttons. **todo**
-   7. Seen working in the app. **todo**
+   5. Playback (`wce_audio_tool::player`): one SDL3 audio stream per sound on the default device (SDL converts rate and
+      channels), stop, progress; decoding on a worker thread. **done, not yet heard by the user** (unattended runs must not make
+      sound).
+   6. The Audio tool (`wce_audio_tool`, feature `audio`, on by default; icon `AUDIO_LINES`): panels Audio Banks (filter, every
+      bank, the player strip), Audio Bank (tabs Events, Dialogue events, Music, Sounds in the bank, All objects; each event a
+      Play button and a tree of what it plays, unnamed containers described: "Random of 3", "Switch on <group>"), Audio Search
+      (names or #IDs across every bank), Audio Object (name and its source, banks, fields by kind, parent, bus, properties,
+      children; Play). Event Play picks one sound: random and switch containers at random. Script commands `audio_bank`,
+      `audio_search`, `audio_select`, `audio_expand`. The library loads on a worker when the game's files are mounted. **done**
+   7. Seen working in the app (2026-11-19, `wce.exe --tool audio --cmd "audio_expand battle_bird_wing_flaps" --shot`): banks,
+      events with names, the expanded tree, Audio Object. **done**; playback by ear: the user.
+   - Follow-ups (later steps): property IDs beyond volume (0), pitch (2) and low-pass (3) to name (check with the oracle);
+     labels set by the user (UI); DB tables as a names source; Wwise-faithful playback (blend layers mixed, sequences in order)
+     is the Cinematic layer's (not chosen for v1).
 4. **Replace and add variations**: the encoder (aoTuV built in, the conversion from `tools\wwvorbis.py` ported to Rust, the alloc
    sizes of 1.4.10), the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties; an in-game check of media
    inside a bank. **todo**
