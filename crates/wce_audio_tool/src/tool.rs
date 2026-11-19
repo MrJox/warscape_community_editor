@@ -132,7 +132,9 @@ impl AudioTool {
             match result {
                 Ok(wem) => match target {
                     ImportTarget::Replace(media) => self.edit(e, &format!("replaced #{media} with {name}"), |edits, lib, files| {
-                        edits.replace_media(lib, files, media, &wem).map(|()| String::new())
+                        edits
+                            .replace_audio(lib, files, media, &wem)
+                            .map(|id| if id == media { String::new() } else { format!(" (now streamed as #{id})") })
                     }),
                     ImportTarget::Add(container) => self.edit(e, &format!("added {name}"), |edits, lib, _| {
                         edits.add_variation(lib, container, &wem).map(|id| format!(" as #{id}"))

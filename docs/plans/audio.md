@@ -289,8 +289,14 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       with the pack enabled alone (`used_mods.txt`). The main menu layout (`frontend ui/main`) does use
       `grp_gw_generic_button_small`, whose `lclick` / `mouse_on` play exactly the replaced media; every copy of them was
       replaced. Next: `spike\ingame2\wce_audio_test_ui2.pack` = the same banks + the main menu ambience WEM that worked in 1.4.8,
-      to tell "the pack does not load" from "the game does not take the edited banks". **blocked: waiting on the user's run**. An
-      added variation in game: todo.
+      to tell "the pack does not load" from "the game does not take the edited banks". Result: the ambience beeps, the buttons
+      stay original: **the game does not take edited `*_data.bnk` banks from a mod pack** (TDD, also a Mod pack, only ever ships
+      event banks, never data banks), while loose WEMs and event banks from a mod pack do load. So replacing in-bank media now
+      redirects: `EditSet::replace_audio` (the tool's Replace) writes a streamed media file again under its ID, and for media in a
+      data bank points every source using it at a new loose `audio/<new id>.wem` (`redirect_media`; stream type 2, no data bank
+      touched); `add_variation` streams its new sound from a loose file too. Gate 3b checks it. Test pack 3:
+      `spike\ingame3\wce_audio_test_ui3.pack` (`battle_ui`, `campaign_ui`, `global_ui` + the two new loose WEMs + the ambience
+      control). **blocked: waiting on the user's run of pack 3**. An added variation in game: todo.
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**

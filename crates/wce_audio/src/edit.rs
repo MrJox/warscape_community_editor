@@ -111,7 +111,8 @@ impl EditSet {
     }
 
     /// Replaces the audio of a media file (a WEM) wherever the game has it: in banks' `DATA` and as a loose file. A prefetched start
-    /// in a bank keeps its length (cut from the new file).
+    /// in a bank keeps its length (cut from the new file). Note: the game does not take edited data banks from a mod pack (see
+    /// [`EditSet::redirect_media`]); the tool uses [`EditSet::replace_audio`].
     ///
     /// # Errors
     ///
@@ -139,6 +140,75 @@ impl EditSet {
         Ok(())
     }
 
+    /// Replaces a sound's audio without touching the banks that hold media (`*_data.bnk`): every source using `media_id` is pointed
+    /// at a new media ID, streamed from a loose `audio/<new id>.wem`. Returns the new ID.
+    ///
+    /// The game takes in-bank media from its own data banks even when a mod pack ships edited copies (a replace inside
+    /// `battle_ui_data` / `global_ui_data` played the original sounds, 2026-11-19), while loose WEMs from a mod pack do play.
+    ///
+    /// # Errors
+    ///
+    /// When no source uses this media.
+    pub fn redirect_media(&mut self, lib: &SoundLibrary, media_id: u32, wem: &[u8]) -> Result<u32> {
+        let new_id = self.new_id(lib, media_id);
+        let mut found = false;
+        for b in 0..lib.banks.len() {
+            let version = lib.banks[b].version;
+            let mut changed = vec![];
+            for (i, o) in self.bank(lib, b).objects().iter().enumerate() {
+                if o.kind != 2 && o.kind != 11 {
+                    continue;
+                }
+                let Some(Ok(mut object)) = hirc::parse(version, o.kind, &o.body) else { continue };
+                let sources: Vec<&mut Source> = match &mut object {
+                    Object::Sound(s) => vec![&mut s.source],
+                    Object::MusicTrack(t) => t.sources.iter_mut().collect(),
+                    _ => vec![],
+                };
+                let mut any = false;
+                for s in sources.into_iter().filter(|s| s.source_id == media_id) {
+                    s.source_id = new_id;
+                    s.stream_type = 2;
+                    s.file_id = new_id;
+                    s.file_offset = None;
+                    s.in_memory_size = 0;
+                    any = true;
+                }
+                if any {
+                    changed.push((i, object.write()));
+                }
+            }
+            if !changed.is_empty() {
+                found = true;
+                let bank = self.bank_mut(lib, b);
+                for (i, body) in changed {
+                    bank.objects_mut()[i].body = body;
+                }
+            }
+        }
+        if !found {
+            return Err(AudioError::Invalid(format!("no sound uses media #{media_id}")));
+        }
+        self.loose.insert(format!("audio/{new_id}.wem"), wem.to_vec());
+        Ok(new_id)
+    }
+
+    /// Replaces a sound's audio the way the game takes it: a streamed (loose) media file is written again under its ID; media held
+    /// in a data bank is redirected to a new loose file ([`EditSet::redirect_media`]). Returns the ID now playing.
+    ///
+    /// # Errors
+    ///
+    /// When no source or file has this media.
+    pub fn replace_audio(&mut self, lib: &SoundLibrary, files: &dyn wce_vfs::files::Files, media_id: u32, wem: &[u8]) -> Result<u32> {
+        let path = format!("audio/{media_id}.wem");
+        let in_banks = (0..lib.banks.len()).any(|b| self.bank(lib, b).media(media_id).is_some());
+        if !in_banks && (files.exists(&path) || self.loose.contains_key(&path)) {
+            self.loose.insert(path, wem.to_vec());
+            return Ok(media_id);
+        }
+        self.redirect_media(lib, media_id, wem)
+    }
+
     /// An unused ID for a new object or media file.
     fn new_id(&self, lib: &SoundLibrary, salt: u32) -> u32 {
         let mut id = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u32) ^ salt) | 1;
@@ -154,8 +224,8 @@ impl EditSet {
         }
     }
 
-    /// Adds a variation to a random/sequence container: a new sound made like the container's first sound child, playing `wem` (in
-    /// the same media bank as that sound, or as a loose file if it streams). Returns the new sound's ID.
+    /// Adds a variation to a random/sequence container: a new sound made like the container's first sound child, playing `wem`
+    /// streamed from a loose file. Returns the new sound's ID.
     ///
     /// # Errors
     ///
@@ -178,21 +248,12 @@ impl EditSet {
         let mut sound = template.clone();
         sound.source.source_id = media_id;
         sound.node.parent_id = container_id;
-        let mut media_banks = vec![];
-        match (template.source.stream_type, lib.bank_by_id(template.source.file_id)) {
-            (0, Some(media_bank)) => {
-                self.bank_mut(lib, media_bank).set_media(media_id, wem);
-                media_banks.push(media_bank);
-                sound.source.in_memory_size = wem.len() as u32;
-            }
-            _ => {
-                sound.source.stream_type = 2;
-                sound.source.file_id = media_id;
-                sound.source.file_offset = None;
-                sound.source.in_memory_size = 0;
-                self.loose.insert(format!("audio/{media_id}.wem"), wem.to_vec());
-            }
-        }
+        // Streamed from a loose file: the game does not take edited data banks from a mod pack (see `redirect_media`).
+        sound.source.stream_type = 2;
+        sound.source.file_id = media_id;
+        sound.source.file_offset = None;
+        sound.source.in_memory_size = 0;
+        self.loose.insert(format!("audio/{media_id}.wem"), wem.to_vec());
 
         // The new sound right after the one it copies (children before their parent, as in the game's banks).
         let (b, i) = self.find(lib, template_id).ok_or_else(|| AudioError::Invalid("the copied sound is in no bank".into()))?;
@@ -205,7 +266,6 @@ impl EditSet {
             container.playlist.push((sound_id, 50_000));
         }
         self.put_object(lib, container_id, &Object::RandomSequence(container))?;
-        self.fix_offsets(lib, &media_banks);
         Ok(sound_id)
     }
 
