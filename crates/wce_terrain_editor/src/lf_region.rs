@@ -1,5 +1,6 @@
 //! Exact land-LF PNG transfer at the document boundary. All validation precedes a single page-history command.
 
+use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -15,27 +16,43 @@ use crate::lf::{LfMirror, LfStrokeCommand};
 
 impl MapDocument {
     /// Native/built documents are export-only, including native battle maps. Refuse before accessing the input file or history.
-    pub fn check_lf_region_import(&self, region: LfRegion) -> Result<(), String> {
+    fn check_lf_region_import(&self) -> Result<(), String> {
         let model = self.model().ok_or("LF region import requires a raw/kit map")?;
         if model.built || !matches!(&self.source, crate::MapSource::Kit(_)) {
             return Err("Native LF region import is unsupported; open a raw/kit map. PNG export is read-only and does not certify native campaign-height export.".into());
         }
-        region.validate(self.land_region_field()?)?;
+        self.lf_field(LfRole::Land).ok_or("This document has no land LF samples")?;
         Ok(())
     }
 
-    fn land_region_field(&self) -> Result<&PagedU16, String> {
-        self.lf_field(LfRole::Land).ok_or_else(|| "This document has no land LF samples".into())
+    pub fn lf_region_import_supported(&self) -> bool {
+        self.check_lf_region_import().is_ok()
+    }
+
+    /// File-oriented samples, shared without copying, including maps read only from packs.
+    pub fn land_region_field(&self) -> Result<Cow<'_, PagedU16>, String> {
+        if let Some(field) = self.lf_field(LfRole::Land) {
+            return Ok(Cow::Borrowed(field));
+        }
+        self.placed
+            .lf
+            .as_ref()
+            .map(|field| Cow::Owned(PagedU16::from_grid(field.values.clone())))
+            .ok_or_else(|| "This document has no land LF samples".into())
     }
 
     pub fn export_lf_region_png(&self, region: LfRegion) -> Result<Vec<u8>, String> {
-        let samples = region.read(self.land_region_field()?)?;
+        let samples = region.read(self.land_region_field()?.as_ref())?;
         lf_region_png::encode(region.width, region.height, &samples).map_err(|e| e.0)
     }
 
     /// True only when one edit was recorded. A no-op leaves Item::edited, dirty state and any redo tail unchanged.
     pub fn import_lf_region_png(&mut self, region: LfRegion, bytes: &[u8], mirror: Option<Arc<LfMirror>>) -> Result<bool, String> {
-        self.check_lf_region_import(region)?;
+        self.check_lf_region_import()?;
+        self.apply_lf_region_png(region, bytes, mirror)
+    }
+
+    fn apply_lf_region_png(&mut self, region: LfRegion, bytes: &[u8], mirror: Option<Arc<LfMirror>>) -> Result<bool, String> {
         let image = lf_region_png::decode(bytes).map_err(|e| e.0)?;
         if (image.width, image.height) != (region.width, region.height) {
             return Err("PNG dimensions must exactly match the LF region; no resampling is performed".into());
@@ -44,27 +61,29 @@ impl MapDocument {
         if mirror.as_ref().is_some_and(|m| (m.w, m.h) != (field.width(), field.height())) {
             return Err("LF view mirror does not match the document".into());
         }
-        let Some(record) = LfRecord::replacement(field, region, &image.samples)? else {
+        let Some(record) = LfRecord::replacement(field.as_ref(), region, &image.samples)? else {
             return Ok(false);
         };
-        self.push_stroke(LfStrokeCommand { role: LfRole::Land, record: Arc::new(record), mirror });
+        drop(field);
+        self.push_lf_command(Box::new(ImportRegion(LfStrokeCommand { role: LfRole::Land, record: Arc::new(record), mirror })));
         Ok(true)
     }
 
     /// None is file-dialog cancellation. Read a bounded input, then use the same document path as commands and the UI.
     pub fn import_lf_region_file(&mut self, region: LfRegion, path: Option<&Path>, mirror: Option<Arc<LfMirror>>) -> Result<bool, String> {
         let Some(path) = path else { return Ok(false) };
-        self.check_lf_region_import(region)?;
+        self.check_lf_region_import()?;
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         let mut bytes = Vec::new();
         file.take(lf_region_png::MAX_FILE_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-        self.import_lf_region_png(region, &bytes, mirror)
+        self.apply_lf_region_png(region, &bytes, mirror)
     }
 
     /// Create a new PNG only: existing paths (including map resources and aliases to them) are never overwritten.
     /// None is cancellation. An output I/O error never changes the document.
     pub fn export_lf_region_file(&self, region: LfRegion, path: Option<&Path>) -> Result<bool, String> {
         let Some(path) = path else { return Ok(false) };
+        let path = if path.extension().is_none() { path.with_extension("png") } else { path.to_owned() };
         if !path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("png")) {
             return Err("Choose a new .png file for LF region export".into());
         }
@@ -72,13 +91,29 @@ impl MapDocument {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(path)
+            .open(&path)
             .map_err(|e| format!("{}: {e}; choose a new PNG path", path.display()))?;
         if let Err(err) = file.write_all(&bytes) {
             drop(file);
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&path);
             return Err(err.to_string());
         }
         Ok(true)
+    }
+}
+
+struct ImportRegion(LfStrokeCommand);
+impl wce_editor_core::command::Command<Option<wce_terrain::MapModel>> for ImportRegion {
+    fn name(&self) -> String {
+        "Import LF region PNG".into()
+    }
+    fn apply(&mut self, model: &mut Option<wce_terrain::MapModel>) {
+        self.0.apply(model);
+    }
+    fn revert(&mut self, model: &mut Option<wce_terrain::MapModel>) {
+        self.0.revert(model);
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

@@ -2,6 +2,18 @@ use super::*;
 use wce_editor_core::document::{Document, SaveTarget};
 use wce_terrain::lf_region::LfRegion;
 
+struct Scratch(PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let root = self.0.canonicalize().unwrap();
+        assert!(
+            root.starts_with(std::env::temp_dir().canonicalize().unwrap())
+                && root.file_name().unwrap().to_string_lossy().starts_with("wce_lf_region_loader_")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 fn tiny_map() -> wce_terrain_io::MapFiles {
     let mut tif = b"II*\0".to_vec();
     tif.extend(8u32.to_le_bytes());
@@ -32,10 +44,13 @@ fn tiny_map() -> wce_terrain_io::MapFiles {
 #[test]
 fn lf_region_production_loader_save_reopen_retains_f1_metadata_and_project_override() {
     let root = std::env::temp_dir().join(format!(
-        "d3e_loader_{}_{}",
+        "wce_lf_region_loader_{}_{}",
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));
+    std::fs::create_dir_all(&root).unwrap();
+    let cleanup = Scratch(root);
+    let root = &cleanup.0;
     let (kit, project) = (root.join("kit/raw_data"), root.join("project/raw_data"));
     let roots = [project.clone(), kit.clone()];
     let settings = kit.join(database_dir(MapKind::Campaign)).join("_settings.xml");

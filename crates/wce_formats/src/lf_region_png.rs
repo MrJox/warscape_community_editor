@@ -94,7 +94,7 @@ pub fn decode(bytes: &[u8]) -> Result<Image, PngError> {
     if !end {
         return Err(bad("PNG has no IEND"));
     }
-    let png = PngFile::parse(bytes)?;
+    let png = PngFile::parse_pixels(bytes)?;
     Ok(Image {
         width: png.width,
         height: png.height,

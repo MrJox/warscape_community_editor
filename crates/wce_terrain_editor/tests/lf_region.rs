@@ -71,14 +71,31 @@ fn state(d: &MapDocument) -> (usize, usize, u64, bool, bool, u64) {
         d.terry_revision.load(std::sync::atomic::Ordering::Relaxed),
     )
 }
-fn scratch() -> PathBuf {
+struct Scratch(PathBuf);
+impl std::ops::Deref for Scratch {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let root = self.0.canonicalize().unwrap();
+        assert!(
+            root.starts_with(std::env::temp_dir().canonicalize().unwrap())
+                && root.file_name().unwrap().to_string_lossy().starts_with("wce_lf_region_")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+fn scratch() -> Scratch {
     let path = std::env::temp_dir().join(format!(
-        "wce_d3e_{}_{}",
+        "wce_lf_region_{}_{}",
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));
     std::fs::create_dir(&path).unwrap();
-    path
+    Scratch(path)
 }
 
 #[test]
@@ -91,6 +108,7 @@ fn page_crossing_import_is_one_undo_step_and_mirror_refresh() {
     let png = encode(68, 5, &pixels()).unwrap();
     assert!(d.import_lf_region_png(region(), &png, Some(mirror.clone())).unwrap());
     assert_eq!((d.history().size(), d.history().position()), (1, 1));
+    assert_eq!(d.history().name(0), "Import LF region PNG");
     assert!(d.history().modified());
     assert!(Arc::ptr_eq(&d.placed, &placed));
     assert_eq!((d.placed.lf_height, d.placed.vertical_offset), (712., 38.28));
@@ -196,6 +214,45 @@ fn native_battle_and_campaign_export_readonly_and_import_refuses_before_file_acc
 }
 
 #[test]
+fn pack_only_maps_export_shared_file_rows_without_creating_an_editable_model() {
+    use wce_tile::battle_map::context::{LfField, PlacedMap};
+    for name in ["pack_battle", "campaigns/pack_campaign"] {
+        let lf = LfField::new(4, 3, (0..12).collect());
+        let grid = lf.values.clone();
+        let placed = Arc::new(PlacedMap { width: 4, height: 3, lf: Some(lf), ..Default::default() });
+        let mut d = MapDocument::new(name.into(), MapSource::Packs(name.into()), None, placed.clone(), None, Arc::default());
+        assert!(Arc::ptr_eq(d.land_region_field().unwrap().grid(), &grid));
+        let region = LfRegion { x: 1, y: 1, width: 2, height: 2 };
+        assert_eq!(decode(&d.export_lf_region_png(region).unwrap()).unwrap().samples, [5, 6, 9, 10]);
+        assert!(!d.lf_region_import_supported());
+        let error = d.import_lf_region_file(region, Some(std::path::Path::new("missing-input.png")), None).unwrap_err();
+        assert!(!error.contains("missing-input"), "native eligibility must be checked before file access");
+        assert!(d.model().is_none());
+        assert_eq!(d.history().size(), 0);
+        assert!(!d.modified());
+        assert!(Arc::ptr_eq(&d.placed, &placed));
+        assert_eq!(&*grid.read(), &(0..12).collect::<Vec<u16>>());
+    }
+}
+
+#[test]
+fn extensionless_exports_append_png_and_still_refuse_existing_files() {
+    let d = document(MapKind::Battle, false);
+    let stable = state(&d);
+    let dir = scratch();
+    let path = dir.join("region1");
+    assert!(d.export_lf_region_file(region(), Some(&path)).unwrap());
+    let png = dir.join("region1.png");
+    let saved = std::fs::read(&png).unwrap();
+    assert_eq!(decode(&saved).unwrap().samples.len(), 340);
+    assert!(!path.exists());
+    assert!(d.export_lf_region_file(region(), Some(&path)).is_err());
+    assert_eq!(std::fs::read(&png).unwrap(), saved);
+    assert!(d.export_lf_region_file(region(), Some(&dir.join("region.txt"))).is_err());
+    assert_eq!(state(&d), stable);
+}
+
+#[test]
 fn raw_battle_and_campaign_save_reopen_preserve_all_other_resources() {
     for kind in [MapKind::Battle, MapKind::Campaign] {
         let mut d = document(kind, false);
@@ -229,14 +286,14 @@ fn raw_battle_and_campaign_save_reopen_preserve_all_other_resources() {
 }
 
 #[test]
-#[ignore = "requires readonly D3E_ATTILA_MAP and D3E_ROME2_MAP witness folders"]
+#[ignore = "requires readonly WCE_ATTILA_MAP and WCE_ROME2_MAP witness folders"]
 fn real_witnesses_export_small_regions_without_mutation() {
     use std::io::{Read, Seek, SeekFrom};
     use wce_terrain::paged::PagedU16;
     use wce_terrain::{Item, MapModel};
     use wce_tile_model::Blob;
     for native in [false, true] {
-        let folder = PathBuf::from(std::env::var_os(if native { "D3E_ROME2_MAP" } else { "D3E_ATTILA_MAP" }).unwrap());
+        let folder = PathBuf::from(std::env::var_os(if native { "WCE_ROME2_MAP" } else { "WCE_ATTILA_MAP" }).unwrap());
         let path = folder.join(if native { "lf_height_map.dds" } else { "lf_heights.tif" });
         let before = std::fs::metadata(&path).unwrap();
         let model = if native {

@@ -382,8 +382,12 @@ impl MapDocument {
 
     /// A finished stroke onto the history (it is in the field already: applying it again changes nothing).
     pub fn push_stroke(&mut self, cmd: crate::lf::LfStrokeCommand) {
+        self.push_lf_command(Box::new(cmd));
+    }
+
+    pub(crate) fn push_lf_command(&mut self, cmd: Box<dyn wce_editor_core::command::Command<Option<MapModel>>>) {
         use wce_editor_core::command::History;
-        self.history.push(Box::new(cmd));
+        self.history.push(cmd);
         self.history.break_merge();
     }
 
