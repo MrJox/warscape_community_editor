@@ -39,6 +39,7 @@ Each open item lives in one plan; the others point to it.
 | [tile.md](docs/plans/tile.md) | tilemaps and the map pipeline (a later scope) | not started; its map-level items go to terrain_editor.md |
 | [terrain_editor.md](docs/plans/terrain_editor.md) | the Terrain tool, Terry's replacement: map documents, LF and tile map painting, the `.terry` scene, BCA generation, BOB_Terrain's outputs | Phases 0 to 2 done (2026-11-02), Phase 3 next |
 | [units.md](docs/plans/units.md) | units in the renderer: skinning through the game's palette texture, variant meshes, animation; for the scale reference, cinematics, the unit editor | planned, not started |
+| [audio.md](docs/plans/audio.md) | the Audio tool and the shared audio layer: banks, WEMs, `event_data.dat`, `.snd.meta`, `.amb`, sound DB tables, VO; playback, Wwise Vorbis encoding, recipes; reused by the Cinematic tool | decided (2026-11-19), spikes in progress |
 
 ## Project-level open items
 
