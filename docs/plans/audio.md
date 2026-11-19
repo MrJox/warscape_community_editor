@@ -25,14 +25,13 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
 | `.snd.meta` | A per-animation timeline with readable event names and playback, no model yet; the Unit/Cinematic tools later show the model on the same timeline. |
 | `.amb` | Parsed, round-tripped and listed with readable names and preview in v1; the campaign/terrain tool places them on the map later with the same crate. |
 | Also v1 | The sound DB tables with readable joins (unit -> voice category -> events), and the localised VO packs. |
-| Names | From the install at runtime (`event_data.dat`, DB tables, `.snd.meta`, the triggers CSV, file and bank names, unit and animation keys, hashed with FNV-1 and matched), user labels saved in the project, and an importable community name list. Nothing game-derived is committed. |
+| Names | From the install at runtime (`event_data.dat`, DB tables, `.snd.meta`, the triggers CSV, file and bank names, unit and animation keys, hashed with FNV-1 and matched), user labels saved in the project, and TheTollski's `TWA_Names.txt` (SoundbankEditor), shipped with WCE: TheTollski is on the user's team and the user has permission (2026-11-19); credit it in `THIRD_PARTY.md` when it goes in. Other community lists importable. |
 | Recipes | Music tracks (replace/add into the playlists), unit voice set (bank objects + `unit_voice_*` / `voice_events` rows), advisor/VO line, animation sound. |
 | Cinematics | The shared layer plays an event at a time on a timeline (seekable, seeded randomness), positions it in 3D (the bank's attenuation and panning) and mixes a timeline down to WAV. |
 
 ## What the game has (Attila, checked 2026-11-19)
 
-- `sound.pack`: 51 banks, 1,478 WEMs, `audio/event_data.dat` (165 KB, starts with 1,864 length-prefixed event names, the rest not yet
-  decoded), `audio/sound_animation_triggers.csv`. `music.pack`: 4 banks (`battle_music`, `global_movies`, `global_music`, `music_data`),
+- `sound.pack`: 51 banks, 1,478 WEMs, `audio/event_data.dat` (165 KB, layout below), `audio/sound_animation_triggers.csv`. `music.pack`: 4 banks (`battle_music`, `global_movies`, `global_music`, `music_data`),
   546 WEMs. `local_en_shared_rome2.pack`: about 39,000 VO files (`audio/`, `audio/advisor`, `audio/diplomacy`) and the VO banks
   (`battle_advice`, `battle_vo_orders_*`...). `music_en_shared_rome2.pack`: 99 files.
 - `data.pack`: `.snd.meta` next to the animations, `audio/{main,bel,cha}_attila_map.amb` + `.xml` (campaign map ambience), and the DB
@@ -62,6 +61,26 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
 - The setup packet references codebooks by 10-bit ID (18 to 44 per file, highest ID 462): Wwise's built-in codebook library, not inline
   codebooks. Our encoder must emit streams that use only codebooks of that library.
 - Bitrate: median 57 kbps per channel (10th percentile 47, 90th 67).
+
+### `event_data.dat`
+
+The same layout in Attila and both Rome 2 copies, consumed exactly to the end by all three (checked 2026-11-19 with a scratch reader;
+SoundbankEditor reads it this way, TheAssetEditor's Rome 2 variant with min/max floats per setting does not fit either game). All
+integers u32 LE, strings u32 length + UTF-8:
+
+1. Events: count, then name + a 4-byte value read as f32 (0 for most; 57 distinct values in Attila such as 32, 35, 133, 140; meaning
+   not yet known). Attila 1,864, Rome 2 1,361 / 1,523.
+2. State groups A: count, then group name + count + state names (`VO_battle_actor`, `VO_battle_culture`, `VO_battle_order` with 517
+   states...). Attila 32.
+3. State groups B: same shape (`Mixer`, `Music_Dynamic`, `animation_data_pool`...). Attila 37.
+4. Dialogue events: count, then event name + count + u32 state-group IDs (FNV-1 of the group's name: `vo_battle_subculture`,
+   `vo_battle_remark`...). Attila 171.
+5. Settings / game parameters: count + names (`meter_advice`, `setting_music_battle_intensity_...`; Rome 2: `advisor_volume`,
+   `amount_forest_under_listener`...). Attila 393.
+6. Dialogue trees: count, then a dialogue event ID + count + (state value ID + count + state value IDs). Attila 98. The IDs resolve
+   with FNV-1 of the names above (`battle_vo_about_to_disembark`, `Barbarian`, `conversation_03`...).
+
+It is a names source in itself: every string in it hashes to an ID the banks use. To document in `docs/formats/event_data.md` (step 2).
 
 ### The Wwise 2014.1.3 oracle
 
@@ -104,7 +123,7 @@ byte-identical; every WEM decodes; the encoder and the bank writer match the Wwi
 ## Open questions and risks
 
 - Whether Attila's Wwise runtime accepts our Vorbis streams is only known once one plays in game (step 1.4).
-- `event_data.dat` past the event names is not decoded yet.
+- `event_data.dat`: the meaning of the events' f32 value and the difference between state groups A and B are still open.
 - Music editing is the hardest part to keep byte-identical; the oracle can generate reference objects for it.
-- TheTollski's `TWA_Names.txt` has no visible licence: not shipped, importable by the user. pywarscape-sound (MIT) reports v112
+- pywarscape-sound (MIT) reports v112
   round trips and PCM WEMs (32 kHz mono) that load in Attila: a fallback if the encoder fails, and a cross-check for the bank writer.
