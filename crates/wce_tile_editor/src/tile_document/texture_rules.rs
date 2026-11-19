@@ -9,6 +9,7 @@
 //! rules is an undo entry ([`TextureRulesCommand`]).
 
 use std::any::Any;
+use std::sync::Arc;
 
 use wce_editor_core::command::Command;
 use wce_tile::roads::WaterMap;
@@ -19,10 +20,64 @@ use super::{TERRAIN, Tile, TileDocument};
 
 /// A job making the rules' layer, and what it was started from.
 pub(crate) struct TextureRulesJob {
-    job: super::jobs::Job<(Stack<Blend>, Option<Stack<TerrainGround>>)>,
+    job: super::jobs::Job<Made>,
     signature: u64,
+    key: u64,
     before: Stack<Blend>,
     before_ground: Option<Stack<TerrainGround>>,
+}
+
+/// What a job made: the stacks with the rules' layers, the pixels of each to compose again (None: wherever the rules' layers were or
+/// are; a remake of a part: that part, or nothing) and the fields it was made from.
+struct Made {
+    blend: Stack<Blend>,
+    ground: Option<Stack<TerrainGround>>,
+    rect: Option<Option<[u32; 4]>>,
+    ground_rect: Option<Option<[u32; 4]>>,
+    fields: Arc<Fields>,
+}
+
+/// What the rules' layer in the stack was made from: the rules' own key ([`rules_key`]: their text, the texture groups, the grids), the
+/// layer's owner and the fields. A remake under the same key remakes only where the fields changed (`Fields::changed_area`), widened by
+/// the rules' reach: an edit of the heights, a building moved, an area drawn remake that much of the map, not all of it.
+pub(crate) struct RulesBasis {
+    key: u64,
+    owner: String,
+    fields: Arc<Fields>,
+
+    /// What the remake that made it covered: None, the whole map; a part, its blend map pixels (none: nothing changed).
+    part: Option<Option<[u32; 4]>>,
+}
+
+/// What a remake of the rules' layer covered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remade {
+    Whole,
+
+    /// Nothing the rules read changed where they lay.
+    Nothing,
+
+    /// The blend map's pixels `[x0, y0, x1, y1]` (end exclusive).
+    Part([u32; 4]),
+}
+
+/// The rules' own key: their text (the areas' bindings with it), the texture groups, the blend map's and the ground map's sizes.
+fn rules_key(rules: &[texture_rules::Rule], groups: &[String], size: (u32, u32), ground: Option<(u32, u32)>) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let text = texture_rules::text(&RuleSet { preset: String::new(), rules: rules.to_vec() });
+    let area = rules.iter().flat_map(|r| r.area.map_or(u64::MAX, |a| a as u64).to_le_bytes());
+    let sizes = [size.0, size.1, ground.map_or(0, |g| g.0), ground.map_or(0, |g| g.1)].into_iter().flat_map(u32::to_le_bytes);
+    for b in text.iter().copied().chain(groups.iter().flat_map(|g| g.bytes().chain(*b"/"))).chain(area).chain(sizes) {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+
+    h
+}
+
+/// Metres from the map's corner as a grid's pixels (`ppm` a metre, `w` x `h`), the pixels they touch.
+fn pixel_rect(m: [f64; 4], ppm: (f64, f64), w: u32, h: u32) -> [u32; 4] {
+    let px = |v: f64, s: f64, n: u32| ((v * s).max(0.0) as u32).min(n);
+    [px(m[0], ppm.0, w), px(m[1], ppm.1, h), px(m[2] * ppm.0 + 0.999, 1.0, w), px(m[3] * ppm.1 + 0.999, 1.0, h)]
 }
 
 /// What the distance conditions measure to, taken from the scene (`Tile::texture_rules_inputs`), what the rules use of it only: the water
@@ -300,7 +355,7 @@ impl Tile {
             None
         };
 
-        Ok(Prepared { rules, groups, inputs, fields, blend, ground, size: (bw, bh), ppm, border })
+        Ok(Prepared { rules, groups, inputs, fields, blend, ground, size: (bw, bh), ppm, border, mpp: (mx, mz) })
     }
 
     /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
@@ -308,6 +363,20 @@ impl Tile {
         let (rules, masks) = self.all_texture_rules();
         let mut prepared = self.prepare_texture_rules(rules)?;
         prepared.fields = prepared.fields.with_areas(masks);
+        let key = rules_key(&prepared.rules, &prepared.groups, prepared.size, prepared.ground.as_ref().map(|g| g.1));
+
+        // The fields the layer in the stack was made from, when it is still that layer under the same rules: only what changed is made.
+        let blend_owner = prepared.blend.layers.iter().find(|l| l.owner.starts_with(OWNER)).map(|l| l.owner.clone());
+        let ground_owner =
+            prepared.ground.as_ref().and_then(|g| g.0.layers.iter().find(|l| l.owner.starts_with(OWNER)).map(|l| l.owner.clone()));
+        let lays_ground = texture_rules::lays_ground(&prepared.rules);
+        let old = self
+            .texture_rules_basis
+            .as_ref()
+            .filter(|b| b.key == key && blend_owner.as_ref() == Some(&b.owner))
+            .filter(|b| if lays_ground { ground_owner.as_ref() == Some(&b.owner) } else { ground_owner.is_none() })
+            .map(|b| b.fields.clone());
+
         let id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
         let ground_id = self.project.layers.get_or_insert_with(TerrainLayers::default).new_id();
         let before = prepared.blend.clone();
@@ -315,24 +384,75 @@ impl Tile {
         let job = super::jobs::Job::spawn("texture rules", move || {
             wce_foundation::wce_prof!("tile.texture_rules");
             let (fields, mut blend) = prepared.fields();
-            let Prepared { rules, groups, ground, size: (bw, bh), ppm, .. } = prepared;
-            blend.layers.retain(|l| !l.owner.starts_with(OWNER));
-            let id = blend.add(id, "Texture rules", &owner_of(signature));
-            texture_rules::generate(&rules, &groups, &fields, ppm, [0, 0, bw, bh], &mut |x, y, px| blend.put(id, x, y, &px));
-            let ground = ground.map(|(mut stack, (gw, gh), gppm)| {
-                stack.layers.retain(|l| !l.owner.starts_with(OWNER));
-                if texture_rules::lays_ground(&rules) {
-                    let id = stack.add(ground_id, "Texture rules", &owner_of(signature));
-                    texture_rules::generate_ground(&rules, &groups, &fields, gppm, [0, 0, gw, gh], &mut |x, y, px| {
-                        stack.put(id, x, y, &px)
+            let Prepared { rules, groups, ground, size: (bw, bh), ppm, mpp, .. } = prepared;
+            let owner = owner_of(signature);
+
+            // A part: where the fields changed, the rules' reach around a changed height.
+            let part = old.map(|o| fields.changed_area(&o, texture_rules::reach(&rules, mpp)));
+            let (rect, ground) = match part {
+                Some(changed) => {
+                    let rect = changed.map(|m| pixel_rect(m, ppm, bw, bh));
+                    if let Some(l) = blend.layers.iter_mut().find(|l| l.owner.starts_with(OWNER)) {
+                        l.owner.clone_from(&owner);
+                        let id = l.id;
+                        if let Some(r) = rect {
+                            for y in r[1]..r[3] {
+                                for x in r[0]..r[2] {
+                                    blend.put(id, x, y, &[0; 16]);
+                                }
+                            }
+
+                            texture_rules::generate(&rules, &groups, &fields, ppm, r, &mut |x, y, px| blend.put(id, x, y, &px));
+                        }
+                    }
+
+                    let ground = ground.map(|(mut stack, (gw, gh), gppm)| {
+                        let rect = changed.map(|m| pixel_rect(m, gppm, gw, gh));
+                        if let Some(l) = stack.layers.iter_mut().find(|l| l.owner.starts_with(OWNER)) {
+                            l.owner.clone_from(&owner);
+                            let id = l.id;
+                            if let Some(r) = rect {
+                                for y in r[1]..r[3] {
+                                    for x in r[0]..r[2] {
+                                        stack.put(id, x, y, &[0; 4]);
+                                    }
+                                }
+
+                                texture_rules::generate_ground(&rules, &groups, &fields, gppm, r, &mut |x, y, px| stack.put(id, x, y, &px));
+                            }
+                        }
+
+                        (stack, Some(rect))
                     });
+                    (Some(rect), ground)
                 }
 
-                stack
-            });
-            (blend, ground)
+                None => {
+                    blend.layers.retain(|l| !l.owner.starts_with(OWNER));
+                    let id = blend.add(id, "Texture rules", &owner);
+                    texture_rules::generate(&rules, &groups, &fields, ppm, [0, 0, bw, bh], &mut |x, y, px| blend.put(id, x, y, &px));
+                    let ground = ground.map(|(mut stack, (gw, gh), gppm)| {
+                        stack.layers.retain(|l| !l.owner.starts_with(OWNER));
+                        if texture_rules::lays_ground(&rules) {
+                            let id = stack.add(ground_id, "Texture rules", &owner);
+                            texture_rules::generate_ground(&rules, &groups, &fields, gppm, [0, 0, gw, gh], &mut |x, y, px| {
+                                stack.put(id, x, y, &px)
+                            });
+                        }
+
+                        (stack, None)
+                    });
+                    (None, ground)
+                }
+            };
+
+            let (ground, ground_rect) = match ground {
+                Some((s, r)) => (Some(s), r),
+                None => (None, None),
+            };
+            Made { blend, ground, rect, ground_rect, fields: Arc::new(fields) }
         });
-        self.texture_rules_job = Some(TextureRulesJob { job, signature, before, before_ground });
+        self.texture_rules_job = Some(TextureRulesJob { job, signature, key, before, before_ground });
         Ok(())
     }
 
@@ -347,7 +467,7 @@ impl Tile {
         };
 
         let j = self.texture_rules_job.take().expect("a job");
-        let Some((blend, ground)) = made else {
+        let Some(Made { blend, ground, rect, ground_rect, fields }) = made else {
             wce_foundation::log::warn("texture rules: their layer could not be made");
             return;
         };
@@ -364,7 +484,7 @@ impl Tile {
         }
 
         if let (Some(ground), Some(gf)) = (ground, p.ground.as_mut()) {
-            let rect = rules_rect(j.before_ground.as_ref().expect("taken with it"), &ground);
+            let rect = ground_rect.unwrap_or_else(|| rules_rect(j.before_ground.as_ref().expect("taken with it"), &ground));
             layers.ground = Some(ground);
             if let Some(s) = layers.ground.as_mut() {
                 if let Some(r) = rect {
@@ -377,7 +497,8 @@ impl Tile {
             p.ground_dirty |= rect.is_some();
         }
 
-        let rect = rules_rect(&j.before, &blend);
+        let made_part = rect;
+        let rect = rect.unwrap_or_else(|| rules_rect(&j.before, &blend));
         layers.blend = Some(blend);
         layers.dirty = true;
         if let Some(s) = layers.blend.as_mut() {
@@ -390,12 +511,16 @@ impl Tile {
 
         // The game and the compile read the map, not the layers.
         p.blend_dirty |= rect.is_some();
+        self.texture_rules_basis = Some(RulesBasis { key: j.key, owner: owner_of(j.signature), fields, part: made_part });
         self.layers_shown = true;
-        self.reload_grass();
+        if rect.is_some() {
+            self.reload_grass();
+        }
     }
 
     /// Takes the rules' layer away (the rules went).
     fn remove_texture_rules_layer(&mut self) {
+        self.texture_rules_basis = None;
         let p = &mut self.project;
         let (Some(bf), Some(layers)) = (p.blend.as_mut(), p.layers.as_mut()) else { return };
         if let (Some(s), Some(gf)) = (layers.ground.as_mut(), p.ground.as_mut()) {
@@ -440,6 +565,9 @@ struct Prepared {
     size: (u32, u32),
     ppm: (f64, f64),
     border: f64,
+
+    /// The heights' metres a sample.
+    mpp: (f64, f64),
 }
 
 impl Prepared {
@@ -502,6 +630,16 @@ fn rules_rect<K: wce_tile::terrain_layers::Kind>(old: &Stack<K>, new: &Stack<K>)
 }
 
 impl TileDocument {
+    /// What the last remake of the rules' layer covered; None before any.
+    #[must_use]
+    pub fn texture_rules_last_part(&self) -> Option<Remade> {
+        self.tile().texture_rules_basis.as_ref().map(|b| match b.part {
+            None => Remade::Whole,
+            Some(None) => Remade::Nothing,
+            Some(Some(r)) => Remade::Part(r),
+        })
+    }
+
     /// The tile's texture rules, if it has any.
     #[must_use]
     pub fn texture_rules(&self) -> Option<&RuleSet> {

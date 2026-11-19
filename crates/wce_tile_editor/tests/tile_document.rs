@@ -2568,6 +2568,64 @@ fn texture_rules_make_a_layer_that_hand_paint_goes_over() {
 }
 
 #[test]
+fn texture_rules_remake_only_where_an_edit_changed_what_they_read() {
+    use wce_tile::texture_rules::{Range, Rule, RuleSet};
+    use wce_tile_editor::tile_document::texture_rules::Remade;
+
+    let (_dir, mut d) = open_with_texture_groups();
+    let weights = |d: &TileDocument| d.project().blend.as_ref().unwrap().weights().to_vec();
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    // Rock over the ground where the bump goes below (on the main ground, grass), a metre up: not there until the bump.
+    let top = d.tile().terrain_height(ex * 0.6, ez * 0.6) + 1.0;
+    let rock = Rule {
+        name: "rock".to_owned(),
+        group: "rock".to_owned(),
+        height: Some(Range { lo: Some(top), hi: None, fade: 0.2 }),
+        ..Rule::default()
+    };
+    let mud = Rule {
+        name: "mud".to_owned(),
+        group: "mud".to_owned(),
+        hollow: Some(Range { lo: Some(0.05), hi: None, fade: 0.05 }),
+        hollow_radius: 4.0,
+        ..Rule::default()
+    };
+    let set = RuleSet { preset: String::new(), rules: vec![rock, mud] };
+    d.set_texture_rules(Some(set.clone()));
+    d.finish_texture_rules();
+    assert_eq!(d.texture_rules_last_part(), Some(Remade::Whole));
+    let first = weights(&d);
+
+    // A bump: only around it is made again, and what it makes is what a whole remake makes.
+    let s = BrushSettings { radius_m: 4.0, strength: 40.0, ..BrushSettings::default() };
+    for _ in 0..10 {
+        d.brush_step(BrushKind::Raise, ex * 0.6, ez * 0.6, s.clone(), 0.1);
+    }
+    d.end_stroke();
+    assert!(d.tile().terrain_height(ex * 0.6, ez * 0.6) > top + 0.5, "the bump rose");
+    d.finish_texture_rules();
+    let Some(Remade::Part(r)) = d.texture_rules_last_part() else { panic!("a part: {:?}", d.texture_rules_last_part()) };
+    let (w, h) = d.project().blend.as_ref().map(|b| (b.width(), b.height())).unwrap();
+    assert!((r[2] - r[0]) < w && (r[3] - r[1]) < h, "a part of the map: {r:?} of {w} x {h}");
+    let partial = weights(&d);
+    assert_ne!(partial, first);
+
+    let other = RuleSet { preset: String::new(), rules: vec![Rule { group: "forest".to_owned(), ..Rule::default() }] };
+    d.set_texture_rules(Some(other));
+    d.finish_texture_rules();
+    d.set_texture_rules(Some(set));
+    d.finish_texture_rules();
+    assert_eq!(d.texture_rules_last_part(), Some(Remade::Whole));
+    assert!(weights(&d) == partial, "the part made again is what the whole map made again has");
+
+    // Nothing the rules read changed (a building of no rule's concern): nothing is made again.
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    assert!(d.set_local(b, Some(Double3::new(1.0, 2.0, 3.0)), None, 0));
+    d.finish_texture_rules();
+    assert!(matches!(d.texture_rules_last_part(), Some(Remade::Whole | Remade::Nothing)));
+}
+
+#[test]
 fn texture_rules_are_saved_beside_the_tile() {
     use wce_tile::texture_rules::{RuleSet, default_rules};
 

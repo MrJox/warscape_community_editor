@@ -88,7 +88,7 @@ earlier one, as blend layers go over each other).
    Done: `terrain_layers::order_of` (0 under the user's, 1 theirs, 2 on top), `UNDER_OWNERS`, `Stack::first_on_top`; the roads' and the
    prefabs' ground follow it. Merge down stops at the rules' layer (it would go when the layer is made again). Painting with texture rules
    and no working layer makes or picks `Painted` first (its own undo entry), for strokes, strokes along a line and Paint the whole tile.
-3. **Live regeneration in the editor** (done, but the command and the reach-widened rectangle): the job, the triggers, the reach-widened rectangle, combined projects. Script command
+3. **Live regeneration in the editor** (done): the job, the triggers, the reach-widened rectangle, combined projects. Script command
    `texture_rules <on|off|regenerate|load <preset>>`; a check script on a kit tile (a few tiles with `--filter`, no corpus run).
    Done: `tile_document/texture_rules.rs`. The layer's owner is `texture_rules#<signature>`, the signature a hash of the rules, the texture
    group slots and the heights' content (hashed again only when the field's version moves): a tile opened again does not remake it. A
@@ -96,6 +96,12 @@ earlier one, as blend layers go over each other).
    measured to be needed); it goes in when the blend stack is as it was taken, no undo entry (an undo puts back what it is made from).
    Edits of the rules are undo entries (`set_texture_rules`); exports wait for it after the roads (`finish_road_jobs`). Grass follows.
    Left for step 5: the script command and the check on kit tiles.
+   Later (2026-11-19): **only what changed is made again**. The layer keeps what it was made from (`RulesBasis`: the rules' key, its
+   owner, the fields); a remake under the same rules diffs the new fields against those (`Fields::changed_area`: the heights widened by
+   the rules' reach, the distances, the main ground and the areas where they changed), clears and makes only that part of the layer
+   (and of the rules' ground layer), and composes only it again. Another rule set, another grid or a layer that is not the one made
+   (an undo past it) make the whole map. Checked: a bump on the mountain tile remakes 15 x 15 blend map pixels; a test has the part
+   equal to a whole remake.
 4. **Distances** (done): water, roads, buildings. Done as: `texture_rules::Distances` (exact Euclidean distance transform on the blend
    map's grid), the rules' `water`, `road` and `building` ranges (endless where the tile has none). Water is the roads' `WaterMap`
    (rivers' ribbons and lake planes over the ground, the sea under 0 in the sea's sets), not stage B's (live, without a compile); roads

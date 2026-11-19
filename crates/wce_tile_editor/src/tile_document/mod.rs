@@ -626,6 +626,9 @@ pub struct Tile {
     /// since waits), and the heights' hash by their version (`texture_rules.rs`).
     pub(crate) texture_rules_job: Option<texture_rules::TextureRulesJob>,
     pub(crate) texture_rules_seen: u64,
+
+    /// What the rules' layer in the stack was made from, for a remake of only where that changed.
+    pub(crate) texture_rules_basis: Option<texture_rules::RulesBasis>,
     pub(crate) texture_rules_heights: ((usize, u64), u64),
     pub(crate) texture_rules_inputs: Option<(u64, texture_rules::Inputs)>,
 
@@ -1007,6 +1010,7 @@ impl TileDocument {
             roads_stale: false,
             roads_seen: 0,
             texture_rules_job: None,
+            texture_rules_basis: None,
             texture_rules_seen: 0,
             texture_rules_heights: ((0, u64::MAX), 0),
             texture_rules_inputs: None,
