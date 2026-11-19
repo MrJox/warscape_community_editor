@@ -86,7 +86,7 @@ pub fn resource_path(root: &Path, key: &str) -> Result<PathBuf, String> {
     Ok(root.join(key))
 }
 
-fn identical(source: &Source, to: &Path) -> io::Result<bool> {
+pub fn identical(source: &Source, to: &Path) -> io::Result<bool> {
     if matches!(source, Source::Remove) {
         return match fs::metadata(to) {
             Ok(_) => Ok(false),

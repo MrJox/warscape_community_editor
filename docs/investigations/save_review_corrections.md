@@ -31,3 +31,15 @@ cargo test --locked -p wce_editor --lib save_prompt_tests
 ```
 
 The shell modal tests run on Windows using a software D3D11 WARP device only to construct the shell. They create real Dear ImGui frames, feed in-memory mouse events to the real Overwrite/X buttons, and use isolated settings and synthetic documents. They create no native window, need no game assets and do not simulate a real driver crash. Core save routing and the real Terrain copy regression run on every platform.
+
+## Follow-up review, 19 November 2026
+
+The [maintainer's re-review](https://github.com/MrJox/warscape_community_editor/pull/74#issuecomment-6992126283) confirmed the original four corrections and identified additional integration problems. The follow-up preserves unplanned destination files while continuing to reject ambiguous or conflicting resource paths. It checks destination ownership before closing the current document, rejects implicit same-tool reuse, and restores normal same-map reload through the Save/Discard flow. Async adoption keeps its observed Save destination across a prompt.
+
+Scripts temporarily use the non-prompting Save policy. Conflicts fail with their reason, retain edits and leave no pending modal; a later interactive Save can still ask. Discard clears a pending disk-change choice. Save All keeps its remaining cursor and failures, attempts documents once and continues past a failed Overwrite. Save As to the owned folder produces the normal saved-source notification. The unused overwrite-copy manager entry point was removed.
+
+The resource-key and exact-byte comparison rules now reuse the publication module. Canonical aliases to the same source file take its existing identity shortcut. Folder enumeration and freshness observation share their treatment of file links, dangling links and linked directories. Export observes only its map subtree and pack on the worker; unrelated output-root changes no longer invalidate publication.
+
+Added regressions exercise destination-only file retention, combined file/directory conflicts, rejected replacement preserving the current document, explicit same-folder replacement, scripted save/close conflicts, Discard, owned-folder Save As notifications, Save All failure continuation, export scope and platform link handling. They supplement the earlier modal and native-preservation controls. No new native application smoke or game-runtime equivalence result is claimed.
+
+The broader Save latency and second pack-copy recommendations remain performance follow-ups: Save still scans relevant source/destination inventories more than once and compares generated or distinct-file outputs exactly; Export still copies a generated temporary pack into staging. These have not been benchmarked on a large map in this follow-up. Publication remains per-file.

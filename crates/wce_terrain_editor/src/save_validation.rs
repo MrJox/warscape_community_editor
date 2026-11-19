@@ -2,7 +2,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
-    io::{self, Read},
+    io,
     path::Path,
 };
 use wce_terrain::MapModel;
@@ -10,29 +10,7 @@ use wce_terrain_io::{MapFiles, built};
 use wce_tile_model::Blob;
 
 fn key(rel: &str) -> Result<String, String> {
-    if wce_foundation::publication::reserved(rel) {
-        return Err(format!("{rel}: .wce_tmp is reserved for internal staging"));
-    }
-    // Reader-produced keys use '/', without traversal or filesystem-specific aliases.
-    if rel.contains('\\') {
-        return Err(format!("{rel}: expected a reader-visible '/' resource key"));
-    }
-    for part in rel.split('/') {
-        let base = part.split('.').next().unwrap_or("").to_ascii_uppercase();
-        let device = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-            || ["COM", "LPT"]
-                .iter()
-                .any(|p| base.strip_prefix(p).is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")));
-        if part.is_empty()
-            || part == "."
-            || part == ".."
-            || part.ends_with(['.', ' '])
-            || device
-            || part.chars().any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
-        {
-            return Err(format!("{rel}: unsupported resource key; use a relative, unambiguous file within the map folder"));
-        }
-    }
+    wce_foundation::publication::resource_path(Path::new(""), rel)?;
     Ok(rel.to_uppercase())
 }
 
@@ -95,41 +73,6 @@ fn readable(p: &Path) -> io::Result<File> {
     Ok(f)
 }
 
-// Adapted from P0-03: equal length is only a fast exclusion, never proof of retained content.
-fn same_files(a: &Path, b: &Path) -> io::Result<bool> {
-    let (mut a, mut b) = (readable(a)?, readable(b)?);
-    let mut remaining = a.metadata()?.len();
-    if remaining != b.metadata()?.len() {
-        return Ok(false);
-    }
-    let (mut left, mut right) = ([0u8; 65536], [0u8; 65536]);
-    while remaining != 0 {
-        let n = remaining.min(left.len() as u64) as usize;
-        a.read_exact(&mut left[..n])?;
-        b.read_exact(&mut right[..n])?;
-        if left[..n] != right[..n] {
-            return Ok(false);
-        }
-        remaining -= n as u64;
-    }
-    Ok(a.read(&mut left[..1])? == 0 && b.read(&mut right[..1])? == 0)
-}
-
-fn same_bytes(p: &Path, bytes: &[u8]) -> io::Result<bool> {
-    let mut f = readable(p)?;
-    if f.metadata()?.len() != bytes.len() as u64 {
-        return Ok(false);
-    }
-    let mut buffer = [0u8; 65536];
-    for part in bytes.chunks(buffer.len()) {
-        f.read_exact(&mut buffer[..part.len()])?;
-        if &buffer[..part.len()] != part {
-            return Ok(false);
-        }
-    }
-    Ok(f.read(&mut buffer[..1])? == 0)
-}
-
 // Use the same practical path normalization as destination ownership, including existing aliases.
 fn location(p: &Path) -> io::Result<String> {
     wce_foundation::save_path::key(p).map_err(io::Error::other)
@@ -151,12 +94,11 @@ pub(super) fn preflight(m: &MapModel, files: &MapFiles, dir: &Path) -> Result<BT
                         "Cannot save: destination key '{name}' differs from output key '{output}'; use a destination that preserves the resource spelling"
                     ));
                 }
-                if !outputs.contains_key(&key(name)?) {
-                    return Err(format!(
-                        "Cannot save: destination-only reader-visible resource '{name}'; reopen the folder or choose an independent destination"
-                    ));
-                }
             }
+            // Unplanned files stay untouched. Check their combined names only for
+            // ambiguity or file/directory conflicts with the outputs we will publish.
+            let names: BTreeSet<_> = existing.folder.keys().chain(files.folder.keys()).map(String::as_str).collect();
+            keys(names)?;
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.to_string()),
@@ -182,8 +124,12 @@ pub(super) fn preflight(m: &MapModel, files: &MapFiles, dir: &Path) -> Result<BT
         };
         if target.is_some()
             && match blob {
-                Blob::File(p) => p == &to || same_files(p, &to).map_err(fail)?,
-                Blob::Bytes(b) => same_bytes(&to, b).map_err(fail)?,
+                Blob::File(p) => {
+                    wce_foundation::publication::identical(&wce_foundation::publication::Source::File(p.clone()), &to).map_err(fail)?
+                }
+                Blob::Bytes(b) => {
+                    wce_foundation::publication::identical(&wce_foundation::publication::Source::Bytes(b.clone()), &to).map_err(fail)?
+                }
             }
         {
             kept.insert(name.clone());
