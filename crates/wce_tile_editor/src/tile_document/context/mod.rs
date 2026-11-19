@@ -257,19 +257,34 @@ fn lf_map(
     lf_level: f64,
     unit: f64,
     k: f64,
+    campaign: bool,
 ) -> Option<LfMap> {
     let vertical_offset = map.vertical_offset;
     let f = f.filter(|f| f.w > 1 && f.h > 1)?;
     let (ppx, ppy) = (f64::from(f.w) / f64::from(map.width), f64::from(f.h) / f64::from(map.height));
     let s = CELL / ppx;
     let sz = s * k;
-    let b = bounds(from_map, 0.0, 0.0, f64::from(f.w - 1) / ppx, f64::from(f.h - 1) / ppy);
+    let mut b = bounds(from_map, 0.0, 0.0, f64::from(f.w - 1) / ppx, f64::from(f.h - 1) / ppy);
+    // A campaign map's game LF has two samples a cell, the field's box averages (main_attila: the field eight a cell, the game's texture
+    // 4064 x 2882, BOB's 4 x 4 `lf_height_map_lq.dds`, `campaign_level`), and the terrain shader puts its texel k at k / 2 cells: the
+    // mean of samples 4k .. 4k + 3, centred a sample and a half further on. The samples move back by that (3/16 of a cell, north-west),
+    // so a point's height is the game's: at the main_attila coast below capture A's camera, eleven points off by 6.8 m rms on the field's
+    // own lattice, 3.0 m with it moved so (the best fit then 1/16 of a cell further south, 1.2 m: not explained).
+    // `shift` (samples) takes a node back to its own sample.
+    let mut shift = (0.0, 0.0);
+    if campaign && ppx > 2.0 && ppy > 2.0 {
+        let (dx, dy) = ((ppx / 2.0 - 1.0) * 0.5 / ppx, (ppy / 2.0 - 1.0) * 0.5 / ppy);
+        let (a, o) = (from_map.apply(-dx, -dy), from_map.apply(0.0, 0.0));
+        let (ox, oz) = (a.0 - o.0, a.1 - o.1);
+        b = [b[0] + ox, b[1] + oz, b[2] + ox, b[3] + oz];
+        shift = (dx * ppx, dy * ppy);
+    }
     let (nx, nz) = (((b[2] - b[0]) / s).round() as i32 + 1, ((b[3] - b[1]) / sz).round() as i32 + 1);
     // The frame lays the field's samples out one to one (the Terrain tool's: the map's own frame, rows the other way up): the field's
     // samples themselves, shared (the campaign's LF is 375 MB), else resampled.
     let sample = |i: f64, j: f64| {
         let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * sz);
-        (cx * ppx, cy * ppy)
+        (cx * ppx + shift.0, cy * ppy + shift.1)
     };
     let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
     let same_size = u32::try_from(nx).ok() == Some(f.w) && u32::try_from(nz).ok() == Some(f.h);
@@ -309,7 +324,7 @@ fn lf_map(
     values.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
         for (i, v) in row.iter_mut().enumerate() {
             let (cx, cy) = to_map.apply(b[0] + i as f64 * s, b[1] + j as f64 * sz);
-            let (px, py) = ((cx * ppx).clamp(0.0, f64::from(f.w - 1)), (cy * ppy).clamp(0.0, f64::from(f.h - 1)));
+            let (px, py) = ((cx * ppx + shift.0).clamp(0.0, f64::from(f.w - 1)), (cy * ppy + shift.1).clamp(0.0, f64::from(f.h - 1)));
             let (x0, y0) = (px.floor() as u32, py.floor() as u32);
             let (x1, y1) = ((x0 + 1).min(f.w - 1), (y0 + 1).min(f.h - 1));
             let (fx, fy) = (px - f64::from(x0), py - f64::from(y0));
@@ -491,6 +506,10 @@ pub struct Frame {
     /// size and climate.
     plain_bases: Mutex<HashMap<u8, PlainBase>>,
 
+    /// A campaign map's sea material: a `sea` tile's own (every one is `sand_a`, the texture the game's sea pass draws), for the sea's
+    /// ground past the rings (`on_sea`); offered by the first such tile read.
+    sea_material: Mutex<Option<Arc<TerrainMaterial>>>,
+
     /// The climates' plain colours (`plain_colour`).
     plain_colours: Mutex<HashMap<u8, [u8; 4]>>,
     plains: Mutex<Plains>,
@@ -517,18 +536,16 @@ impl Frame {
         let from_map = Affine2 { m: [[1.0, 0.0, 0.0], [0.0, k, 0.0]] }.then_after(&me.to_map().inverse());
         let to_map = from_map.inverse();
         let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
-        let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k).map(Arc::new);
-        let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k).map(Arc::new);
+        // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures, and its LF is the game's
+        // (`lf_map`).
+        let campaign =
+            map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/"));
+        let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k, campaign).map(Arc::new);
+        let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k, false).map(Arc::new);
         wce_foundation::log::info(format!("map context: the frame's LF maps made, {}", wce_foundation::heap::note()));
 
         let index = MapIndex::new(&map, open);
-        // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures.
-        let kind =
-            if map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/")) {
-                "campaign"
-            } else {
-                "battle"
-            };
+        let kind = if campaign { "campaign" } else { "battle" };
         let kit_climates =
             ClimateList::load(&rq.raw_root.join(format!("terrain/tiles/{kind}/_tile_database/_settings.xml"))).unwrap_or_default();
         let climates = effective_climates(kit_climates, kind, files.as_deref());
@@ -556,6 +573,7 @@ impl Frame {
             plain_normal_id: next_id(&NORMAL_IDS),
             zeros: Mutex::default(),
             plain_bases: Mutex::default(),
+            sea_material: Mutex::default(),
             plain_colours: Mutex::default(),
             plains: Mutex::default(),
         }
@@ -588,6 +606,7 @@ impl Frame {
             plain_normal_id: self.plain_normal_id,
             zeros: Mutex::default(),
             plain_bases: Mutex::default(),
+            sea_material: Mutex::new(self.sea_material.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
             plain_colours: Mutex::default(),
             plains: Mutex::default(),
         }
@@ -679,6 +698,14 @@ impl Frame {
 
         bases.insert(climate, made.clone());
         made
+    }
+
+    /// A campaign map's sea material (`sea_material`), when there is none yet.
+    pub fn offer_sea(&self, m: &Option<Arc<TerrainMaterial>>) {
+        let mut sea = self.sea_material.lock().unwrap_or_else(|p| p.into_inner());
+        if sea.is_none() {
+            sea.clone_from(m);
+        }
     }
 
     /// A base for the plain material, when there is none yet.
@@ -780,7 +807,11 @@ impl Frame {
     /// The heights of an LF ground grid on a campaign map from `source`: its points over the sea (sea tiles, cliffs, uncovered cells)
     /// at the sea bed, the others at the far material's relief (none yet: 0); none when every point is 0.
     fn ground_heights(&self, r: [i32; 4], b: [f64; 4], nx: i32, nz: i32, step: f64, source: &BlockSource) -> Option<Vec<f32>> {
-        let sea = (r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| self.cell_on_sea(x, y, source.is_custom)));
+        // Each cell's once (`cell_on_sea` looks at every placement over it).
+        let rw = (r[2] - r[0]).max(0);
+        let on_sea: Vec<bool> =
+            (r[1]..r[3]).flat_map(|y| (r[0]..r[2]).map(move |x| (x, y))).map(|(x, y)| self.cell_on_sea(x, y, source.is_custom)).collect();
+        let sea = on_sea.iter().any(|&s| s);
         if !sea && (source.relief)(f64::from(r[0]), f64::from(r[1])).is_none() {
             return None;
         }
@@ -792,7 +823,7 @@ impl Frame {
                 let (x, z) = (b[0] + f64::from(i) * step, b[1] + f64::from(j) * step * k);
                 let (mx, my) = self.to_map.apply(x, z);
                 let (cx, cy) = ((mx.floor() as i32).clamp(r[0], r[2] - 1), (my.floor() as i32).clamp(r[1], r[3] - 1));
-                heights[(j * nx + i) as usize] = if sea && self.cell_on_sea(cx, cy, source.is_custom) {
+                heights[(j * nx + i) as usize] = if sea && on_sea[((cy - r[1]) * rw + (cx - r[0])) as usize] {
                     bed - self.lift(x, z)
                 } else {
                     (source.relief)(mx, my).unwrap_or(0.0)
@@ -863,7 +894,9 @@ impl Frame {
         (world, Payload::Terrain(t))
     }
 
-    /// Whether a map cell is the sea on a campaign map: no placement over it, or a sea tile's (`on_sea_lf`) or a cliff's (`custom`).
+    /// Whether a map cell is the sea on a campaign map: no placement over it, a cliff's (`custom`), or a sea tile's (`on_sea_lf`) with no
+    /// land tile under it. A coast tile under a sea tile (`sea_coast` on layer 0, `sea` over it) is the land: the game draws it on the
+    /// land's LF, its sea tile on the sea's, and the higher shows (the shore; RenderDoc, capture A).
     fn cell_on_sea(&self, x: i32, y: i32, custom: &dyn Fn(usize) -> bool) -> bool {
         let (w, h) = (self.map.width as i32, self.map.height as i32);
         if x < 0 || y < 0 || x >= w || y >= h {
@@ -872,17 +905,34 @@ impl Frame {
         match self.owner[(y * w + x) as usize] {
             0 => true,
             1 => false,
-            o => {
-                let (cw, _) = self.chunks();
-                let key = ((o as i32 - 2) % cw, (o as i32 - 2) / cw);
-                self.by_chunk.get(&key).is_some_and(|list| {
-                    list.iter().any(|&i| {
-                        let r = self.map.placements[i].rect();
-                        x >= r[0] && x < r[2] && y >= r[1] && y < r[3] && (self.on_sea_lf(i) || custom(i))
-                    })
-                })
+            _ => {
+                let (mut sea, mut land) = (false, false);
+                for i in self.over_cell(x, y) {
+                    if custom(i) {
+                        return true;
+                    }
+                    if self.on_sea_lf(i) {
+                        sea = true;
+                    } else {
+                        land = true;
+                    }
+                }
+                sea && !land
             }
         }
+    }
+
+    /// The placements over a map cell, every layer's (`by_chunk` holds a placement in its origin's chunk).
+    fn over_cell(&self, x: i32, y: i32) -> impl Iterator<Item = usize> + '_ {
+        let back = (self.reach + CHUNK - 1) / CHUNK;
+        let (kx, ky) = (x.div_euclid(CHUNK), y.div_euclid(CHUNK));
+        (ky - back..=ky)
+            .flat_map(move |gy| (kx - back..=kx).map(move |gx| (gx, gy)))
+            .flat_map(move |k| self.by_chunk.get(&k).map_or(&[][..], Vec::as_slice).iter().copied())
+            .filter(move |&i| {
+                let r = self.map.placements[i].rect();
+                x >= r[0] && x < r[2] && y >= r[1] && y < r[3]
+            })
     }
 
     /// The height of the sea (0 m) in the frame.
@@ -1081,6 +1131,16 @@ impl Frame {
     /// A sea tile's ground (`frame`: where it stands on the land's LF) on the sea's LF: the map's sea LF (`LF * 400 - 20` m), else a
     /// flat -20 m (the sea LF taken as 0).
     fn on_sea(&self, mut frame: Float4x4, t: Terrain) -> (Float4x4, Payload) {
+        // A campaign map's sea tiles are drawn as the game's sea pass draws them (`Terrain::sea_floor`; RenderDoc, capture A): sand with
+        // an up normal, none of the terrain's blend, so the coast tiles' ground (on the land's LF) shows where it is higher: the shore.
+        let campaign = self.is_campaign();
+        // Past the rings its ground is a plain one (its climate's grass): the sea tiles' own material once one has been read.
+        let material = if campaign && t.material.as_ref().is_some_and(|m| m.baked || m.diffuse[0] != self.sea_diffuse()) {
+            self.sea_material.lock().unwrap_or_else(|p| p.into_inner()).clone().or(t.material)
+        } else {
+            t.material
+        };
+        let t = Terrain { sea_floor: campaign, material, ..t };
         match &self.sea_lf {
             Some(sea) => (frame, Payload::Terrain(Terrain { lf: Some(sea.clone()), ..t })),
             None => {
@@ -1088,6 +1148,11 @@ impl Frame {
                 (frame, Payload::Terrain(Terrain { lf: None, ..t }))
             }
         }
+    }
+
+    /// The sea material's first texture (`sea_material`; empty without one).
+    fn sea_diffuse(&self) -> String {
+        self.sea_material.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map_or_else(String::new, |m| m.diffuse[0].clone())
     }
 
     /// Whether a placement is drawn on the sea's LF (`place`): a tile of the `sea` set whose land LF reaches the sea somewhere (the lowest
@@ -1545,7 +1610,17 @@ impl Frame {
                         out.push(self.on_sea(world, t));
                     }
 
-                    cut.push(p.rect());
+                    // Its cells but those a land tile shares (a coast tile under it): their ground is the land's too (the shore).
+                    let r = p.rect();
+                    let sea: Vec<(i32, i32)> = (r[1]..r[3])
+                        .flat_map(|y| (r[0]..r[2]).map(move |x| (x, y)))
+                        .filter(|&(x, y)| self.cell_on_sea(x, y, is_custom))
+                        .collect();
+                    if sea.len() as i32 == (r[2] - r[0]) * (r[3] - r[1]) {
+                        cut.push(r);
+                    } else {
+                        cut.extend(sea.into_iter().map(|(x, y)| [x, y, x + 1, y + 1]));
+                    }
                 }
             }
 

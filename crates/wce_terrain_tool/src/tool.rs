@@ -2561,6 +2561,15 @@ impl Tool for TerrainTool {
                     }
                     // At one point, the placements over it: their tile, size, turn, flip and the point in their own frame.
                     if steps == 0 {
+                        // The LFs there (metres; the sea's level 0).
+                        let (fx, fz) = frame.from_map.apply(v[0], v[1]);
+                        let m = |y: f32| (f64::from(y) - f64::from(frame.sea_y())) * frame.unit;
+                        let sea = frame.sea_lf.as_ref().map(|s| m(s.height_at(fx as f32, fz as f32)));
+                        out.push(format!(
+                            "land LF {:.1} m, sea LF {sea:.1?} m, ground {:.1} m",
+                            m(frame.lift(fx, fz)),
+                            m(s.ground_at(&frame, fx, fz))
+                        ));
                         let (cx, cy) = (v[0].floor() as i32, v[1].floor() as i32);
                         for p in &frame.map.placements {
                             let r = p.rect();
