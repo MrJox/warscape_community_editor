@@ -9,6 +9,14 @@ ported.
 | Project | Licence | Where | Used for |
 |---|---|---|---|
 | etwng by Tomasz Wegrzanowski (taw), `ui/` converter; research credits in its README: alpaca and Cpecific | MIT | `third_party/etwng/LICENSE`; ported to Rust in `crates/wce_ui_format` (the version-by-version layout of the UI file formats, the XML conventions and the float formatting) | UI layouts (`Version0xx`, `.cml`, `.fc`, `.twui.images`) to XML and back |
+| ww2ogg by Adam Gashlin (hcs64/ww2ogg) | BSD-3-Clause | `third_party/ww2ogg/COPYING`; its Wwise Vorbis rebuild (setup, packed codebooks, packet flags) re-implemented in `crates/wce_audio` (`codebooks.rs`, `decode.rs`), docs/formats/wem.md | decoding the game's sound files |
+| pywarscape-sound (PyWarscape Sound Contributors) | MIT | not vendored; the bank version 112 object layouts, re-implemented in `crates/wce_audio_format` and checked against the games' banks (docs/formats/wwise_bank.md) | reading and writing sound banks |
+
+## Data (vendored)
+
+| Data | Licence | Where | Used for |
+|---|---|---|---|
+| Wwise's Vorbis codebook library as packed by ww2ogg, `packed_codebooks_aoTuV_603.bin` (aoTuV 6.03 codebooks, Xiph.org and Aoyumi) | BSD-3-Clause (`third_party/ww2ogg/COPYING`) | `third_party/ww2ogg`, unchanged; built into `wce_audio` (`include_bytes!`) | a WEM names its codebooks by ID: decoding needs the library (user's decision, 2026-11-19) |
 
 ## Fonts (vendored)
 
@@ -49,6 +57,7 @@ Dear ImGui 1.92.9b docking and cimgui, MIT) and sdl3-sys (zlib licence), linked 
 the SDL3 platform backend is a port of Dear ImGui's `imgui_impl_sdl3.cpp` and the D3D11 renderer one of `imgui_impl_dx11.cpp` (both MIT).
 The gizmos come from dear-imguizmo-sys (MIT or Apache-2.0), which builds upstream ImGuizmo (MIT) without the local `SetAllowedItem`
 change: the viewport clears its button from Dear ImGui's hovered and active ids around `Manipulate` instead.
+The game's sounds are decoded by lewton (MIT or Apache-2.0, pure Rust Vorbis; without its Ogg feature).
 
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.
 

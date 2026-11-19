@@ -214,7 +214,23 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    7. Format docs: [wwise_bank.md](../formats/wwise_bank.md) (chunks, every HIRC layout), [wem.md](../formats/wem.md) (RIFF,
       the Wwise Vorbis header, the packing and encoding), [sound_data.md](../formats/sound_data.md) (`event_data.dat`,
       `.snd.meta` + triggers, `.amb` + `.xml`). **done**
-3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **todo**
+3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **in progress**
+   1. Crate `wce_audio` (headless): the Wwise codebook library (ww2ogg's `packed_codebooks_aoTuV_603.bin`, BSD-3, vendored in
+      `third_party/ww2ogg`; user 2026-11-19), the Wwise Vorbis -> Vorbis packet rebuild (`tools\wwvorbis.py`'s `wem2ogg`, in Rust,
+      no Ogg container), decoding with `lewton` 0.10 (no default features; user-approved). `wce_audio::decode::decode_wem` ->
+      `Pcm` (interleaved f32, WAVE channel order). About 400x real time (a 9-minute track in 1.3 s): decode on a worker. **done**
+   2. Decode gate `audio_decode_check` (`scripts/gates.sh`: `audio_decode`, `rome2_audio_decode`): every WEM the game loads
+      decodes to its header's frame count. Attila + TDD: 44,703 loose WEMs and 25,140 media inside banks (51 hours), 0 failures;
+      12 bank media are prefetched starts of loose files (stream type 1: only the start is in the bank) and 1 is plug-in data
+      (not RIFF). Rome 2: 41,088 loose WEMs, 0 failures. **done**
+   3. Name index: `event_data.dat`, `STID`, bank and file names, the triggers CSV, `.amb` events, TheTollski's `TWA_Names.txt`
+      (vendored, user's permission), user labels later; FNV-1 match. **todo**
+   4. Resolver: an event's actions -> targets -> containers -> sounds -> media (a bank's `DATA` or a loose `audio/<id>.wem`), across
+      the game's banks. **todo**
+   5. Playback: SDL3 audio streams (SDL already linked; SDL converts rate and channels), play / stop, position. **todo**
+   6. The Audio tool (`wce_audio_tool`, feature `audio`): banks list, a bank document with its readable object tree, an object's
+      fields, the global search, play buttons. **todo**
+   7. Seen working in the app. **todo**
 4. **Replace and add variations**: the encoder (aoTuV built in, the conversion from `tools\wwvorbis.py` ported to Rust, the alloc
    sizes of 1.4.10), the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties; an in-game check of media
    inside a bank. **todo**
