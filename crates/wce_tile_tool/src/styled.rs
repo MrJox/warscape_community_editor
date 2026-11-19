@@ -394,3 +394,48 @@ pub fn icon_button(icon: &str, id: &str, tip: &str) -> bool {
 
     clicked
 }
+
+/// A section's title (as `gui::separator_text` draws one) with icon buttons at its right: `(icon, id, tooltip, enabled)`; the one
+/// clicked.
+pub fn section(title: &str, buttons: &[(&str, &str, &str, bool)]) -> Option<usize> {
+    let start = gui::cursor_screen_pos();
+    let avail = gui::content_region_avail().x;
+    let spacing = gui::item_spacing().x;
+    let width = buttons.iter().map(|b| gui::button_width(b.0)).sum::<f32>() + spacing * buttons.len().saturating_sub(1) as f32;
+    let line = theme::u32(theme::mix(frame_bg(), theme::text(), 0.25));
+    let dl = gui::window_draw_list();
+
+    // The title, a short line before it and a line after it up to the buttons.
+    gui::set_cursor_screen_pos(gui::v2(start.x + 20.0, start.y));
+    gui::align_text_to_frame_padding();
+    gui::text(title);
+    let (lo, hi) = gui::item_rect();
+    let y = (lo.y + hi.y) * 0.5;
+    dl.line(gui::v2(start.x, y), gui::v2(start.x + 12.0, y), line, 1.0);
+    let end = start.x + avail - width - 8.0;
+    if end > hi.x + 8.0 {
+        dl.line(gui::v2(hi.x + 8.0, y), gui::v2(end, y), line, 1.0);
+    }
+
+    let mut clicked = None;
+    for (i, (icon, id, tip, enabled)) in buttons.iter().enumerate() {
+        if i == 0 {
+            gui::same_line();
+            gui::set_cursor_screen_pos(gui::v2(start.x + avail - width, start.y));
+        } else {
+            gui::same_line();
+        }
+
+        gui::begin_disabled(!enabled);
+        if gui::button(&format!("{icon}##{id}")) {
+            clicked = Some(i);
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(tip);
+        }
+    }
+
+    clicked
+}

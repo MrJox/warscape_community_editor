@@ -40,6 +40,9 @@ pub struct BiomesUi {
 
     /// Every number (advanced) or the plain choices.
     pub advanced: bool,
+
+    /// The texture rule of the biome shown.
+    pub rule: usize,
 }
 
 /// A brush stroke: taking away or adding, the area it works on (none: a new one), the dabs so far (world metres).
@@ -543,33 +546,19 @@ impl TileTool {
             }
         }
 
-        gui::separator_text("Texture");
-        let mut remove = None;
-        for (i, r) in b.rules.iter_mut().enumerate() {
-            gui::push_id_int(i as i32);
-            let title = if r.name.is_empty() { "(rule)".to_owned() } else { r.name.clone() };
-            if gui::collapsing_header(&format!("{title}###rule"), 0) {
-                changed |= crate::texture_rules_panel::rule_fields(&format!("rule{i}"), r, view);
-                if gui::small_button(&format!("{}  Remove this rule", icons::TRASH_2)) {
-                    remove = Some(i);
-                }
-            }
-
-            gui::pop_id();
-        }
-
-        if let Some(i) = remove {
-            b.rules.remove(i);
-            changed = true;
-        }
-
-        if gui::small_button(&format!("{}  Add a texture rule", icons::PLUS)) {
-            b.rules.push(wce_tile::texture_rules::Rule {
-                name: "Ground".to_owned(),
-                group: view.groups.first().cloned().unwrap_or_default(),
-                ..Default::default()
-            });
-            changed = true;
+        let mut selected = self.biomes.rule;
+        changed |= crate::texture_rules_panel::rule_list(
+            "biomerules",
+            "Texture",
+            &mut b.rules,
+            &mut selected,
+            view.groups,
+            view.swatches,
+            "Ground",
+        );
+        self.biomes.rule = selected;
+        if let Some(r) = b.rules.get_mut(selected) {
+            changed |= crate::texture_rules_panel::rule_fields(&format!("rule{selected}"), r, view);
         }
 
         changed

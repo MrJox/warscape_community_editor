@@ -1481,7 +1481,8 @@ fn params_rows(kind: Kind, p: &mut Params, advanced: bool) -> bool {
 impl TileTool {
     fn clutter_rows(&mut self, e: &mut Editor, defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[VegetationSet]) -> bool {
         let mut changed = false;
-        gui::separator_text("Rules (the first that matches a building is its)");
+        let add =
+            styled::section("Rules (the first that matches a building is its)", &[(icons::PLUS, "addrule", "Add a rule", true)]).is_some();
         note(
             "A rule matches ordinary buildings by their key (patterns with *, several separated by |), less its exceptions, or the buildings \
          of its categories; its props go all around them.",
@@ -1577,7 +1578,7 @@ impl TileTool {
             changed = true;
         }
 
-        if gui::small_button(&format!("{}  Add a rule", icons::PLUS)) {
+        if add {
             defs.push(wce_tile::ground_coverage::ClutterDef { name: "New rule".to_owned(), ..Default::default() });
             changed = true;
         }
