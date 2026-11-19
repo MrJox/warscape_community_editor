@@ -2350,6 +2350,7 @@ impl Tool for TerrainTool {
             e.scene.campaign = false;
             e.scene.terrain_units = 0.0;
             e.scene.z_stretch = 1.0;
+            e.scene.vegetation_season.clear();
             e.scene.campaign_shroud = None;
             self.lighting = None;
             if let Some(sky) = self.skybox.take() {
@@ -2399,6 +2400,11 @@ impl Tool for TerrainTool {
         wce_foundation::wce_prof!("terrain_tool.props");
         let view = &self.view;
         self.props.season_bit = 1 << ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
+        // A campaign map's vegetation takes the view's season (its forests' `<base>_<season>_diffuse.dds`: spring's `_sp` in the game's
+        // turn-1 frame); a battle map's tiles set theirs.
+        if e.scene.campaign && e.scene.vegetation_season != self.season {
+            e.scene.vegetation_season.clone_from(&self.season);
+        }
         self.props.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), view.tiles_loaded());
     }
 
