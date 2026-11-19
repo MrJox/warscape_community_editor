@@ -10,6 +10,7 @@
 pub mod bits;
 pub mod codebooks;
 pub mod decode;
+pub mod edit;
 pub mod encode;
 pub mod import;
 pub mod library;

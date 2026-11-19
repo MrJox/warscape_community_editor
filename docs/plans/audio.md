@@ -264,8 +264,15 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       to 252 (10); quality 4: 77. **done**
    3. Audio import (`wce_audio::import::read_sound`): WAV (PCM 8/16/24/32-bit, float 32/64, extensible), Ogg Vorbis (pages read
       here, lewton decodes), WEM; any rate (no resampling: the WEM keeps the rate). **done**
-   4. Bank writer: DIDX/DATA rebuilt (media alignment as the game's), HIRC objects replaced; a Sound's source sizes updated;
-      round trip unchanged when nothing changes. **todo**
+   4. Bank writer and edits. The game's rules (checked on every Attila bank): media in `DATA` at 16-byte boundaries, zeros
+      between, nothing after the last; an in-bank source has `file_id` = its media bank's ID, `file_offset` = the media's offset
+      from the start of that bank's file, `in_memory_size` = its size (all 38,117); a streamed one `file_id` = its media ID,
+      `in_memory_size` 0. `Bank::set_media` / `remove_media` / `data_position` / `objects_mut`; `wce_audio::edit::EditSet`:
+      `replace_media` (banks and loose file; a prefetched start keeps its length), `add_variation` (a sound copied from the
+      container's first sound, new IDs, media in the same bank or loose), `remove_variation`, `set_property`, `fix_offsets` (every
+      source into a changed media bank). Gate `audio_edit_check` (`audio_edit`) on Attila + TDD: 0 inconsistent sources as
+      shipped; replace by the same bytes changes nothing; replace by a new sound edits 8 banks, stays consistent, decodes; add then
+      remove a variation gives the banks back byte for byte; a property reads back. **done**
    5. Documents: an edited bank is a document (undo/redo, Save to `<projects>/loose/audio/...`, revert); replacing a loose WEM
       writes `<projects>/loose/audio/<id>.wem`. **todo**
    6. Tool: Replace (on a sound or media), Add variation (to a random/sequence container), properties of containers (volume,
