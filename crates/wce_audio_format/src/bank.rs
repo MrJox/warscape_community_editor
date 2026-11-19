@@ -175,7 +175,7 @@ fn read_chunk(tag: [u8; 4], data: &[u8]) -> Result<Chunk> {
     let chunk = match &tag {
         b"BKHD" => Chunk::Header(Header { version: r.u32()?, bank_id: r.u32()?, language_id: r.u32()?, rest: r.rest().to_vec() }),
         b"DIDX" => {
-            if data.len() % 12 != 0 {
+            if !data.len().is_multiple_of(12) {
                 return Err(FormatError::Invalid(format!("{} bytes is not a whole number of 12-byte entries", data.len())));
             }
 

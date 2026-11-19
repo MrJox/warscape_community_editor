@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use wce_audio_format::bank::{Bank, kind_name};
 use wce_audio_format::event_data::EventData;
-use wce_audio_format::fnv;
 use wce_audio_format::wem::Wem;
+use wce_audio_format::{fnv, hirc};
 use wce_vfs::{Config, GameProfile, Vfs};
 
 #[derive(Default)]
@@ -53,6 +53,7 @@ fn main() {
     println!("{} packs, {} missing mods", vfs.packs().len(), vfs.missing_mods().len());
 
     let mut banks = Tally::default();
+    let (mut typed, mut typed_failed) = (BTreeMap::<u8, (usize, usize)>::new(), Vec::<String>::new());
     let (mut versions, mut kinds, mut chunk_tags) = (BTreeMap::new(), BTreeMap::<u8, usize>::new(), BTreeMap::<String, usize>::new());
     for path in vfs.list("", ".bnk") {
         for (pack, bytes) in copies(&vfs, path) {
@@ -64,9 +65,24 @@ fn main() {
             banks.read += 1;
             match Bank::read(&bytes) {
                 Ok(bank) if bank.write() == bytes => {
-                    *versions.entry(bank.header().map_or(0, |h| h.version)).or_insert(0usize) += 1;
+                    let version = bank.header().map_or(0, |h| h.version);
+                    *versions.entry(version).or_insert(0usize) += 1;
                     for o in bank.objects() {
                         *kinds.entry(o.kind).or_default() += 1;
+                        if let Some(parsed) = hirc::parse(version, o.kind, &o.body) {
+                            let tally = typed.entry(o.kind).or_default();
+                            match parsed {
+                                Ok(object) if object.write() == o.body => tally.0 += 1,
+                                Ok(_) => {
+                                    tally.1 += 1;
+                                    typed_failed.push(format!("{pack}: {path}: {} {}: written bytes differ", kind_name(o.kind), o.id));
+                                }
+                                Err(e) => {
+                                    tally.1 += 1;
+                                    typed_failed.push(format!("{pack}: {path}: {} {}: {e}", kind_name(o.kind), o.id));
+                                }
+                            }
+                        }
                     }
                     for c in &bank.chunks {
                         *chunk_tags.entry(String::from_utf8_lossy(&c.tag()).into_owned()).or_default() += 1;
@@ -128,7 +144,11 @@ fn main() {
     println!("bank versions: {versions:?}");
     println!("chunks: {chunk_tags:?}");
     for (kind, n) in &kinds {
-        println!("  HIRC {kind:>2} {:<28} {n}", kind_name(*kind));
+        let typed = typed.get(kind).map_or("raw".to_owned(), |(ok, failed)| format!("typed: {ok} ok, {failed} failed"));
+        println!("  HIRC {kind:>2} {:<28} {n:>7}  {typed}", kind_name(*kind));
+    }
+    for f in typed_failed.iter().take(20) {
+        println!("  {f}");
     }
     println!("WEM codecs: {:?}", codecs.iter().map(|(c, n)| (format!("{c:#06x}"), *n)).collect::<Vec<_>>());
     println!("Vorbis codebook hash != FNV-1 of the setup: {}", hash_bad.len());
@@ -136,6 +156,8 @@ fn main() {
         println!("  {f}");
     }
 
-    let ok = [banks.report("banks"), wems.report("WEMs"), event_data.report("event_data.dat")].iter().all(|&ok| ok) && hash_bad.is_empty();
+    let ok = [banks.report("banks"), wems.report("WEMs"), event_data.report("event_data.dat")].iter().all(|&ok| ok)
+        && hash_bad.is_empty()
+        && typed_failed.is_empty();
     std::process::exit(if ok { 0 } else { 1 });
 }
