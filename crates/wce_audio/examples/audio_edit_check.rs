@@ -1,8 +1,9 @@
 //! Gate of the bank edits on a game's banks (docs/plans/audio.md, step 4):
 //! 1. every in-bank source points at its media (file offset and size) in the game as shipped;
 //! 2. replacing a media file with its own bytes changes no byte;
-//! 3. replacing it with a new sound keeps every source consistent, and the new media decodes;
-//! 4. adding a variation to a random container, then removing it, gives the banks back byte for byte;
+//! 3. replacing it with a new sound keeps every source consistent, and the new media decodes; replacing it the way the game takes it
+//!    (`replace_audio`) redirects every source to a new loose file and touches no data bank;
+//! 4. adding a variation to a random container (its media a new loose file), then removing it, gives the banks back byte for byte;
 //! 5. a property set on the container reads back.
 //!
 //!   audio_edit_check <game folder> [mod pack...]
@@ -134,6 +135,23 @@ fn main() {
         failures.push("a replace broke the banks");
     }
 
+    // 3b. Replace the way the game takes it: the sources redirected to a new loose file, no data bank touched.
+    let mut edits = EditSet::default();
+    let new_id = edits.replace_audio(&lib, &vfs, media, &wem).expect("replace_audio");
+    let data_banks_touched = edits.banks.keys().filter(|b| !lib.banks[**b].bank.media_index().is_empty()).count();
+    let users_left = (0..lib.banks.len())
+        .flat_map(|b| edits.bank(&lib, b).objects().iter().map(move |o| (b, o)))
+        .filter(|(b, o)| matches!(hirc::parse(lib.banks[*b].version, o.kind, &o.body), Some(Ok(Object::Sound(s))) if s.source.source_id == media))
+        .count();
+    let loose_ok = edits.loose.get(&format!("audio/{new_id}.wem")).is_some_and(|w| decode_wem(w).is_ok());
+    println!(
+        "3b. redirected to #{new_id}: {} banks edited, {data_banks_touched} data banks touched, {users_left} sounds still on #{media}, loose file decodes: {loose_ok}",
+        edits.banks.len()
+    );
+    if data_banks_touched != 0 || users_left != 0 || !loose_ok || !inconsistent(&lib, &edits).is_empty() {
+        failures.push("replace_audio");
+    }
+
     // 4. Add a variation, then remove it.
     let mut edits = EditSet::default();
     let added = edits.add_variation(&lib, container, &wem).expect("add");
@@ -146,7 +164,7 @@ fn main() {
         Some(Object::Sound(s)) => s.source.source_id,
         _ => 0,
     };
-    let plays = (0..lib.banks.len()).find_map(|b| edits.bank(&lib, b).media(new_media).map(decode_wem)).is_some_and(|r| r.is_ok());
+    let plays = edits.loose.get(&format!("audio/{new_media}.wem")).is_some_and(|w| decode_wem(w).is_ok());
     println!(
         "4. variation {added} added to container {container}: {children} children, inconsistent sources {}, its media decodes: {plays}",
         bad.len()
