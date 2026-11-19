@@ -137,7 +137,7 @@ the terrain, the scene or the rules change. The tile keeps its rules in `texture
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
 rock on slopes). The window outlines the selected rule's area in the viewport. Both this window and the biomes' (`styled.rs`) show
 **Simple** (named choices: a condition's Flat / Gentle / Steep / Cliffs, a strength's Faint ... Full, the edges' Clean ... Very patchy) or
-**Advanced** (every number), in a label column and a value column that keep their places; a condition is a chip and a bar that draws
+**Advanced** (every number), in a label column and a value column that keep their places; a condition is a check box and a bar that draws
 the weight it gives (its fades as ramps; drag an end, onto the bar's end for no limit, Shift + drag for its softness); the texture is
 picked from the tile's groups' and variations' swatches.
 

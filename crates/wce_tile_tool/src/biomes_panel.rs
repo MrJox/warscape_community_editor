@@ -182,8 +182,6 @@ impl TileTool {
             return;
         }
 
-        styled::push_look();
-
         gui::text_wrapped(
             "A biome is trees, undergrowth, rocks and a texture laid in areas. An area is a vegetation exclusion polygon: the game's own trees \
              give way to the biome's there. Its contents are made again whenever it, its biome or the ground changes.",
@@ -256,7 +254,6 @@ impl TileTool {
             gui::text_disabled(&format!("{areas} area(s): {trees} tree(s) and plant(s), {rocks} rock(s)"));
         }
 
-        styled::pop_look();
         gui::end();
         self.biomes.open = open;
     }
