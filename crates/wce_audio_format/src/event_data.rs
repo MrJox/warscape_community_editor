@@ -1,5 +1,5 @@
 //! `audio/event_data.dat`: the game's list of sound events, state groups, dialogue events and game parameters (Attila; both of Rome
-//! 2's copies have the same layout). Integers are u32, strings a u32 length and UTF-8. Six sections, in order (docs/formats/event_data.md):
+//! 2's copies have the same layout). Integers are u32, strings a u32 length and UTF-8. Six sections, in order (docs/formats/sound_data.md):
 //!
 //! 1. events: name + a 4-byte value read as f32 (0 for most; its meaning is not known yet);
 //! 2. and 3. two lists of state groups: name + state names;
