@@ -160,7 +160,7 @@ fn duplicate_destination_keeps_original_document_history_and_one_document_rule()
     let id = docs.add(&mut scene, Box::new(first), "terrain").unwrap();
     let mut duplicate = doc(model.clone());
     duplicate.save_dir = Some(root.0.join("."));
-    assert_eq!(docs.add(&mut scene, Box::new(duplicate), "terrain").unwrap(), id);
+    assert!(docs.add(&mut scene, Box::new(duplicate), "terrain").is_err());
     assert_eq!(docs.order().len(), 1);
     assert_eq!(state(docs.find_as::<MapDocument>(id).unwrap()), before);
     let mut different = doc(model);

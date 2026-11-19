@@ -26,6 +26,33 @@ pub struct Folder {
     pub root: PathBuf,
     pub files: BTreeMap<String, Stamp>,
 }
+
+pub enum ResourceEntry {
+    File,
+    Directory,
+    Ignore,
+}
+
+/// Follow file links for observations, but never descend through linked folders or
+/// treat a dangling link as a map resource. Readers and freshness scans share this rule.
+pub fn resource_entry(entry: &fs::DirEntry) -> io::Result<ResourceEntry> {
+    let kind = entry.file_type()?;
+    if kind.is_symlink() {
+        return match fs::metadata(entry.path()) {
+            Ok(metadata) if metadata.is_file() => Ok(ResourceEntry::File),
+            Ok(_) => Ok(ResourceEntry::Ignore),
+            Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => Ok(ResourceEntry::Ignore),
+            Err(error) => Err(error),
+        };
+    }
+    Ok(if kind.is_dir() {
+        ResourceEntry::Directory
+    } else if kind.is_file() {
+        ResourceEntry::File
+    } else {
+        ResourceEntry::Ignore
+    })
+}
 impl Folder {
     pub fn empty(root: &Path) -> Self {
         Self { root: root.to_owned(), files: BTreeMap::new() }
@@ -48,11 +75,24 @@ impl Folder {
                 if crate::publication::reserved(&entry.file_name().to_string_lossy()) {
                     continue;
                 }
-                if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
-                    todo.push(entry.path())
-                } else {
-                    out.record(&entry.path())?;
+                match resource_entry(&entry).map_err(|e| e.to_string())? {
+                    ResourceEntry::Directory => todo.push(entry.path()),
+                    ResourceEntry::File => out.record(&entry.path())?,
+                    ResourceEntry::Ignore => {}
                 }
+            }
+        }
+        Ok(out)
+    }
+    fn capture_paths(root: &Path, paths: &[PathBuf]) -> Result<Self, String> {
+        let mut out = Self::empty(root);
+        for path in paths {
+            match fs::metadata(path) {
+                Ok(metadata) if metadata.is_dir() => out.files.extend(Self::capture(path)?.files),
+                Ok(metadata) if metadata.is_file() => out.record(path)?,
+                Ok(_) => return Err(format!("{} is not a resource file or folder", path.display())),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("{}: {error}", path.display())),
             }
         }
         Ok(out)
@@ -87,6 +127,7 @@ pub struct Changes {
 pub struct Attempt {
     sources: Vec<Folder>,
     pub target: Folder,
+    target_paths: Option<Vec<PathBuf>>,
 }
 impl Changes {
     pub fn new(source: Option<&Folder>) -> Self {
@@ -123,7 +164,7 @@ impl Changes {
                 Some(before) => before.files != target.files,
                 None => !target.files.is_empty(),
             };
-        Ok((Attempt { sources, target }, changed))
+        Ok((Attempt { sources, target, target_paths: None }, changed))
     }
     pub fn reason(&self, path: &Path) -> Result<Option<String>, String> {
         let (_, changed) = self.current(path)?;
@@ -156,6 +197,14 @@ impl Changes {
     }
     /// Export has its own destination; it must not retarget the document's Save folder.
     pub fn begin_export(&self, path: &Path) -> Result<Attempt, String> {
+        self.export_attempt(path, None)
+    }
+    /// Observe only this map's loose subtree and pack, not other projects sharing the output root.
+    pub fn begin_export_scoped(&self, path: &Path, resources: &[&str]) -> Result<Attempt, String> {
+        let paths = resources.iter().map(|rel| crate::publication::resource_path(path, rel)).collect::<Result<Vec<_>, _>>()?;
+        self.export_attempt(path, Some(paths))
+    }
+    fn export_attempt(&self, path: &Path, target_paths: Option<Vec<PathBuf>>) -> Result<Attempt, String> {
         if self.destination_needs_choice {
             return Err("Review the populated Save folder with Save (Overwrite or Cancel) before exporting".into());
         }
@@ -167,7 +216,11 @@ impl Changes {
             }
             sources.push(current);
         }
-        Ok(Attempt { sources, target: Folder::capture(path)? })
+        let target = match &target_paths {
+            Some(paths) => Folder::capture_paths(path, paths)?,
+            None => Folder::capture(path)?,
+        };
+        Ok(Attempt { sources, target, target_paths })
     }
     pub fn note_owned(&mut self, path: &Path) -> Result<(), String> {
         for observed in self.sources.iter_mut().chain(self.destination.iter_mut()).chain(self.partial.iter_mut()) {
@@ -190,10 +243,17 @@ impl Changes {
 }
 impl Attempt {
     pub fn recheck(&self) -> Result<(), String> {
-        for folder in self.sources.iter().chain(std::iter::once(&self.target)) {
+        for folder in &self.sources {
             if Folder::capture(&folder.root)?.files != folder.files {
                 return Err("Files changed while staging; nothing has been published. Save again to review the change".into());
             }
+        }
+        let target = match &self.target_paths {
+            Some(paths) => Folder::capture_paths(&self.target.root, paths)?,
+            None => Folder::capture(&self.target.root)?,
+        };
+        if target.files != self.target.files {
+            return Err("Export destination changed while staging; nothing has been published".into());
         }
         Ok(())
     }

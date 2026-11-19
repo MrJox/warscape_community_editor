@@ -6,6 +6,7 @@
 use wce_scene::render_scene::{DocumentId, LayerId, RenderScene};
 
 use crate::document::{Document, SaveTarget};
+use std::collections::VecDeque;
 
 struct Entry {
     doc: Box<dyn Document>,
@@ -28,10 +29,15 @@ pub struct ChangedSave {
     pub reason: String,
 }
 
-#[derive(Default)]
+struct SaveBatch {
+    remaining: VecDeque<DocumentId>,
+    failures: Vec<String>,
+}
+
 pub struct DocumentManager {
     pending_save: Option<ChangedSave>,
-    pending_save_all: bool,
+    pending_save_all: Option<SaveBatch>,
+    prompt_saves: bool,
     entries: Vec<Entry>,
     order: Vec<DocumentId>,
 
@@ -45,6 +51,21 @@ pub struct DocumentManager {
     saved: Vec<String>,
 }
 
+impl Default for DocumentManager {
+    fn default() -> Self {
+        Self {
+            pending_save: None,
+            pending_save_all: None,
+            prompt_saves: true,
+            entries: vec![],
+            order: vec![],
+            active_tool: String::new(),
+            real_scene: false,
+            saved: vec![],
+        }
+    }
+}
+
 impl DocumentManager {
     /// Takes the document, creates its layer and publishes it (the active one when it is the active tool's).
     ///
@@ -55,10 +76,7 @@ impl DocumentManager {
         if let Some(path) = doc.save_destination()
             && let Some(id) = self.destination_owner(&path, None)?
         {
-            if self.tool_of(id) != tool_id {
-                return Err("Save destination is owned by another tool".into());
-            }
-            return Ok(id);
+            return Err(format!("Save destination is already owned by open document {id}; replace it explicitly"));
         }
         if !doc.stand_in()
             && let Some(old) = self.of_tool(tool_id).and_then(|id| self.find(id))
@@ -89,7 +107,7 @@ impl DocumentManager {
         self.entries.remove(i);
         if self.pending_save.as_ref().is_some_and(|pending| pending.id == id) {
             self.pending_save = None;
-            self.pending_save_all = false;
+            self.pending_save_all = None;
         }
         self.order.retain(|&d| d != id);
         self.apply_stand_ins(scene);
@@ -232,20 +250,33 @@ impl DocumentManager {
     pub fn pending_changed_save(&self) -> Option<&ChangedSave> {
         self.pending_save.as_ref()
     }
+    /// Script execution refuses conflicts instead of creating choices with no answerer.
+    pub fn set_save_prompts(&mut self, enabled: bool) -> bool {
+        let previous = std::mem::replace(&mut self.prompt_saves, enabled);
+        if !enabled {
+            self.pending_save = None;
+            self.pending_save_all = None;
+        }
+        previous
+    }
     pub fn answer_changed_save(&mut self, overwrite: bool) -> Result<String, String> {
         let pending = self.pending_save.take().ok_or("no changed-file Save awaiting a choice")?;
-        let continue_all = std::mem::take(&mut self.pending_save_all);
+        let batch = self.pending_save_all.take();
         let result = if overwrite {
             self.save_with_policy(pending.id, &pending.target, SavePolicy::Overwrite)
         } else {
             Ok("Save cancelled; document and files unchanged".into())
         };
-        if overwrite
-            && continue_all
-            && let Ok(message) = result
-        {
-            let mut messages = vec![message];
-            let all = self.save_all(&mut messages);
+        if overwrite && let Some(mut batch) = batch {
+            let mut messages = batch.failures.clone();
+            match result {
+                Ok(message) => messages.push(message),
+                Err(message) => {
+                    messages.push(message.clone());
+                    batch.failures.push(message);
+                }
+            }
+            let all = self.resume_save_all(batch, &mut messages);
             let message = messages.join("; ");
             if all { Ok(message) } else { Err(message) }
         } else {
@@ -253,13 +284,16 @@ impl DocumentManager {
         }
     }
     pub fn save_to(&mut self, id: DocumentId, target: &SaveTarget) -> Result<String, String> {
-        self.save_with_policy(id, target, SavePolicy::Prompt)
-    }
-    pub fn save_to_overwrite(&mut self, id: DocumentId, target: &SaveTarget) -> Result<String, String> {
-        self.save_with_policy(id, target, SavePolicy::Overwrite)
+        let policy = if self.prompt_saves { SavePolicy::Prompt } else { SavePolicy::RefuseChanges };
+        self.save_with_policy(id, target, policy)
     }
     fn save_with_policy(&mut self, id: DocumentId, target: &SaveTarget, policy: SavePolicy) -> Result<String, String> {
         let d = self.find(id).ok_or("no such document")?;
+        let owned = target.path.as_os_str().is_empty()
+            || d.save_destination()
+                .map(|path| Ok::<_, String>(wce_foundation::save_path::key(&path)? == wce_foundation::save_path::key(&target.path)?))
+                .transpose()?
+                .unwrap_or(false);
         let destination =
             if target.path.as_os_str().is_empty() { d.save_destination() } else { d.save_destination().map(|_| target.path.clone()) };
         if let Some(path) = destination
@@ -285,11 +319,11 @@ impl DocumentManager {
         } else {
             e.doc.save(target)?;
         }
-        if target.path.as_os_str().is_empty() {
+        if owned {
             e.doc.history_mut().mark_saved();
         }
         let key = e.doc.source_key();
-        let message = if !target.path.as_os_str().is_empty() && e.doc.modified() {
+        let message = if !owned && !target.path.as_os_str().is_empty() && e.doc.modified() {
             format!("a copy saved to {}; the document's own file does not have the edits yet (Save)", target.path.display())
         } else {
             match e.doc.save_message() {
@@ -297,7 +331,7 @@ impl DocumentManager {
                 _ => format!("saved {}", e.doc.title()),
             }
         };
-        if target.path.as_os_str().is_empty() {
+        if owned {
             self.saved.push(key);
         }
         Ok(message)
@@ -310,16 +344,41 @@ impl DocumentManager {
 
     /// Saves every modified document that can be saved. The messages say what was saved and explain each failure; true when nothing failed.
     pub fn save_all(&mut self, messages: &mut Vec<String>) -> bool {
-        let all = self.save_all_with_policy(messages, SavePolicy::Prompt);
-        self.pending_save_all = self.pending_save.is_some();
-        all
+        if !self.prompt_saves {
+            return self.save_all_without_prompt(messages);
+        }
+        if self.pending_save.is_some() {
+            messages.push("Resolve the pending Save choice before starting Save All".into());
+            return false;
+        }
+        self.resume_save_all(SaveBatch { remaining: self.order.iter().copied().collect(), failures: vec![] }, messages)
+    }
+
+    fn resume_save_all(&mut self, mut batch: SaveBatch, messages: &mut Vec<String>) -> bool {
+        while let Some(id) = batch.remaining.pop_front() {
+            let Some(entry) = self.entry(id).filter(|e| e.doc.modified() && e.doc.can_save()) else { continue };
+            let title = entry.doc.title();
+            match self.save_one(id) {
+                Ok(message) => messages.push(message),
+                Err(message) => {
+                    let message = format!("cannot save {title}: {message}");
+                    messages.push(message.clone());
+                    if self.pending_save.as_ref().is_some_and(|pending| pending.id == id) {
+                        self.pending_save_all = Some(batch);
+                        return false;
+                    }
+                    batch.failures.push(message);
+                }
+            }
+        }
+        batch.failures.is_empty()
     }
 
     /// Best-effort Save when no UI can answer a conflict. Attempts every document,
     /// refuses unreviewed outside changes, and leaves failed edits dirty for recovery.
     pub fn save_all_without_prompt(&mut self, messages: &mut Vec<String>) -> bool {
         self.pending_save = None;
-        self.pending_save_all = false;
+        self.pending_save_all = None;
         self.save_all_with_policy(messages, SavePolicy::RefuseChanges)
     }
 

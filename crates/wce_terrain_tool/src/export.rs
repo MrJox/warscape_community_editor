@@ -161,7 +161,6 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     let model = d.publication_model()?;
     let changes = d.io_changes.clone();
     let normals = d.normal_inputs();
-    let attempt = changes.lock().map_err(|e| e.to_string())?.begin_export(&out)?;
     let map = d.name.clone();
     let revision = wce_editor_core::document::Document::history(d).version();
     let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml", None, "");
@@ -174,23 +173,28 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     std::thread::spawn(move || {
         let _lease = lease;
         let t0 = Instant::now();
-        let built = if model.built { Some(built_changes(&model, &db, &name, packs.as_deref())) } else { None };
-        let r = built
-            .unwrap_or_else(|| {
-                build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string())
-            })
-            .and_then(|b| {
-                let (folder, pack) = write(&out, &name, &b.files, profile, &model, &normals, &changes, attempt)?;
-                Ok(Exported {
-                    map: name.clone(),
-                    revision,
-                    folder,
-                    pack,
-                    files: b.files,
-                    messages: b.messages,
-                    secs: t0.elapsed().as_secs_f64(),
+        let (folder, bare) = game_folder(&name);
+        let pack = format!("terrain_{bare}.pack");
+        let attempt = changes.lock().map_err(|e| e.to_string()).and_then(|changes| changes.begin_export_scoped(&out, &[&folder, &pack]));
+        let r = attempt.and_then(|attempt| {
+            let built = if model.built { Some(built_changes(&model, &db, &name, packs.as_deref())) } else { None };
+            built
+                .unwrap_or_else(|| {
+                    build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string())
                 })
-            });
+                .and_then(|b| {
+                    let (folder, pack) = write(&out, &name, &b.files, profile, &model, &normals, &changes, attempt)?;
+                    Ok(Exported {
+                        map: name.clone(),
+                        revision,
+                        folder,
+                        pack,
+                        files: b.files,
+                        messages: b.messages,
+                        secs: t0.elapsed().as_secs_f64(),
+                    })
+                })
+        });
         let _ = tx.send(r);
     });
 

@@ -150,16 +150,41 @@ fn normalized_cross_resource_file_sources_cannot_be_overwritten() {
 }
 
 #[test]
-fn destination_only_keys_and_spelling_changes_refuse_even_with_overwrite() {
+fn destination_only_files_survive_save_overwrite_and_later_plain_save() {
+    let root = Scratch::new();
+    fixture().write_to(&root.0).unwrap();
+    let mut d = doc(built::read("test", &MapFiles::from_dir(&root.0).unwrap()).unwrap());
+    d.save_dir = Some(root.0.clone());
+    d.observe_save_destination().unwrap();
+    changed(&mut d);
+    for name in ["Thumbs.db", "desktop.ini", ".DS_Store", "deployment/old.xml", "TEd-added.bin"] {
+        let path = root.0.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"retain exactly").unwrap();
+    }
+    assert!(d.save(&SaveTarget::default()).is_err(), "outside additions still need a choice");
+    d.save_overwrite(&SaveTarget::default()).unwrap();
+    d.save(&SaveTarget::default()).unwrap();
+    for name in ["Thumbs.db", "desktop.ini", ".DS_Store", "deployment/old.xml", "TEd-added.bin"] {
+        assert_eq!(std::fs::read(root.0.join(name)).unwrap(), b"retain exactly");
+    }
+}
+
+#[test]
+fn destination_spelling_and_combined_file_directory_conflicts_refuse_even_with_overwrite() {
     for spelling in [false, true] {
         let root = Scratch::new();
         fixture().write_to(&root.0).unwrap();
         if spelling {
             std::fs::rename(root.0.join("terrain.tile_list"), root.0.join("TERRAIN.TILE_LIST")).unwrap();
         } else {
-            std::fs::write(root.0.join("unknown.bin"), b"retain").unwrap();
+            std::fs::write(root.0.join("only-in-destination"), b"retain").unwrap();
         }
-        let mut d = doc(built::read("test", &fixture()).unwrap());
+        let mut model = built::read("test", &fixture()).unwrap();
+        if !spelling {
+            model.carried.insert("only-in-destination/child.bin".into(), Blob::Bytes(Arc::from(&b"new"[..])));
+        }
+        let mut d = doc(model);
         changed(&mut d);
         let before = state(&d);
         let on_disk = disk(&root.0);

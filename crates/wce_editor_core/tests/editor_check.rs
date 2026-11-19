@@ -131,6 +131,7 @@ struct NumberDoc {
     history: CommandStack<Vec<f32>>,
     role: Role,
     saves: i32,
+    save_attempts: i32,
     publishes: i32,
     changed_on_disk: bool,
     save_error: Option<String>,
@@ -147,6 +148,7 @@ impl NumberDoc {
             history: CommandStack::new(vec![0.0; n]),
             role,
             saves: 0,
+            save_attempts: 0,
             publishes: 0,
             changed_on_disk: false,
             save_error: None,
@@ -237,6 +239,7 @@ impl Document for NumberDoc {
     }
 
     fn save(&mut self, _: &SaveTarget) -> Result<(), String> {
+        self.save_attempts += 1;
         if let Some(error) = &self.save_error {
             return Err(error.clone());
         }

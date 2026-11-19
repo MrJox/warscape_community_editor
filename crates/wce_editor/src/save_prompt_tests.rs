@@ -61,6 +61,9 @@ impl Document for SaveDoc {
     fn save_destination(&self) -> Option<PathBuf> {
         Some(self.path.clone())
     }
+    fn source_key(&self) -> String {
+        self.path.to_string_lossy().into_owned()
+    }
     fn save_changes(&self, _: &SaveTarget) -> Result<Option<String>, String> {
         Ok(self.outside.then(|| "TEd changed the original".into()))
     }
@@ -358,4 +361,71 @@ fn emergency_save_keeps_recovery_of_the_conflict_and_saves_later_documents() {
     let found = wce_editor_core::autosave::stale(&recovery);
     assert_eq!(found.len(), 1);
     assert_eq!(std::fs::read(found[0].copy_dir(0).unwrap().join("draft.txt")).unwrap(), b"unsaved in-memory edits");
+}
+
+#[test]
+fn rejected_replacement_preserves_the_current_document_and_same_folder_reload_replaces_it() {
+    let mut f = Fixture::new();
+    let (old, _) = f.add(false);
+    let (other, _) = f.add(false);
+    let other_path = f.editor().docs.find(other).unwrap().save_destination().unwrap();
+    let old_path = f.editor().docs.find(old).unwrap().save_destination().unwrap();
+    let layer = f.editor().docs.layer_of(old);
+    assert!(f.editor().replace_document("tool-0", Box::new(SaveDoc::new(other_path, false))).is_err());
+    assert_eq!(f.editor().docs.of_tool("tool-0"), Some(old));
+    assert_eq!(f.editor().docs.layer_of(old), layer);
+    assert!(f.editor().docs.find(old).unwrap().modified());
+    let fresh = SaveDoc::new(old_path, false);
+    let fresh_id = fresh.id();
+    assert_eq!(f.editor().replace_document("tool-0", Box::new(fresh)).unwrap(), fresh_id);
+    assert_ne!(fresh_id, old);
+    assert!(f.editor().docs.find(old).is_none());
+    assert!(f.editor().docs.find(other).is_some());
+}
+
+#[test]
+fn discard_clears_a_conflicting_save_before_closing_or_quitting() {
+    for kind in [PromptKind::Close, PromptKind::Quit, PromptKind::Replace] {
+        let mut f = Fixture::new();
+        let (id, saves) = f.add(true);
+        f.prompt(kind, id, Rc::new(Cell::new(false)));
+        assert!(f.editor().answer_prompt(Answer::Save).is_err());
+        f.editor().answer_prompt(Answer::Discard).unwrap();
+        assert!(f.editor().docs.pending_changed_save().is_none());
+        assert_eq!(f.editor().prompt_kind(), PromptKind::None);
+        assert_eq!(saves.get(), 0);
+        f.frame();
+        // SAFETY: the fixture owns the current context and only reads popup bookkeeping.
+        unsafe {
+            assert_eq!((*f.context).OpenPopupStack.Size, 0);
+        }
+    }
+}
+
+#[test]
+fn script_save_and_close_fail_without_leaving_a_modal_or_closing_documents() {
+    for command in ["save", "save_all", "close_all save"] {
+        let mut f = Fixture::new();
+        let (id, saves) = f.add(true);
+        f.editor().docs.set_active_tool("tool-0");
+        let mut script = ScriptRunner::default();
+        script.load_text(command);
+        assert!(!f.editor().step_script(&mut script));
+        assert!(script.error().contains("TEd changed"), "{}", script.error());
+        assert!(f.editor().docs.pending_changed_save().is_none());
+        assert!(f.editor().docs.find(id).unwrap().modified());
+        assert_eq!(saves.get(), 0);
+        assert!(f.editor().docs.save_one(id).is_err());
+        assert!(f.editor().docs.pending_changed_save().is_some());
+    }
+}
+
+#[test]
+fn save_as_to_the_owned_folder_notifies_the_indexer() {
+    let mut f = Fixture::new();
+    let (id, _) = f.add(false);
+    let path = f.editor().docs.find(id).unwrap().save_destination().unwrap();
+    f.editor().docs.save_to(id, &SaveTarget { path: path.clone() }).unwrap();
+    assert_eq!(f.editor().docs.take_saved(), vec![path.to_string_lossy().into_owned()]);
+    assert!(!f.editor().docs.find(id).unwrap().modified());
 }
