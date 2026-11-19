@@ -91,12 +91,13 @@ fn main() {
         // The anchor cell's hex record: in a footprint, in a zone, water, road shape and turn, coast shape and turn.
         let hex = cities.hexes.get(&s.cell);
         println!(
-            "slot {} #{} {} cell {:?} {} | event {} at {:.3} angle {:.1} scale {:.4} | hex {:?}",
+            "slot {} #{} {} cell {:?} {} turn {} | event {} at {:.3} angle {:.1} scale {:.4} | hex {:?}",
             s.region,
             s.index,
             s.kind,
             s.cell,
             s.model.as_deref().unwrap_or("").rsplit('/').next().unwrap_or(""),
+            s.turn,
             i.event,
             d,
             i.angle,

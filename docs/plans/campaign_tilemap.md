@@ -249,4 +249,6 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   view's season (spring's `_sp`, green with blossom, as capture A's).
 - **Phase 4 item 6, the settlements' turns (2026-11-19, capture A):** ports turned by their anchor hex's coast rotation (9 of 9),
   the walls' connecting towers half a turn more (204 of 204), walls and gatehouses already right. Left: the main and secondary
-  slots' turn (and `sprawl_edge_0`'s): not in their hexes; its writer in the DLL being traced.
+  slots' turn (and `sprawl_edge_0`'s): not in their hexes. Traced: ports by the game's water rule (9 of 9), the land slots a draw of
+  the campaign's shared random state (not reproducible): DEVIATION, the game's draw on a seed of each slot's own (docs/re/terry.md).
+  `sprawl_edge_0`'s varying angles not traced (the runtime sprawl's).

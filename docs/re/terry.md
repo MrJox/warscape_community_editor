@@ -331,7 +331,14 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   **RenderDoc, capture A (2026-11-19, `campaign_settlement_turns`: the rigid instances matched to the slots and pieces by position):**
   a port's building is turned by its anchor hex's coast rotation (`SPRAWL_HEX_MAP_DATA` field 14) in sixths, as the sprawl (9 of 9);
   the main and secondary slots' anchor hexes hold no rotation (all 0) and their buildings stand at every multiple of 60 degrees, with
-  no relation to the roads near them found (40 main, 9 secondary matched): their source is open (being traced in the DLL). The
+  no relation to the roads near them found (40 main, 9 secondary matched). **Traced (Ghidra, 2026-11-19):** the display reads the turn
+  from the slot's `SETTLEMENT_EXPANSION_SLOT` (+8, times 60 degrees; fn 0x10b29540), which a new campaign sets once (fn 0x10a4c230 via
+  0x10a31320, from 0x10a7d1e0) and saves (`SLOTS_ARRAY`: a u32 slot index, then the slot's string and u32 turn; empty in the
+  startpos): a port's is the first direction i (fn 0x10a67bc0's order: (c, r+1), (c+1, r+odd), (c+1, r-1+odd), (c, r-1), (c-1,
+  r-1+odd), (c-1, r+odd)) whose neighbour and the next are water sprawl cells, else 0 (9 of 9 of capture A's ports); a main or
+  secondary slot's is a draw of the campaign model's shared state (+0x1c7c, `x * 0x343fd + 0x269ec3`, `min((x >> 16) * 6 / 0xffff,
+  5)`; main, then the secondaries, in each settlement's order), seeded by the startpos's `RandSeed` and shared with every other draw
+  of the campaign's start: random in practice (a save holds the drawn turns). The
   walls and gatehouses are as the editor turns them (72 of 73); the connecting towers half a turn from the reading above (204 of
   204: corrected); `sprawl_edge_0` (no shape, stored turn 0) stands at every angle too, as the land slots.
 - **Sprawl pieces at run time** (2026-11-05, `FUN_10af6ae0`, from `FUN_10b29d90`): a runtime sprawl hex with a level (0: none) gets

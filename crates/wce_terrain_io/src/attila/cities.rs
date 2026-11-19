@@ -67,8 +67,9 @@ pub struct CitySlot {
     /// The model the display tables give the building for the region's owner (a packs path, lower case, `/`).
     pub model: Option<String>,
 
-    /// Its building's turn in sixths, clockwise seen from above as the sprawl's: a port's is its anchor hex's coast rotation (RenderDoc,
-    /// capture A: 9 of 9 ports); the others' is not known yet (0; their anchor hexes hold no rotation: docs/re/terry.md).
+    /// Its building's turn in sixths, clockwise seen from above as the sprawl's (the game's `SETTLEMENT_EXPANSION_SLOT` turn, set when a
+    /// campaign starts: fn 0x10a4c230): a port's from the water around its anchor (`port_turn`); a main or secondary slot's is a draw of
+    /// the campaign's shared random state, not reproducible (DEVIATION: `land_turn`, the game's draw on a seed of the slot's own).
     pub turn: u32,
 }
 
@@ -113,6 +114,30 @@ pub struct SprawlPiece {
     pub level: u32,
     pub turn: u32,
     pub model: Option<String>,
+}
+
+/// A hex's neighbour in the game's direction `i` (0 .. 5, fn 0x10a67bc0: bit 1 << i; RPFM's clockwise order): (c, r + 1), (c + 1, r +
+/// odd), (c + 1, r - 1 + odd), (c, r - 1), (c - 1, r - 1 + odd), (c - 1, r + odd), odd the column's parity.
+fn game_neighbour((c, r): (u16, u16), i: u32) -> Option<(u16, u16)> {
+    let (c, r) = (i32::from(c), i32::from(r));
+    let odd = c & 1;
+    let (dc, dr) = [(0, 1), (1, odd), (1, odd - 1), (0, -1), (-1, odd - 1), (-1, odd)][i as usize % 6];
+    Some((u16::try_from(c + dc).ok()?, u16::try_from(r + dr).ok()?))
+}
+
+/// A port's turn as the game sets it when a campaign starts (fn 0x10a4c230, RenderDoc capture A's nine ports agreeing): the first
+/// direction whose neighbour and the next one clockwise are both water sprawl cells, else 0.
+fn port_turn(anchor: (u16, u16), water: &dyn Fn((u16, u16)) -> bool) -> u32 {
+    (0..6).find(|&i| game_neighbour(anchor, i).is_some_and(water) && game_neighbour(anchor, (i + 1) % 6).is_some_and(water)).unwrap_or(0)
+}
+
+/// A main or secondary slot's turn. The game's is a draw of the campaign's shared random state (`x = x * 0x343fd + 0x269ec3`, turn
+/// `min((x >> 16) * 6 / 0xffff, 5)`), seeded by the startpos's `RandSeed` and shared with every other draw of a new campaign: not
+/// reproducible. DEVIATION: the same draw on a seed of the slot's own (its region's key and index), so that each slot keeps a turn.
+fn land_turn(region: &str, index: usize) -> u32 {
+    let seed = region.bytes().chain((index as u32).to_le_bytes()).fold(0x811c_9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+    let x = seed.wrapping_mul(0x343fd).wrapping_add(0x0026_9ec3);
+    (((x >> 16) & 0xffff) * 6 / 0xffff).min(5)
 }
 
 /// A building level's tier: the number its key ends with (`att_bld_roman_city_major_3`: 3; 1 without one).
@@ -672,11 +697,17 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                 }
             }
 
-            // A port's building faces as its anchor hex's coast (its rotation: capture A's nine ports).
-            for slot in cities.slots.iter_mut().filter(|s| s.region == key && s.kind == "port") {
-                if let Some(h) = cities.hexes.get(&slot.cell) {
-                    slot.turn = h[6].rem_euclid(6) as u32;
-                }
+            // The slots' turns: a port's from the water around its anchor, the others' a draw (docs/re/terry.md, "Settlement models").
+            let water = |cell: (u16, u16)| cities.hexes.get(&cell).is_some_and(|h| h[2] != 0);
+            let turns: Vec<(usize, u32)> = cities
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.region == key)
+                .map(|(i, s)| (i, if s.kind == "port" { port_turn(s.cell, &water) } else { land_turn(&s.region, s.index) }))
+                .collect();
+            for (i, turn) in turns {
+                cities.slots[i].turn = turn;
             }
 
             // The walls of a major settlement (RPFM: Attila walls its major settlements): every slot's wall walk (`SLOT_WALL_ARRAY`, in
