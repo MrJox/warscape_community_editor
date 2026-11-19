@@ -325,3 +325,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   read the map further south than it was drawn (six cells at a block's north edge, every block 15 % taller than its square). Rows now
   z_stretch apart; the blocks take a coast cell (a land tile under a sea tile) as land, as the chunks do; the far bake paints sea-tile
   cells as sea bed (it baked the climate's green where the LF under them is land).
+- **The far bake after edits, and on disk (2026-11-19):** the bake runs on a window of cells too (`Frame::far_map_over`); the
+  streamer's bake thread, after the whole map, waits for edited cells (`Streamer::refresh_far`: an LF stroke's `rebuild`, a refill's
+  `swap_frame` over its changed chunks and the reach of their tiles), lets the edits pause half a second, bakes their window again
+  (a 96 x 96-cell stroke: 1.1 s) and swaps the new material in; the Terrain tool uploads each new one and rebuilds the blocks over
+  its cells. The whole map's bake is cached (`cache::write_far`, `<key>.far`, 36 MB for main_attila, the newest four kept): the key
+  is every placement's tile (its folder's cache key for its look) and place, the climates, the LF's samples and the frame's numbers;
+  main_attila's bake 28.7 s, read back 1.1 s.

@@ -1469,39 +1469,82 @@ impl Frame {
     /// run it away from the UI thread). `stop` ends it early (None).
     pub fn far_map(&self, size: u32, source: &BlockSource, stop: &dyn Fn() -> bool) -> Option<FarMap> {
         let n = size as usize;
+        let mut far = FarMap {
+            size,
+            diffuse: Arc::new(vec![0u8; n * n * 4]),
+            normal: Arc::new(vec![255u8; n * n * 4]),
+            relief: Arc::new(vec![0.0; n * n]),
+        };
+        self.bake_far(&mut far, None, source, stop)?;
+        Some(far)
+    }
+
+    /// `base` made again over some map cells (x0, y0, x1, y1; an edit's): a copy with their texels baked again from this frame.
+    pub fn far_map_over(&self, base: &FarMap, cells: [i32; 4], source: &BlockSource, stop: &dyn Fn() -> bool) -> Option<FarMap> {
+        let mut far = base.clone();
+        self.bake_far(&mut far, Some(cells), source, stop)?;
+        Some(far)
+    }
+
+    /// Bakes `far`'s texels over `cells` (all of them without), with a texel around them for the normals.
+    fn bake_far(&self, far: &mut FarMap, cells: Option<[i32; 4]>, source: &BlockSource, stop: &dyn Fn() -> bool) -> Option<()> {
+        let n = far.size as usize;
         let (w, h) = (self.map.width as i32, self.map.height as i32);
         let (sw, ne) = self.corners();
         let (fw, fh) = (ne.0 - sw.0, ne.1 - sw.1);
         // A texel's point in the frame and its map cell.
         let frame_of = |i: usize, j: usize| (sw.0 + (i as f64 + 0.5) / n as f64 * fw, ne.1 - (j as f64 + 0.5) / n as f64 * fh);
+        // The texels baked: the cells' (rows go south as the map's), two more around.
+        let texel = |c: i32, cells: i32| f64::from(c) / f64::from(cells) * n as f64;
+        let [k0, j0, k1, j1] = match cells {
+            Some(c) => [
+                (texel(c[0], w).floor() as i64 - 2).clamp(0, n as i64) as usize,
+                (texel(c[1], h).floor() as i64 - 2).clamp(0, n as i64) as usize,
+                (texel(c[2], w).ceil() as i64 + 2).clamp(0, n as i64) as usize,
+                (texel(c[3], h).ceil() as i64 + 2).clamp(0, n as i64) as usize,
+            ],
+            None => [0, 0, n, n],
+        };
+        let (ww, wh) = (k1.saturating_sub(k0), j1.saturating_sub(j0));
+        if ww == 0 || wh == 0 {
+            return Some(());
+        }
+        let window = [
+            (k0 as f64 / n as f64 * f64::from(w)).floor() as i32,
+            (j0 as f64 / n as f64 * f64::from(h)).floor() as i32,
+            (k1 as f64 / n as f64 * f64::from(w)).ceil() as i32,
+            (j1 as f64 / n as f64 * f64::from(h)).ceil() as i32,
+        ];
 
         // The tiles drawn: not a cliff, not a sea tile. A cell takes the highest of their own heights over it, as `ground_at` does (a
         // masked tile's ground slopes down where another lies: Attila's `large_oval_60_r` over the grass tiles in its mask's holes,
         // taken alone, sank them 256 m).
         let drawn = |i: usize| !(source.is_custom)(i) && !self.on_sea_lf(i);
 
-        let mut diffuse = vec![0u8; n * n * 4];
-        let mut heights = vec![f32::NAN; n * n];
-        let mut relief = vec![0.0f32; n * n];
-        let mut painted = vec![false; n * n];
-        let mut best = vec![f32::NEG_INFINITY; n * n];
+        let diffuse = Arc::make_mut(&mut far.diffuse);
+        let relief = Arc::make_mut(&mut far.relief);
+        // The window's own: heights (NaN: none yet), painted, the highest own height so far.
+        let mut heights = vec![f32::NAN; ww * wh];
+        let mut painted = vec![false; ww * wh];
+        let mut best = vec![f32::NEG_INFINITY; ww * wh];
+        for j in j0..j1 {
+            relief[j * n + k0..j * n + k1].fill(0.0);
+        }
         for (i, p) in self.map.placements.iter().enumerate() {
             if stop() {
                 return None;
             }
-            if !drawn(i) {
+            let r = p.rect();
+            if !drawn(i) || r[2] <= window[0] || r[0] >= window[2] || r[3] <= window[1] || r[1] >= window[3] {
                 continue;
             }
-            let r = p.rect();
             let Some(t) = (source.template)(i) else { continue };
             let inverse = p.to_map().inverse();
             // The texels whose cells lie in its rectangle.
-            let (u0, u1) =
-                ((f64::from(r[0]) / f64::from(w) * n as f64).floor() as i64, (f64::from(r[2]) / f64::from(w) * n as f64).ceil() as i64);
-            let (v0, v1) =
-                ((f64::from(r[1]) / f64::from(h) * n as f64).floor() as i64, (f64::from(r[3]) / f64::from(h) * n as f64).ceil() as i64);
-            for j in v0.max(0)..v1.min(n as i64) {
-                for k in u0.max(0)..u1.min(n as i64) {
+            let (u0, u1) = (texel(r[0], w).floor() as i64, texel(r[2], w).ceil() as i64);
+            let (v0, v1) = (texel(r[1], h).floor() as i64, texel(r[3], h).ceil() as i64);
+            for j in v0.max(j0 as i64)..v1.min(j1 as i64) {
+                for k in u0.max(k0 as i64)..u1.min(k1 as i64) {
                     let (x, z) = frame_of(k as usize, j as usize);
                     let (mx, my) = self.to_map.apply(x, z);
                     let (cx, cy) = (mx.floor() as i32, my.floor() as i32);
@@ -1511,19 +1554,19 @@ impl Frame {
                     if self.owner[(cy * w + cx) as usize] <= 1 {
                         continue;
                     }
-                    let at = j as usize * n + k as usize;
+                    let (at, local) = (j as usize * n + k as usize, (j as usize - j0) * ww + (k as usize - k0));
                     let (lx, lz) = inverse.apply(mx, my);
                     let own = t.own.height(lx, lz);
-                    if own <= best[at] {
+                    if own <= best[local] {
                         continue;
                     }
-                    best[at] = own;
+                    best[local] = own;
                     if let Some(c) = t.far_colour(lx, lz) {
                         diffuse[at * 4..at * 4 + 4].copy_from_slice(&c);
-                        painted[at] = true;
+                        painted[local] = true;
                     }
                     relief[at] = own;
-                    heights[at] = own + self.lift(x, z);
+                    heights[local] = own + self.lift(x, z);
                 }
             }
         }
@@ -1540,20 +1583,26 @@ impl Frame {
         for (i, p) in self.map.placements.iter().enumerate() {
             let mark = if (source.is_custom)(i) || self.on_sea_lf(i) { &mut sea_tile } else { &mut land_tile };
             let r = p.rect();
-            for y in r[1].max(0)..r[3].min(h) {
-                for x in r[0].max(0)..r[2].min(w) {
+            for y in r[1].max(window[1]).max(0)..r[3].min(window[3]).min(h) {
+                for x in r[0].max(window[0]).max(0)..r[2].min(window[2]).min(w) {
                     mark[(y * w + x) as usize] = true;
                 }
             }
         }
-        diffuse.par_chunks_mut(n * 4).zip(heights.par_chunks_mut(n)).zip(painted.par_chunks(n)).enumerate().for_each(
-            |(j, ((row, hs), done))| {
-                for k in 0..n {
+        diffuse[j0 * n * 4..j1 * n * 4]
+            .par_chunks_mut(n * 4)
+            .zip(heights.par_chunks_mut(ww))
+            .zip(painted.par_chunks(ww))
+            .enumerate()
+            .for_each(|(jj, ((row, hs), done))| {
+                let j = j0 + jj;
+                for kk in 0..ww {
+                    let k = k0 + kk;
                     let (x, z) = frame_of(k, j);
-                    if hs[k].is_nan() {
-                        hs[k] = self.lift(x, z);
+                    if hs[kk].is_nan() {
+                        hs[kk] = self.lift(x, z);
                     }
-                    if done[k] {
+                    if done[kk] {
                         continue;
                     }
                     let (mx, my) = self.to_map.apply(x, z);
@@ -1562,19 +1611,28 @@ impl Frame {
                     let c = if self.lift(x, z) < self.sea_y() || (sea_tile[at] && !land_tile[at]) {
                         SEA_BED
                     } else {
-                        plain.get(&self.climate[(cy * w + cx) as usize]).copied().unwrap_or(SEA_BED)
+                        plain.get(&self.climate[at]).copied().unwrap_or(SEA_BED)
                     };
                     row[k * 4..k * 4 + 4].copy_from_slice(&c);
                 }
-            },
-        );
+            });
 
-        // The normals: the heights' central differences (scene units both ways; rows go south, the frame's z north).
+        // The normals: the heights' central differences (scene units both ways; rows go south, the frame's z north). The window's edge
+        // texels lack a neighbour (but at the map's edge): theirs stay as they were.
         let (dx, dz) = (fw / n as f64, fh / n as f64);
-        let mut normal = vec![255u8; n * n * 4];
-        normal.par_chunks_mut(n * 4).enumerate().for_each(|(j, row)| {
-            for k in 0..n {
-                let hgt = |a: usize, b: usize| f64::from(heights[b.min(n - 1) * n + a.min(n - 1)]);
+        let normal = Arc::make_mut(&mut far.normal);
+        let edge = |v: usize, lo: usize, hi: usize| (v == lo && lo > 0) || (v + 1 == hi && hi < n);
+        normal[j0 * n * 4..j1 * n * 4].par_chunks_mut(n * 4).enumerate().for_each(|(jj, row)| {
+            let j = j0 + jj;
+            if edge(j, j0, j1) {
+                return;
+            }
+            for kk in 0..ww {
+                let k = k0 + kk;
+                if edge(k, k0, k1) {
+                    continue;
+                }
+                let hgt = |a: usize, b: usize| f64::from(heights[b.clamp(j0, j1 - 1).saturating_sub(j0) * ww + a.clamp(k0, k1 - 1) - k0]);
                 let gx = (hgt(k + 1, j) - hgt(k.saturating_sub(1), j)) / (2.0 * dx);
                 let gz = (hgt(k, j.saturating_sub(1)) - hgt(k, j + 1)) / (2.0 * dz);
                 let l = (gx * gx + gz * gz + 1.0).sqrt();
@@ -1584,7 +1642,7 @@ impl Frame {
             }
         });
 
-        Some(FarMap { size, diffuse: Arc::new(diffuse), normal: Arc::new(normal), relief: Arc::new(relief) })
+        Some(())
     }
 
     /// The colour of a climate's plain ground, as a baked material stores it: what its material averages to.
