@@ -675,6 +675,9 @@ pub(crate) struct TerrainGpuState {
     /// A campaign map's season snow (`RenderScene::campaign_snow`) as the resolve reads it.
     campaign_snow: Option<CampaignSnowGpu>,
 
+    /// A campaign map's far material on the GPU (`RenderScene::campaign_far`): its id, the diffuse and the normal.
+    campaign_far: Option<(u64, Option<ID3D11ShaderResourceView>, Option<ID3D11ShaderResourceView>)>,
+
     /// Material updates so far (a material no terrain uses stays for MATERIAL_KEEP more: a streamed chunk that goes from mid to near and
     /// back would make its maps again).
     material_epoch: u64,
@@ -1266,6 +1269,39 @@ impl Renderer {
         }
     }
 
+    /// A campaign map's far material's textures (made once a material: RGBA8, one level, as the game's are), none until uploaded.
+    fn campaign_far_srvs(
+        &mut self,
+        f: &wce_scene::render_scene::CampaignFar,
+    ) -> Option<(Option<ID3D11ShaderResourceView>, Option<ID3D11ShaderResourceView>)> {
+        if self.terrain.campaign_far.as_ref().is_none_or(|c| c.0 != f.id) {
+            let n = f.size;
+            let make = |px: &[u8]| {
+                let td = D3D11_TEXTURE2D_DESC {
+                    Width: n,
+                    Height: n,
+                    MipLevels: 1,
+                    ArraySize: 1,
+                    Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                    Usage: D3D11_USAGE_IMMUTABLE,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                    CPUAccessFlags: 0,
+                    MiscFlags: 0,
+                };
+                (px.len() >= (n * n * 4) as usize)
+                    .then(|| self.dev.create_texture_2d(&td, Some(&[InitData::new(px, n * 4)])).ok())
+                    .flatten()
+                    .and_then(|tx| self.dev.create_shader_resource_view(&tx, None).ok())
+            };
+            let (d, nm) = (make(&f.diffuse), make(&f.normal));
+            self.terrain.campaign_far = Some((f.id, d, nm));
+        }
+
+        let (_, d, n) = self.terrain.campaign_far.as_ref()?;
+        d.is_some().then(|| (d.clone(), n.clone()))
+    }
+
     /// A campaign map's season snow as the resolve draws it: its mask (read once, its rows rolled again when the render origin moves) and
     /// the snow group's array (made once a mask, group and season). The resolve's mask uv is `(x / W + o, -z / H + o)` of the position
     /// relative to the render origin, one offset `o` for both axes: o = (origin.x - corner.x) / W fits x exactly, and the mask's rows are
@@ -1753,6 +1789,7 @@ impl Renderer {
             &ents,
             scene.snow(),
             scene.campaign_snow.as_ref(),
+            scene.campaign_far.as_deref(),
             [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps],
         );
     }
@@ -1801,6 +1838,7 @@ impl Renderer {
         ents: &[&wce_scene::render_scene::Entity],
         snow: Option<&wce_scene::render_scene::SnowRegions>,
         campaign_snow: Option<&wce_scene::render_scene::CampaignSnow>,
+        campaign_far: Option<&wce_scene::render_scene::CampaignFar>,
         shaders: [std::rc::Rc<GameShader>; 7],
     ) {
         let all = ents.to_vec();
@@ -2195,6 +2233,20 @@ impl Renderer {
         cbs.set_f("vs_height_map_cb", "g_layer1_texture_index", &[0.0]);
         cbs.set_f("vs_height_map_cb", "g_layer2_texture_index", &[0.0]);
         cbs.set_f("ps_height_map_cb", "g_far_blend_range", &[1.0e9, 2.0e9]);
+
+        // A campaign map's far material, as the game's resolve blends to it (RenderDoc, capture A: g_far_tile_distance 0, the blend from
+        // 9 to 37 world units off the eye, read at world xz over the map's size (game units), v down from the north edge, one offset for
+        // both axes: the render origin is the map's corner on a campaign map, so 0).
+        let far = if m.campaign { campaign_far.and_then(|f| self.campaign_far_srvs(f)) } else { None };
+        if let (Some(_), Some(f)) = (&far, campaign_far) {
+            let (u, o) = (self.camera.units, self.camera.origin);
+            let cbs = &mut self.cbs;
+            cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[f.extent[0] * u, f.extent[1] * u]);
+            cbs.set_f("ps_height_map_cb", "g_far_world_read_uv_offset", &[(o.x - f.corner[0]) / f.extent[0].max(1e-6)]);
+            cbs.set_f("ps_height_map_cb", "g_far_tile_distance", &[0.0]);
+            cbs.set_f("ps_height_map_cb", "g_far_blend_range", &[9.0, 37.0]);
+        }
+        let cbs = &mut self.cbs;
         cbs.set_f("shroud_PS", "g_shroud_enabled", &[if self.shroud.fog_on { 1.0 } else { 0.0 }]);
         self.upload();
         self.bind(&res_vs);
@@ -2212,8 +2264,17 @@ impl Renderer {
         bind_srv(ctx, &res_ps, "s_terrain_normal_map", self.terrain.acc[1].srv.as_ref());
         bind_srv(ctx, &res_ps, "s_terrain_gloss_map", self.terrain.acc[2].srv.as_ref());
         bind_srv(ctx, &res_ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
-        bind_srv(ctx, &res_ps, "s_far_diffuse_map", g.black.srv.as_ref());
-        bind_srv(ctx, &res_ps, "s_far_normal_map", g.lf_normal.srv.as_ref());
+        match &far {
+            Some((d, n)) => {
+                bind_srv(ctx, &res_ps, "s_far_diffuse_map", d.as_ref());
+                bind_srv(ctx, &res_ps, "s_far_normal_map", n.as_ref());
+            }
+
+            None => {
+                bind_srv(ctx, &res_ps, "s_far_diffuse_map", g.black.srv.as_ref());
+                bind_srv(ctx, &res_ps, "s_far_normal_map", g.lf_normal.srv.as_ref());
+            }
+        }
         bind_srv(ctx, &res_ps, "s_mask_map", snow_layer.as_ref().map_or(g.black.srv.as_ref(), |l| l.mask.as_ref()));
         bind_srv(ctx, &res_ps, "s_snow_normals", snow.as_ref());
         // The resolve reads its diffuse array only for the mask's layers.
