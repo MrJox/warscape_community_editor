@@ -1,0 +1,141 @@
+//! Gate of the sound formats: reads every copy (every pack that has it, not only the winning one) of every bank, WEM and
+//! `event_data.dat` of a game and the given mod packs, writes each back and compares the bytes. Also checks each Vorbis WEM's codebook
+//! hash against its setup packet. Prints a tally and the failures; exits non-zero on a failure.
+//!
+//!   audio_formats_check <game folder> [mod pack...]
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use wce_audio_format::bank::{Bank, kind_name};
+use wce_audio_format::event_data::EventData;
+use wce_audio_format::fnv;
+use wce_audio_format::wem::Wem;
+use wce_vfs::{Config, GameProfile, Vfs};
+
+#[derive(Default)]
+struct Tally {
+    read: usize,
+    empty: usize,
+    failed: Vec<String>,
+}
+
+impl Tally {
+    fn report(&self, name: &str) -> bool {
+        println!("{name}: {} read, {} empty (removals), {} failed", self.read, self.empty, self.failed.len());
+        for f in self.failed.iter().take(20) {
+            println!("  {f}");
+        }
+
+        self.failed.is_empty()
+    }
+}
+
+/// Every (pack name, bytes) copy of a path.
+fn copies<'a>(vfs: &'a Vfs, path: &'a str) -> impl Iterator<Item = (String, Vec<u8>)> + 'a {
+    vfs.owners(path).iter().map(move |&pack| {
+        let bytes = vfs.read_from(pack, path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        (vfs.packs()[pack].name.clone(), bytes)
+    })
+}
+
+fn main() {
+    let mut args = std::env::args().skip(1);
+    let Some(game) = args.next() else {
+        eprintln!("audio_formats_check <game folder> [mod pack...]");
+        std::process::exit(2);
+    };
+
+    let mut config = Config::new(PathBuf::from(game), GameProfile::from_env().clone());
+    config.use_mods = true;
+    config.mod_packs = Some(args.collect());
+    let vfs = Vfs::mount(&config).expect("the game's packs");
+    println!("{} packs, {} missing mods", vfs.packs().len(), vfs.missing_mods().len());
+
+    let mut banks = Tally::default();
+    let (mut versions, mut kinds, mut chunk_tags) = (BTreeMap::new(), BTreeMap::<u8, usize>::new(), BTreeMap::<String, usize>::new());
+    for path in vfs.list("", ".bnk") {
+        for (pack, bytes) in copies(&vfs, path) {
+            if bytes.is_empty() {
+                banks.empty += 1;
+                continue;
+            }
+
+            banks.read += 1;
+            match Bank::read(&bytes) {
+                Ok(bank) if bank.write() == bytes => {
+                    *versions.entry(bank.header().map_or(0, |h| h.version)).or_insert(0usize) += 1;
+                    for o in bank.objects() {
+                        *kinds.entry(o.kind).or_default() += 1;
+                    }
+                    for c in &bank.chunks {
+                        *chunk_tags.entry(String::from_utf8_lossy(&c.tag()).into_owned()).or_default() += 1;
+                    }
+                }
+                Ok(_) => banks.failed.push(format!("{pack}: {path}: written bytes differ")),
+                Err(e) => banks.failed.push(format!("{pack}: {path}: {e}")),
+            }
+        }
+    }
+
+    let mut wems = Tally::default();
+    let (mut codecs, mut hash_bad) = (BTreeMap::<u16, usize>::new(), vec![]);
+    for path in vfs.list("", ".wem") {
+        for (pack, bytes) in copies(&vfs, path) {
+            if bytes.is_empty() {
+                wems.empty += 1;
+                continue;
+            }
+
+            wems.read += 1;
+            match Wem::read(&bytes) {
+                Ok(wem) if wem.write() == bytes => {
+                    *codecs.entry(wem.format().map_or(0, |f| f.codec)).or_default() += 1;
+                    if let (Some(h), Some(setup)) = (wem.vorbis(), wem.vorbis_setup())
+                        && h.codebook_hash != fnv::bytes(setup)
+                    {
+                        hash_bad.push(format!("{pack}: {path}"));
+                    }
+                }
+                Ok(_) => wems.failed.push(format!("{pack}: {path}: written bytes differ")),
+                Err(e) => wems.failed.push(format!("{pack}: {path}: {e}")),
+            }
+        }
+    }
+
+    let mut event_data = Tally::default();
+    for path in vfs.list("", ".dat").into_iter().filter(|p| p.ends_with("event_data.dat")) {
+        for (pack, bytes) in copies(&vfs, path) {
+            event_data.read += 1;
+            match EventData::read(&bytes) {
+                Ok(data) if data.write() == bytes => {
+                    println!(
+                        "  {pack}: {path}: {} events, {}+{} state groups, {} dialogue events, {} game parameters, {} dialogue trees",
+                        data.events.len(),
+                        data.state_groups.len(),
+                        data.state_groups_2.len(),
+                        data.dialogue_events.len(),
+                        data.game_parameters.len(),
+                        data.dialogue_trees.len()
+                    );
+                }
+                Ok(_) => event_data.failed.push(format!("{pack}: {path}: written bytes differ")),
+                Err(e) => event_data.failed.push(format!("{pack}: {path}: {e}")),
+            }
+        }
+    }
+
+    println!("bank versions: {versions:?}");
+    println!("chunks: {chunk_tags:?}");
+    for (kind, n) in &kinds {
+        println!("  HIRC {kind:>2} {:<28} {n}", kind_name(*kind));
+    }
+    println!("WEM codecs: {:?}", codecs.iter().map(|(c, n)| (format!("{c:#06x}"), *n)).collect::<Vec<_>>());
+    println!("Vorbis codebook hash != FNV-1 of the setup: {}", hash_bad.len());
+    for f in hash_bad.iter().take(10) {
+        println!("  {f}");
+    }
+
+    let ok = [banks.report("banks"), wems.report("WEMs"), event_data.report("event_data.dat")].iter().all(|&ok| ok) && hash_bad.is_empty();
+    std::process::exit(if ok { 0 } else { 1 });
+}
