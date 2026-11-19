@@ -922,6 +922,14 @@ impl Frame {
         }
     }
 
+    /// A map cell as the ground sees it, for scripts: who draws it and whether it is the sea (custom-mesh tiles by `custom`).
+    pub fn cell_note(&self, x: i32, y: i32, custom: &dyn Fn(usize) -> bool) -> String {
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        let owner = if x < 0 || y < 0 || x >= w || y >= h { u32::MAX } else { self.owner[(y * w + x) as usize] };
+        let over: Vec<String> = self.over_cell(x, y).map(|i| format!("{i}{}", if self.on_sea_lf(i) { " sea" } else { "" })).collect();
+        format!("owner {owner}, over [{}], sea {}", over.join(", "), self.cell_on_sea(x, y, custom))
+    }
+
     /// The placements over a map cell, every layer's (`by_chunk` holds a placement in its origin's chunk).
     fn over_cell(&self, x: i32, y: i32) -> impl Iterator<Item = usize> + '_ {
         let back = (self.reach + CHUNK - 1) / CHUNK;
@@ -1324,6 +1332,15 @@ impl Frame {
             }
         }
 
+        // A sea tile's cell that a land tile shares (a coast tile under it) is the land's, as `cell_on_sea` has it (the shore follows the
+        // LF; else the coasts stepped from cell to cell).
+        for k in 0..(aw * ah) as usize {
+            let (x, y) = (area[0] + k as i32 % aw, area[1] + k as i32 / aw);
+            if matches!(cells[k], Cell::Sea) && self.owner[(y * w + x) as usize] > 1 && !self.cell_on_sea(x, y, source.is_custom) {
+                cells[k] = Cell::Land;
+            }
+        }
+
         let b = bounds(&self.from_map, f64::from(area[0]), f64::from(area[1]), f64::from(area[2]), f64::from(area[3]));
         let cell_at = |x: f64, z: f64| {
             let (mx, my) = self.to_map.apply(x, z);
@@ -1331,14 +1348,18 @@ impl Frame {
             ((mx, my), (cx, cy), cells[((cy - area[1]) * aw + cx - area[0]) as usize])
         };
 
-        // The heights at twice the grid's density: the fine ones are for the normal map.
+        // The heights at twice the grid's density: the fine ones are for the normal map. The grid's rows are square in its own units and
+        // its world matrix stretches them (a campaign map's hex z): a row is z_stretch frame units on. Taken a frame unit apart, its rows
+        // read the map ever further south of where they were drawn (six cells at a block's north edge, and a block 15 % taller than its
+        // square): main_attila's land south of the islands west of Rome stood as flats over their sea tiles.
         let bed = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
-        let (fw, fh) = (((b[2] - b[0]) / (CELL / 2.0)).round() as i32 + 1, ((b[3] - b[1]) / (CELL / 2.0)).round() as i32 + 1);
+        let k = self.z_stretch;
+        let (fw, fh) = (((b[2] - b[0]) / (CELL / 2.0)).round() as i32 + 1, ((b[3] - b[1]) / k / (CELL / 2.0)).round() as i32 + 1);
         let mut grid = Vec::with_capacity((fw / 2 + 1) as usize * (fh / 2 + 1) as usize);
         let mut relief = vec![0.0f32; (fw * fh) as usize];
         for j in 0..fh {
             for i in 0..fw {
-                let (x, z) = (b[0] + f64::from(i) * CELL / 2.0, b[1] + f64::from(j) * CELL / 2.0);
+                let (x, z) = (b[0] + f64::from(i) * CELL / 2.0, b[1] + f64::from(j) * CELL / 2.0 * k);
                 let (at, _, cell) = cell_at(x, z);
                 let own = match cell {
                     Cell::Tile(k) => {
@@ -1507,11 +1528,23 @@ impl Frame {
             }
         }
 
-        // The rest: the sea bed under the sea, else the climate's plain ground (each climate's worked out once: `mean` is not shared
-        // between threads); their heights the LF's.
+        // The rest: the sea bed under the sea (the LF under it, or the cells of sea tiles and cliffs with no land tile: Attila's sea
+        // tiles north of the Tiber's mouth lie on land LF up to 52 m, which baked the climate's green there, a flat far off where the
+        // game has open sea), else the climate's plain ground (each climate's worked out once: `mean` is not shared between threads);
+        // their heights the LF's.
         let mut plain: HashMap<u8, [u8; 4]> = HashMap::new();
         for &c in &self.climate {
             plain.entry(c).or_insert_with(|| self.plain_colour(c, source.mean));
+        }
+        let (mut sea_tile, mut land_tile) = (vec![false; (w * h) as usize], vec![false; (w * h) as usize]);
+        for (i, p) in self.map.placements.iter().enumerate() {
+            let mark = if (source.is_custom)(i) || self.on_sea_lf(i) { &mut sea_tile } else { &mut land_tile };
+            let r = p.rect();
+            for y in r[1].max(0)..r[3].min(h) {
+                for x in r[0].max(0)..r[2].min(w) {
+                    mark[(y * w + x) as usize] = true;
+                }
+            }
         }
         diffuse.par_chunks_mut(n * 4).zip(heights.par_chunks_mut(n)).zip(painted.par_chunks(n)).enumerate().for_each(
             |(j, ((row, hs), done))| {
@@ -1525,7 +1558,8 @@ impl Frame {
                     }
                     let (mx, my) = self.to_map.apply(x, z);
                     let (cx, cy) = ((mx.floor() as i32).clamp(0, w - 1), (my.floor() as i32).clamp(0, h - 1));
-                    let c = if self.lift(x, z) < self.sea_y() {
+                    let at = (cy * w + cx) as usize;
+                    let c = if self.lift(x, z) < self.sea_y() || (sea_tile[at] && !land_tile[at]) {
                         SEA_BED
                     } else {
                         plain.get(&self.climate[(cy * w + cx) as usize]).copied().unwrap_or(SEA_BED)
