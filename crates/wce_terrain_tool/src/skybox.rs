@@ -2,7 +2,8 @@
 //! `campaign_skybox.rigid_model_v2` (a cylinder 12.24 model units round, a 4096 x 512 cloud panorama) at the camera, unturned, scaled by
 //! `campaign_sky_scale` 37.5 in the campaign world's units (fns 0x10afd250, 0x10b29f60; RenderDoc, camp_attila 2026-11-16: the world
 //! matrix scale 37.5 at the eye plus the mesh's pivot, drawn in the G-buffer unlit, then fogged); `cubemap.dds` is the environment cube.
-//! DEVIATION, for review (docs/plans/campaign_environment.md): the game draws it into the shadow cascades too; here it casts none.
+//! It casts into the shadow cascades, as the game's (RenderDoc: every cascade; the user's decision 2026-11-19). The stripes it lays over
+//! TDD's Rauros come from the editor's cascades differing from the game's: docs/plans/campaign_tilemap.md, Phase 4.
 
 use wce_editor::editor::Editor;
 use wce_foundation::math::Float4x4;
@@ -35,7 +36,7 @@ impl CampaignSkybox {
         let p = DEFAULT_INSTANCE_PARAMS;
         let mesh = MeshInstance {
             model,
-            casts_shadow: false,
+            casts_shadow: true,
             lod: false,
             p4: [p[0], p[1], p[2], p[3]],
             p5: [p[4], p[5], p[6], p[7]],
