@@ -746,18 +746,31 @@ impl Frame {
     /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
     /// of the cells' climate.
     fn ground(&self, r: [i32; 4], far: bool, climate: u8) -> (Float4x4, Payload) {
+        self.ground_with(r, far, climate, None)
+    }
+
+    /// [`Self::ground`]; with `sink` (the tiles that are custom meshes), on a campaign map its points over the sea (sea tiles, cliffs,
+    /// uncovered cells, as the blocks take them) at the sea bed: for ground on the land's LF that a sea tile's own (on the sea's LF)
+    /// does not replace.
+    fn ground_with(&self, r: [i32; 4], far: bool, climate: u8, sink: Option<&dyn Fn(usize) -> bool>) -> (Float4x4, Payload) {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
         // Its grid square in its own units (the LF's x step), the frame's z stretch in its world matrix.
         let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
         let k = self.z_stretch;
         let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / k / step).round() as i32 + 1);
-        let heights = self
-            .zeros
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .entry((nx, nz))
-            .or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize]))
-            .clone();
+        // On a campaign map the points over sea tiles (and uncovered cells: the open sea) at the sea bed, as the blocks have them: the
+        // land LF stands out of the sea under some (35 m beside main_attila's islands), and the ground there showed as dark flats.
+        let sea_heights = sink.filter(|_| self.is_campaign()).and_then(|custom| self.ground_over_sea(r, b, nx, nz, step, custom));
+        let heights = match sea_heights {
+            Some(h) => Arc::new(h),
+            None => self
+                .zeros
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entry((nx, nz))
+                .or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize]))
+                .clone(),
+        };
         let (base, plain_id) = self.plain_for(climate);
         let material = base.map(|base| {
             self.plains
@@ -796,6 +809,50 @@ impl Frame {
         (world.m[0][3], world.m[2][3]) = (b[0] as f32, b[1] as f32);
         world.m[2][2] = k as f32;
         (world, Payload::Terrain(t))
+    }
+
+    /// Whether a map cell is the sea on a campaign map: no placement over it, or a sea tile's (`on_sea_lf`) or a cliff's (`custom`).
+    fn cell_on_sea(&self, x: i32, y: i32, custom: &dyn Fn(usize) -> bool) -> bool {
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        if x < 0 || y < 0 || x >= w || y >= h {
+            return true;
+        }
+        match self.owner[(y * w + x) as usize] {
+            0 => true,
+            1 => false,
+            o => {
+                let (cw, _) = self.chunks();
+                let key = ((o as i32 - 2) % cw, (o as i32 - 2) / cw);
+                self.by_chunk.get(&key).is_some_and(|list| {
+                    list.iter().any(|&i| {
+                        let r = self.map.placements[i].rect();
+                        x >= r[0] && x < r[2] && y >= r[1] && y < r[3] && (self.on_sea_lf(i) || custom(i))
+                    })
+                })
+            }
+        }
+    }
+
+    /// An LF ground grid's heights over a campaign map's sea (the sea bed, relative to the LF the shader adds), the rest 0; none when
+    /// no cell of the rectangle is the sea.
+    fn ground_over_sea(&self, r: [i32; 4], b: [f64; 4], nx: i32, nz: i32, step: f64, custom: &dyn Fn(usize) -> bool) -> Option<Vec<f32>> {
+        if !(r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| self.cell_on_sea(x, y, custom))) {
+            return None;
+        }
+        let bed = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
+        let k = self.z_stretch;
+        let mut heights = vec![0.0f32; (nx * nz) as usize];
+        for j in 0..nz {
+            for i in 0..nx {
+                let (x, z) = (b[0] + f64::from(i) * step, b[1] + f64::from(j) * step * k);
+                let (mx, my) = self.to_map.apply(x, z);
+                let (cx, cy) = ((mx.floor() as i32).clamp(r[0], r[2] - 1), (my.floor() as i32).clamp(r[1], r[3] - 1));
+                if self.cell_on_sea(cx, cy, custom) {
+                    heights[(j * nx + i) as usize] = bed - self.lift(x, z);
+                }
+            }
+        }
+        Some(heights)
     }
 
     /// The height of the sea (0 m) in the frame.
@@ -1423,7 +1480,13 @@ impl Frame {
         let by_block = |o: u32| o > 1 && (source.in_block)(((o as i32 - 2) % cw, (o as i32 - 2) / cw));
         let area = [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK];
         let me = self.owner_of(key);
-        out.extend(self.runs_by_climate(area, |o, _, _| o != me && by_block(o)).into_iter().map(|(r, c)| self.ground(r, true, c)));
+        // On the land's LF whatever tile they belong to: a campaign map's sea there at its bed (beside main_attila's islands the land LF
+        // stands 35 m out of the sea under sea tiles, and these showed as dark flats).
+        out.extend(
+            self.runs_by_climate(area, |o, _, _| o != me && by_block(o))
+                .into_iter()
+                .map(|(r, c)| self.ground_with(r, true, c, Some(source.is_custom))),
+        );
         out
     }
 

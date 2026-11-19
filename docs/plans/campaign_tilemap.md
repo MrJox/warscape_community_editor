@@ -291,3 +291,8 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   `terrain_far_wait`. Left: the far ring's geometry (its LF ground is flat where the game has mountains; it pokes out of the sea over
   sea tiles beside the islands), an edit's bake again (the bake is made once a map), a disk cache of the bake.
   Idle numbers for the record: default rings 5.8 ms (p95 7.5); merged blocks to 600 cells 33.5 ms (blend 9.7, shadows 9.5).
+- **The dark flats beside the islands (2026-11-19):** a chunk's cells owned by tiles the blocks draw (`build_chunk`) were LF ground on
+  the land's LF whatever the tile, sea tiles and cliffs included (the land LF 35 m out of the sea there): on a campaign map their
+  points over the sea (sea tiles, cliffs, uncovered cells, as the blocks take them) now at the sea bed (`Frame::ground_with`). Left:
+  green flats in the far ring there (cell (630, 683) a grass tile: likely the small island's land, drawn flat where the game has its
+  trees and cliffs; (603, 686) uncovered: not explained).
