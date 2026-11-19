@@ -343,11 +343,14 @@ impl Shared {
             // that very worker's job (a deadlock); only the opening and the cache read run there.
             let (frame, generation) = self.frame();
             let zone = lock(&self.zone).clone();
+            let far = lock(&self.far).clone();
+            let (mw, mh) = (frame.map.width, frame.map.height);
             let source = BlockSource {
                 template: &|i| self.template(&frame, i),
                 is_custom: &|i| self.is_custom(&frame, i),
                 mean: &|path| self.mean_colour(path),
                 in_block: &|k| self.rq.bake_ground && !zone.contains(&block_of(k)),
+                relief: &|x, y| far.as_ref().map(|f| f.relief_at(x, y, mw, mh)),
             };
 
             let entities = frame.build_chunk(job.key, job.lod, &source);
@@ -429,6 +432,7 @@ impl Streamer {
                     is_custom: &|i| s.is_custom(&frame, i),
                     mean: &|path| s.mean_colour(path),
                     in_block: &|_| false,
+                    relief: &|_, _| None,
                 };
                 if let Some(far) = frame.far_map(FAR_MAP_SIZE, &source, &|| s.stop.load(Ordering::Relaxed)) {
                     wce_foundation::log::info(format!(
@@ -659,6 +663,11 @@ impl Streamer {
             let side = if l.is_block() { BLOCK - 1 } else { 0 };
             cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
         });
+    }
+
+    /// The blocks and the far chunks made again at the next update (their relief once the far material is made).
+    pub fn rebuild_far(&mut self) {
+        self.wanted.retain(|_, l| !l.is_block() && *l != Lod::Far);
     }
 
     /// The chunks wanted and not on the scene at their level yet.

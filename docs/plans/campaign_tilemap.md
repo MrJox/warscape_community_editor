@@ -296,3 +296,9 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   points over the sea (sea tiles, cliffs, uncovered cells, as the blocks take them) now at the sea bed (`Frame::ground_with`). Left:
   green flats in the far ring there (cell (630, 683) a grass tile: likely the small island's land, drawn flat where the game has its
   trees and cliffs; (603, 686) uncovered: not explained).
+- **The distant relief (2026-11-19, idle):** the far bake keeps the tiles' own heights over the LF (`FarMap::relief`, 4096 a side);
+  the unpainted blocks past the rings take them (`BlockSource::relief`; `Streamer::rebuild_far` once the bake is made), so the Alps
+  and the far Apennines stand at the horizon without their tiles opened. The frame 6.0 ms (5.6 without). Tried and dropped: the far
+  level's per-chunk LF ground with the relief too (dark walls along chunk edges where it met tiles drawn otherwise). Left: holes
+  beside some mountain tiles seen from high up (their own edges against the flat ring; not traced, may be older), the blue patch
+  north-east of Rome at capture A's camera (cell (695, 680), a sea tile).
