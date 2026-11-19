@@ -2351,6 +2351,7 @@ impl Tool for TerrainTool {
             e.scene.terrain_units = 0.0;
             e.scene.z_stretch = 1.0;
             e.scene.vegetation_season.clear();
+            e.scene.campaign_far = None;
             e.scene.campaign_shroud = None;
             self.lighting = None;
             if let Some(sky) = self.skybox.take() {
@@ -2400,6 +2401,24 @@ impl Tool for TerrainTool {
         wce_foundation::wce_prof!("terrain_tool.props");
         let view = &self.view;
         self.props.season_bit = 1 << ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
+        // A campaign map's far material, once the streamer has made it (every tile read: a while after the map opens).
+        if e.scene.campaign
+            && e.scene.campaign_far.is_none()
+            && let Some(far) = self.view.streamer.as_ref().and_then(|s| s.far_map())
+            && let Some(frame) = self.view.frame()
+        {
+            let (sw, ne) = frame.corners();
+            e.scene.campaign_far = Some(Arc::new(wce_scene::render_scene::CampaignFar {
+                id: Arc::as_ptr(&far) as u64,
+                size: far.size,
+                diffuse: far.diffuse.clone(),
+                normal: far.normal.clone(),
+                corner: [sw.0 as f32, sw.1 as f32],
+                extent: [(ne.0 - sw.0) as f32, (ne.1 - sw.1) as f32],
+            }));
+            e.scene.touch();
+        }
+
         // A campaign map's vegetation takes the view's season (its forests' `<base>_<season>_diffuse.dds`: spring's `_sp` in the game's
         // turn-1 frame); a battle map's tiles set theirs.
         if e.scene.campaign && e.scene.vegetation_season != self.season {
@@ -2508,6 +2527,26 @@ impl Tool for TerrainTool {
                 CommandResult::success(format!("{}{note}{late}", t.view.status))
             })
         });
+
+        c.add(
+            "terrain_far_wait",
+            "terrain_far_wait [seconds]",
+            "the Terrain tool: wait (scripts; default 900 s) until a campaign map's far material is made (every tile read)",
+            |e, a| {
+                let max = a.first().and_then(|v| v.parse::<u64>().ok()).unwrap_or(900);
+                with_terrain(e, |t, _| {
+                    let Some(s) = t.view.streamer.as_ref() else { return CommandResult::fail("no map shown") };
+                    let t0 = std::time::Instant::now();
+                    while s.far_map().is_none() {
+                        if t0.elapsed().as_secs() >= max {
+                            return CommandResult::fail(format!("no far material after {max} s"));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                    CommandResult::success(format!("far material ready ({:.1?} waited)", t0.elapsed()))
+                })
+            },
+        );
 
         c.add(
             "terrain_pick",

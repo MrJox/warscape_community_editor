@@ -282,3 +282,12 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   bake the map-wide far diffuse and normal from the tiles (the blocks' bake, `Template::bake_far`, over the whole map; cached on
   disk), bind them to the resolve with the game's far-blend constants, and keep the far rings as LF ground (cheap). To trace: how
   the game bakes it (its colours against the editor's block bake), its alpha and normal channels, and the snow mask's use.
+- **The far material built (2026-11-19, measured on an idle machine):** `Frame::far_map` bakes the map's far colour (each cell's
+  tile's far bake, the first tile over it; else the sea bed or the climate's plain colour) and normal (the LF and the tiles' own
+  heights, packed as the game's: x in alpha, up in green) at 4096 a side (DEVIATION: the game's 8192), on a thread of the streamer's
+  for campaign maps (29 - 67 s on main_attila from the cache); the resolve binds it with the game's far blend (0, 9 - 37 world
+  units, `g_world_dimensions` the map's size). The distant land now has its tiles' colours (was the plain olive); the constants
+  match the game's; the frame's cost unchanged (5.6 ms, default rings; the merged blocks to 600 cells were 33.5 ms). Script:
+  `terrain_far_wait`. Left: the far ring's geometry (its LF ground is flat where the game has mountains; it pokes out of the sea over
+  sea tiles beside the islands), an edit's bake again (the bake is made once a map), a disk cache of the bake.
+  Idle numbers for the record: default rings 5.8 ms (p95 7.5); merged blocks to 600 cells 33.5 ms (blend 9.7, shadows 9.5).

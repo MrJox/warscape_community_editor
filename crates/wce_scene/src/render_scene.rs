@@ -1210,6 +1210,9 @@ pub struct RenderScene {
     /// A campaign map's season snow: the terrain resolve's extra layer from the season's `snow_mask_<season>.dds` (none: no snow).
     pub campaign_snow: Option<CampaignSnow>,
 
+    /// A campaign map's far material: what the terrain resolve blends to from 9 to 37 world units off the eye, as the game's (none: off).
+    pub campaign_far: Option<std::sync::Arc<CampaignFar>>,
+
     /// Where the ground, buildings, decals and trees take snow, and how much (a map context's season snow map; none: the weather's alone).
     /// Set with [`Self::set_snow`].
     snow: Option<SnowRegions>,
@@ -1219,6 +1222,20 @@ pub struct RenderScene {
 /// A campaign map's season snow, as the game's terrain resolve draws it (docs/re/terrain.md, "Snow"): where the season's snow mask (an L8
 /// DDS over the map's cells, row 0 the north edge) is above 0 the resolve lays the `snow` texture group over the ground, its variation
 /// (mask - 0.25) * 4. The mask covers the frame rectangle from its south-west corner (x, z; scene units) over `size`.
+/// A campaign map's far material (`s_far_diffuse_map`, `s_far_normal_map`): `size` texels a side over the map's rectangle, row 0 its
+/// north edge; RGBA8 each (the colour's square root, its detail byte; the normal's x in alpha, its up component in green).
+#[derive(Clone, Debug, Default)]
+pub struct CampaignFar {
+    pub id: u64,
+    pub size: u32,
+    pub diffuse: std::sync::Arc<Vec<u8>>,
+    pub normal: std::sync::Arc<Vec<u8>>,
+
+    /// The map's south-west corner and size (scene units).
+    pub corner: [f32; 2],
+    pub extent: [f32; 2],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CampaignSnow {
     pub mask: String,
@@ -1389,6 +1406,7 @@ impl Default for RenderScene {
             campaign_lines: None,
             campaign_sea: None,
             campaign_snow: None,
+            campaign_far: None,
             snow: None,
             ground_overlay: None,
         }

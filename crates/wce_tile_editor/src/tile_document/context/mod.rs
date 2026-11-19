@@ -158,6 +158,21 @@ pub struct BlockSource<'a> {
 /// A cell no placement gives a climate.
 const NO_CLIMATE: u8 = u8::MAX;
 
+/// A campaign map's far material as the game's terrain resolve reads it (`s_far_diffuse_map`, `s_far_normal_map`: docs/re/terrain.md,
+/// "Far blend"): the whole map's ground in one square image over the map's rectangle, row 0 its north edge. The game's are 8192 a side,
+/// made at load (RenderDoc, capture A); `size` here (DEVIATION: smaller, the blend starts 9 world units from the eye).
+#[derive(Clone, Debug, Default)]
+pub struct FarMap {
+    pub size: u32,
+
+    /// RGBA8 rows: the colour as the tiles' far bakes store it (the square root of the linear colour: the shader squares it), the alpha
+    /// their detail byte.
+    pub diffuse: Arc<Vec<u8>>,
+
+    /// RGBA8 rows: the normal as the game packs it (alpha its x, green its up component, red and blue 255; the shader makes the third).
+    pub normal: Arc<Vec<u8>>,
+}
+
 /// A heights buffer the terrains of a size share.
 type Heights = Arc<Vec<f32>>;
 
@@ -1260,6 +1275,129 @@ impl Frame {
         world.m[2][2] = self.z_stretch as f32;
         out.push((world, Payload::Terrain(t)));
         out
+    }
+
+    /// Whether this is a campaign map's frame (its tiles in the campaign database).
+    pub fn is_campaign(&self) -> bool {
+        self.climates.kind == "campaign"
+    }
+
+    /// The map's south-west and north-east corners in the frame (map cells (0, h) and (w, 0)).
+    pub fn corners(&self) -> ((f64, f64), (f64, f64)) {
+        let (w, h) = (f64::from(self.map.width), f64::from(self.map.height));
+        (self.from_map.apply(0.0, h), self.from_map.apply(w, 0.0))
+    }
+
+    /// The map's far material (`FarMap`), `size` texels a side: each texel the far colour of the tile drawing its cell (the first one over
+    /// it, as the blocks take them; a cliff's or a sea tile's cells are the sea), else the sea bed under the sea or the climate's plain
+    /// colour; the normal from the LF and the tiles' own heights. Every tile is opened once, in placement order (slow on a whole map:
+    /// run it away from the UI thread). `stop` ends it early (None).
+    pub fn far_map(&self, size: u32, source: &BlockSource, stop: &dyn Fn() -> bool) -> Option<FarMap> {
+        let n = size as usize;
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        let (sw, ne) = self.corners();
+        let (fw, fh) = (ne.0 - sw.0, ne.1 - sw.1);
+        // A texel's point in the frame and its map cell.
+        let frame_of = |i: usize, j: usize| (sw.0 + (i as f64 + 0.5) / n as f64 * fw, ne.1 - (j as f64 + 0.5) / n as f64 * fh);
+
+        // Which placement draws each cell: the first tile over it (not a cliff, not a sea tile).
+        let mut owner = vec![u32::MAX; (w * h) as usize];
+        for (i, p) in self.map.placements.iter().enumerate() {
+            if (source.is_custom)(i) || self.on_sea_lf(i) {
+                continue;
+            }
+            let r = p.rect();
+            for y in r[1].max(0)..r[3].min(h) {
+                for x in r[0].max(0)..r[2].min(w) {
+                    let at = (y * w + x) as usize;
+                    if owner[at] == u32::MAX && self.owner[at] > 1 {
+                        owner[at] = i as u32;
+                    }
+                }
+            }
+        }
+
+        let mut diffuse = vec![0u8; n * n * 4];
+        let mut heights = vec![f32::NAN; n * n];
+        let mut painted = vec![false; n * n];
+        for (i, p) in self.map.placements.iter().enumerate() {
+            if stop() {
+                return None;
+            }
+            let r = p.rect();
+            if !(r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| x >= 0 && y >= 0 && x < w && y < h && owner[(y * w + x) as usize] == i as u32)) {
+                continue;
+            }
+            let Some(t) = (source.template)(i) else { continue };
+            let inverse = p.to_map().inverse();
+            // The texels whose cells lie in its rectangle.
+            let (u0, u1) =
+                ((f64::from(r[0]) / f64::from(w) * n as f64).floor() as i64, (f64::from(r[2]) / f64::from(w) * n as f64).ceil() as i64);
+            let (v0, v1) =
+                ((f64::from(r[1]) / f64::from(h) * n as f64).floor() as i64, (f64::from(r[3]) / f64::from(h) * n as f64).ceil() as i64);
+            for j in v0.max(0)..v1.min(n as i64) {
+                for k in u0.max(0)..u1.min(n as i64) {
+                    let (x, z) = frame_of(k as usize, j as usize);
+                    let (mx, my) = self.to_map.apply(x, z);
+                    let (cx, cy) = (mx.floor() as i32, my.floor() as i32);
+                    if cx < 0 || cy < 0 || cx >= w || cy >= h || owner[(cy * w + cx) as usize] != i as u32 {
+                        continue;
+                    }
+                    let at = j as usize * n + k as usize;
+                    let (lx, lz) = inverse.apply(mx, my);
+                    if let Some(c) = t.far_colour(lx, lz) {
+                        diffuse[at * 4..at * 4 + 4].copy_from_slice(&c);
+                        painted[at] = true;
+                    }
+                    heights[at] = t.own.height(lx, lz) + self.lift(x, z);
+                }
+            }
+        }
+
+        // The rest: the sea bed under the sea, else the climate's plain ground (each climate's worked out once: `mean` is not shared
+        // between threads); their heights the LF's.
+        let mut plain: HashMap<u8, [u8; 4]> = HashMap::new();
+        for &c in &self.climate {
+            plain.entry(c).or_insert_with(|| self.plain_colour(c, source.mean));
+        }
+        diffuse.par_chunks_mut(n * 4).zip(heights.par_chunks_mut(n)).zip(painted.par_chunks(n)).enumerate().for_each(
+            |(j, ((row, hs), done))| {
+                for k in 0..n {
+                    let (x, z) = frame_of(k, j);
+                    if hs[k].is_nan() {
+                        hs[k] = self.lift(x, z);
+                    }
+                    if done[k] {
+                        continue;
+                    }
+                    let (mx, my) = self.to_map.apply(x, z);
+                    let (cx, cy) = ((mx.floor() as i32).clamp(0, w - 1), (my.floor() as i32).clamp(0, h - 1));
+                    let c = if self.lift(x, z) < self.sea_y() {
+                        SEA_BED
+                    } else {
+                        plain.get(&self.climate[(cy * w + cx) as usize]).copied().unwrap_or(SEA_BED)
+                    };
+                    row[k * 4..k * 4 + 4].copy_from_slice(&c);
+                }
+            },
+        );
+
+        // The normals: the heights' central differences (scene units both ways; rows go south, the frame's z north).
+        let (dx, dz) = (fw / n as f64, fh / n as f64);
+        let mut normal = vec![255u8; n * n * 4];
+        normal.par_chunks_mut(n * 4).enumerate().for_each(|(j, row)| {
+            for k in 0..n {
+                let hgt = |a: usize, b: usize| f64::from(heights[b.min(n - 1) * n + a.min(n - 1)]);
+                let gx = (hgt(k + 1, j) - hgt(k.saturating_sub(1), j)) / (2.0 * dx);
+                let gz = (hgt(k, j.saturating_sub(1)) - hgt(k, j + 1)) / (2.0 * dz);
+                let l = (gx * gx + gz * gz + 1.0).sqrt();
+                let q = |v: f64| ((v * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8;
+                row[k * 4 + 1] = q(1.0 / l);
+                row[k * 4 + 3] = q(-gx / l);
+            }
+        });
+
+        Some(FarMap { size, diffuse: Arc::new(diffuse), normal: Arc::new(normal) })
     }
 
     /// The colour of a climate's plain ground, as a baked material stores it: what its material averages to.

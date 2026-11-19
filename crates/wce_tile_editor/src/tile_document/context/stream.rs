@@ -18,7 +18,7 @@ use wce_scene::render_scene::Payload;
 use wce_vfs::files::Files;
 
 use super::template::{Template, load_any_template};
-use super::{BLOCK, BlockSource, CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
+use super::{BLOCK, BlockSource, CHUNK, ContextRequest, FarMap, Frame, TileKey, cache, tile_dir};
 use crate::terrain_bake::TerrainLook;
 
 /// A chunk: its column and row of CHUNK x CHUNK map cells.
@@ -129,7 +129,13 @@ struct Shared {
     stats: Mutex<Stats>,
     clock: std::sync::atomic::AtomicU64,
     stop: AtomicBool,
+
+    /// A campaign map's far material, once made (`Frame::far_map`, on a thread of its own).
+    far: Mutex<Option<Arc<FarMap>>>,
 }
+
+/// The side of a campaign map's far material (the game's is 8192: `FarMap`).
+pub const FAR_MAP_SIZE: u32 = 4096;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
@@ -408,7 +414,31 @@ impl Streamer {
             stats: Mutex::default(),
             clock: Default::default(),
             stop: AtomicBool::new(false),
+            far: Mutex::default(),
         });
+
+        // A campaign map's far material, made once every tile is read (minutes on a whole map the first time: the cache's later).
+        if shared.frame().0.is_campaign() {
+            let s = shared.clone();
+            std::thread::spawn(move || {
+                wce_foundation::jobs::lower_thread_priority();
+                let t0 = std::time::Instant::now();
+                let (frame, _) = s.frame();
+                let source = BlockSource {
+                    template: &|i| s.template(&frame, i),
+                    is_custom: &|i| s.is_custom(&frame, i),
+                    mean: &|path| s.mean_colour(path),
+                    in_block: &|_| false,
+                };
+                if let Some(far) = frame.far_map(FAR_MAP_SIZE, &source, &|| s.stop.load(Ordering::Relaxed)) {
+                    wce_foundation::log::info(format!(
+                        "map context: the campaign's far material made, {FAR_MAP_SIZE} a side, in {:.1?}",
+                        t0.elapsed()
+                    ));
+                    *lock(&s.far) = Some(Arc::new(far));
+                }
+            });
+        }
 
         let (tx, results) = channel();
         let workers = (0..WORKERS)
@@ -419,6 +449,11 @@ impl Streamer {
             .collect();
 
         Self { shared, results, workers, shown: HashMap::new(), wanted: HashMap::new(), rings, started, frame_s, first_s: None }
+    }
+
+    /// A campaign map's far material, once made (`Frame::far_map`).
+    pub fn far_map(&self) -> Option<Arc<FarMap>> {
+        lock(&self.shared.far).clone()
     }
 
     /// New rings (cells): the next update moves the chunks to their levels.
