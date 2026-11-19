@@ -89,6 +89,34 @@ Headless conversion works: `WwiseCLI.exe <project>.wproj -ConvertExternalSources
 conversion ShareSets are Vorbis on Windows. The output has vanilla's exact layout (0x42 `fmt`, external codebook IDs, blocksizes 8/11);
 only the `uid` differs per file. So tests can convert the same WAV with Wwise and with WCE and compare.
 
+### Wwise Vorbis encoding (spike findings)
+
+The vorb block (fmt + 0x18, 0x2A bytes), named after Wwise's runtime header and checked on the oracle's output:
+
+| Offset | Field | Value written |
+|---|---|---|
+| 0x00 | total PCM frames | the source's frame count |
+| 0x04 | loop start packet offset | size of the setup packet with its 2-byte header (relative to the end of the seek table) |
+| 0x08 | loop end packet offset | data size minus the seek table |
+| 0x0C | loop begin extra (u16), loop end extra (u16) | 0, and the same value as last-granule extra |
+| 0x10 | seek table size | 0 (Voice preset), 0x80 (Music preset with seek table granularity) |
+| 0x14 | Vorbis data offset | seek table + setup packet: the first audio packet |
+| 0x18 | max packet size (u16), last granule extra (u16) | largest audio packet; samples decoded beyond the frame count (52 for the test tone) |
+| 0x1C, 0x20 | decode alloc size, x64 alloc size | fixed per setup: taken from a table of known setups (all 18 seen so far); unknown setups: formula still to find |
+| 0x24 | codebook hash | FNV-1 32 of the setup packet's payload |
+| 0x28, 0x29 | blocksize exponents | from the Vorbis identification header |
+
+The `fmt` before it: codec 0xFFFF, channels, rate, average bytes per second = data size x rate / frames, block align 0, bits 0,
+cbSize 0x30, a u16 0, the channel mask (mono 4). Data: [seek table], the setup packet (u16 size + payload), then audio packets (u16
+size + payload).
+
+Conversion from a standard Vorbis stream (ww2ogg's rebuild, reversed): the setup drops the 'vorbis' header, the time section, floor
+types (always 1), residue types to 2 bits, mapping types, the modes' window/transform types and the framing bit; codebooks become
+10-bit IDs into Wwise's library (`packed_codebooks_aoTuV_603.bin`, 598 entries, 26 contents present twice). When a codebook has two
+IDs, Wwise uses the copies that keep each quality level's block contiguous: choose the assignment minimising the sum of every ID's
+distance to its nearest other ID (ties: lowest). Audio packets drop the packet-type bit and, for long blocks, the previous/next window
+flags (the decoder recomputes them from the neighbouring packets' modes).
+
 ## Crates
 
 - `wce_audio_format`: the files, no audio. Banks (`BKHD`, `DIDX`, `DATA`, `HIRC`, `STID` and any other chunk raw; HIRC objects of an
@@ -104,21 +132,46 @@ byte-identical; every WEM decodes; the encoder and the bank writer match the Wwi
 
 ## Steps
 
-1. **Spikes.**
+Status legend: **done**, **in progress**, **partial**, **todo**, **blocked** (with why). Every step and sub-step keeps its status here,
+updated as work lands (user, 2026-11-19), so the work can be resumed from this file alone.
+
+Scratch work (not in the repo, may be lost on a reboot; the findings that matter are recorded here):
+`%TEMP%\claude\439e225181e38936\b8cb548f-d7a7-4438-97ec-8a54f498b744\scratchpad\` — `dl\` the downloaded sources (aoTuV, libogg,
+ww2ogg), `build\prefix` the built static libs, `tools\` (`build_vorbis.bat`, `vtool.c` an aoTuV encode/decode tool, `wwvorbis.py`
+the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` the oracle project and its outputs, `audio\` vanilla
+`sound.pack` audio, `rome2own\` Rome 2's banks.
+
+1. **Spikes.** **in progress**
    1. Rome 2's banks' version: v112 wherever the game loads them (its v88 release banks are all overridden). **done**
    2. The vanilla WEM survey (above). **done**
    3. The Wwise 2014.1.3 oracle (above). **done**
-   4. The encoder: encode the oracle's WAV with aoTuV/libvorbis, rebuild it as Wwise Vorbis against the codebook library, compare with
-      Wwise's WEM (structure, codebook IDs, size within about 5 %, SNR against the source at least Wwise's), then replace a vanilla
-      sound and hear it in game. Passes: aoTuV (built from source like SDL3, `THIRD_PARTY.md`). Fails: a native encoder. **todo, waits
-      on the dependency question** (aoTuV and libogg sources, and the codebook library: ww2ogg's packed file, BSD, or our own extraction).
-2. **Formats** with the round-trip gates; `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`.
-3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback.
+   4. The encoder (aoTuV vs native). **in progress**
+      1. Downloads (aoTuV `AO-Yumi/vorbis_aotuv` ef858ad, libogg `xiph/ogg` 06a5e02, ww2ogg `hcs64/ww2ogg` 14ed9b0 for
+         `packed_codebooks_aoTuV_603.bin`; all BSD; user approved 2026-11-19) and an MSVC build of both libraries. **done**
+      2. Wwise header fields understood (see "Wwise Vorbis encoding" below): codebook hash = FNV-1 of the setup packet (1,480 of
+         1,480 WEMs); decoder alloc sizes fixed per setup. **done**
+      3. Ogg Vorbis -> Wwise Vorbis conversion: every aoTuV codebook (q0.0 to q0.6) is in Wwise's library; the duplicate-ID rule
+         reproduces all 18 distinct vanilla + oracle setups; aoTuV q0.4 gives Wwise's Voice preset's setup byte for byte (hash
+         3017712712); aoTuV q0.0 gives vanilla's most common mono setup (997642109). **done**
+      4. Back conversion (WEM -> Ogg) for decoding: vanilla and oracle WEMs decode; our WEM decodes to exactly the samples of the Ogg
+         it came from. **done**
+      5. Synthetic comparison with Wwise (3 s mono tone + noise, q0.4 vs Voice): same setup, same packet count, audio not
+         bit-identical (encoder decisions differ from bit 2 of the first packet), size +0.08 %, SNR 20.48 dB vs Wwise's 20.22 dB.
+         **done**
+      6. Realistic comparison: decoded vanilla WEMs (mono VO/SFX, stereo music, 5.1) re-encoded by Wwise and by aoTuV at matching
+         quality: size, SNR, setups. Also try input scaling (/32767 vs /32768) for bit-exact output. **todo**
+      7. Packet sizes exact: Wwise keeps the exact bit count; ours rounds up from the Ogg packet (up to 1 byte per packet). Needs
+         aoTuV's bit count (we build it from source) or the native encoder. **todo**
+      8. In-game test: replace a vanilla sound with our WEM (bank DIDX/DATA or loose WEM), the user listens. **todo**
+      9. Verdict: aoTuV (`THIRD_PARTY.md`, built from source like SDL3) or a native encoder; record it here. **todo**
+2. **Formats** with the round-trip gates; `docs/formats/wwise_bank.md`, `wem.md`, `event_data.md`, `snd_meta.md`, `amb.md`. **todo**
+3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **todo**
 4. **Replace and add variations**: the encoder, the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties.
-5. **Remove and delete** with the reference warnings; **new events** with their triggers.
-6. **Music**: playlists, segments, tracks, transitions, switches, stingers.
-7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.**
-8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound.
+   **todo**
+5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
+6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
+7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
+8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **todo**
 
 ## Open questions and risks
 
