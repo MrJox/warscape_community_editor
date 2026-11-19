@@ -33,6 +33,8 @@ const BLEND_VS: &str = "dx11_sm_4_0_rigidterrain.hlsl_vs_vs30_blend";
 const BLEND_PS: &str = "dx11_sm_4_0_rigidterrain.hlsl_ps_ps30_blend";
 const RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
+/// The sea geometry pass's pixel shader (a campaign map's sea tiles: `Terrain::sea_floor`).
+const SEA_PS: &str = "dx11_sm_4_0_rigidterrain.hlsl_ps_ps_sea_geom";
 const SHADOW_NEW_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_shadow_new";
 
 /// The blend pass of a baked material (`TerrainMaterial::baked`), in place of ps30_blend behind the same vs30_blend: the colour from one
@@ -1785,6 +1787,7 @@ impl Renderer {
             return;
         }
 
+        let geom = geom_vs.clone();
         self.draw_terrain_material(
             &ents,
             scene.snow(),
@@ -1792,6 +1795,63 @@ impl Renderer {
             scene.campaign_far.as_deref(),
             [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps],
         );
+        self.draw_sea_floor(&ents, &geom);
+    }
+
+    /// A campaign map's sea tiles (`Terrain::sea_floor`), as the game's sea geometry pass draws them after the G-buffer's models (RenderDoc,
+    /// capture A, events 17966 - 17988: rigidterrain `vs41_geom_new` with the sea's LF and `ps_sea_geom` into the G-buffer, depth
+    /// LessEqual): an up normal and one layer of the terrain's diffuse array (`g_sea_texture_index`: the sea tiles' own `sand_a`, layer 0 of
+    /// their material here) at world xz over its group's metres per repeat, none of the terrain's blend. The coast tiles' ground (on the
+    /// land's LF) shows through where it is higher: the shore.
+    fn draw_sea_floor(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader) {
+        let sea: Vec<&wce_scene::render_scene::Entity> =
+            ents.iter().copied().filter(|e| matches!(&e.payload, Payload::Terrain(t) if t.sea_floor && t.material.is_some())).collect();
+        if sea.is_empty() {
+            return;
+        }
+        wce_prof!("terrain.sea_floor");
+        let Some(ps) = self.shader(SEA_PS) else { return };
+        let Some(il) = self.layout(vs, "terrain_geom", &geom_layout()) else { return };
+        let rtvs = self.gbuffer.scene_rtvs();
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
+        self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_input_layout(Some(&il));
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        // By material (each sea tile's own: their arrays and repeats).
+        let mut groups: Vec<(Arc<TerrainMaterial>, Vec<&wce_scene::render_scene::Entity>)> = vec![];
+        for e in sea {
+            let Payload::Terrain(Terrain { material: Some(m), .. }) = &e.payload else { continue };
+            match groups.iter_mut().find(|(g, _)| g.id == m.id) {
+                Some((_, v)) => v.push(e),
+                None => groups.push((m.clone(), vec![e])),
+            }
+        }
+
+        let (cull, clip, u) = (self.camera.main_view_proj, self.camera.cb_view_proj, self.camera.units);
+        for (m, group) in groups {
+            let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
+            let mut arr = [0.0f32; 4];
+            arr[0] = super::tiling(m.pixel_scale[0] * self.tile_scale(), super::ORIGIN_REACH * u);
+            (arr[1], arr[2]) = (m.outfield_scale[0], m.mid_strength[0]);
+            let cbs = &mut self.cbs;
+            cbs.set_f("ps_texture_array_cb", "g_sea_texture_index", &[0.0, 0.0]);
+            cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
+            cbs.set_f("shroud_PS", "g_shroud_enabled", &[if self.shroud.fog_on { 1.0 } else { 0.0 }]);
+            self.upload();
+            bind_srv(&self.ctx, &ps, "t_diffuse_array", g.diffuse.srv.as_ref());
+            ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
+            bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
+            let triangles = self.draw_terrain_patches(&group, vs, &ps, &cull, &clip);
+            self.draw_stats.triangles += triangles;
+        }
+
+        // The resolve's constants back as the other terrain passes leave them.
+        self.cbs.set_f("ps_texture_array_cb", "g_sea_texture_index", &[0.0, 0.0]);
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
     }
 
     /// Brings the GPU materials and texture arrays up to date with the scene's terrains (dropping those no terrain uses).
@@ -1841,8 +1901,13 @@ impl Renderer {
         campaign_far: Option<&wce_scene::render_scene::CampaignFar>,
         shaders: [std::rc::Rc<GameShader>; 7],
     ) {
-        let all = ents.to_vec();
-        let ents = self.terrain_in_view(ents, &self.camera.main_view_proj);
+        // A campaign map's sea tiles are the sea pass's (`draw_sea_floor`).
+        let land = |e: &&wce_scene::render_scene::Entity| !matches!(&e.payload, Payload::Terrain(t) if t.sea_floor);
+        let all: Vec<_> = ents.iter().copied().filter(land).collect();
+        if all.is_empty() {
+            return;
+        }
+        let ents: Vec<_> = self.terrain_in_view(ents, &self.camera.main_view_proj).into_iter().filter(land).collect();
         let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());

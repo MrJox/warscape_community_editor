@@ -253,8 +253,13 @@ impl Shared {
                 // (a desert's sand laid beige over the whole far ring).
                 let set = key.0.replace('/', "\\").to_lowercase();
                 let campaign = set.contains("\\tiles\\campaign\\");
-                if !campaign || set.split('\\').filter(|s| !s.is_empty()).nth(3).is_some_and(|s| s.starts_with("grass_")) {
+                let tile_set = set.split('\\').filter(|s| !s.is_empty()).nth(3).unwrap_or_default().to_owned();
+                if !campaign || tile_set.starts_with("grass_") {
                     frame.offer_plain(&t.material);
+                }
+                // Its sea's ground past the rings from a sea tile (`Frame::offer_sea`).
+                if campaign && tile_set == "sea" {
+                    frame.offer_sea(&t.material);
                 }
                 Slot::Ready(Arc::new(t), now)
             }

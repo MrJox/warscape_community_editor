@@ -657,6 +657,22 @@ Pass order (event ranges of capture A):
   the shroud plane (twice), the VFX, luminance and exposure, the tone map (`hdr_to_screen`, 18985), the lens flare, the UI (19033 on).
 - **Not drawn**: no grass pass, no `campaignterrain ps30_main_coast` (the coast strip) and no `ps30_main_trade_route`.
 
+The sea tiles and the coast (capture A, pixel history and disassembly, 2026-11-19):
+- A coast cell holds two tiles: a `sea_coast` tile (layer 0; flat, its `final_heights` all 0) and a `sea` tile over it (flat too). The
+  terrain passes draw the coast tile on the land's LF (4064 x 2882, `g_height_map_lf_scale` 9.2868 = 712 m, offset 0.4993 = 38.28 m:
+  0.013043 world units a metre); the sea tiles are not in them. In the open sea beside the cliffs the terrain passes draw nothing.
+- The sea geometry pass (17966 - 17988, after the models) draws the sea tiles' 1-cell patches on the sea's LF (texture 2032 x 1441, 11
+  mips, read on a 1016 x 720 grid: `g_height_map_dimension`; `g_height_map_lf_scale` 5.2173 = 400 m) into the G-buffer, depth
+  LessEqual. `ps_sea_geom`: albedo = sqrt of `t_diffuse_array` layer `g_sea_texture_index.x * 4 + .y` (6, 0 here: the sea tiles'
+  `sand_a`) at world xz over `g_blend_pixel_scale_array[layer / 4].x` (bias -0.66), darkened by the shroud; normal (0.5, 1, 0.5); the
+  third target (1, 1, 1, 1/255); z / w. So where the coast tile's ground is higher than the sea floor it shows, else the sand: the
+  shore follows the LF, not the cells (at the probed bay pixel: coast ground -15.9 m, sea floor -5.4 m, the shore +2.1 m).
+- The terrain shader's LF lookup (`vs41_geom_new`): uv = (x / W + o, 1 - (z / H + o)), clamped below 1 - 1/N; texel k at k / N (a
+  gather at (floor(p) + 1) / N and its own bilinear weights). The game's land texture has two texels a cell where the kit's
+  `lf_heights.tif` has eight (16256 x 11528): its 4 x 4 box average, so a texel stands for the field 1.5 samples (3/16 cell) further
+  south-east. Twelve terrain-depth points of the bay agree with the field moved so (6.8 m rms -> 3.0 m; best 1/16 cell further
+  south still, 1.2 m: not explained).
+
 The world (the instance matrices, `instances.csv`):
 - The tiles, the cliff meshes, the sea tiles and the river meshes carry the hex world's stretch: their matrices' z axis is 1.1548 x
   their x axis (0.8660 for tiles turned a quarter: the stretch is the world's, applied after the tile's turn).

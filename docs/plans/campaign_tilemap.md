@@ -307,3 +307,14 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   out of its mask the cells where grass tiles lie; its ground there slopes down (the mask's drop), so the bake sank them 256 m:
   holes near, walls far. A cell now takes the highest of the tiles' own heights over it, as `Frame::ground_at` does. The far
   level's chunks take the relief again (the walls were the same sinks). Capture A's ground 22.07 -> 21.87.
+- **The blue patch / the coasts' squares (2026-11-19):** traced in capture A (docs/re/renderer.md, "The sea tiles and the coast"):
+  the game draws a coast cell's `sea_coast` tile on the land's LF and its `sea` tile in a pass of its own (`ps_sea_geom`: sand, an up
+  normal) on the sea's LF; the higher shows, so the shore follows the LF. The editor (1) cut a sea tile's cells out of the land's
+  ground past the rings even where a coast tile shares them (`cell_on_sea`: the sea now only with no land tile there; blocks and far
+  chunks alike), (2) drew the sea tiles through the terrain's blend (the coast tiles' green on the sea floor): a campaign map's sea
+  tiles are `Terrain::sea_floor`, drawn by the game's `ps_sea_geom` after the resolve, the far ones with a sea tile's material
+  (`Frame::offer_sea`), and (3) sampled the land LF 3/16 cell off the game's (`lf_map`: the game's texture is the field's 4 x 4
+  average). The coasts seen from high up lost their cell squares (beaches along the LF). Left: capture A's nearest ground is drawn at
+  the far level (the rings centre on the pivot, 37 cells ahead: the bottom of the frame 31 cells off; wider rings, `terrain_view 13000
+  40 48 96 48`, give the coast tiles' sand as the game's); the bay there shows less water than the game's (the sea LF is the game's
+  coarser 1016 x 720 read, not ported; the 1/16 cell left); a streaming race once left dark shadows in a capture (not reproduced).
