@@ -82,7 +82,19 @@ impl CampaignLinesView {
     /// Takes in what the worker read: the scene's lines for the document shown.
     pub fn poll(&mut self, e: &mut Editor, shown: DocumentId, map: &str) {
         let Some(rx) = &self.rx else { return };
-        let Ok((id, r)) = rx.try_recv() else { return };
+        let Ok(read) = rx.try_recv() else { return };
+        self.take_read(e, shown, map, read);
+    }
+
+    /// Waits up to `max` for the worker (scripts: `terrain_settle`), then takes in what it read. False: still reading.
+    pub fn wait(&mut self, e: &mut Editor, shown: DocumentId, map: &str, max: std::time::Duration) -> bool {
+        let Some(rx) = &self.rx else { return true };
+        let Ok(read) = rx.recv_timeout(max) else { return false };
+        self.take_read(e, shown, map, read);
+        true
+    }
+
+    fn take_read(&mut self, e: &mut Editor, shown: DocumentId, map: &str, (id, r): Read) {
         self.rx = None;
         if id != shown {
             return;

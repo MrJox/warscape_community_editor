@@ -2466,7 +2466,7 @@ impl Tool for TerrainTool {
             },
         );
 
-        c.add("terrain_settle", "terrain_settle [all]", "the Terrain tool: wait until the map's chunks around the camera are on the scene; says what it has (all: every tile it could not open)", |e, a| {
+        c.add("terrain_settle", "terrain_settle [all]", "the Terrain tool: wait until the map's chunks around the camera are on the scene (a campaign's settlements and borders read too); says what it has (all: every tile it could not open)", |e, a| {
             let all = a.first().is_some_and(|v| v == "all");
             with_terrain(e, |t, e| {
                 if t.view.streamer.is_none() {
@@ -2474,9 +2474,28 @@ impl Tool for TerrainTool {
                 }
 
                 t.view.settle(e, &t.rings);
+                // A campaign map's settlements and borders are read on workers (the startpos takes seconds): waited for, so that a
+                // script's next frames draw them (the props' update starts the settlements' read and builds the models once read).
+                let mut late = vec![];
+                if t.shown != 0
+                    && let Some(name) = e.docs.find_as::<MapDocument>(t.shown).filter(|d| map_kind(&d.name).0 == MapKind::Campaign).map(|d| map_kind(&d.name).1.to_owned())
+                {
+                    let max = std::time::Duration::from_secs(60);
+                    let frame = t.view.frame();
+                    let view = &t.view;
+                    t.props.update(e, t.shown, frame.clone(), &|x, z| view.ground_at(x, z), view.tiles_loaded());
+                    if !t.props.wait_cities(max) {
+                        late.push("the settlements");
+                    }
+                    if !t.lines.wait(e, t.shown, &name, max) {
+                        late.push("the borders");
+                    }
+                    t.props.update(e, t.shown, frame, &|x, z| view.ground_at(x, z), view.tiles_loaded());
+                }
+                let late = if late.is_empty() { String::new() } else { format!("; still reading {}", late.join(" and ")) };
                 let failed = t.view.streamer.as_ref().map(|s| s.failed()).unwrap_or_default();
                 let note = if failed.is_empty() { String::new() } else { format!("; could not open: {}", failed.iter().take(if all { usize::MAX } else { 4 }).cloned().collect::<Vec<_>>().join("; ")) };
-                CommandResult::success(format!("{}{note}", t.view.status))
+                CommandResult::success(format!("{}{note}{late}", t.view.status))
             })
         });
 

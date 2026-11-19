@@ -186,5 +186,5 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
 - Phase 4 items settled for Attila by capture A's pass list: no coast strip (`ps30_main_coast` not drawn: item 3 closed, nothing
   to draw), no grass pass (item 4: off on Attila; TDD's reeds wait for its capture).
 - The prerequisite: the settlement buildings are drawn in scripted runs once the startpos is read (a thread): 0 right after
-  `terrain_settle`, 304 at Rome 240 frames later. The 2026-11-18 run took its shot too early. To do in Phase 2: `terrain_settle`
-  waits for the startpos, the forests and the props too.
+  `terrain_settle`, 304 at Rome 240 frames later. The 2026-11-18 run took its shot too early. Fixed: `terrain_settle` on a
+  campaign map waits for the settlements' and the borders' workers and builds the props (304 buildings right after it).

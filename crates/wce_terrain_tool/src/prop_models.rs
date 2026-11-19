@@ -324,6 +324,19 @@ impl Default for PropModels {
 }
 
 impl PropModels {
+    /// Waits up to `max` for the settlements' read (scripts: `terrain_settle`). False: still reading.
+    pub fn wait_cities(&self, max: std::time::Duration) -> bool {
+        let Some((_, cell)) = &self.cities else { return true };
+        let t0 = std::time::Instant::now();
+        while cell.get().is_none() {
+            if t0.elapsed() >= max {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        true
+    }
+
     /// `ground`: the drawn ground at a frame point (the LF and the tiles' own heights, `MapView::ground_at`), which the props, trees and
     /// buildings stand on; `loaded`: the view's tiles in memory, which build the models again as more come (each brings its ground).
     pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<Arc<Frame>>, ground: &dyn Fn(f64, f64) -> f32, loaded: usize) {
