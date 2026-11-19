@@ -10,8 +10,6 @@ license.workspace = true
 lewton = { version = "0.10", default-features = false }
 thiserror = "2"
 wce_audio_format = { path = "../wce_audio_format" }
-
-[dev-dependencies]
 wce_vfs = { path = "../wce_vfs" }
 
 [lints]
