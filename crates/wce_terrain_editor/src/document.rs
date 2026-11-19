@@ -884,6 +884,7 @@ impl MapDocument {
             target.path.clone()
         };
         let model = self.model().ok_or("a map of the game's packs is read-only")?;
+        let attempt = std::cell::RefCell::new(self.io_changes.lock().map_err(|e| e.to_string())?.begin(&dir, overwrite)?);
         let writing = self.publication_model()?;
         let files = if writing.built {
             wce_terrain_io::built::write_project(&writing, Some(&self.db))
@@ -891,8 +892,7 @@ impl MapDocument {
             wce_terrain_io::attila::write(&writing)
         }
         .map_err(|e| e.to_string())?;
-        let retained = crate::save_validation::preflight(model, &files, &dir)?;
-        let attempt = std::cell::RefCell::new(self.io_changes.lock().map_err(|e| e.to_string())?.begin(&dir, overwrite)?);
+        let retained = crate::save_validation::preflight(model, &files, &dir, attempt.borrow().target_names())?;
         let outputs = files
             .folder
             .iter()
@@ -907,7 +907,7 @@ impl MapDocument {
                 output
             })
             .collect();
-        let staged = wce_foundation::publication::Staged::prepare(outputs).map_err(|e| e.to_string())?;
+        let staged = wce_foundation::publication::Staged::prepare_changes(outputs).map_err(|e| e.to_string())?;
         let mut normal_sources = vec![];
         for (key, blob) in &files.folder {
             if key.to_ascii_lowercase().starts_with("normals/") && matches!(blob,wce_tile_model::Blob::Bytes(_)) && !self.normal_source_bytes.lock().map_err(|e|e.to_string())?.contains_key(key)
