@@ -216,6 +216,81 @@ impl Drop for Staged {
 impl Staged {
     /// All source reads and writes to reserved temporaries finish here, before any destination rename.
     pub fn prepare(outputs: Vec<Output>) -> Result<Self, Failure> {
+        Self::prepare_impl(outputs, true)
+    }
+
+    /// The caller has already compared every output and removed exact matches.
+    /// Source readability, destination permissions, synchronization and publication
+    /// checks still apply. This avoids repeating the caller's content comparisons.
+    pub fn prepare_changes(outputs: Vec<Output>) -> Result<Self, Failure> {
+        Self::prepare_impl(outputs, false)
+    }
+
+    /// Generate one additional output directly in publication staging. The completed
+    /// bytes are never copied again. Failure cleans the whole staged group; no output
+    /// is published until the caller performs its final freshness check.
+    pub fn prepare_with_generated(
+        outputs: Vec<Output>,
+        path: PathBuf,
+        priority: u8,
+        generate: impl FnOnce(&Path) -> Result<(), String>,
+    ) -> Result<Self, Failure> {
+        if reserved(&path.to_string_lossy()) {
+            return Err(fail("reserved .wce_tmp resource"));
+        }
+        let key = crate::save_path::key(&path).map_err(fail)?;
+        for output in &outputs {
+            if crate::save_path::key(&output.path).map_err(fail)? == key {
+                return Err(fail("duplicate publication destination"));
+            }
+        }
+        let mut staged = Self::prepare(outputs)?;
+        let temp = path.with_added_extension("wce_tmp");
+        let result = (|| -> io::Result<bool> {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            clear_temp(&temp)?;
+            generate(&temp).map_err(io::Error::other)?;
+            let metadata = fs::symlink_metadata(&temp)?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err(io::Error::other("generator did not produce a regular staging file"));
+            }
+            if identical(&Source::File(temp.clone()), &path)? {
+                return Ok(false);
+            }
+            let permissions = match fs::metadata(&path) {
+                Ok(metadata) => {
+                    if !metadata.is_file() || metadata.permissions().readonly() {
+                        return Err(io::Error::other("destination is not a writable regular file"));
+                    }
+                    Some(metadata.permissions())
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let file = OpenOptions::new().write(true).open(&temp)?;
+            if let Some(permissions) = permissions {
+                file.set_permissions(permissions)?;
+            }
+            sync_staged(&file)?;
+            Ok(true)
+        })();
+        match result {
+            Ok(true) => staged.files.push((Output { path, source: Source::File(temp.clone()), priority }, Some(temp))),
+            Ok(false) => {
+                clear_temp(&temp).map_err(fail)?;
+                staged.retained.push(path);
+            }
+            Err(error) => {
+                let _ = clear_temp(&temp);
+                return Err(fail(format!("stage {}: {error}", path.display())));
+            }
+        }
+        Ok(staged)
+    }
+
+    fn prepare_impl(outputs: Vec<Output>, compare: bool) -> Result<Self, Failure> {
         let mut staged = Self { files: vec![], retained: vec![] };
         let mut keys = BTreeSet::new();
         for o in &outputs {
@@ -229,7 +304,7 @@ impl Staged {
         }
         for o in outputs {
             let result = (|| -> io::Result<Option<PathBuf>> {
-                if identical(&o.source, &o.path)? {
+                if compare && identical(&o.source, &o.path)? {
                     return Ok(None);
                 }
                 let permissions = match fs::metadata(&o.path) {
@@ -318,6 +393,75 @@ mod tests {
     use super::*;
     thread_local! {
         pub(super) static FAIL_SYNC_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
+
+    #[test]
+    fn generated_staging_failure_or_sync_failure_cleans_the_whole_group() {
+        for fail_sync in [false, true] {
+            let dir = root("generated-failure");
+            let loose = dir.join("loose.bin");
+            let pack = dir.join("map.pack");
+            fs::write(&loose, b"old loose").unwrap();
+            fs::write(&pack, b"old pack").unwrap();
+            if fail_sync {
+                FAIL_SYNC_AFTER.set(Some(1));
+            }
+            let result = Staged::prepare_with_generated(
+                vec![Output::new(loose.clone(), Source::Bytes(Arc::from(&b"new loose"[..])))],
+                pack.clone(),
+                5,
+                |temp| {
+                    fs::write(temp, b"new pack").unwrap();
+                    if fail_sync { Ok(()) } else { Err("controlled generator failure".into()) }
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(fs::read(&loose).unwrap(), b"old loose");
+            assert_eq!(fs::read(&pack).unwrap(), b"old pack");
+            assert!(!loose.with_added_extension("wce_tmp").exists());
+            assert!(!pack.with_added_extension("wce_tmp").exists());
+            assert_eq!(FAIL_SYNC_AFTER.get(), None);
+            cleanup(&dir);
+        }
+    }
+
+    #[test]
+    fn generated_staging_publishes_the_generated_file_without_recopying_it() {
+        let dir = root("generated");
+        let pack = dir.join("map.pack");
+        let stamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        let staged = Staged::prepare_with_generated(vec![], pack.clone(), 5, |temp| {
+            fs::write(temp, b"complete pack").unwrap();
+            File::options().write(true).open(temp).unwrap().set_modified(stamp).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert!(!pack.exists());
+        staged.publish().unwrap();
+        assert_eq!(fs::read(&pack).unwrap(), b"complete pack");
+        assert_eq!(fs::metadata(&pack).unwrap().modified().unwrap(), stamp, "the generated file itself is renamed into place");
+        let staged =
+            Staged::prepare_with_generated(vec![], pack.clone(), 5, |temp| fs::write(temp, b"complete pack").map_err(|e| e.to_string()))
+                .unwrap();
+        assert_eq!(staged.publish().unwrap().retained, vec![pack.clone()]);
+        assert_eq!(fs::metadata(&pack).unwrap().modified().unwrap(), stamp);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn generated_staging_rejects_duplicate_destinations_before_running_a_writer() {
+        let dir = root("generated-duplicate");
+        let pack = dir.join("map.pack");
+        let result = Staged::prepare_with_generated(
+            vec![Output::new(pack.clone(), Source::Bytes(Arc::from(&b"loose"[..])))],
+            pack.clone(),
+            5,
+            |_| panic!("duplicate must be rejected first"),
+        );
+        assert!(result.is_err());
+        assert!(!pack.exists());
+        assert!(!pack.with_added_extension("wce_tmp").exists());
+        cleanup(&dir);
     }
 
     #[test]

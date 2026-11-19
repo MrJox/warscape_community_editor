@@ -100,23 +100,10 @@ fn write(
         output.priority = wce_terrain_io::publication_priority(rel);
         outputs.push(output);
     }
-    // Generate the pack before any loose output is published. Its reserved work file is disposable.
-    let work = pack.with_added_extension("build.wce_tmp");
-    struct Work(PathBuf);
-    impl Drop for Work {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let _work = Work(work.clone());
-    if work.exists() {
-        std::fs::remove_file(&work).map_err(|e| e.to_string())?;
-    }
-    wce_vfs::mod_pack::write_new(profile, &work, &pack_files(map, files))?;
-    let mut pack_output = Output::new(pack.clone(), Source::File(work));
-    pack_output.priority = 5;
-    outputs.push(pack_output);
-    let staged = Staged::prepare(outputs).map_err(|e| e.to_string())?;
+    let staged = Staged::prepare_with_generated(outputs, pack.clone(), 5, |temp| {
+        wce_vfs::mod_pack::write_new(profile, temp, &pack_files(map, files))
+    })
+    .map_err(|e| e.to_string())?;
     attempt.recheck()?;
     let mut inputs = normals.lock().map_err(|e| e.to_string())?;
     for (key, _) in files {
@@ -282,3 +269,7 @@ mod tests {
         std::fs::remove_dir_all(canonical).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "publication_bench.rs"]
+mod benchmarks;

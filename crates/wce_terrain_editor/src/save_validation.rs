@@ -78,31 +78,24 @@ fn location(p: &Path) -> io::Result<String> {
     wce_foundation::save_path::key(p).map_err(io::Error::other)
 }
 
-pub(super) fn preflight(m: &MapModel, files: &MapFiles, dir: &Path) -> Result<BTreeSet<String>, String> {
+pub(super) fn preflight(m: &MapModel, files: &MapFiles, dir: &Path, existing: &[String]) -> Result<BTreeSet<String>, String> {
     let originals = inputs(m);
     keys(originals.iter().map(|(n, _)| *n))?;
     let outputs = keys(files.folder.keys().map(String::as_str))?;
-    match std::fs::metadata(dir) {
-        Ok(_) => {
-            let existing = MapFiles::from_dir(dir).map_err(|e| e.to_string())?;
-            keys(existing.folder.keys().map(String::as_str))?;
-            for name in existing.folder.keys() {
-                if let Some(output) = outputs.get(&key(name)?)
-                    && *output != name
-                {
-                    return Err(format!(
-                        "Cannot save: destination key '{name}' differs from output key '{output}'; use a destination that preserves the resource spelling"
-                    ));
-                }
-            }
-            // Unplanned files stay untouched. Check their combined names only for
-            // ambiguity or file/directory conflicts with the outputs we will publish.
-            let names: BTreeSet<_> = existing.folder.keys().chain(files.folder.keys()).map(String::as_str).collect();
-            keys(names)?;
+    keys(existing.iter().map(String::as_str))?;
+    for name in existing {
+        if let Some(output) = outputs.get(&key(name)?)
+            && *output != name
+        {
+            return Err(format!(
+                "Cannot save: destination key '{name}' differs from output key '{output}'; use a destination that preserves the resource spelling"
+            ));
         }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.to_string()),
     }
+    // Unplanned files stay untouched. Check their combined names only for
+    // ambiguity or file/directory conflicts with the outputs we will publish.
+    let names: BTreeSet<_> = existing.iter().chain(files.folder.keys()).map(String::as_str).collect();
+    keys(names)?;
     let mut sources: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (name, blob) in originals {
         if let Blob::File(p) = blob {
