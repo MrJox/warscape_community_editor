@@ -272,3 +272,13 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   refraction), the tone map's DOF focus and focal length 0 (the files' `variance(0,18.404907)` not carried: the whole frame blurred
   by `blur_kernel_scale`, two captures), `pos_transform`, `g_vSoftShadowBufferSize`. Left: the resolve's snow / rock heights and far
   blend, the wind offset, the fade range (cascades), the foam animation's frames.
+- **The horizon's mechanism (2026-11-19, capture A's resolve, event 6762):** the game's campaign resolve blends each pixel from the
+  tiles' ground to a map-wide far material between 9 and 37 world units from the camera (`ps_height_map_cb.g_far_tile_distance` 0,
+  `g_far_blend_range` (9, 37); the editor's 1e9 switch it off): `s_far_diffuse_map` and `s_far_normal_map`, 8192 x 8192 BC3, one
+  mip, not in the packs (made at load), and `s_mask_map` (the 2032 x 1441 snow mask). Decoded (`dds_preview`;
+  `%TEMP%\wce_scratch\campcmp\far\far_diffuse.png`): a colour bake of every tile's ground over the whole map (forests, mountains,
+  deserts, roads; the sea blank), square over the map's 678.5 x 555.6. So the game does not draw its tiles to the horizon: past
+  about 37 units its ground is the LF's geometry with this bake's colour. **Plan for the horizon (replaces "tiles to the far plane"):**
+  bake the map-wide far diffuse and normal from the tiles (the blocks' bake, `Template::bake_far`, over the whole map; cached on
+  disk), bind them to the resolve with the game's far-blend constants, and keep the far rings as LF ground (cheap). To trace: how
+  the game bakes it (its colours against the editor's block bake), its alpha and normal channels, and the snow mask's use.
