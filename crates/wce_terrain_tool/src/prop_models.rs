@@ -630,10 +630,13 @@ impl PropModels {
                     continue;
                 }
 
+                // Turned as the sprawl is, by its sixths (a port's from its coast; the others 0 until their rule is known).
                 let (fx, fz) = frame.from_map.apply(x, y);
+                let (s, co) = (slot.turn as f32 * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
-                (world.m[0][0], world.m[1][1], world.m[2][2]) = (k, k, k);
-                (world.m[0][3], world.m[1][3], world.m[2][3]) = (fx as f32, ground(fx, fz), fz as f32);
+                world.m[0] = [co * k, 0.0, s * k, fx as f32];
+                world.m[1] = [0.0, k, 0.0, ground(fx, fz)];
+                world.m[2] = [-s * k, 0.0, co * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
                     model: model.clone(),

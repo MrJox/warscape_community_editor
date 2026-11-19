@@ -328,6 +328,12 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   `FUN_10b23a80`); the startpos stores no turn (`REGION_SLOT`'s numbers are the same on every slot; `esf_leaves`), nor do the map's
   slot positions (a slot's several `SLOT_POSITIONS_BLOCK` cells are candidates, not a direction: `slot_positions`). Not found: what sets
   it. `roman_city_minor_1`'s decal is 5.72 x 5.51 (turned 90 degrees from the others'), so the turns differ by model.
+  **RenderDoc, capture A (2026-11-19, `campaign_settlement_turns`: the rigid instances matched to the slots and pieces by position):**
+  a port's building is turned by its anchor hex's coast rotation (`SPRAWL_HEX_MAP_DATA` field 14) in sixths, as the sprawl (9 of 9);
+  the main and secondary slots' anchor hexes hold no rotation (all 0) and their buildings stand at every multiple of 60 degrees, with
+  no relation to the roads near them found (40 main, 9 secondary matched): their source is open (being traced in the DLL). The
+  walls and gatehouses are as the editor turns them (72 of 73); the connecting towers half a turn from the reading above (204 of
+  204: corrected); `sprawl_edge_0` (no shape, stored turn 0) stands at every angle too, as the land slots.
 - **Sprawl pieces at run time** (2026-11-05, `FUN_10af6ae0`, from `FUN_10b29d90`): a runtime sprawl hex with a level (0: none) gets
   on water `sea_sprawl_navy_dock` (a dock hex), else `sea_sprawl_edge_<coast shape>` for shapes 3, 7, 15, 31 or `sea_sprawl_default`;
   on land `sprawl_edge_<shape digits>` (`sprawl_edge_0` without edges) or `sprawl_abandoned_hex`; turned by a byte of the hex times
