@@ -251,4 +251,6 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   the walls' connecting towers half a turn more (204 of 204), walls and gatehouses already right. Left: the main and secondary
   slots' turn (and `sprawl_edge_0`'s): not in their hexes. Traced: ports by the game's water rule (9 of 9), the land slots a draw of
   the campaign's shared random state (not reproducible): DEVIATION, the game's draw on a seed of each slot's own (docs/re/terry.md).
-  `sprawl_edge_0`'s varying angles not traced (the runtime sprawl's).
+  `sprawl_edge_0`'s turn traced: a sprawl hex without a road shape draws its turn at the campaign's start (fn 0x10a315f0), the rest
+  keep their road rotation; the same DEVIATION (a draw on the hex's own seed). The game's draws are defined by the startpos's
+  `RandSeed` but not reproducible from it (docs/re/terry.md); two captures of one campaign disagree on two settlements: open.

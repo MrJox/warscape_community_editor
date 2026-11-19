@@ -41,6 +41,13 @@ fn main() {
     let list = |p: &str| vfs.list(p, "").iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let read_vfs = |p: &str| vfs.read(p).ok().map(|b| b.to_vec());
     let tables = DisplayTables::read(&schema, &list, &read_vfs);
+    // The settlements' rotations table (`campaign_settlement_display_settlement_rotations`): its rows.
+    let rotations =
+        wce_terrain_io::attila::cities::table_rows(&schema, "campaign_settlement_display_settlement_rotations_tables", &list, &read_vfs);
+    println!("settlement rotations: {} rows", rotations.len());
+    for r in rotations.iter().take(12) {
+        println!("  {r:?}");
+    }
     let map_data = vfs.read(&format!("campaign_maps/{map}/map_data.esf")).expect("map_data.esf");
     let startpos = std::fs::read(game_dir.join(format!("data/campaigns/{campaign}/startpos.esf"))).expect("startpos.esf");
     let cities = read(&map_data, &startpos, &tables).expect("cities");
@@ -60,6 +67,21 @@ fn main() {
         .filter(|r| r.len() > 8 && r[1] == "draw" && r[5].split(' ').count() >= 3)
         .filter(|r| names.get(&r[7]).is_some_and(|n| n.ends_with("rigidcommon.hlsl_vs_vs30_main")))
         .filter_map(|r| r[0].parse().ok())
+        .collect();
+    // Each rigid draw's diffuse texture (`texture_names.csv` from `campaign_frame --textures`, where named).
+    let tex_names: HashMap<String, String> = std::fs::read_to_string(dir.join("texture_names.csv"))
+        .unwrap_or_default()
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split_once(',').map(|(a, b)| (a.to_owned(), b.to_owned())))
+        .collect();
+    let diffuse: HashMap<u32, String> = csv("events.csv")
+        .into_iter()
+        .filter_map(|r| {
+            let e: u32 = r.first()?.parse().ok()?;
+            let id = r.get(13)?.split(' ').find_map(|t| t.strip_prefix("s_diffuse_map="))?.to_owned();
+            Some((e, tex_names.get(&id).cloned().unwrap_or(format!("#{id}"))))
+        })
         .collect();
     let mut inst = vec![];
     for r in csv("instances.csv") {
@@ -87,6 +109,19 @@ fn main() {
         let Some((d, i)) = near(s.world.0, s.world.1) else { continue };
         if d > 1.0 {
             continue;
+        }
+        // Every instance standing on it (a settlement can be several models at one centre), with its draw's diffuse texture.
+        if std::env::var_os("WCE_ALL_AT_SLOT").is_some() {
+            for j in inst.iter().filter(|j| (j.x - s.world.0).hypot(j.z - s.world.1) < 0.01) {
+                let tex = diffuse.get(&j.event).map_or("?", String::as_str);
+                println!(
+                    "    at it: event {} angle {:.1} scale {:.4} {}",
+                    j.event,
+                    j.angle,
+                    j.scale,
+                    tex.rsplit('/').next().unwrap_or(tex)
+                );
+            }
         }
         // The anchor cell's hex record: in a footprint, in a zone, water, road shape and turn, coast shape and turn.
         let hex = cities.hexes.get(&s.cell);
@@ -118,6 +153,27 @@ fn main() {
             }
         }
     }
+    // Every slot in the startpos's order with the capture's turn where an instance stands exactly on it (`order.csv`: region, index,
+    // kind, has a model, the capture's sixths or -1), for working out the game's draws.
+    let mut order = String::from(
+        "region,index,kind,model,turn
+",
+    );
+    for s in &cities.slots {
+        let t = near(s.world.0, s.world.1)
+            .filter(|(d, _)| *d < 0.01 && s.model.is_some())
+            .map_or(-1, |(_, i)| ((i.angle / 60.0).round() as i64).rem_euclid(6));
+        order += &format!(
+            "{},{},{},{},{t}
+",
+            s.region,
+            s.index,
+            s.kind,
+            u8::from(s.model.is_some())
+        );
+    }
+    std::fs::write(dir.join("order.csv"), order).expect("order.csv");
+
     for s in cities.sprawl.iter().filter(|s| s.region.contains(&filter) && s.model.is_some()) {
         let Some((d, i)) = near(s.world.0, s.world.1) else { continue };
         if d > 0.2 {

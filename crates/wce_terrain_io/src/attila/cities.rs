@@ -131,7 +131,7 @@ fn port_turn(anchor: (u16, u16), water: &dyn Fn((u16, u16)) -> bool) -> u32 {
     (0..6).find(|&i| game_neighbour(anchor, i).is_some_and(water) && game_neighbour(anchor, (i + 1) % 6).is_some_and(water)).unwrap_or(0)
 }
 
-/// A main or secondary slot's turn. The game's is a draw of the campaign's shared random state (`x = x * 0x343fd + 0x269ec3`, turn
+/// A main or secondary slot's turn (and a sprawl hex's without a road shape: `index` its cell). The game's is a draw of the campaign's shared random state (`x = x * 0x343fd + 0x269ec3`, turn
 /// `min((x >> 16) * 6 / 0xffff, 5)`), seeded by the startpos's `RandSeed` and shared with every other draw of a new campaign: not
 /// reproducible. DEVIATION: the same draw on a seed of the slot's own (its region's key and index), so that each slot keeps a turn.
 fn land_turn(region: &str, index: usize) -> u32 {
@@ -688,7 +688,14 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         };
                         (piece, coast_turn as u32)
                     } else {
-                        (format!("sprawl_edge_{}", shape_digits(road_shape as u32)), road_turn as u32)
+                        // A hex without a road shape takes a turn the game draws when the campaign starts (fn 0x10a315f0: from its
+                        // shared random state; not reproducible): DEVIATION, the same draw on a seed of the hex's own (`land_turn`).
+                        let turn = if road_shape == 0 {
+                            land_turn(key, usize::from(c as u16) << 16 | usize::from(r as u16))
+                        } else {
+                            road_turn as u32
+                        };
+                        (format!("sprawl_edge_{}", shape_digits(road_shape as u32)), turn)
                     };
 
                     let cell = (c as u16, r as u16);

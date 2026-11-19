@@ -66,9 +66,17 @@ fn main() {
         let Some(info) = child(region, "SETTLEMENT_INFO") else { continue };
         let mut slots: Vec<(String, Vec<(i32, i32)>)> = vec![];
         if let Some(b) = child(info, "SLOT_ARRAY_BLOCK") {
-            for g in b.children() {
+            for (i, g) in b.children().iter().enumerate() {
                 for r in g.iter().filter_map(rec).filter(|r| r.name() == "SLOT_POSITIONS_BLOCK") {
                     slots.push(("slot".to_owned(), cells(r)));
+                }
+                // With `WCE_SLOT_AREAS` set: every slot's positions and area cells (`SLOT_AREA_BLOCK`), one line each.
+                if std::env::var_os("WCE_SLOT_AREAS").is_some() {
+                    let pos: Vec<(i32, i32)> =
+                        g.iter().filter_map(rec).filter(|r| r.name() == "SLOT_POSITIONS_BLOCK").flat_map(cells).collect();
+                    let area: Vec<(i32, i32)> =
+                        g.iter().filter_map(rec).filter(|r| r.name() == "SLOT_AREA_BLOCK").flat_map(cells).collect();
+                    println!("area {key} {i} {pos:?} {area:?}");
                 }
             }
         }
