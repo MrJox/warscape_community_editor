@@ -57,7 +57,8 @@ Dear ImGui 1.92.9b docking and cimgui, MIT) and sdl3-sys (zlib licence), linked 
 the SDL3 platform backend is a port of Dear ImGui's `imgui_impl_sdl3.cpp` and the D3D11 renderer one of `imgui_impl_dx11.cpp` (both MIT).
 The gizmos come from dear-imguizmo-sys (MIT or Apache-2.0), which builds upstream ImGuizmo (MIT) without the local `SetAllowedItem`
 change: the viewport clears its button from Dear ImGui's hovered and active ids around `Manipulate` instead.
-The game's sounds are decoded by lewton (MIT or Apache-2.0, pure Rust Vorbis; without its Ogg feature).
+The game's sounds are decoded by lewton (MIT or Apache-2.0, pure Rust Vorbis; without its Ogg feature) and encoded by aotuv_lancer_vorbis_sys
+(BSD-3-Clause: libvorbis with aoTuV's encoder and the Lancer patches, built from its bundled C source) with ogg_next_sys (BSD-3-Clause, libogg).
 
 No game assets, shaders or binaries are redistributed. The game's `.fxc` shaders are read from the user's own installation at run time.
 
