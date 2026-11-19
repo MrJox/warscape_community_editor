@@ -44,6 +44,7 @@ pub mod scene_panel;
 mod selection_tools;
 pub mod settings;
 mod share_prompt;
+mod styled;
 mod tech_chip;
 pub mod texture_rules_panel;
 pub(crate) use wce_editor::thumbnails;

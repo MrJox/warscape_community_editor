@@ -233,12 +233,17 @@ impl Tile {
     /// A small picture of a ground texture group, in the look's climate and season: the middle of its first texture, `size` pixels of a mip
     /// a few times larger. The whole texture that small is a flat colour; a piece of it shows the grain.
     pub fn ground_thumbnail(&self, group: &str, size: u32) -> Option<wce_formats::dds_decode::Rgba8Image> {
+        self.ground_variation_thumbnail(group, 0, size)
+    }
+
+    /// [`Self::ground_thumbnail`] of one of the group's four textures (0..3).
+    pub fn ground_variation_thumbnail(&self, group: &str, variation: u8, size: u32) -> Option<wce_formats::dds_decode::Rgba8Image> {
         let files = self.files.as_deref()?;
         let climates = self.climates();
         let climate = climates.find(&self.look.climate).or_else(|| climates.find("default"));
         let folder = climate.map_or_else(|| climates.default_folder(), |c| climates.folder_of(c));
         let group = climates.group_of(climate, group);
-        let path = climates.texture_path(&folder, group, 0, &self.look.season, false, |p| files.exists(p))?;
+        let path = climates.texture_path(&folder, group, i32::from(variation.min(3)), &self.look.season, false, |p| files.exists(p))?;
         let bytes = files.read(&path).ok()?;
         let info = wce_formats::dds_decode::dds_info(&bytes);
         let mip = (info.width.max(info.height) / (size.max(1) * 3)).checked_ilog2().unwrap_or(0);

@@ -3754,6 +3754,39 @@ impl TileTool {
         shown
     }
 
+    /// The pictures of the tile's texture groups' four textures each, by group and variation, for the texture rules' and the biomes'
+    /// windows. One is made per frame, as [`Self::ground_thumbs`].
+    pub(crate) fn ground_swatches(&mut self, e: &mut Editor) -> HashMap<(String, u8), u64> {
+        let Some(id) = document_id(e) else { return HashMap::new() };
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return HashMap::new() };
+        let groups = d.texture_group_slots();
+        let (t, mut budget) = (d.tile(), true);
+        let look = t.terrain_look();
+        let (mut shown, mut made) = (HashMap::new(), vec![]);
+        for group in groups.iter().filter(|g| !g.is_empty()) {
+            for v in 0..4u8 {
+                let k = format!("ground_thumb/{}/{}/{group}/{v}", look.climate, look.season);
+                if let Some(image) = e.images.get(&k) {
+                    shown.insert((group.clone(), v), image.id);
+                } else if budget && !e.images.knows(&k) && !self.ground_thumbs_failed.contains(&k) {
+                    budget = false;
+                    made.push((k, t.ground_variation_thumbnail(group, v, GROUND_THUMB)));
+                }
+            }
+        }
+
+        for (k, image) in made {
+            match image {
+                Some(image) => e.images.submit(&k, image.w, image.h, image.px),
+                None => {
+                    self.ground_thumbs_failed.insert(k);
+                }
+            }
+        }
+
+        shown
+    }
+
     /// The tile's database entry: where it is, what the tile is, the ground's texture groups (editable), the variation's height / normal values, the
     /// links.
     fn draw_entry_section(&mut self, e: &mut Editor, id: DocumentId) {

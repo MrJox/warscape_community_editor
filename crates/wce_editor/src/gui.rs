@@ -261,6 +261,11 @@ pub fn same_line_touching() {
     call!(sys::igSameLine(0.0, 0.0))
 }
 
+/// On the same line, `spacing` pixels after the last item.
+pub fn same_line_spacing(spacing: f32) {
+    call!(sys::igSameLine(0.0, spacing))
+}
+
 /// A pill: the child that holds a row of [`crate::chips::chip`]s. Its padding is in the chips, so that all of the pill is a chip; only the
 /// child loses it (what opens inside, a popup, keeps the style).
 pub fn begin_pill(id: &str) -> bool {
@@ -1261,6 +1266,8 @@ pub use sys::{
 pub const CHILD_AUTO_RESIZE: i32 =
     sys::ImGuiChildFlags_AutoResizeX | sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
+pub const COL_SLIDER_GRAB: i32 = sys::ImGuiCol_SliderGrab;
+pub const COL_SLIDER_GRAB_ACTIVE: i32 = sys::ImGuiCol_SliderGrabActive;
 pub const CHILD_AUTO_RESIZE_Y: i32 = sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
 pub const KEY_LEFT_ARROW: i32 = sys::ImGuiKey_LeftArrow;

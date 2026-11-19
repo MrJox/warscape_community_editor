@@ -11,10 +11,13 @@ use wce_editor::{gui, icons, theme};
 use wce_foundation::math::Float3;
 use wce_scene::render_scene::{Overlay, overlay_colour};
 use wce_tile::biomes::{BIOME_ATTR, BUILTIN_FOLDER, Biome, Props, SEED_ATTR, presets_root};
+use wce_tile::texture_rules::Range;
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::Draft;
 
 use crate::gesture::Gesture;
+use crate::styled;
+use crate::texture_rules_panel::RuleView;
 use crate::tool::{TileMode, TileTool, document, document_id, primary};
 
 /// The brush's radius at first, metres.
@@ -34,6 +37,9 @@ pub struct BiomesUi {
     pub brush: bool,
     pub radius: f32,
     pub(crate) stroke: Option<BiomeStroke>,
+
+    /// Every number (advanced) or the plain choices.
+    pub advanced: bool,
 }
 
 /// A brush stroke: taking away or adding, the area it works on (none: a new one), the dabs so far (world metres).
@@ -176,23 +182,34 @@ impl TileTool {
             return;
         }
 
+        styled::push_look();
+
         gui::text_wrapped(
             "A biome is trees, undergrowth, rocks and a texture laid in areas. An area is a vegetation exclusion polygon: the game's own trees \
              give way to the biome's there. Its contents are made again whenever it, its biome or the ground changes.",
         );
         gui::spacing();
 
+        let row = styled::row("Show", "The plain choices, or every number");
+        if let Some(i) = styled::segmented("mode", &["Simple", "Advanced"], Some(usize::from(self.biomes.advanced)), row.width) {
+            self.biomes.advanced = i == 1;
+        }
+
         self.biome_preset_rows(e);
         let mut draft = self.biome_draft(e);
         let sets = self.vegetation_sets(e);
-        let groups = document(e).map(|d| d.texture_group_slots()).unwrap_or_default();
-        let changed = biome_fields(&mut draft, &sets, &groups);
+        let swatches = self.ground_swatches(e);
+        let (groups, heights) =
+            document(e).map(|d| (d.texture_group_slots(), crate::texture_rules_panel::tile_heights(d))).unwrap_or((vec![], (0.0, 10.0)));
+        let view = RuleView { groups: &groups, swatches: &swatches, heights, advanced: self.biomes.advanced };
+        let changed = biome_fields(&mut draft, &sets, &view);
         if changed {
             self.biomes.draft = Some(draft.clone());
         }
 
         gui::separator_text("Lay it");
-        if gui::button(&format!("{}  Draw an area", icons::PLUS)) {
+        let half = (gui::content_region_avail().x - gui::item_spacing().x) * 0.5;
+        if gui::button_sized(&format!("{}  Draw an area", icons::PLUS), gui::v2(half, 0.0)) {
             if let Some(d) = document(e) {
                 d.adopt_biome(&draft);
             }
@@ -211,17 +228,21 @@ impl TileTool {
         }
 
         gui::same_line();
-        gui::checkbox("Brush", &mut self.biomes.brush);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "Left drag in the viewport (Select mode): adds to the area under the mouse, or makes a new one; Ctrl + drag takes away",
-            );
+        if styled::toggle_chip(
+            "brush",
+            "Brush",
+            self.biomes.brush,
+            half,
+            "Left drag in the viewport (Select mode): adds to the area under the mouse, or makes a new one; Ctrl + drag takes away",
+        ) {
+            self.biomes.brush = !self.biomes.brush;
         }
 
         if self.biomes.brush {
+            let row = styled::row("Radius", "The brush's radius (Ctrl + click to type)");
             let mut r = self.biome_radius();
-            gui::set_next_item_width(160.0);
-            if gui::drag_float("radius", &mut r, 0.2, 1.0, 200.0, "%.1f m") {
+            gui::set_next_item_width(row.width);
+            if gui::slider_float("##radius", &mut r, 1.0, 100.0, "%.1f m") {
                 self.biomes.radius = r;
             }
         }
@@ -235,6 +256,7 @@ impl TileTool {
             gui::text_disabled(&format!("{areas} area(s): {trees} tree(s) and plant(s), {rocks} rock(s)"));
         }
 
+        styled::pop_look();
         gui::end();
         self.biomes.open = open;
     }
@@ -254,8 +276,11 @@ impl TileTool {
         };
 
         let mut pick = None;
-        gui::set_next_item_width(260.0);
-        if gui::begin_combo("biome", &shown) {
+        let row = styled::row("Biome", "The built-in biomes and the projects' (raw_data/art/biomes)");
+        let buttons =
+            [icons::SAVE, icons::FILE_PLUS, icons::TRASH_2].iter().map(|i| gui::button_width(i)).sum::<f32>() + 3.0 * gui::item_spacing().x;
+        gui::set_next_item_width((row.width - buttons).max(100.0));
+        if gui::begin_combo("##biome", &shown) {
             for b in presets.iter() {
                 let text = if b.folder == BUILTIN_FOLDER { format!("{} (built in)", b.name) } else { label(b) };
                 if gui::selectable(&text, b.name == draft.name, 0) {
@@ -266,14 +291,47 @@ impl TileTool {
             gui::end_combo();
         }
 
+        let file = current.as_ref().is_some_and(|b| b.path.is_some());
+        let mut result: Option<Result<String, String>> = None;
+        if self.biomes.save_as.is_none() && !self.biomes.delete_ask {
+            gui::same_line();
+            gui::begin_disabled(!file);
+            if gui::button(&format!("{}##savebiome", icons::SAVE)) {
+                result = Some(self.save_biome(e, None));
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Save the biome into its file (a built-in one has none: Save as)");
+            }
+
+            gui::same_line();
+            if gui::button(&format!("{}##saveasbiome", icons::FILE_PLUS)) {
+                self.biomes.save_as = Some(String::new());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Save as a new biome...");
+            }
+
+            gui::same_line();
+            gui::begin_disabled(!file);
+            if gui::button(&format!("{}##deletebiome", icons::TRASH_2)) {
+                self.biomes.delete_ask = true;
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Delete the biome's file");
+            }
+        }
+
         if let Some(b) = pick {
             self.biomes.draft = Some(b);
         }
 
-        let file = current.as_ref().is_some_and(|b| b.path.is_some());
-        let mut result: Option<Result<String, String>> = None;
         if let Some(mut name) = self.biomes.save_as.take() {
-            gui::set_next_item_width(200.0);
+            gui::set_next_item_width(gui::content_region_avail().x - gui::button_width("Save") - gui::button_width("Cancel") - 24.0);
             let enter = gui::input_text("##biomename", Some("the new biome's name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
             gui::same_line();
             let ok = gui::small_button("Save") || enter;
@@ -295,25 +353,6 @@ impl TileTool {
             if gui::small_button("Cancel") {
                 self.biomes.delete_ask = false;
             }
-        } else {
-            gui::begin_disabled(!file);
-            if gui::small_button(&format!("{}  Save", icons::SAVE)) {
-                result = Some(self.save_biome(e, None));
-            }
-
-            gui::end_disabled();
-            gui::same_line();
-            if gui::small_button("Save as...") {
-                self.biomes.save_as = Some(String::new());
-            }
-
-            gui::same_line();
-            gui::begin_disabled(!file);
-            if gui::small_button(&format!("{}  Delete", icons::X)) {
-                self.biomes.delete_ask = true;
-            }
-
-            gui::end_disabled();
         }
 
         if let Some(r) = result {
@@ -383,62 +422,137 @@ fn same_values(a: &Biome, b: &Biome) -> bool {
     Biome { folder: String::new(), path: None, ..a.clone() } == Biome { folder: String::new(), path: None, ..b.clone() }
 }
 
-/// A biome's fields; whether any changed.
-fn biome_fields(b: &mut Biome, sets: &[VegetationSet], groups: &[String]) -> bool {
+/// A density's plain choices, per 100 square metres.
+type Choices = [(&'static str, f32); 4];
+const TREES: Choices = [("Scattered", 0.5), ("Open", 1.25), ("Wood", 2.0), ("Dense", 3.0)];
+const UNDERGROWTH: Choices = [("Little", 1.0), ("Some", 3.0), ("Lots", 6.0), ("Thick", 15.0)];
+const ROCKS: Choices = [("None", 0.0), ("Few", 0.1), ("Some", 0.4), ("Many", 1.0)];
+
+/// The edge band's plain choices, metres.
+const EDGES: Choices = [("Hard", 0.0), ("Narrow", 6.0), ("Medium", 12.0), ("Wide", 24.0)];
+
+/// A density row: plain choices, or (advanced) a slider; per square metre, shown per 100.
+fn density_row(id: &str, label: &str, tip: &str, v: &mut f32, choices: &Choices, advanced: bool) -> bool {
+    let row = styled::row(label, tip);
+    let mut per100 = *v * 100.0;
+    if advanced {
+        gui::set_next_item_width(row.width);
+        if gui::slider_float(&format!("##{id}"), &mut per100, 0.0, 20.0, "%.2f / 100 m2") {
+            *v = per100 / 100.0;
+            return true;
+        }
+
+        return false;
+    }
+
+    let names = choices.map(|c| c.0);
+    let current = choices.iter().position(|c| (c.1 - per100).abs() < 1e-4);
+    if let Some(i) = styled::segmented(id, &names, current, row.width) {
+        *v = choices[i].1 / 100.0;
+        return true;
+    }
+
+    false
+}
+
+/// A slider row of the advanced view.
+fn slider_row(id: &str, label: &str, tip: &str, v: &mut f32, lo: f32, hi: f32, format: &str) -> bool {
+    let row = styled::row(label, tip);
+    gui::set_next_item_width(row.width);
+    gui::slider_float(&format!("##{id}"), v, lo, hi, format)
+}
+
+/// A size range (smallest to largest) as a bar with two ends.
+fn size_row(id: &str, label: &str, tip: &str, v: &mut (f32, f32)) -> bool {
+    let row = styled::row(label, tip);
+    let bar = styled::Bar { domain: (0.3, 2.0), step: 0.05, unit: "x", open_ends: false, fade: false };
+    let mut r = Range { lo: Some(v.0), hi: Some(v.1), fade: 0.0 };
+    let (changed, _) = styled::range_bar(id, &mut r, &bar, row.width, true);
+    if changed {
+        *v = (r.lo.unwrap_or(v.0), r.hi.unwrap_or(v.1));
+    }
+
+    changed
+}
+
+/// A biome's fields in rows; whether any changed.
+fn biome_fields(b: &mut Biome, sets: &[VegetationSet], view: &RuleView) -> bool {
     let mut changed = false;
+    let advanced = view.advanced;
     gui::separator_text("What grows");
-    changed |= props_row("trees", &mut b.trees, sets, SetKind::Vegetation);
-    changed |= props_row("undergrowth", &mut b.undergrowth, sets, SetKind::Vegetation);
-    changed |= props_row("rocks", &mut b.rocks, sets, SetKind::Building);
+    changed |= props_row("Trees", &mut b.trees, sets, SetKind::Vegetation);
+    changed |= props_row("Undergrowth", &mut b.undergrowth, sets, SetKind::Vegetation);
+    changed |= props_row("Rocks", &mut b.rocks, sets, SetKind::Building);
 
-    let mut per100 = |label: &str, v: &mut f32, tip: &str| {
-        let mut d = *v * 100.0;
-        gui::set_next_item_width(160.0);
-        if gui::drag_float(label, &mut d, 0.05, 0.0, 400.0, "%.2f / 100 m2") {
-            *v = d / 100.0;
-            changed = true;
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-    };
-    per100("trees##d", &mut b.tree_density, "Trees per 100 square metres, inside past the edge band");
-    per100("undergrowth##d", &mut b.undergrowth_density, "Plants of the undergrowth per 100 square metres, inside");
-    per100("rocks##d", &mut b.rock_density, "Rocks per 100 square metres");
-
-    let mut f = |label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format: &str, tip: &str| {
-        gui::set_next_item_width(160.0);
-        changed |= gui::drag_float(label, v, speed, lo, hi, format);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-    };
-    f("tree spacing", &mut b.tree_spacing, 0.05, 0.0, 50.0, "%.1f m", "How far apart the trees stand at least");
-    f("tree scale from", &mut b.tree_scale.0, 0.01, 0.1, 5.0, "%.2f", "The trees' sizes, from ... to");
-    f("tree scale to", &mut b.tree_scale.1, 0.01, 0.1, 5.0, "%.2f", "The trees' sizes, from ... to");
+    gui::separator_text("How much");
+    changed |=
+        density_row("treesd", "Trees", "Trees per 100 square metres, inside past the edge band", &mut b.tree_density, &TREES, advanced);
+    changed |= density_row(
+        "undergrowthd",
+        "Undergrowth",
+        "Plants of the undergrowth per 100 square metres, inside",
+        &mut b.undergrowth_density,
+        &UNDERGROWTH,
+        advanced,
+    );
+    changed |= density_row("rocksd", "Rocks", "Rocks per 100 square metres", &mut b.rock_density, &ROCKS, advanced);
+    changed |= size_row("treesize", "Tree sizes", "The trees' sizes, smallest to largest (times the model's)", &mut b.tree_scale);
+    if advanced {
+        changed |= size_row("undersize", "Plant sizes", "The undergrowth's sizes, smallest to largest", &mut b.undergrowth_scale);
+        changed |=
+            slider_row("spacing", "Tree spacing", "How far apart the trees stand at least", &mut b.tree_spacing, 0.0, 30.0, "%.1f m");
+    }
 
     gui::separator_text("Edge");
-    f(
-        "edge band",
-        &mut b.edge,
-        0.1,
-        0.0,
-        200.0,
-        "%.1f m",
-        "How far in from the area's boundary the edge reaches (the texture fades over it too)",
-    );
-    f("trees' size there", &mut b.edge_tree_scale, 0.01, 0.05, 2.0, "x %.2f", "At the boundary the trees are this much of their size");
-    f("trees there", &mut b.edge_tree_density, 0.01, 0.0, 1.0, "x %.2f", "At the boundary there are this much as many trees");
-    f("undergrowth there", &mut b.edge_undergrowth, 0.01, 0.0, 10.0, "x %.2f", "At the boundary the undergrowth is this much as dense");
+    let tip = "How far in from the area's boundary the edge reaches: smaller, fewer trees and more undergrowth there; the texture fades \
+               over it too";
+    if advanced {
+        changed |= slider_row("edge", "Edge band", tip, &mut b.edge, 0.0, 100.0, "%.1f m");
+        changed |= slider_row(
+            "edgesize",
+            "Trees' size there",
+            "At the boundary the trees are this much of their size",
+            &mut b.edge_tree_scale,
+            0.05,
+            2.0,
+            "x %.2f",
+        );
+        changed |= slider_row(
+            "edgetrees",
+            "Trees there",
+            "At the boundary there are this much as many trees",
+            &mut b.edge_tree_density,
+            0.0,
+            1.0,
+            "x %.2f",
+        );
+        changed |= slider_row(
+            "edgeunder",
+            "Undergrowth there",
+            "At the boundary the undergrowth is this much as dense",
+            &mut b.edge_undergrowth,
+            0.0,
+            10.0,
+            "x %.2f",
+        );
+    } else {
+        let row = styled::row("Edge band", tip);
+        let names = EDGES.map(|c| c.0);
+        let current = EDGES.iter().position(|c| (c.1 - b.edge).abs() < 1e-4);
+        if let Some(i) = styled::segmented("edge", &names, current, row.width) {
+            b.edge = EDGES[i].1;
+            changed = true;
+        }
+    }
 
     gui::separator_text("Texture");
     let mut remove = None;
     for (i, r) in b.rules.iter_mut().enumerate() {
         gui::push_id_int(i as i32);
-        if gui::collapsing_header(&format!("{}###rule", if r.name.is_empty() { "(rule)" } else { &r.name }), 0) {
-            changed |= crate::texture_rules_panel::rule_fields(r, groups);
-            if gui::small_button(&format!("{}  Remove", icons::X)) {
+        let title = if r.name.is_empty() { "(rule)".to_owned() } else { r.name.clone() };
+        if gui::collapsing_header(&format!("{title}###rule"), 0) {
+            changed |= crate::texture_rules_panel::rule_fields(&format!("rule{i}"), r, view);
+            if gui::small_button(&format!("{}  Remove this rule", icons::TRASH_2)) {
                 remove = Some(i);
             }
         }
@@ -454,7 +568,7 @@ fn biome_fields(b: &mut Biome, sets: &[VegetationSet], groups: &[String]) -> boo
     if gui::small_button(&format!("{}  Add a texture rule", icons::PLUS)) {
         b.rules.push(wce_tile::texture_rules::Rule {
             name: "Ground".to_owned(),
-            group: groups.first().cloned().unwrap_or_default(),
+            group: view.groups.first().cloned().unwrap_or_default(),
             ..Default::default()
         });
         changed = true;
@@ -463,13 +577,14 @@ fn biome_fields(b: &mut Biome, sets: &[VegetationSet], groups: &[String]) -> boo
     changed
 }
 
-/// What grows of one sort: a set (of its kind) or keys.
+/// What grows of one sort: a set (of its kind) or keys (on a line of their own).
 fn props_row(label: &str, p: &mut Props, sets: &[VegetationSet], kind: SetKind) -> bool {
     let mut changed = false;
     gui::push_id(label);
+    let row = styled::row(label, "A vegetation set of the projects, or keys of their own");
     let preview = if p.set.is_empty() { format!("keys ({})", p.keys.len()) } else { p.set.clone() };
-    gui::set_next_item_width(200.0);
-    if gui::begin_combo(label, &preview) {
+    gui::set_next_item_width(row.width);
+    if gui::begin_combo("##set", &preview) {
         if gui::selectable("keys", p.set.is_empty(), 0) {
             p.set.clear();
             changed = true;
@@ -486,8 +601,9 @@ fn props_row(label: &str, p: &mut Props, sets: &[VegetationSet], kind: SetKind) 
     }
 
     if p.set.is_empty() {
+        row.next_line();
         let mut keys = p.keys.join(" ");
-        gui::set_next_item_width(320.0);
+        gui::set_next_item_width(row.width);
         if gui::input_text("##keys", Some("oak.oak_g beech.beech_e"), &mut keys, 4096, 0) {
             p.keys = keys.split_whitespace().map(str::to_owned).collect();
             changed = true;
