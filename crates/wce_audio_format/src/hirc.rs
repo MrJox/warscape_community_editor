@@ -16,6 +16,108 @@ pub enum Object {
     Switch(Switch),
     ActorMixer(ActorMixer),
     Blend(Blend),
+    /// Kinds 8 (bus) and 20 (auxiliary bus).
+    Bus(Bus),
+    Attenuation(Attenuation),
+    DialogueEvent(DialogueEvent),
+    /// Kinds 18 (effect share set) and 19 (effect).
+    Effect(Effect),
+    MusicSegment(MusicSegment),
+    MusicTrack(MusicTrack),
+    MusicSwitch(MusicSwitch),
+    MusicPlaylist(MusicPlaylist),
+}
+
+mod music;
+pub use music::{
+    ClipAutomation, Marker, Meter, MusicNode, MusicPlaylist, MusicSegment, MusicSwitch, MusicTrack, PlaylistItem, Stinger, TrackClip,
+    TrackSwitch, TransitionRule,
+};
+
+/// Kinds 8 and 20: a mixing bus (`aux` for an auxiliary bus).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bus {
+    pub aux: bool,
+    pub parent_bus_id: u32,
+    /// Absent in a bus that is only its parent's ID.
+    pub params: Option<BusParams>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BusParams {
+    pub props: Vec<(u8, f32)>,
+    pub positioning: Positioning,
+    pub advanced_bits: u8,
+    pub max_instances: u16,
+    pub channel_config: u32,
+    pub hdr_bits: u8,
+    pub recovery_time: i32,
+    pub max_duck_volume: f32,
+    pub ducks: Vec<Duck>,
+    pub effects: Vec<EffectSlot>,
+    /// Bypass bits of the effects; written only when there are effects.
+    pub effects_bypass: u8,
+    pub override_attachment: u8,
+    pub effect_0_id: u32,
+    pub effect_0_is_share_set: u8,
+    pub rtpcs: Vec<Rtpc>,
+    pub state_groups: Vec<StateGroupRef>,
+}
+
+/// A bus ducking another while it plays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Duck {
+    pub bus_id: u32,
+    pub volume: f32,
+    pub fade_out_time: i32,
+    pub fade_in_time: i32,
+    pub fade_curve: u8,
+    pub target_prop: u8,
+}
+
+/// Kind 14: distance attenuation: a cone, curves, and which curve each property uses.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attenuation {
+    pub cone_enabled: u8,
+    /// Inside angle, outside angle, outside volume, low-pass, high-pass; present when the cone is enabled.
+    pub cone: Option<[f32; 5]>,
+    /// Per property (volume, aux volumes, low-pass, spread...), the curve's index or 255 for none.
+    pub curve_to_use: [u8; 7],
+    /// (scaling, points).
+    pub curves: Vec<(u8, Vec<CurvePoint>)>,
+    pub rtpcs: Option<Vec<Rtpc>>,
+}
+
+/// Kind 15: a dialogue event: picks a sound from a decision tree over state and switch groups.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DialogueEvent {
+    pub probability: u8,
+    /// The groups the tree decides on, in depth order: (group ID, group type).
+    pub arguments: Vec<(u32, u8)>,
+    pub mode: u8,
+    /// The tree's nodes, breadth first, 12 bytes each: (key, children (first u16, count u16) or the audio node's ID at a leaf,
+    /// weight, probability).
+    pub nodes: Vec<TreeNode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeNode {
+    pub key: u32,
+    pub value: u32,
+    pub weight: u16,
+    pub probability: u16,
+}
+
+/// Kinds 18 and 19: an effect plug-in's parameters (`share_set` for kind 18).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Effect {
+    pub share_set: bool,
+    pub plugin_id: u32,
+    pub params: Vec<u8>,
+    /// (index, media source ID).
+    pub media: Vec<(u8, u32)>,
+    pub rtpcs: Option<Vec<Rtpc>>,
+    pub rtpc_init_flags: Option<u16>,
 }
 
 /// Kind 1: a state's property overrides.
@@ -249,6 +351,14 @@ pub fn parse(bank_version: u32, kind: u8, body: &[u8]) -> Option<Result<Object>>
         6 => read_switch(&mut r).map(Object::Switch),
         7 => read_actor_mixer(&mut r).map(Object::ActorMixer),
         9 => read_blend(&mut r).map(Object::Blend),
+        8 | 20 => read_bus(&mut r, kind == 20).map(Object::Bus),
+        14 => read_attenuation(&mut r).map(Object::Attenuation),
+        15 => read_dialogue_event(&mut r).map(Object::DialogueEvent),
+        18 | 19 => read_effect(&mut r, kind == 18).map(Object::Effect),
+        10 => music::read_segment(&mut r).map(Object::MusicSegment),
+        11 => music::read_track(&mut r).map(Object::MusicTrack),
+        12 => music::read_switch(&mut r).map(Object::MusicSwitch),
+        13 => music::read_playlist(&mut r).map(Object::MusicPlaylist),
         _ => return None,
     };
 
@@ -273,6 +383,26 @@ impl Object {
             Object::Switch(_) => 6,
             Object::ActorMixer(_) => 7,
             Object::Blend(_) => 9,
+            Object::Bus(b) => {
+                if b.aux {
+                    20
+                } else {
+                    8
+                }
+            }
+            Object::Attenuation(_) => 14,
+            Object::DialogueEvent(_) => 15,
+            Object::MusicSegment(_) => 10,
+            Object::MusicTrack(_) => 11,
+            Object::MusicSwitch(_) => 12,
+            Object::MusicPlaylist(_) => 13,
+            Object::Effect(e) => {
+                if e.share_set {
+                    18
+                } else {
+                    19
+                }
+            }
         }
     }
 
@@ -284,6 +414,10 @@ impl Object {
             Object::Switch(o) => Some(&o.node),
             Object::ActorMixer(o) => Some(&o.node),
             Object::Blend(o) => Some(&o.node),
+            Object::MusicSegment(o) => Some(&o.base.node),
+            Object::MusicTrack(o) => Some(&o.node),
+            Object::MusicSwitch(o) => Some(&o.base.node),
+            Object::MusicPlaylist(o) => Some(&o.base.node),
             _ => None,
         }
     }
@@ -295,6 +429,9 @@ impl Object {
             Object::Switch(o) => &o.children,
             Object::ActorMixer(o) => &o.children,
             Object::Blend(o) => &o.children,
+            Object::MusicSegment(o) => &o.base.children,
+            Object::MusicSwitch(o) => &o.base.children,
+            Object::MusicPlaylist(o) => &o.base.children,
             _ => &[],
         }
     }
@@ -378,9 +515,78 @@ impl Object {
                     }
                 }
             }
+            Object::Bus(o) => write_bus(&mut w, o),
+            Object::Attenuation(o) => {
+                w.put_u8(o.cone_enabled);
+                if let Some(cone) = o.cone {
+                    cone.iter().for_each(|v| w.put_f32(*v));
+                }
+                w.extend_from_slice(&o.curve_to_use);
+                w.put_u8(o.curves.len() as u8);
+                for (scaling, points) in &o.curves {
+                    w.put_u8(*scaling);
+                    w.put_u16(points.len() as u16);
+                    points.iter().for_each(|p| put_point(&mut w, p));
+                }
+                if let Some(rtpcs) = &o.rtpcs {
+                    put_rtpcs(&mut w, rtpcs);
+                }
+            }
+            Object::DialogueEvent(o) => {
+                w.put_u8(o.probability);
+                write_tree(&mut w, &o.arguments, o.mode, &o.nodes);
+            }
+            Object::MusicSegment(o) => music::write_segment(&mut w, o),
+            Object::MusicTrack(o) => music::write_track(&mut w, o),
+            Object::MusicSwitch(o) => music::write_switch(&mut w, o),
+            Object::MusicPlaylist(o) => music::write_playlist(&mut w, o),
+            Object::Effect(o) => {
+                w.put_u32(o.plugin_id);
+                w.put_u32(o.params.len() as u32);
+                w.extend_from_slice(&o.params);
+                w.put_u8(o.media.len() as u8);
+                for (index, source) in &o.media {
+                    w.put_u8(*index);
+                    w.put_u32(*source);
+                }
+                if let Some(rtpcs) = &o.rtpcs {
+                    put_rtpcs(&mut w, rtpcs);
+                }
+                if let Some(flags) = o.rtpc_init_flags {
+                    w.put_u16(flags);
+                }
+            }
         }
 
         w
+    }
+}
+
+impl DialogueEvent {
+    /// The audio nodes the tree's leaves play (the nodes at the tree's full depth), in tree order, without repeats.
+    pub fn leaves(&self) -> Vec<u32> {
+        let mut out = vec![];
+        let mut level = vec![0usize];
+        for _ in 0..self.arguments.len() {
+            let mut next = vec![];
+            for &i in &level {
+                let Some(n) = self.nodes.get(i) else { continue };
+                let (first, count) = ((n.value & 0xFFFF) as usize, (n.value >> 16) as usize);
+                next.extend(first..first + count);
+            }
+            level = next;
+        }
+
+        for i in level {
+            if let Some(n) = self.nodes.get(i)
+                && n.value != 0
+                && !out.contains(&n.value)
+            {
+                out.push(n.value);
+            }
+        }
+
+        out
     }
 }
 
@@ -710,4 +916,207 @@ fn read_blend(r: &mut Reader) -> Result<Blend> {
         })
         .collect::<Result<_>>()?;
     Ok(Blend { node, children, layers })
+}
+
+fn read_rtpcs(r: &mut Reader) -> Result<Vec<Rtpc>> {
+    let n = r.u16()? as usize;
+    (0..n).map(|_| read_rtpc(r)).collect()
+}
+
+fn put_rtpcs(w: &mut Vec<u8>, rtpcs: &[Rtpc]) {
+    w.put_u16(rtpcs.len() as u16);
+    rtpcs.iter().for_each(|rtpc| write_rtpc(w, rtpc));
+}
+
+fn read_state_groups(r: &mut Reader) -> Result<Vec<StateGroupRef>> {
+    let n = r.count(7)?;
+    (0..n)
+        .map(|_| {
+            let (group_id, sync_type) = (r.u32()?, r.u8()?);
+            let count = r.u16()? as usize;
+            let states = (0..count).map(|_| Ok((r.u32()?, r.u32()?))).collect::<Result<_>>()?;
+            Ok(StateGroupRef { group_id, sync_type, states })
+        })
+        .collect()
+}
+
+fn put_state_groups(w: &mut Vec<u8>, groups: &[StateGroupRef]) {
+    w.put_u32(groups.len() as u32);
+    for g in groups {
+        w.put_u32(g.group_id);
+        w.put_u8(g.sync_type);
+        w.put_u16(g.states.len() as u16);
+        for (state, props) in &g.states {
+            w.put_u32(*state);
+            w.put_u32(*props);
+        }
+    }
+}
+
+fn read_effect_slots(r: &mut Reader) -> Result<(Vec<EffectSlot>, u8)> {
+    let n = r.u8()? as usize;
+    if n == 0 {
+        return Ok((vec![], 0));
+    }
+
+    let bypass = r.u8()?;
+    let slots = (0..n)
+        .map(|_| Ok(EffectSlot { index: r.u8()?, effect_id: r.u32()?, is_share_set: r.u8()?, rendered: r.u8()? }))
+        .collect::<Result<_>>()?;
+    Ok((slots, bypass))
+}
+
+fn put_effect_slots(w: &mut Vec<u8>, slots: &[EffectSlot], bypass: u8) {
+    w.put_u8(slots.len() as u8);
+    if !slots.is_empty() {
+        w.put_u8(bypass);
+        for e in slots {
+            w.put_u8(e.index);
+            w.put_u32(e.effect_id);
+            w.put_u8(e.is_share_set);
+            w.put_u8(e.rendered);
+        }
+    }
+}
+
+fn read_bus(r: &mut Reader, aux: bool) -> Result<Bus> {
+    let parent_bus_id = r.u32()?;
+    if r.left() == 0 {
+        return Ok(Bus { aux, parent_bus_id, params: None });
+    }
+
+    let props = read_props(r)?;
+    let positioning = read_positioning(r)?;
+    let (advanced_bits, max_instances, channel_config, hdr_bits) = (r.u8()?, r.u16()?, r.u32()?, r.u8()?);
+    let (recovery_time, max_duck_volume) = (r.u32()? as i32, r.f32()?);
+    let n = r.count(18)?;
+    let ducks = (0..n)
+        .map(|_| {
+            Ok(Duck {
+                bus_id: r.u32()?,
+                volume: r.f32()?,
+                fade_out_time: r.u32()? as i32,
+                fade_in_time: r.u32()? as i32,
+                fade_curve: r.u8()?,
+                target_prop: r.u8()?,
+            })
+        })
+        .collect::<Result<_>>()?;
+    let (effects, effects_bypass) = read_effect_slots(r)?;
+    let (override_attachment, effect_0_id, effect_0_is_share_set) = (r.u8()?, r.u32()?, r.u8()?);
+    let rtpcs = read_rtpcs(r)?;
+    let state_groups = read_state_groups(r)?;
+    let params = BusParams {
+        props,
+        positioning,
+        advanced_bits,
+        max_instances,
+        channel_config,
+        hdr_bits,
+        recovery_time,
+        max_duck_volume,
+        ducks,
+        effects,
+        effects_bypass,
+        override_attachment,
+        effect_0_id,
+        effect_0_is_share_set,
+        rtpcs,
+        state_groups,
+    };
+    Ok(Bus { aux, parent_bus_id, params: Some(params) })
+}
+
+fn write_bus(w: &mut Vec<u8>, b: &Bus) {
+    w.put_u32(b.parent_bus_id);
+    let Some(p) = &b.params else { return };
+    put_props(w, &p.props);
+    write_positioning(w, &p.positioning);
+    w.put_u8(p.advanced_bits);
+    w.put_u16(p.max_instances);
+    w.put_u32(p.channel_config);
+    w.put_u8(p.hdr_bits);
+    w.put_u32(p.recovery_time as u32);
+    w.put_f32(p.max_duck_volume);
+    w.put_u32(p.ducks.len() as u32);
+    for d in &p.ducks {
+        w.put_u32(d.bus_id);
+        w.put_f32(d.volume);
+        w.put_u32(d.fade_out_time as u32);
+        w.put_u32(d.fade_in_time as u32);
+        w.put_u8(d.fade_curve);
+        w.put_u8(d.target_prop);
+    }
+    put_effect_slots(w, &p.effects, p.effects_bypass);
+    w.put_u8(p.override_attachment);
+    w.put_u32(p.effect_0_id);
+    w.put_u8(p.effect_0_is_share_set);
+    put_rtpcs(w, &p.rtpcs);
+    put_state_groups(w, &p.state_groups);
+}
+
+fn read_attenuation(r: &mut Reader) -> Result<Attenuation> {
+    let cone_enabled = r.u8()?;
+    let cone = if cone_enabled != 0 { Some([r.f32()?, r.f32()?, r.f32()?, r.f32()?, r.f32()?]) } else { None };
+    let curve_to_use = r.array::<7>()?;
+    let n = r.u8()? as usize;
+    let curves = (0..n)
+        .map(|_| {
+            let scaling = r.u8()?;
+            let count = r.u16()? as usize;
+            Ok((scaling, (0..count).map(|_| read_point(r)).collect::<Result<_>>()?))
+        })
+        .collect::<Result<_>>()?;
+    let rtpcs = if r.left() > 0 { Some(read_rtpcs(r)?) } else { None };
+    Ok(Attenuation { cone_enabled, cone, curve_to_use, curves, rtpcs })
+}
+
+/// A decision tree (dialogue events, music switches): (arguments, mode, nodes).
+type Tree = (Vec<(u32, u8)>, u8, Vec<TreeNode>);
+
+fn read_tree(r: &mut Reader) -> Result<Tree> {
+    let depth = r.count(5)?;
+    let groups = (0..depth).map(|_| r.u32()).collect::<Result<Vec<_>>>()?;
+    let kinds = (0..depth).map(|_| r.u8()).collect::<Result<Vec<_>>>()?;
+    let tree_size = r.u32()? as usize;
+    if !tree_size.is_multiple_of(12) {
+        return Err(FormatError::Invalid(format!("a decision tree of {tree_size} bytes is not whole 12-byte nodes")));
+    }
+
+    let mode = r.u8()?;
+    let nodes = (0..tree_size / 12)
+        .map(|_| Ok(TreeNode { key: r.u32()?, value: r.u32()?, weight: r.u16()?, probability: r.u16()? }))
+        .collect::<Result<_>>()?;
+    Ok((groups.into_iter().zip(kinds).collect(), mode, nodes))
+}
+
+fn write_tree(w: &mut Vec<u8>, arguments: &[(u32, u8)], mode: u8, nodes: &[TreeNode]) {
+    w.put_u32(arguments.len() as u32);
+    arguments.iter().for_each(|(group, _)| w.put_u32(*group));
+    arguments.iter().for_each(|(_, kind)| w.put_u8(*kind));
+    w.put_u32(nodes.len() as u32 * 12);
+    w.put_u8(mode);
+    for n in nodes {
+        w.put_u32(n.key);
+        w.put_u32(n.value);
+        w.put_u16(n.weight);
+        w.put_u16(n.probability);
+    }
+}
+
+fn read_dialogue_event(r: &mut Reader) -> Result<DialogueEvent> {
+    let probability = r.u8()?;
+    let (arguments, mode, nodes) = read_tree(r)?;
+    Ok(DialogueEvent { probability, arguments, mode, nodes })
+}
+
+fn read_effect(r: &mut Reader, share_set: bool) -> Result<Effect> {
+    let plugin_id = r.u32()?;
+    let size = r.u32()? as usize;
+    let params = r.take(size)?.to_vec();
+    let n = r.u8()? as usize;
+    let media = (0..n).map(|_| Ok((r.u8()?, r.u32()?))).collect::<Result<_>>()?;
+    let rtpcs = if r.left() > 0 { Some(read_rtpcs(r)?) } else { None };
+    let rtpc_init_flags = if r.left() >= 2 { Some(r.u16()?) } else { None };
+    Ok(Effect { share_set, plugin_id, params, media, rtpcs, rtpc_init_flags })
 }
