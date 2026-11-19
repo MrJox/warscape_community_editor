@@ -15,6 +15,12 @@ impl Default for Panel {
     }
 }
 
+impl Panel {
+    fn remember_success(&mut self, path: &Path) {
+        self.path = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_owned();
+    }
+}
+
 fn region(values: &[String]) -> Result<(LfRegion, PathBuf), String> {
     if values.len() != 5 {
         return Err("usage: terrain_lf_region_<export|import> <x> <y> <width> <height> <png>".into());
@@ -25,8 +31,21 @@ fn region(values: &[String]) -> Result<(LfRegion, PathBuf), String> {
 }
 
 impl TerrainTool {
+    fn lf_region_busy(&self, editor_gesture: bool) -> bool {
+        editor_gesture
+            || self.painting.is_some()
+            || self.cells.stroke_open()
+            || self.cells.dragging.is_some()
+            || self.explicit.placing
+            || self.terry.claims_left_button()
+            || self.placements.claims()
+            || self.rx.is_some()
+            || self.refill.busy()
+            || self.export.is_some()
+    }
+
     fn transfer_lf_region(&mut self, e: &mut Editor, region: LfRegion, path: Option<&Path>, import: bool) -> Result<String, String> {
-        if self.painting.is_some() || self.rx.is_some() || self.refill.busy() || self.export.is_some() {
+        if self.lf_region_busy(e.open_gesture().is_some()) {
             return Err("Finish the current Terrain operation before transferring an LF region".into());
         }
         let d = e.docs.find_as_mut::<MapDocument>(self.shown).ok_or("No map shown")?;
@@ -55,7 +74,7 @@ impl TerrainTool {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else {
             return;
         };
-        let Some(field) = d.lf_field(LfRole::Land) else {
+        let Ok(field) = d.land_region_field() else {
             gui::text_disabled("This document has no land LF samples.");
             return;
         };
@@ -74,9 +93,10 @@ impl TerrainTool {
             [Ok(x), Ok(y), Ok(width), Ok(height)] => Some(LfRegion { x, y, width, height }),
             _ => None,
         };
-        let error = selected.map_or_else(|| Some("Use non-negative file sample coordinates".into()), |r| r.validate(field).err());
-        let can_import = selected.is_some_and(|r| d.check_lf_region_import(r).is_ok());
-        let native = d.model().is_some_and(|m| m.built);
+        let error = selected.map_or_else(|| Some("Use non-negative file sample coordinates".into()), |r| r.validate(field.as_ref()).err());
+        let can_import = d.lf_region_import_supported();
+        let native = d.model().is_none_or(|m| m.built);
+        drop(field);
         if let Some(error) = &error {
             gui::text_wrapped(error);
         }
@@ -85,7 +105,7 @@ impl TerrainTool {
                 "Native map: PNG export is read-only; region import is unsupported. This does not make native campaign-height export safe.",
             );
         }
-        let busy = self.painting.is_some() || self.rx.is_some() || self.refill.busy() || self.export.is_some();
+        let busy = self.lf_region_busy(e.open_gesture().is_some());
         gui::begin_disabled(error.is_some() || busy);
         let export = gui::button("Export region PNG...");
         gui::begin_disabled(!can_import);
@@ -99,13 +119,48 @@ impl TerrainTool {
             let filters = [("16-bit grayscale PNG".into(), "*.png".into())];
             let path = wce_editor::steam_detect::file_dialog(export, &self.lf_region.path, &filters);
             match self.transfer_lf_region(e, region, path.as_deref(), import) {
-                Ok(message) => e.status(&message, false),
+                Ok(message) => {
+                    if let Some(path) = &path {
+                        self.lf_region.remember_success(path);
+                    }
+                    e.status(&message, false);
+                }
                 Err(error) => e.status(&error, true),
             }
-            if let Some(path) = path {
-                self.lf_region.path = path;
-            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lf_region_repeat_dialog_starts_in_the_parent_without_suggesting_an_existing_file() {
+        let mut panel = Panel::default();
+        let directory = std::env::temp_dir();
+        panel.remember_success(&directory.join("previous.png"));
+        let (start, name) = wce_editor::steam_detect::dialog_start(&panel.path);
+        assert_eq!(start, Some(directory));
+        assert!(name.is_empty());
+    }
+
+    #[test]
+    fn lf_region_busy_includes_cell_drags_placement_and_terry_operations() {
+        let mut tool = TerrainTool::default();
+        assert!(!tool.lf_region_busy(false));
+        assert!(tool.lf_region_busy(true));
+        tool.cells.dragging = Some([0, 0, 1, 1]);
+        assert!(tool.lf_region_busy(false));
+        tool.cells.dragging = None;
+        tool.explicit.placing = true;
+        assert!(tool.lf_region_busy(false));
+        tool.explicit.placing = false;
+        tool.terry.mode = crate::terry_view::Mode::EditPoints;
+        assert!(tool.lf_region_busy(false));
+        tool.terry.mode = crate::terry_view::Mode::Select;
+        tool.placements.mode = crate::placements::Mode::Place;
+        assert!(tool.lf_region_busy(false));
     }
 }
 

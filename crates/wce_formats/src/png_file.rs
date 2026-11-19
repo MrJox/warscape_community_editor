@@ -188,11 +188,21 @@ impl PngFile {
     ///
     /// Fails for a file that isn't a PNG, is truncated or interlaced, has an unsupported format, or a bad pixel stream.
     pub fn parse(bytes: &[u8]) -> Result<Self, PngError> {
+        Self::parse_with_original(bytes, true)
+    }
+
+    /// Pixel-only consumers need no original-container copy. Writing this result re-encodes its pixels.
+    pub(crate) fn parse_pixels(bytes: &[u8]) -> Result<Self, PngError> {
+        Self::parse_with_original(bytes, false)
+    }
+
+    fn parse_with_original(bytes: &[u8], keep_original: bool) -> Result<Self, PngError> {
         if bytes.len() < 8 || bytes[..8] != SIGNATURE {
             return fail("not a PNG");
         }
 
-        let mut f = Self { original: bytes.to_vec(), ..Default::default() };
+        let mut f =
+            Self { original: if keep_original { bytes.to_vec() } else { Vec::new() }, pixels_edited: !keep_original, ..Default::default() };
         let mut idat = vec![];
         let (mut have_ihdr, mut first_idat) = (false, true);
         let mut i = 8;
