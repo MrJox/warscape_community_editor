@@ -267,3 +267,8 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   (45, 46, 0.87), lowest trough 1) and `directional_light_PS.g_refraction_depth` 36 (battle 0.75); `shadowmap_PS.g_fFadeRange` 0.29
   (0.2) and `g_vSoftShadowBufferSize` 1; `hdr_to_screen_PS.pos_transform` (1, 1, 0, 0) and `focal_length` 0; the campaign's
   `weather_shared.g_wind_offset` 0. Ground: mean difference 23 of 255, the editor's colour within 1.4 of the game's brightness.
+- **Constants matched (2026-11-19, `campaign_compare` at capture A):** the campaign water's `OceanSharedConstants` (froth 1 / 1,
+  trough 1, detail repeats 1 / 1, speeds 1.2 / 1.2; the sea's and lakes' alike), `g_refraction_depth` 36 (light and water
+  refraction), the tone map's DOF focus and focal length 0 (the files' `variance(0,18.404907)` not carried: the whole frame blurred
+  by `blur_kernel_scale`, two captures), `pos_transform`, `g_vSoftShadowBufferSize`. Left: the resolve's snow / rock heights and far
+  blend, the wind offset, the fade range (cascades), the foam animation's frames.
