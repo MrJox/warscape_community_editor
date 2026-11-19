@@ -223,10 +223,17 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       decodes to its header's frame count. Attila + TDD: 44,703 loose WEMs and 25,140 media inside banks (51 hours), 0 failures;
       12 bank media are prefetched starts of loose files (stream type 1: only the start is in the bank) and 1 is plug-in data
       (not RIFF). Rome 2: 41,088 loose WEMs, 0 failures. **done**
-   3. Name index: `event_data.dat`, `STID`, bank and file names, the triggers CSV, `.amb` events, TheTollski's `TWA_Names.txt`
-      (vendored, user's permission), user labels later; FNV-1 match. **todo**
-   4. Resolver: an event's actions -> targets -> containers -> sounds -> media (a bank's `DATA` or a loose `audio/<id>.wem`), across
-      the game's banks. **todo**
+   3. Name index (`wce_audio::names`): `event_data.dat`, `STID`, bank file names, the triggers CSV, TheTollski's `TWA_Names.txt`
+      (vendored in `third_party/soundbank_editor`, user's permission), user labels (`NameSource::Label`, first in priority; the
+      UI to set them is step 3.6 or later); FNV-1 match. Attila + TDD: 3,559 names; every event (1,629) and dialogue event (171)
+      named, 22 of 198 buses; containers and sounds have no names in Wwise (the tool labels them by content). DB tables as a
+      source: later. **done**
+   4. Resolver (`wce_audio::library::SoundLibrary`, example `audio_library_check`): loads every bank through `Files` (packs +
+      loose project files; 126 banks, 98,009 objects in 0.2 s), indexes objects and media by ID across banks, resolves an object
+      to a `PlayNode` tree (event -> actions -> play targets -> containers / switch values / dialogue tree leaves / music ->
+      sounds -> media in a bank's `DATA` or a loose `audio/<id>.wem`). All 1,629 events in 0.1 s: 215,360 sound leaves, 204,360
+      in banks, 9,635 loose, 1,365 missing (195 sound objects whose media is in no bank or pack: the game's own leftovers,
+      silent in game too); 280 events play nothing (stop, set state...). **done**
    5. Playback: SDL3 audio streams (SDL already linked; SDL converts rate and channels), play / stop, position. **todo**
    6. The Audio tool (`wce_audio_tool`, feature `audio`): banks list, a bank document with its readable object tree, an object's
       fields, the global search, play buttons. **todo**

@@ -3,11 +3,15 @@
 //!
 //! - [`decode`]: a WEM (Wwise Vorbis) to interleaved f32 samples.
 //! - [`codebooks`]: Wwise's built-in Vorbis codebook library.
+//! - [`names`]: names for Wwise IDs, from every source the game has.
+//! - [`library`]: every bank indexed, and what an event plays ([`library::SoundLibrary::resolve`]).
 //! - [`bits`]: LSB-first bit reading and writing, as Vorbis packs its bits.
 
 pub mod bits;
 pub mod codebooks;
 pub mod decode;
+pub mod library;
+pub mod names;
 
 /// Why a sound could not be decoded.
 #[derive(Debug, thiserror::Error)]
