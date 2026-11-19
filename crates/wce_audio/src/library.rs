@@ -117,6 +117,26 @@ impl SoundLibrary {
         Some((b, &entry.bank.objects()[i], entry.typed[i].as_ref()))
     }
 
+    /// If any bank has an object with this ID.
+    pub fn has_object(&self, id: u32) -> bool {
+        self.objects.contains_key(&id)
+    }
+
+    /// If any bank holds media with this ID.
+    pub fn has_media(&self, id: u32) -> bool {
+        self.media.contains_key(&id)
+    }
+
+    /// The bank with this bank ID (its `BKHD` ID).
+    pub fn bank_by_id(&self, bank_id: u32) -> Option<usize> {
+        self.banks.iter().position(|b| b.bank.header().is_some_and(|h| h.bank_id == bank_id))
+    }
+
+    /// Every (bank, object index) holding an object.
+    pub fn locations(&self, id: u32) -> &[(usize, usize)] {
+        self.objects.get(&id).map_or(&[], Vec::as_slice)
+    }
+
     /// Every bank holding an object.
     pub fn banks_of(&self, id: u32) -> Vec<usize> {
         self.objects.get(&id).map(|v| v.iter().map(|(b, _)| *b).collect()).unwrap_or_default()

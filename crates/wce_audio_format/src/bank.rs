@@ -144,6 +144,79 @@ impl Bank {
         self.chunks.iter().find_map(|c| if let Chunk::MediaIndex(m) = c { Some(m.as_slice()) } else { None }).unwrap_or(&[])
     }
 
+    /// Where `DATA`'s payload starts in the written file (a Sound held in this bank stores its media's offset from the file's start:
+    /// this plus the media's `DIDX` offset).
+    pub fn data_position(&self) -> Option<usize> {
+        let mut at = 0;
+        for c in &self.chunks {
+            if matches!(c, Chunk::Data(_)) {
+                return Some(at + 8);
+            }
+            at += 8 + write_chunk(c).1.len();
+        }
+        None
+    }
+
+    /// Replaces a media file, or adds it (`DIDX` and `DATA` made when the bank has none). `DATA` is laid out again as the game's banks
+    /// are: in `DIDX` order, each file at a 16-byte boundary, zeros between, nothing after the last. Every later offset may move: the
+    /// sounds pointing into this bank need their offsets again (`wce_audio::edit`).
+    pub fn set_media(&mut self, id: u32, bytes: &[u8]) {
+        let mut files: Vec<(u32, Vec<u8>)> =
+            self.media_index().iter().map(|e| (e.id, self.media(e.id).unwrap_or_default().to_vec())).collect();
+        match files.iter_mut().find(|(i, _)| *i == id) {
+            Some(f) => f.1 = bytes.to_vec(),
+            None => files.push((id, bytes.to_vec())),
+        }
+        self.lay_out_media(files);
+    }
+
+    /// Removes a media file; true if the bank held it.
+    pub fn remove_media(&mut self, id: u32) -> bool {
+        let before = self.media_index().len();
+        let files: Vec<(u32, Vec<u8>)> =
+            self.media_index().iter().filter(|e| e.id != id).map(|e| (e.id, self.media(e.id).unwrap_or_default().to_vec())).collect();
+        let removed = files.len() != before;
+        if removed {
+            self.lay_out_media(files);
+        }
+        removed
+    }
+
+    fn lay_out_media(&mut self, files: Vec<(u32, Vec<u8>)>) {
+        let (mut index, mut data) = (vec![], vec![]);
+        for (id, bytes) in files {
+            if !data.is_empty() {
+                data.resize(data.len().next_multiple_of(16), 0);
+            }
+            index.push(MediaEntry { id, offset: data.len() as u32, size: bytes.len() as u32 });
+            data.extend_from_slice(&bytes);
+        }
+
+        let has_index = self.chunks.iter().any(|c| matches!(c, Chunk::MediaIndex(_)));
+        if !has_index {
+            // After the header, as in the game's banks.
+            let at = self.chunks.iter().position(|c| matches!(c, Chunk::Header(_))).map_or(0, |i| i + 1);
+            self.chunks.insert(at, Chunk::Data(vec![]));
+            self.chunks.insert(at, Chunk::MediaIndex(vec![]));
+        }
+        for c in &mut self.chunks {
+            match c {
+                Chunk::MediaIndex(m) => *m = std::mem::take(&mut index),
+                Chunk::Data(d) => *d = std::mem::take(&mut data),
+                _ => {}
+            }
+        }
+    }
+
+    /// The hierarchy's objects, to change them (an empty `HIRC` is added if the bank has none).
+    pub fn objects_mut(&mut self) -> &mut Vec<HircObject> {
+        if !self.chunks.iter().any(|c| matches!(c, Chunk::Hierarchy(_))) {
+            let at = self.chunks.iter().position(|c| matches!(c, Chunk::Header(_))).map_or(0, |i| i + 1);
+            self.chunks.insert(at, Chunk::Hierarchy(vec![]));
+        }
+        self.chunks.iter_mut().find_map(|c| if let Chunk::Hierarchy(o) = c { Some(o) } else { None }).expect("added")
+    }
+
     /// A media file held in the bank, by its ID.
     pub fn media(&self, id: u32) -> Option<&[u8]> {
         let entry = self.media_index().iter().find(|e| e.id == id)?;
@@ -292,7 +365,7 @@ mod tests {
         };
         chunk(b"BKHD", &[112, 0, 0, 0, 1, 2, 3, 4, 11, 0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0]);
         chunk(b"DIDX", &[7, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0]);
-        chunk(b"DATA", &[9, 8, 7, 0]);
+        chunk(b"DATA", &[9, 8, 7]);
         // One Event (kind 4): ID 0x10, then one action ID.
         chunk(b"HIRC", &[1, 0, 0, 0, 4, 12, 0, 0, 0, 0x10, 0, 0, 0, 1, 0, 0, 0, 0x20, 0, 0, 0]);
         chunk(b"STID", &[1, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 2, b'a', b'b']);
@@ -309,6 +382,24 @@ mod tests {
         assert_eq!(bank.media(7), Some(&[9u8, 8, 7][..]));
         assert_eq!(bank.objects()[0].id, 0x10);
         assert_eq!(bank.objects()[0].kind, 4);
+    }
+
+    #[test]
+    fn media_layout() {
+        let mut bank = Bank::read(&sample()).unwrap();
+        // The sample's single media item, written again unchanged, gives the same bytes.
+        bank.set_media(7, &[9, 8, 7]);
+        assert_eq!(bank.write(), sample());
+
+        bank.set_media(8, &[1; 20]);
+        bank.set_media(7, &[2; 5]);
+        assert_eq!(bank.media_index(), &[MediaEntry { id: 7, offset: 0, size: 5 }, MediaEntry { id: 8, offset: 16, size: 20 }]);
+        assert_eq!(bank.media(8), Some(&[1u8; 20][..]));
+        let data_at = bank.data_position().unwrap();
+        let bytes = bank.write();
+        assert_eq!(&bytes[data_at + 16..data_at + 36], &[1u8; 20]);
+        assert!(bank.remove_media(7));
+        assert_eq!(bank.media_index(), &[MediaEntry { id: 8, offset: 0, size: 20 }]);
     }
 
     #[test]
