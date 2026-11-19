@@ -254,3 +254,16 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   `sprawl_edge_0`'s turn traced: a sprawl hex without a road shape draws its turn at the campaign's start (fn 0x10a315f0), the rest
   keep their road rotation; the same DEVIATION (a draw on the hex's own seed). The game's draws are defined by the startpos's
   `RandSeed` but not reproducible from it (docs/re/terry.md); two captures of one campaign disagree on two settlements: open.
+- **Phase 3, the comparison (2026-11-19):** the editor's `cb_dump <file>` (every constant buffer as the last frame set it) and
+  `scripts/campaign_compare.py` (standard library only): each buffer's game values at the draw of the pass that sets it for the frame
+  (its `PASS_OF` table; 4 x 4 matrices either way round, integers read back from their bits) against the editor's; the editor's
+  `capture` against the game's screen (mean difference and colour of the ground and sky, the mask left out, a heat map). The depth
+  target is now saved as depth (`rd_campaign_frame.py`: it was zeros), so the sky region needs capture A read again.
+  **First baseline (capture A's camera):** the camera matches to 0.1 % (the eye's z 0.2 world units off: to look at). Fixed:
+  `camera_near_far` and `g_vertical_fov` were never set (every map): now from the projection, (1, 500, 1 / 499) and 1.4 as the game's.
+  Left, the campaign's constants the editor sets as the battle's or not at all: the resolve's `shroud_PS` snow and rock heights
+  (1.4, 0.4, 0.4, 1.4) and `ps_height_map_cb`'s far blend (`g_far_tile_distance` 0, `g_far_blend_range` (9, 37), `g_blend_contrast` 0,
+  `g_lq_infield_blend_range` 100); the sea's `OceanSharedConstants` (detail normal scales / speeds 1 / 1.2, froth 1 / 1, foam anim
+  (45, 46, 0.87), lowest trough 1) and `directional_light_PS.g_refraction_depth` 36 (battle 0.75); `shadowmap_PS.g_fFadeRange` 0.29
+  (0.2) and `g_vSoftShadowBufferSize` 1; `hdr_to_screen_PS.pos_transform` (1, 1, 0, 0) and `focal_length` 0; the campaign's
+  `weather_shared.g_wind_offset` 0. Ground: mean difference 23 of 255, the editor's colour within 1.4 of the game's brightness.

@@ -1563,6 +1563,15 @@ impl Renderer {
         cbs.set_m("camera_VS_PS", "inv_view_projection", inverse(&vp).data());
         cbs.set_f("camera_VS_PS", "time_in_sec", &[time_s]);
         cbs.set_f("camera_VS_PS", "g_inverse_focal_length", &[1.0 / proj.m[0][0], 1.0 / proj.m[1][1]]);
+        // The game's (RenderDoc, the campaign's capture A: (1, 500, 1 / 499, 1 / 499) and 1.4): near and far in game units from the
+        // projection's z terms (z' = a z + b: near -b / a, far a near / (a - 1)), the vertical field of view from its y scale.
+        let a = proj.m[2][2];
+        let b = if proj.m[2][3].abs() > proj.m[3][2].abs() { proj.m[2][3] } else { proj.m[3][2] };
+        let near = if a.abs() > 1e-12 { -b / a } else { 0.0 };
+        let far = if (a - 1.0).abs() > 1e-12 { a * near / (a - 1.0) } else { near };
+        let span = if far > near { 1.0 / (far - near) } else { 0.0 };
+        cbs.set_f("camera_VS_PS", "camera_near_far", &[near, far, span, span]);
+        cbs.set_f("camera_VS_PS", "g_vertical_fov", &[2.0 * (1.0 / proj.m[1][1]).atan()]);
         let (fw, fh) = (w as f32, h as f32);
         cbs.set_f("camera_VS_PS", "g_screen_size", &[fw, fh, 1.0 / fw, 1.0 / fh]);
 

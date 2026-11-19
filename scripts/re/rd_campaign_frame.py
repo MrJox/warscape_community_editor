@@ -268,6 +268,9 @@ def main():
         ts.mip = 0
         ts.alpha = rd.AlphaMapping.Preserve
         ts.destType = rd.FileType.DDS
+        # A depth target is typeless (D24S8 as R24G8_TYPELESS): read as depth, else the file holds zeros.
+        if texs[t].format.Name().startswith(("D24", "R24G8", "D32", "R32G8")):
+            ts.typeCast = rd.CompType.Depth
         path = os.path.join(OUT, "targets", name + ".dds")
         ok = ctl.SaveTexture(ts, path)
         d = texs[t]
