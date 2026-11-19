@@ -779,6 +779,9 @@ pub(crate) struct CameraState {
     /// world's ([`Self::units`]); the passes of the tile content take the camera's constants in theirs ([`Renderer::in_tile_units`]).
     pub terrain_units: f32,
 
+    /// `RenderScene::z_stretch` (1: none).
+    pub z_stretch: f32,
+
     /// The last main camera given to `set_camera` (scene units: the view, the projection, the eye, the viewport, the time), for
     /// [`Renderer::in_tile_units`].
     pub last: Option<(Float4x4, Float4x4, Float3, u32, u32, f32)>,
@@ -832,6 +835,7 @@ impl Default for CameraState {
             px_ratio: 0.001,
             units: 1.0,
             terrain_units: 1.0,
+            z_stretch: 1.0,
             last: None,
             cb_view: Float4x4::IDENTITY,
             cb_view_proj: Float4x4::IDENTITY,
@@ -1715,6 +1719,7 @@ impl Renderer {
         }
         self.camera.units = if scene.game_units > 0.0 { scene.game_units } else { 1.0 };
         self.camera.terrain_units = if scene.terrain_units > 0.0 { scene.terrain_units } else { self.camera.units };
+        self.camera.z_stretch = if scene.z_stretch > 0.0 { scene.z_stretch } else { 1.0 };
         wce_prof!("render.total");
         let mut cam = view_params.camera;
         // A campaign map's far plane: the game's, 500 of its world's units (RenderDoc, camp_attila: near 1, far 500), whatever the view

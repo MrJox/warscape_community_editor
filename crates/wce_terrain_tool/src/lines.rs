@@ -7,7 +7,6 @@ use std::sync::mpsc::{Receiver, channel};
 
 use wce_editor::editor::Editor;
 use wce_foundation::log;
-use wce_scene::campaign_lighting::CAMPAIGN_Z_SCALE;
 use wce_scene::render_scene::{CampaignLines, DocumentId, OverlayCurve, OverlayLine};
 use wce_terrain_io::attila::borders::BorderCurve;
 use wce_terrain_io::attila::diplomacy::FactionInfo;
@@ -144,13 +143,12 @@ impl CampaignLinesView {
     }
 }
 
-/// The overlay in the view's frame: x as the game's (from the map's west edge), z the game's over `CAMPAIGN_Z_SCALE` (the editor's
-/// cells are square; the game's hex world is 2 / sqrt 3 longer north to south). The trade routes drawn are the segments the game makes a
-/// draw for (flag byte 0 is 0, fn 0x10aba960).
+/// The overlay in the view's frame: the game's x and z (from the map's west and south edges; the view is the game's hex world, 2 / sqrt
+/// 3 longer north to south, as the borders' curves are). The trade routes drawn are the segments the game makes a draw for (flag byte 0
+/// is 0, fn 0x10aba960).
 fn scene_lines(o: &CampaignOverlay, map: &str, id: u64) -> CampaignLines {
-    let k = (1.0 / CAMPAIGN_Z_SCALE) as f32;
     let curves = |cs: &[BorderCurve]| -> Vec<OverlayCurve> {
-        cs.iter().map(|c| OverlayCurve { cp: c.cp.map(|p| [p[0], p[1] * k]), ts: c.ts, uv: [c.uv_offset, c.uv_scale] }).collect()
+        cs.iter().map(|c| OverlayCurve { cp: c.cp, ts: c.ts, uv: [c.uv_offset, c.uv_scale] }).collect()
     };
     let dir = format!("campaign_maps/{map}/display");
     let mut lines: Vec<OverlayLine> = o

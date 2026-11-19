@@ -82,7 +82,7 @@ impl Renderer {
         self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[on]);
         if let Some(s) = shroud {
             let u = self.camera.units;
-            let world = [s.lf.nx as f32 * s.lf.step * u, s.lf.nz as f32 * s.lf.step * u];
+            let world = [s.lf.nx as f32 * s.lf.step * u, s.lf.nz as f32 * s.lf.dz() * u];
             let cbs = &mut self.cbs;
             cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, world[0], world[1]]);
             cbs.set_f("shroud_PS", "g_campaign_playable_area_bounds", &[0.0, 0.0, world[0], world[1]]);
@@ -115,7 +115,7 @@ impl Renderer {
         // The map's frame: its south-west corner (the LF's first sample) at 0, game units.
         let u = self.camera.units;
         let corner = Float3::new(lf.x0, self.camera.origin.y, lf.z0);
-        let world = [dims[0] as f32 * k as f32 * lf.step * u, dims[1] as f32 * k as f32 * lf.step * u];
+        let world = [dims[0] as f32 * k as f32 * lf.step * u, dims[1] as f32 * k as f32 * lf.dz() * u];
         let eye = (self.camera.eye - corner) * u;
         let q = 2.0 * GRID_HALF / (GRID - 1) as f32;
         self.shift_camera_constants(corner - self.camera.origin);

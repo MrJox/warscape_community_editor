@@ -92,6 +92,11 @@ pub struct ContextRequest {
     pub cells: (i32, i32),
     pub unit: f64,
 
+    /// The frame's z (north) over the map's cells' (1: square cells). A campaign map is drawn in the game's world, the hex grid's: 2 / sqrt 3
+    /// longer north to south (docs/re/renderer.md, "The campaign frame"): its ground (tiles, the LF, the sea) is stretched by it, the
+    /// models only moved.
+    pub z_stretch: f64,
+
     /// The rings around the focus, in cells: everything, the mid level, the tiles' ground, the LF ground.
     pub near: i32,
     pub mid: i32,
@@ -198,6 +203,8 @@ fn position(m: &Float4x4) -> (f64, f64) {
 
 /// A field of the map (its LF, its sea LF) in the open frame, on the field's own lattice (the frame's axes are the map's turned by whole
 /// quarter turns, so its samples are the map's pixels): `LF * height - VERTICAL_OFFSET` m, relative to the median LF under the open tile.
+/// `k`: the frame's z stretch (its z step is the x step times it).
+#[allow(clippy::too_many_arguments)]
 fn lf_map(
     map: &PlacedMap,
     f: Option<&LfField>,
@@ -206,17 +213,19 @@ fn lf_map(
     to_map: &Affine2,
     lf_level: f64,
     unit: f64,
+    k: f64,
 ) -> Option<LfMap> {
     let vertical_offset = map.vertical_offset;
     let f = f.filter(|f| f.w > 1 && f.h > 1)?;
     let (ppx, ppy) = (f64::from(f.w) / f64::from(map.width), f64::from(f.h) / f64::from(map.height));
     let s = CELL / ppx;
+    let sz = s * k;
     let b = bounds(from_map, 0.0, 0.0, f64::from(f.w - 1) / ppx, f64::from(f.h - 1) / ppy);
-    let (nx, nz) = (((b[2] - b[0]) / s).round() as i32 + 1, ((b[3] - b[1]) / s).round() as i32 + 1);
+    let (nx, nz) = (((b[2] - b[0]) / s).round() as i32 + 1, ((b[3] - b[1]) / sz).round() as i32 + 1);
     // The frame lays the field's samples out one to one (the Terrain tool's: the map's own frame, rows the other way up): the field's
     // samples themselves, shared (the campaign's LF is 375 MB), else resampled.
     let sample = |i: f64, j: f64| {
-        let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * s);
+        let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * sz);
         (cx * ppx, cy * ppy)
     };
     let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
@@ -238,6 +247,7 @@ fn lf_map(
             x0: b[0] as f32,
             z0: b[1] as f32,
             step: s as f32,
+            step_z: sz as f32,
             nx,
             nz,
             values: LfSamples::shared(f.values.clone(), flip),
@@ -255,7 +265,7 @@ fn lf_map(
     let mut values = vec![0u16; (nx * nz) as usize];
     values.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
         for (i, v) in row.iter_mut().enumerate() {
-            let (cx, cy) = to_map.apply(b[0] + i as f64 * s, b[1] + j as f64 * s);
+            let (cx, cy) = to_map.apply(b[0] + i as f64 * s, b[1] + j as f64 * sz);
             let (px, py) = ((cx * ppx).clamp(0.0, f64::from(f.w - 1)), (cy * ppy).clamp(0.0, f64::from(f.h - 1)));
             let (x0, y0) = (px.floor() as u32, py.floor() as u32);
             let (x1, y1) = ((x0 + 1).min(f.w - 1), (y0 + 1).min(f.h - 1));
@@ -272,6 +282,7 @@ fn lf_map(
         x0: b[0] as f32,
         z0: b[1] as f32,
         step: s as f32,
+        step_z: sz as f32,
         nx,
         nz,
         values: LfSamples::new(values),
@@ -290,7 +301,7 @@ fn lf_map(
 fn lf_normals(lf: &mut LfMap) {
     lf.normal_k = ((lf.nx.max(lf.nz) + LF_NORMAL_SIDE - 1) / LF_NORMAL_SIDE).max(1);
     let (w, h) = lf.normal_size();
-    let s = lf.step * lf.normal_k as f32;
+    let (s, sz) = (lf.step * lf.normal_k as f32, lf.dz() * lf.normal_k as f32);
     let mut px = vec![0u8; (w * h * 4) as usize];
     let lfr = &*lf;
     let values = lfr.values.read();
@@ -302,7 +313,7 @@ fn lf_normals(lf: &mut LfMap) {
 
     drop(values);
     lf.normal = TerrainImage { w: w as u32, h: h as u32, rgba: Some(Arc::new(px)) };
-    lf.normal_world = [w as f32 * s, h as f32 * s];
+    lf.normal_world = [w as f32 * s, h as f32 * sz];
 }
 
 /// A material of one colour: `base` with its blend and index maps averaged into one pixel and a flat normal (the LF map's normals shade it).
@@ -397,6 +408,9 @@ pub struct Frame {
     pub map: Arc<PlacedMap>,
     pub unit: f64,
 
+    /// [`ContextRequest::z_stretch`]: part of `from_map` / `to_map`.
+    pub z_stretch: f64,
+
     /// The open tile's cells, its frame -> map cells and back.
     pub open: [i32; 4],
     pub to_map: Affine2,
@@ -456,11 +470,12 @@ impl Frame {
             any_variation: false,
         };
         let open = me.rect();
-        let to_map = me.to_map();
-        let from_map = to_map.inverse();
+        let k = if rq.z_stretch > 0.0 { rq.z_stretch } else { 1.0 };
+        let from_map = Affine2 { m: [[1.0, 0.0, 0.0], [0.0, k, 0.0]] }.then_after(&me.to_map().inverse());
+        let to_map = from_map.inverse();
         let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
-        let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
-        let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
+        let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k).map(Arc::new);
+        let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k).map(Arc::new);
         wce_foundation::log::info(format!("map context: the frame's LF maps made, {}", wce_foundation::heap::note()));
 
         let index = MapIndex::new(&map, open);
@@ -478,6 +493,7 @@ impl Frame {
         Self {
             map,
             unit: rq.unit,
+            z_stretch: k,
             open,
             to_map,
             from_map,
@@ -509,6 +525,7 @@ impl Frame {
         Self {
             map,
             unit: self.unit,
+            z_stretch: self.z_stretch,
             open: self.open,
             to_map: self.to_map,
             from_map: self.from_map,
@@ -715,8 +732,10 @@ impl Frame {
     /// of the cells' climate.
     fn ground(&self, r: [i32; 4], far: bool, climate: u8) -> (Float4x4, Payload) {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
+        // Its grid square in its own units (the LF's x step), the frame's z stretch in its world matrix.
         let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
-        let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / step).round() as i32 + 1);
+        let k = self.z_stretch;
+        let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / k / step).round() as i32 + 1);
         let heights = self
             .zeros
             .lock()
@@ -760,6 +779,7 @@ impl Frame {
         };
         let mut world = Float4x4::IDENTITY;
         (world.m[0][3], world.m[2][3]) = (b[0] as f32, b[1] as f32);
+        world.m[2][2] = k as f32;
         (world, Payload::Terrain(t))
     }
 
@@ -992,6 +1012,17 @@ impl Frame {
             .is_none_or(|m| m <= SEA_LF_REACH)
     }
 
+    /// A model's matrix moved by the frame but not stretched by it: the z row of its 3 x 3 part over the frame's z stretch (its position
+    /// stays where the stretched frame puts it).
+    fn unstretch(&self, m: &mut Float4x4) {
+        if self.z_stretch != 1.0 {
+            let k = self.z_stretch as f32;
+            for c in 0..3 {
+                m.m[2][c] /= k;
+            }
+        }
+    }
+
     /// A placement's entities moved into the frame (`frame`) and lifted by the LF at their position.
     fn place_entities(&self, t: &Template, lod: Lod, frame: Float4x4, out: &mut Vec<(Float4x4, Payload)>) {
         let n = if lod == Lod::Near { t.entities.len() } else { t.mid };
@@ -1014,7 +1045,14 @@ impl Frame {
                 continue;
             }
 
+            // A model is moved into the stretched frame, not stretched itself (the game's buildings and props are uniform in its
+            // stretched world: RenderDoc, docs/re/renderer.md "The campaign frame"): the z row of its 3 x 3 part without the stretch. A
+            // lake's water planes (`water_plane` models scaled over it) are the ground's: stretched with their shores.
             let mut world = frame * *w;
+            let water_plane = matches!(payload, Payload::MeshInstance(mi) if mi.model.to_ascii_lowercase().contains("water_plane"));
+            if !water_plane {
+                self.unstretch(&mut world);
+            }
             let (x, z) = position(&world);
             let lift = self.lift(x, z);
             world.m[1][3] += lift;
@@ -1027,6 +1065,7 @@ impl Frame {
                 && let Some(rows) = untilted(&[mi.p5, mi.p6, mi.p7])
             {
                 let mut m = frame * rows;
+                self.unstretch(&mut m);
                 m.m[1][3] += lift;
                 [mi.p5, mi.p6, mi.p7] = [m.m[0], m.m[1], m.m[2]];
             }
@@ -1183,7 +1222,8 @@ impl Frame {
         let climate = self.climate[(area[1] * w + area[0]) as usize];
         let Some(base) = self.plain_for(climate).0 else { return out };
         let mut m = (*base).clone();
-        let (gw, gh) = (b[2] - b[0], b[3] - b[1]);
+        // The grid in its own units (square cells), the frame's z stretch in its world matrix.
+        let (gw, gh) = (b[2] - b[0], (b[3] - b[1]) / self.z_stretch);
         m.baked = true;
         m.blend = TerrainImage { w: tw as u32, h: th as u32, rgba: Some(Arc::new(colour)) };
         m.index = TerrainImage::default();
@@ -1217,6 +1257,7 @@ impl Frame {
         };
         let mut world = Float4x4::IDENTITY;
         (world.m[0][3], world.m[2][3]) = (b[0] as f32, b[1] as f32);
+        world.m[2][2] = self.z_stretch as f32;
         out.push((world, Payload::Terrain(t)));
         out
     }

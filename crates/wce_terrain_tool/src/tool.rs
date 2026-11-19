@@ -95,9 +95,9 @@ impl LfPick {
     /// Where the ray (frame, scene units) meets the LF: the point (scene units) and the sample's raw height there.
     fn hit(&self, o: Float3, d: Float3) -> Option<(Float3, f32)> {
         let lf = &self.lf;
-        let (s, k) = (lf.step, 65535.0 / lf.scale.max(1e-6));
-        let os = [(o.x - lf.x0) / s, (o.y + lf.offset) * k, (o.z - lf.z0) / s];
-        let ds = [d.x / s, d.y * k, d.z / s];
+        let (s, sz, k) = (lf.step, lf.dz(), 65535.0 / lf.scale.max(1e-6));
+        let os = [(o.x - lf.x0) / s, (o.y + lf.offset) * k, (o.z - lf.z0) / sz];
+        let ds = [d.x / s, d.y * k, d.z / sz];
         let nx = lf.nx as u32;
         let values = lf.values.read();
         let t = self.pyramid.intersect(os, ds, |x, y| values[(y * nx + x) as usize])?;
@@ -569,11 +569,11 @@ fn land_near_centre(lf: &wce_scene::render_scene::LfMap) -> Option<Float3> {
     const ABOVE_SEA: f32 = 20.0;
     let v = lf.values.read();
     let stride = (lf.nx.max(lf.nz) / 256).max(1);
-    let (ci, cj) = (-lf.x0 / lf.step, -lf.z0 / lf.step);
+    let (ci, cj) = (-lf.x0 / lf.step, -lf.z0 / lf.dz());
     (0..lf.nz)
         .step_by(stride as usize)
         .flat_map(|j| (0..lf.nx).step_by(stride as usize).map(move |i| (i, j)))
-        .map(|(i, j)| (lf.x0 + i as f32 * lf.step, lf.z0 + j as f32 * lf.step, (i as f32 - ci).powi(2) + (j as f32 - cj).powi(2)))
+        .map(|(i, j)| (lf.x0 + i as f32 * lf.step, lf.z0 + j as f32 * lf.dz(), (i as f32 - ci).powi(2) + (j as f32 - cj).powi(2)))
         .map(|(x, z, d)| (x, z, d, lf.height_in(&v, x, z)))
         .filter(|&(.., h)| h > ABOVE_SEA)
         .min_by(|a, b| a.2.total_cmp(&b.2))
@@ -936,8 +936,10 @@ impl TerrainTool {
             map: m.clone(),
             spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 },
             cells: (0, 0),
-            // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`).
+            // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`); its ground in the game's
+            // world, the hex grid's (longer north to south).
             unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
+            z_stretch: if map_kind(&d.name).0 == MapKind::Campaign { wce_scene::campaign_lighting::CAMPAIGN_Z_SCALE } else { 1.0 },
             near: self.rings.near,
             mid: self.rings.mid,
             ground: self.rings.ground,
@@ -1098,6 +1100,7 @@ impl TerrainTool {
         let frame = e.docs.find_as::<MapDocument>(id).filter(|d| map_kind(&d.name).0 == MapKind::Campaign).map(|d| d.terry_frame);
         e.scene.game_units = frame.map_or(UNIT as f32, |f| f.unit as f32);
         e.scene.terrain_units = if frame.is_some() { 0.2 } else { 0.0 };
+        e.scene.z_stretch = if frame.is_some() { wce_scene::campaign_lighting::CAMPAIGN_Z_SCALE as f32 } else { 1.0 };
         e.scene.campaign = frame.is_some();
         let fog = self.lines.fog.clone();
         e.scene.campaign_shroud = frame.and(s.frame().lf.clone()).map(|lf| wce_scene::render_scene::CampaignShroud { lf, fog });
@@ -1475,7 +1478,7 @@ impl TerrainTool {
     /// The sample of the brush's field (x along the columns, y down the rows of the file) under a frame point.
     fn field_xy(&self, p: Float3) -> Option<(f64, f64)> {
         let lf = self.target_lf()?;
-        let (fi, fj) = (f64::from((p.x - lf.x0) / lf.step), f64::from((p.z - lf.z0) / lf.step));
+        let (fi, fj) = (f64::from((p.x - lf.x0) / lf.step), f64::from((p.z - lf.z0) / lf.dz()));
         Some((fi, f64::from(lf.nz - 1) - fj))
     }
 
@@ -1833,7 +1836,7 @@ impl TerrainTool {
                 let a = f64::from(k) / 64.0 * std::f64::consts::TAU;
                 let (u, v) = (a.cos() * b.brush.radius * b.aspect, a.sin() * b.brush.radius);
                 let (fx, fy) = (cx + c * u - s * v, cy + s * u + c * v);
-                let (x, z) = (lf.x0 + fx as f32 * lf.step, lf.z0 + (f64::from(lf.nz - 1) - fy) as f32 * lf.step);
+                let (x, z) = (lf.x0 + fx as f32 * lf.step, lf.z0 + (f64::from(lf.nz - 1) - fy) as f32 * lf.dz());
                 pts.push(Float3::new(x, lf.height_in(&values, x, z) + 0.5, z));
             }
 
@@ -2346,6 +2349,7 @@ impl Tool for TerrainTool {
             self.view.clear(e);
             e.scene.campaign = false;
             e.scene.terrain_units = 0.0;
+            e.scene.z_stretch = 1.0;
             e.scene.campaign_shroud = None;
             self.lighting = None;
             if let Some(sky) = self.skybox.take() {
@@ -3158,6 +3162,45 @@ impl Tool for TerrainTool {
                     CommandResult::success(format!(
                         "view distance {}, rings {} / {} / {} / {}",
                         t.rings.view_distance, t.rings.near, t.rings.mid, t.rings.ground, t.rings.far
+                    ))
+                })
+            },
+        );
+
+        c.add(
+            "terrain_cam_game",
+            "terrain_cam_game <eye x y z> <forward x y z>",
+            "the Terrain tool: a campaign map's camera where the game's is (its campaign world's units, as a capture's `camera_VS_PS`: the \
+             eye and the view's forward axis, docs/plans/campaign_tilemap.md)",
+            |e, a| {
+                let v: Vec<f64> = a.iter().filter_map(|x| x.parse().ok()).collect();
+                if v.len() != 6 || a.len() != 6 {
+                    return CommandResult::fail("usage: terrain_cam_game <eye x y z> <forward x y z>");
+                }
+
+                with_terrain(e, |t, e| {
+                    let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
+                    if map_kind(&d.name).0 != MapKind::Campaign {
+                        return CommandResult::fail("not a campaign map");
+                    }
+
+                    // The game's world is the `.terry`'s with z times the stretch (from the map's south-west corner, as both are); the
+                    // scene's y is the world's over the frame's unit (the sea at 0).
+                    let tf = d.terry_frame;
+                    let scene = |x: f64, y: f64, z: f64| {
+                        let (sx, sz) = tf.to_frame(x, z / tf.z_stretch);
+                        Float3::new(sx as f32, (y / tf.unit) as f32, sz as f32)
+                    };
+                    let eye = scene(v[0], v[1], v[2]);
+                    // The target where the view meets the sea's height, else 10 world units on (a view up or level).
+                    let reach = if v[4] < -1e-6 { (v[1] / -v[4]).min(400.0) } else { 10.0 };
+                    let target = scene(v[0] + v[3] * reach, v[1] + v[4] * reach, v[2] + v[5] * reach);
+                    e.viewport.set_mode(wce_editor_core::camera_controller::CameraMode::Orbit);
+                    let cam = wce_scene::camera::Camera { eye, target, ..e.viewport.camera() };
+                    e.viewport.controller().set_camera(&cam);
+                    CommandResult::success(format!(
+                        "camera at {:.1} {:.1} {:.1}, looking at {:.1} {:.1} {:.1}",
+                        eye.x, eye.y, eye.z, target.x, target.y, target.z
                     ))
                 })
             },

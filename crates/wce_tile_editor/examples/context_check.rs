@@ -106,6 +106,7 @@ fn main() {
         spot,
         cells: (project.info.cells_x as i32, project.info.cells_y as i32),
         unit: project.unit_scale,
+        z_stretch: 1.0,
         near: n(4, 8),
         mid: n(5, 24),
         ground: 0,

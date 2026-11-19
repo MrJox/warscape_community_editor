@@ -278,7 +278,10 @@ const LF_WINDOW: i32 = 2048;
 struct LfDraw {
     srv: Option<ID3D11ShaderResourceView>,
     n: f32,
+
+    /// The window's size in world units along x and z (z longer on a campaign map: the LF's own z step).
     width: f32,
+    width_z: f32,
     scale: f32,
     offset: f32,
     uv_offset: f32,
@@ -1040,15 +1043,17 @@ impl Renderer {
         }
 
         // The blend box: the material's rectangle turned and moved with the entity (not scaled: the tile tool's z scale is in the rectangle),
-        // its height range around the terrain's lifted by the LF under it.
+        // its height range around the terrain's lifted by the LF under it. The world's z stretch (a campaign map's) comes off the turn and
+        // goes back on the corners.
         if let Some(m) = &t.material {
-            let (a, c) = (w[0][0], w[2][0]);
+            let k = self.camera.z_stretch;
+            let (a, c) = (w[0][0], w[2][0] / k);
             let l = (a * a + c * c).sqrt().max(1e-12);
             let (cos, sin) = (a / l, c / l);
             let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
             for (x, z) in [(m.x0, m.z0), (m.x1, m.z0), (m.x0, m.z1), (m.x1, m.z1)] {
                 let (x, z) = (x as f32, z as f32);
-                let (wx, wz) = (cos * x - sin * z + w[0][3], sin * x + cos * z + w[2][3]);
+                let (wx, wz) = (cos * x - sin * z + w[0][3], (sin * x + cos * z) * k + w[2][3]);
                 (lo[0], lo[1], hi[0], hi[1]) = (lo[0].min(wx), lo[1].min(wz), hi[0].max(wx), hi[1].max(wz));
             }
 
@@ -1135,14 +1140,14 @@ impl Renderer {
     /// 80 km away on the campaign map, they lost the depth's precision: the sea showed through the ground). The window is a square of the map
     /// around the camera, made again when the camera leaves its middle.
     fn lf_draw(&mut self, lf: &LfMap, eye: Float3) -> LfDraw {
-        let s = lf.step;
+        let (s, sz) = (lf.step, lf.dz());
         let n = LF_WINDOW.min((lf.nx.max(lf.nz) as u32).next_power_of_two() as i32);
         let Some(g) = self.terrain.lf.get(&lf.id).cloned() else {
-            return LfDraw { srv: None, n: 2.0, width: 1.0e6, scale: 0.0, offset: 0.0, uv_offset: 0.0, shift: [0.0, 0.0] };
+            return LfDraw { srv: None, n: 2.0, width: 1.0e6, width_z: 1.0e6, scale: 0.0, offset: 0.0, uv_offset: 0.0, shift: [0.0, 0.0] };
         };
 
         // The camera's sample; the window whole when the map fits, else centred on it once it is a quarter of the window off its middle.
-        let (ci, cj) = (((eye.x - lf.x0) / s).round() as i32, ((eye.z - lf.z0) / s).round() as i32);
+        let (ci, cj) = (((eye.x - lf.x0) / s).round() as i32, ((eye.z - lf.z0) / sz).round() as i32);
         let whole = n >= lf.nx && n >= lf.nz;
         let stale =
             g.window.is_none() || g.n != n || (!whole && ((ci - (g.i0 + n / 2)).abs() > n / 4 || (cj - (g.j0 + n / 2)).abs() > n / 4));
@@ -1196,17 +1201,19 @@ impl Renderer {
             g
         };
 
-        // Column 0 at x_t, the row past the last at z_t; the shift is the point of the diagonal through them nearest the camera.
-        let (x_t, z_t, w) = (lf.x0 + g.i0 as f32 * s, lf.z0 + (g.j0 - 1) as f32 * s, n as f32 * s);
-        let uv_offset = ((eye.x - x_t) + (eye.z - z_t)) / (2.0 * w);
+        // Column 0 at x_t, the row past the last at z_t; the shift is the point of the diagonal through them nearest the camera (one uv
+        // offset for both axes: the window's diagonal in uv, its sizes w and wz in the world).
+        let (x_t, z_t, w, wz) = (lf.x0 + g.i0 as f32 * s, lf.z0 + (g.j0 - 1) as f32 * sz, n as f32 * s, n as f32 * sz);
+        let uv_offset = ((eye.x - x_t) / w + (eye.z - z_t) / wz) / 2.0;
         LfDraw {
             srv: g.window,
             n: n as f32,
             width: w,
+            width_z: wz,
             scale: lf.scale,
             offset: lf.offset,
             uv_offset,
-            shift: [x_t + uv_offset * w, z_t + uv_offset * w],
+            shift: [x_t + uv_offset * w, z_t + uv_offset * wz],
         }
     }
 
@@ -2533,6 +2540,7 @@ impl Renderer {
                     srv: self.lf_zero(),
                     n: 2.0,
                     width: 1.0e6,
+                    width_z: 1.0e6,
                     scale: 0.0,
                     offset: 0.0,
                     uv_offset: 0.0,
@@ -2546,12 +2554,12 @@ impl Renderer {
             cbs.set_f("vs_height_map_cb", "g_height_map_hf_scale", &[1.0]);
             cbs.set_f("vs_height_map_cb", "g_height_map_vertical_offset", &[d.offset * units]);
             cbs.set_f("vs_height_map_cb", "g_height_map_dimension", &[d.n, d.n, 1.0 / d.n, 1.0 / d.n]);
-            cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[d.width * units, d.width * units]);
+            cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[d.width * units, d.width_z * units]);
             cbs.set_f("vs_height_map_cb", "g_lf_uv_offset", &[d.uv_offset]);
             // Rome 2's shader places the window through lf_block_cb's rectangles: uv = (x, z) / size, v = 1 - v, then (u + offset,
             // (1 - v) - offset): Attila's (x / size + offset, 1 - (z / size + offset)). (A mirrored v went unseen on a flat LF.)
             cbs.set_f("lf_block_cb", "g_height_map_dimension", &[d.n, d.n, 1.0 / d.n, 1.0 / d.n]);
-            cbs.set_f("lf_block_cb", "g_ws_lf_aabb", &[0.0, 0.0, d.width * units, d.width * units]);
+            cbs.set_f("lf_block_cb", "g_ws_lf_aabb", &[0.0, 0.0, d.width * units, d.width_z * units]);
             cbs.set_f("lf_block_cb", "g_lf_aabb", &[d.uv_offset, -d.uv_offset, 1.0, 1.0]);
             cbs.set_f("lf_block_cb", "g_normal_lf_aabb", &[0.0, 0.0, 1.0, 1.0]);
 
