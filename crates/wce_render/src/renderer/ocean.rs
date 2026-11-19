@@ -847,7 +847,15 @@ impl Renderer {
             _ => [0.0; 4],
         };
 
-        let detail = row.detail_normal_constants();
+        // The campaign water's own values (RenderDoc, capture A: the sea's and the lakes' draws alike; not a weather's sea row): froth
+        // 1 / 1, the lowest trough 1, the detail normals' repeats 1 / 1 and speeds 1.2 / 1.2. Its foam animation's frames (45, 46, 0.87
+        // there) not traced: none.
+        let mut row = row;
+        let mut detail = row.detail_normal_constants();
+        if campaign.is_some() {
+            (row.froth_distortion_speed, row.froth_distortion_amount, row.wave_trough_y_value) = (1.0, 1.0, 1.0);
+            detail = [1.0, 1.0, 1.2, 1.2];
+        }
         let cbs = &mut self.cbs;
         cbs.set_f("ocean_VS", "g_sea_decay", &[row.sea_decay]);
         cbs.set_f("ocean_VS", "g_sea_uv_scale", &[sea_uv]);

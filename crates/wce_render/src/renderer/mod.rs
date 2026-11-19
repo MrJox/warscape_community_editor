@@ -298,6 +298,9 @@ pub(crate) const CLOUD_PS: &str = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 pub(crate) const SHADOW_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 
 /// The tree casters: their vertex shaders (wind, LOD blend) and alpha-tested pixel shaders (the leaves' also dissolve).
+/// `g_refraction_depth` of the light and the water refraction on the campaign map (RenderDoc, capture A; the battle's 0.75).
+pub(crate) const CAMPAIGN_REFRACTION_DEPTH: f32 = 36.0;
+
 /// A campaign's tree clumps (`MeshKind::CampaignVegetation`): the game's G-buffer pair (capture A draws `ps41_gbuffer_ms` with MSAA).
 pub(crate) const CAMPAIGN_VEGETATION_VS: &str = "dx11_sm_3_0_rigidcampaignvegetation.hlsl_vs_vs30_main";
 pub(crate) const CAMPAIGN_VEGETATION_PS: &str = "dx11_sm_3_0_rigidcampaignvegetation.hlsl_ps_ps30_gbuffer";
@@ -806,6 +809,9 @@ pub(crate) struct CameraState {
     /// `RenderScene::z_stretch` (1: none).
     pub z_stretch: f32,
 
+    /// `RenderScene::campaign`: the frame's constants the game sets otherwise on its campaign map.
+    pub campaign: bool,
+
     /// The last main camera given to `set_camera` (scene units: the view, the projection, the eye, the viewport, the time), for
     /// [`Renderer::in_tile_units`].
     pub last: Option<(Float4x4, Float4x4, Float3, u32, u32, f32)>,
@@ -860,6 +866,7 @@ impl Default for CameraState {
             units: 1.0,
             terrain_units: 1.0,
             z_stretch: 1.0,
+            campaign: false,
             last: None,
             cb_view: Float4x4::IDENTITY,
             cb_view_proj: Float4x4::IDENTITY,
@@ -1753,6 +1760,7 @@ impl Renderer {
         self.camera.units = if scene.game_units > 0.0 { scene.game_units } else { 1.0 };
         self.camera.terrain_units = if scene.terrain_units > 0.0 { scene.terrain_units } else { self.camera.units };
         self.camera.z_stretch = if scene.z_stretch > 0.0 { scene.z_stretch } else { 1.0 };
+        self.camera.campaign = scene.campaign;
         wce_prof!("render.total");
         let mut cam = view_params.camera;
         // A campaign map's far plane: the game's, 500 of its world's units (RenderDoc, camp_attila: near 1, far 500), whatever the view

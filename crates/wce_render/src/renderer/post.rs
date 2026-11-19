@@ -329,9 +329,14 @@ impl Renderer {
         // The DOF constants (fn 0x172aae0): with use_DOF, the environment's DOF block: focus_distance = DOF_focus's first value, focal_length =
         // the second, blur_kernel_scale = DOF_blur_size; otherwise the battle camera's (dump: 0, 1000, 1).
         let (focus, focal, kernel_scale) = if dof { (env.dof_focus[0], env.dof_focus[1], env.dof_blur_size) } else { (0.0, 1000.0, 1.0) };
+        // The campaign map's: focus and focal length 0 whatever its files' DOF_focus (`variance(0,18.404907)` in main_attila's), the
+        // blur size theirs (RenderDoc, two captures over Rome and Britain): the whole frame blurred by blur_kernel_scale.
+        let (focus, focal) = if dof && self.camera.campaign { (0.0, 0.0) } else { (focus, focal) };
         self.cbs.set_f("hdr_to_screen_PS", "focus_distance", &[focus]);
         self.cbs.set_f("hdr_to_screen_PS", "focal_length", &[focal]);
         self.cbs.set_f("hdr_to_screen_PS", "blur_kernel_scale", &[kernel_scale]);
+        // The game's every frame (RenderDoc, the campaign's captures): the screen's scale and offset, identity.
+        self.cbs.set_f("hdr_to_screen_PS", "pos_transform", &[1.0, 1.0, 0.0, 0.0]);
 
         // The blur kernels (dump): offsets in texels (x / width, y / height), Gaussian weights with sigma^2 = 4 normalised over the kernel, w = 1.
         for (name, n) in [("sample_data_9x9", 9i32), ("sample_data_5x5", 5), ("sample_data_3x3", 3)] {

@@ -92,7 +92,8 @@ impl Renderer {
         }
 
         let Some(ps) = self.shader(if self.gbuffer.ms.is_some() { REFRACTION_MS_PS } else { REFRACTION_PS }) else { return };
-        self.cbs.set_f("water_refraction_PS", "g_refraction_depth", &[REFRACTION_DEPTH]);
+        let depth = if self.camera.campaign { super::CAMPAIGN_REFRACTION_DEPTH } else { REFRACTION_DEPTH };
+        self.cbs.set_f("water_refraction_PS", "g_refraction_depth", &[depth]);
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_render_targets(std::slice::from_ref(&self.water.refr.rtv), None);
         self.ctx.set_viewports(&[viewport(0.0, 0.0, tw as f32, th as f32)]);

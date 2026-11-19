@@ -468,7 +468,9 @@ impl Renderer {
         self.cbs.set_m("directional_light_PS", "g_overlay_view_projection", ovp.data());
 
         // The engine's default (see the water pass); the shader writes the refraction weight into the light buffer's alpha.
-        self.cbs.set_f("directional_light_PS", "g_refraction_depth", &[0.75]);
+        // The battle's 0.75; the campaign map's 36 (RenderDoc, capture A: the light's and the water refraction's).
+        let refraction_depth = if self.camera.campaign { CAMPAIGN_REFRACTION_DEPTH } else { 0.75 };
+        self.cbs.set_f("directional_light_PS", "g_refraction_depth", &[refraction_depth]);
         self.upload();
         for i in 0..4 {
             bind_srv(&self.ctx, &ps, &format!("gbuffer_channel_{}_sampler", i + 1), self.gbuffer.channels[i].srv.as_ref());
@@ -1011,6 +1013,8 @@ impl Renderer {
         self.cbs.set_f("shadowmap_PS", "g_split_uv_texture_bounds", SHADOW_BOUNDS.as_flattened());
         self.cbs.set_f("shadowmap_PS", "g_fFadeRange", &[0.1, fade_y]);
         self.cbs.set_f("shadowmap_PS", "g_sample_bias", &[0.0]);
+        // The game's (RenderDoc, the campaign's capture A; no shader the editor runs reads it).
+        self.cbs.set_f("shadowmap_PS", "g_vSoftShadowBufferSize", &[1.0; 4]);
         self.cbs.set_f("shadowmap_PS", "g_iSplitCount", &[if shadows_on { count as f32 } else { 0.0 }]);
         self.cbs.set_f("shadowmap_PS", "g_shadow_light_direction", &[light_dir.x, light_dir.y, light_dir.z]);
 
