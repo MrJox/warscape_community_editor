@@ -273,6 +273,8 @@ impl MapView {
     pub fn stream(&mut self, e: &mut Editor, r: &Rings) -> bool {
         wce_prof!("context.stream");
         e.viewport.set_far_plane(r.view_distance.max(GAME_FAR_PLANE));
+        // A campaign map's lens is the game's campaign camera's; a battle map's the battle camera's.
+        e.viewport.set_campaign_lens(e.scene.campaign, e.scene.game_units);
         let Some(focus) = self.focus(e, r.follow) else { return false };
         let widened = self.follow_view(e, focus, r);
         let reach = self.sea_reach(r);
@@ -410,6 +412,7 @@ impl MapView {
     /// Takes the view off the scene (and stops its streamer).
     pub fn clear(&mut self, e: &mut Editor) {
         e.viewport.set_far_plane(GAME_FAR_PLANE);
+        e.viewport.set_campaign_lens(false, 1.0);
         if self.layer != 0 {
             e.scene.remove_layer(self.layer);
             self.layer = 0;
