@@ -210,3 +210,19 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   `lf_draw`, `g_world_dimensions`, the shroud's and sea's bounds, `g_wp_world_size`, the snow masks) takes z / 1.1547 or an
   anisotropic step; the camera, the Map panel, the overlays and the gizmo convert at the view's edge (`TerryFrame`); the
   borders stop dividing by `CAMPAIGN_Z_SCALE`. Battle maps keep a stretch of 1.
+- **Phase 2, the stretch (2026-11-19):** a campaign map is drawn in the game's world. `ContextRequest::z_stretch` /
+  `Frame::z_stretch` (2 / sqrt 3 on campaign maps, 1 elsewhere) is part of the frame's `from_map` / `to_map`, so the tiles, cliff
+  meshes, sea tiles, rivers and lakes (`water_plane` models) carry S after their turn as the game's; every other model placed through
+  the frame keeps its own shape (`Frame::unstretch`: the z row of its 3 x 3 part), at its stretched place. The LF has a z step of its
+  own (`LfMap::step_z`, `dz()`; its normals, ranges, lookups, the renderer's LF window and `g_world_dimensions`, the shroud's bounds);
+  the LF ground rectangles and blocks keep square grids with the stretch in their world matrix; the blend boxes take it off the turn
+  (`RenderScene::z_stretch`). `TerryFrame::z_stretch`: `.terry` points to the view and back (props, effects, overlays, the gizmo's
+  moves, the lighting spheres' eye); the borders no longer squash the game's z. Picking, `land_near_centre` and the LF brush use the
+  z step. `terrain_cam_game <eye> <forward>` puts the camera where a capture's is (capture A: eye (-50488, 3562, 881.6)).
+  Checked at capture A's camera: Rome, the islands, the Tiber's mouth and the trade route within a few pixels of the game's frame
+  (30 - 70 pixels low before). Battle maps: a stretch of 1 is the arithmetic as before (an LF test with a z step added).
+  Seen, not yet fixed: (1) with the cells' rings now shorter north to south, dark flat shapes beside the islands' cliffs: the far
+  ring's plain ground on the land LF (35 m under sea tiles there) poking out of the sea; wider rings (`terrain_view 13000 8 48 96 48`)
+  remove them and show the snowy Apennines as the game does: the horizon item below; (2) `gfx view albedo` is black in an
+  offscreen campaign capture; (3) a lighter vertical band in the sky at a lower pitch (one windowed shot), not checked against the
+  build before the stretch.

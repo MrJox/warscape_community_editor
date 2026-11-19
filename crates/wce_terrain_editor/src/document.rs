@@ -88,13 +88,17 @@ pub struct TerryFrame {
 
     /// The `.terry`'s y is not the view's height (the campaign's): entities stand on the LF.
     pub y_from_lf: bool,
+
+    /// The view's z over the `.terry`'s (1: none): a campaign map is drawn in the game's world, 2 / sqrt 3 longer north to south (the
+    /// game's loaders multiply the `.terry`'s z by `CAMPAIGN_Z_SCALE`).
+    pub z_stretch: f64,
 }
 
 /// A campaign cell in `.terry` units when the map's world bounds are not known (`TerryFrame::campaign`).
 pub const CAMPAIGN_CELL: f64 = 0.32;
 
 impl TerryFrame {
-    pub const BATTLE: Self = Self { unit: 2.0, origin: [0.0, 0.0], cell: TERRY_CELL, y_from_lf: false };
+    pub const BATTLE: Self = Self { unit: 2.0, origin: [0.0, 0.0], cell: TERRY_CELL, y_from_lf: false, z_stretch: 1.0 };
 
     /// A campaign map `w` x `h` cells in a world of `bounds` (its `map_data.esf`'s: min x, min z, max x, max z). The game scales the
     /// terrain to the world's width: a cell is `width / w` world units along both axes, from the bounds' min corner, rows from the map's
@@ -106,17 +110,17 @@ impl TerryFrame {
             _ => (CAMPAIGN_CELL, [0.0, 0.0]),
         };
         let origin = [min[0] + f64::from(w) / 2.0 * cell, min[1] + f64::from(h) / 2.0 * cell];
-        Self { unit: cell / 128.0, origin, cell, y_from_lf: true }
+        Self { unit: cell / 128.0, origin, cell, y_from_lf: true, z_stretch: wce_scene::campaign_lighting::CAMPAIGN_Z_SCALE }
     }
 
-    /// A `.terry` point (x, z) in the frame.
+    /// A `.terry` point (x, z) in the frame (the view's world: z stretched on a campaign map).
     pub fn to_frame(&self, x: f64, z: f64) -> (f64, f64) {
-        ((x - self.origin[0]) / self.unit, (z - self.origin[1]) / self.unit)
+        ((x - self.origin[0]) / self.unit, (z - self.origin[1]) / self.unit * self.z_stretch)
     }
 
     /// A frame point (x, z) in the `.terry`'s coordinates.
     pub fn from_frame(&self, x: f64, z: f64) -> (f64, f64) {
-        (x * self.unit + self.origin[0], z * self.unit + self.origin[1])
+        (x * self.unit + self.origin[0], z / self.z_stretch * self.unit + self.origin[1])
     }
 
     /// A `.terry` point's map cell (x right, y down) on a map `w` x `h` cells (its centre at `w / 2`, `h / 2`, whole cells).
@@ -772,7 +776,7 @@ impl Document for MapDocument {
     fn transform_items(&mut self, items: &[wce_scene::render_scene::SourceRef], delta: &wce_foundation::math::Float4x4, gesture: u64) {
         use crate::terry::TerryAttrCommand;
         let u = self.terry_frame.unit;
-        let d = [f64::from(delta.m[0][3]) * u, f64::from(delta.m[1][3]) * u, f64::from(delta.m[2][3]) * u];
+        let d = [f64::from(delta.m[0][3]) * u, f64::from(delta.m[1][3]) * u, f64::from(delta.m[2][3]) * u / self.terry_frame.z_stretch];
         if self.gesture.as_ref().is_none_or(|g| g.0 != gesture) {
             let starts = self
                 .project()

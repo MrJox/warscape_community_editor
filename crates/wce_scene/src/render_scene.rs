@@ -608,13 +608,17 @@ impl LfSamples {
     }
 }
 
-/// A map's low-frequency heights in world space (the game's `t_low_res_height_map`): sample (i, j) at x = x0 + i * step, z = z0 + j * step,
-/// its height `values[j * nx + i] / 65535 * scale - offset` (scene units), bilinear between samples and clamped at the edges.
+/// A map's low-frequency heights in world space (the game's `t_low_res_height_map`): sample (i, j) at x = x0 + i * step, z = z0 + j * dz()
+/// (`step_z`, else `step`), its height `values[j * nx + i] / 65535 * scale - offset` (scene units), bilinear between samples and clamped
+/// at the edges.
 #[derive(Clone, Debug, Default)]
 pub struct LfMap {
     pub x0: f32,
     pub z0: f32,
     pub step: f32,
+
+    /// The z step when it is not `step` (0: `step`): a campaign map's LF in the game's world, 2 / sqrt 3 longer north to south.
+    pub step_z: f32,
     pub nx: i32,
     pub nz: i32,
 
@@ -642,6 +646,11 @@ impl PartialEq for LfMap {
 }
 
 impl LfMap {
+    /// The z step (`step_z`, else `step`).
+    pub fn dz(&self) -> f32 {
+        if self.step_z > 0.0 { self.step_z } else { self.step }
+    }
+
     fn value_in(&self, v: &LfRead<'_>, i: i32, j: i32) -> f32 {
         f32::from(v[(j.clamp(0, self.nz - 1) * self.nx + i.clamp(0, self.nx - 1)) as usize])
     }
@@ -653,7 +662,7 @@ impl LfMap {
         }
 
         let fi = ((x - self.x0) / self.step).clamp(0.0, (self.nx - 1) as f32);
-        let fj = ((z - self.z0) / self.step).clamp(0.0, (self.nz - 1) as f32);
+        let fj = ((z - self.z0) / self.dz()).clamp(0.0, (self.nz - 1) as f32);
         let (i, j) = (fi.floor() as i32, fj.floor() as i32);
         let (u, t) = (fi - i as f32, fj - j as f32);
         let a = self.value_in(v, i, j) + (self.value_in(v, i + 1, j) - self.value_in(v, i, j)) * u;
@@ -674,7 +683,7 @@ impl LfMap {
         }
 
         let i = |x: f32| (((x - self.x0) / self.step).floor() as i32).clamp(0, self.nx - 1);
-        let j = |z: f32| (((z - self.z0) / self.step).floor() as i32).clamp(0, self.nz - 1);
+        let j = |z: f32| (((z - self.z0) / self.dz()).floor() as i32).clamp(0, self.nz - 1);
         let (i0, i1) = (i(x0.min(x1)), (i(x0.max(x1)) + 1).min(self.nx - 1));
         let (j0, j1) = (j(z0.min(z1)), (j(z0.max(z1)) + 1).min(self.nz - 1));
         let (mut lo, mut hi) = (u16::MAX, 0u16);
@@ -700,13 +709,13 @@ impl LfMap {
     pub fn normal_texel(&self, v: &LfRead<'_>, c: i32, r: i32) -> [u8; 4] {
         let k = self.normal_k.max(1);
         let (w, h) = self.normal_size();
-        let s = self.step * k as f32;
-        let (wx, wz) = (w as f32 * s, h as f32 * s);
+        let (s, sz) = (self.step * k as f32, self.dz() * k as f32);
+        let (wx, wz) = (w as f32 * s, h as f32 * sz);
         let (u, t) = ((c as f32 + 0.5) / w as f32, (r as f32 + 0.5) / h as f32);
         let x = self.x0 + (u * wx - self.x0).rem_euclid(wx);
         let z = self.z0 + (-t * wz - self.z0).rem_euclid(wz);
         let dx = (self.height_in(v, x + s, z) - self.height_in(v, x - s, z)) / (2.0 * s);
-        let dz = (self.height_in(v, x, z + s) - self.height_in(v, x, z - s)) / (2.0 * s);
+        let dz = (self.height_in(v, x, z + sz) - self.height_in(v, x, z - sz)) / (2.0 * sz);
         let l = (dx * dx + dz * dz + 1.0).sqrt();
         let q = |v: f32| ((v * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8;
         [255, q(dz / l), 0, q(-dx / l)]
@@ -716,10 +725,10 @@ impl LfMap {
     pub fn normal_texel_of(&self, i: i32, j: i32) -> (i32, i32) {
         let k = self.normal_k.max(1);
         let (w, h) = self.normal_size();
-        let s = self.step * k as f32;
-        let (wx, wz) = (w as f32 * s, h as f32 * s);
-        let (x, z) = (self.x0 + i as f32 * self.step, self.z0 + j as f32 * self.step);
-        (((x.rem_euclid(wx) / s) as i32).clamp(0, w - 1), (((-z).rem_euclid(wz) / s) as i32).clamp(0, h - 1))
+        let (s, sz) = (self.step * k as f32, self.dz() * k as f32);
+        let (wx, wz) = (w as f32 * s, h as f32 * sz);
+        let (x, z) = (self.x0 + i as f32 * self.step, self.z0 + j as f32 * self.dz());
+        (((x.rem_euclid(wx) / s) as i32).clamp(0, w - 1), (((-z).rem_euclid(wz) / sz) as i32).clamp(0, h - 1))
     }
 }
 
@@ -1163,6 +1172,11 @@ pub struct RenderScene {
     /// 60, `campaign_sky_scale` 37.5 around a camera in that world).
     pub terrain_units: f32,
 
+    /// The world's z over the scene's documents' (0 or 1: none): a campaign map's 2 / sqrt 3, the game's hex world longer north to south.
+    /// Its ground's matrices carry it (S = diag(1, 1, z_stretch) after their turn), its models only at their positions; what reads the
+    /// ground's own rectangles (the blend boxes) takes it off first.
+    pub z_stretch: f32,
+
     /// The height of the sea (scene units): 0 unless the scene is drawn relative to something else (a map context draws the map relative to
     /// the open tile, and puts this a little above its sea: Frame::bias_y). The shaders get heights relative to it, as the game's are to its
     /// sea at 0 (the terrain lifts land and lowers sea bed by the sign of that height).
@@ -1365,6 +1379,7 @@ impl Default for RenderScene {
             world_yaw: 0.0,
             game_units: 1.0,
             terrain_units: 0.0,
+            z_stretch: 1.0,
             sea_level: 0.0,
             overlay_slots: [[0.0; 4]; OVERLAY_SLOTS],
             battle_centre: [0.0, 0.0],

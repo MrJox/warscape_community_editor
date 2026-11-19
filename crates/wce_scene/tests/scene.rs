@@ -208,6 +208,12 @@ fn lf_map_and_ground() {
     assert!((lf.height_at(-1e6, 200.0) + 5.0).abs() < 1e-4, "clamped");
     assert_eq!(lf.range(100.0, 200.0, 101.0, 201.0), (-5.0, 25.0));
 
+    // The same samples with a z step of its own (a campaign map's, the hex world's): row 1 at z 220, halfway at 210.
+    let tall = LfMap { step_z: 20.0, ..lf.clone() };
+    assert!((tall.height_at(105.0, 210.0) - 17.5).abs() < 1e-3);
+    assert!((tall.height_at(100.0, 220.0) - 25.0).abs() < 1e-3);
+    assert_eq!(tall.range(100.0, 215.0, 101.0, 216.0), (-5.0, 25.0));
+
     // A 2 x 2 grid (heights 0, 1 / 2, 3) turned a quarter about y and moved: world (x, z) = (z + 50, -x + 60).
     let t = Terrain {
         nx: 2,
