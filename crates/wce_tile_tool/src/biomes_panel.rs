@@ -170,7 +170,7 @@ impl TileTool {
 
         gui::set_next_window_size(gui::v2(460.0, 700.0), gui::COND_FIRST_USE_EVER);
         let mut open = true;
-        if !gui::begin(&format!("{}  Biomes###biomes", icons::SHRUB), Some(&mut open), 0) {
+        if !gui::begin(&format!("{}  Biomes (experimental)###biomes", icons::SHRUB), Some(&mut open), 0) {
             gui::end();
             self.biomes.open = open;
             return;

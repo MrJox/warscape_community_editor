@@ -102,7 +102,7 @@ impl TileTool {
 
         gui::set_next_window_size(gui::v2(460.0, 680.0), gui::COND_FIRST_USE_EVER);
         let mut open = true;
-        if !gui::begin(&format!("{}  Texture rules###texturerules", icons::LAYERS), Some(&mut open), 0) {
+        if !gui::begin(&format!("{}  Texture rules (experimental)###texturerules", icons::LAYERS), Some(&mut open), 0) {
             gui::end();
             self.rules_ui.open = open;
             return;
