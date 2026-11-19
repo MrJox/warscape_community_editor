@@ -332,90 +332,7 @@ impl TileTool {
         let Some((_, Some(set))) = ui.draft.as_mut() else { return };
         let mut edited = false;
 
-        gui::separator_text("Rules (later over earlier)");
-        let n = set.rules.len();
-        ui.selected = ui.selected.min(n.saturating_sub(1));
-        let line = gui::frame_height();
-        let list_h = (line + gui::item_spacing().y) * (n.clamp(3, 7) as f32) + 8.0;
-        gui::begin_child("##ruleslist", gui::v2(0.0, list_h), gui::CHILD_BORDERS, 0);
-        for (i, r) in set.rules.iter_mut().enumerate() {
-            gui::push_id_int(i as i32);
-            edited |= gui::checkbox("##on", &mut r.enabled);
-            if gui::is_item_hovered() {
-                gui::set_tooltip("On or off");
-            }
-
-            gui::same_line();
-            let slot = group_slot(&groups, &r.group);
-            let thumb = slot.and_then(|g| swatches.get(&(groups[g].clone(), r.variation.round().clamp(0.0, 3.0) as u8)).copied());
-            match thumb {
-                Some(t) => gui::image(t, gui::v2(line, line)),
-                None => gui::dummy(gui::v2(line, line)),
-            }
-
-            gui::same_line();
-            let name = if r.name.is_empty() { format!("(rule {})", i + 1) } else { r.name.clone() };
-            gui::align_text_to_frame_padding();
-            if gui::selectable(&name, ui.selected == i, 0) {
-                ui.selected = i;
-            }
-
-            // The texture it lays, at the row's right.
-            let (lo, hi) = gui::item_rect();
-            let what = slot.map_or_else(|| "not in this tile".to_owned(), |g| groups[g].clone());
-            let colour = if slot.is_some() { theme::dim() } else { theme::warning() };
-            let w = gui::calc_text_width(&what);
-            let y = lo.y + (hi.y - lo.y - gui::text_line_height()) * 0.5;
-            gui::window_draw_list().text(gui::v2(hi.x - w - 6.0, y), theme::u32(colour), &what);
-            gui::pop_id();
-        }
-
-        gui::end_child();
-
-        // The list's tools, and the area's switch at the right.
-        if styled::icon_button(icons::PLUS, "add", "Add a rule (laid over the others)") {
-            set.rules.push(Rule {
-                name: "New rule".to_owned(),
-                group: groups.first().cloned().unwrap_or_default(),
-                seed: n as u32 + 1,
-                ..Rule::default()
-            });
-            ui.selected = set.rules.len() - 1;
-            edited = true;
-        }
-
-        gui::begin_disabled(n == 0);
-        gui::same_line();
-        if styled::icon_button(icons::COPY, "dup", "Duplicate the selected rule") && n > 0 {
-            let mut r = set.rules[ui.selected].clone();
-            r.name = format!("{} (copy)", r.name);
-            set.rules.insert(ui.selected + 1, r);
-            ui.selected += 1;
-            edited = true;
-        }
-
-        gui::same_line();
-        if styled::icon_button(icons::TRASH_2, "remove", "Remove the selected rule") && n > 0 {
-            set.rules.remove(ui.selected);
-            ui.selected = ui.selected.saturating_sub(1);
-            edited = true;
-        }
-
-        gui::same_line();
-        if styled::icon_button(icons::ARROW_BIG_UP, "up", "Earlier: under the rules after it") && ui.selected > 0 {
-            set.rules.swap(ui.selected, ui.selected - 1);
-            ui.selected -= 1;
-            edited = true;
-        }
-
-        gui::same_line();
-        if styled::icon_button(icons::ARROW_BIG_DOWN, "down", "Later: over the rules before it") && ui.selected + 1 < n {
-            set.rules.swap(ui.selected, ui.selected + 1);
-            ui.selected += 1;
-            edited = true;
-        }
-
-        gui::end_disabled();
+        edited |= rule_list("rules", "Rules (later over earlier)", &mut set.rules, &mut ui.selected, &groups, &swatches, "New rule");
         if let Some(r) = set.rules.get_mut(ui.selected) {
             gui::separator_text("The selected rule");
             let row = styled::row("Viewport", "");
@@ -500,6 +417,116 @@ impl TileTool {
             self.rules_ui.area = Some((id, key, lines));
         }
     }
+}
+
+/// A list of rules under a title whose buttons add, duplicate, remove and move the selected one: each rule on or off, its texture's
+/// swatch, its name and what it lays (or that the tile has not its texture); a click selects one. New rules are called `new_name`.
+/// Whether the rules changed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rule_list(
+    id: &str,
+    title: &str,
+    rules: &mut Vec<Rule>,
+    selected: &mut usize,
+    groups: &[String],
+    swatches: &HashMap<(String, u8), u64>,
+    new_name: &str,
+) -> bool {
+    let mut edited = false;
+    gui::push_id(id);
+    let n = rules.len();
+    *selected = (*selected).min(n.saturating_sub(1));
+    let at = *selected;
+    let clicked = styled::section(
+        title,
+        &[
+            (icons::PLUS, "add", "Add a rule (laid over the others)", true),
+            (icons::COPY, "dup", "Duplicate the selected rule", n > 0),
+            (icons::TRASH_2, "remove", "Remove the selected rule", n > 0),
+            (icons::ARROW_BIG_UP, "up", "Earlier: under the rules after it", at > 0),
+            (icons::ARROW_BIG_DOWN, "down", "Later: over the rules before it", at + 1 < n),
+        ],
+    );
+    match clicked {
+        Some(0) => {
+            rules.push(Rule {
+                name: new_name.to_owned(),
+                group: groups.first().cloned().unwrap_or_default(),
+                seed: n as u32 + 1,
+                ..Rule::default()
+            });
+            *selected = rules.len() - 1;
+            edited = true;
+        }
+        Some(1) if n > 0 => {
+            let mut r = rules[at].clone();
+            r.name = format!("{} (copy)", r.name);
+            rules.insert(at + 1, r);
+            *selected = at + 1;
+            edited = true;
+        }
+        Some(2) if n > 0 => {
+            rules.remove(at);
+            *selected = at.saturating_sub(1);
+            edited = true;
+        }
+        Some(3) if at > 0 => {
+            rules.swap(at, at - 1);
+            *selected = at - 1;
+            edited = true;
+        }
+        Some(4) if at + 1 < n => {
+            rules.swap(at, at + 1);
+            *selected = at + 1;
+            edited = true;
+        }
+        _ => {}
+    }
+
+    if rules.is_empty() {
+        gui::text_disabled("No rules: + adds one.");
+        gui::pop_id();
+        return edited;
+    }
+
+    let line = gui::frame_height();
+    let list_h = (line + gui::item_spacing().y) * (rules.len().clamp(2, 7) as f32) + 8.0;
+    gui::begin_child("##list", gui::v2(0.0, list_h), gui::CHILD_BORDERS, 0);
+    for (i, r) in rules.iter_mut().enumerate() {
+        gui::push_id_int(i as i32);
+        edited |= gui::checkbox("##on", &mut r.enabled);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("On or off");
+        }
+
+        gui::same_line();
+        let slot = group_slot(groups, &r.group);
+        let thumb = slot.and_then(|g| swatches.get(&(groups[g].clone(), r.variation.round().clamp(0.0, 3.0) as u8)).copied());
+        match thumb {
+            Some(t) => gui::image(t, gui::v2(line, line)),
+            None => gui::dummy(gui::v2(line, line)),
+        }
+
+        gui::same_line();
+        let name = if r.name.is_empty() { format!("(rule {})", i + 1) } else { r.name.clone() };
+        gui::align_text_to_frame_padding();
+        if gui::selectable(&name, *selected == i, 0) {
+            *selected = i;
+        }
+
+        // The texture it lays, at the row's right.
+        let (lo, hi) = gui::item_rect();
+        let what = slot.map_or_else(|| "not in this tile".to_owned(), |g| groups[g].clone());
+        let colour = if slot.is_some() { theme::dim() } else { theme::warning() };
+        let w = gui::calc_text_width(&what);
+        let y = lo.y + (hi.y - lo.y - gui::text_line_height()) * 0.5;
+        gui::window_draw_list().text(gui::v2(hi.x - w - 6.0, y), theme::u32(colour), &what);
+        gui::pop_id();
+    }
+
+    gui::end_child();
+    gui::pop_id();
+    edited
 }
 
 /// What a rule's fields show besides the rule: the tile's texture groups and their swatches (by group and variation), the tile's
