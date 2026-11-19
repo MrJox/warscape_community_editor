@@ -634,3 +634,34 @@ For a pixel at world position P, the camera at E, d = |P - E| and r = |(P - E).x
   from the camera; in the charlemagne files it is 2500 to 2600 m, so it shapes the fog over the ground more than the distance term.
 
 The Weather tool's fog rings (`wce_weather_tool` `visual.rs` `fog_opacity`) evaluate this over the ground.
+
+## The campaign frame (2026-11-19, RenderDoc)
+
+Capture A (`camp_attila_frame6628.rdc`: vanilla, turn 1, Rome's coast at a middle zoom) read by `scripts/re/rd_campaign_frame.py`
+and named by `wce_terrain_io`'s `campaign_frame` example (every one of its 127 shaders matched to the game's `fxc/` files by DXBC
+checksum). The tooling and the comparison it serves: docs/plans/campaign_tilemap.md.
+
+Pass order (event ranges of capture A):
+- particles' GPU simulation and sort (24 - 252);
+- four shadow cascades (308 - 5325), each: `rigidcommon` shadow (opaque and alpha test), `rigidcampaignvegetation` shadow (the tree
+  clumps), `weightedcommon` shadow (the units), `rigidterrain vs41_geom_new` and `vs41_custom_geom` (tiles and cliff meshes);
+- the terrain's depth (`rigidterrainblend` geom, `rigidterrain ps_depth`), the depth anti-resolve;
+- the terrain surface into its three targets (`rigidterrainblend ps_terrain_material`, `rigidterrain ps30_blend`,
+  `ps30_custom_geom_mat`), then the resolve into the G-buffer (`ps30_terrain_to_gbuffer_ss`, event 6762);
+- the overlay (2048 x 1620): the rivers (`rigidriver main_river`, 2194 draws), the borders and trade routes (`campaignborder`);
+- the G-buffer's models: `rigidcommon vs30_main` with `rigidstandard`, `rigidtileddirtmapmesh`, `rigidwithdirtmesh`,
+  `rigidwithdecaldirtmesh` (buildings, props), `rigidcampaignvegetation ps41_gbuffer_ms` (the forests), `weightedcommon` (armies,
+  agents: 110 draws in one run, 17547 - 17944), then the sea tiles' geometry (`rigidterrain ps_sea_geom`);
+- SSAO, the projected decals, the directional light (`ps41_slm_highdef_ms`, then `_skinlm_`), water refraction, the lakes
+  (`waterplane vs30_water_campaign_lake`), the sea (`waterplane ps30_campaign_high_water_quality`), sky / fog composites, `battlefog`,
+  the shroud plane (twice), the VFX, luminance and exposure, the tone map (`hdr_to_screen`, 18985), the lens flare, the UI (19033 on).
+- **Not drawn**: no grass pass, no `campaignterrain ps30_main_coast` (the coast strip) and no `ps30_main_trade_route`.
+
+The world (the instance matrices, `instances.csv`):
+- The tiles, the cliff meshes, the sea tiles and the river meshes carry the hex world's stretch: their matrices' z axis is 1.1548 x
+  their x axis (0.8660 for tiles turned a quarter: the stretch is the world's, applied after the tile's turn).
+- Buildings, props, decals and units are uniform (z / x 1.0000): unstretched models at their places in the stretched world.
+- The tree clumps' instances are (x, y, z, angle) in world units, every angle a multiple of 60 degrees (the list's turn in sixths);
+  no per-instance scale (the shader's 0.4).
+- The main camera: eye (207.54, 9.29, 280.10), pitched 37.1 degrees down, vertical fov 80.2 degrees (`projection` [1][1] 1.1872),
+  near 1, far 500, 1920 x 1080.
