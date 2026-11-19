@@ -42,6 +42,20 @@ A Vorbis stream with Wwise's packing (what ww2ogg undoes; the encoder does the r
 - Audio packets drop the packet-type bit and, for long blocks, the previous/next window flags (a decoder recomputes them from the
   neighbouring packets' modes). A packet is ceil((bits - 1 - 2 for long blocks) / 8) bytes of the encoder's exact bit count.
 
+## Setups by quality, channels and rate (oracle grid, 2026-11-19)
+
+Wwise 2014.1.3 converting test WAVs for every Vorbis quality 0 to 10, 1, 2, 4, 5 and 6 channels and 8 rates (11,025 to 48,000 Hz):
+
+- One setup per quality and channel layout, **whatever the sample rate**: Wwise chooses the Vorbis setup as for 44.1 kHz and writes
+  the real rate in the header (so most vanilla 28 kHz mono files share setup 997642109, aoTuV's quality 0 at 44.1 kHz).
+- aoTuV at quality Q/10 and 44.1 kHz gives Wwise's setup for qualities 0 and 2 to 10 with 1 to 5 channels. Quality 1 differs (Wwise's
+  899852801 is not any aoTuV quality from -0.2 to 0.15: its aoTuV build differs in that band).
+- More than 2 channels: Wwise uses the uncoupled setup, the mono one (6-channel quality 4 = mono quality 4 = 3017712712). Stock aoTuV
+  picks its 5.1 template for 6 channels, whose codebooks are not in Wwise's library.
+- The decoder alloc sizes depend only on the setup (the same for every channel count); the x64 size is the 32-bit one plus 8 bytes per
+  codebook plus 144 (92 for the 512/512 blocksize setups). The sizes are kept in a table (`wce_audio::setup_allocs`, 35 setups: the
+  grid's and vanilla's); a formula from the codebooks came close (about 4 bytes per used entry) but not exact.
+
 ## Encoding (docs/plans/audio.md, step 1.4)
 
 aoTuV (libvorbis 1.3.x with aoTuV's encoder) produces Wwise's own setups: at quality 0.4 the setup of Wwise's Voice preset byte

@@ -12,6 +12,7 @@ pub mod codebooks;
 pub mod decode;
 pub mod library;
 pub mod names;
+pub mod setup_allocs;
 
 /// Why a sound could not be decoded.
 #[derive(Debug, thiserror::Error)]

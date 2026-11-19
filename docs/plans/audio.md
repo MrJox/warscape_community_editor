@@ -214,8 +214,8 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    7. Format docs: [wwise_bank.md](../formats/wwise_bank.md) (chunks, every HIRC layout), [wem.md](../formats/wem.md) (RIFF,
       the Wwise Vorbis header, the packing and encoding), [sound_data.md](../formats/sound_data.md) (`event_data.dat`,
       `.snd.meta` + triggers, `.amb` + `.xml`). **done**
-3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **done** (2026-11-19; the
-   user to hear playback)
+3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **done** (2026-11-19; playback
+   heard by the user)
    1. Crate `wce_audio` (headless): the Wwise codebook library (ww2ogg's `packed_codebooks_aoTuV_603.bin`, BSD-3, vendored in
       `third_party/ww2ogg`; user 2026-11-19), the Wwise Vorbis -> Vorbis packet rebuild (`tools\wwvorbis.py`'s `wem2ogg`, in Rust,
       no Ogg container), decoding with `lewton` 0.10 (no default features; user-approved). `wce_audio::decode::decode_wem` ->
@@ -249,9 +249,23 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    - Follow-ups (later steps): property IDs beyond volume (0), pitch (2) and low-pass (3) to name (check with the oracle);
      labels set by the user (UI); DB tables as a names source; Wwise-faithful playback (blend layers mixed, sequences in order)
      is the Cinematic layer's (not chosen for v1).
-4. **Replace and add variations**: the encoder (aoTuV built in, the conversion from `tools\wwvorbis.py` ported to Rust, the alloc
-   sizes of 1.4.10), the bank writer (DIDX/DATA rebuilt, HIRC edited in place), containers' properties; an in-game check of media
-   inside a bank. **todo**
+4. **Replace and add variations**. **in progress**
+   1. Decoder alloc sizes (1.4.10): oracle grid (scratch `tools\setup_grid.py`: Wwise at qualities 0 to 10 x 1, 2, 4, 5, 6
+      channels x 8 rates, 440 conversions, against aoTuV at Q/10): Wwise uses one setup per quality and channel layout at any
+      rate (chosen as for 44.1 kHz); ours matches for qualities 0 and 2 to 10 with 1 to 5 channels; quality 1 and 5.1 differ
+      (docs/formats/wem.md). Table `wce_audio::setup_allocs` (35 setups). Import offers qualities 0 and 2 to 10, 1 to 5 channels;
+      6 channels: todo (force the uncoupled template, or downmix). **done**
+   2. Encoder in `wce_audio::encode`: `aotuv_lancer_vorbis_sys` 0.1.6 (crates.io, BSD-3; user 2026-11-19), set up for 44.1 kHz
+      whatever the rate, exact packet bits from `vorbis_block.opb`, the Ogg -> Wwise conversion of `tools\wwvorbis.py` (setup,
+      duplicate-ID rule, packets, header fields). Gate: re-encoding test material gives Wwise's setups and decodes back. **todo**
+   3. Audio import: WAV (PCM 16/24/32-bit, float) and Ogg Vorbis read; resampling not needed (any rate). **todo**
+   4. Bank writer: DIDX/DATA rebuilt (media alignment as the game's), HIRC objects replaced; a Sound's source sizes updated;
+      round trip unchanged when nothing changes. **todo**
+   5. Documents: an edited bank is a document (undo/redo, Save to `<projects>/loose/audio/...`, revert); replacing a loose WEM
+      writes `<projects>/loose/audio/<id>.wem`. **todo**
+   6. Tool: Replace (on a sound or media), Add variation (to a random/sequence container), properties of containers (volume,
+      pitch, weights, mode); remove a variation. **todo**
+   7. In game: a replaced in-bank sound and an added variation heard in game (the user). **todo**
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
