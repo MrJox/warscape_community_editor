@@ -2989,20 +2989,6 @@ impl TileTool {
         gui::separator();
         self.draw_problems_section(e, id);
         gui::separator();
-        if gui::button(&format!("{}  Texture rules...", icons::LAYERS)) {
-            self.open_texture_rules();
-        }
-
-        gui::same_line();
-        if gui::button(&format!("{}  Biomes...", icons::SHRUB)) {
-            self.open_biomes();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Textures laid by the terrain (slope, height, hollows, water, roads, buildings), under what you paint");
-        }
-
-        gui::separator();
         if gui::collapsing_header("Experimental", 0) {
             if gui::button(&format!("{}  Ground coverage...", icons::MOUNTAIN)) {
                 self.open_coverage();
@@ -3010,6 +2996,24 @@ impl TileTool {
 
             if gui::is_item_hovered() {
                 gui::set_tooltip("Rocks and plants on the tile's steep slopes, generated into their own layer");
+            }
+
+            if gui::button(&format!("{}  Texture rules...", icons::LAYERS)) {
+                self.open_texture_rules();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Textures laid by the terrain (slope, height, hollows, water, roads, buildings), under what you paint");
+            }
+
+            if gui::button(&format!("{}  Biomes...", icons::SHRUB)) {
+                self.open_biomes();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Areas of a kind of ground (a forest, a marsh) whose trees, undergrowth, rocks and texture are made for you",
+                );
             }
         }
 

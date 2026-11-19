@@ -126,7 +126,7 @@ selection, inspector, gizmo and history work on them.
 
 **Terrain layers** (`wce_tile::terrain_layers`, the Tile panel's section, `terrain_layer`; [plans/procedural_roads.md](plans/procedural_roads.md)): height, texture and ground type maps made by composition, as the newer Terry's. What is painted goes into the working layer, whatever the tool, and the base stays as it was. They live in `terrain_layers.wcl` beside the tile; the tile's maps hold what they make, which is what Save for Assembly Kit writes. A layer can export only with a scene layer ("Exports with"; the scene layer gets a `wce_layer_id`): Save for Assembly Kit and the game export (`TileProject::export_maps`, through `save_exported_with`) leave it out while that layer is "Don't Export". An escalation layer has no terrain of its own (its BMD holds buildings, props, effects, capture points, no-go regions and zones), so a layer depending on one exports with the tile at every level, and the panel says so. A hidden working layer takes the paint without showing it, and the panel warns. Everything undoes, the stack's own changes too. In a combined project (below) a layer belongs to some variations (all by default): each layer's variations button, **New layer for...**, the dimming and the warning follow the variations shown; a layer exporting with a scene layer belongs where that layer does. The file's format: [formats/tile_wce.md](formats/tile_wce.md).
 
-**Texture rules** (`wce_tile::texture_rules`, `tile_document/texture_rules.rs`, the window `texture_rules_panel.rs` from the Tile panel's
+**Texture rules** (`wce_tile::texture_rules`, `tile_document/texture_rules.rs`, the window `texture_rules_panel.rs` from the Tile panel's Experimental section's
 *Texture rules...*; `texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>`; [plans/auto_detail.md](plans/auto_detail.md)):
 textures laid by the terrain. A rule puts a texture group (several names separated by `|`, the first the tile has) and variation where
 its conditions hold: height, slope, hollows and ridges, and distance to water, procedural roads and real buildings, each a range with
@@ -137,7 +137,7 @@ the terrain, the scene or the rules change. The tile keeps its rules in `texture
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
 rock on slopes). The window outlines the selected rule's area in the viewport.
 
-**Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, the window `biomes_panel.rs` from the Tile panel's *Biomes...*, the Create
+**Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, the window `biomes_panel.rs` from the Tile panel's Experimental section's *Biomes...*, the Create
 panel's Vegetation > Biomes; `biome_area`, `biome_brush`, `biomes_wait`; [plans/auto_detail.md](plans/auto_detail.md), C): a biome is
 trees, undergrowth and rocks (a set or keys each), their densities, an edge band (smaller, sparser trees and denser undergrowth towards
 the boundary) and texture rules. An area of one is a vegetation exclusion polygon with `wce_biome` and `wce_biome_seed` (TEd and BOB get
