@@ -660,8 +660,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "biomes",
-        "biomes window [simple | advanced]",
-        "the biomes' window open, showing the plain choices or every number",
+        "biomes window [simple | advanced] | pick <Trees | Undergrowth | Rocks> [search]",
+        "the biomes' window open, showing the plain choices or every number; pick: a row's key picker open (with a search)",
         |e, a| match (a.first().map(String::as_str), a.get(1).map(String::as_str)) {
             (Some("window"), mode @ (None | Some("simple" | "advanced"))) => with_tile(e, |t, _| {
                 t.open_biomes();
@@ -671,7 +671,15 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
                 ok("biomes' window open")
             }),
-            _ => fail("usage: biomes window [simple | advanced]"),
+            (Some("pick"), Some(row)) => {
+                let (row, search) = (row.to_owned(), a.get(2).cloned().unwrap_or_default());
+                with_tile(e, |t, _| {
+                    t.open_biomes();
+                    t.key_picker.open_request = Some((row, search));
+                    ok("biomes' key picker asked for")
+                })
+            }
+            _ => fail("usage: biomes window [simple | advanced] | pick <Trees | Undergrowth | Rocks> [search]"),
         },
     );
 

@@ -245,6 +245,18 @@ pub(crate) fn folder_order(folder: &str) -> Vec<(u8, String)> {
 }
 
 impl Entry {
+    /// An entry that places a key of a kind (a key picker's cell, for its thumbnail).
+    pub(crate) fn placing(kind: &str, key: &str) -> Self {
+        Self {
+            category: usize::from(kind != "BUILDING_INSTANCE"),
+            label: key.to_owned(),
+            make: Make::Place { kind: kind.to_owned(), key: key.to_owned() },
+            folder: String::new(),
+            project: false,
+            search: String::new(),
+        }
+    }
+
     /// The key it places.
     fn place_key(&self) -> Option<&str> {
         match &self.make {
@@ -1328,7 +1340,7 @@ impl TileTool {
     }
 
     /// An entry's thumbnail when it is ready; asks for it when it was never made (`first`: before the others).
-    fn thumbnail(&mut self, e: &mut Editor, en: &Entry, first: bool) -> Option<wce_editor::images::ImageRef> {
+    pub(crate) fn thumbnail(&mut self, e: &mut Editor, en: &Entry, first: bool) -> Option<wce_editor::images::ImageRef> {
         let dir = crate::thumbnails::cache_dir(e);
         if self.thumbs.dir != dir {
             self.thumbs = crate::thumbnails::Thumbnails::default();

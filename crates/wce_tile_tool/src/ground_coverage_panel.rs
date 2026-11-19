@@ -344,7 +344,9 @@ impl TileTool {
         let sets = self.vegetation_sets(e);
         let mut changed = false;
         if self.coverage.kind == Kind::Buildings {
-            changed |= clutter_rows(&mut self.coverage.clutter, &sets);
+            let mut clutter = std::mem::take(&mut self.coverage.clutter);
+            changed |= self.clutter_rows(e, &mut clutter, &sets);
+            self.coverage.clutter = clutter;
         } else {
             gui::separator_text("What it lays");
             set_row("Rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
@@ -1476,111 +1478,110 @@ fn params_rows(kind: Kind, p: &mut Params, advanced: bool) -> bool {
 
 /// Around buildings: the clutter rules, each a collapsing row (name, the buildings it matches, its props: a building set or keys); whether
 /// any changed.
-fn clutter_rows(defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[VegetationSet]) -> bool {
-    let mut changed = false;
-    gui::separator_text("Rules (the first that matches a building is its)");
-    note(
-        "A rule matches ordinary buildings by their key (patterns with *, several separated by |), less its exceptions, or the buildings \
+impl TileTool {
+    fn clutter_rows(&mut self, e: &mut Editor, defs: &mut Vec<wce_tile::ground_coverage::ClutterDef>, sets: &[VegetationSet]) -> bool {
+        let mut changed = false;
+        gui::separator_text("Rules (the first that matches a building is its)");
+        note(
+            "A rule matches ordinary buildings by their key (patterns with *, several separated by |), less its exceptions, or the buildings \
          of its categories; its props go all around them.",
-    );
-    let (mut remove, mut up, mut down) = (None, None, None);
-    let n = defs.len();
-    for (i, d) in defs.iter_mut().enumerate() {
-        gui::push_id_int(i as i32);
-        let title = format!("{}###rule", if d.name.is_empty() { "(no name)" } else { &d.name });
-        if gui::collapsing_header(&title, 0) {
-            let mut text = |label: &str, id: &str, v: &mut String, hint: &str, tip: &str| {
-                let row = styled::row(label, tip);
+        );
+        let (mut remove, mut up, mut down) = (None, None, None);
+        let n = defs.len();
+        for (i, d) in defs.iter_mut().enumerate() {
+            gui::push_id_int(i as i32);
+            let title = format!("{}###rule", if d.name.is_empty() { "(no name)" } else { &d.name });
+            if gui::collapsing_header(&title, 0) {
+                let mut text = |label: &str, id: &str, v: &mut String, hint: &str, tip: &str| {
+                    let row = styled::row(label, tip);
+                    gui::set_next_item_width(row.width);
+                    changed |= gui::input_text(&format!("##{id}"), Some(hint), v, 256, 0);
+                };
+                text("Name", "name", &mut d.name, "", "");
+                text(
+                    "Keys like",
+                    "patterns",
+                    &mut d.patterns,
+                    "*villa*|*farm*",
+                    "Building keys with * for any run, several separated by |",
+                );
+                text("Except", "except", &mut d.except, "*_wall*|*tower*", "Keys left out, as above");
+                text(
+                    "Categories",
+                    "categories",
+                    &mut d.categories,
+                    "generic (none: ordinary buildings)",
+                    "The categories the rule looks among (gate|fort_tower ...); none: ordinary buildings, not walls, towers, gates or bridges",
+                );
+
+                let row = styled::row("Props", "A set of buildings of the projects, or keys of their own");
+                let preview = if d.set.is_empty() { format!("keys ({})", d.keys.len()) } else { d.set.clone() };
                 gui::set_next_item_width(row.width);
-                changed |= gui::input_text(&format!("##{id}"), Some(hint), v, 256, 0);
-            };
-            text("Name", "name", &mut d.name, "", "");
-            text("Keys like", "patterns", &mut d.patterns, "*villa*|*farm*", "Building keys with * for any run, several separated by |");
-            text("Except", "except", &mut d.except, "*_wall*|*tower*", "Keys left out, as above");
-            text(
-                "Categories",
-                "categories",
-                &mut d.categories,
-                "generic (none: ordinary buildings)",
-                "The categories the rule looks among (gate|fort_tower ...); none: ordinary buildings, not walls, towers, gates or bridges",
-            );
-
-            let row = styled::row("Props", "A set of buildings of the projects, or keys of their own");
-            let preview = if d.set.is_empty() { format!("keys ({})", d.keys.len()) } else { d.set.clone() };
-            gui::set_next_item_width(row.width);
-            if gui::begin_combo("##props", &preview) {
-                if gui::selectable("keys", d.set.is_empty(), 0) {
-                    d.set.clear();
-                    changed = true;
-                }
-
-                for s in sets.iter().filter(|s| s.kind == SetKind::Building) {
-                    if gui::selectable(&s.name, d.set == s.name, 0) {
-                        d.set.clone_from(&s.name);
+                if gui::begin_combo("##props", &preview) {
+                    if gui::selectable("keys", d.set.is_empty(), 0) {
+                        d.set.clear();
                         changed = true;
                     }
+
+                    for s in sets.iter().filter(|s| s.kind == SetKind::Building) {
+                        if gui::selectable(&s.name, d.set == s.name, 0) {
+                            d.set.clone_from(&s.name);
+                            changed = true;
+                        }
+                    }
+
+                    gui::end_combo();
                 }
 
-                gui::end_combo();
-            }
-
-            if d.set.is_empty() {
-                row.next_line();
-                let mut keys = d.keys.join(" ");
-                gui::set_next_item_width(row.width);
-                if gui::input_text("##keys", Some("barrel crate woodpile"), &mut keys, 2048, 0) {
-                    d.keys = keys.split_whitespace().map(str::to_owned).collect();
-                    changed = true;
+                if d.set.is_empty() {
+                    row.next_line();
+                    changed |= self.key_list(e, "props", "BUILDING_INSTANCE", &mut d.keys, row.width, "incidental");
                 }
 
-                if gui::is_item_hovered() {
-                    gui::set_tooltip("Building keys separated by spaces, each as likely as the others");
+                let row = styled::row("", "");
+                gui::set_cursor_pos_x(row.x);
+                gui::begin_disabled(i == 0);
+                if styled::icon_button(icons::ARROW_BIG_UP, "up", "Earlier: tried before the rules after it") {
+                    up = Some(i);
+                }
+
+                gui::end_disabled();
+                gui::same_line();
+                gui::begin_disabled(i + 1 == n);
+                if styled::icon_button(icons::ARROW_BIG_DOWN, "down", "Later: tried after the rules before it") {
+                    down = Some(i);
+                }
+
+                gui::end_disabled();
+                gui::same_line();
+                if styled::icon_button(icons::TRASH_2, "remove", "Remove the rule") {
+                    remove = Some(i);
                 }
             }
 
-            let row = styled::row("", "");
-            gui::set_cursor_pos_x(row.x);
-            gui::begin_disabled(i == 0);
-            if styled::icon_button(icons::ARROW_BIG_UP, "up", "Earlier: tried before the rules after it") {
-                up = Some(i);
-            }
-
-            gui::end_disabled();
-            gui::same_line();
-            gui::begin_disabled(i + 1 == n);
-            if styled::icon_button(icons::ARROW_BIG_DOWN, "down", "Later: tried after the rules before it") {
-                down = Some(i);
-            }
-
-            gui::end_disabled();
-            gui::same_line();
-            if styled::icon_button(icons::TRASH_2, "remove", "Remove the rule") {
-                remove = Some(i);
-            }
+            gui::pop_id();
         }
 
-        gui::pop_id();
-    }
+        if let Some(i) = up.filter(|&i| i > 0) {
+            defs.swap(i, i - 1);
+            changed = true;
+        }
 
-    if let Some(i) = up.filter(|&i| i > 0) {
-        defs.swap(i, i - 1);
-        changed = true;
-    }
+        if let Some(i) = down.filter(|&i| i + 1 < defs.len()) {
+            defs.swap(i, i + 1);
+            changed = true;
+        }
 
-    if let Some(i) = down.filter(|&i| i + 1 < defs.len()) {
-        defs.swap(i, i + 1);
-        changed = true;
-    }
+        if let Some(i) = remove {
+            defs.remove(i);
+            changed = true;
+        }
 
-    if let Some(i) = remove {
-        defs.remove(i);
-        changed = true;
-    }
+        if gui::small_button(&format!("{}  Add a rule", icons::PLUS)) {
+            defs.push(wce_tile::ground_coverage::ClutterDef { name: "New rule".to_owned(), ..Default::default() });
+            changed = true;
+        }
 
-    if gui::small_button(&format!("{}  Add a rule", icons::PLUS)) {
-        defs.push(wce_tile::ground_coverage::ClutterDef { name: "New rule".to_owned(), ..Default::default() });
-        changed = true;
+        changed
     }
-
-    changed
 }
