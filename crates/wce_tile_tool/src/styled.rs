@@ -1,6 +1,6 @@
 //! The styled controls of the texture rules' and the biomes' windows (docs/plans/auto_detail.md): a label column and a value column that
-//! fill the window's width and keep their places whatever is switched on, segmented chips (one of a few choices, the editor's pill look),
-//! toggle chips, a range bar (a condition's ends as handles over the weight it gives, its fades drawn as the ramps they are) and texture
+//! fill the window's width and keep their places whatever is switched on, segmented choices (one of a few), check boxes over a row's
+//! width, a range bar (a condition's ends as handles over the weight it gives, its fades drawn as the ramps they are) and texture
 //! swatches. Drawn with the window's draw list over invisible buttons.
 
 use wce_editor::{gui, theme};
@@ -10,7 +10,7 @@ use wce_tile::texture_rules::Range;
 const GAP: f32 = 3.0;
 
 /// The rounding of a chip, pixels.
-const ROUNDING: f32 = 5.0;
+const ROUNDING: f32 = 2.0;
 
 /// The label column's width: a third of the window, 90 to 150 pixels. Asked at the start of a line.
 fn label_width() -> f32 {
@@ -45,7 +45,7 @@ pub fn row(label: &str, tip: &str) -> Row {
     Row { x: start + lw, width: (avail - lw).max(60.0) }
 }
 
-/// A row whose label is a toggle chip (on or off); whether it was clicked.
+/// A row whose label is a check box (on or off); whether it was clicked.
 pub fn toggle_row(id: &str, label: &str, on: &mut bool, tip: &str) -> (Row, bool) {
     let start = gui::cursor_pos_x();
     let (lw, avail) = (label_width(), gui::content_region_avail().x);
@@ -63,21 +63,22 @@ fn frame_bg() -> [f32; 4] {
     [c.x, c.y, c.z, c.w]
 }
 
+/// The editor's accent: the colour of its check marks and sliders' grabs.
 fn accent() -> [f32; 4] {
-    theme::palette().highlight
+    let c = gui::style_color(gui::COL_CHECK_MARK);
+    [c.x, c.y, c.z, c.w]
 }
 
 /// A chip's colours: its fill and its text, lit or not, hovered or held.
 fn chip_colours(on: bool, hovered: bool, held: bool) -> ([f32; 4], [f32; 4]) {
     let base = frame_bg();
     let fill = match (on, hovered || held) {
-        (true, false) => theme::mix(base, accent(), 0.28),
-        (true, true) => theme::mix(base, accent(), 0.38),
+        (true, false) => theme::mix(base, accent(), 0.55),
+        (true, true) => theme::mix(base, accent(), 0.7),
         (false, false) => base,
         (false, true) => theme::mix(base, theme::text(), 0.12),
     };
-    let text = if on { accent() } else { theme::text() };
-    (fill, text)
+    (fill, theme::text())
 }
 
 /// Text centred in a box, clipped to it.
@@ -91,7 +92,8 @@ fn centred_text(dl: gui::DrawList, min: gui::Vec2, max: gui::Vec2, colour: [f32;
     dl.pop_clip_rect();
 }
 
-/// A toggle chip: a pill with a dot, lit while on; true when clicked.
+/// A toggle: a check box and its label over `width` (all of it clickable, lit under the mouse), as the editor's check boxes look;
+/// true when clicked.
 pub fn toggle_chip(id: &str, label: &str, on: bool, width: f32, tip: &str) -> bool {
     let h = gui::frame_height();
     let at = gui::cursor_screen_pos();
@@ -103,17 +105,26 @@ pub fn toggle_chip(id: &str, label: &str, on: bool, width: f32, tip: &str) -> bo
 
     let dl = gui::window_draw_list();
     let max = gui::v2(at.x + width.max(h), at.y + h);
-    let (fill, text) = chip_colours(on, hovered, held);
-    dl.rect_filled(at, max, theme::u32(fill), h * 0.5);
-    let dot = gui::v2(at.x + h * 0.5, at.y + h * 0.5);
+    if hovered || held {
+        dl.rect_filled(at, max, theme::u32(theme::mix(theme::palette_background(), theme::text(), 0.06)), ROUNDING);
+    }
+
+    // The box, the frame's colour as a check box's; its mark in the accent.
+    let (b0, b1) = (gui::v2(at.x + 2.0, at.y + 2.0), gui::v2(at.x + h - 2.0, at.y + h - 2.0));
+    let (fill, _) = chip_colours(false, hovered, held);
+    dl.rect_filled(b0, b1, theme::u32(fill), ROUNDING);
     if on {
-        dl.circle_filled(dot, h * 0.18, theme::u32(accent()));
-    } else {
-        dl.ellipse(dot, gui::v2(h * 0.18, h * 0.18), theme::u32(theme::dim()), 12, 1.2);
+        let s = b1.x - b0.x;
+        let mark = [
+            gui::v2(b0.x + s * 0.22, b0.y + s * 0.52),
+            gui::v2(b0.x + s * 0.42, b0.y + s * 0.72),
+            gui::v2(b0.x + s * 0.78, b0.y + s * 0.3),
+        ];
+        dl.polyline(&mark, theme::u32(accent()), false, (s * 0.12).max(1.5));
     }
 
     dl.push_clip_rect(at, max);
-    dl.text(gui::v2(at.x + h, at.y + (h - gui::text_line_height()) * 0.5), theme::u32(text), label);
+    dl.text(gui::v2(at.x + h + 4.0, at.y + (h - gui::text_line_height()) * 0.5), theme::u32(theme::text()), label);
     dl.pop_clip_rect();
     clicked
 }
@@ -382,17 +393,4 @@ pub fn icon_button(icon: &str, id: &str, tip: &str) -> bool {
     }
 
     clicked
-}
-
-/// The windows' own look for the stock controls in them (sliders' grabs and check marks in the accent colour); [`pop_look`] after.
-pub fn push_look() {
-    let a = accent();
-    let held = theme::mix(a, theme::text(), 0.3);
-    gui::push_style_color(gui::COL_SLIDER_GRAB, theme::v4(a));
-    gui::push_style_color(gui::COL_SLIDER_GRAB_ACTIVE, theme::v4(held));
-    gui::push_style_color(gui::COL_CHECK_MARK, theme::v4(a));
-}
-
-pub fn pop_look() {
-    gui::pop_style_color(3);
 }

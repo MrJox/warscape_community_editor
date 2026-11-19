@@ -113,8 +113,6 @@ impl TileTool {
             return;
         }
 
-        styled::push_look();
-
         gui::text_wrapped(
             "Textures laid by the terrain: each rule puts a texture where its conditions hold (height, slope, hollows, distance to water, \
              roads and buildings), a later rule over an earlier one. They go into a terrain layer of their own under yours: what you \
@@ -138,7 +136,6 @@ impl TileTool {
             }
 
             self.rules_ui.draft = None;
-            styled::pop_look();
             gui::end();
             return;
         }
@@ -153,7 +150,6 @@ impl TileTool {
             }
         }
 
-        styled::pop_look();
         gui::end();
         self.rules_ui.open = open;
         self.update_rules_area(e);

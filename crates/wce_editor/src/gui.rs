@@ -1266,8 +1266,6 @@ pub use sys::{
 pub const CHILD_AUTO_RESIZE: i32 =
     sys::ImGuiChildFlags_AutoResizeX | sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
-pub const COL_SLIDER_GRAB: i32 = sys::ImGuiCol_SliderGrab;
-pub const COL_SLIDER_GRAB_ACTIVE: i32 = sys::ImGuiCol_SliderGrabActive;
 pub const CHILD_AUTO_RESIZE_Y: i32 = sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
 pub const KEY_LEFT_ARROW: i32 = sys::ImGuiKey_LeftArrow;
