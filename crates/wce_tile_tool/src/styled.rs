@@ -113,7 +113,7 @@ pub fn toggle_chip(id: &str, label: &str, on: bool, width: f32, tip: &str) -> bo
     }
 
     dl.push_clip_rect(at, max);
-    dl.text(gui::v2(at.x + h, at.y + (h - gui::text_line_height()) * 0.5), theme::u32(if on { text } else { theme::dim() }), label);
+    dl.text(gui::v2(at.x + h, at.y + (h - gui::text_line_height()) * 0.5), theme::u32(text), label);
     dl.pop_clip_rect();
     clicked
 }

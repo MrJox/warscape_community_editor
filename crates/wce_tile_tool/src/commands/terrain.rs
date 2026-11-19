@@ -665,10 +665,10 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "texture_rules",
-        "texture_rules <off | load <preset> | file <path> | window [simple | advanced] | area <rule> | wait>",
+        "texture_rules <off | load <preset> | file <path> | window [simple | advanced] | outline <on | off> [rule] | area <rule> | wait>",
         "the tile's texture rules: off (taken away with their layer), a preset's (Default: the built-in one), a rule set's file (a preset's or a tile's texture_rules.wce), the window open; area: how much of the tile a rule (by number, from 1) covers as though alone; wait: the layer made now, and what it covers",
         |e, a| {
-            let usage = "usage: texture_rules <off | load <preset> | file <path> | window [simple | advanced] | area <rule> | wait>";
+            let usage = "usage: texture_rules <off | load <preset> | file <path> | window [simple | advanced] | outline <on | off> [rule] | area <rule> | wait>";
             match (a.first().map(String::as_str), a.get(1)) {
                 (Some("off"), None) => {
                     let Some(d) = document(e) else { return fail("no tile is open") };
@@ -696,6 +696,18 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
                     ok("texture rules' window open")
                 }),
+
+                (Some("outline"), Some(v)) if v == "on" || v == "off" => {
+                    let rule = a.get(2).and_then(|n| n.parse::<usize>().ok()).and_then(|n| n.checked_sub(1));
+                    with_tile(e, |t, _| {
+                        t.rules_ui.show_area = v == "on";
+                        if let Some(i) = rule {
+                            t.rules_ui.selected = i;
+                        }
+
+                        ok(format!("texture rules' outline {v}"))
+                    })
+                }
 
                 (Some("area"), Some(n)) => {
                     let Some(i) = n.parse::<usize>().ok().and_then(|n| n.checked_sub(1)) else { return fail(usage) };
@@ -729,6 +741,14 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                         p.extent_z(),
                         p.border_m()
                     );
+                    use wce_tile_editor::tile_document::texture_rules::Remade;
+                    match d.texture_rules_last_part() {
+                        Some(Remade::Part(r)) => msg.push_str(&format!("; remade {} x {} pixels of it", r[2] - r[0], r[3] - r[1])),
+                        Some(Remade::Nothing) => msg.push_str("; nothing to remake"),
+                        Some(Remade::Whole) => msg.push_str("; remade whole"),
+                        None => {}
+                    }
+
                     if !missing.is_empty() {
                         msg += &format!("; not in this tile: {}", missing.join(", "));
                     }

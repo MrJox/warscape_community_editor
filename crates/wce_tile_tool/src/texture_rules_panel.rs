@@ -420,21 +420,20 @@ impl TileTool {
         }
 
         gui::end_disabled();
-        gui::same_line();
-        let w = gui::content_region_avail().x.min(150.0);
-        gui::set_cursor_pos_x(gui::cursor_pos_x() + gui::content_region_avail().x - w);
-        if styled::toggle_chip(
-            "showarea",
-            "Show its area",
-            ui.show_area,
-            w,
-            "Outlines in the viewport where the selected rule lays its texture (at least half of it), as though it were the only rule",
-        ) {
-            ui.show_area = !ui.show_area;
-        }
-
         if let Some(r) = set.rules.get_mut(ui.selected) {
             gui::separator_text("The selected rule");
+            let row = styled::row("Viewport", "");
+            if styled::toggle_chip(
+                "showarea",
+                "Outline where it lays its texture",
+                ui.show_area,
+                row.width,
+                "Outlines in the viewport (orange) where the selected rule lays its texture (at least half of it), as though it were the \
+                 only rule",
+            ) {
+                ui.show_area = !ui.show_area;
+            }
+
             let view = RuleView { groups: &groups, swatches: &swatches, heights, advanced };
             edited |= rule_fields("selected", r, &view);
         }

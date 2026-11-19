@@ -516,6 +516,86 @@ impl Fields {
         })
     }
 
+    /// Where the rules' result may differ between these fields and `old` (made for the same map), in metres from the map's corner:
+    /// `[x0, z0, x1, z1]`, None where nothing does. A changed height reaches `reach` metres ([`reach`]: the hollows, the slope); a
+    /// distance, the main ground and an area count where they changed, a cell around. Fields of another size: the whole map.
+    #[must_use]
+    pub fn changed_area(&self, old: &Self, reach: f64) -> Option<[f64; 4]> {
+        let whole = [0.0, 0.0, f64::from(self.w) * self.mpp.0, f64::from(self.h) * self.mpp.1];
+        if (self.w, self.h, self.mpp) != (old.w, old.h, old.mpp) {
+            return Some(whole);
+        }
+
+        let mut out: Option<[f64; 4]> = None;
+        let mut add = |r: [f64; 4]| {
+            out = Some(out.map_or(r, |o| [o[0].min(r[0]), o[1].min(r[1]), o[2].max(r[2]), o[3].max(r[3])]));
+        };
+
+        // A grid's changed cells as metres, `pad` cells and `extra` metres around.
+        let cells = |w: u32, a: &[f32], b: &[f32], size: (f64, f64), extra: f64| -> Option<[f64; 4]> {
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+            for (i, (p, q)) in a.iter().zip(b).enumerate() {
+                if p.to_bits() != q.to_bits() {
+                    let (x, y) = (i as u32 % w, i as u32 / w);
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+
+            (x0 != u32::MAX).then(|| {
+                [
+                    f64::from(x0) * size.0 - size.0 - extra,
+                    f64::from(y0) * size.1 - size.1 - extra,
+                    f64::from(x1 + 2) * size.0 + extra,
+                    f64::from(y1 + 2) * size.1 + extra,
+                ]
+            })
+        };
+
+        if let Some(r) = cells(self.w, &self.heights, &old.heights, self.mpp, reach) {
+            add(r);
+        }
+
+        for (new, was) in self.distances.iter().zip(&old.distances) {
+            match (new, was) {
+                (None, None) => {}
+                (Some(a), Some(b)) if (a.w, a.h, a.ppm) == (b.w, b.h, b.ppm) => {
+                    if let Some(r) = cells(a.w, &a.d, &b.d, (1.0 / a.ppm.0, 1.0 / a.ppm.1), 0.0) {
+                        add(r);
+                    }
+                }
+                _ => add(whole),
+            }
+        }
+
+        match (&self.keep, &old.keep) {
+            (None, None) => {}
+            (Some(a), Some(b)) if (a.w, a.h, a.ppm) == (b.w, b.h, b.ppm) => {
+                if let Some(r) = cells(a.w, &a.share, &b.share, (1.0 / a.ppm.0, 1.0 / a.ppm.1), 0.0) {
+                    add(r);
+                }
+            }
+            _ => add(whole),
+        }
+
+        // An area changed, came or went: both its outlines' boxes.
+        let n = self.areas.len().max(old.areas.len());
+        for i in 0..n {
+            let (a, b) = (self.areas.get(i), old.areas.get(i));
+            if a != b {
+                for m in [a, b].into_iter().flatten() {
+                    let (xs, zs) = (m.points.iter().map(|p| f64::from(p.0)), m.points.iter().map(|p| f64::from(p.1)));
+                    let (x0, x1) = xs.fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+                    let (z0, z1) = zs.fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+                    if x0 <= x1 {
+                        add([x0 - 1.0, z0 - 1.0, x1 + 1.0, z1 + 1.0]);
+                    }
+                }
+            }
+        }
+
+        out.map(|r| [r[0].max(0.0), r[1].max(0.0), r[2].min(whole[2]), r[3].min(whole[3])])
+    }
+
     /// Gives the distances to a feature.
     #[must_use]
     pub fn with_distances(mut self, feature: Feature, d: Distances) -> Self {
@@ -548,7 +628,7 @@ impl Fields {
 }
 
 /// How far past a changed place of the heights the rules' result can change (metres): the hollows' reach, a sample's for the slope.
-/// (The distances reach as far as their features move: those changes remake the whole map.)
+/// (A distance, the main ground and an area change the result only where they changed: `Fields::changed_area`.)
 #[must_use]
 pub fn reach(rules: &[Rule], mpp: (f64, f64)) -> f64 {
     let sample = mpp.0.max(mpp.1);
@@ -1296,6 +1376,25 @@ mod tests {
         assert!((rule.weight(&fields, 1.5, 3.5) - 0.5).abs() < 1e-6);
         assert_eq!(rule.weight(&fields, 4.5, 3.5), 1.0);
         assert_eq!(field(8, |_, _| 0.0).main_ground_share(0.5, 0.5), 1.0, "no base given: everywhere");
+    }
+
+    #[test]
+    fn what_changed_between_two_fields() {
+        let a = field(32, |_, _| 0.0);
+        assert_eq!(a.changed_area(&a.clone(), 3.0), None);
+
+        // A height at (10, 20): that cell, a cell around and the reach.
+        let b = field(32, |x, y| if (x, y) == (10.0, 20.0) { 1.0 } else { 0.0 });
+        assert_eq!(b.changed_area(&a, 3.0), Some([6.0, 16.0, 15.0, 25.0]));
+
+        // An area drawn: its box; the main ground changed at one pixel: that pixel and one around.
+        let square = AreaMask { points: vec![(2.0, 2.0), (6.0, 2.0), (6.0, 5.0), (2.0, 5.0)], edge: 1.0 };
+        assert_eq!(a.clone().with_areas(vec![square]).changed_area(&a, 3.0), Some([1.0, 1.0, 7.0, 6.0]));
+        let mut share = vec![1.0; 32 * 32];
+        let main = a.clone().with_main_ground(32, 32, (1.0, 1.0), share.clone());
+        share[5 * 32 + 30] = 0.5;
+        assert_eq!(a.clone().with_main_ground(32, 32, (1.0, 1.0), share).changed_area(&main, 3.0), Some([29.0, 4.0, 32.0, 7.0]));
+        assert_eq!(main.changed_area(&a, 3.0), Some([0.0, 0.0, 32.0, 32.0]), "a main ground given: the whole map");
     }
 
     #[test]
