@@ -226,3 +226,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   remove them and show the snowy Apennines as the game does: the horizon item below; (2) `gfx view albedo` is black in an
   offscreen campaign capture; (3) a lighter vertical band in the sky at a lower pitch (one windowed shot), not checked against the
   build before the stretch.
+- **The horizon (2026-11-19, measured while the user played a GPU-heavy game: relative numbers only).** The game draws its tiles'
+  ground to the far plane (500 world units, about 1 500 cells). Merged blocks out to 600 cells (`terrain_view 13000 8 24 1600 600`)
+  look like the game's at capture A's camera (the snowy Alps, the haze, the coasts) but cost far more than the default rings. Under
+  that load: the cliff meshes' draws were the largest CPU cost (each placement's mesh its own batch, a buffer map each): now one
+  upload for all their rows, 12.8 -> 2.0 ms a call; the blend pass's constants are uploaded only when they change; the blend pass's
+  draws (628 materials) remain the largest cost, not yet understood (possibly texture residency, possibly the game's load). To do on
+  an idle machine: measure the default and far rings, then decide the campaign defaults (or a "game's view distance" switch).
