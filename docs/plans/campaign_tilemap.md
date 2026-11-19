@@ -233,3 +233,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   upload for all their rows, 12.8 -> 2.0 ms a call; the blend pass's constants are uploaded only when they change; the blend pass's
   draws (628 materials) remain the largest cost, not yet understood (possibly texture residency, possibly the game's load). To do on
   an idle machine: measure the default and far rings, then decide the campaign defaults (or a "game's view distance" switch).
+- **The orange clumps (2026-11-19):** the autumn-only `fallen_leaves` decal props, drawn in every season: props now follow their
+  seasons (`ECSeasonMask` / the markers' `seasons`), as the effects did; at capture A's camera the land is green as in the game.
+- **The forests' facts for item 1 (capture A):** the clump instance is (x, y, z, angle): the list's position plus 0.4 x the model's
+  pivot, its byte times 60 degrees; the diffuse the season's `<base>_<season>_diffuse.dds` (spring `_sp`), the dissolve map
+  `commontextures/dissolve.dds` (docs/re/terry.md, "Forests"). `campaign_frame --textures <prefix>...` names a capture's textures
+  (163 of capture A's 701 under the common, campaign model and map folders). Left: the clumps through `rigidcampaignvegetation`
+  (their own mesh kind, the raw Uk12 vertices, the instance's (x, y, z, angle) in `p4`).

@@ -374,7 +374,16 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   count of 15-byte trees (f32 x y z, u8 0/1, u8 0..5, u8 15). By the bounds all but 6 of 17 576 sampled trees stand on land
   (`campaign_tree_fit`). The models (`rigidmodels/campaign/vegetation/*`, material CampaignVegetation, vertex format Uk12: f16 (position,
   u), (normal, v)) are drawn by `rigidcampaignvegetation.hlsl`: the instance's position plus its vertices times 0.4 turned by its
-  angle and leaning towards the camera; the diffuse's alpha cut at 0.5. ASSUMPTION: the second byte is the turn in sixths.
+  angle and leaning towards the camera; the diffuse's alpha cut at 0.5.
+  **Settled by RenderDoc (2026-11-19, capture A, `campaign_tree_angles`):** the shader's instance is (x, y, z, angle) in the world's
+  units; the angle is the list's second byte times 60 degrees (every clump drawn, 0 off a sixth); the position is the list's plus 0.4
+  times the model's first mesh's pivot (`v_pivot`), not turned (exact for every tree matched one to one). The diffuse follows the
+  season: the models name `<base>_diffuse.dds`, the game's spring frame binds `<base>_sp_diffuse.dds` (the packs have `_sp`, `_au`,
+  `_wi`, `_sn`, `_br` beside the plain one; a texture without them, `pine_tree_diffuse.dds`, drawn plain); its `s_dissolve_map` is
+  `commontextures/dissolve.dds` (`campaign_frame --textures`). Which suffix summer, snow and `_br` take: not traced.
+- **Props' seasons**: `prop_marker.markers`' `seasons` / the `.terry`'s `ECSeasonMask`: main_attila_map's `fallen_leaves` and
+  `fallen_leaves_medium` (7 838 decal patches) are autumn's alone, many animals spring's or winter's (`campaign_prop_seasons`); the
+  game's spring frame draws no leaves. The view draws the props of its season (2026-11-19; the effects already were).
 
 ## Open
 

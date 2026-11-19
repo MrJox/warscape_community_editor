@@ -3,9 +3,11 @@
 //! - `shader_names.csv`: each shader of the capture named by the game's `fxc/*.fxc` file whose DXBC checksum it has;
 //! - `passes.txt`: the frame's draws in runs of the same targets and shaders, with the shaders' names;
 //! - `mask.png`: the pixels the skinned draws (armies, agents) change in the G-buffer, white (out of the comparison's scope);
-//! - `screen.png`, `gbuffer0.png`: the screen before the UI and the G-buffer's first target (8-bit targets as RGB, to look at).
+//! - `screen.png`, `gbuffer0.png`: the screen before the UI and the G-buffer's first target (8-bit targets as RGB, to look at);
+//! - with `--textures <prefix>...`: `texture_names.csv`, the capture's textures named by the packs' DDS files under the prefixes whose
+//!   mip of the capture's top size has the same bytes (SHA-1; the texture setting may drop the top mips).
 //!
-//!   cargo run --release -p wce_terrain_io --example campaign_frame -- <the script's folder>
+//!   cargo run --release -p wce_terrain_io --example campaign_frame -- <the script's folder> [--textures <prefix>...]
 //!
 //! `WCE_ATTILA_DIR` the game whose shaders name the capture's (default this machine's Steam folder); the profile from `WCE_GAME`.
 
@@ -113,8 +115,122 @@ fn mask(dir: &Path) {
     println!("mask: {count} pixels ({:.2} %) changed by the skinned draws", 100.0 * count as f64 / m.len() as f64);
 }
 
+/// SHA-1 of the bytes as 40 hex digits (FIPS 180-4; the capture script's `hashlib.sha1`).
+fn sha1_hex(data: &[u8]) -> String {
+    let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
+    let mut msg = data.to_vec();
+    let bits = (data.len() as u64).wrapping_mul(8);
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bits.to_be_bytes());
+    for block in msg.chunks_exact(64) {
+        let mut w = [0u32; 80];
+        for (i, c) in block.chunks_exact(4).enumerate() {
+            w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(*wi);
+            (e, d, c, b, a) = (d, c, b.rotate_left(30), a, t);
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    h.iter().map(|x| format!("{x:08x}")).collect()
+}
+
+/// Bytes per 4 x 4 block (compressed) or per pixel (8-bit RGBA / BGRA) of a DXGI format's name; none: not matched.
+fn format_size(name: &str) -> Option<(bool, usize)> {
+    match name.split('_').next()? {
+        "BC1" | "BC4" => Some((true, 8)),
+        "BC2" | "BC3" | "BC5" | "BC6H" | "BC7" => Some((true, 16)),
+        "R8G8B8A8" | "B8G8R8A8" | "B8G8R8X8" => Some((false, 4)),
+        _ => None,
+    }
+}
+
+fn mip_bytes(w: u32, h: u32, (blocks, size): (bool, usize)) -> usize {
+    if blocks { (w.div_ceil(4).max(1) * h.div_ceil(4).max(1)) as usize * size } else { (w * h) as usize * size }
+}
+
+/// The capture's textures named by the packs' DDS files under the prefixes (`textures.csv`'s top-mip SHA-1 against each file's mip of
+/// that size).
+fn name_textures(dir: &Path, vfs: &Vfs, prefixes: &[String]) {
+    let rows = read_csv(&dir.join("textures.csv"));
+    let mut want: HashMap<(u32, u32, String), Vec<(String, String)>> = HashMap::new();
+    for r in &rows {
+        if r.len() >= 8 && r[7].len() == 40 && r[6] == "0" {
+            let (w, h) = (r[1].parse().unwrap_or(0), r[2].parse().unwrap_or(0));
+            want.entry((w, h, r[3].clone())).or_default().push((r[0].clone(), r[7].clone()));
+        }
+    }
+    let mut found: HashMap<String, String> = HashMap::new();
+    for prefix in prefixes {
+        let files: Vec<String> = vfs.list(prefix, "dds").iter().map(|s| (*s).to_owned()).collect();
+        for path in &files {
+            let Ok(b) = vfs.read(path) else { continue };
+            if b.len() < 128 || &b[..4] != b"DDS " {
+                continue;
+            }
+            let u = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+            let (h, w, mips) = (u(12), u(16), u(28).max(1));
+            let start = if &b[84..88] == b"DX10" { 148 } else { 128 };
+            for ((cw, ch, format), list) in &want {
+                let Some(fs) = format_size(format) else { continue };
+                let mut at = start;
+                for m in 0..mips {
+                    let (mw, mh) = ((w >> m).max(1), (h >> m).max(1));
+                    let n = mip_bytes(mw, mh, fs);
+                    if (mw, mh) == (*cw, *ch) {
+                        if let Some(bytes) = b.get(at..at + n) {
+                            let sha = sha1_hex(bytes);
+                            for (id, s) in list {
+                                if *s == sha {
+                                    found.entry(id.clone()).or_insert_with(|| path.clone());
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    at += n;
+                }
+            }
+        }
+        println!("textures under {prefix}: {} files read", files.len());
+    }
+    let mut out = String::from(
+        "id,file
+",
+    );
+    for r in &rows {
+        if let Some(f) = found.get(&r[0]) {
+            out += &format!(
+                "{},{f}
+",
+                r[0]
+            );
+        }
+    }
+    std::fs::write(dir.join("texture_names.csv"), out).expect("texture_names.csv");
+    println!("textures named: {} of {}", found.len(), rows.len());
+}
+
 fn main() {
-    let dir = PathBuf::from(std::env::args().nth(1).expect("usage: campaign_frame <folder>"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let dir = PathBuf::from(args.first().expect("usage: campaign_frame <folder> [--textures <prefix>...]"));
+    let prefixes: Vec<String> = args.iter().skip_while(|a| *a != "--textures").skip(1).cloned().collect();
     let game_dir = std::env::var_os("WCE_ATTILA_DIR")
         .map_or_else(|| PathBuf::from("D:/Juegos/Steam/steamapps/common/Total War Attila"), PathBuf::from);
     let game = GameProfile::from_env().clone();
@@ -179,4 +295,7 @@ fn main() {
     mask(&dir);
     rgb_png(&dir.join("targets/screen.dds"), &dir.join("screen.png"));
     rgb_png(&dir.join("targets/gbuffer0.dds"), &dir.join("gbuffer0.png"));
+    if !prefixes.is_empty() {
+        name_textures(&dir, &vfs, &prefixes);
+    }
 }

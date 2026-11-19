@@ -114,6 +114,10 @@ struct Prop {
     model: String,
     matrix: [f32; 16],
     item: u64,
+
+    /// The seasons it shows in (`ECSeasonMask`, the markers' `seasons`: spring 1, summer 2, autumn 4, winter 8): main_attila_map's
+    /// fallen leaves are autumn's alone, many of its animals spring's (the game's spring frame draws no leaves).
+    seasons: u32,
 }
 
 /// The key of a prop of the packs' markers.
@@ -249,9 +253,18 @@ fn marker_props(bytes: &[u8]) -> Vec<Prop> {
         .filter(|(_, m)| !m.is_empty())
         .filter_map(|(i, model)| {
             let fields = f.fields(i).ok()?;
-            let Some(Value::Matrix(matrix)) = fields.into_iter().find(|(n, _)| *n == "transform").map(|(_, v)| v) else { return None };
+            let Some(Value::Matrix(matrix)) = fields.iter().find(|(n, _)| *n == "transform").map(|(_, v)| v.clone()) else { return None };
             let at = [f64::from(matrix[12]), f64::from(matrix[13]), f64::from(matrix[14])];
-            Some(Prop { key: MARKER_KEY | i as u64, at, model: model.to_lowercase().replace('\\', "/"), matrix, item: u64::MAX })
+            let seasons = fields
+                .iter()
+                .find(|(n, _)| *n == "seasons")
+                .and_then(|(_, v)| match v {
+                    Value::U32(s) => Some(*s),
+                    Value::U8(s) => Some(u32::from(*s)),
+                    _ => None,
+                })
+                .unwrap_or(15);
+            Some(Prop { key: MARKER_KEY | i as u64, at, model: model.to_lowercase().replace('\\', "/"), matrix, item: u64::MAX, seasons })
         })
         .collect()
 }
@@ -425,6 +438,7 @@ impl PropModels {
                             model: model.to_lowercase().replace('\\', "/"),
                             matrix: wce_terrain_io::attila::campaign::matrix(p, x),
                             item: x.id,
+                            seasons: wce_terrain_io::attila::campaign::seasons(p, x),
                         }),
                         _ => None,
                     })
@@ -480,7 +494,7 @@ impl PropModels {
         // (key, world, payload, the item a click selects).
         let mut out: Vec<(u64, Float4x4, Payload, u64)> = vec![];
         let props = self.props.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
-        for prop in props {
+        for prop in props.iter().filter(|p| p.seasons & self.season_bit != 0) {
             let (w, m) = (prop.at, prop.matrix);
             if (w[0] - tx).hypot(w[2] - tz) > r {
                 continue;
