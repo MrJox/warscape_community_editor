@@ -41,7 +41,13 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
   `audio_campaign_building_enums`. Battle tiles have `sound_emitter_list.xml` (the Tile tool's, later).
 - TDD (`tdd_pack1_main_v1.2.0`): 8 overriding banks (`battle_music`, `battle_vo_orders`, `battle_vocalisations`, `campaign_ui`,
   `campaign_vo`, `global_movies`, `global_music`, `music_data`), 1,061 WEMs, advisor VO.
-- Every bank is `BKHD` version 112, also those of the `*_shared_rome2` packs. Rome 2's own packs: to check once installed.
+- Every bank is `BKHD` version 112, also those of the `*_shared_rome2` packs.
+- Rome 2 (checked 2026-11-19): its release packs `sound.pack` (39 banks) and `music.pack` (4) are **v88**, but the patch packs
+  `sound_rome2.pack` (51 banks + an empty `animation_data.bnk`, which removes it) and `music_rome2.pack` (4) override every one of them
+  with v112, and the VO banks of `local_en_shared_rome2.pack` (61) are v112. So the game loads only v112 banks: one bank parser serves
+  both games; v88 is read-only history (not supported unless a mod needs it). Rome 2 has its own `event_data.dat` (104 KB in
+  `sound.pack`, 112 KB in `sound_rome2.pack`, same layout as Attila's) and eight campaign `.amb` + `.xml` pairs in `data.pack`
+  (`main_emperor`, `main_gaul`, `main_greek`, `main_invasion`, `main_punic`, `main_rome_map`, `prologue_map_01`...).
 - `music.pack` and `music_en_shared_rome2.pack` have the data-encrypted flag (PFH4 header flags `0x11`). rpfm_lib's develop branch (what
   WCE uses) decrypts them right; **rpfm_cli 4.3.14 does not**: it negates the position as a u64 where PFH4 needs a u32, and its output has
   every other u32 garbled. Scripts must not trust rpfm_cli extracts from those packs.
@@ -80,7 +86,7 @@ byte-identical; every WEM decodes; the encoder and the bank writer match the Wwi
 ## Steps
 
 1. **Spikes.**
-   1. Rome 2's banks' version: the `*_shared_rome2` banks are v112; Rome 2's own packs to check once installed. **partial**
+   1. Rome 2's banks' version: v112 wherever the game loads them (its v88 release banks are all overridden). **done**
    2. The vanilla WEM survey (above). **done**
    3. The Wwise 2014.1.3 oracle (above). **done**
    4. The encoder: encode the oracle's WAV with aoTuV/libvorbis, rebuild it as Wwise Vorbis against the codebook library, compare with
