@@ -153,6 +153,10 @@ pub struct BlockSource<'a> {
 
     /// Whether a chunk is drawn by a block at the moment.
     pub in_block: &'a dyn Fn(ChunkKey) -> bool,
+
+    /// The tiles' own heights over the LF at a map cell point, when known without opening them (a campaign map's far material's
+    /// relief): the unpainted blocks' ground.
+    pub relief: &'a dyn Fn(f64, f64) -> Option<f32>,
 }
 
 /// A cell no placement gives a climate.
@@ -171,6 +175,30 @@ pub struct FarMap {
 
     /// RGBA8 rows: the normal as the game packs it (alpha its x, green its up component, red and blue 255; the shader makes the third).
     pub normal: Arc<Vec<u8>>,
+
+    /// The tiles' own heights over the LF (scene units; 0 where no tile is): the far blocks' relief without opening their tiles.
+    pub relief: Arc<Vec<f32>>,
+}
+
+impl FarMap {
+    /// The relief at a map cell point (x right, y down: the map's cells over its width and height), bilinear.
+    pub fn relief_at(&self, x: f64, y: f64, w: u32, h: u32) -> f32 {
+        let n = self.size as usize;
+        if n == 0 || self.relief.len() < n * n {
+            return 0.0;
+        }
+        let (u, v) = (
+            (x / f64::from(w) * n as f64 - 0.5).clamp(0.0, (n - 1) as f64),
+            (y / f64::from(h) * n as f64 - 0.5).clamp(0.0, (n - 1) as f64),
+        );
+        let (i, j) = (u.floor() as usize, v.floor() as usize);
+        let (i1, j1) = ((i + 1).min(n - 1), (j + 1).min(n - 1));
+        let (fu, fv) = ((u - i as f64) as f32, (v - j as f64) as f32);
+        let r = |a: usize, b: usize| self.relief[b * n + a];
+        let top = r(i, j) + (r(i1, j) - r(i, j)) * fu;
+        let bottom = r(i, j1) + (r(i1, j1) - r(i, j1)) * fu;
+        top + (bottom - top) * fv
+    }
 }
 
 /// A heights buffer the terrains of a size share.
@@ -749,10 +777,34 @@ impl Frame {
         self.ground_with(r, far, climate, None)
     }
 
-    /// [`Self::ground`]; with `sink` (the tiles that are custom meshes), on a campaign map its points over the sea (sea tiles, cliffs,
-    /// uncovered cells, as the blocks take them) at the sea bed: for ground on the land's LF that a sea tile's own (on the sea's LF)
-    /// does not replace.
-    fn ground_with(&self, r: [i32; 4], far: bool, climate: u8, sink: Option<&dyn Fn(usize) -> bool>) -> (Float4x4, Payload) {
+    /// The heights of an LF ground grid on a campaign map from `source`: its points over the sea (sea tiles, cliffs, uncovered cells)
+    /// at the sea bed, the others at the far material's relief (none yet: 0); none when every point is 0.
+    fn ground_heights(&self, r: [i32; 4], b: [f64; 4], nx: i32, nz: i32, step: f64, source: &BlockSource) -> Option<Vec<f32>> {
+        let sea = (r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| self.cell_on_sea(x, y, source.is_custom)));
+        if !sea && (source.relief)(f64::from(r[0]), f64::from(r[1])).is_none() {
+            return None;
+        }
+        let bed = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
+        let k = self.z_stretch;
+        let mut heights = vec![0.0f32; (nx * nz) as usize];
+        for j in 0..nz {
+            for i in 0..nx {
+                let (x, z) = (b[0] + f64::from(i) * step, b[1] + f64::from(j) * step * k);
+                let (mx, my) = self.to_map.apply(x, z);
+                let (cx, cy) = ((mx.floor() as i32).clamp(r[0], r[2] - 1), (my.floor() as i32).clamp(r[1], r[3] - 1));
+                heights[(j * nx + i) as usize] = if sea && self.cell_on_sea(cx, cy, source.is_custom) {
+                    bed - self.lift(x, z)
+                } else {
+                    (source.relief)(mx, my).unwrap_or(0.0)
+                };
+            }
+        }
+        Some(heights)
+    }
+
+    /// [`Self::ground`]; with `source`, on a campaign map its heights from it (`ground_heights`: the sea at its bed, the land at the far
+    /// material's relief): for ground on the land's LF that a sea tile's own (on the sea's LF) does not replace.
+    fn ground_with(&self, r: [i32; 4], far: bool, climate: u8, source: Option<&BlockSource>) -> (Float4x4, Payload) {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
         // Its grid square in its own units (the LF's x step), the frame's z stretch in its world matrix.
         let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
@@ -760,7 +812,7 @@ impl Frame {
         let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / k / step).round() as i32 + 1);
         // On a campaign map the points over sea tiles (and uncovered cells: the open sea) at the sea bed, as the blocks have them: the
         // land LF stands out of the sea under some (35 m beside main_attila's islands), and the ground there showed as dark flats.
-        let sea_heights = sink.filter(|_| self.is_campaign()).and_then(|custom| self.ground_over_sea(r, b, nx, nz, step, custom));
+        let sea_heights = source.filter(|_| self.is_campaign()).and_then(|s| self.ground_heights(r, b, nx, nz, step, s));
         let heights = match sea_heights {
             Some(h) => Arc::new(h),
             None => self
@@ -831,28 +883,6 @@ impl Frame {
                 })
             }
         }
-    }
-
-    /// An LF ground grid's heights over a campaign map's sea (the sea bed, relative to the LF the shader adds), the rest 0; none when
-    /// no cell of the rectangle is the sea.
-    fn ground_over_sea(&self, r: [i32; 4], b: [f64; 4], nx: i32, nz: i32, step: f64, custom: &dyn Fn(usize) -> bool) -> Option<Vec<f32>> {
-        if !(r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| self.cell_on_sea(x, y, custom))) {
-            return None;
-        }
-        let bed = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
-        let k = self.z_stretch;
-        let mut heights = vec![0.0f32; (nx * nz) as usize];
-        for j in 0..nz {
-            for i in 0..nx {
-                let (x, z) = (b[0] + f64::from(i) * step, b[1] + f64::from(j) * step * k);
-                let (mx, my) = self.to_map.apply(x, z);
-                let (cx, cy) = ((mx.floor() as i32).clamp(r[0], r[2] - 1), (my.floor() as i32).clamp(r[1], r[3] - 1));
-                if self.cell_on_sea(cx, cy, custom) {
-                    heights[(j * nx + i) as usize] = bed - self.lift(x, z);
-                }
-            }
-        }
-        Some(heights)
     }
 
     /// The height of the sea (0 m) in the frame.
@@ -1252,7 +1282,9 @@ impl Frame {
                         t.own.height(lx, lz)
                     }
 
-                    _ => 0.0,
+                    // A block not painted: its tiles' relief from the far material, when there is one (the mountains past the rings).
+                    Cell::Land => (source.relief)(at.0, at.1).unwrap_or(0.0),
+                    Cell::Sea => 0.0,
                 };
 
                 relief[(j * fw + i) as usize] = own;
@@ -1376,6 +1408,7 @@ impl Frame {
 
         let mut diffuse = vec![0u8; n * n * 4];
         let mut heights = vec![f32::NAN; n * n];
+        let mut relief = vec![0.0f32; n * n];
         let mut painted = vec![false; n * n];
         for (i, p) in self.map.placements.iter().enumerate() {
             if stop() {
@@ -1406,7 +1439,8 @@ impl Frame {
                         diffuse[at * 4..at * 4 + 4].copy_from_slice(&c);
                         painted[at] = true;
                     }
-                    heights[at] = t.own.height(lx, lz) + self.lift(x, z);
+                    relief[at] = t.own.height(lx, lz);
+                    heights[at] = relief[at] + self.lift(x, z);
                 }
             }
         }
@@ -1454,7 +1488,7 @@ impl Frame {
             }
         });
 
-        Some(FarMap { size, diffuse: Arc::new(diffuse), normal: Arc::new(normal) })
+        Some(FarMap { size, diffuse: Arc::new(diffuse), normal: Arc::new(normal), relief: Arc::new(relief) })
     }
 
     /// The colour of a climate's plain ground, as a baked material stores it: what its material averages to.
@@ -1472,7 +1506,7 @@ impl Frame {
             return self.build_block(key, lod == Lod::Merged, source);
         }
 
-        let mut out = self.chunk_levels(key, lod, source.template, source.is_custom);
+        let mut out = self.chunk_levels(key, lod, source);
 
         // Cells of its own that belong to a tile drawn by a block: a chunk keeps to its tiles and a block to its square, and a tile that
         // starts in a block and reaches in here was neither's (holes down to the sea bed along the blocks' edges).
@@ -1485,19 +1519,14 @@ impl Frame {
         out.extend(
             self.runs_by_climate(area, |o, _, _| o != me && by_block(o))
                 .into_iter()
-                .map(|(r, c)| self.ground_with(r, true, c, Some(source.is_custom))),
+                .map(|(r, c)| self.ground_with(r, true, c, Some(source))),
         );
         out
     }
 
     /// A chunk at a level, as [`Self::build_chunk`] says, without the cells of tiles the blocks draw.
-    fn chunk_levels(
-        &self,
-        key: ChunkKey,
-        lod: Lod,
-        template: &dyn Fn(usize) -> Option<Arc<Template>>,
-        is_custom: &dyn Fn(usize) -> bool,
-    ) -> Vec<(Float4x4, Payload)> {
+    fn chunk_levels(&self, key: ChunkKey, lod: Lod, source: &BlockSource) -> Vec<(Float4x4, Payload)> {
+        let (template, is_custom) = (source.template, source.is_custom);
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
         // its mesh (its coarsest level by distance): the LF under it is the land its cliff drops from, which drawn plain stood as a slab
         // over the sea. Their tiles are few (48 cliffs), opened once for all their placements. A sea tile's rectangle is on the sea's LF.

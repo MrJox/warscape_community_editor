@@ -2399,9 +2399,9 @@ impl Tool for TerrainTool {
         }
 
         wce_foundation::wce_prof!("terrain_tool.props");
-        let view = &self.view;
         self.props.season_bit = 1 << ["sp", "su", "au", "wi"].iter().position(|s| *s == self.season).unwrap_or(1);
         // A campaign map's far material, once the streamer has made it (every tile read: a while after the map opens).
+        let mut far_ready = false;
         if e.scene.campaign
             && e.scene.campaign_far.is_none()
             && let Some(far) = self.view.streamer.as_ref().and_then(|s| s.far_map())
@@ -2417,6 +2417,11 @@ impl Tool for TerrainTool {
                 extent: [(ne.0 - sw.0) as f32, (ne.1 - sw.1) as f32],
             }));
             e.scene.touch();
+            far_ready = true;
+        }
+        // The blocks again, with the tiles' relief it carries.
+        if far_ready && let Some(s) = self.view.streamer.as_mut() {
+            s.rebuild_far();
         }
 
         // A campaign map's vegetation takes the view's season (its forests' `<base>_<season>_diffuse.dds`: spring's `_sp` in the game's
@@ -2424,6 +2429,7 @@ impl Tool for TerrainTool {
         if e.scene.campaign && e.scene.vegetation_season != self.season {
             e.scene.vegetation_season.clone_from(&self.season);
         }
+        let view = &self.view;
         self.props.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), view.tiles_loaded());
     }
 
