@@ -104,7 +104,11 @@ impl EditSet {
         let value = fnv::id(name);
         let media = self.new_id(lib, value);
         self.loose.insert(format!("audio/{media}.wem"), wem.to_vec());
-        for &switch_id in orders_switches {
+        // A switch listed twice (voice sets sharing an actor's bank) gets the line once.
+        let mut switches = orders_switches.to_vec();
+        switches.sort_unstable();
+        switches.dedup();
+        for &switch_id in &switches {
             let Some(Object::Switch(mut switch)) = self.object(lib, switch_id) else {
                 return Err(AudioError::Invalid(format!("#{switch_id} is not a switch")));
             };
@@ -136,27 +140,25 @@ impl EditSet {
             sound.source.in_memory_size = 0;
 
             let (bank, at) = self.find(lib, like_child).ok_or_else(|| AudioError::Invalid("the copied line is in no bank".into()))?;
-            let line_id = match container {
+            // The new objects, children before their parent (as in the game's banks).
+            let (line_id, objects) = match container {
                 Some(mut r) => {
                     let container_id = self.new_id(lib, sound_id);
                     sound.node.parent_id = container_id;
                     r.node.parent_id = switch_id;
                     r.children = vec![sound_id];
                     r.playlist = if r.playlist.is_empty() { vec![] } else { vec![(sound_id, 50_000)] };
-                    // Children before their parent, as in the game's banks.
-                    let objects = self.bank_mut(lib, bank).objects_mut();
-                    objects.insert(at + 1, HircObject { kind: 2, id: sound_id, body: Object::Sound(sound).write() });
-                    objects.insert(at + 2, HircObject { kind: 5, id: container_id, body: Object::RandomSequence(r).write() });
-                    container_id
+                    let sound = HircObject { kind: 2, id: sound_id, body: Object::Sound(sound).write() };
+                    (container_id, vec![sound, HircObject { kind: 5, id: container_id, body: Object::RandomSequence(r).write() }])
                 }
                 None => {
                     sound.node.parent_id = switch_id;
-                    self.bank_mut(lib, bank)
-                        .objects_mut()
-                        .insert(at + 1, HircObject { kind: 2, id: sound_id, body: Object::Sound(sound).write() });
-                    sound_id
+                    (sound_id, vec![HircObject { kind: 2, id: sound_id, body: Object::Sound(sound).write() }])
                 }
             };
+            for (k, o) in objects.iter().enumerate() {
+                self.bank_mut(lib, bank).objects_mut().insert(at + 1 + k, o.clone());
+            }
 
             let place = switch.children.partition_point(|c| *c < line_id);
             switch.children.insert(place, line_id);
@@ -171,7 +173,10 @@ impl EditSet {
             });
             let place = switch.child_params.partition_point(|p| p.node_id < line_id);
             switch.child_params.insert(place, SwitchChildParams { node_id: line_id, ..params });
-            self.put_object(lib, switch_id, &Object::Switch(switch))?;
+            // Every whole copy of the switch gains the line, and its bank the line's objects.
+            let banks = self.put_object_copies(lib, switch_id, &Object::Switch(switch))?;
+            let others: Vec<usize> = banks.into_iter().filter(|b| *b != bank).collect();
+            self.insert_before(lib, &others, switch_id, &objects);
         }
         self.names.insert(value, name.to_owned());
         Ok(value)
