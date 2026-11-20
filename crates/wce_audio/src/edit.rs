@@ -64,9 +64,44 @@ impl EditSet {
     }
 
     pub(crate) fn put_object(&mut self, lib: &SoundLibrary, id: u32, object: &Object) -> Result<()> {
-        let (b, i) = self.find(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is in no bank")))?;
-        self.bank_mut(lib, b).objects_mut()[i].body = object.write();
-        Ok(())
+        self.put_object_copies(lib, id, object).map(|_| ())
+    }
+
+    /// Every bank holding an object, with its index there, as edited.
+    pub(crate) fn copies(&self, lib: &SoundLibrary, id: u32) -> Vec<(usize, usize)> {
+        let mut banks: Vec<usize> = lib.locations(id).iter().map(|(b, _)| *b).chain(self.banks.keys().copied()).collect();
+        banks.sort_unstable();
+        banks.dedup();
+        banks.into_iter().filter_map(|b| self.bank(lib, b).objects().iter().position(|o| o.id == id).map(|i| (b, i))).collect()
+    }
+
+    /// Writes an object as edited into its first copy and every copy the same as it (a voice set's actors can be in two banks
+    /// whole; the game takes whichever loads first). Copies that differ (partial copies of a switch above a voice bank's own,
+    /// holding only its branch) are left as they are. Returns the banks written, the first copy's first.
+    pub(crate) fn put_object_copies(&mut self, lib: &SoundLibrary, id: u32, object: &Object) -> Result<Vec<usize>> {
+        let (b0, i0) = self.find(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is in no bank")))?;
+        let original = self.bank(lib, b0).objects()[i0].body.clone();
+        let body = object.write();
+        let mut written = vec![b0];
+        self.bank_mut(lib, b0).objects_mut()[i0].body = body.clone();
+        for (b, i) in self.copies(lib, id) {
+            if b != b0 && self.bank(lib, b).objects()[i].body == original {
+                self.bank_mut(lib, b).objects_mut()[i].body = body.clone();
+                written.push(b);
+            }
+        }
+        Ok(written)
+    }
+
+    /// Puts new objects into each of `banks`, right before `parent` there (children before their parent, as in the game's banks).
+    pub(crate) fn insert_before(&mut self, lib: &SoundLibrary, banks: &[usize], parent: u32, objects: &[HircObject]) {
+        for &b in banks {
+            let bank = self.bank_mut(lib, b);
+            let at = bank.objects().iter().position(|o| o.id == parent).unwrap_or(bank.objects().len());
+            for (k, o) in objects.iter().enumerate() {
+                bank.objects_mut().insert(at + k, o.clone());
+            }
+        }
     }
 
     /// Sets again the offset and size of every source held in the banks whose media changed (`media_banks`: library indices).
@@ -270,12 +305,16 @@ impl EditSet {
         let body = Object::Sound(sound).write();
         self.bank_mut(lib, b).objects_mut().insert(i + 1, wce_audio_format::bank::HircObject { kind: 2, id: sound_id, body });
 
+        let new_sound = self.bank(lib, b).objects()[i + 1].clone();
         let at = container.children.partition_point(|c| *c < sound_id);
         container.children.insert(at, sound_id);
         if !container.playlist.is_empty() || container.children.len() == 1 {
             container.playlist.push((sound_id, 50_000));
         }
-        self.put_object(lib, container_id, &Object::RandomSequence(container))?;
+        // The container's other whole copies gain the sound too, in their banks.
+        let banks = self.put_object_copies(lib, container_id, &Object::RandomSequence(container))?;
+        let others: Vec<usize> = banks.into_iter().filter(|x| *x != b).collect();
+        self.insert_before(lib, &others, container_id, &[new_sound]);
         Ok(sound_id)
     }
 
