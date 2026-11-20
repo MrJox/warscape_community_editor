@@ -198,6 +198,11 @@ impl Tile {
 
     /// The real buildings (as the rules' distances take them): x, z, radius, world metres.
     pub(super) fn texture_rules_buildings(&self) -> Vec<[f64; 3]> {
+        self.texture_rules_buildings_elems().into_iter().map(|(_, b)| b).collect()
+    }
+
+    /// [`Self::texture_rules_buildings`] with their elements.
+    pub(super) fn texture_rules_buildings_elems(&self) -> Vec<(usize, [f64; 3])> {
         let sc = self.tscene();
         let coverage = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == super::ground_coverage::COVERAGE_LAYER);
         let kit = self.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project.dir));
@@ -213,7 +218,7 @@ impl Tile {
                     let across = [m.bmin.x.abs(), m.bmax.x.abs(), m.bmin.z.abs(), m.bmax.z.abs()].into_iter().fold(0.0f32, f32::max);
                     f64::from(across) * s / self.unit()
                 });
-                [f64::from(p.x), f64::from(p.z), radius]
+                (e, [f64::from(p.x), f64::from(p.z), radius])
             })
             .collect()
     }

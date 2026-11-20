@@ -3011,3 +3011,47 @@ fn a_path_is_found_over_the_ground_and_a_building_connected_to_it() {
     assert_eq!((made, failed.len()), (1, 0), "{failed:?}");
     assert_eq!(d.tile().tscene().find_all(ROAD_SPLINE).len(), before + 1);
 }
+
+#[test]
+fn a_district_is_filled_and_filled_again_in_place() {
+    use wce_tile::biomes::AREA_TYPE;
+    use wce_tile::districts::{DISTRICT_ATTR, DistrictSettings, SEED_ATTR};
+
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let key = d.tile().tscene().get(d.tile().tscene().find_all("BUILDING_INSTANCE")[0], "key").unwrap();
+    let settings = DistrictSettings { keys: vec![key.clone()], max_slope: 60.0, ..DistrictSettings::default() };
+    let attrs = BTreeMap::from([
+        (DISTRICT_ATTR.to_owned(), settings.to_text()),
+        (SEED_ATTR.to_owned(), "3".to_owned()),
+        ("name".to_owned(), "Town".to_owned()),
+    ]);
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let square = Create::Line(vec![
+        Float3::new(ex * 0.1, 0.0, ez * 0.1),
+        Float3::new(ex * 0.9, 0.0, ez * 0.1),
+        Float3::new(ex * 0.9, 0.0, ez * 0.9),
+        Float3::new(ex * 0.1, 0.0, ez * 0.9),
+    ]);
+    let area = d.create_with(AREA_TYPE, layer, &square, "", &attrs).unwrap();
+    assert_eq!(d.tile().district_areas().len(), 1);
+    let size = d.history().size();
+    let n = d.fill_district(area).unwrap();
+    assert!(n > 0);
+    assert_eq!(d.history().size(), size + 1, "one undo entry");
+    assert_eq!(d.district_buildings(area), n);
+    let all = d.tile().tscene().find_all("BUILDING_INSTANCE").len();
+
+    // Again: the same group, its buildings replaced, not added to.
+    let again = d.fill_district(area).unwrap();
+    assert_eq!(again, n, "the same seed, the same buildings");
+    assert_eq!(d.tile().tscene().find_all("BUILDING_INSTANCE").len(), all);
+    let groups =
+        d.tile().tscene().find_all("UserInstanceGroup").into_iter().filter(|&g| d.tile().tscene().name(g) == "Town buildings").count();
+    assert_eq!(groups, 1);
+
+    // Undone twice: no buildings of the district.
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(d.district_buildings(area), 0);
+}

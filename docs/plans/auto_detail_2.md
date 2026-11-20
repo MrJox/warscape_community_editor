@@ -11,7 +11,7 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
-Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done; H done. Their look on kit tiles is the user's.
+Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done; H done; I done. The whole plan is built; its look on kit tiles and in game is the user's. Their look on kit tiles is the user's.
 
 Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
 the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
@@ -154,7 +154,14 @@ added and connected: a dirt track of the game's pieces.
   bounds) kept off roads, other buildings and steep ground; the rest filled inward by size. Made into a group `District <n>` with one
   undo entry; filling again replaces it.
 
-### Steps
+### Steps (done 2026-11-20)
+
+Done as planned, but prefabs are left out (buildings only, picked as keys); a district is drawn and filled at once, and its group is
+found again by its name. Found on the way: the kits' tables name buildings the game has no model for (the first default took barbarian
+houses that showed as boxes; the default takes only keys with model pieces), the building splines' fallback size (5 × 0.5 m, a fence's)
+made hundreds of slivers (a district guesses 8 × 8 m and says so), and a size not known when first asked was cached for good (looked for in
+the scene again now). On the empty plains tile: a path across, a district round it: 51 Nordic houses, two rows facing the path, the inside
+filled.
 
 1. `wce_tile::districts`: lots from a polygon and road lines, packing by footprints, tests.
 2. Editor: the fill as an edit, the Create entry, the Inspector, script command, docs.
