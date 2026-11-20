@@ -8,7 +8,7 @@ use std::sync::mpsc::channel;
 use wce_audio::analysis::{Stats, analyse};
 use wce_audio::decode::decode_wem;
 use wce_audio::library::{MediaRef, SoundLibrary};
-use wce_audio::setup_allocs::allocs;
+use wce_audio::setup_allocs::setup_kind;
 use wce_audio_format::hirc::Object;
 use wce_audio_format::wem::Wem;
 use wce_editor::gui::{self, col32, v2};
@@ -43,8 +43,6 @@ pub struct VorbisInfo {
     pub block_sizes: (u32, u32),
     pub max_packet: u16,
     pub setup_hash: u32,
-    /// The setup is one the encoder's table knows (Wwise's own setups and ours).
-    pub setup_known: bool,
 }
 
 fn codec_name(codec: u16) -> String {
@@ -76,7 +74,6 @@ pub fn read_preview(bytes: Option<Vec<u8>>) -> Preview {
             block_sizes: (1 << v.blocksize_0_exp, 1 << v.blocksize_1_exp),
             max_packet: v.max_packet_size,
             setup_hash: v.codebook_hash,
-            setup_known: allocs(v.codebook_hash).is_some(),
         }),
     });
     match decode_wem(&bytes) {
@@ -170,11 +167,7 @@ fn info(place: Option<&str>, file: Option<&FileInfo>, stats: Option<&Stats>) {
         if let Some(v) = &f.vorbis {
             row("Vorbis blocks", format!("{} / {} samples", v.block_sizes.0, v.block_sizes.1), "Short and long block sizes.");
             row("Largest packet", format!("{} bytes", v.max_packet), "");
-            row(
-                "Vorbis setup",
-                format!("{:#010x}{}", v.setup_hash, if v.setup_known { "" } else { " (not in the encoder's table)" }),
-                "The codebook set's hash. Known setups are Wwise's own and the ones this editor encodes with.",
-            );
+            row("Encoding", encoding(v), &format!("Vorbis setup {:#010x}", v.setup_hash));
         }
     }
     if let Some(s) = stats {
@@ -230,6 +223,20 @@ fn speakers(mask: u32) -> String {
     ];
     let names: Vec<&str> = (0..NAMES.len()).filter(|b| mask & (1 << b) != 0).map(|b| NAMES[b]).collect();
     if names.is_empty() { format!("{mask:#x}") } else { names.join(", ") }
+}
+
+/// The quality a file was encoded at, from its Vorbis setup: "Vorbis quality 4", "Vorbis quality 3, tuned for 32 kHz".
+fn encoding(v: &VorbisInfo) -> String {
+    let Some(kind) = setup_kind(v.setup_hash) else {
+        return "Vorbis, a setup of its own".to_owned();
+    };
+    let (lo, hi) = kind.qualities;
+    let quality = if lo == hi { format!("Vorbis quality {lo}") } else { format!("Vorbis quality {lo} to {hi}") };
+    match kind.rates {
+        None => quality,
+        Some((r, r2)) if r == r2 => format!("{quality}, tuned for {} kHz", f64::from(r) / 1000.0),
+        Some((r, r2)) => format!("{quality}, tuned for {} to {} kHz", f64::from(r) / 1000.0, f64::from(r2) / 1000.0),
+    }
 }
 
 /// Where a media file is, for the info rows.

@@ -487,13 +487,15 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
           the clip's end (boar_charge, 0.53 s). **done**
        5. The engine's music and voice groups: their IDs are constants in its code, the values fixed ("What the game lets
           mods choose"). **done**
-       6. Audio Recipes made clear (user, 2026-11-20: "not clear what it is for, no hints"; then "much worse, a ton of text:
-          explanations short, as tooltips"): sections named by the job ("Change the music", "Replace a voice line", "Soldiers'
-          battle voices of a culture", "A unit's voice", "Add a sound to an animation"), no text in the panel but its lists, a
-          one-line hint on each header and button; music rows "culture Roman, campaign prebattle (4 tracks) +2" (state groups in
-          plain words, the most specific situation first, the others on hover) with Play, Add a track..., Edit...; voice rows with
-          Play and Edit.... Script command `audio_recipe <section>`. Seen in the app (2026-11-20). **done**
-       7. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); whether the
+       6. Audio Recipes: **removed** (user, 2026-11-20, after two rewrites: "it doesn't make sense to me"). The library under it
+          stays, gated (`wce_audio::recipes`, `unit_voices`, `trees`: gate `audio_recipes`); what only the panel offered (a
+          unit's own selection line, a culture's lines copied to another, a new sound for an animation from a file) has no UI
+          now: if wanted back, as actions in the place the object is (Audio Object, Audio Game Data), not a panel of its own.
+       7. The Inspector's Vorbis setup in words (user): "Encoding: Vorbis quality 3, tuned for 32 kHz" (the setup's hash on
+          hover), from `setup_allocs::SETUP_KINDS`: the oracle grid's 65 setups (Wwise 2014's own per quality and stereo, and
+          aoTuV's per rate, as the game's older files were encoded) with their quality range, stereo and rates. Unit test.
+          **done**
+       8. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); whether the
           empty voice junction tables are read (a test pack). **todo**
 
 ## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)
