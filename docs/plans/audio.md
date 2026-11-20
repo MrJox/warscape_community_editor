@@ -487,7 +487,14 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
           the clip's end (boar_charge, 0.53 s). **done**
        5. The engine's music and voice groups: their IDs are constants in its code, the values fixed ("What the game lets
           mods choose"). **done**
-       6. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); whether the
+       6. Audio Recipes made clear (user, 2026-11-20: "not clear what it is for, no hints, non-intuitive"): an intro line, each
+          section a task ("Change the music", "Replace a voice line", "Soldiers' battle voices of a culture", "A unit's voice",
+          "Add a sound to an animation") with a hover hint, what it changes in the game and numbered steps; hints on its buttons;
+          music rows read "culture Roman, campaign prebattle (4 tracks, +2 more situations)" (state groups in plain words, the
+          most specific situation first, all of them on hover, a playlist no switch chooses named by its event) with Play, Add a
+          track... and Edit...; voice rows with Play and Edit...; a culture's lines "Copy X's lines to [culture]". Script
+          command `audio_recipe <section>`. **done**; seen in the app: **todo** (no display).
+       7. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); whether the
           empty voice junction tables are read (a test pack). **todo**
 
 ## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)

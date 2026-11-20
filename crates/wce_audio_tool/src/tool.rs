@@ -190,6 +190,8 @@ pub struct AudioTool {
     pending_unit: Option<String>,
     /// `audio_volume`: "<object> <dB>", an edit made from a script.
     pending_volume: Option<String>,
+    /// `audio_recipe`: the Audio Recipes section to open (music, voice, culture, unit, animation).
+    pending_recipe: Option<String>,
     /// Where to start the sound being decoded (a click on a waveform), 0 to 1.
     pending_seek: Option<f32>,
     /// Waveforms of the sounds shown (Audio Object, the trees), by media ID; the one being decoded; the ones shown last frame
@@ -1908,7 +1910,7 @@ impl Tool for AudioTool {
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
         type Slot = fn(&mut AudioTool) -> &mut Option<String>;
-        let commands: [(&str, &str, &str, Slot); 8] = [
+        let commands: [(&str, &str, &str, Slot); 9] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
             ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
@@ -1918,6 +1920,9 @@ impl Tool for AudioTool {
             }),
             ("audio_show", "audio_show <panel title>", "Brings an Audio panel to the front (its dock tab)", |t| &mut t.pending_panel),
             ("audio_unit", "audio_unit <land unit key>", "Shows a unit's voice in Audio Recipes", |t| &mut t.pending_unit),
+            ("audio_recipe", "audio_recipe <music|voice|culture|unit|animation>", "Opens one of the Audio Recipes", |t| {
+                &mut t.pending_recipe
+            }),
             ("audio_volume", "audio_volume <object id> <dB>", "Sets an object's volume (an edit of the Audio edits document)", |t| {
                 &mut t.pending_volume
             }),
