@@ -1,6 +1,6 @@
 # Third-party code
 
-Permissive licences only. Ask before adding anything. Nothing is vendored but the fonts and NIS's shaders (below): the code comes from
+Permissive licences only. Ask before adding anything. Nothing is vendored but the fonts, NIS's shaders and libvpx's VP8 codec (below): the code comes from
 crates.io (see the Rust dependencies below), and `third_party/` otherwise only keeps the licence of a project whose format knowledge was
 ported.
 
@@ -47,6 +47,12 @@ libraries.
 | DXVK (native build) | v3.1.1 | zlib licence | `libdxvk_d3d11.so`, `libdxvk_dxgi.so` and the D3D/DXGI headers (from mingw-w64). Built with one change backported from upstream master: `ResizeBuffers` gives the presenter the new size (a maximized window on Wayland kept its first swapchain) |
 | vkd3d | vkd3d-2.1 | **LGPL-2.1-or-later** | `libvkd3d-utils.so`: `D3DCompile` (the editor's helper HLSL), `D3DReflect` (game shader bindings) and `D3DDisassemble` (`fxc_dump`). Built with one local change: `WINAPI` / COM methods use the native x86-64 ABI instead of `ms_abi`, to match DXVK's headers |
 | SPIRV-Headers | vulkan-sdk-1.4.321.0 | MIT-style (Khronos) | headers needed to build vkd3d |
+
+## Libraries (vendored source)
+
+| Library | Version | Licence | Where | Used for |
+|---|---|---|---|---|
+| libvpx (The WebM Project), the VP8 encoder and decoder and what they use, plain C without assembly or SIMD | v1.16.0 | BSD-3-Clause with Google's patent grant (`third_party/libvpx/LICENSE`, `PATENTS`) | `third_party/libvpx`, cut from the release by `scripts/vendor_libvpx.py` (it writes the config and run-time dispatch headers configure would); built by `crates/wce_video/build.rs` with the cc crate, with a shim of ours (`crates/wce_video/src/shim.c`) | decoding the game's movies and encoding new ones (`.ca_vp8`; user's decision, 2026-11-20) |
 
 ## Rust dependencies
 

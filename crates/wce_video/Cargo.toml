@@ -1,0 +1,21 @@
+[package]
+name = "wce_video"
+description = "Video for the Cinematic tool: VP8 decoding and encoding (libvpx, vendored as plain C) and the game's movies (.ca_vp8 through rpfm_lib)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The CAMV container (.ca_vp8) and IVF: rpfm_lib's files::video, which round-trips every Attila movie byte for byte (docs/plans/cinematic.md).
+rpfm_lib.workspace = true
+thiserror = "2"
+
+[build-dependencies]
+# libvpx 1.16.0's VP8 codec, vendored in third_party/libvpx (BSD-3-Clause; user 2026-11-20).
+cc = "1"
+
+[dev-dependencies]
+wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true
