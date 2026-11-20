@@ -72,6 +72,12 @@ enum Request {
     SetMusicPath(u32, Vec<u32>, u32),
     /// (the new culture's name, the culture it copies).
     NewCulture(String, u32),
+    /// (music switch or playlist, rule index, the rule).
+    SetRule(u32, usize, wce_audio_format::hirc::TransitionRule),
+    /// (music object, its stingers).
+    SetStingers(u32, Vec<wce_audio_format::hirc::Stinger>),
+    /// (music switch, a path, the playlist to copy): pick a sound file, a new playlist of it plays for the path.
+    PathMusic(u32, Vec<u32>, u32),
     /// Pick a sound file for a new unit line.
     UnitLine(UnitLine),
     Save,
@@ -91,6 +97,8 @@ enum ImportTarget {
     /// A new sound fired by an animation: (`.snd.meta`, seconds, the event to copy, the new event's name).
     AnimationSound(String, f32, String, String),
     UnitLine(UnitLine),
+    /// (music switch, a path, the playlist copied).
+    PathMusic(u32, Vec<u32>, u32),
 }
 
 /// A new order line under some voice actors, and the unit whose DB column names it.
@@ -140,6 +148,8 @@ pub struct AudioTool {
     rename: (u32, String),
     /// A music switch path's "play instead" field: (path index, text).
     path_target: (usize, String),
+    /// A new stinger's (trigger, segment) fields.
+    new_stinger: (String, String),
     search: String,
     searched: String,
     results: Vec<(String, u32, u8, usize)>,
@@ -280,6 +290,13 @@ impl AudioTool {
                     ImportTarget::ReplaceSegment(segment) => {
                         self.edit(e, &format!("replaced the music of #{segment} with {name}"), |edits, lib, _| {
                             edits.replace_segment_audio(lib, segment, &wem).map(|_| String::new())
+                        })
+                    }
+                    ImportTarget::PathMusic(switch, keys, like) => {
+                        self.edit(e, &format!("made a playlist of {name} for a music path"), |edits, lib, _| {
+                            let playlist = edits.new_playlist_like(lib, like, &wem)?;
+                            edits.set_music_path(lib, switch, &keys, playlist)?;
+                            Ok(format!(" (#{playlist})"))
                         })
                     }
                     ImportTarget::UnitLine(line) => {
@@ -436,6 +453,7 @@ impl AudioTool {
                 Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
                 Request::AddMusic(playlist, after) => self.import(e, ImportTarget::AddMusic(playlist, after)),
                 Request::UnitLine(line) => self.import(e, ImportTarget::UnitLine(line)),
+                Request::PathMusic(switch, keys, like) => self.import(e, ImportTarget::PathMusic(switch, keys, like)),
                 Request::ReplaceSegment(segment) => self.import(e, ImportTarget::ReplaceSegment(segment)),
                 Request::AnimationNewSound(path, time, like, event) => {
                     self.import(e, ImportTarget::AnimationSound(path, time, like, event))
@@ -501,6 +519,12 @@ impl AudioTool {
                     recipes::new_voice_culture(edits, lib, &name, like)
                         .map(|(events, lines)| format!(" ({lines} lines in {events} voice events, the same files as the copied culture's)"))
                 }),
+                Request::SetRule(id, index, rule) => self.edit(e, "set a music transition", |edits, lib, _| {
+                    edits.set_transition_rule(lib, id, index, rule).map(|()| String::new())
+                }),
+                Request::SetStingers(id, stingers) => {
+                    self.edit(e, "set the stingers", |edits, lib, _| edits.set_stingers(lib, id, stingers).map(|()| String::new()))
+                }
                 Request::Save => self.save(e),
                 Request::Revert => {
                     if !self.edits.is_empty() {
@@ -1124,6 +1148,18 @@ impl AudioTool {
                 if let Object::MusicSwitch(switch) = object {
                     music_switch_view(id, switch, &lib, &mut self.path_target, requests);
                 }
+                let (rules, stingers) = match object {
+                    Object::MusicSwitch(m) => (Some(&m.rules), Some(&m.base.stingers)),
+                    Object::MusicPlaylist(p) => (Some(&p.rules), Some(&p.base.stingers)),
+                    Object::MusicSegment(s) => (None, Some(&s.base.stingers)),
+                    _ => (None, None),
+                };
+                if let Some(rules) = rules {
+                    transitions_view(id, rules, &lib, requests);
+                }
+                if let Some(stingers) = stingers {
+                    stingers_view(id, stingers, &lib, &mut self.new_stinger, requests);
+                }
                 if let Object::MusicPlaylist(playlist) = object {
                     playlist_view(id, playlist, &lib, &self.edits, &mut self.play, requests);
                 }
@@ -1339,14 +1375,8 @@ fn fields(object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
                 }
             }
         }
-        Object::RandomSequence(r) => {
-            row("Mode", if r.mode == 1 { "random".into() } else { "sequence".into() });
-            row("Loop count", if r.loop_count == 0 { "infinite".into() } else { r.loop_count.to_string() });
-            row("Avoid repeating the last", r.avoid_repeat_count.to_string());
-            for (child, weight) in &r.playlist {
-                gui::text_disabled(&format!("  #{child}: weight {:.0} %", f64::from(*weight) / 1000.0));
-            }
-        }
+        // Its mode, shuffle, repeat avoidance and weights are edited below (container_settings, the children).
+        Object::RandomSequence(r) => row("Loop count", if r.loop_count == 0 { "infinite".into() } else { r.loop_count.to_string() }),
         Object::Switch(s) => {
             row(if s.group_type == 1 { "State group" } else { "Switch group" }, lib.label(s.group_id, 0));
             row("Default", lib.label(s.default_switch, 0));
@@ -1440,13 +1470,6 @@ fn playlist_view(
         }
         gui::pop_id();
     }
-    if !playlist.rules.is_empty() || !playlist.base.stingers.is_empty() {
-        gui::text_disabled(&format!(
-            "{} transition rule(s), {} stinger(s) (shown; editing them comes later)",
-            playlist.rules.len(),
-            playlist.base.stingers.len()
-        ));
-    }
 }
 
 /// The edits an object offers: replace a sound's audio, add a variation to a random container, its volume and pitch.
@@ -1514,6 +1537,168 @@ fn node_fields(node: &NodeBase, lib: &SoundLibrary, requests: &mut Vec<Request>)
 }
 
 /// Property IDs (bank version 112). Only the ones checked are named; the others show their number (docs/plans/audio.md, step 4).
+const SYNCS: [&str; 10] = [
+    "immediately",
+    "next grid",
+    "next bar",
+    "next beat",
+    "next cue",
+    "next custom cue",
+    "entry cue",
+    "exit cue",
+    "never",
+    "last exit position",
+];
+const ENTRIES: [&str; 5] = ["entry cue", "same time as the source", "random cue", "random custom cue", "last exit position"];
+const CURVES: [&str; 10] = ["log 3", "sine", "log 1", "inverted S", "linear", "S", "exp 1", "sine reciprocal", "exp 3", "constant"];
+
+fn pick(label: &str, value: &mut u32, names: &[&str]) -> bool {
+    let mut i = *value as i32;
+    gui::set_next_item_width(130.0);
+    let changed = gui::combo(label, &mut i, names);
+    if changed {
+        *value = i.max(0) as u32;
+    }
+    changed
+}
+
+/// The objects a rule names: "any" for -1, "nothing" for 0.
+fn rule_ends(ids: &[u32], lib: &SoundLibrary) -> String {
+    let names: Vec<String> = ids
+        .iter()
+        .map(|i| match *i {
+            u32::MAX => "any".to_owned(),
+            0 => "nothing".to_owned(),
+            i => lib.label(i, lib.object(i).map_or(0, |(_, o, _)| o.kind)),
+        })
+        .collect();
+    names.join(", ")
+}
+
+/// A music switch's or playlist's transition rules: how it leaves a source (when, fade out) and enters a destination (where,
+/// fade in), and the segment played between, each editable.
+fn transitions_view(id: u32, rules: &[wce_audio_format::hirc::TransitionRule], lib: &SoundLibrary, requests: &mut Vec<Request>) {
+    if rules.is_empty() || !gui::collapsing_header(&format!("Transitions ({})", rules.len()), 0) {
+        return;
+    }
+    for (i, rule) in rules.iter().enumerate() {
+        gui::push_id(&format!("rule{i}"));
+        gui::text_wrapped(&format!("From {} to {}", rule_ends(&rule.sources, lib), rule_ends(&rule.destinations, lib)));
+        let mut r = rule.clone();
+        let mut changed = false;
+        gui::text_disabled("  leave at");
+        gui::same_line();
+        changed |= pick("##sync", &mut r.source_rule.sync, &SYNCS);
+        gui::same_line();
+        let mut out = r.source_rule.fade.time;
+        gui::set_next_item_width(110.0);
+        gui::drag_int_range("##fo", &mut out, 10.0, 0, 60_000, "fade out %d ms");
+        if gui::is_item_deactivated_after_edit() {
+            r.source_rule.fade.time = out;
+            changed = true;
+        }
+        gui::same_line();
+        changed |= pick("##foc", &mut r.source_rule.fade.curve, &CURVES);
+        gui::text_disabled("  enter at");
+        gui::same_line();
+        let mut entry = u32::from(r.destination_rule.entry);
+        if pick("##entry", &mut entry, &ENTRIES) {
+            r.destination_rule.entry = entry as u16;
+            changed = true;
+        }
+        gui::same_line();
+        let mut fin = r.destination_rule.fade.time;
+        gui::set_next_item_width(110.0);
+        gui::drag_int_range("##fi", &mut fin, 10.0, 0, 60_000, "fade in %d ms");
+        if gui::is_item_deactivated_after_edit() {
+            r.destination_rule.fade.time = fin;
+            changed = true;
+        }
+        gui::same_line();
+        changed |= pick("##fic", &mut r.destination_rule.fade.curve, &CURVES);
+        if let Some(o) = &r.transition_object {
+            gui::text_disabled(&format!("  through {}", lib.label(o.segment_id, 10)));
+            gui::same_line();
+            if gui::small_button("Select##seg") {
+                requests.push(Request::Select(o.segment_id));
+            }
+        }
+        if changed {
+            requests.push(Request::SetRule(id, i, r));
+        }
+        gui::separator();
+        gui::pop_id();
+    }
+}
+
+/// A music object's stingers (a trigger plays a segment over the music): when, how often, the segment; Remove; Add.
+fn stingers_view(
+    id: u32,
+    stingers: &[wce_audio_format::hirc::Stinger],
+    lib: &SoundLibrary,
+    fields: &mut (String, String),
+    requests: &mut Vec<Request>,
+) {
+    if !gui::collapsing_header(&format!("Stingers ({})", stingers.len()), 0) {
+        return;
+    }
+    gui::text_wrapped("A trigger (a game event, by name) plays a segment over the music, in time with it.");
+    for (i, st) in stingers.iter().enumerate() {
+        gui::push_id(&format!("st{i}"));
+        let mut s = *st;
+        let mut changed = false;
+        gui::text(&format!("{} plays {}", lib.label(s.trigger_id, 0), lib.label(s.segment_id, 10)));
+        gui::text_disabled("  at");
+        gui::same_line();
+        changed |= pick("##at", &mut s.sync_play_at, &SYNCS);
+        gui::same_line();
+        let mut gap = s.dont_repeat_time;
+        gui::set_next_item_width(150.0);
+        gui::drag_int_range("##gap", &mut gap, 50.0, 0, 600_000, "not again for %d ms");
+        if gui::is_item_deactivated_after_edit() {
+            s.dont_repeat_time = gap;
+            changed = true;
+        }
+        gui::same_line();
+        if gui::small_button("Remove") {
+            let mut list = stingers.to_vec();
+            list.remove(i);
+            requests.push(Request::SetStingers(id, list));
+        } else if changed {
+            let mut list = stingers.to_vec();
+            list[i] = s;
+            requests.push(Request::SetStingers(id, list));
+        }
+        gui::pop_id();
+    }
+    gui::set_next_item_width(160.0);
+    gui::input_text("##strig", Some("trigger name"), &mut fields.0, 128, 0);
+    gui::same_line();
+    gui::set_next_item_width(160.0);
+    gui::input_text("##sseg", Some("segment (name or #ID)"), &mut fields.1, 128, 0);
+    gui::same_line();
+    let token = fields.1.trim().trim_start_matches('#');
+    let segment = token.parse::<u32>().ok().or_else(|| (!token.is_empty()).then(|| wce_audio_format::fnv::id(token)));
+    let segment = segment.filter(|s| lib.object(*s).is_some_and(|(_, o, _)| o.kind == 10));
+    gui::begin_disabled(fields.0.trim().is_empty() || segment.is_none());
+    if gui::small_button("Add a stinger")
+        && let Some(segment) = segment
+    {
+        let mut list = stingers.to_vec();
+        list.push(wce_audio_format::hirc::Stinger {
+            trigger_id: wce_audio_format::fnv::id(fields.0.trim()),
+            segment_id: segment,
+            sync_play_at: 2,
+            cue_filter_hash: 0,
+            dont_repeat_time: 0,
+            segment_look_ahead: 0,
+        });
+        requests.push(Request::SetStingers(id, list));
+        *fields = (String::new(), String::new());
+    }
+    gui::end_disabled();
+}
+
 /// A music switch's paths of states and what each plays, each one settable to another music object (a name or #ID).
 fn music_switch_view(
     id: u32,
@@ -1540,6 +1725,15 @@ fn music_switch_view(
         }
         if gui::is_item_hovered() {
             gui::set_tooltip("Selects what it plays.");
+        }
+        if lib.object(*target).is_some_and(|(_, o, _)| o.kind == 13) {
+            gui::same_line();
+            if gui::small_button("New music...") {
+                requests.push(Request::PathMusic(id, keys.clone(), *target));
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Picks a sound file: a new playlist of it (set up like this one) plays for these states instead.");
+            }
         }
         gui::same_line();
         if field.0 != i {

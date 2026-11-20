@@ -38,17 +38,59 @@ pub struct Stinger {
     pub segment_look_ahead: u32,
 }
 
-/// When moving from one music object to another, how to leave the source and enter the destination. The source rule (21
-/// bytes), destination rule (24 bytes) and transition segment (30 bytes) are kept as bytes.
+/// When moving from one music object to another, how to leave the source and enter the destination (Wwise 2014's
+/// `AkMusicTransitionRule`: sources and destinations, -1 for any, 0 for nothing).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransitionRule {
     pub sources: Vec<u32>,
     pub destinations: Vec<u32>,
-    pub source_rule: [u8; 21],
-    pub destination_rule: [u8; 24],
+    pub source_rule: SourceRule,
+    pub destination_rule: DestinationRule,
     pub transition_flag: u8,
-    /// Present when the flag is 1.
-    pub transition_object: Option<[u8; 30]>,
+    /// A segment played between them; present when the flag is 1.
+    pub transition_object: Option<TransitionObject>,
+}
+
+/// A fade: its length (ms), curve (Wwise's interpolation: 0 log3, 1 sine, 2 log1, 3 inverted S, 4 linear, 5 S, 6 exp1, 7 sine
+/// reciprocal, 8 exp3, 9 constant) and offset (ms).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Fade {
+    pub time: i32,
+    pub curve: u32,
+    pub offset: i32,
+}
+
+/// How the source is left (21 bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceRule {
+    pub fade: Fade,
+    /// When: 0 immediate, 1 next grid, 2 next bar, 3 next beat, 4 next cue, 5 next custom cue, 6 entry cue, 7 exit cue, 9 last exit
+    /// position.
+    pub sync: u32,
+    pub cue_filter: u32,
+    pub play_post_exit: u8,
+}
+
+/// How the destination is entered (24 bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestinationRule {
+    pub fade: Fade,
+    pub cue_filter: u32,
+    pub jump_to: u32,
+    /// Where: 0 entry cue, 1 same time as the source, 2 random cue, 3 random custom cue, 4 last exit position.
+    pub entry: u16,
+    pub play_pre_entry: u8,
+    pub match_source_cue_name: u8,
+}
+
+/// The segment played between source and destination (30 bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransitionObject {
+    pub segment_id: u32,
+    pub fade_in: Fade,
+    pub fade_out: Fade,
+    pub play_pre_entry: u8,
+    pub play_post_exit: u8,
 }
 
 /// Kind 10: a music segment: tracks (its children) on a timeline.
@@ -213,10 +255,28 @@ fn read_rules(r: &mut Reader) -> Result<Vec<TransitionRule>> {
         .map(|_| {
             let sources = ids32(r)?;
             let destinations = ids32(r)?;
-            let source_rule = r.array()?;
-            let destination_rule = r.array()?;
+            let fade = |r: &mut Reader| -> Result<Fade> { Ok(Fade { time: r.u32()? as i32, curve: r.u32()?, offset: r.u32()? as i32 }) };
+            let source_rule = SourceRule { fade: fade(r)?, sync: r.u32()?, cue_filter: r.u32()?, play_post_exit: r.u8()? };
+            let destination_rule = DestinationRule {
+                fade: fade(r)?,
+                cue_filter: r.u32()?,
+                jump_to: r.u32()?,
+                entry: r.u16()?,
+                play_pre_entry: r.u8()?,
+                match_source_cue_name: r.u8()?,
+            };
             let transition_flag = r.u8()?;
-            let transition_object = if transition_flag == 1 { Some(r.array()?) } else { None };
+            let transition_object = if transition_flag == 1 {
+                Some(TransitionObject {
+                    segment_id: r.u32()?,
+                    fade_in: fade(r)?,
+                    fade_out: fade(r)?,
+                    play_pre_entry: r.u8()?,
+                    play_post_exit: r.u8()?,
+                })
+            } else {
+                None
+            };
             Ok(TransitionRule { sources, destinations, source_rule, destination_rule, transition_flag, transition_object })
         })
         .collect()
@@ -227,11 +287,29 @@ fn write_rules(w: &mut Vec<u8>, rules: &[TransitionRule]) {
     for rule in rules {
         put_ids32(w, &rule.sources);
         put_ids32(w, &rule.destinations);
-        w.extend_from_slice(&rule.source_rule);
-        w.extend_from_slice(&rule.destination_rule);
+        let put_fade = |w: &mut Vec<u8>, f: &Fade| {
+            w.put_u32(f.time as u32);
+            w.put_u32(f.curve);
+            w.put_u32(f.offset as u32);
+        };
+        let (s, d) = (&rule.source_rule, &rule.destination_rule);
+        put_fade(w, &s.fade);
+        w.put_u32(s.sync);
+        w.put_u32(s.cue_filter);
+        w.put_u8(s.play_post_exit);
+        put_fade(w, &d.fade);
+        w.put_u32(d.cue_filter);
+        w.put_u32(d.jump_to);
+        w.put_u16(d.entry);
+        w.put_u8(d.play_pre_entry);
+        w.put_u8(d.match_source_cue_name);
         w.put_u8(rule.transition_flag);
-        if let Some(object) = &rule.transition_object {
-            w.extend_from_slice(object);
+        if let Some(o) = &rule.transition_object {
+            w.put_u32(o.segment_id);
+            put_fade(w, &o.fade_in);
+            put_fade(w, &o.fade_out);
+            w.put_u8(o.play_pre_entry);
+            w.put_u8(o.play_post_exit);
         }
     }
 }
