@@ -24,6 +24,8 @@ pub struct EditSet {
     pub loose: BTreeMap<String, Vec<u8>>,
     /// Names given to new objects (new events), by ID.
     pub names: BTreeMap<u32, String>,
+    /// New IDs start from this instead of the clock, so an export makes the same IDs every time (the Cinematic tool's movies).
+    pub id_seed: Option<u32>,
 }
 
 impl EditSet {
@@ -256,7 +258,10 @@ impl EditSet {
 
     /// An unused ID for a new object or media file.
     pub(crate) fn new_id(&self, lib: &SoundLibrary, salt: u32) -> u32 {
-        let mut id = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u32) ^ salt) | 1;
+        let start = self
+            .id_seed
+            .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u32));
+        let mut id = (start ^ salt) | 1;
         loop {
             id = (id.wrapping_mul(2_654_435_761) ^ (id >> 15)) & 0x3FFF_FFFF;
             let used = lib.has_object(id)
