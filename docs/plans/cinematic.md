@@ -4,7 +4,7 @@ One editor, one scene model, two outputs: a **game-ready movie** (`.ca_vp8` with
 the editor, and a **historical battle** (battle XML, Lua, DB rows, loc, sounds) that the game plays. Plus a movie viewer and editor for
 the game's own movies. Everything on a timeline is keyed: moving the timeline gives the same picture every time.
 
-State: decided with the user 2026-11-20 (the grilling, decisions below); static spikes done the same day (findings below). Nothing
+State: decided with the user 2026-11-20 (the grilling, decisions below); static spikes done the same day (findings below; the CAMV survey, the camera methods and the node canvas binding added later that day). Nothing
 built. Waits on the Audio plan's bank writer (user: audio first).
 
 ## Decisions (user, 2026-11-20)
@@ -63,8 +63,15 @@ built. Waits on the Audio plan's bank writer (user: audio first).
   tick, so times are quantised to 100 ms: a baked camera segment is at least one tick.
 - **`wait_for_vo()` / `wait_for_advisor()` shift every later action** by 500 ms steps while a sound plays: an exported clip must never
   use them, or its timeline stops being keyed.
-- Camera: `cam:move_to(pos, target, seconds, blend, fov)` in the vanilla scripts; the library calls it with 7 arguments
-  (`..., false, 0, 0, 0)`): the last two are not known. `cam:fade(out, seconds)`.
+- Camera (the battle camera's Lua methods, table at RVA 0x1d22ea0): `look_at`, `move_to`, `position`, `target`,
+  `enable_functionality`, `disable_functionality`, `change_depth_of_field`, `fade`, `change_height_range`, `enable_shake`,
+  `disable_shake`, `enable_anchor_to_army`, `disable_anchor_to_army`.
+  - `move_to` (RVA 0x1abaa0): 3 to 7 arguments: position, target (vectors), duration (s), a flag (the scripts' "blend"), the field
+    of view in **degrees** (multiplied by pi / 180; default -1, read as "keep"), then two more numbers, default -1, not known. The
+    vanilla scripts pass 5 (fov 33 to 45); the library's skip and restore pass `false, 0, 0, 0`.
+  - `change_depth_of_field` (RVA 0x1abe60): a duration alone, or duration, focus distance, focal length, blur size. So depth of
+    field can be keyed in battle cutscenes too, not only in movies.
+  - `fade(out, seconds)`.
 - Subtitles: `cutscene:subtitles():set_text(key)` / `clear()`; the key is a `scripted_subtitles` row (`key`, `character_for_vo`), its
   text the loc `scripted_subtitles_localised_text_<key>`.
 - Sounds: `new_sfx("<Wwise event>")`, `cutscene:play_sound(sfx)`, `stop_sound(sfx)`.
@@ -88,17 +95,27 @@ built. Waits on the Audio plan's bank writer (user: audio first).
 
 ### Movies
 
-- `movies.pack`: 153 `.ca_vp8`. The container: `CAMV`, a short header with `VP80`, width, height (1920 x 1080), milliseconds
-  per frame as f32 (33.33: 30 fps), the frame count and the offset of a frame table at the end; then raw VP8 frames
-  (**ASSUMPTION**: field layout read from one file's bytes; RPFM converts CAMV <-> IVF, `set_video_format`, which is the reference).
-  No audio inside.
+- `movies.pack`: 153 `.ca_vp8`: 19 at 1920 x 1080 (the intro and the seals), 134 at 380 x 214 (one at 213; the campaign event
+  pictures, `CAMPAIGN_ESTABLISH`); all 30 fps. No audio inside. TDD's `tdd_intro` is 1920 x 1080, 2,880 frames.
+- The container, as rpfm_lib's `files::video` reads it (`ca_vp8.rs`): `CAMV`, version u16, header length - 8 u16, `VP80`, width
+  and height u16, ms per frame f32, a u32 always 1, the frame count (or count - 1), the frame table's offset, the frame count, the
+  largest frame's size; when the two counts are equal, 9 more bytes (u8, u32, u32); then the VP8 frames; then the table, per frame
+  offset u32, size u32 (and a third u32 in 13-byte entries), key frame u8.
+- Survey of all 154 (2026-11-20, `tools\camv_survey.py` in the scratch folder): one layout only: version 0, header length field 32
+  (data at 40), count - 1, no extra bytes, 9-byte entries, frames contiguous in table order, every table key flag equal to the VP8
+  frame tag's, the largest-size field right. rpfm_lib's writer, simulated on each, gives **every file back byte for byte**. So the
+  editor uses rpfm_lib's `Video` (already a dependency) and needs no parser of its own; a gate confirms it with the real code. The
+  writer is not lossless for the variants Attila doesn't use (13-byte entries lose their third u32, out-of-order frames are
+  rewritten in order): a fix to port to rpfm_lib if another game has them.
 - `videos` (`video_name`, `video_type` FULLSCREEN_INTRO / CAMPAIGN_ESTABLISH / FULLSCREEN_FRONTEND, `audio_tracks`, `script_ref`);
   `movie_event_strings` (event, culture, movie, id).
 - Audio: the Wwise event `Play_Movie_<name>` (the engine's prefix), vanilla's in `global_movies.bnk` (`music.pack`).
 - Subtitles: `subtitle_timings` (`language`, `subtitle_field`, `text_section`, `foreign_key` = the movie, `start`, `end`,
   `script_id` = the video's `script_ref`, `text_id`), text in `vo_fmv_texts.loc`: one entry per movie
-  (`vo_fmv_texts_text_<movie>`), its sections separated by `|`, section *n* shown from `start` to `end`. **ASSUMPTION**: those are
-  frames at the movie's rate (att_seal_3: 2,163 frames, last subtitle ends at 1,841).
+  (`vo_fmv_texts_text_<movie>`), its sections separated by `|`, section *n* shown from `start` to `end`, in **frames** (30 fps):
+  in all 17 movies of `movies.pack` with subtitles the last `end` is 90 to 95 % of the frame count (intro 4,709 of 5,152); read as
+  tenths of a second they would run past the movie. The other 10 subtitle sets are the Belisarius and Charlemagne campaigns' movies,
+  not in `movies.pack`.
 - TDD's own: `intro.pack` (`movies/tdd_intro.ca_vp8` + a `videos` row), and the campaign flybys (`*_flyby.pack`: faction intro Lua
   + advisor `.wem` lines + advice rows): campaign camera scripts, a later output if wanted.
 
@@ -106,9 +123,11 @@ built. Waits on the Audio plan's bank writer (user: audio first).
 
 - `wce_cinematic`: the headless model: project, clips, tracks, keys, capability flags, `evaluate(clip, t)` as a pure function, the
   node graph, the compilers (battle XML, Lua, DB rows, loc), save/load.
-- `wce_formats::ca_vp8`: the CAMV container (read, write, round trip byte for byte).
+- The CAMV container: rpfm_lib's `files::video::Video` (see Movies); no parser of our own.
 - `wce_video`: libvpx (decode, encode), built from source like aoTuV.
 - `wce_cinematic_tool`: the UI (timeline, viewport, node canvas, movie viewer), publishing into the shared scene like every tool.
+  The node canvas: `dear-imnodes` 0.20.0 (MIT OR Apache-2.0; imnodes itself MIT), the same project and version as the
+  `dear-imgui-rs` 0.20 the editor uses; added when step 7 starts.
 - Reused: `wce_audio` (the timeline player, mixdown, bank writer), `wce_render` (units, weather, the frame), Map context, Launch in
   game, `wce_weather` (environments).
 
@@ -133,11 +152,15 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    5. Cindy: the Lua methods and their arguments found; no scene file in Attila, its kit or TDD. **parked**: resume only if a sample
       turns up (another Warscape game's Cindy scenes, a CA leak of the format); until then battles use orders and teleports.
    6. A `battles` row whose XML uses `tile_map_position` (vanilla's all use `terrain/battles/<name>/`). **todo** (in game)
-   7. `cam:move_to`'s last two arguments and its fov unit. **todo**
-   8. The CAMV layout against RPFM's converter, a byte-for-byte round trip over `movies.pack`. **todo**
-   9. An imnodes binding for dear-imgui-rs 0.20 (exists, or a thin one of our own). **todo**
-   10. libvpx built from source on the three platforms; licence in `THIRD_PARTY.md`. **todo**
-2. **Movie viewer.** **todo** (first milestone): a movie from any pack, decoded (CAMV -> VP8 -> frames), its `Play_Movie_<name>` audio
+   7. `cam:move_to`'s arguments. **partial**: fov in degrees, -1 keeps; the last two numbers not known (they stay -1 on export).
+      Found on the way: `change_depth_of_field` (above).
+   8. The CAMV layout against rpfm_lib, a byte-for-byte round trip. **done** (simulated in Python on all 154 movies, see Movies);
+      the same check on rpfm_lib's own code is step 2's gate.
+   9. An imnodes binding for dear-imgui-rs 0.20. **done**: `dear-imnodes` 0.20.0 (see Crates).
+   10. libvpx built from source on the three platforms; licence in `THIRD_PARTY.md`. **todo** (the source download needs the user's
+       go-ahead, as aoTuV's did)
+2. **Movie viewer.** **todo** (first milestone): a movie from any pack (the 380 x 214 event pictures too), decoded (rpfm_lib's `Video`
+   -> VP8 frames -> libvpx), gate: every movie of `movies.pack` round-trips byte for byte through rpfm_lib; its `Play_Movie_<name>` audio
    through the audio layer in sync, its subtitles from `subtitle_timings` + `vo_fmv_texts` in the chosen language; scrub, frame step.
 3. **Scene model and timeline.** **todo**: the project folder, clips, tracks (camera, units, sound, music, subtitles, VFX, weather,
    fades/letterbox, DOF), keys, capability flags, `evaluate(clip, t)` pure, undo, autosave.
@@ -149,7 +172,7 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    `Play_Movie_<name>` event (bank writer); `videos`, `subtitle_timings` rows and `vo_fmv_texts` loc in every language; a pack.
 6. **Battle export: setup and cutscenes.** **todo**: the battle XML (armies from the scene's units, deployment areas,
    `tile_map_position`, the weather or a written `.environment`); each clip -> a `cutscene` (actions on 100 ms ticks, the camera
-   baked into `move_to` segments, never `wait_for_vo`, subtitles as `scripted_subtitles` rows + loc, sounds as `new_sfx` events,
+   baked into `move_to` segments with their field of view, depth of field through `change_depth_of_field`, never `wait_for_vo`, subtitles as `scripted_subtitles` rows + loc, sounds as `new_sfx` events,
    music); the test launch through Launch in game.
 7. **Battle logic node graph.** **todo**: the imnodes canvas; events (battle phase, timer, zone entered, unit routed / killed / below
    N men, cutscene ended, objective done), conditions, actions (orders, reinforcements, AI planner, patrols, objectives, advisor,
