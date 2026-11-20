@@ -1,0 +1,19 @@
+[package]
+name = "wce_cinematic_tool"
+description = "The Cinematic tool (docs/plans/cinematic.md): the movie viewer, then the keyed scene editor and its exports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_audio = { path = "../wce_audio" }
+# The SDL audio player (the Audio tool's).
+wce_audio_tool = { path = "../wce_audio_tool" }
+wce_cinematic = { path = "../wce_cinematic" }
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_vfs = { path = "../wce_vfs" }
+wce_video = { path = "../wce_video" }
+
+[lints]
+workspace = true

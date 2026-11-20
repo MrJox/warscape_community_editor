@@ -77,6 +77,8 @@ run audio_encode      ex wce_audio audio_encode_check                   # every 
 run audio_edit        ex wce_audio audio_edit_check "$GAME"             # replace / add / remove / property edits keep the banks consistent
 run audio_music       ex wce_audio audio_music_check "$GAME"            # playlist entries added / removed, segments replaced, item weights
 run audio_recipes     ex wce_audio audio_recipes_check "$GAME"          # music named by its switches, animation sounds (existing / new), culture lines
+run video_check       ex wce_video video_check "$GAME"                  # every movie written back byte for byte through rpfm_lib and decoded; an encoded clip read back (docs/plans/cinematic.md)
+run movie_catalog     ex wce_cinematic movie_catalog_check "$GAME"      # every movie with its videos row, sound event versions and subtitles inside its frames
 run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)
 run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
 run unit_db           ex wce_unit_tool unit_db_check "$OUT/unit_db"   # the Unit tool's DB files: game rows read back, files written again to the same bytes
@@ -171,6 +173,7 @@ if [ "$RENDER" = 1 ]; then
     run weather_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/weather_check.sh" "$OUT/weather_tool_check"   # the weather tool of wce.exe scripted: documents, structural edits, save (minimal edit), weather database, capture; two runs identical
     run tile_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/tile_check.sh" "$OUT/tile_tool_check"   # the tile tool of wce.exe scripted: edits, undo, mouse and keys, save (minimal edit, byte-identical round trip, .bak); two runs identical
     run tile_entry_script env WCE_BIN="$WB" bash "$ROOT/scripts/tile_entry_run.sh" "$OUT/tile_entry_script"   # the tile tool opens tiles by entry, name, folder and tile.ted; assert_entry; the tile browser's rows
+    run cinematic_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cinematic_check.sh" "$OUT/cinematic_tool_check"   # the Cinematic tool scripted: movies opened, seeks, playback on the fixed clock, subtitles; two runs identical
     run cross_tool_check env WCE_BIN="$WB" bash "$ROOT/scripts/cross_tool_check.sh" "$OUT/cross_tool_check"   # wce.exe scripted: a tile lit by a weather file of the packs, then that file open at once and edited live, one edit in each, the unsaved-changes prompts, Save All writes only the two edited spans; two runs identical
     run render_check  ex wce_render render_check   # scene, picking, terrain, overlays and capture through a headless D3D11 device
 fi

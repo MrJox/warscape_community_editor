@@ -4,8 +4,9 @@ One editor, one scene model, two outputs: a **game-ready movie** (`.ca_vp8` with
 the editor, and a **historical battle** (battle XML, Lua, DB rows, loc, sounds) that the game plays. Plus a movie viewer and editor for
 the game's own movies. Everything on a timeline is keyed: moving the timeline gives the same picture every time.
 
-State: decided with the user 2026-11-20 (the grilling, decisions below); static spikes done the same day (findings below; the CAMV survey, the camera methods and the node canvas binding added later that day). Nothing
-built. Waits on the Audio plan's bank writer (user: audio first).
+State: decided with the user 2026-11-20 (the grilling, decisions below); static spikes done the same day (findings below; the CAMV survey, the camera methods and the node canvas binding added later that day). The Audio plan's bank writer
+landed (its steps 4 to 8), so work started the same day (user: run unattended): the video layer and the movie viewer are built
+(steps 1.10 and 2).
 
 ## Decisions (user, 2026-11-20)
 
@@ -109,7 +110,10 @@ built. Waits on the Audio plan's bank writer (user: audio first).
   rewritten in order): a fix to port to rpfm_lib if another game has them.
 - `videos` (`video_name`, `video_type` FULLSCREEN_INTRO / CAMPAIGN_ESTABLISH / FULLSCREEN_FRONTEND, `audio_tracks`, `script_ref`);
   `movie_event_strings` (event, culture, movie, id).
-- Audio: the Wwise event `Play_Movie_<name>` (the engine's prefix), vanilla's in `global_movies.bnk` (`music.pack`).
+- Audio: the Wwise event `Play_Movie_<name>` (the engine's prefix), vanilla's in `global_movies.bnk` (`music.pack`). Each plays a
+  switch container on the speaker setup: `stereo` (a 2-channel WEM), `surround` (a 5.1 one) and `None` (the surround one again),
+  both 48 kHz and as long as the movie (intro: 173.3 s for 171.7 s of pictures); the SEGA sting plays one stereo sound. 34 of the
+  388 movies the game loads have sound; 27 have subtitles (`movie_catalog_check`).
 - Subtitles: `subtitle_timings` (`language`, `subtitle_field`, `text_section`, `foreign_key` = the movie, `start`, `end`,
   `script_id` = the video's `script_ref`, `text_id`), text in `vo_fmv_texts.loc`: one entry per movie
   (`vo_fmv_texts_text_<movie>`), its sections separated by `|`, section *n* shown from `start` to `end`, in **frames** (30 fps):
@@ -121,10 +125,14 @@ built. Waits on the Audio plan's bank writer (user: audio first).
 
 ## Crates
 
-- `wce_cinematic`: the headless model: project, clips, tracks, keys, capability flags, `evaluate(clip, t)` as a pure function, the
+- `wce_cinematic`: `movies` (the catalog: movies, `videos` types, the sound event's versions, subtitles by language); the headless model: project, clips, tracks, keys, capability flags, `evaluate(clip, t)` as a pure function, the
   node graph, the compilers (battle XML, Lua, DB rows, loc), save/load.
 - The CAMV container: rpfm_lib's `files::video::Video` (see Movies); no parser of our own.
-- `wce_video`: libvpx (decode, encode), built from source like aoTuV.
+- `wce_video`: libvpx 1.16.0's VP8 encoder and decoder, vendored as plain C in `third_party/libvpx` (`scripts/vendor_libvpx.py`
+  writes what libvpx's configure would for a generic C target: no assembler, gcc or make needed) and built by `build.rs` with cc;
+  a C shim (`src/shim.c`) keeps libvpx's structs out of Rust. `Decoder`, `Encoder` (one pass, constrained quality, alt-ref
+  look-ahead), `I420` <-> RGBA (BT.601 video range, **ASSUMPTION** for the game's movies), `Movie` (rpfm_lib's `Video`; new movies
+  go through IVF, and 30 fps is written as vanilla's 33.333 ms).
 - `wce_cinematic_tool`: the UI (timeline, viewport, node canvas, movie viewer), publishing into the shared scene like every tool.
   The node canvas: `dear-imnodes` 0.20.0 (MIT OR Apache-2.0; imnodes itself MIT), the same project and version as the
   `dear-imgui-rs` 0.20 the editor uses; added when step 7 starts.
@@ -140,8 +148,8 @@ Scratch work (not in the repo, may be lost on a reboot; the findings that matter
 `%TEMP%\claude\c3aa9bd9b1039f6c\235db9f9-a566-4b6b-8909-603929d37216\scratchpad\` — `hb\` two vanilla historical battles, `lib\` the
 battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tables and loc, `mv\` one movie.
 
-0. **Prerequisites.** **blocked** (the Audio plan's bank writer: user chose audio first)
-   1. The Audio plan's bank writer (new events in a bank, `global_movies` override). **blocked** (audio.md)
+0. **Prerequisites.** **partial**
+   1. The Audio plan's bank writer (new events in a bank, `global_movies` override). **done** (audio.md steps 4 to 8)
    2. Units step 8 (close-ups) only as the scenes need it. **todo**
 1. **Spikes.** **partial**
    1. The Historical Battles menu: tables, loc, screenshot (above). **done** (static); an exported battle seen in the menu: **todo**
@@ -157,11 +165,19 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    8. The CAMV layout against rpfm_lib, a byte-for-byte round trip. **done** (simulated in Python on all 154 movies, see Movies);
       the same check on rpfm_lib's own code is step 2's gate.
    9. An imnodes binding for dear-imgui-rs 0.20. **done**: `dear-imnodes` 0.20.0 (see Crates).
-   10. libvpx built from source on the three platforms; licence in `THIRD_PARTY.md`. **todo** (the source download needs the user's
-       go-ahead, as aoTuV's did)
-2. **Movie viewer.** **todo** (first milestone): a movie from any pack (the 380 x 214 event pictures too), decoded (rpfm_lib's `Video`
-   -> VP8 frames -> libvpx), gate: every movie of `movies.pack` round-trips byte for byte through rpfm_lib; its `Play_Movie_<name>` audio
-   through the audio layer in sync, its subtitles from `subtitle_timings` + `vo_fmv_texts` in the chosen language; scrub, frame step.
+   10. libvpx built from source; licence in `THIRD_PARTY.md`. **done** on Windows (MSVC, 2026-11-20; the source fetched from
+       chromium.googlesource.com at tag v1.16.0 under the user's "run unattended"); Linux and macOS not built yet (plain C, no
+       platform code but `vpx_pthread.h`'s, so expected to build).
+2. **Movie viewer.** **done** (2026-11-20) but for listening: the Cinematic tool (`wce_cinematic_tool`, feature `cinematic` of
+   `wce_app`, in the default set): Movies (every `.ca_vp8` by `videos` type, a filter) and Movie (the picture fitted, subtitles at
+   the bottom centre, play / pause, frame steps, the scrub bar, the subtitle language, the sound version, volume). Live: a worker
+   decodes, the sound drives the clock while it plays (the Audio tool's SDL player). Scripted: the fixed step drives the viewer's own
+   clock (the editor's ticks only with a viewport) and frames decode on the spot. Commands `movie_open`, `movie_seek`,
+   `movie_play`, `movie_pause`, `movie_language`, `movie_info`, `assert_movie <frame> [text]`.
+   Gates: `video_check` (all 388 movies of Attila with its DLC give their bytes back through rpfm_lib's own code and decode, 67,694
+   frames: every frame of the small ones, the first 120 of the large; a synthetic clip encodes, is written as CAMV and decodes back
+   at 51 dB luma PSNR), `movie_catalog_check`, `scripts/cinematic_check.sh` (render: two scripted runs, identical shots).
+   Not checked: the sound by ear and its sync with the pictures in live playback (user).
 3. **Scene model and timeline.** **todo**: the project folder, clips, tracks (camera, units, sound, music, subtitles, VFX, weather,
    fades/letterbox, DOF), keys, capability flags, `evaluate(clip, t)` pure, undo, autosave.
 4. **Scene preview.** **todo**: a campaign-map position through Map context; weather keyed (blending two environments is the editor's

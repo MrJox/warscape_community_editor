@@ -1,0 +1,30 @@
+# The Cinematic tool's movie viewer (docs/plans/cinematic.md, step 2), run by scripts/cinematic_check.sh twice in throw-away settings.
+tool cinematic
+layout reset
+frames 3
+movie_open intro
+movie_seek 400
+frames 3
+assert_movie 400 Ah Rome
+shot "%SHOT1%"
+frames 2
+movie_open att_seal_3
+movie_seek 300
+frames 3
+assert_movie 300
+movie_play
+frames 60
+movie_pause
+frames 2
+# 60 frames played, plus the frame the pause waits for: 300.5 frames + 62 / 60 s at 30 fps.
+assert_movie 331
+movie_open sega_logo_sting_hd
+movie_seek 74
+frames 3
+assert_movie 74
+movie_open att_evpic_all_attila_dies
+movie_seek 0
+frames 3
+assert_movie 0
+shot "%SHOT2%"
+quit
