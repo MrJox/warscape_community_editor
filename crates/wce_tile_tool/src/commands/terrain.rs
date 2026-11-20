@@ -618,10 +618,37 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "biome_brush",
-        "biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> [<x m> <z m>]...",
+        "biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> [<x m> <z m>]... | held <add|erase> <radius m> <x m> <z m>...",
         "one stroke of the biome brush through ground points: add grows the area under the first point (else makes a new one of the biome), erase takes away from it",
         |e, a| {
-            let usage = "usage: biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> ...";
+            let usage = "usage: biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> ... | biome_brush held <add|erase> <radius m> <x m> <z m> ...";
+
+            // The tool's own stroke through the points, left open (as while the mouse is held): what it shows on the way.
+            if a.first().is_some_and(|w| w == "held") {
+                let (Some(what), Some(radius)) = (a.get(1).cloned(), a.get(2).and_then(|v| number(v))) else { return fail(usage) };
+                let pts = a[3..].chunks(2).filter_map(|p| Some((number(p.first()?)?, number(p.get(1)?)?))).collect::<Vec<_>>();
+                if pts.is_empty() {
+                    return fail(usage);
+                }
+
+                return with_tile(e, |t, e| {
+                    t.open_biomes();
+                    t.biomes.brush = true;
+                    t.biomes.radius = radius;
+                    for (k, &(x, z)) in pts.iter().enumerate() {
+                        t.cursor.x = x;
+                        t.cursor.z = z;
+                        if k == 0 {
+                            t.begin_biome_stroke(e, what == "erase");
+                        } else {
+                            t.biome_dab(e);
+                        }
+                    }
+
+                    ok(format!("biome brush: a stroke held ({})", t.biome_stroke_state()))
+                });
+            }
+
             let (Some(what), Some(name), Some(radius)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).and_then(|v| number(v))) else {
                 return fail(usage);
             };

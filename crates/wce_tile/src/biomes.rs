@@ -536,11 +536,51 @@ pub fn polygon_area(poly: &[(f32, f32)]) -> f32 {
     ((0..n).map(|i| poly[i].0 * poly[(i + 1) % n].1 - poly[(i + 1) % n].0 * poly[i].1).sum::<f32>() * 0.5).abs()
 }
 
-/// An area touched up by a brush stroke: the area's polygon (none: a new area) with circles of `radius` at `dabs` added (or taken away,
-/// `erase`), on a grid of `cell` metres; the outlines of what is left, the largest first, simplified (no point off the cells' outline by
-/// more than about a cell). Holes are left out (an area is one polygon), and so are pieces under four cells.
+/// A simple polygon (no holes, not crossing itself; either winding) as triangles of its points, by ear clipping. Fewer than three
+/// points: none.
 #[must_use]
-pub fn stroke_outline(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, erase: bool, cell: f32) -> Vec<Vec<(f32, f32)>> {
+pub fn triangulate(poly: &[(f32, f32)]) -> Vec<[usize; 3]> {
+    let n = poly.len();
+    if n < 3 {
+        return vec![];
+    }
+
+    // Counter-clockwise (x right, z up): an ear's corner turns left.
+    let signed = (0..n).map(|i| poly[i].0 * poly[(i + 1) % n].1 - poly[(i + 1) % n].0 * poly[i].1).sum::<f32>();
+    let mut idx: Vec<usize> = if signed >= 0.0 { (0..n).collect() } else { (0..n).rev().collect() };
+    let cross = |a: (f32, f32), b: (f32, f32), c: (f32, f32)| (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+    let inside = |p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)| {
+        cross(a, b, p) >= 0.0 && cross(b, c, p) >= 0.0 && cross(c, a, p) >= 0.0
+    };
+
+    let mut out = Vec::with_capacity(n - 2);
+    let mut guard = 0;
+    while idx.len() > 3 && guard < n * n {
+        guard += 1;
+        let m = idx.len();
+        let ear = (0..m).find(|&k| {
+            let (a, b, c) = (poly[idx[(k + m - 1) % m]], poly[idx[k]], poly[idx[(k + 1) % m]]);
+            cross(a, b, c) > 0.0
+                && idx.iter().enumerate().all(|(j, &q)| j == k || j == (k + m - 1) % m || j == (k + 1) % m || !inside(poly[q], a, b, c))
+        });
+
+        // None left (a degenerate outline): its corners as a fan, rather than nothing.
+        let k = ear.unwrap_or(1);
+        out.push([idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]]);
+        idx.remove(k);
+    }
+
+    if idx.len() == 3 {
+        out.push([idx[0], idx[1], idx[2]]);
+    }
+
+    out
+}
+
+/// The cells an area touched up by a brush stroke fills ([`stroke_outline`]'s grid, holes and small pieces kept): what a stroke under way
+/// shows. None when nothing is.
+#[must_use]
+pub fn stroke_cells(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, erase: bool, cell: f32) -> Option<StrokeCells> {
     let cell = cell.max(0.1);
     let (mut x0, mut x1, mut z0, mut z1) = (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY);
     for &(x, z) in area {
@@ -554,7 +594,7 @@ pub fn stroke_outline(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, era
     }
 
     if !x0.is_finite() {
-        return vec![];
+        return None;
     }
 
     // A cell of margin all round, so that every outline closes inside the grid.
@@ -586,6 +626,27 @@ pub fn stroke_outline(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, era
             }
         }
     }
+
+    Some(StrokeCells { x0: ox, z0: oz, cell, nx, nz, filled })
+}
+
+/// A grid of cells over an area (row by row along +z, `x0`, `z0` its corner, `cell` metres a side), filled or not.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StrokeCells {
+    pub x0: f32,
+    pub z0: f32,
+    pub cell: f32,
+    pub nx: usize,
+    pub nz: usize,
+    pub filled: Vec<bool>,
+}
+
+/// An area touched up by a brush stroke: the area's polygon (none: a new area) with circles of `radius` at `dabs` added (or taken away,
+/// `erase`), on a grid of `cell` metres; the outlines of what is left, the largest first, simplified (no point off the cells' outline by
+/// more than about a cell). Holes are left out (an area is one polygon), and so are pieces under four cells.
+#[must_use]
+pub fn stroke_outline(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, erase: bool, cell: f32) -> Vec<Vec<(f32, f32)>> {
+    let Some(StrokeCells { x0: ox, z0: oz, cell, nx, nz, filled }) = stroke_cells(area, dabs, radius, erase, cell) else { return vec![] };
 
     // The cells' boundary as directed edges between grid corners, the filled cell on their left (counter-clockwise round a filled region
     // seen from above with x right and z up): outer outlines run counter-clockwise, holes clockwise.
@@ -636,7 +697,7 @@ pub fn stroke_outline(area: &[(f32, f32)], dabs: &[(f32, f32)], radius: f32, era
         let world = pts.iter().map(|&(i, j)| (ox + i as f32 * cell, oz + j as f32 * cell)).collect::<Vec<_>>();
         let signed = signed_area(&world);
         if signed > 4.0 * cell * cell {
-            loops.push((signed, simplify(&world, cell * 0.75)));
+            loops.push((signed, simplify(&world, cell * 1.2)));
         }
     }
 
@@ -718,6 +779,26 @@ pub fn set_of(keys: &[&str]) -> VegetationSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_concave_outline_as_triangles() {
+        // An L: its area is the triangles', whichever way it winds.
+        let l = [(0.0, 0.0), (4.0, 0.0), (4.0, 1.0), (1.0, 1.0), (1.0, 3.0), (0.0, 3.0)];
+        let area = |poly: &[(f32, f32)]| {
+            triangulate(poly)
+                .iter()
+                .map(|t| {
+                    let (a, b, c) = (poly[t[0]], poly[t[1]], poly[t[2]]);
+                    ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)).abs() * 0.5
+                })
+                .sum::<f32>()
+        };
+        assert_eq!(triangulate(&l).len(), 4);
+        assert!((area(&l) - 6.0).abs() < 1e-5);
+        let reversed = l.iter().rev().copied().collect::<Vec<_>>();
+        assert!((area(&reversed) - 6.0).abs() < 1e-5);
+        assert!(triangulate(&l[..2]).is_empty());
+    }
 
     fn square(side: f32) -> Vec<(f32, f32)> {
         vec![(0.0, 0.0), (side, 0.0), (side, side), (0.0, side)]
