@@ -2791,6 +2791,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_video"
+version = "0.0.1"
+dependencies = [
+ "cc",
+ "rpfm_lib",
+ "thiserror",
+ "wce_vfs",
+]
+
+[[package]]
 name = "wce_walls"
 version = "0.0.1"
 dependencies = [
