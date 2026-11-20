@@ -10,6 +10,7 @@ use wce_audio_format::amb::Ambience;
 use wce_audio_format::fnv;
 use wce_audio_format::triggers::Triggers;
 use wce_editor::gui::{self, col32, v2};
+use wce_editor::icons;
 use wce_formats::anim_meta::Meta;
 use wce_vfs::files::Files;
 
@@ -176,7 +177,7 @@ impl AudioTool {
         for f in &frames {
             gui::push_id(&format!("f{}", f.entry));
             let (name, event) = frame_label(triggers, f);
-            if gui::small_button("Play") && !event.is_empty() {
+            if gui::small_button(icons::PLAY) && !event.is_empty() {
                 requests.push(Request::PlayObject(fnv::id(&event)));
             }
             gui::same_line();
@@ -255,7 +256,7 @@ impl AudioTool {
         gui::text_disabled(&format!("{} emitters, {} sounds", amb.emitters.len(), rows.len()));
         for (label, id, emitters, points) in rows {
             gui::push_id(&format!("a{id}"));
-            if gui::small_button("Play") {
+            if gui::small_button(icons::PLAY) {
                 requests.push(Request::PlayObject(id));
             }
             gui::same_line();
@@ -272,7 +273,7 @@ fn db_tab(db: &SoundDb, requests: &mut Vec<Request>) {
     if gui::collapsing_header(&format!("Events named by the tables ({})", events.len()), gui::TREE_DEFAULT_OPEN) {
         for (table, key, column, event) in &events {
             gui::push_id(&format!("{table}{key}{column}"));
-            if gui::small_button("Play") {
+            if gui::small_button(icons::PLAY) {
                 requests.push(Request::PlayObject(fnv::id(event)));
             }
             gui::same_line();

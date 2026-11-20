@@ -19,6 +19,7 @@ use wce_audio_format::bank::kind_name;
 use wce_audio_format::hirc::{MusicPlaylist, NodeBase, Object};
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, v2};
+use wce_editor::icons;
 use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_vfs::files::Files;
@@ -26,6 +27,7 @@ use wce_vfs::files::Files;
 use crate::player::Player;
 
 mod game_data;
+mod player_view;
 mod recipes_panel;
 
 /// What a click asked for; done after the panel is drawn.
@@ -35,7 +37,8 @@ enum Request {
     /// Play what an object plays (resolved on demand).
     PlayObject(u32),
     Select(u32),
-    Stop,
+    /// Play a media file from a point (0 to 1).
+    PlayFrom(MediaRef, String, f32),
     /// Replace a media file's audio with a sound file the user picks.
     Replace(u32),
     /// Add a sound file the user picks to a random/sequence container.
@@ -134,6 +137,13 @@ pub struct AudioTool {
     pending_animation: Option<String>,
     /// `audio_show`: a panel to bring to the front.
     pending_panel: Option<String>,
+    /// Where to start the sound being decoded (a click on a waveform), 0 to 1.
+    pending_seek: Option<f32>,
+    /// Waveforms of the sounds shown (Audio Object, the trees), by media ID; the one being decoded; the ones shown last frame
+    /// without a waveform yet, the first decoded next.
+    previews: HashMap<u32, Arc<Vec<f32>>>,
+    preview_loading: Option<(u32, Receiver<Vec<f32>>)>,
+    preview_wanted: Vec<MediaRef>,
     /// The New event field, and the object a Delete waits to be confirmed for.
     new_event_name: String,
     confirm_delete: Option<u32>,
@@ -199,6 +209,14 @@ impl AudioTool {
             self.apply_pending(&lib, e);
         }
 
+        if let Some((media, rx)) = &self.preview_loading
+            && let Ok(peaks) = rx.try_recv()
+        {
+            self.previews.insert(*media, Arc::new(peaks));
+            self.preview_loading = None;
+        }
+        self.start_preview();
+
         if let Some((name, rx, target)) = &self.encoding
             && let Ok(result) = rx.try_recv()
         {
@@ -238,8 +256,13 @@ impl AudioTool {
         {
             let label = label.clone();
             self.decoding = None;
-            match result.and_then(|pcm| self.player.play(&pcm, &label)) {
-                Ok(()) => {}
+            let seek = self.pending_seek.take();
+            match result.and_then(|pcm| self.player.play(Arc::new(pcm), &label)) {
+                Ok(()) => {
+                    if let Some(at) = seek {
+                        self.player.seek(at);
+                    }
+                }
                 Err(why) => e.status(&format!("cannot play {label}: {why}"), true),
             }
         }
@@ -268,7 +291,8 @@ impl AudioTool {
         if let Some(text) = self.pending.1.take() {
             self.search = text;
         }
-        for (token, expand) in [(self.pending.2.take(), false), (self.pending.3.take(), true)] {
+        // An expand first, so a select queued with it (both waiting for the library) keeps the selection.
+        for (token, expand) in [(self.pending.3.take(), true), (self.pending.2.take(), false)] {
             let Some(token) = token else { continue };
             match Self::find(lib, &token) {
                 Some((id, bank)) => {
@@ -323,7 +347,10 @@ impl AudioTool {
                         self.handle(e, vec![Request::PlayAny(tree)]);
                     }
                 }
-                Request::Stop => self.player.stop(),
+                Request::PlayFrom(media, label, at) => {
+                    self.pending_seek = Some(at);
+                    self.start_decode(e, &media, &label);
+                }
                 Request::Replace(media) => self.import(e, ImportTarget::Replace(media)),
                 Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
                 Request::AddMusic(playlist, after) => self.import(e, ImportTarget::AddMusic(playlist, after)),
@@ -378,17 +405,20 @@ impl AudioTool {
                 Request::Revert => {
                     if !self.edits.is_empty() {
                         self.undo.push(std::mem::take(&mut self.edits));
+                        self.forget_previews();
                         e.status("Audio: unsaved edits reverted (Undo brings them back)", false);
                     }
                 }
                 Request::Undo => {
                     if let Some(previous) = self.undo.pop() {
                         self.redo.push(std::mem::replace(&mut self.edits, previous));
+                        self.forget_previews();
                     }
                 }
                 Request::Redo => {
                     if let Some(next) = self.redo.pop() {
                         self.undo.push(std::mem::replace(&mut self.edits, next));
+                        self.forget_previews();
                     }
                 }
             }
@@ -411,6 +441,7 @@ impl AudioTool {
                     self.undo.remove(0);
                 }
                 self.redo.clear();
+                self.forget_previews();
                 e.status(&format!("Audio: {what}{note} (not saved yet)"), false);
             }
             Err(err) => e.status(&format!("Audio: cannot {}: {err}", what.trim_start_matches("removed ").trim_start_matches("set ")), true),
@@ -552,17 +583,7 @@ impl AudioTool {
         }
 
         // The player.
-        if let Some((label, _)) = &self.decoding {
-            gui::text_disabled(&format!("Decoding {label}..."));
-        } else if let Some(p) = self.player.progress() {
-            if gui::small_button("Stop") {
-                requests.push(Request::Stop);
-            }
-            gui::same_line();
-            gui::progress_bar(p, -1.0, &format!("{} ({:.1} s)", self.player.label, self.player.seconds));
-        } else {
-            gui::text_disabled("Nothing playing.");
-        }
+        self.player_strip(requests);
         gui::separator();
 
         // Edits: what is unsaved, and the import quality.
@@ -691,7 +712,7 @@ impl AudioTool {
                 if gui::begin_child("media", v2(0.0, 0.0), 0, 0) {
                     gui::clipped(media.len(), |row| {
                         let m = media[row];
-                        if gui::small_button(&format!("Play##m{}", m.id)) {
+                        if gui::small_button(&format!("{}##m{}", icons::PLAY, m.id)) {
                             requests.push(Request::Play(MediaRef::InBank { bank, id: m.id }, format!("#{}", m.id)));
                         }
                         gui::same_line();
@@ -725,7 +746,7 @@ impl AudioTool {
 
     /// An event (or dialogue event, music container): a Play button and a tree node that opens on what it plays.
     fn event_row(&mut self, label: &str, id: u32, requests: &mut Vec<Request>) {
-        if gui::small_button(&format!("Play##p{id}"))
+        if gui::small_button(&format!("{}##p{id}", icons::PLAY))
             && let Some(tree) = self.tree(id)
         {
             requests.push(Request::PlayAny(tree));
@@ -766,9 +787,12 @@ impl AudioTool {
         path.push(node.id);
         let key = path.iter().map(u32::to_string).collect::<Vec<_>>().join(".");
         if let Some(media) = &node.media {
-            if gui::small_button(&format!("Play##s{key}")) {
+            if gui::small_button(&format!("{}##s{key}", icons::PLAY)) {
                 requests.push(Request::Play(media.clone(), node.label.clone()));
             }
+            gui::same_line();
+            let peaks = self.peaks_of(media, false);
+            player_view::mini_waveform(peaks.as_deref().map(Vec::as_slice));
             gui::same_line();
             let where_ = match media {
                 MediaRef::InBank { bank, id } => format!("#{id} in {}", lib.as_ref().map_or("?", |l| l.banks[*bank].name.as_str())),
@@ -783,6 +807,10 @@ impl AudioTool {
             | gui::TREE_SPAN_AVAIL_WIDTH
             | if leaf { gui::TREE_LEAF | gui::TREE_NO_PUSH_ON_OPEN } else { 0 }
             | if self.selected == Some(node.id) && node.kind != 0 { gui::TREE_SELECTED } else { 0 };
+        // An event opened by `audio_expand` shows its first levels open, down to the sounds of most events.
+        if path.len() <= 4 && self.expand.is_some() && self.expand == path.first().copied() {
+            gui::set_next_item_open(true, gui::COND_APPEARING);
+        }
         let open = gui::tree_node_ex_id(&key, flags, &label);
         if node.kind != 0 && gui::is_item_clicked() && !gui::is_item_toggled_open() {
             requests.push(Request::Select(node.id));
@@ -906,6 +934,10 @@ impl AudioTool {
             None => gui::text_disabled("Not read field by field (this bank version or kind is kept as bytes)."),
             Some(object) => {
                 fields(object, &lib, requests);
+                if let Object::Sound(s) = object {
+                    let label = self.edits.names.get(&id).cloned().unwrap_or_else(|| lib.label(id, kind));
+                    self.sound_preview(&lib, &s.source, &label, requests);
+                }
                 edit_fields(id, object, requests);
                 if let Object::MusicPlaylist(playlist) = object {
                     playlist_view(id, playlist, &lib, &self.edits, requests);
@@ -1138,7 +1170,7 @@ fn playlist_view(id: u32, playlist: &MusicPlaylist, lib: &SoundLibrary, edits: &
                 Some(Object::MusicSegment(s)) => format!("{:.1} s", s.duration / 1000.0),
                 _ => "?".into(),
             };
-            if gui::small_button("Play") {
+            if gui::small_button(icons::PLAY) {
                 requests.push(Request::PlayObject(item.segment_id));
             }
             gui::same_line();

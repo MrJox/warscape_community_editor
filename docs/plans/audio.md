@@ -396,7 +396,22 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       `voiceover` / the DB junctions), which needs decision-tree insertion.
 9. **Player and visuals** (user, 2026-11-20): a nicer, more useful player: the sound's waveform (amplitude envelope) as the
    progress bar, as is common now; seek by clicking it; the bar reset when the sound ends; play / pause / stop, loop, volume;
-   waveforms next to sounds in the trees; overall polish of the Audio tool's panels (icons, colours, spacing). **todo**
+   waveforms next to sounds in the trees; overall polish of the Audio tool's panels (icons, colours, spacing). **done**
+   (2026-11-20; the controls by ear: user)
+   1. Player (`wce_audio_tool::player`): keeps the decoded sound, so it seeks, loops and replays; `peaks` (the loudest sample
+      of 600 slices, all channels) for the waveform; pause / resume, stop (back to the start, the sound stays loaded), loop,
+      volume 0 to 150 % (SDL stream gain); at the end it loops or goes back to the start (the bar resets). Unit test
+      `envelope`. **done**
+   2. Player strip (top of Audio Banks, `tool/player_view.rs`): play / pause, stop, loop, volume, time / length, the sound's
+      name, and its waveform as the progress bar (played part in the accent colour, a playhead); a click seeks and plays.
+      **done**
+   3. Waveforms: Audio Object shows a selected sound's waveform (a click plays from there); every sound row of the trees has a
+      small one. Read on a worker one at a time, only for what is shown, cached by media ID and read again after an edit,
+      undo or redo. Each column draws the loudest of the peaks it covers. **done**
+   4. Polish: Lucide icons on the Play buttons and the strip; `audio_expand` opens the event's first levels (down to the
+      sounds of most events), and a select queued with it keeps the selection. Seen in the app (screenshots, no sound played
+      by the unattended runs, 2026-11-20). **done**
+   5. To check by ear (user): pause, seek by clicking, loop, volume, and the bar reset at the end. **todo (user)**
 
 ## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)
 
