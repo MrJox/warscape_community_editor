@@ -23,6 +23,22 @@ use crate::{AudioError, Result, anim_sounds};
 
 /// The game's music playlists, each named by how the music switches above it choose it: the state values along the switch tree's
 /// paths (e.g. `Hunnic / Battle / Threat`), else the playlist's own label. Sorted by name, named ones first.
+/// A music state group in plain words for the music list.
+pub fn music_group_word(group: &str) -> String {
+    match group.to_lowercase().as_str() {
+        "music_culture" => "culture",
+        "game_mode" => "mode",
+        "campaign_music_state" => "campaign",
+        "battle_intensity" => "intensity",
+        "battle_state" => "battle",
+        "battle_result_state" => "result",
+        "music_key" => "key",
+        "music_dynamic" => "moment",
+        other => return other.to_owned(),
+    }
+    .to_owned()
+}
+
 pub fn music_playlists(lib: &SoundLibrary, files: &dyn Files) -> Vec<(u32, Vec<String>)> {
     let _ = files;
     let mut by_playlist: BTreeMap<u32, Vec<String>> = BTreeMap::new();
@@ -45,14 +61,40 @@ pub fn music_playlists(lib: &SoundLibrary, files: &dyn Files) -> Vec<(u32, Vec<S
         for (id, s) in &switches {
             let own = parent_path.get(id).cloned().unwrap_or_default();
             for (keys, child) in hirc::tree_paths(s.arguments.len(), &s.nodes) {
-                let names: Vec<String> = keys.iter().filter(|k| **k != 0).map(|k| lib.label(*k, 0)).collect();
-                let path = [own.clone(), names.join(" / ")].iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join(" / ");
+                // Each state with its group in plain words: "culture Barbarian", "key Bb" (0: any, left out).
+                let names: Vec<String> = keys
+                    .iter()
+                    .zip(&s.arguments)
+                    .filter(|(k, _)| **k != 0)
+                    .map(|(k, (g, _))| format!("{} {}", music_group_word(&lib.label(*g, 0)), lib.label(*k, 0)))
+                    .collect();
+                // A nested switch repeats a state of its parent's path: once.
+                let mut parts: Vec<String> = own.split(", ").filter(|p| !p.is_empty()).map(str::to_owned).collect();
+                for n in names {
+                    if !parts.contains(&n) {
+                        parts.push(n);
+                    }
+                }
+                let path = parts.join(", ");
                 parent_path.entry(child).or_insert_with(|| path.clone());
+                let shown = if path.is_empty() { "any situation".to_owned() } else { path };
                 if let Some(list) = by_playlist.get_mut(&child)
-                    && !path.is_empty()
-                    && !list.contains(&path)
+                    && !list.contains(&shown)
                 {
-                    list.push(path);
+                    list.push(shown);
+                }
+            }
+        }
+    }
+    // A playlist no switch chooses is played by an event directly: named by it.
+    let mut played_by: BTreeMap<u32, String> = BTreeMap::new();
+    for b in &lib.banks {
+        for (o, t) in b.bank.objects().iter().zip(&b.typed) {
+            if let Some(Object::Event(e)) = t {
+                for a in &e.actions {
+                    if let Some((_, _, Some(Object::Action(action)))) = lib.object(*a) {
+                        played_by.entry(action.target_id).or_insert_with(|| lib.label(o.id, 4));
+                    }
                 }
             }
         }
@@ -61,8 +103,10 @@ pub fn music_playlists(lib: &SoundLibrary, files: &dyn Files) -> Vec<(u32, Vec<S
         .into_iter()
         .map(|(id, mut names)| {
             if names.is_empty() {
-                names.push(lib.label(id, 13));
+                names.push(played_by.get(&id).map_or_else(|| lib.label(id, 13), |e| format!("played by the event {e}")));
             }
+            // The most specific situation first (it names the playlist in the list).
+            names.sort_by_key(|n| (std::cmp::Reverse(if n == "any situation" { 0 } else { n.split(", ").count() }), n.clone()));
             (id, names)
         })
         .collect();

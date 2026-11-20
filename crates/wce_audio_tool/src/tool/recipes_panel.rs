@@ -40,6 +40,24 @@ pub struct View {
     new_culture: String,
 }
 
+/// A section's explanation: what it changes in the game, then its steps (one per line).
+fn explain(what: &str, steps: &[&str]) {
+    gui::push_style_color(gui::COL_TEXT, gui::v4(0.78, 0.80, 0.86, 1.0));
+    gui::text_wrapped(what);
+    gui::pop_style_color(1);
+    for (i, step) in steps.iter().enumerate() {
+        gui::text_wrapped(&format!("{}. {step}", i + 1));
+    }
+    gui::spacing();
+}
+
+/// A hint on the last item when hovered.
+fn hint(text: &str) {
+    if gui::is_item_hovered() {
+        gui::set_tooltip(text);
+    }
+}
+
 impl AudioTool {
     pub(super) fn recipes_panel(&mut self, requests: &mut Vec<Request>) {
         gui::set_next_window_size(v2(600.0, 500.0), gui::COND_FIRST_USE_EVER);
@@ -56,15 +74,47 @@ impl AudioTool {
             return;
         };
 
-        // Music tracks.
+        gui::text_wrapped(
+            "Common sound jobs, each with its steps in one place. Open the one you want. Every change is an undoable edit (Edit > Undo, \
+             the History panel); File > Save writes it into your project's files, which go into your mod pack.",
+        );
+        gui::spacing();
+
+        // A section asked for by `audio_recipe` opens, the others close.
+        let asked = self.pending_recipe.take();
+        let section = |key: &str| {
+            if let Some(a) = &asked {
+                gui::set_next_item_open(a.trim().eq_ignore_ascii_case(key), gui::COND_ALWAYS);
+            }
+        };
+
+        // Music.
+        section("music");
         if self.pending_unit.is_some() && self.game_data.is_some() {
             gui::set_next_item_open(false, gui::COND_ALWAYS);
         }
-        if gui::collapsing_header("Music tracks", gui::TREE_DEFAULT_OPEN) {
-            gui::text_wrapped("Add a track to a playlist, or pick one to see its entries (Replace music..., weights) in Audio Object.");
+        let open = gui::collapsing_header("Change the music (battle, campaign, menus)", 0);
+        hint("Hear the game's music playlists and add your own tracks to them, by the situation each plays in.");
+        if open {
+            explain(
+                "The game picks a music playlist by the situation: the culture (Barbarian, Roman, Hunnic, Arabic), campaign or battle, \
+                 before or after a battle, how heated the fighting is, the musical key. Each row is one playlist and its situation.",
+                &[
+                    "Type a word of the situation in the filter (Roman, prebattle, battle, front_end...).",
+                    "Press Play to hear it (one of its tracks, at random).",
+                    "Add a track... puts your music file into the playlist: it plays among the others in that situation.",
+                    "Edit... opens the playlist in Audio Object: replace a track's music, its weight and loops, the transitions, or New music... for a situation.",
+                ],
+            );
             let music = self.recipes_view.music.get_or_insert_with(|| Arc::new(recipes::music_playlists(&lib, files.as_ref()))).clone();
             gui::set_next_item_width(-1.0);
-            gui::input_text("##music", Some("Filter (e.g. Hunnic, battle, prebattle)"), &mut self.recipes_view.music_filter, 128, 0);
+            gui::input_text(
+                "##music",
+                Some("Filter by situation (e.g. Hunnic, battle, prebattle)"),
+                &mut self.recipes_view.music_filter,
+                128,
+                0,
+            );
             let filter = self.recipes_view.music_filter.to_lowercase();
             let shown: Vec<&(u32, Vec<String>)> =
                 music.iter().filter(|(_, names)| filter.is_empty() || names.iter().any(|n| n.to_lowercase().contains(&filter))).collect();
@@ -72,6 +122,10 @@ impl AudioTool {
                 gui::clipped(shown.len(), |row| {
                     let (id, names) = shown[row];
                     gui::push_id(&format!("m{id}"));
+                    if self.play.button(&format!("mus{id}"), requests) {
+                        requests.push(Request::PlayObject(*id));
+                    }
+                    gui::same_line();
                     if gui::small_button("Add a track...") {
                         let first_leaf = match self.edits.object(&lib, *id) {
                             Some(Object::MusicPlaylist(p)) => {
@@ -83,10 +137,21 @@ impl AudioTool {
                             requests.push(Request::AddMusic(*id, leaf));
                         }
                     }
+                    hint("Picks a music file (WAV, Ogg or WEM): it becomes one more track of this playlist.");
                     gui::same_line();
-                    let more = if names.len() > 1 { format!("  (+{} more)", names.len() - 1) } else { String::new() };
-                    if gui::selectable(&format!("{}{more}", names[0]), self.selected == Some(*id), 0) {
+                    if gui::small_button("Edit...") {
                         requests.push(Request::Select(*id));
+                    }
+                    hint("Opens the playlist in Audio Object: its tracks (Replace music..., weight, loops), transitions and stingers.");
+                    gui::same_line();
+                    let tracks = match self.edits.object(&lib, *id) {
+                        Some(Object::MusicPlaylist(p)) => p.items.iter().filter(|i| i.children == 0 && i.segment_id != 0).count(),
+                        _ => 0,
+                    };
+                    let more = if names.len() > 1 { format!(", +{} more situations", names.len() - 1) } else { String::new() };
+                    gui::text(&format!("{}  ({tracks} tracks{more})", names[0]));
+                    if names.len() > 1 {
+                        hint(&format!("Plays in:\n{}", names.join("\n")));
                     }
                     gui::pop_id();
                 });
@@ -95,8 +160,18 @@ impl AudioTool {
         }
 
         // A voice line.
-        if gui::collapsing_header("A voice line (advisor, orders, speeches)", 0) {
-            gui::text_wrapped("Find the event, select it: Audio Object lists what it plays; a sound's Replace audio... swaps the line.");
+        section("voice");
+        let open = gui::collapsing_header("Replace a voice line (advisor, generals' speeches, orders)", 0);
+        hint("Find a spoken line by its name, hear it, and put your own recording in its place.");
+        if open {
+            explain(
+                "Every spoken line the game plays is an event with a name (battle_advice_..., generals_speech_..., Battle_Order_VO_...).",
+                &[
+                    "Type a word of it (advice, speech, charge, rally...).",
+                    "Press Play to hear one of its takes.",
+                    "Edit... opens it in Audio Object: each take has Replace audio... (your recording), a group of takes has Add variation... (one more).",
+                ],
+            );
             gui::set_next_item_width(-1.0);
             gui::input_text("##vo", Some("Filter voice events (e.g. advice, charge, retreat)"), &mut self.recipes_view.vo_filter, 128, 0);
             let filter = self.recipes_view.vo_filter.to_lowercase();
@@ -114,9 +189,12 @@ impl AudioTool {
                             requests.push(Request::PlayObject(o.id));
                         }
                         gui::same_line();
-                        if gui::selectable(&format!("{label}  ({})", b.name), self.selected == Some(o.id), 0) {
+                        if gui::small_button("Edit...") {
                             requests.push(Request::Select(o.id));
                         }
+                        hint("Opens it in Audio Object: its takes, each with Replace audio...");
+                        gui::same_line();
+                        gui::text(&format!("{label}  ({})", b.name));
                         gui::pop_id();
                     }
                 }
@@ -125,10 +203,21 @@ impl AudioTool {
         }
 
         // A culture's voice lines.
-        if gui::collapsing_header("A culture's voice lines", 0) {
-            gui::text_wrapped(
-                "Battle voice lines are chosen by voice-over culture (vo_battle_subculture: the DB gives each subculture and religion one). \
-                 Pick a voice event and a culture to see and replace its lines.",
+        section("culture");
+        let open = gui::collapsing_header("Soldiers' battle voices of a culture", 0);
+        hint(
+            "What soldiers shout and say in battle (charging, routing, idle...) for one voice-over culture: hear, replace, or give a culture its own.",
+        );
+        if open {
+            explain(
+                "Soldiers talk in battle by situation (charging, being charged, routing, winning...): each situation is a voice event, \
+                 and its lines depend on the army's voice-over culture (the DB gives one to each subculture and religion).",
+                &[
+                    "Pick a situation below.",
+                    "Pick a culture: its lines for that situation are listed.",
+                    "Press Play to hear a line; Replace audio... puts your recording in its place.",
+                    "A culture the game knows that has no lines of its own speaks another's: Copy its lines to it, then change them.",
+                ],
             );
             let group = fnv::id(CULTURE_GROUP);
             let events: Vec<(String, u32)> = lib
@@ -151,7 +240,7 @@ impl AudioTool {
             gui::end_child();
             if let Some(dialogue) = self.recipes_view.dialogue {
                 for value in recipes::group_values(&self.edits, &lib, dialogue, group) {
-                    if gui::small_button(&format!("{}##c{value}", lib.label(value, 0))) {
+                    if gui::radio_button(&format!("{}##c{value}", lib.label(value, 0)), self.recipes_view.culture == Some(value)) {
                         self.recipes_view.culture = Some(value);
                     }
                     gui::same_line();
@@ -166,6 +255,8 @@ impl AudioTool {
                     if !free.contains(&self.recipes_view.new_culture.as_str()) {
                         self.recipes_view.new_culture = free.first().map_or_else(String::new, |c| (*c).to_owned());
                     }
+                    gui::text_disabled(&format!("Copy {}'s lines to", lib.label(culture, 0)));
+                    gui::same_line();
                     gui::set_next_item_width(200.0);
                     if gui::begin_combo("##newculture", &self.recipes_view.new_culture) {
                         for c in &free {
@@ -178,7 +269,7 @@ impl AudioTool {
                     gui::same_line();
                     let name = self.recipes_view.new_culture.clone();
                     gui::begin_disabled(name.is_empty());
-                    if gui::button(&format!("New culture like {}", lib.label(culture, 0))) {
+                    if gui::button("Copy") {
                         requests.push(Request::NewCulture(name.clone(), culture));
                     }
                     gui::end_disabled();
@@ -199,6 +290,7 @@ impl AudioTool {
                             if gui::small_button("Replace audio...") {
                                 requests.push(Request::Replace(s.source.source_id));
                             }
+                            hint("Picks a WAV, Ogg or WEM file: this line plays it instead.");
                             gui::same_line();
                         }
                         let path: Vec<String> = keys.iter().filter(|k| **k != 0 && **k != culture).map(|k| lib.label(*k, 0)).collect();
@@ -217,14 +309,31 @@ impl AudioTool {
         if unit_asked {
             gui::set_next_item_open(true, gui::COND_ALWAYS);
         }
-        if gui::collapsing_header("A unit's voice (battle orders and selection)", 0) {
+        section("unit");
+        let open = gui::collapsing_header("A unit's voice (when selected or given orders)", 0);
+        hint(
+            "What a unit answers when you select it or give it orders: hear its lines, add takes, or give it a selection line of its own.",
+        );
+        if open {
             self.unit_voice(&lib, requests);
         }
 
         // An animation sound.
-        if gui::collapsing_header("An animation sound", 0) {
+        section("animation");
+        let open = gui::collapsing_header("Add a sound to an animation (footsteps, swings, impacts)", 0);
+        hint("Make an animation play a sound at a moment of it: an existing sound, or a new one from your file.");
+        if open {
+            explain(
+                "Animations fire sounds at set moments (a foot touching the ground, a sword swing). The moments are listed in the \
+                 animation's sound file (.snd.meta), shown as a timeline in Audio Game Data > Animations.",
+                &[
+                    "Pick the animation in Audio Game Data > Animations.",
+                    "Set the time (seconds into the animation).",
+                    "Fire an existing sound event by its name, or make a new sound from your file (set up like an existing event's).",
+                ],
+            );
             match self.data_view.animation().map(str::to_owned) {
-                None => gui::text_wrapped("Pick an animation in Audio Game Data > Animations first."),
+                None => gui::text_colored([1.0, 0.8, 0.3, 1.0], "First pick an animation in Audio Game Data > Animations."),
                 Some(path) => {
                     gui::text(&path);
                     gui::set_next_item_width(120.0);
@@ -233,7 +342,9 @@ impl AudioTool {
                     gui::set_next_item_width(260.0);
                     gui::input_text("##event", Some("event name (e.g. battle_footstep_walk_01)"), &mut self.recipes_view.event, 128, 0);
                     gui::same_line();
-                    if gui::button("Add the frame") && !self.recipes_view.event.trim().is_empty() {
+                    let add = gui::button("Add the frame");
+                    hint("The animation plays this event at the time above.");
+                    if add && !self.recipes_view.event.trim().is_empty() {
                         requests.push(Request::AnimationEvent(
                             path.clone(),
                             self.recipes_view.time,
@@ -296,9 +407,15 @@ impl AudioTool {
                     .and_then(|c| unit_voices::family_actors(lib, c, unit_voices::mounted(&u.category)).first().map(|(_, s)| *s));
             }
         }
-        gui::text_wrapped(
-            "Order lines: the culture (main_units.voiceover) picks the voice set, the game gives each unit one of its culture's actors \
-             (foot: Inf, mounted: Mtd), and land_units.selection_vo / selected_vo_secondary / selected_vo_tertiary name its selection lines.",
+        explain(
+            "When you select a unit or give it an order, it answers in the voice of one of its culture's voice actors (the game picks one \
+             per unit; foot and mounted units have their own actors). Which line it says when selected comes from the unit's DB row.",
+            &[
+                "Find the unit.",
+                "Pick an actor: its lines are listed, the unit's own selection lines first.",
+                "Press Play to hear a line; Add a take... adds your recording to it.",
+                "Or give the unit a selection line of its own (below): every actor of its culture says your recording, and its DB row points to it.",
+            ],
         );
         gui::set_next_item_width(-1.0);
         gui::input_text("##units", Some("Filter units (e.g. comitatenses, cavalry)"), &mut self.recipes_view.unit_filter, 128, 0);
