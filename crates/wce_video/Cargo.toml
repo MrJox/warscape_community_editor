@@ -16,6 +16,8 @@ cc = "1"
 
 [dev-dependencies]
 wce_vfs = { path = "../wce_vfs" }
+wce_formats = { path = "../wce_formats" }
+wce_walls = { path = "../wce_walls" }
 
 [lints]
 workspace = true

@@ -41,6 +41,8 @@ pub struct SceneUi {
     /// A key being dragged on the timeline: its time when the drag started.
     dragging: Option<(KeyRef, f64)>,
     pub speeds: SpeedTable,
+    /// The viewport's camera is the user's, not the keys'.
+    pub free_camera: bool,
     last_tick: Option<std::time::Instant>,
 }
 
@@ -373,6 +375,11 @@ impl SceneUi {
             gui::end_combo();
         }
         gui::same_line();
+        gui::checkbox("Free camera", &mut self.free_camera);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Fly the viewport yourself; Add key on a camera track keys this view");
+        }
+        gui::same_line();
         if gui::button("Add key") {
             self.add_key(e, &p, &clip);
         }
@@ -523,7 +530,15 @@ impl SceneUi {
         let t = self.time;
         let frame = evaluate(p, clip, &self.speeds, t);
         let unit_pos = |u: u32| frame.units.iter().find(|s| s.unit == u).map(|s| s.position);
-        let cam = frame.camera.clone();
+        // A camera key holds the viewport's view (in metres, the FOV in degrees).
+        let units = e.scene.game_units.max(1e-3);
+        let vc = e.viewport.camera();
+        let cam = Some(wce_cinematic::eval::CameraState {
+            position: [vc.eye.x * units, vc.eye.y * units, vc.eye.z * units],
+            target: [vc.target.x * units, vc.target.y * units, vc.target.z * units],
+            fov: vc.fov_y.to_degrees(),
+        })
+        .or(frame.camera.clone());
         let env = p.battle.environment.clone();
         let next_text =
             (1..).map(|n| format!("{}_{}", sanitize_key(&clip.name), n)).find(|id| !p.texts.contains_key(id)).unwrap_or_default();

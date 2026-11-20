@@ -29,7 +29,16 @@ for run in 1 2; do
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/scene_run$run.log" | tail -5; }
     [ -s "$proj/cinematics/wce_scene_test/project.json" ] || { echo "scene run $run: no project.json saved"; bad=1; }
     [ -s "$OUT/scene$run.pack" ] || { echo "scene run $run: no battle pack"; bad=1; }
+    # The 3D preview and a movie export, in a projects folder of their own.
+    proj="$OUT/projects_preview$run"; rm -rf "$proj"; mkdir -p "$proj"
+    sed -e "s|%SHOT4%|$(cygpath -m "$OUT/preview$run.png")|" -e "s|%MOVIE%|$(cygpath -m "$OUT/movie$run.pack")|"         "$ROOT/scripts/cinematic_preview.txt" > "$OUT/preview$run.txt"
+    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/preview$run.txt")" > "$OUT/preview_run$run.log" 2>&1
+    rc=$?
+    echo "preview run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/preview_run$run.log" | tail -5; }
+    [ -s "$OUT/movie$run.pack" ] || { echo "preview run $run: no movie pack"; bad=1; }
 done
+if cmp -s "$OUT/movie1.pack" "$OUT/movie2.pack"; then echo "movie pack identical between runs"; else echo "movie pack DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/projects1/cinematics/wce_scene_test/project.json" "$OUT/projects2/cinematics/wce_scene_test/project.json"; then echo "project.json identical between runs"
 else echo "project.json DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/scene1.pack" "$OUT/scene2.pack"; then echo "battle pack identical between runs"; else echo "battle pack DIFFERS between runs"; bad=1; fi
@@ -37,4 +46,13 @@ for shot in intro event scene; do
     if cmp -s "$OUT/${shot}1.png" "$OUT/${shot}2.png" && [ -s "$OUT/${shot}1.png" ]; then echo "$shot shot identical between runs"
     else echo "$shot shot DIFFERS between runs (or missing)"; bad=1; fi
 done
+# The live 3D viewport: within 2 levels, as app_check.sh allows its live shots (exposure noise); the movie above is exact.
+if cmp -s "$OUT/preview1.png" "$OUT/preview2.png" && [ -s "$OUT/preview1.png" ]; then echo "preview shot identical between runs"
+elif [ -s "$OUT/preview1.png" ] && [ -s "$OUT/preview2.png" ] && python -c "
+import sys
+import numpy as np
+from PIL import Image
+a = np.asarray(Image.open(sys.argv[1]).convert('RGB'), dtype=int); b = np.asarray(Image.open(sys.argv[2]).convert('RGB'), dtype=int)
+sys.exit(0 if a.shape == b.shape and np.abs(a - b).max() <= 2 else 1)" "$OUT/preview1.png" "$OUT/preview2.png"; then echo "preview shot within 2 levels between runs (live exposure noise)"
+else echo "preview shot DIFFERS between runs (or missing)"; bad=1; fi
 [ $bad = 0 ] && echo OK || { echo FAILED; exit 1; }

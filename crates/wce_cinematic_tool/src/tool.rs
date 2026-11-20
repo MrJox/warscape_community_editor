@@ -15,6 +15,8 @@ use wce_vfs::files::Files;
 
 use wce_cinematic::scene::{Interp, PathKey, Project, SceneUnit, TrackContent, sanitize_key};
 
+use crate::export::MovieJob;
+use crate::preview::Preview;
 use crate::scene_doc::SceneDocument;
 use crate::scene_ui::{SceneUi, add_track, edit, for_track, scene_doc};
 use crate::viewer::MovieViewer;
@@ -37,6 +39,10 @@ enum Pending {
     KeyAdd,
     PathKey(f32, f32),
     ExportBattle(String),
+    ExportMovie(String, u32, u32),
+    TrackSelect(u32),
+    CameraKey([f32; 3], [f32; 3], f32),
+    Show(String),
 }
 
 #[derive(Default)]
@@ -52,6 +58,8 @@ pub struct CinematicTool {
     pending: Vec<Pending>,
     scene: SceneUi,
     new_scene: Option<String>,
+    preview: Preview,
+    movie_job: Option<MovieJob>,
 }
 
 impl CinematicTool {
@@ -73,6 +81,7 @@ impl CinematicTool {
             });
             self.catalog_loading = Some(rx);
             self.library_loading = None;
+            self.preview.game_changed(e);
         }
         // A scripted run waits for the list, so that its next line can open a movie.
         let scripted = e.scripted_input();
@@ -222,6 +231,28 @@ impl CinematicTool {
                 Ok(msg) => e.status(&msg, false),
                 Err(err) => e.status(&format!("Cinematic: {err}"), true),
             },
+            Pending::ExportMovie(path, w, h) => self.start_movie(e, std::path::PathBuf::from(path), w, h),
+            Pending::TrackSelect(id) => self.scene.track = Some(id),
+            Pending::Show(panel) => gui::select_dock_tab(&panel),
+            Pending::CameraKey(position, target, fov) => {
+                let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+                let Some(clip) = self.scene.current_clip(&p).map(|c| c.id) else { return };
+                let t = self.scene.time;
+                let track =
+                    p.clip(clip).and_then(|c| c.tracks.iter().find(|tr| matches!(tr.content, TrackContent::Camera { .. })).map(|tr| tr.id));
+                edit(e, "camera key", |p| {
+                    let id = match track {
+                        Some(id) => id,
+                        None => add_track(p, clip, "Camera", None, "").unwrap_or(0),
+                    };
+                    for_track(p, clip, id, |tr| {
+                        if let TrackContent::Camera { keys } = &mut tr.content {
+                            keys.retain(|k| (k.t - t).abs() > 1e-6);
+                            keys.push(wce_cinematic::scene::CameraKey { t, position, target, fov, interp: Interp::Smooth });
+                        }
+                    });
+                });
+            }
         }
     }
 
@@ -287,6 +318,51 @@ impl CinematicTool {
             e.status(&format!("Cinematic: {w}"), true);
         }
         Ok(format!("Cinematic: wrote {} ({} warnings)", path.display(), warnings.len()))
+    }
+
+    /// Starts rendering the timeline's clip as a movie pack.
+    fn start_movie(&mut self, e: &mut Editor, path: std::path::PathBuf, w: u32, h: u32) {
+        let (Some(doc), Some(p)) = (e.docs.of_tool("cinematic"), scene_doc(e).map(|d| d.project().clone())) else {
+            e.status("Cinematic: no scene open", true);
+            return;
+        };
+        let Some(clip) = self.scene.current_clip(&p).map(|c| c.id) else {
+            e.status("Cinematic: the scene has no clip", true);
+            return;
+        };
+        match MovieJob::new(path, p, clip, doc, w.max(16), h.max(16)) {
+            Ok(job) => {
+                e.status(&format!("Cinematic: rendering {}...", job.name), false);
+                self.movie_job = Some(job);
+            }
+            Err(err) => e.status(&format!("Cinematic: {err}"), true),
+        }
+    }
+
+    /// The movie export's frames: a few per editor frame live, all at once in a scripted run; then the pack.
+    fn step_movie(&mut self, e: &mut Editor) {
+        let Some(mut job) = self.movie_job.take() else { return };
+        let budget = if e.scripted_input() { None } else { Some(3) };
+        match job.step(e, &mut self.preview, &self.scene.speeds, budget) {
+            Ok(false) => {
+                let (n, total) = job.progress();
+                e.status(&format!("Cinematic: rendering {} frame {n} of {total}", job.name), false);
+                self.movie_job = Some(job);
+            }
+            Ok(true) => {
+                let Some(files) = self.files.clone() else { return };
+                match job.finish(&files, self.library.as_deref()) {
+                    Ok((msg, warnings)) => {
+                        for w in warnings {
+                            e.status(&format!("Cinematic: {w}"), true);
+                        }
+                        e.status(&format!("Cinematic: {msg}"), false);
+                    }
+                    Err(err) => e.status(&format!("Cinematic: the movie: {err}"), true),
+                }
+            }
+            Err(err) => e.status(&format!("Cinematic: the movie: {err}"), true),
+        }
     }
 
     fn new_scene_popup(&mut self, e: &mut Editor) {
@@ -433,7 +509,7 @@ impl Tool for CinematicTool {
     }
 
     fn shows_viewport(&self) -> bool {
-        false
+        true
     }
 
     fn file_menu(&mut self, e: &mut Editor, part: wce_editor::tool::FileMenu) {
@@ -481,6 +557,16 @@ impl Tool for CinematicTool {
         if gui::is_item_hovered() {
             gui::set_tooltip("The battle XML, Lua, menu rows, subtitles and loc as one mod pack");
         }
+        if gui::menu_item("Movie pack (1080p)...", None, false, has && self.movie_job.is_none()) {
+            let name = scene_doc(e).map(|d| sanitize_key(&d.project().battle.key)).unwrap_or_default();
+            let filters = [("Mod pack".to_owned(), "*.pack".to_owned())];
+            if let Some(path) = e.pick_export_file("cinematic_movie_pack", &format!("{name}_movie.pack"), &filters) {
+                self.start_movie(e, path, 1920, 1080);
+            }
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The timeline's clip rendered as a game movie, with its sound event, videos row and subtitles");
+        }
         true
     }
 
@@ -492,6 +578,7 @@ impl Tool for CinematicTool {
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Movie", center);
         gui::dock_builder_dock_window("Layout", center);
+        gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Key", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -598,6 +685,27 @@ impl Tool for CinematicTool {
             }
             queue(e, Pending::ExportBattle(a.join(" ")))
         });
+        c.add("track_select", "track_select <id>", "Selects a track of the clip", |e, a| match a.first().and_then(|x| x.parse().ok()) {
+            Some(id) => queue(e, Pending::TrackSelect(id)),
+            None => CommandResult::fail("usage: track_select <id>"),
+        });
+        c.add("camera_key", "camera_key <x y z> <tx ty tz> <fov>", "A camera key at the playhead (metres, degrees)", |e, a| {
+            let v: Vec<f32> = a.iter().filter_map(|x| x.parse().ok()).collect();
+            if v.len() != 7 {
+                return CommandResult::fail("usage: camera_key x y z tx ty tz fov");
+            }
+            queue(e, Pending::CameraKey([v[0], v[1], v[2]], [v[3], v[4], v[5]], v[6]))
+        });
+        c.add("cinematic_show", "cinematic_show <panel>", "Brings a panel to the front (Viewport, Layout, Movie, Timeline...)", |e, a| {
+            queue(e, Pending::Show(a.join(" ")))
+        });
+        c.add("scene_export_movie", "scene_export_movie <file.pack> [width height]", "Renders the clip as a movie pack", |e, a| {
+            let n = |i: usize, d: u32| a.get(i).and_then(|x| x.parse().ok()).unwrap_or(d);
+            match a.first() {
+                Some(p) => queue(e, Pending::ExportMovie(p.clone(), n(1, 1920), n(2, 1080))),
+                None => CommandResult::fail("usage: scene_export_movie <file.pack> [width height]"),
+            }
+        });
         c.add(
             "assert_unit",
             "assert_unit <id> <x> <z> [slot]",
@@ -655,6 +763,17 @@ impl Tool for CinematicTool {
         self.scene.key_panel(e);
         self.scene.layout_panel(e);
         self.new_scene_popup(e);
+        // The scene in the viewport, at the playhead (the movie export poses it frame by frame meanwhile).
+        if self.movie_job.is_some() {
+            self.step_movie(e);
+        } else if let (Some(doc), Some(p)) = (e.docs.of_tool("cinematic"), scene_doc(e).map(|d| d.project().clone())) {
+            if let Some(frame) = self.scene.frame(&p) {
+                self.preview.free_camera = self.scene.free_camera;
+                self.preview.update(e, doc, &p, &frame);
+            }
+        } else {
+            self.preview.clear(e);
+        }
     }
 
     fn unsaved_work(&self) -> Vec<String> {
