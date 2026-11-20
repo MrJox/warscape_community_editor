@@ -158,10 +158,16 @@ pub enum Kind {
     /// A ring around each building a clutter rule matches (`Input::targets`, `Input::clutter`; docs/plans/auto_detail.md, B): props from
     /// the rule's set, all around (the user clears doors).
     Buildings,
+
+    /// The banks units walk on and the shallows by them (docs/plans/auto_detail_2.md, F): the walkable ground within `water_reach` of a
+    /// river, a water plane or the sea and up to `foot_up` over its surface, and the water down to `water_below` under it. Reeds (the
+    /// plants) in the shallows and at the edge, stones or driftwood (the rocks) along both; where the coast and the banks find the no-go
+    /// ground, this finds the rest.
+    Shores,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [Kind::Cliffs, Kind::Coast, Kind::Riverbank, Kind::Buildings];
+    pub const ALL: [Kind; 5] = [Kind::Cliffs, Kind::Coast, Kind::Riverbank, Kind::Shores, Kind::Buildings];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -169,6 +175,7 @@ impl Kind {
             Kind::Coast => "coast",
             Kind::Riverbank => "riverbank",
             Kind::Buildings => "buildings",
+            Kind::Shores => "shores",
         }
     }
 
@@ -178,7 +185,7 @@ impl Kind {
 
     /// Whether its bands are measured from water (the waterline band reaches under it).
     pub fn by_water(self) -> bool {
-        matches!(self, Kind::Coast | Kind::Riverbank)
+        matches!(self, Kind::Coast | Kind::Riverbank | Kind::Shores)
     }
 }
 
@@ -197,6 +204,23 @@ impl Params {
                 ..Self::default()
             },
             Kind::Riverbank => Self { min_rise: 0.5, min_area: 10.0, foot_up: 1.5, foot_out: 2.0, water_reach: 4.0, ..Self::default() },
+
+            // Low, flat ground: no rise needed, a narrow bank, reeds thick in the shallows.
+            Kind::Shores => Self {
+                min_rise: 0.0,
+                min_area: 8.0,
+                foot_up: 1.2,
+                foot_out: 0.0,
+                water_reach: 5.0,
+                water_below: 0.5,
+                rock_density_foot: 1.0 / 20.0,
+                plant_density: 1.0 / 3.0,
+                plant_spacing: 0.8,
+                plant_radius: 0.5,
+                exclusion_margin: 1.0,
+                rock_scale_foot: (0.5, 1.0),
+                ..Self::default()
+            },
 
             // Props stand on the ground, upright, whole.
             Kind::Buildings => Self {
@@ -1197,8 +1221,8 @@ fn throw_plant(
     let pick = rnd.unit();
     let (scale_r, yaw_r) = (rnd.unit(), rnd.unit());
 
-    // By the water, none under it (a point in a cell at the waterline may be).
-    let dry = !input.kind.by_water() || g.index_of(x, z).is_none_or(|i| g.height(x, z) >= base[i]);
+    // By the water, none under it (a point in a cell at the waterline may be); on the shores, reeds stand in the shallows.
+    let dry = !input.kind.by_water() || input.kind == Kind::Shores || g.index_of(x, z).is_none_or(|i| g.height(x, z) >= base[i]);
     if !dry || !buildings.clear(x, z, p.plant_radius) || !keep_off.clear(x, z, p.plant_radius) || !g.contains(x, z) {
         return None;
     }
@@ -1265,6 +1289,26 @@ fn features(input: &Input) -> Option<Features> {
             let far = nearest(g, &water, p.water_reach + 2.0 * g.cell);
             let surface = |w: usize| g.heights[w] + c.water_depth[w];
             let base = (0..n).map(|i| if far[i] == NONE { g.heights[i] } else { surface(far[i]) }).collect();
+            Some(Features { mask, base, others: vec![false; n] })
+        }
+
+        Kind::Shores => {
+            let c = input.context.filter(|c| c.no_go.len() == n && c.water_depth.len() == n)?;
+            // The water: the rivers' and the planes', and the sea (its surface at 0 m) of a tile that meets it.
+            let sea = if c.has_sea { sea(g) } else { vec![false; n] };
+            let depth = |i: usize| if sea[i] { -g.heights[i] } else { c.water_depth[i] };
+            let water = (0..n).map(|i| depth(i) > 0.0).collect::<Vec<_>>();
+            let surface = |w: usize| if sea[w] { 0.0 } else { g.heights[w] + c.water_depth[w] };
+            let near_water = nearest(g, &water, p.water_reach);
+            let base = (0..n).map(|i| if near_water[i] == NONE { g.heights[i] } else { surface(near_water[i]) }).collect::<Vec<_>>();
+
+            // The bank: walkable, out of the water, near it and not far over it.
+            let bank = (0..n)
+                .map(|i| !water[i] && !c.no_go[i] && near_water[i] != NONE && g.heights[i] - base[i] <= p.foot_up)
+                .collect::<Vec<_>>();
+            // The shallows by a bank, as deep as `water_below` at most.
+            let near_bank = nearest(g, &bank, p.water_reach);
+            let mask = (0..n).map(|i| bank[i] || (water[i] && depth(i) <= p.water_below && near_bank[i] != NONE)).collect::<Vec<_>>();
             Some(Features { mask, base, others: vec![false; n] })
         }
 
@@ -1494,9 +1538,10 @@ fn populate(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[
         }
     }
 
-    // Plants: at the foot, apart from each other and off the rocks.
-    if !d.foot.is_empty() && !input.plants.entries.is_empty() {
-        let count = (area(&d.foot) * p.plant_density).round() as usize;
+    // Plants: at the foot (on the shores, in the shallows too), apart from each other and off the rocks.
+    let growing = if input.kind == Kind::Shores { shore.clone() } else { d.foot.clone() };
+    if !growing.is_empty() && !input.plants.entries.is_empty() {
+        let count = (area(&growing) * p.plant_density).round() as usize;
         let rocks = d
             .rocks
             .iter()
@@ -1506,7 +1551,7 @@ fn populate(input: &Input, buildings: &Buildings, keep_off: &Buildings, base: &[
         let mut tries = count * 30;
         while d.plants.len() < count && tries > 0 {
             tries -= 1;
-            let at = rnd.point_in(g, &d.foot);
+            let at = rnd.point_in(g, &growing);
             let spaced = d.plants.iter().all(|o| (o.x - at.0).hypot(o.z - at.1) >= p.plant_spacing) && rocks.clear(at.0, at.1, 0.0);
             match throw_plant(input, buildings, keep_off, base, &mut rnd, at) {
                 Some(pl) if spaced => d.plants.push(pl),
@@ -1895,6 +1940,34 @@ mod tests {
         let (g, mut c) = field(river, river_depth);
         c.no_go.iter_mut().for_each(|b| *b = false);
         assert!(run_kind(Kind::Riverbank, &g, &c).is_empty());
+    }
+
+    /// A river 10 m wide (its surface at 1 m) between gentle banks rising 1 m in 10 (walkable).
+    fn gentle_river(x: f32, _: f32) -> f32 {
+        let d = (x - 50.0).abs();
+        (d - 3.0) * 0.1
+    }
+
+    #[test]
+    fn a_walkable_bank_is_the_shores_with_reeds_in_its_shallows() {
+        let (g, mut c) = field(gentle_river, |x| (1.0 - gentle_river(x, 0.0)).max(0.0));
+        c.no_go.iter_mut().for_each(|b| *b = false);
+        c.has_sea = false;
+        assert!(kept(&run_kind(Kind::Riverbank, &g, &c)).is_empty(), "no no-go ground: not the banks'");
+        let out = run_kind(Kind::Shores, &g, &c);
+        let shores = kept(&out);
+        assert_eq!(shores.len(), 2, "{:?}", out.iter().map(|d| (d.state, d.area)).collect::<Vec<_>>());
+        let p = Params::for_kind(Kind::Shores);
+        for d in &shores {
+            assert!(!d.wet.is_empty() && !d.foot.is_empty() && d.face.is_empty());
+            assert!(d.wet.iter().all(|&i| 1.0 - g.heights[i] <= p.water_below + 1e-3), "the shallows only");
+            assert!(d.foot.iter().all(|&i| g.heights[i] - 1.0 <= p.foot_up + 1e-3), "the bank, low over the water");
+            assert!(!d.plants.is_empty() && !d.rocks.is_empty());
+            assert!(d.plants.iter().any(|pl| g.height(pl.x, pl.z) < 1.0), "reeds in the water");
+        }
+
+        // Far from the river, nothing: the water ends 13 m from its middle (the banks reach its surface there).
+        assert!(shores.iter().flat_map(|d| d.plants.iter()).all(|pl| (pl.x - 50.0).abs() < 13.0 + p.water_reach + 1.0));
     }
 
     fn cliff_input<'a>(g: &'a Grid, rocks: &'a VegetationSet, plants: &'a VegetationSet, keep_off: &'a [Blocker]) -> Input<'a> {

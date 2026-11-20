@@ -422,8 +422,14 @@ impl TileTool {
             self.coverage.clutter = clutter;
         } else {
             gui::separator_text("What it lays");
-            set_row("Rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
-            set_row("Plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
+            let shores = self.coverage.kind == Kind::Shores;
+            let (rock_hint, plant_hint) = if shores && self.coverage.rocks.is_empty() && self.coverage.plants.is_empty() {
+                ("the built-in stones", "the built-in reeds")
+            } else {
+                ("a set of buildings", "a set of trees")
+            };
+            set_row("Rocks", rock_hint, &sets, SetKind::Building, &mut self.coverage.rocks);
+            set_row("Plants", plant_hint, &sets, SetKind::Vegetation, &mut self.coverage.plants);
             if !sets.iter().any(|s| s.kind == SetKind::Building) {
                 note("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
             }
@@ -606,6 +612,14 @@ impl TileTool {
         let (rocks, plants) = (find(&self.coverage.rocks, SetKind::Building), find(&self.coverage.plants, SetKind::Vegetation));
         if self.coverage.kind == Kind::Buildings {
             return Ok((rocks, plants));
+        }
+
+        // The shores without sets: the reeds and the rocks the built-in biomes use.
+        if self.coverage.kind == Kind::Shores && rocks.entries.is_empty() && plants.entries.is_empty() {
+            return Ok((
+                VegetationSet::from_keys("stones", SHORE_ROCKS.iter().copied()),
+                VegetationSet::from_keys("reeds", SHORE_PLANTS.iter().copied()),
+            ));
         }
 
         if rocks.entries.is_empty() && plants.entries.is_empty() {
@@ -1077,6 +1091,7 @@ fn kind_title(kind: Kind) -> &'static str {
         Kind::Coast => "Coast",
         Kind::Riverbank => "Riverbanks",
         Kind::Buildings => "Around buildings",
+        Kind::Shores => "Shores",
     }
 }
 
@@ -1089,6 +1104,10 @@ fn kind_tip(kind: Kind) -> &'static str {
         }
         Kind::Riverbank => "The ground by a river or a water plane that units can't walk; its bands measured from the water's surface",
         Kind::Buildings => "A ring around each building a clutter rule matches (by its key or category), with that rule's props",
+        Kind::Shores => {
+            "The banks units can walk by a river, a water plane or the sea, and the shallows by them: reeds (the plants) in the shallows \
+             and at the edge, stones or driftwood (the rocks) along both"
+        }
     }
 }
 
@@ -1120,12 +1139,17 @@ fn set_row(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, chose
     }
 }
 
+/// The shores' rocks and reeds when no set is chosen (the built-in biomes' rocks, the Reeds and marsh biome's undergrowth).
+const SHORE_ROCKS: [&str; 2] = ["gaul_rock_01", "gaul_rock_02"];
+const SHORE_PLANTS: [&str; 2] = ["shrub_calamus.shrub_calamus_a", "shrubs_med.water_a"];
+
 /// Plain choices of a value: names and values.
 type Choices = [(&'static str, f32); 4];
 const SLOPES: Choices = [("Gentle", 25.0), ("Steep", 35.0), ("Sheer", 45.0), ("Cliffs", 60.0)];
 const ROCKS_FOOT: Choices = [("None", 0.0), ("Few", 1.0 / 25.0), ("Some", 1.0 / 10.0), ("Many", 1.0 / 5.0)];
 const ROCKS_FACE: Choices = [("None", 0.0), ("Few", 1.0 / 50.0), ("Some", 1.0 / 25.0), ("Many", 1.0 / 12.0)];
 const PLANTS: Choices = [("None", 0.0), ("Few", 1.0 / 30.0), ("Some", 1.0 / 15.0), ("Many", 1.0 / 8.0)];
+const REEDS: Choices = [("None", 0.0), ("Few", 1.0 / 12.0), ("Some", 1.0 / 6.0), ("Thick", 1.0 / 3.0)];
 const PROPS: Choices = [("Few", 1.0 / 25.0), ("Some", 1.0 / 12.0), ("Many", 1.0 / 6.0), ("Packed", 1.0 / 3.0)];
 const RINGS: Choices = [("Tight", 1.5), ("Medium", 3.0), ("Wide", 6.0), ("Very wide", 10.0)];
 
@@ -1238,8 +1262,10 @@ fn params_rows(kind: Kind, p: &mut Params, advanced: bool) -> bool {
         return changed;
     }
 
-    gui::separator_text("Slopes");
-    if kind.by_water() {
+    gui::separator_text(if kind == Kind::Shores { "Banks" } else { "Slopes" });
+    if kind == Kind::Shores {
+        note("Where units can walk by the water, up to the foot band's height over it, and the shallows by it.");
+    } else if kind.by_water() {
         note("Where units can't walk (the game's no-go areas, steeper than 30 deg), by the water.");
         if advanced {
             changed |= value_row(
@@ -1345,16 +1371,18 @@ fn params_rows(kind: Kind, p: &mut Params, advanced: bool) -> bool {
         "%.2f / 100 m2",
         advanced,
     );
-    changed |= value_row(
-        "rocksface",
-        "On the face",
-        "Rocks per 100 square metres of the face band",
-        &mut p.rock_density_face,
-        Some(&ROCKS_FACE),
-        (0.0, 50.0),
-        "%.2f / 100 m2",
-        advanced,
-    );
+    // The shores have no face: their banks are low.
+    changed |= kind != Kind::Shores
+        && value_row(
+            "rocksface",
+            "On the face",
+            "Rocks per 100 square metres of the face band",
+            &mut p.rock_density_face,
+            Some(&ROCKS_FACE),
+            (0.0, 50.0),
+            "%.2f / 100 m2",
+            advanced,
+        );
     let row = styled::row("Scale", "");
     let mut scale = p.scale_rocks;
     if styled::toggle_chip(
@@ -1419,10 +1447,14 @@ fn params_rows(kind: Kind, p: &mut Params, advanced: bool) -> bool {
     gui::separator_text("Plants");
     changed |= value_row(
         "plants",
-        "At the foot",
-        "Plants per 100 square metres of the foot band",
+        if kind == Kind::Shores { "In the shallows" } else { "At the foot" },
+        if kind == Kind::Shores {
+            "Plants (reeds) per 100 square metres of the shallows and the bank"
+        } else {
+            "Plants per 100 square metres of the foot band"
+        },
         &mut p.plant_density,
-        Some(&PLANTS),
+        Some(if kind == Kind::Shores { &REEDS } else { &PLANTS }),
         (0.0, 50.0),
         "%.2f / 100 m2",
         advanced,

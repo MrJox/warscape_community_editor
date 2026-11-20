@@ -558,9 +558,16 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "ground_coverage",
-        "ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed] | window [simple | advanced]",
+        "ground_coverage <preview|generate> <cliffs|coast|riverbank|shores|buildings> <preset|-> [seed] | window [simple | advanced] | close",
         "the ground coverage's window from a script: a kind's preset (Default: the built-in one; -: the tile's last run, else the kind's last preset), then Preview (prints the summary, draws it) or Generate (replaces the kind's group in \"(AUTOGEN) Ground Coverage\" without asking)",
         |e, a| {
+            if a.first().is_some_and(|w| w == "close") {
+                return with_tile(e, |t, _| {
+                    t.close_coverage();
+                    ok("ground coverage's window closed")
+                });
+            }
+
             if a.first().is_some_and(|w| w == "window") {
                 let mode = a.get(1).cloned();
                 return with_tile(e, |t, _| {
@@ -574,11 +581,11 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             }
 
             let (Some(what), Some(kind), Some(preset)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
-                return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank> <preset|-> [seed] | window [simple | advanced]");
+                return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank|shores|buildings> <preset|-> [seed] | window [simple | advanced]");
             };
 
             let Some(kind) = wce_tile::ground_coverage::Kind::from_name(&kind) else {
-                return fail("the kind is cliffs, coast or riverbank");
+                return fail("the kind is cliffs, coast, riverbank, shores or buildings");
             };
 
             let seed = a.get(3).and_then(|s| s.parse::<u64>().ok());
