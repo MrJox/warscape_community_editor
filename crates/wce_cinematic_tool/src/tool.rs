@@ -16,6 +16,7 @@ use wce_vfs::files::Files;
 use wce_cinematic::scene::{Interp, PathKey, Project, SceneUnit, TrackContent, sanitize_key};
 
 use crate::export::MovieJob;
+use crate::logic_ui::LogicUi;
 use crate::preview::Preview;
 use crate::scene_doc::SceneDocument;
 use crate::scene_ui::{SceneUi, add_track, edit, for_track, scene_doc};
@@ -61,6 +62,7 @@ pub struct CinematicTool {
     preview: Preview,
     movie_job: Option<MovieJob>,
     speeds_loading: Option<Receiver<wce_cinematic::eval::SpeedTable>>,
+    logic: LogicUi,
 }
 
 impl CinematicTool {
@@ -592,6 +594,7 @@ impl Tool for CinematicTool {
         gui::dock_builder_dock_window("Movie", center);
         gui::dock_builder_dock_window("Layout", center);
         gui::dock_builder_dock_window("Viewport", center);
+        gui::dock_builder_dock_window("Logic", center);
         gui::dock_builder_dock_window("Key", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -712,6 +715,48 @@ impl Tool for CinematicTool {
         c.add("cinematic_show", "cinematic_show <panel>", "Brings a panel to the front (Viewport, Layout, Movie, Timeline...)", |e, a| {
             queue(e, Pending::Show(a.join(" ")))
         });
+        c.add("logic_node", "logic_node <kind> [key=value...]", "Adds a battle logic node (event.* / action.*)", |e, a| {
+            let Some(kind) = a.first().cloned() else { return CommandResult::fail("usage: logic_node <kind> [key=value...]") };
+            if wce_cinematic::logic::node_type(&kind).is_none() {
+                return CommandResult::fail(format!("no node kind {kind}"));
+            }
+            let values: std::collections::BTreeMap<String, String> =
+                a[1..].iter().filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_owned(), v.to_owned())).collect();
+            let mut made = 0;
+            edit(e, "add logic node", |p| {
+                let id = p.logic.nodes.iter().map(|n| n.id).max().unwrap_or(0) + 1;
+                let x = 40.0 + 220.0 * ((id - 1) % 3) as f32;
+                let y = 40.0 + 160.0 * ((id - 1) / 3) as f32;
+                p.logic.nodes.push(wce_cinematic::scene::LogicNode { id, kind, values, position: [x, y] });
+                made = id;
+            });
+            if made == 0 { CommandResult::fail("no scene open") } else { CommandResult::success(format!("node {made}")) }
+        });
+        c.add("logic_link", "logic_link <event node> <action node>", "Links an event node to an action node", |e, a| {
+            match (a.first().and_then(|x| x.parse::<u32>().ok()), a.get(1).and_then(|x| x.parse::<u32>().ok())) {
+                (Some(from), Some(to)) => {
+                    edit(e, "logic link", |p| {
+                        p.logic.links.push(wce_cinematic::scene::LogicLink { from, from_pin: "out".into(), to, to_pin: "in".into() })
+                    });
+                    CommandResult::success(format!("{from} -> {to}"))
+                }
+                _ => CommandResult::fail("usage: logic_link <from> <to>"),
+            }
+        });
+        c.add("assert_logic", "assert_logic <text...>", "Fails unless the compiled battle logic contains the text", |e, a| {
+            let want = a.join(" ");
+            let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return CommandResult::fail("no scene open") };
+            let lua = wce_cinematic::logic::compile(&p, &mut vec![]);
+            // The script parser takes double quotes as grouping: compare without them.
+            if lua.replace('"', "").contains(&want.replace('"', "")) {
+                CommandResult::success(want)
+            } else {
+                CommandResult::fail(format!(
+                    "the logic has no \"{want}\":
+{lua}"
+                ))
+            }
+        });
         c.add("scene_export_movie", "scene_export_movie <file.pack> [width height]", "Renders the clip as a movie pack", |e, a| {
             let n = |i: usize, d: u32| a.get(i).and_then(|x| x.parse().ok()).unwrap_or(d);
             match a.first() {
@@ -775,6 +820,7 @@ impl Tool for CinematicTool {
         self.scene.timeline_panel(e);
         self.scene.key_panel(e);
         self.scene.layout_panel(e);
+        self.logic.panel(e);
         self.new_scene_popup(e);
         // The scene in the viewport, at the playhead (the movie export poses it frame by frame meanwhile).
         if self.movie_job.is_some() {

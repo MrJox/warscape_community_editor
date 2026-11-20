@@ -22,5 +22,9 @@ rpfm_lib.workspace = true
 wce_vfs = { path = "../wce_vfs" }
 wce_video = { path = "../wce_video" }
 
+# The battle logic graph's canvas: imnodes (MIT) through its C API, built against the editor's dear-imgui-sys (user 2026-11-20).
+dear-imnodes-sys = "0.20"
+dear-imgui-sys = "0.20"
+
 [lints]
 workspace = true
