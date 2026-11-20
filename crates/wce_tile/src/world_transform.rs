@@ -184,3 +184,21 @@ pub fn ted_world_matrix_f32(scene: &TedScene, elem: usize) -> [f32; 16] {
 
     world.unwrap_or(ted_rotation_f32([0.0; 3]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_yaw_turns_the_same_as_an_euler_of_it() {
+        // What `rotate_world_yaw` turns by and what an `euler(yaw,0,0)` orientation is: one rotation (the decals and fields rely on it).
+        for yaw in [0.3f64, 1.2, -2.0] {
+            let (a, b) = (euler_matrix(Double3::new(yaw, 0.0, 0.0)), Double3x3::rotation_y(yaw));
+            for r in 0..3 {
+                for c in 0..3 {
+                    assert!((a.m[r][c] - b.m[r][c]).abs() < 1e-9, "{yaw}: {a:?} {b:?}");
+                }
+            }
+        }
+    }
+}
