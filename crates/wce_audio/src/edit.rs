@@ -36,12 +36,12 @@ impl EditSet {
         self.banks.get(&index).unwrap_or(&lib.banks[index].bank)
     }
 
-    fn bank_mut(&mut self, lib: &SoundLibrary, index: usize) -> &mut Bank {
+    pub(crate) fn bank_mut(&mut self, lib: &SoundLibrary, index: usize) -> &mut Bank {
         self.banks.entry(index).or_insert_with(|| lib.banks[index].bank.clone())
     }
 
     /// Where an object is, as edited: (bank, index in its objects).
-    fn find(&self, lib: &SoundLibrary, id: u32) -> Option<(usize, usize)> {
+    pub(crate) fn find(&self, lib: &SoundLibrary, id: u32) -> Option<(usize, usize)> {
         for (b, bank) in &self.banks {
             if let Some(i) = bank.objects().iter().position(|o| o.id == id) {
                 return Some((*b, i));
@@ -58,7 +58,7 @@ impl EditSet {
         hirc::parse(lib.banks[b].version, o.kind, &o.body).and_then(|r| r.ok())
     }
 
-    fn put_object(&mut self, lib: &SoundLibrary, id: u32, object: &Object) -> Result<()> {
+    pub(crate) fn put_object(&mut self, lib: &SoundLibrary, id: u32, object: &Object) -> Result<()> {
         let (b, i) = self.find(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is in no bank")))?;
         self.bank_mut(lib, b).objects_mut()[i].body = object.write();
         Ok(())
@@ -215,7 +215,7 @@ impl EditSet {
     }
 
     /// An unused ID for a new object or media file.
-    fn new_id(&self, lib: &SoundLibrary, salt: u32) -> u32 {
+    pub(crate) fn new_id(&self, lib: &SoundLibrary, salt: u32) -> u32 {
         let mut id = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u32) ^ salt) | 1;
         loop {
             id = (id.wrapping_mul(2_654_435_761) ^ (id >> 15)) & 0x3FFF_FFFF;

@@ -338,7 +338,23 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       `<projects>/audio/names.txt` and read with the banks (`NameSource::Label`). **done (builds, lints); not yet seen in the
       app**: the scripted capture failed with "SDL_Init failed: No displays available" (the screen off, 2026-11-20); capture
       `--tool audio --cmd "audio_select grp_gw_generic_button_small" --frames 900 --shot` when a display is on.
-6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
+6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **in progress**
+   1. How the game's music is built (Attila, TDD's music banks): a playlist's items are a depth-first tree, groups (no segment,
+      a child count, a play kind: 0 sequence continuous, 1 sequence step, 2 random continuous, 3 random step) and leaves (a
+      segment, kind 0xFFFFFFFF, weight 50,000); a segment holds one track with one streamed source and one clip; its duration
+      is the entry cue's position plus the clip's end; markers: the entry cue (43573010) and the exit cue (1539036744, at the
+      duration). **done**
+   2. Music edits (`wce_audio::music`, on `EditSet`): `replace_segment_audio` (the track's source redirected to a new loose WEM,
+      the clip the whole sound, the segment's duration and exit cue fitted), `add_playlist_entry` (a segment and track copied
+      from a leaf's, the new leaf after it in its group, the group's count +1, new audio loose), `remove_playlist_entry` (the
+      leaf, and its segment and tracks when nothing else plays them), `set_playlist_item` (weight, loop); `item_tree`,
+      `group_kind` for display. Gate `audio_music_check` (`audio_music`) on Attila + TDD, a 22-item playlist with nested
+      random groups: the entry added keeps the tree whole and fits its 3 s sound, removing it gives the banks back byte for byte,
+      a segment's replace fits, weight and loop read back. **done**
+   3. Tool: a playlist's item tree (groups and their play kind, segments with their length), per entry Play, Remove, weight and
+      loop, "Add music..." after an entry; a segment's "Replace music..."; transitions and stingers shown. **todo**
+   4. Later (follow-ups): editing transition rules (their source / destination / transition-segment blocks are kept as bytes),
+      stingers, music switch trees (which playlist plays for which state), segments with several tracks, new playlists.
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
 8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **todo**
 9. **Player and visuals** (user, 2026-11-20): a nicer, more useful player: the sound's waveform (amplitude envelope) as the
