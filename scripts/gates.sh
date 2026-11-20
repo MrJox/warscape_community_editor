@@ -75,6 +75,7 @@ run audio_formats     ex wce_audio_format audio_formats_check "$GAME"   # every 
 run audio_decode      ex wce_audio audio_decode_check "$GAME"           # every WEM and bank media decoded to its frame count
 run audio_encode      ex wce_audio audio_encode_check                   # every offered quality x channels x rate encodes with a known setup and decodes back
 run audio_edit        ex wce_audio audio_edit_check "$GAME"             # replace / add / remove / property edits keep the banks consistent
+run audio_music       ex wce_audio audio_music_check "$GAME"            # playlist entries added / removed, segments replaced, item weights
 run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)
 run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
 [ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"

@@ -14,6 +14,7 @@ pub mod edit;
 pub mod encode;
 pub mod import;
 pub mod library;
+pub mod music;
 pub mod names;
 pub mod references;
 pub mod setup_allocs;
