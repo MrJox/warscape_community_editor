@@ -202,7 +202,7 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    (the Timeline's Battle, `eval::evaluate_battle`): units teleported to their first key, then under orders at their own walk /
    run speed in straight lines (early or late against their keys), movie-only tracks gone. Not done: the campaign-map ground at
    the battle's position (Map context), VFX instances, sounds heard while scrubbing.
-5. **Movie export.** **done** (2026-11-20) but motion blur and the in-game test. `movie_export.rs`: `MovieEncoder`,
+5. **Movie export.** **done** (2026-11-20; motion blur 2026-11-21: per clip, four sub-frames over a 180 degree shutter) but the in-game test. `movie_export.rs`: `MovieEncoder`,
    `render_clip`, `mixdown` (48 kHz stereo: sound events at their times and volumes, music cues with fades; a switched event's
    stereo version, a random container's first child), `movie_files` (an overriding `global_movies.bnk` with `Play_Movie_<name>` on
    a sound made like the SEGA sting's, streamed from `audio/<id>.wem`; IDs seeded by the name, `EditSet::id_seed`; the `videos` row
