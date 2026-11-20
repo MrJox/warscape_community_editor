@@ -1,4 +1,5 @@
-//! The Cinematic tool: the Movies list and the Movie viewer (step 2 of docs/plans/cinematic.md).
+//! The Cinematic tool (docs/plans/cinematic.md): the Movies list and the Movie viewer (step 2), the scene editor (Scene, Timeline,
+//! Key, Layout: steps 3 and 4) and the exports (a historical battle pack).
 
 use std::any::Any;
 use std::sync::Arc;
@@ -12,6 +13,10 @@ use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_vfs::files::Files;
 
+use wce_cinematic::scene::{Interp, PathKey, Project, SceneUnit, TrackContent, sanitize_key};
+
+use crate::scene_doc::SceneDocument;
+use crate::scene_ui::{SceneUi, add_track, edit, for_track, scene_doc};
 use crate::viewer::MovieViewer;
 
 /// What a command asked for, done at the next frame (commands reach the tool between frames).
@@ -22,6 +27,16 @@ enum Pending {
     Play,
     Pause,
     Language(String),
+    SceneNew(String),
+    SceneOpen(String),
+    SceneTime(f64),
+    ScenePlay(bool),
+    UnitAdd(String, usize, f32, f32),
+    UnitSelect(u32),
+    TrackAdd(String),
+    KeyAdd,
+    PathKey(f32, f32),
+    ExportBattle(String),
 }
 
 #[derive(Default)]
@@ -35,6 +50,8 @@ pub struct CinematicTool {
     viewer: Option<MovieViewer>,
     filter: String,
     pending: Vec<Pending>,
+    scene: SceneUi,
+    new_scene: Option<String>,
 }
 
 impl CinematicTool {
@@ -128,6 +145,171 @@ impl CinematicTool {
                     v.set_language(c, &l);
                 }
             }
+            Pending::SceneNew(name) => self.new_scene_project(e, &name),
+            Pending::SceneOpen(what) => self.open_scene(e, &what),
+            Pending::SceneTime(t) => {
+                self.scene.time = t.max(0.0);
+                self.scene.playing = false;
+            }
+            Pending::ScenePlay(on) => self.scene.playing = on,
+            Pending::UnitAdd(key, army, x, z) => {
+                let mut made = 0;
+                edit(e, "add unit", |p| {
+                    let id = p.new_id();
+                    let facing = p.armies.get(army).map_or(0.0, |a| a.deployment_orientation);
+                    p.units.push(SceneUnit {
+                        id,
+                        name: key.clone(),
+                        unit: key.clone(),
+                        army,
+                        start: [x, z],
+                        facing,
+                        width: 30.0,
+                        men: 160,
+                        seed: id,
+                        general: false,
+                    });
+                    made = id;
+                });
+                if made != 0 {
+                    self.scene.unit = Some(made);
+                }
+            }
+            Pending::UnitSelect(id) => self.scene.unit = Some(id),
+            Pending::TrackAdd(kind) => {
+                let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+                let Some(clip) = self.scene.current_clip(&p).map(|c| c.id) else { return };
+                let (unit, env) = (self.scene.unit, p.battle.environment.clone());
+                let mut made = None;
+                edit(e, "add track", |p| made = add_track(p, clip, &kind, unit, &env));
+                if made.is_some() {
+                    self.scene.track = made;
+                } else {
+                    e.status(&format!("Cinematic: no {kind} track (a unit track needs a selected unit)"), true);
+                }
+            }
+            Pending::KeyAdd => {
+                if let Some(p) = scene_doc(e).map(|d| d.project().clone())
+                    && let Some(clip) = self.scene.current_clip(&p).cloned()
+                {
+                    self.scene.add_key_public(e, &p, &clip);
+                }
+            }
+            Pending::PathKey(x, z) => {
+                let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+                let (Some(u), Some(clip)) = (self.scene.unit, self.scene.current_clip(&p).map(|c| c.id)) else { return };
+                let t = self.scene.time;
+                let mut track = None;
+                edit(e, "path key", |p| {
+                    let id = match p
+                        .clip(clip)
+                        .and_then(|c| c.tracks.iter().find(|tr| matches!(&tr.content, TrackContent::Unit { unit, .. } if *unit == u)))
+                    {
+                        Some(tr) => tr.id,
+                        None => add_track(p, clip, "Unit", Some(u), "").unwrap_or(0),
+                    };
+                    for_track(p, clip, id, |tr| {
+                        if let TrackContent::Unit { path, .. } = &mut tr.content {
+                            path.retain(|k| (k.t - t).abs() > 1e-6);
+                            path.push(PathKey { t, position: [x, z], interp: Interp::Linear, gait: None });
+                        }
+                    });
+                    track = Some(id);
+                });
+                self.scene.track = track;
+            }
+            Pending::ExportBattle(path) => match self.export_battle(e, std::path::Path::new(&path)) {
+                Ok(msg) => e.status(&msg, false),
+                Err(err) => e.status(&format!("Cinematic: {err}"), true),
+            },
+        }
+    }
+
+    fn scenes_dir(e: &Editor) -> std::path::PathBuf {
+        e.projects_dir().join("cinematics")
+    }
+
+    /// A new scene in `<projects>/cinematics/<key>/project.json` (written when saved).
+    fn new_scene_project(&mut self, e: &mut Editor, name: &str) {
+        let game = self.files.as_ref().and_then(|f| f.game().map(|g| g.key.to_owned())).unwrap_or_else(|| "attila".into());
+        let p = Project::new(name.trim(), &game);
+        let path = Self::scenes_dir(e).join(sanitize_key(name)).join("project.json");
+        if path.exists() {
+            e.status(&format!("Cinematic: {} exists: opened instead", path.display()), true);
+            self.open_scene(e, &path.display().to_string());
+            return;
+        }
+        match e.replace_document("cinematic", Box::new(SceneDocument::new(p, path))) {
+            Ok(_) => {
+                self.scene = SceneUi::default();
+                e.status(&format!("Cinematic: new scene {name}"), false);
+                gui::select_dock_tab("Timeline");
+                gui::select_dock_tab("Layout");
+            }
+            Err(err) => e.status(&format!("Cinematic: {err}"), true),
+        }
+    }
+
+    /// Opens a scene by its project.json path or its folder name under `<projects>/cinematics`.
+    fn open_scene(&mut self, e: &mut Editor, what: &str) {
+        let mut path = std::path::PathBuf::from(what);
+        if !path.is_absolute() {
+            path = Self::scenes_dir(e).join(what);
+        }
+        if path.is_dir() {
+            path = path.join("project.json");
+        }
+        match SceneDocument::open(path.clone()) {
+            Ok(d) => match e.replace_document("cinematic", Box::new(d)) {
+                Ok(_) => {
+                    self.scene = SceneUi::default();
+                    e.status(&format!("Cinematic: opened {}", path.display()), false);
+                    gui::select_dock_tab("Timeline");
+                    gui::select_dock_tab("Layout");
+                }
+                Err(err) => e.status(&format!("Cinematic: {err}"), true),
+            },
+            Err(err) => e.status(&format!("Cinematic: {err}"), true),
+        }
+    }
+
+    /// The scene as a historical battle pack at `path`.
+    fn export_battle(&mut self, e: &mut Editor, path: &std::path::Path) -> Result<String, String> {
+        let p = scene_doc(e).map(|d| d.project().clone()).ok_or("no scene open")?;
+        let files = self.files.clone().ok_or("the game's files are not loaded")?;
+        let schema = files
+            .game()
+            .and_then(wce_foundation::settings::rpfm_schema_path)
+            .and_then(|s| rpfm_lib::schema::Schema::load(&s, None).ok())
+            .ok_or("no RPFM schema for the game")?;
+        let warnings = wce_cinematic::battle_tables::write_battle_pack(path, &p, files.as_ref(), &schema, "en")?;
+        for w in &warnings {
+            e.status(&format!("Cinematic: {w}"), true);
+        }
+        Ok(format!("Cinematic: wrote {} ({} warnings)", path.display(), warnings.len()))
+    }
+
+    fn new_scene_popup(&mut self, e: &mut Editor) {
+        let Some(mut name) = self.new_scene.take() else { return };
+        gui::open_popup("New cinematic scene");
+        let mut keep = true;
+        if gui::begin_popup_modal("New cinematic scene", None, 0) {
+            gui::set_next_item_width(260.0);
+            let enter = gui::input_text("##scenename", Some("name"), &mut name, 64, gui::INPUT_ENTER_RETURNS_TRUE);
+            if (gui::button("Create") || enter) && !name.trim().is_empty() {
+                self.new_scene_project(e, &name);
+                keep = false;
+                gui::close_current_popup();
+            }
+            gui::same_line();
+            if gui::button("Cancel") {
+                keep = false;
+                gui::close_current_popup();
+            }
+            gui::end_popup();
+        }
+        if keep {
+            self.new_scene = Some(name);
         }
     }
 
@@ -254,15 +436,69 @@ impl Tool for CinematicTool {
         false
     }
 
+    fn file_menu(&mut self, e: &mut Editor, part: wce_editor::tool::FileMenu) {
+        if part != wce_editor::tool::FileMenu::Open {
+            return;
+        }
+        if gui::menu_item("New cinematic scene...", None, false, true) {
+            self.new_scene = Some(String::new());
+        }
+        if gui::begin_menu("Open cinematic scene") {
+            let dir = Self::scenes_dir(e);
+            let mut scenes: Vec<String> = std::fs::read_dir(&dir)
+                .map(|r| {
+                    r.flatten()
+                        .filter(|d| d.path().join("project.json").is_file())
+                        .map(|d| d.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            scenes.sort();
+            if scenes.is_empty() {
+                gui::text_disabled("No scenes yet");
+            }
+            for s in scenes {
+                if gui::menu_item(&s, None, false, true) {
+                    self.open_scene(e, &s);
+                }
+            }
+            gui::end_menu();
+        }
+    }
+
+    fn export_menu(&mut self, e: &mut Editor) -> bool {
+        let has = scene_doc(e).is_some();
+        if gui::menu_item("Historical battle pack...", None, false, has) {
+            let key = scene_doc(e).map(|d| sanitize_key(&d.project().battle.key)).unwrap_or_default();
+            let filters = [("Mod pack".to_owned(), "*.pack".to_owned())];
+            if let Some(path) = e.pick_export_file("cinematic_battle_pack", &format!("{key}.pack"), &filters) {
+                match self.export_battle(e, &path) {
+                    Ok(msg) => e.status(&msg, false),
+                    Err(err) => e.status(&format!("Cinematic: {err}"), true),
+                }
+            }
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle XML, Lua, menu rows, subtitles and loc as one mod pack");
+        }
+        true
+    }
+
     fn default_layout(&self, dockspace: gui::ImGuiID) {
         let (left, center) = gui::dock_builder_split(dockspace, gui::DIR_LEFT, 0.22);
-        let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.2);
+        let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.24);
+        let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.32);
         gui::dock_builder_dock_window("Movies", left);
+        gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Movie", center);
+        gui::dock_builder_dock_window("Layout", center);
+        gui::dock_builder_dock_window("Key", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
         gui::dock_builder_dock_window("Inspector", bottom);
+        // Docked last: the bottom node's tab in front.
+        gui::dock_builder_dock_window("Timeline", bottom);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -313,6 +549,88 @@ impl Tool for CinematicTool {
                 }
             },
         );
+        c.add("scene_new", "scene_new <name>", "A new cinematic scene (saved under <projects>/cinematics/<key>)", |e, a| {
+            if a.is_empty() {
+                return CommandResult::fail("usage: scene_new <name>");
+            }
+            queue(e, Pending::SceneNew(a.join(" ")))
+        });
+        c.add("scene_open", "scene_open <folder | project.json>", "Opens a cinematic scene", |e, a| {
+            if a.is_empty() {
+                return CommandResult::fail("usage: scene_open <folder | path>");
+            }
+            queue(e, Pending::SceneOpen(a.join(" ")))
+        });
+        c.add("scene_time", "scene_time <seconds>", "Moves the timeline's playhead", |e, a| match a.first().and_then(|x| x.parse().ok()) {
+            Some(t) => queue(e, Pending::SceneTime(t)),
+            None => CommandResult::fail("usage: scene_time <seconds>"),
+        });
+        c.add("scene_play", "scene_play [0|1]", "Plays (or stops) the clip", |e, a| {
+            queue(e, Pending::ScenePlay(a.first().is_none_or(|x| x != "0")))
+        });
+        c.add("unit_add", "unit_add <main_units key> <army> <x> <z>", "Adds a unit to the scene and selects it", |e, a| {
+            let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+            match (a.first(), a.get(1).and_then(|x| x.parse().ok()), n(2), n(3)) {
+                (Some(k), Some(army), Some(x), Some(z)) => queue(e, Pending::UnitAdd(k.clone(), army, x, z)),
+                _ => CommandResult::fail("usage: unit_add <key> <army> <x> <z>"),
+            }
+        });
+        c.add("unit_select", "unit_select <id>", "Selects a unit of the scene", |e, a| match a.first().and_then(|x| x.parse().ok()) {
+            Some(id) => queue(e, Pending::UnitSelect(id)),
+            None => CommandResult::fail("usage: unit_select <id>"),
+        });
+        c.add("track_add", "track_add <kind>", "Adds a track to the clip (a Unit track: the selected unit's)", |e, a| {
+            if a.is_empty() {
+                return CommandResult::fail("usage: track_add <kind>");
+            }
+            queue(e, Pending::TrackAdd(a.join(" ")))
+        });
+        c.add("key_add", "key_add", "Adds a key at the playhead on the selected track", |e, _| queue(e, Pending::KeyAdd));
+        c.add("path_key", "path_key <x> <z>", "A path key for the selected unit at the playhead", |e, a| {
+            match (a.first().and_then(|x| x.parse().ok()), a.get(1).and_then(|x| x.parse().ok())) {
+                (Some(x), Some(z)) => queue(e, Pending::PathKey(x, z)),
+                _ => CommandResult::fail("usage: path_key <x> <z>"),
+            }
+        });
+        c.add("scene_export_battle", "scene_export_battle <file.pack>", "Writes the scene as a historical battle pack", |e, a| {
+            if a.is_empty() {
+                return CommandResult::fail("usage: scene_export_battle <file.pack>");
+            }
+            queue(e, Pending::ExportBattle(a.join(" ")))
+        });
+        c.add(
+            "assert_unit",
+            "assert_unit <id> <x> <z> [slot]",
+            "Fails unless the unit is there (1 m) at the playhead, with that slot",
+            |e, a| {
+                let id: Option<u32> = a.first().and_then(|x| x.parse().ok());
+                let (x, z) = (a.get(1).and_then(|v| v.parse::<f32>().ok()), a.get(2).and_then(|v| v.parse::<f32>().ok()));
+                let slot = a.get(3).cloned();
+                let (Some(id), Some(x), Some(z)) = (id, x, z) else { return CommandResult::fail("usage: assert_unit <id> <x> <z> [slot]") };
+                let got = e.with_tool::<CinematicTool, _>(|t, e| {
+                    let p = scene_doc(e).map(|d| d.project().clone())?;
+                    let f = t.scene.frame(&p)?;
+                    f.units.into_iter().find(|u| u.unit == id)
+                });
+                match got.flatten() {
+                    Some(u)
+                        if (u.position[0] - x).abs() <= 1.0
+                            && (u.position[1] - z).abs() <= 1.0
+                            && slot.as_ref().is_none_or(|s| *s == u.slot) =>
+                    {
+                        CommandResult::success(format!(
+                            "unit {id} at {:.2} {:.2} {} since {:.2}",
+                            u.position[0], u.position[1], u.slot, u.slot_start
+                        ))
+                    }
+                    Some(u) => CommandResult::fail(format!(
+                        "unit {id} at {:.2} {:.2} {}, expected {x} {z} {slot:?}",
+                        u.position[0], u.position[1], u.slot
+                    )),
+                    None => CommandResult::fail(format!("no unit {id} in the scene")),
+                }
+            },
+        );
         c.add("movie_info", "movie_info", "Logs the open movie's frame, time and subtitle line", |e, _| {
             let info = e.with_tool::<CinematicTool, _>(|t, _| {
                 t.viewer.as_ref().map(|v| {
@@ -332,6 +650,11 @@ impl Tool for CinematicTool {
         self.poll(e);
         self.movies_panel(e);
         self.movie_panel(e);
+        self.scene.scene_panel(e);
+        self.scene.timeline_panel(e);
+        self.scene.key_panel(e);
+        self.scene.layout_panel(e);
+        self.new_scene_popup(e);
     }
 
     fn unsaved_work(&self) -> Vec<String> {

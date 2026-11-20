@@ -20,8 +20,20 @@ for run in 1 2; do
     rc=$?
     echo "run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/run$run.log" | tail -5; }
+    # The scene editor, with its own projects folder.
+    proj="$OUT/projects$run"; rm -rf "$proj"; mkdir -p "$proj"
+    sed -e "s|%SHOT3%|$(cygpath -m "$OUT/scene$run.png")|" -e "s|%PACK%|$(cygpath -m "$OUT/scene$run.pack")|"         "$ROOT/scripts/cinematic_scene.txt" > "$OUT/scene$run.txt"
+    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/scene$run.txt")" > "$OUT/scene_run$run.log" 2>&1
+    rc=$?
+    echo "scene run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/scene_run$run.log" | tail -5; }
+    [ -s "$proj/cinematics/wce_scene_test/project.json" ] || { echo "scene run $run: no project.json saved"; bad=1; }
+    [ -s "$OUT/scene$run.pack" ] || { echo "scene run $run: no battle pack"; bad=1; }
 done
-for shot in intro event; do
+if cmp -s "$OUT/projects1/cinematics/wce_scene_test/project.json" "$OUT/projects2/cinematics/wce_scene_test/project.json"; then echo "project.json identical between runs"
+else echo "project.json DIFFERS between runs"; bad=1; fi
+if cmp -s "$OUT/scene1.pack" "$OUT/scene2.pack"; then echo "battle pack identical between runs"; else echo "battle pack DIFFERS between runs"; bad=1; fi
+for shot in intro event scene; do
     if cmp -s "$OUT/${shot}1.png" "$OUT/${shot}2.png" && [ -s "$OUT/${shot}1.png" ]; then echo "$shot shot identical between runs"
     else echo "$shot shot DIFFERS between runs (or missing)"; bad=1; fi
 done
