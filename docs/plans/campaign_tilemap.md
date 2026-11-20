@@ -168,6 +168,20 @@ player faction named, a screenshot at the user's normal settings beside it. Rend
 
 The rain and winter captures (64369, 92544, 94246) are kept as extra baselines.
 
+Taken 2026-11-20 (one campaign, the Western Roman Empire, turn 1; the settings above: every quality 3, textures "small"; each with a
+Steam screenshot in Documents, `325610_20261120<time>_1.png`), files `D:\renderdoc\camp_attila_G_frame<N>.rdc`:
+
+| Name | Frame | Size | View |
+|---|---|---|---|
+| G | 11596 | 1920 x 1080 | Germania north of the Alps, the fog of war over the north |
+| E, E2 | 12470, 13058 | 1920 x 1080 | the Atlantic edge: shroud and sea |
+| A_res | 4153 | 1280 x 720 | Rome's coast at capture A's middle zoom |
+| C | 8325 | 1280 x 720 | Rome close (the province panel open) |
+| F1, F | 8961, 9207 | 1280 x 720 | the far zoom over Italy, looking down; tilted to the horizon |
+
+At 1280 x 720 the game draws flat light-blue polygons over parts of the sea (the user: a rendering error at that size; north of
+Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD captures yet.
+
 ## Order
 
 1, 2, 3 (the baseline), then 4 in its order (re-ranked by the baseline's errors), 5, 6; Phase 7's docs with each phase. Captures C and
