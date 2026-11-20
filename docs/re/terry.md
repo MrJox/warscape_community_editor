@@ -295,6 +295,9 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   - Levels (corrected 2026-11-05 from the game's turn-1 screenshots: a pale road in every region): a region's level is how many
     thresholds its value passes, so `att_road_lv_1` (threshold 0) is `road1` (`roads`), `lv_2` `road2` (`roads_stone`), `lv_3` the
     highest group there is (`road2`; ASSUMPTION); `roads_climate` (`road0`) is never left on Attila's main map.
+  - At the start every road is level 1 (2026-11-20): capture C, at the start (its fog of war the start's), shows Rome's road as
+    `roads`' pale track where its region's level is 2 or more; a level above 1 takes its turns (`turns_required_to_upgrade_to`) first.
+    The editor's start view draws level 1 everywhere (`roads::START_LEVEL`) and still reports the regions' levels.
   - a region's road value is the sum of `att_effect_building_road` (scope `region_to_region_own`; 96 buildings, no technology or
     effect bundle gives it) over its buildings in the startpos; its level the last `campaign_map_roads` row of the campaign whose
     `threshold` it reaches (`main_attila`: `att_road_lv_1` 0, `att_road_lv_2` 10, `att_road_lv_3` 40; `turns_required_to_upgrade_to`
