@@ -13,7 +13,7 @@ use wce_foundation::math::Float4x4;
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, RenderScene, SnowRegions, SourceRef};
 use wce_tile::battle_map::context::{CELL, PlacedMap};
-use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, Frame, Streamer};
+use wce_tile_editor::tile_document::context::{CHUNK, ChunkChange, ChunkKey, Frame, StreamStats, Streamer};
 
 use crate::maps::{GAME_FAR_PLANE, MINIMAP_KEY, MINIMAP_SIDE, minimap_pixels};
 
@@ -85,8 +85,9 @@ pub struct MapView {
     /// The overview map's picture: the map it is of (its name).
     overview_of: String,
 
-    /// The streamer's report.
+    /// The streamer's report, and the same as fields (the panel's table).
     pub status: String,
+    pub stats: Option<StreamStats>,
 }
 
 /// How far the ground shows from under the camera (scene units): straight ahead, and to each side there. What ends the view is its far plane,
@@ -280,7 +281,8 @@ impl MapView {
         let reach = self.sea_reach(r);
         let Some(s) = self.streamer.as_mut() else { return false };
         let changes = s.update(focus);
-        self.status = s.report();
+        let stats = s.stats();
+        (self.status, self.stats) = (stats.line(), Some(stats));
         let (dx, dz) = (focus.0 - self.sea_at.0, focus.1 - self.sea_at.1);
         let moved = (dx * dx + dz * dz).sqrt() > f64::from(2 * CHUNK) * CELL || widened;
         if let (Some(id), true) = (self.sea, moved) {
@@ -299,7 +301,8 @@ impl MapView {
         self.follow_view(e, focus, r);
         let Some(s) = self.streamer.as_mut() else { return };
         let changes = s.run_to_idle(focus);
-        self.status = s.report();
+        let stats = s.stats();
+        (self.status, self.stats) = (stats.line(), Some(stats));
         self.take(changes);
 
         // The renderer makes their terrains' GPU side on its loading threads.

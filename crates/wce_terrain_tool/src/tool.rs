@@ -1395,14 +1395,7 @@ impl TerrainTool {
         gui::slider_float("view distance", &mut self.rings.view_distance, GAME_FAR_PLANE, whole, "%.0f");
         gui::checkbox("follow the camera", &mut self.rings.follow);
         gui::checkbox("overview map", &mut self.overview);
-        if !self.status.is_empty() {
-            gui::text_wrapped(&self.status);
-        }
-
-        if !self.view.status.is_empty() {
-            gui::text_wrapped(&self.view.status);
-        }
-
+        self.draw_status(e);
         if let Some(line) = self.cursor_line() {
             gui::text_disabled(&line);
         }
@@ -1455,6 +1448,73 @@ impl TerrainTool {
     fn pick_at(&self, e: &Editor, x: i32, y: i32) -> Option<(Float3, f32)> {
         let (o, d) = e.viewport.ray(x, y)?;
         self.pick.as_ref()?.hit(o, d)
+    }
+
+    /// The map's summary and the view's streaming, as a table (each was one long line); what the tool last said, when it is something
+    /// else (an error).
+    fn draw_status(&self, e: &Editor) {
+        let doc = e.docs.find_as::<MapDocument>(self.shown);
+        let summary = doc.map(|d| (format!("{}: {}", d.name, d.summary()), d.summary_rows()));
+        let said = summary.as_ref().is_none_or(|(line, _)| *line != self.status);
+        let stats = self.view.stats.as_ref();
+        if summary.is_none() && stats.is_none() {
+            if !self.status.is_empty() {
+                gui::text_wrapped(&self.status);
+            }
+            return;
+        }
+
+        gui::separator();
+        if gui::begin_table("terrain_status", 2, gui::TABLE_SIZING_STRETCH_PROP, gui::v2(0.0, 0.0)) {
+            // The labels as wide as the longest, the values the rest (wrapped).
+            gui::table_setup_column("what", gui::COLUMN_WIDTH_FIXED, gui::calc_text_size("LF under the tile").x);
+            gui::table_setup_column("value", gui::COLUMN_WIDTH_STRETCH, 0.0);
+            let row = |label: &str, value: &str| {
+                gui::table_next_row();
+                gui::table_next_column();
+                gui::text_disabled(label);
+                gui::table_next_column();
+                gui::text_wrapped(value);
+            };
+            if let Some((_, rows)) = &summary {
+                for (k, v) in rows {
+                    row(k, v);
+                }
+            }
+
+            if let Some(s) = stats {
+                let [near, mid, ground, far, blocks, merged, distant] = s.shown;
+                row("chunks", &format!("{near} near, {mid} buildings, {ground} tile ground, {far} LF ground"));
+                row("blocks", &format!("{merged} merged, {blocks} LF ground, {distant} distant"));
+                if s.building > 0 {
+                    gui::table_next_row();
+                    gui::table_next_column();
+                    gui::text_disabled("building");
+                    gui::table_next_column();
+                    gui::text_colored([1.0, 0.8, 0.3, 1.0], &s.building.to_string());
+                }
+
+                row("tiles", &format!("{} opened ({:.1} s), {} from the cache", s.opened, s.open_s, s.from_cache));
+                if s.failed > 0 {
+                    gui::table_next_row();
+                    gui::table_next_column();
+                    gui::text_disabled("not opened");
+                    gui::table_next_column();
+                    gui::text_colored([1.0, 0.45, 0.4, 1.0], &format!("{} tiles", s.failed));
+                }
+
+                row("in memory", &format!("{} MB", s.mb));
+                row("LF under the tile", s.lf_note.strip_prefix("LF under the tile ").unwrap_or(&s.lf_note));
+                let first = s.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"));
+                row("loaded in", &format!("map {:.1} s{first}", s.map_s));
+            }
+
+            gui::end_table();
+        }
+
+        if said && !self.status.is_empty() {
+            gui::text_wrapped(&self.status);
+        }
     }
 
     /// The cursor's point on the LF for the panel: its map cell, metres above the sea and the raw sample.
