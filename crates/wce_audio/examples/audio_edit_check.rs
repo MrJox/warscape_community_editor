@@ -14,8 +14,12 @@ use wce_audio::decode::{Pcm, decode_wem};
 use wce_audio::edit::EditSet;
 use wce_audio::encode::{DEFAULT_QUALITY, encode_wem};
 use wce_audio::library::SoundLibrary;
+use wce_audio::references::{self, Reference, ReferenceIndex};
+use wce_audio_format::amb::Ambience;
 use wce_audio_format::bank::Bank;
+use wce_audio_format::fnv;
 use wce_audio_format::hirc::{self, Object};
+use wce_audio_format::triggers::Triggers;
 use wce_vfs::{Config, GameProfile, Vfs};
 
 /// In-bank sources whose offset or size does not match their media bank.
@@ -183,6 +187,76 @@ fn main() {
     println!("5. container volume set to -3 dB, reads back {volume:?}");
     if volume != Some(-3.0) {
         failures.push("set property");
+    }
+
+    // 6. References.
+    let t = std::time::Instant::now();
+    let index = ReferenceIndex::build(&vfs, &lib);
+    println!("6. references (index built in {:.1} s):", t.elapsed().as_secs_f64());
+    let expect = [
+        ("grp_gw_generic_button_small", "UI layout"),
+        ("battle_bird_wing_flaps", "sound_animation_triggers.csv"),
+        ("campaign_spot_ambience_coastal_waves_cliff", "campaign ambience"),
+        ("Battle_Order_VO_Mute", "event_data.dat"),
+    ];
+    for (name, want) in expect {
+        let refs = references::find(&lib, &EditSet::default(), &index, fnv::id(name));
+        let found = refs.iter().any(|r| r.describe(&lib).contains(want));
+        println!("   {name}: {} references, {want}: {found}", refs.len());
+        if !found {
+            failures.push("references");
+        }
+    }
+    let refs = references::find(&lib, &EditSet::default(), &index, container);
+    println!("   container {container}: {:?}", refs.iter().map(|r| r.describe(&lib)).collect::<Vec<_>>());
+    if !refs.iter().any(|r| matches!(r, Reference::Object { how: "child of", .. })) {
+        failures.push("references of a container");
+    }
+
+    // 7. Delete the container with its sounds.
+    let mut edits = EditSet::default();
+    let deleted = edits.delete_object(&lib, container).expect("delete");
+    let dangling = (0..lib.banks.len())
+        .flat_map(|b| edits.bank(&lib, b).objects().iter().map(move |o| (b, o)))
+        .filter(|(b, o)| {
+            deleted.contains(&o.id)
+                || hirc::parse(lib.banks[*b].version, o.kind, &o.body)
+                    .and_then(|r| r.ok())
+                    .is_some_and(|object| object.children().iter().any(|c| deleted.contains(c)))
+        })
+        .count();
+    let rereads = edits.banks.values().all(|b| Bank::read(&b.write()).is_ok_and(|r| r == *b));
+    println!("7. container deleted: {} objects gone, {dangling} still named or present, re-reads: {rereads}", deleted.len());
+    if dangling != 0 || !rereads || deleted.len() < 2 {
+        failures.push("delete");
+    }
+
+    // 8. A new event playing the container, wired to a new trigger row and an ambience emitter.
+    let mut edits = EditSet::default();
+    let bank = lib.banks_of(container)[0];
+    let event = edits.new_event(&lib, bank, "wce_test_event", container).expect("new event");
+    let plays = match edits.object(&lib, event) {
+        Some(Object::Event(e)) => matches!(edits.object(&lib, e.actions[0]), Some(Object::Action(a)) if a.target_id == container),
+        _ => false,
+    };
+    let rows_before = vfs.read("audio/sound_animation_triggers.csv").ok().and_then(|b| Triggers::read(&b).ok()).map_or(0, |t| t.rows.len());
+    let row = edits.add_trigger(&vfs, "wce_test_trigger", "wce_test_event", "", 84).expect("trigger");
+    let csv = Triggers::read(&edits.loose["audio/sound_animation_triggers.csv"]).expect("csv");
+    let amb_path = vfs.list("audio/", ".amb").into_iter().next().expect("an amb");
+    edits.add_emitter(&vfs, amb_path, event, vec![[10.0, 0.0, 10.0], [20.0, 0.0, 10.0]]).expect("emitter");
+    let amb = Ambience::read(&edits.loose[amb_path]).expect("amb");
+    let ok = plays
+        && row == rows_before
+        && csv.rows.len() == rows_before + 1
+        && csv.get(row, "sound_event_name_battle") == Some("wce_test_event")
+        && amb.emitters.last().is_some_and(|e| e.event_id == event);
+    println!(
+        "8. new event {event} plays the container: {plays}; trigger row {row} of {}; {} emitter added: {ok}",
+        csv.rows.len(),
+        amb_path
+    );
+    if !ok {
+        failures.push("new event and wiring");
     }
 
     for f in &failures {

@@ -311,15 +311,25 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       banks (event or data banks), while loose WEMs do; cause unknown (UI banks loaded before mods, another event, or cached
       media). Revisit with a runtime trace or a non-UI event (a battle sound) later. An added variation in game: todo.
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **in progress**
-   1. References finder (`wce_audio::references`): who names or uses an object: `event_data.dat` (the game's code triggers
-      these events by name), `sound_animation_triggers.csv` rows, campaign `.amb` emitters, UI layouts' sound events, other
-      objects (parents, actions, switch and dialogue trees, music). **todo**
-   2. Delete (`EditSet::delete_object`): an event with its actions, or a hierarchy object out of its parent, with what it alone
-      owns (children, media); the references listed first as warnings. **todo**
-   3. New events (`EditSet::new_event`): a named event (ID = FNV-1 of the name) with a Play action on an object, in a chosen
-      bank. **todo**
-   4. Wiring a new event: a new `sound_animation_triggers.csv` row (battle/campaign event names) for `.snd.meta` frames (the
-      frames themselves: step 7), or an `.amb` emitter; a warning when nothing triggers it. **todo**
+   1. References finder (`wce_audio::references`): `ReferenceIndex::build` (once, about 5 s: on a worker) indexes the game's
+      references by ID: `event_data.dat` (the game's code triggers these events by name), `sound_animation_triggers.csv` rows,
+      campaign `.amb` emitters, UI layouts (their words hashed, kept when a bank has that ID); `references::find` adds the
+      banks' own (child of, action of, target of, switch value of, in the tree of, in the playlist of), as edited. Gate step 6:
+      `grp_gw_generic_button_small` 79 references (UI layouts), `battle_bird_wing_flaps` (the triggers CSV),
+      `campaign_spot_ambience_coastal_waves_cliff` (`.amb`), `Battle_Order_VO_Mute` (`event_data.dat`), a container's parent and
+      Play action. **done**
+   2. Delete (`EditSet::delete_object`): the object, its subtree (children whose parent it is), an event's actions, the Play
+      actions on any of them; every list naming them drops them (events, random/sequence children and playlists, switch
+      children / assignments / child parameters, actor-mixers, blend children and layers); media stay (the game's packs are not
+      changed); loose files of these edits no longer used are dropped. Music objects: step 6. Gate step 7: a container with
+      its 4 sounds and its Play action (6 objects), nothing left naming them, the banks re-read. **done**
+   3. New events (`EditSet::new_event`): a named event (ID = FNV-1 of the name, letters / digits / `_`) with a Play action on an
+      object of the bank, the action copied from a Play action of that bank; the name kept in `EditSet::names`. Gate step 8.
+      **done**
+   4. Wiring: `EditSet::add_trigger` (a `sound_animation_triggers.csv` row firing battle / campaign events, its conditions
+      copied from another row; returns the row index a `.snd.meta` holds; the frames themselves: step 7) and
+      `EditSet::add_emitter` (a campaign `.amb` emitter along points). Gate step 8: row 168 added, an emitter added. **done**;
+      the "nothing triggers it" warning: with the tool (5.5).
    5. Tool: Delete (with the warnings), New event (name, bank, target), Wire. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
