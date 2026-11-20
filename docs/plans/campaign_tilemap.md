@@ -227,6 +227,11 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   a frame moved by their LF window's shift: the fog was read some way off, where the map was unexplored. The bounds now move
   with the frame (`ShroudGpu::world`, `draw_terrain_patches`). The band shows at both coasts; the shore pixel 7.5 / 9.0 / 9.5
   against the game's 7.8 / 9.3 / 9.0; ours a little brighter further out (840, 650: 3.7 / 6.8 / 9.0 against 1.8 / 3.9 / 6.4).
+- **G's sawtooth (2026-11-20):** dark teeth across mountain tiles past the tile rings (`atlantic_mountains\large_point_60_r`, and a
+  smaller one on the right). The far chunks draw a tile's cells as plain ground raised by the far relief (40 to 90 m there), and
+  the plain material's blend box stands 30 units over the LF: what rose out of it resolved black. A ground with heights of its
+  own now has a box over them, and no level of detail (two at different strides parted along their edge, as the blocks'
+  comment has it). Also: a far chunk drew its tiles' cells inside a block's square, which the block draws (drawn twice).
 
 ## Order
 

@@ -946,12 +946,16 @@ impl Frame {
 
     /// The cells a chunk draws, but those in `except`: those of its placements (which reach out of it by up to the largest tile) when
     /// `placed`, else its own nobody covers.
-    fn owned(&self, key: ChunkKey, except: &[[i32; 4]], placed: bool) -> Vec<([i32; 4], u8)> {
+    fn owned(&self, key: ChunkKey, except: &[[i32; 4]], placed: bool, in_block: &dyn Fn(ChunkKey) -> bool) -> Vec<([i32; 4], u8)> {
         let (me, c) = (self.owner_of(key), [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK]);
         let inside = |x: i32, y: i32| x >= c[0] && x < c[2] && y >= c[1] && y < c[3];
         let cut = |x: i32, y: i32| except.iter().any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
+        // A block draws every cell of its square, whichever chunk's tile it is: those cells are not this chunk's to draw too (capture
+        // G: a mountain tile reaching from a far chunk into a block stood there twice, the chunk's strips' skirts a sawtooth along
+        // the block's edge).
+        let blocked = |x: i32, y: i32| in_block((x.div_euclid(CHUNK), y.div_euclid(CHUNK)));
         self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| {
-            (if placed { o == me } else { o == 0 && inside(x, y) }) && !cut(x, y)
+            (if placed { o == me } else { o == 0 && inside(x, y) }) && !cut(x, y) && !blocked(x, y)
         })
     }
 
@@ -1001,6 +1005,10 @@ impl Frame {
         // On a campaign map the points over sea tiles (and uncovered cells: the open sea) at the sea bed, as the blocks have them: the
         // land LF stands out of the sea under some (35 m beside main_attila's islands), and the ground there showed as dark flats.
         let sea_heights = source.filter(|_| self.is_campaign()).and_then(|s| self.ground_heights(r, b, nx, nz, step, s));
+        // A level of detail only on flat ground (the shader adds the LF at every vertex): with heights of its own (the far relief, the
+        // sea bed) two grounds side by side at different strides parted along their edge, the coarse one's line cutting across the fine
+        // one's peaks (capture G: a sawtooth of cracks across a mountain tile's far strips).
+        let lod = sea_heights.is_none();
         let heights = match sea_heights {
             Some(h) => Arc::new(h),
             None => self
@@ -1030,6 +1038,17 @@ impl Frame {
                 })
                 .clone()
         });
+        // With heights of its own its box reaches them: the plain box stands 30 units over the LF, and the far relief's mountains (40
+        // to 90 m over it) came out of it, black (capture G: a sawtooth across a mountain tile's far strips).
+        let material = match (&material, lod) {
+            (Some(m), false) => {
+                let (lo, hi) = heights.iter().fold((0.0f32, 0.0f32), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+                let mut m = (**m).clone();
+                (m.y0, m.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
+                Some(Arc::new(m))
+            }
+            _ => material,
+        };
 
         let t = Terrain {
             nx,
@@ -1038,7 +1057,7 @@ impl Frame {
             origin_z: 0.0,
             step: step as f32,
             heights,
-            lod: true,
+            lod,
             tile_metres: 32.0,
             material,
             lf: self.lf.clone(),
@@ -1892,8 +1911,8 @@ impl Frame {
             }
 
             // The tiles' ground with their relief from the far material, once there is one (a campaign map's mountains past the rings).
-            out.extend(self.owned(key, &cut, true).into_iter().map(|(r, c)| self.ground_with(r, true, c, Some(source))));
-            out.extend(self.owned(key, &cut, false).into_iter().map(|(r, c)| self.uncovered_ground(r, true, c)));
+            out.extend(self.owned(key, &cut, true, source.in_block).into_iter().map(|(r, c)| self.ground_with(r, true, c, Some(source))));
+            out.extend(self.owned(key, &cut, false, source.in_block).into_iter().map(|(r, c)| self.uncovered_ground(r, true, c)));
             return out;
         }
 
