@@ -85,6 +85,21 @@ impl MovieJob {
             let mut rgba =
                 wce_editor::viewport::render_offscreen(e, &mut self.target, self.width, self.height, cam, t as f32, self.next == 0)
                     .ok_or("the renderer could not draw the frame")?;
+            // Motion blur: the frame and three more moments of its 180 degree shutter, averaged (the scene posed at each).
+            if clip.motion_blur {
+                const SUB: usize = 4;
+                let mut sum: Vec<u32> = rgba.iter().map(|&v| u32::from(v)).collect();
+                for k in 1..SUB {
+                    let ts = t + k as f64 / SUB as f64 * 0.5 / fps;
+                    let sub = evaluate(&self.project, &clip, speeds, ts);
+                    preview.update(e, self.doc, &self.project, &sub);
+                    let cam = sub.camera.as_ref().map_or(cam, |c| camera_of(c, units));
+                    let more = wce_editor::viewport::render_offscreen(e, &mut self.target, self.width, self.height, cam, ts as f32, false)
+                        .ok_or("the renderer could not draw the frame")?;
+                    sum.iter_mut().zip(&more).for_each(|(s, &v)| *s += u32::from(v));
+                }
+                rgba = sum.into_iter().map(|s| ((s + SUB as u32 / 2) / SUB as u32) as u8).collect();
+            }
             overlay(&mut rgba, self.width, self.height, &frame);
             self.encoder.as_mut().ok_or("finished")?.push_rgba(&rgba)?;
             self.next += 1;

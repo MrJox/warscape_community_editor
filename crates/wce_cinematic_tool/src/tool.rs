@@ -829,6 +829,23 @@ impl Tool for CinematicTool {
             }
             queue(e, Pending::CameraKey([v[0], v[1], v[2]], [v[3], v[4], v[5]], v[6]))
         });
+        c.add("clip_blur", "clip_blur 0|1", "Motion blur in the current clip's movie", |e, a| {
+            let on = a.first().is_none_or(|x| x != "0");
+            let r = e.with_tool::<CinematicTool, _>(|t, e| {
+                let p = scene_doc(e).map(|d| d.project().clone())?;
+                let id = t.scene.current_clip(&p)?.id;
+                edit(e, "motion blur", |p| {
+                    if let Some(c) = p.clip_mut(id) {
+                        c.motion_blur = on;
+                    }
+                });
+                Some(())
+            });
+            match r {
+                Some(Some(())) => CommandResult::success(format!("motion blur {on}")),
+                _ => CommandResult::fail("no scene or clip"),
+            }
+        });
         c.add("scene_battle_preview", "scene_battle_preview 0|1", "Plays the scene as a battle would (units under orders)", |e, a| {
             queue(e, Pending::BattlePreview(a.first().is_none_or(|x| x != "0")))
         });
