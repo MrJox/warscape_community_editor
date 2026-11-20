@@ -9,6 +9,7 @@ pub mod building_db;
 pub mod building_pieces;
 pub mod building_spline;
 pub mod decal_refit;
+pub mod erosion;
 pub mod export_as_prop;
 pub mod falloff;
 pub mod ground_coverage;
