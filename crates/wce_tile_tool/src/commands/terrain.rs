@@ -1001,6 +1001,36 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "district",
+        "district fill",
+        "fills the selected district with buildings (replacing those it was filled with): how many, and of which keys",
+        |e, a| match a.first().map(String::as_str) {
+            Some("fill") => {
+                let Some(el) = crate::tool::primary(e) else { return fail("select a district") };
+                let Some(d) = document(e) else { return fail("no tile is open") };
+                match d.fill_district(el) {
+                    Ok(n) => {
+                        let keys = d.tile().district_areas().into_iter().find(|a| a.elem == el).map_or_else(Vec::new, |a| {
+                            if a.settings.keys.is_empty() { d.tile().district_default_keys() } else { a.settings.keys }
+                        });
+                        let sizes = keys
+                            .iter()
+                            .map(|k| match d.building_footprint(k) {
+                                Some(f) => format!("{k} ({:.1} x {:.1} m)", f.x.1 - f.x.0, f.z.1 - f.z.0),
+                                None => format!("{k} (size not known: {0} x {0} m)", wce_tile_editor::tile_document::districts::GUESS),
+                            })
+                            .collect::<Vec<_>>();
+                        ok(format!("{n} buildings of {}", sizes.join(", ")))
+                    }
+                    Err(err) => fail(err),
+                }
+            }
+
+            _ => fail("usage: district fill"),
+        },
+    );
+
+    c.add(
         "ground_coverage_brush",
         "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
         "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",

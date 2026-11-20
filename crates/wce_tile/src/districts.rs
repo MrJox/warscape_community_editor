@@ -37,7 +37,7 @@ pub struct DistrictSettings {
 
 impl Default for DistrictSettings {
     fn default() -> Self {
-        Self { keys: vec![], setback: 1.0, spacing: 2.0, max_slope: 12.0, inside: true, facing: 0.0, jitter: 4.0 }
+        Self { keys: vec![], setback: 1.0, spacing: 3.0, max_slope: 12.0, inside: true, facing: 0.0, jitter: 4.0 }
     }
 }
 

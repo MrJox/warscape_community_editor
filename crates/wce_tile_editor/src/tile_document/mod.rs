@@ -26,6 +26,7 @@ pub use self::cover::{EdgeColours, edge_strip};
 mod bridges;
 pub mod context;
 pub mod decal_rules;
+pub mod districts;
 mod draft;
 mod edits;
 pub mod erosion;
@@ -635,6 +636,9 @@ pub struct Tile {
 
     /// The decal rules' decals (`decal_rules.rs`): laid, being laid, their entities, whether shown, the signature of what was laid and of
     /// what was last looked at.
+    /// The buildings a district without keys is filled with, by the scene's structure version (`districts.rs`).
+    pub(crate) district_keys: std::cell::RefCell<Option<(u64, Vec<String>)>>,
+
     /// The field areas' farmland (`fields.rs`).
     pub(crate) fields: fields::FieldsMade,
 
@@ -1034,6 +1038,7 @@ impl TileDocument {
             texture_rules_job: None,
             erosion_job: None,
             fields: fields::FieldsMade::default(),
+            district_keys: std::cell::RefCell::new(None),
             decal_items: vec![],
             decal_job: None,
             decal_entities: vec![],

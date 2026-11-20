@@ -183,6 +183,19 @@ and the procedural roads' painting is cheap to walk along. The cells found are s
 (`road_type` `dirt_track` where the game has its pieces, else `none`: ground and texture only; 3 m wide) you then edit as any. *Connect
 to the roads* makes one from each selected building to the nearest point of a procedural road's middle line.
 
+**Districts** (`wce_tile::districts`, `tile_document/districts.rs`, `districts_panel.rs` under a district's properties in the Inspector:
+the Create panel's Buildings > *District (filled with buildings)* draws one and fills it; `start_making district`, `district fill`;
+[plans/auto_detail_2.md](plans/auto_detail_2.md), I): a district is a vegetation exclusion polygon (no trees in a town) with
+`wce_district` (its settings as one attribute) and `wce_district_seed`. Filling it lays plain buildings (moved by hand after) in a group
+of its own in its layer, `<its name> buildings`, as one undo entry; filling again replaces that group. Along each procedural road through
+it first (each side, walked from one end): a building's front (its local +z, or the side *Front* says) at the road's edge plus the
+setback, turned to face it; then, when *Inside* is on, the inside at random, each facing the nearest road (within 80 m), else along the
+district's longest side. Every footprint (the logic file's, else the model's; 8 × 8 m guessed when neither is known, with a warning) stays
+inside the district, off the roads (half their width and half a metre), the buildings there (the real ones) and each other by the
+spacing, and off ground steeper than the most slope across it; 600 at most. Its buildings: the keys picked (from the game's), else the
+tile's own houses (its `generic` buildings whose key says house, home, hut or dwelling, the most used first), else one culture's of the
+kits' that the game has models for (the key prefix with the most).
+
 **Decal rules** (`wce_tile::decal_rules`, `tile_document/decal_rules.rs`, `decal_rules_panel.rs` in the Inspector: the Create panel's
 Decals > *Decal rules* (a tile without any gets the built-in Default); `decal_rules <off | load <preset> | file <path> | window [simple |
 advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), E): decals laid by the ground. A rule's decals (picked from the

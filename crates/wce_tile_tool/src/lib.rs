@@ -15,6 +15,7 @@ pub mod commands;
 pub mod context_panel;
 pub mod create_panel;
 pub mod decal_rules_panel;
+pub mod districts_panel;
 pub mod entity_types;
 pub mod erosion_panel;
 pub mod extract_prompt;

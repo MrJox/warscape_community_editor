@@ -386,6 +386,11 @@ impl Tile {
 
     /// The roads, their ends taken onto the roads they stop near (`road_layout::snap_ends`): what their terrain and their pieces are made
     /// from, so a road reaches the junction it makes.
+    /// The procedural roads' middle lines (world metres, x and z; densely sampled) and half their widths.
+    pub(super) fn road_middle_lines(&self) -> Vec<(Vec<[f64; 2]>, f64)> {
+        self.roads().iter().map(|r| (centre_line_handled(&r.line, &r.handles, &r.sharp).0, r.settings.width * 0.5)).collect()
+    }
+
     fn roads(&self) -> Vec<Road> {
         let doc = self.tscene().doc();
         let number = |e: usize, name: &str, or: f64| doc.get(e, name).and_then(|v| wce_formats::c_num::strtod(&v)).unwrap_or(or);

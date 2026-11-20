@@ -155,25 +155,43 @@ impl Tile {
     /// A building's footprint (metres, from its pivot; it is laid along the longer of its x and z): its logic file's box, else its model's
     /// bounds (the scene's, else its piece files' vertices). A building with neither is 5 m long along x about its pivot.
     pub(crate) fn building_extent(&self, key: &str) -> Footprint {
-        let fallback = Footprint::centred(5.0, 0.5);
-        if let Some(v) = self.building_splines.extents.borrow().get(key) {
-            return v.unwrap_or(fallback);
-        }
+        self.building_extent_found(key).unwrap_or_else(|| Footprint::centred(5.0, 0.5))
+    }
 
+    /// [`Self::building_extent`] when it is known: none when neither the key's logic file, its model in the scene nor its mesh files give
+    /// it.
+    pub(crate) fn building_extent_found(&self, key: &str) -> Option<Footprint> {
         let unit = self.unit();
-        let files = self.files.as_deref();
         let real = |f: &Footprint| f.x.1 > f.x.0 && f.z.1 >= f.z.0 && (f.x.1 - f.x.0).max(f.z.1 - f.z.0) > 1e-3;
-        let from_logic = files
-            .and_then(|f| f.read(&format!("{}{key}_tech.cs2.parsed", wce_walls::building::folder(key))).ok())
-            .and_then(|b| wce_walls::logic::extent_xz(&b).ok())
-            .map(|[x, z]| Footprint { x: (f64::from(x.0), f64::from(x.1)), z: (f64::from(z.0), f64::from(z.1)) })
-            .filter(real);
         let from_scene = || {
             self.building_model(key)
                 .filter(|m| m.ok && m.resolved)
                 .map(|m| Footprint { x: (f64::from(m.bmin.x), f64::from(m.bmax.x)), z: (f64::from(m.bmin.z), f64::from(m.bmax.z)) })
                 .filter(real)
         };
+        let cached = self.building_splines.extents.borrow().get(key).copied();
+        match cached {
+            Some(Some(f)) => return Some(f),
+
+            // Not known when asked: its model may have loaded in the scene since (a district filled with it), cheap to look at again.
+            Some(None) => {
+                let found = from_scene().map(|f| Footprint { x: (f.x.0 / unit, f.x.1 / unit), z: (f.z.0 / unit, f.z.1 / unit) });
+                if found.is_some() {
+                    self.building_splines.extents.borrow_mut().insert(key.to_owned(), found);
+                }
+
+                return found;
+            }
+
+            None => {}
+        }
+
+        let files = self.files.as_deref();
+        let from_logic = files
+            .and_then(|f| f.read(&format!("{}{key}_tech.cs2.parsed", wce_walls::building::folder(key))).ok())
+            .and_then(|b| wce_walls::logic::extent_xz(&b).ok())
+            .map(|[x, z]| Footprint { x: (f64::from(x.0), f64::from(x.1)), z: (f64::from(z.0), f64::from(z.1)) })
+            .filter(real);
         let from_files = || {
             use rpfm_lib::files::Decodeable;
             use rpfm_lib::files::rigidmodel::RigidModel;
@@ -203,7 +221,7 @@ impl Tile {
             self.building_splines.extents.borrow_mut().insert(key.to_owned(), found);
         }
 
-        found.unwrap_or(fallback)
+        found
     }
 
     /// Per frame: the buildings laid again when anything they are laid from may have changed (the document, the ground, the models), and
