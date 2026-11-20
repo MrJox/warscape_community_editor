@@ -15,6 +15,11 @@ wce_audio_format = { path = "../wce_audio_format" }
 wce_foundation = { path = "../wce_foundation" }
 wce_vfs = { path = "../wce_vfs" }
 wce_video = { path = "../wce_video" }
+# The mod pack writer (wce_walls::pack).
+wce_walls = { path = "../wce_walls" }
+
+[dev-dependencies]
+wce_formats = { path = "../wce_formats" }
 
 [lints]
 workspace = true
