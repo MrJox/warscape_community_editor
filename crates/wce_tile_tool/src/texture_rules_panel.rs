@@ -110,7 +110,7 @@ impl TileTool {
         if styled::inspector_header(
             &format!("{}  Texture rules", icons::LAYERS),
             "Textures laid by the terrain: each rule puts a texture where its conditions hold (height, slope, hollows, distance to water, \
-             roads and buildings), a later rule over an earlier one. They go into a terrain layer of their own under yours: what you \
+             roads and buildings, where water runs), a later rule over an earlier one. They go into a terrain layer of their own under yours: what you \
              paint stays over them. The layer is made again by itself when the terrain or the rules change.",
         ) {
             self.rules_ui.open = false;
@@ -653,6 +653,32 @@ fn conditions(heights: (f32, f32)) -> Vec<Condition> {
             presets: vec![("Touching", below(1.0, 1.5)), ("Near", below(3.0, 3.0)), ("Around", below(8.0, 6.0)), ("Away", above(8.0, 6.0))],
             first: 1,
         },
+        Condition {
+            key: "flow",
+            label: "Water flow",
+            tip: "Where rain water runs down the ground: 0 none, about 0.25 as much as anywhere, 1 a stream (the erosion's, or worked out \
+                  from the heights without it)",
+            unit: "",
+            step: 0.05,
+            domain: (0.0, 1.0),
+            presets: vec![
+                ("Dry", below(0.2, 0.1)),
+                ("Runnels", above(0.45, 0.1)),
+                ("Streams", above(0.6, 0.15)),
+                ("Rivers", above(0.8, 0.1)),
+            ],
+            first: 2,
+        },
+        Condition {
+            key: "deposit",
+            label: "Deposit",
+            tip: "Metres of ground the erosion's water laid there (0 without erosion): silt and gravel at the foot of slopes",
+            unit: "m",
+            step: 0.02,
+            domain: (0.0, 2.0),
+            presets: vec![("A little", above(0.05, 0.05)), ("Some", above(0.2, 0.1)), ("Much", above(0.6, 0.3))],
+            first: 1,
+        },
     ]
 }
 
@@ -663,6 +689,8 @@ fn range_of<'a>(r: &'a mut Rule, key: &str) -> &'a mut Option<Range> {
         "hollow" => &mut r.hollow,
         "water" => &mut r.water,
         "road" => &mut r.road,
+        "flow" => &mut r.flow,
+        "deposit" => &mut r.deposit,
         _ => &mut r.building,
     }
 }

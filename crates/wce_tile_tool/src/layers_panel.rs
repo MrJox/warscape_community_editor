@@ -122,6 +122,36 @@ impl TileTool {
         }
 
         gui::spacing();
+
+        // The erosion's layer lies over the user's height layers, under the roads': shown on top of them, edited in the Inspector.
+        if kind == LayerType::Height {
+            gui::push_id("layer_erosion");
+            let on = d.erosion().is_some();
+            gui::small_button(icons::MOUNTAIN);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Erosion: the ground you shaped, weathered, over your layers.");
+            }
+
+            gui::same_line();
+            if gui::selectable(if on { "Erosion" } else { "+ Erosion" }, self.erosion_ui.open, 0) {
+                if !on {
+                    d.set_erosion(Some(wce_tile::erosion::Settings::default()));
+                }
+
+                self.open_erosion();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(if on {
+                    "Shows the erosion in the Inspector: rain channels, loose ground sliding, fine bumps over what you shaped."
+                } else {
+                    "Adds erosion (Weathered) and shows it in the Inspector: rain channels, loose ground sliding, fine bumps over what you shaped."
+                });
+            }
+
+            gui::pop_id();
+        }
+
         for row in rows.iter().rev() {
             gui::push_id(&format!("layer{}", row.id));
             let eye = if row.visible { icons::EYE } else { icons::EYE_OFF };

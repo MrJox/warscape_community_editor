@@ -130,13 +130,14 @@ selection, inspector, gizmo and history work on them.
 Terrain layers > Blend row "Texture rules" (over the base, under the user's layers; "+ Texture rules" adds the built-in Default), or Paint
 mode's *Texture rules...*; `texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>`; [plans/auto_detail.md](plans/auto_detail.md)):
 textures laid by the terrain. A rule puts a texture group (several names separated by `|`, the first the tile has) and variation where
-its conditions hold: height, slope, hollows and ridges, and distance to water, procedural roads and real buildings, each a range with
-soft ends, edges moved by noise. Later rules go over earlier ones, and only over the tile's **main ground** (the texture group most of its
+its conditions hold: height, slope, hollows and ridges, distance to water, procedural roads and real buildings, and where rain water runs
+(*Water flow*, 0 .. 1: the erosion's, else worked out from the heights) and what it laid (*Deposit*, metres: the erosion's), each a range
+with soft ends, edges moved by noise. Later rules go over earlier ones, and only over the tile's **main ground** (the texture group most of its
 base blend map is): what the tile's own painting holds in other textures stays (a kit tile's artist's work). They make one blend layer owned by them that lies **under** the user's
 layers (hand paint goes over it; painting with no working layer goes into a `Painted` layer), made again off the editor's thread when
 the terrain, the scene or the rules change. The tile keeps its rules in `texture_rules.wce` beside `tile.wce`; presets are files in the
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
-rock on slopes). The selected rule's area can be outlined in the viewport. The texture rules and a biome show in the Inspector (one at a
+silt where water runs, rock on slopes). The selected rule's area can be outlined in the viewport. The texture rules and a biome show in the Inspector (one at a
 time, until something else is selected or made; a biome's own area keeps its biome), laying first (Draw an area or the brush), then the
 settings. The ground coverage (`ground_coverage_panel.rs`) stays a window of the Tile panel's Experimental section. They (`styled.rs`) show
 **Simple** (named choices: a condition's Flat / Gentle / Steep / Cliffs, a strength's Faint ... Full, the edges' Clean ... Very patchy) or
@@ -145,6 +146,19 @@ the weight it gives (its fades as ramps; drag an end, onto the bar's end for no 
 picked from the tile's groups' and variations' swatches. Keys a biome grows or a clutter rule lays (when not a set) are picked from the game's own (`key_picker.rs`):
 shown as their thumbnails (a key the game's files lack framed red), a click takes one out, the + cell opens a searchable grid of the
 kind's keys (buildings by category too) where a click adds or takes out one.
+
+**Erosion** (`wce_tile::erosion`, `tile_document/erosion.rs`, `erosion_panel.rs` in the Inspector: the Tile panel's Terrain layers >
+Height row "Erosion", over the user's layers; "+ Erosion" adds the Weathered preset; `erosion <off | on | preset <name> | set <key>
+<value> | window [simple | advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), D): the ground the user shaped,
+weathered. Rain drops run down the slopes a sample at a time, taking ground where they speed up and laying it where they slow (how much
+by the slope, so the samples' spacing does not matter; a drop's speed is capped); loose ground slides to its lower neighbours where it is
+steeper than its talus; fine noise, stronger on steep ground, breaks up smooth surfaces. Buildings keep their ground (none within 2 m of
+their model, fading in over 4 m). It is a height layer owned by it (`erosion#<signature>`) in a rank of its own: **over** the user's layers
+(it reads what they shaped) and **under** the roads', walls' and prefabs' ground (they lay their ground over it, made again when it
+changes). Made again off the editor's thread when the ground under it, the buildings or the settings change, waiting for a stroke's end;
+a job let go is told to stop; exports wait for it. Settings in `erosion.wce` beside `tile.wce`; presets Light, Weathered, Rugged; Simple
+shows the preset, how much is kept and the seed (Reroll), Advanced every number (the drops, loose ground, fine detail). Where the water ran
+and what it laid stay with the tile for the texture rules (made again on opening, with the layer's signature unchanged).
 
 **Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, `biomes_panel.rs` in the Inspector: the Create panel's Vegetation > Biomes
 entries (an area drawn at once unless the brush is on; while a brush stroke goes, the area as it will be is shown filled and outlined on
