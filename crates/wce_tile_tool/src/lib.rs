@@ -37,6 +37,7 @@ mod links_editor;
 pub mod measure_tool;
 pub mod minimap_panel;
 pub mod new_tile_dialog;
+pub mod paths_ui;
 pub mod placement_modes;
 pub mod prefab_panel;
 pub mod prefab_tool;

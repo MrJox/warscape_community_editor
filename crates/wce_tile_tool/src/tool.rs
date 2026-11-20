@@ -527,6 +527,9 @@ pub struct TileTool {
     spline_all: bool,
     value_gesture: u64,
     pub(crate) drawing: bool,
+
+    /// The line being drawn is a path's: its points are waypoints, the way between them found over the ground when it is finished.
+    pub(crate) path_drawing: bool,
     pub(crate) draw_pts: Vec<Float3>,
 
     /// What the Create panel makes: clicks on the terrain place it now (`placing`) or draw it (`drawing`); the draft (its type, key and
@@ -979,6 +982,7 @@ impl Default for TileTool {
             ref_units: Default::default(),
             bspline_ui: Default::default(),
             drawing: false,
+            path_drawing: false,
             flip: None,
             flip_asked: false,
             ground_chip_width: 0.0,
@@ -5838,6 +5842,7 @@ impl Tool for TileTool {
         self.inspect_holder(e);
         self.inspect_biome_area(e);
         self.inspect_field_area(e);
+        self.inspect_connect_roads(e);
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
             self.inspect_measure(e, id);

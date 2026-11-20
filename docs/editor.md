@@ -173,6 +173,16 @@ editor's: made again once an edit settles (on the editor's thread: a few hundred
 layer. The Inspector: Simple (strips Narrow ... Broad, orchards None ... All, haystacks, ground None ... Bare, the fence on or off, Reroll),
 Advanced (the verge, the angle, the crop pieces' length, tree rows and spacing, and what each lays, picked from the game's).
 
+**Paths** (`wce_tile::paths`, `TileDocument::find_path` / `connect_to_roads` in `tile_document/roads.rs`, `paths_ui.rs`: the Create
+panel's Rivers & roads > *Path (found over the ground)*, and *Connect to the roads* under a selection with buildings; `path <find <x z>
+<x z>... | connect>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), H): the way a path takes over the ground between the points
+clicked, found by A* on a grid of the heights (2 m cells at least): a step costs its length, more the steeper it climbs (twice at 8°,
+barred past 22°), the real buildings (and a metre round them) bar it but round its ends (4 m; a building's own size when it starts from
+one), water is crossed where it is narrowest (6 times a step for a ford, 25 for a metre deep or more: the road makes the ford or the bridge),
+and the procedural roads' painting is cheap to walk along. The cells found are simplified (3 m) to a few points and made a procedural road
+(`road_type` `dirt_track` where the game has its pieces, else `none`: ground and texture only; 3 m wide) you then edit as any. *Connect
+to the roads* makes one from each selected building to the nearest point of a procedural road's middle line.
+
 **Decal rules** (`wce_tile::decal_rules`, `tile_document/decal_rules.rs`, `decal_rules_panel.rs` in the Inspector: the Create panel's
 Decals > *Decal rules* (a tile without any gets the built-in Default); `decal_rules <off | load <preset> | file <path> | window [simple |
 advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), E): decals laid by the ground. A rule's decals (picked from the

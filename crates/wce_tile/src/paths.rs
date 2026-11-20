@@ -22,16 +22,24 @@ pub struct PathSettings {
 
     /// Metres the found line may stray from the cells it went through when it is simplified.
     pub tolerance: f32,
+
+    /// What a step through shallow water (a ford) and deep water (a metre or more: a bridge) costs against one on dry ground: a path
+    /// crosses where it must, as short as it can.
+    pub wet_cost: f32,
+    pub deep_cost: f32,
+
+    /// Metres round each end let through though barred (a building's door: the path starts from its middle).
+    pub free: f32,
 }
 
 impl Default for PathSettings {
     fn default() -> Self {
-        Self { soft_slope: 8.0, max_slope: 22.0, road_cost: 0.4, margin: 60.0, tolerance: 1.5 }
+        Self { soft_slope: 8.0, max_slope: 22.0, road_cost: 0.4, margin: 60.0, tolerance: 3.0, wet_cost: 6.0, deep_cost: 25.0, free: 4.0 }
     }
 }
 
 /// The ground a path is found on: `w` × `h` cells `cell` metres across from (`x0`, `z0`), their heights (metres), whether each is barred
-/// (water, a building) and whether it is on a road.
+/// (a building), how deep the water over it is (metres: crossed at a cost, the road makes a ford or a bridge) and whether it is on a road.
 pub struct PathGrid {
     pub x0: f32,
     pub z0: f32,
@@ -40,6 +48,7 @@ pub struct PathGrid {
     pub h: usize,
     pub heights: Vec<f32>,
     pub barred: Vec<bool>,
+    pub water: Vec<f32>,
     pub road: Vec<bool>,
 }
 
@@ -80,7 +89,7 @@ impl PartialOrd for Open {
 pub fn find(g: &PathGrid, from: (f32, f32), to: (f32, f32), s: &PathSettings) -> Option<Vec<(f32, f32)>> {
     let (a, b) = (g.index(from.0, from.1)?, g.index(to.0, to.1)?);
     let n = g.w * g.h;
-    if g.heights.len() != n || g.barred.len() != n || g.road.len() != n {
+    if g.heights.len() != n || g.barred.len() != n || g.road.len() != n || g.water.len() != n {
         return None;
     }
 
@@ -96,7 +105,7 @@ pub fn find(g: &PathGrid, from: (f32, f32), to: (f32, f32), s: &PathSettings) ->
     };
 
     // The ends let through: a few metres round each.
-    let free_radius = 4.0f32;
+    let free_radius = s.free.max(0.0);
     let free = |i: usize| {
         let (x, z) = g.at(i);
         (x - from.0).hypot(z - from.1) <= free_radius || (x - to.0).hypot(z - to.1) <= free_radius
@@ -115,7 +124,12 @@ pub fn find(g: &PathGrid, from: (f32, f32), to: (f32, f32), s: &PathSettings) ->
 
         let steep = 1.0 + (grade / soft).powi(2);
         let road = if g.road[i] && g.road[j] { s.road_cost.clamp(0.05, 1.0) } else { 1.0 };
-        Some(dist * steep * road)
+        let wet = match g.water[j] {
+            d if d > 1.0 => s.deep_cost.max(1.0),
+            d if d > 0.05 => s.wet_cost.max(1.0),
+            _ => 1.0,
+        };
+        Some(dist * steep * road * wet)
     };
 
     let goal = g.at(b);
@@ -226,6 +240,7 @@ mod tests {
             h,
             heights: (0..w * h).map(|i| height(at(i).0, at(i).1)).collect(),
             barred: (0..w * h).map(|i| barred(at(i).0, at(i).1)).collect(),
+            water: vec![0.0; w * h],
             road: vec![false; w * h],
         }
     }
@@ -249,9 +264,22 @@ mod tests {
         assert!(p.iter().any(|q| q.1 >= 44.0), "round the end: {p:?}");
         assert!(length(&p) > 100.0, "longer than straight (80 m): {}", length(&p));
 
-        // A river right across: no way.
+        // A wall right across: no way.
         let g = grid(|_, _| 0.0, |x, _| (x - 50.0).abs() < 2.0);
         assert!(find(&g, (10.0, 10.0), (90.0, 10.0), &PathSettings::default()).is_none());
+
+        // A river, deep but for a ford: crossed there.
+        let mut g = grid(|_, _| 0.0, |_, _| false);
+        for i in 0..g.w * g.h {
+            let (x, z) = ((i % g.w) as f32, (i / g.w) as f32);
+            // Deep, but for a shallow stretch at z = 40.
+            g.water[i] = if (x - 50.0).abs() < 6.0 { if (z - 40.0).abs() < 4.0 { 0.4 } else { 2.0 } } else { 0.0 };
+        }
+
+        let p = find(&g, (10.0, 20.0), (90.0, 20.0), &PathSettings::default()).unwrap();
+        let crossing = p.windows(2).find(|w| (w[0].0 - 50.0) * (w[1].0 - 50.0) <= 0.0).unwrap();
+        let z = crossing[0].1 + (50.0 - crossing[0].0) / (crossing[1].0 - crossing[0].0) * (crossing[1].1 - crossing[0].1);
+        assert!((z - 40.0).abs() < 6.0, "at the ford: {p:?}");
     }
 
     #[test]
