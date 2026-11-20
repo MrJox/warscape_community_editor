@@ -1352,6 +1352,40 @@ impl Renderer {
         self.tonemap.luma_white
     }
 
+    /// A target of the last frame, for comparing with a capture's: `hdr`, the lit HDR image before the tone map (the light
+    /// accumulation: the lighting, the water, the fog, the shroud and the effects added; RGBA half floats), or `zw`, the scene's depth
+    /// as the passes read it without MSAA (channel 4's z / w as f32; with MSAA none: the depth lives in the D24S8, which doesn't copy
+    /// out). Width, height, the bytes a texel and the texels row by row.
+    pub fn read_target(&self, which: &str) -> Option<(u32, u32, u32, Vec<u8>)> {
+        let (src, format, bytes) = match which {
+            "hdr" => (self.gbuffer.hdr.tex.clone()?, DXGI_FORMAT_R16G16B16A16_FLOAT, 8u32),
+            "zw" if self.gbuffer.ms.is_none() => (self.gbuffer.channels[3].tex.clone()?, DXGI_FORMAT_R32_FLOAT, 4),
+            _ => return None,
+        };
+        let (w, h) = (self.gbuffer.w, self.gbuffer.h);
+        let sd = D3D11_TEXTURE2D_DESC {
+            Width: w,
+            Height: h,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: format,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+            MiscFlags: 0,
+        };
+        let staging = self.dev.create_texture_2d(&sd, None).ok()?;
+        self.ctx.copy_resource(&staging, &src);
+        let ms = map_read(&self.ctx, &staging, 0, true)?;
+        let row = w as usize * bytes as usize;
+        let mut out = Vec::with_capacity(row * h as usize);
+        for y in 0..h as usize {
+            out.extend_from_slice(ms.row(y, row)?);
+        }
+        Some((w, h, bytes, out))
+    }
+
     pub fn engine_ambient_faces(&self) -> String {
         self.env.ambient_faces.iter().map(|f| format!("({:.6} {:.6} {:.6}) ", f[0], f[1], f[2])).collect()
     }

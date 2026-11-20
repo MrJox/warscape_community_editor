@@ -1044,6 +1044,31 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "hdr_dump",
+        "hdr_dump <file> [hdr|zw]",
+        "test: write a target of the last frame (`Renderer::read_target`; default the lit HDR image before the tone map): \"WCEHDR\", u32 \
+         width and height (and with `zw` the bytes a texel, 4), then the texels row by row (HDR: RGBA half floats; zw, without \
+         MSAA only: f32 z / w)",
+        |e, a| {
+            let Some(path) = a.first() else { return fail("usage: hdr_dump <file> [hdr|zw]") };
+            let which = a.get(1).map_or("hdr", String::as_str);
+            let Some(r) = e.renderer() else { return fail("no renderer") };
+            let Some((w, h, bytes, px)) = r.read_target(which) else { return fail(format!("no {which} target to read")) };
+            let mut out = b"WCEHDR".to_vec();
+            out.extend(w.to_le_bytes());
+            out.extend(h.to_le_bytes());
+            if which != "hdr" {
+                out.extend(bytes.to_le_bytes());
+            }
+            out.extend(px);
+            match std::fs::write(path, out) {
+                Ok(()) => ok(format!("HDR image {w} x {h} written to {path}")),
+                Err(err) => fail(format!("{path}: {err}")),
+            }
+        },
+    );
+
     c.add("where", "where [x y | on | off]", "the camera's and the cursor's coordinates (scene and game units; map cell and height above the sea in a map context); x y: the ground under that pixel of the viewport image (or 50%); on / off: the readout in the viewport", |e, a| {
         match a.first().map(String::as_str) {
             Some("on") | Some("off") => {

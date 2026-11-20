@@ -190,9 +190,13 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   editor binds the G-buffer's (with the trees). Tried: a ground-only depth pass, and a depth read as infinitely far: neither changes
   the image (reverted). The game's fogged pixel (960, 300): its two draws (12.07, 10.80, 9.76) at alpha 0.315 each, the screen
   (171, 157, 140); the editor's (93, 89, 80), (63, 63, 39) without the fog. The tone map's constants match too; the whole frame is
-  darker (11 of 255) and a forest pixel 32 against the game's 51 without fog: the exposure (the GPU's luminance) is the next
-  suspect, for an HDR comparison at the same stage (the editor's HDR target not dumped yet). Also seen: past the far ring (192
-  cells) the editor draws nothing (black corners at the top), where the game has ground under its fog.
+  darker (11 of 255) and a forest pixel 32 against the game's 51 without fog. **The cause:** the editor read `shroud_cloud.dds` as
+  sRGB, the game as `BC3_UNORM` (a RenderDoc capture of the editor, `scripts/re/rd_capture_editor.py`: the same constants, the
+  same cloud texels, the alpha 0.3144 against 0.3146, the colour a third, as 0.43 decoded from sRGB is). Read linear, the fogged
+  pixel's HDR is 5.7 against the game's 6.6 (2.2 before) and the auto exposure's white point 18.2 against 18.1 (`hdr_dump`, the
+  editor's HDR target, against the capture's). Left: the explored ground below the clouds, darker (HDR (960, 700) 0.26 against
+  0.99) with the fog of war's cells showing as dark squares on the left, where the game's has none. Also seen: past the far ring
+  (192 cells) the editor draws nothing (black corners at the top), where the game has ground under its fog.
 
 ## Order
 
