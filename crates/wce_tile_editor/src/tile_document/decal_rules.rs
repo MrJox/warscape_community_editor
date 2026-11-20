@@ -352,7 +352,7 @@ fn decal_text(d: &Decal, unit: f64) -> Option<Vec<u8>> {
     let scale = format!("vector({},{},{})", num(f64::from(d.across) * unit), num(DEPTH * unit), num(-f64::from(d.length) * unit));
     let text = with_root_attr(&text, "scale", &scale);
     let text = with_root_attr(&text, "surface_mode", "MSM_LANDSCAPE");
-    Some(turned(&text, d.yaw))
+    Some(turned(&text, d.yaw.to_degrees()))
 }
 
 impl TileDocument {
