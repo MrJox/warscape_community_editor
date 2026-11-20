@@ -301,6 +301,11 @@ impl Tile {
         Ok(scene.save())
     }
 
+    /// Where the areas' trees and plants stand (x and z, scene units).
+    pub(super) fn biome_tree_positions(&self) -> Vec<[f64; 2]> {
+        self.biome_items.iter().filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE")).map(|i| [i.position[0], i.position[2]]).collect()
+    }
+
     /// How many trees, plants and rocks the areas hold now.
     #[must_use]
     pub fn biome_item_counts(&self) -> (usize, usize) {

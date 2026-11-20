@@ -76,7 +76,11 @@ impl KeyPicker {
                 }
 
                 dl.rect_filled(pmin, pmax, theme::u32(frame_bg()), 2.0);
-                let icon = if kind == "BUILDING_INSTANCE" { icons::BOX } else { icons::TREES };
+                let icon = match kind {
+                    "BUILDING_INSTANCE" => icons::BOX,
+                    "ProjectedDecalInstance" => icons::STICKER,
+                    _ => icons::TREES,
+                };
                 let w = gui::calc_text_width(icon);
                 dl.text(gui::v2(at.x + (CELL - w) * 0.5, at.y + CELL * 0.5 - 8.0), theme::u32(theme::dim()), icon);
             }
@@ -93,7 +97,9 @@ impl KeyPicker {
         };
         dl.rect(pmin, pmax, theme::u32(frame), 2.0, thick);
         let colour = if bad { theme::error() } else { theme::text() };
-        dl.text(gui::v2(at.x, at.y + CELL + 1.0), theme::u32(colour), &cut(key, CELL));
+        // A model's path (a decal's) by its file's name.
+        let caption = key.rsplit(['\\', '/']).next().unwrap_or(key).trim_end_matches(".rigid_model_v2");
+        dl.text(gui::v2(at.x, at.y + CELL + 1.0), theme::u32(colour), &cut(caption, CELL));
         clicked
     }
 }

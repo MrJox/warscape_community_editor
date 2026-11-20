@@ -609,6 +609,7 @@ pub struct TileTool {
     /// The texture rules' window.
     pub(crate) rules_ui: crate::texture_rules_panel::RulesUi,
     pub(crate) erosion_ui: crate::erosion_panel::ErosionUi,
+    pub(crate) decals_ui: crate::decal_rules_panel::DecalsUi,
 
     /// The selection when the texture rules, a biome or the ground coverage were shown in the Inspector: another one shows it instead.
     pub(crate) detail_selection: Option<u64>,
@@ -1016,6 +1017,7 @@ impl Default for TileTool {
             coverage: Default::default(),
             rules_ui: Default::default(),
             erosion_ui: Default::default(),
+            decals_ui: Default::default(),
             detail_selection: None,
             key_picker: Default::default(),
             biome_presets: None,
@@ -3751,7 +3753,7 @@ impl TileTool {
 
     /// Whether the Inspector shows the texture rules or a biome.
     pub(crate) fn detail_shown(&self) -> bool {
-        self.rules_ui.open || self.biomes.open || self.erosion_ui.open
+        self.rules_ui.open || self.biomes.open || self.erosion_ui.open || self.decals_ui.open
     }
 
     /// Closes the texture rules and the biome in the Inspector (one shows at a time).
@@ -3761,6 +3763,7 @@ impl TileTool {
         self.biomes.stroke = None;
         self.rules_ui.open = false;
         self.erosion_ui.open = false;
+        self.decals_ui.open = false;
         self.detail_selection = None;
     }
 
@@ -5782,6 +5785,8 @@ impl Tool for TileTool {
                     self.inspect_texture_rules(e);
                 } else if self.erosion_ui.open {
                     self.inspect_erosion(e);
+                } else if self.decals_ui.open {
+                    self.inspect_decal_rules(e);
                 } else {
                     self.inspect_biomes(e);
                 }
@@ -5804,7 +5809,7 @@ impl Tool for TileTool {
         use std::hash::{Hash, Hasher};
         if self.detail_shown() {
             let mut h = std::hash::DefaultHasher::new();
-            (self.rules_ui.open, self.biomes.open, self.erosion_ui.open).hash(&mut h);
+            (self.rules_ui.open, self.biomes.open, self.erosion_ui.open, self.decals_ui.open).hash(&mut h);
             return Some(h.finish());
         }
 

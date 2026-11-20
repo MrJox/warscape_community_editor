@@ -230,6 +230,11 @@ pub struct TileProject {
     pub erosion: Option<crate::erosion::Settings>,
     pub erosion_dirty: bool,
 
+    /// The decal rules (`decal_rules`, their own file), when the tile has them; the decals they lay are the editor's, added at export.
+    /// `decal_rules_dirty`: changed since saved (or taken away, the file to remove).
+    pub decal_rules: Option<crate::decal_rules::DecalRuleSet>,
+    pub decal_rules_dirty: bool,
+
     /// The biomes the tile's areas use (`biomes`, their own file); `biomes_dirty`: changed since saved.
     pub biomes: Vec<crate::biomes::Biome>,
     pub biomes_dirty: bool,
@@ -480,6 +485,8 @@ impl TileProject {
             texture_rules_dirty: false,
             erosion: None,
             erosion_dirty: false,
+            decal_rules: None,
+            decal_rules_dirty: false,
             biomes: vec![],
             biomes_dirty: false,
         };
@@ -497,6 +504,15 @@ impl TileProject {
                 std::fs::read(&rules_file)
                     .map_err(|error| format!("{}: {error}", rules_file.display()))
                     .and_then(|b| crate::texture_rules::parse(&b).map_err(|e| format!("{}: {e}", rules_file.display())))?,
+            );
+        }
+
+        let decals_file = project.dir.join(crate::decal_rules::FILE);
+        if decals_file.exists() {
+            project.decal_rules = Some(
+                std::fs::read(&decals_file)
+                    .map_err(|error| format!("{}: {error}", decals_file.display()))
+                    .and_then(|b| crate::decal_rules::parse(&b).map_err(|e| format!("{}: {e}", decals_file.display())))?,
             );
         }
 
@@ -999,6 +1015,26 @@ impl TileProject {
 
         self.erosion_dirty = false;
 
+        // The decal rules, as the texture rules.
+        let decals_file = out_dir.join(crate::decal_rules::FILE);
+        match &self.decal_rules {
+            Some(rules) if self.decal_rules_dirty || elsewhere => {
+                wce_foundation::files::write_replacing(&decals_file, crate::decal_rules::text(rules))
+                    .map_err(|_| format!("could not write {}", decals_file.display()))?;
+                msg += "decal rules saved. ";
+                wrote = true;
+            }
+
+            None if self.decal_rules_dirty && decals_file.exists() => {
+                std::fs::remove_file(&decals_file).map_err(|_| format!("could not remove {}", decals_file.display()))?;
+                wrote = true;
+            }
+
+            _ => {}
+        }
+
+        self.decal_rules_dirty = false;
+
         // The biomes, as the rules.
         let biomes_file = out_dir.join(crate::biomes::FILE);
         if !self.biomes.is_empty() && (self.biomes_dirty || elsewhere) {
@@ -1296,6 +1332,7 @@ impl TileProject {
                 || name == crate::terrain_layers::FILE
                 || name == crate::texture_rules::FILE
                 || name == crate::erosion::FILE
+                || name == crate::decal_rules::FILE
                 || name == crate::biomes::FILE
                 || name == "height_map_0.png"
                 || (name == "blend_map.tif" && self.blend.is_some())
@@ -1513,6 +1550,7 @@ impl TileProject {
                     || name == crate::terrain_layers::FILE
                     || name == crate::texture_rules::FILE
                     || name == crate::erosion::FILE
+                    || name == crate::decal_rules::FILE
                     || name == crate::biomes::FILE
                     || name == "height_map_0.png"
                     || (name == "blend_map.tif" && self.blend.is_some())
