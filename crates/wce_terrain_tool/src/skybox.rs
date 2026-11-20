@@ -2,8 +2,9 @@
 //! `campaign_skybox.rigid_model_v2` (a cylinder 12.24 model units round, a 4096 x 512 cloud panorama) at the camera, unturned, scaled by
 //! `campaign_sky_scale` 37.5 in the campaign world's units (fns 0x10afd250, 0x10b29f60; RenderDoc, camp_attila 2026-11-16: the world
 //! matrix scale 37.5 at the eye plus the mesh's pivot, drawn in the G-buffer unlit, then fogged); `cubemap.dds` is the environment cube.
-//! It casts into the shadow cascades, as the game's (RenderDoc: every cascade; the user's decision 2026-11-19). The stripes it lays over
-//! TDD's Rauros come from the editor's cascades differing from the game's: docs/plans/campaign_tilemap.md, Phase 4.
+//! It casts no shadow. The game draws it into all four shadow cascades, but it lands outside every one of them: in capture A not a texel
+//! of the shadow atlas changes at any of its four draws (events 313, 1089, 2059, 3429). Cast here, the editor's cascades (not the
+//! game's fit) took it in: stripes over TDD's Rauros and a shadow the game never shows (the user, 2026-11-20).
 
 use wce_editor::editor::Editor;
 use wce_foundation::math::Float4x4;
@@ -36,7 +37,7 @@ impl CampaignSkybox {
         let p = DEFAULT_INSTANCE_PARAMS;
         let mesh = MeshInstance {
             model,
-            casts_shadow: true,
+            casts_shadow: false,
             lod: false,
             p4: [p[0], p[1], p[2], p[3]],
             p5: [p[4], p[5], p[6], p[7]],

@@ -171,8 +171,10 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   outside their slices). To review: draw it into the cascades as the game does and compare (stray shadows if the editor's fit differs).
   Compared (2026-11-18, the view's captures `%TEMP%\wce_scratch\ce\sky_shadow.png` / `sky_noshadow.png` over Rome, `skyt_b.png` /
   `skyt_a.png` at TDD's Rauros): casting as the game does changes nothing over Rome (mean pixel difference 0.22) but lays horizontal
-  stripes of shadow over all of Rauros' ground (the editor's cascades are not the game's). **Settled (user, 2026-11-19): it casts, as
-  the game's**; the Rauros stripes are a cascade difference, followed in docs/plans/campaign_tilemap.md (Phase 4). Checked against the screenshots:
+  stripes of shadow over all of Rauros' ground (the editor's cascades are not the game's). Settled (user, 2026-11-19): it casts, as
+  the game's. **Revised 2026-11-20** (the user: the game shows no such shadow): it casts none. Capture A, the shadow atlas before and
+  after each of its four cascade draws (313, 1089, 2059, 3429; `rd_skyshadow.py`): not a texel changes; the game's draws land outside
+  every cascade, the editor's cascades took it in. The cascades' fit stays in docs/plans/campaign_tilemap.md (Phase 4). Checked against the screenshots:
   the cloud band and pale sky over Italy and over TDD's Argonath; Attila's sea blue.
 - **Phase 4, the shroud plane (2026-11-17):** `wce_render` `renderer/shroud.rs`, after the fog: the game's grid (256 x 256 over +-500
   world units, the camera quantised by 1000 / 255), draped 1.1 units over a low-res map of the land LF (every 8th sample on Attila:
