@@ -854,7 +854,8 @@ impl Tile {
         // The biome areas' contents keep off the roads, and an export writes them.
         self.refresh_biomes(true);
 
-        // The decals lie on all of it, and keep off the biomes' trees.
+        // The farmland, and the decals that lie on all of it and keep off the biomes' trees.
+        self.refresh_fields(true);
         self.refresh_decals(true);
     }
 

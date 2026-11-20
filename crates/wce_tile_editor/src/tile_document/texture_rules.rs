@@ -116,7 +116,7 @@ impl Tile {
     /// What the distance conditions need of the scene, worked out again only when the scene or its models changed.
     /// Every rule the layer lays: the tile's, then each biome area's biome's bound to it (docs/plans/auto_detail.md, C), with the areas'
     /// masks (metres from the map's corner).
-    pub(crate) fn all_texture_rules(&self) -> (Vec<texture_rules::Rule>, Vec<texture_rules::AreaMask>) {
+    pub fn all_texture_rules(&self) -> (Vec<texture_rules::Rule>, Vec<texture_rules::AreaMask>) {
         let mut rules = self.project.texture_rules.as_ref().map(|r| r.rules.clone()).unwrap_or_default();
         let border = self.project.border_m() as f32;
         let mut masks = vec![];
@@ -127,6 +127,10 @@ impl Tile {
             rules.extend(b.rules.into_iter().map(|r| texture_rules::Rule { area: Some(i), seed: r.seed ^ (a.seed as u32), ..r }));
         }
 
+        // The field areas' ground.
+        let (field_rules, field_masks) = self.field_texture_rules(masks.len());
+        rules.extend(field_rules);
+        masks.extend(field_masks);
         (rules, masks)
     }
 

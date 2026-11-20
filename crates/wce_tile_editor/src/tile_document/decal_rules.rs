@@ -33,7 +33,7 @@ const TRUNK: f64 = 0.5;
 #[derive(Clone, Debug)]
 pub(crate) struct DecalItem {
     rule: usize,
-    text: Vec<u8>,
+    pub(super) text: Vec<u8>,
     model: String,
     matrix: Float4x4,
 }
@@ -276,24 +276,41 @@ impl Tile {
             return;
         };
 
-        let unit = self.unit();
-        self.decal_items = decals
-            .into_iter()
-            .filter_map(|d| {
-                let (x, z) = (f64::from(d.x), f64::from(d.z));
-                let y = self.project.height_at(x, z) / unit;
-                let text = decal_text(&d, unit)?;
-                let world = WorldTransform {
-                    position: Double3::new(x * unit, y * unit, z * unit),
-                    rotation: euler_matrix(Double3::new(f64::from(d.yaw), 0.0, 0.0)),
-                };
-                let scale = Double3::new(f64::from(d.across), DEPTH, -f64::from(d.length));
-                let matrix = self.refit_decal(super::index::matrix_of(&world, unit, Some(scale)));
-                Some(DecalItem { rule: d.rule, text, model: d.key.replace('\\', "/"), matrix })
-            })
-            .collect();
+        self.decal_items = decals.iter().filter_map(|d| self.decal_item(d)).collect();
         self.decal_made = j.signature;
         self.decal_items_shown = false;
+    }
+
+    /// A decal as the viewport draws it and an export writes it (world metres; refitted to the ground).
+    pub(super) fn decal_item(&self, d: &Decal) -> Option<DecalItem> {
+        let unit = self.unit();
+        let (x, z) = (f64::from(d.x), f64::from(d.z));
+        let y = self.project.height_at(x, z) / unit;
+        let text = decal_text(d, unit)?;
+        let world = WorldTransform {
+            position: Double3::new(x * unit, y * unit, z * unit),
+            rotation: euler_matrix(Double3::new(f64::from(d.yaw), 0.0, 0.0)),
+        };
+        let scale = Double3::new(f64::from(d.across), DEPTH, -f64::from(d.length));
+        let matrix = self.refit_decal(super::index::matrix_of(&world, unit, Some(scale)));
+        Some(DecalItem { rule: d.rule, text, model: d.key.replace('\\', "/"), matrix })
+    }
+
+    /// Decals in the viewport, locked: their entities.
+    pub(super) fn show_decals(&self, scene: &mut RenderScene, items: &[DecalItem]) -> Vec<EntityId> {
+        let source = self.source(TERRAIN);
+        let mut ids: Vec<EntityId> = Vec::with_capacity(items.len());
+        for item in items {
+            let payload = Payload::Decal(DecalPayload { model: item.model.clone(), tiled: false, opacity: 1.0, parallax: 0.1 });
+            let id = scene.add(self.layer, item.matrix, payload, source);
+            if let Some(en) = scene.find_mut(id) {
+                en.locked = true;
+            }
+
+            ids.push(id);
+        }
+
+        ids
     }
 
     /// The decals in the viewport, again when they were laid again (locked: they are the rules', not tile.ted's).
@@ -307,19 +324,7 @@ impl Tile {
             scene.remove(id);
         }
 
-        let source = self.source(TERRAIN);
-        let mut ids: Vec<EntityId> = Vec::with_capacity(self.decal_items.len());
-        for item in &self.decal_items {
-            let payload = Payload::Decal(DecalPayload { model: item.model.clone(), tiled: false, opacity: 1.0, parallax: 0.1 });
-            let id = scene.add(self.layer, item.matrix, payload, source);
-            if let Some(en) = scene.find_mut(id) {
-                en.locked = true;
-            }
-
-            ids.push(id);
-        }
-
-        self.decal_entities = ids;
+        self.decal_entities = self.show_decals(scene, &self.decal_items);
     }
 
     /// The layer of the decals an export adds, as TEd and the game read it.
