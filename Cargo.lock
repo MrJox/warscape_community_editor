@@ -2357,6 +2357,7 @@ dependencies = [
  "dear-imgui-rs",
  "sdl3-sys",
  "wce_audio_tool",
+ "wce_cinematic_tool",
  "wce_d3d11",
  "wce_editor",
  "wce_foundation",
@@ -2415,6 +2416,31 @@ dependencies = [
  "wce_foundation",
  "wce_scene",
  "wce_vfs",
+]
+
+[[package]]
+name = "wce_cinematic"
+version = "0.0.1"
+dependencies = [
+ "rpfm_lib",
+ "wce_audio",
+ "wce_audio_format",
+ "wce_foundation",
+ "wce_vfs",
+ "wce_video",
+]
+
+[[package]]
+name = "wce_cinematic_tool"
+version = "0.0.1"
+dependencies = [
+ "wce_audio",
+ "wce_audio_tool",
+ "wce_cinematic",
+ "wce_editor",
+ "wce_editor_core",
+ "wce_vfs",
+ "wce_video",
 ]
 
 [[package]]

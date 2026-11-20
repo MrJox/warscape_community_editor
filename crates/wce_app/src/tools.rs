@@ -32,22 +32,17 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[cfg(feature = "unit")]
     tools.push(Box::new(wce_unit_tool::UnitTool::default()));
 
+    #[cfg(feature = "cinematic")]
+    tools.push(Box::new(wce_cinematic_tool::CinematicTool::default()));
+
     #[cfg(feature = "placeholders")]
     tools.extend(placeholders());
 
     tools
 }
 
-/// The future tools: no features yet (the Terrain, Unit and VFX tools are features of their own).
+/// The future tools: none at present (every editor is a feature of its own).
 #[cfg(feature = "placeholders")]
 fn placeholders() -> Vec<Box<dyn Tool>> {
-    use wce_editor::icons;
-    use wce_editor::tool::PlaceholderTool;
-
-    vec![Box::new(PlaceholderTool::new(
-        "cinematic",
-        "Cinematic",
-        icons::CLAPPERBOARD,
-        "Keyframed scene composition and movie recording over PropertyPaths, with a camera rig, a second viewport and PNG sequence export.",
-    ))]
+    vec![]
 }

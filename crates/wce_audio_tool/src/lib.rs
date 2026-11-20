@@ -2,7 +2,7 @@
 //! event plays, and listen. Editing (replace, add, remove) comes with the later steps of the plan.
 
 mod document;
-mod player;
+pub mod player;
 mod tool;
 
 pub use tool::AudioTool;
