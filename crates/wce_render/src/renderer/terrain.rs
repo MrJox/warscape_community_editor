@@ -2722,6 +2722,12 @@ impl Renderer {
             cbs.set_m("camera_VS_PS", "view_projection", (*clip * to_world).data());
             cbs.set_m("camera_VS_PS", "view", (view * to_world).data());
             cbs.set_f("camera_VS_PS", "camera_position", &[eye_cb.x - rx * units, eye_cb.y, eye_cb.z - rz * units]);
+            // The fog of war's bounds in that frame too: the sea floor's shader reads it at its world position (capture Ares: read at
+            // the render origin's frame it darkened the shallow sea's sand to a fifth where the fog was clear).
+            if let Some(w) = self.shroud.world {
+                let (ox, oz) = (-rx * units, -rz * units);
+                cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[ox, oz, ox + w[0], oz + w[1]]);
+            }
             self.upload();
             self.bind(vs);
             self.bind(ps);
@@ -2836,11 +2842,14 @@ impl Renderer {
             }
         }
 
-        // The camera as it was.
+        // The camera as it was, and the fog of war's bounds.
         let cbs = &mut self.cbs;
         cbs.set_m("camera_VS_PS", "view_projection", clip.data());
         cbs.set_m("camera_VS_PS", "view", view.data());
         cbs.set_f("camera_VS_PS", "camera_position", &[eye_cb.x, eye_cb.y, eye_cb.z]);
+        if let Some(w) = self.shroud.world {
+            cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, w[0], w[1]]);
+        }
         self.upload();
         triangles
     }

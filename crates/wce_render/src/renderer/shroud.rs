@@ -47,6 +47,10 @@ pub(crate) struct ShroudGpu {
     /// The fog of war on the GPU (its `ShroudMap::id`, the texture), and whether this frame draws one.
     fog: Option<(u64, Option<ID3D11ShaderResourceView>)>,
     pub(crate) fog_on: bool,
+
+    /// The campaign world's size (game units) `g_campaign_world_bounds` spans from the render origin, the map's corner: the terrain
+    /// patches drawn in a frame moved off it move the bounds with them (`Renderer::draw_terrain_patches`).
+    pub(crate) world: Option<[f32; 2]>,
 }
 
 /// The fog of war texture's padding in uv (64 texels of 1485 x 1240: the game's `g_uv_offset`).
@@ -87,6 +91,9 @@ impl Renderer {
             cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, world[0], world[1]]);
             cbs.set_f("shroud_PS", "g_campaign_playable_area_bounds", &[0.0, 0.0, world[0], world[1]]);
             cbs.set_f("shroud_PS", "g_uv_offset", &FOG_UV_OFFSET);
+            self.shroud.world = Some(world);
+        } else {
+            self.shroud.world = None;
         }
     }
 
