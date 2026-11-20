@@ -47,8 +47,7 @@ Never done: a whole frame compared at the same camera. Known gaps (V, from the c
   lean towards the camera, `campaign_tree_ps` unset. Their size and lean are ASSUMPTIONS.
 - **Coast strip:** `campaignterrain.hlsl` `ps30_main_coast` is drawn nowhere in the editor (H: whether the game draws it on Attila).
 - **Grass:** drawn on campaign maps; capture A's frame has no grass pass (kept unchecked for TDD's marsh reeds).
-- **Normals:** which LF normal chunks the game's campaign terrain reads (`terrain/campaigns/<map>/normals` or the battle set) is not
-  checked against the editor's.
+- **Normals:** settled 2026-11-20 (Progress, "The LF normals").
 - **Settlements:** buildings unturned (the turn is not in the startpos, not found in the DLL); sprawl levels, walls around zones
   without a building, the farmland rule and the road cap are ASSUMPTIONS. Seen 2026-11-18: in scripted runs Rome's settlement buildings
   were not drawn (their models never requested).
@@ -365,3 +364,11 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   atlas size, texture mips, far-blend distances and LOD may be the lowest level's; the campaign rows by quality are to be checked in
   the game's table before matching more of it. The game's split start (the near plane, with the nearest ground 7 units off) not
   ported: the editor's analysis starts at the nearest depth.
+- **The LF normals (2026-11-20):** capture A's terrain blend draws all bind one `s_lf_normal_map`, named by its bytes
+  `terrain/campaigns/main_attila_map/lf_normal.dds` (8128 x 5764 DXT5, 13 mips; the capture's 1016 x 720 its fourth mip: the user's
+  texture quality "small" drops three); no chunk of `normals/` is bound. It is BOB's DXT5 of the kit's `normal.dds` (BGRA8, R and G
+  the normal's x and z, B up), stored R 255, G z, B 0, A x: the editor's own LF normal layout. The editor drew normals made from the
+  LF's slopes; a campaign frame now reads the map's (`game_lf_normals`: the kit's `normal.dds`, else the packs' `lf_normal.dds`, at
+  mip 1, two texels a cell). Their components follow the LF's slopes by 0.64 / 0.65 (the rest the authored detail). Capture A's
+  ground 19.62 -> 18.68. DEVIATION: an LF stroke's texels are made from the heights again. The game's preferences file (written
+  2026-11-19) has every quality at 3 but textures at 0: if those were the capture's, only the textures (mips) are minimal there.

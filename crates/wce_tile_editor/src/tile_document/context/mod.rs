@@ -22,7 +22,7 @@ pub mod stream;
 pub mod template;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
@@ -416,6 +416,68 @@ fn derived_lf(
     Some(lf)
 }
 
+/// A campaign map's LF normals as the game binds them to its terrain (`s_lf_normal_map`: `terrain/campaigns/<map>/lf_normal.dds`, BOB's
+/// DXT5 of the kit's `normal.dds`, 8128 x 5764 on main_attila, R 255, G the normal's z, B 0, A its x; RenderDoc, capture A, every blend
+/// draw): an authored map with detail the LF has not, not the LF's slopes. The kit's file first (its R and G the x and z, B up), else
+/// the packs'; read at its second mip (two texels a cell, the LF view's) into `lf`'s normal image, texel by texel at the point
+/// `normal_texel` takes. Whether it was found; logs how its components follow the LF's own slopes (their correlation over the map).
+/// DEVIATION: an LF stroke's texels are made again from the heights (the renderer's `normal_texel`), not from the file.
+fn game_lf_normals(lf: &mut LfMap, to_map: &Affine2, map: &PlacedMap, raw_root: &Path, files: Option<&dyn Files>) -> bool {
+    let name = map.name.rsplit(['/', '\\']).next().unwrap_or(&map.name);
+    let kit = raw_root.join("terrain/campaigns").join(name).join("normal.dds");
+    let (bytes, x_channel, from) = match std::fs::read(&kit) {
+        Ok(b) => (b, 0usize, kit.display().to_string()),
+        Err(_) => {
+            let path = format!("terrain/campaigns/{name}/lf_normal.dds");
+            match files.map(|f| f.read(&path)) {
+                Some(Ok(b)) => (b, 3usize, path),
+                _ => return false,
+            }
+        }
+    };
+    let Ok(img) = wce_formats::dds_decode::dds_decode_mip(&bytes, 1) else { return false };
+    drop(bytes);
+    let (iw, ih) = (img.w as usize, img.h as usize);
+    let (mw, mh) = (f64::from(map.width.max(1)), f64::from(map.height.max(1)));
+    let (w, h) = lf.normal_size();
+    let k = lf.normal_k.max(1);
+    let (s, sz) = (lf.step * k as f32, lf.dz() * k as f32);
+    let (wx, wz) = (w as f32 * s, h as f32 * sz);
+    let old = lf.normal.rgba.clone();
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    px.par_chunks_mut((w * 4) as usize).enumerate().for_each(|(r, row)| {
+        for c in 0..w as usize {
+            let (u, t) = ((c as f32 + 0.5) / w as f32, (r as f32 + 0.5) / h as f32);
+            let x = lf.x0 + (u * wx - lf.x0).rem_euclid(wx);
+            let z = lf.z0 + (-t * wz - lf.z0).rem_euclid(wz);
+            let (mx, my) = to_map.apply(f64::from(x), f64::from(z));
+            let fx = ((mx / mw * iw as f64).floor().max(0.0) as usize).min(iw - 1);
+            let fy = ((my / mh * ih as f64).floor().max(0.0) as usize).min(ih - 1);
+            let p = &img.px[(fy * iw + fx) * 4..(fy * iw + fx) * 4 + 4];
+            row[c * 4..c * 4 + 4].copy_from_slice(&[255, p[1], 0, p[x_channel]]);
+        }
+    });
+
+    // How the file follows the LF's slopes: the correlation of each component with the heights' own (`normal_texel`'s).
+    if let Some(old) = old.filter(|o| o.len() == px.len()) {
+        let corr = |ch: usize| {
+            let n = (px.len() / 4) as f64;
+            let (a, b): (Vec<f64>, Vec<f64>) = px.chunks(4).zip(old.chunks(4)).map(|(p, q)| (f64::from(p[ch]), f64::from(q[ch]))).unzip();
+            let (ma, mb) = (a.iter().sum::<f64>() / n, b.iter().sum::<f64>() / n);
+            let cov: f64 = a.iter().zip(&b).map(|(x, y)| (x - ma) * (y - mb)).sum();
+            let (va, vb): (f64, f64) = (a.iter().map(|x| (x - ma).powi(2)).sum(), b.iter().map(|y| (y - mb).powi(2)).sum());
+            cov / (va * vb).sqrt().max(1e-9)
+        };
+        wce_foundation::log::info(format!(
+            "map context: the LF normals from {from} (x follows the heights' slopes by {:.2}, z by {:.2})",
+            corr(3),
+            corr(1)
+        ));
+    }
+    lf.normal = TerrainImage { w: w as u32, h: h as u32, rgba: Some(Arc::new(px)) };
+    true
+}
+
 fn lf_normals(lf: &mut LfMap) {
     lf.normal_k = ((lf.nx.max(lf.nz) + LF_NORMAL_SIDE - 1) / LF_NORMAL_SIDE).max(1);
     let (w, h) = lf.normal_size();
@@ -612,7 +674,10 @@ impl Frame {
         let drawn_lf = (campaign && land_box > 1)
             .then(|| derived_lf(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k, LfDerive::Box(land_box)))
             .flatten()
-            .map(Arc::new);
+            .map(|mut lf| {
+                game_lf_normals(&mut lf, &to_map, &map, &rq.raw_root, files.as_deref());
+                Arc::new(lf)
+            });
         let drawn_sea = campaign
             .then(|| derived_lf(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k, LfDerive::GameSea))
             .flatten()
