@@ -11,7 +11,7 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
-Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3). Their look on kit tiles is the user's.
+Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done. Their look on kit tiles is the user's.
 
 Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
 the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
@@ -92,7 +92,10 @@ A ground coverage kind **Shores**: the walkable ground within reach of water and
 edge (reeds), the bank (rocks, bushes), the riverbed under the surface (stones), and on coasts the tide line (driftwood). Keys picked
 with the key picker, presets per climate. It goes where Riverbanks and Coast don't (they take the cliffs).
 
-### Steps
+### Steps (done 2026-11-20, one commit)
+
+Done as planned; with no set chosen the shores lay built-in reeds and stones (the other kinds need a set); the window hides "On the
+face" for them and offers thicker reeds. On the river tile (2x2_lt_rb): 7 stretches of bank, 179 stones, 1192 reeds.
 
 1. The kind in `ground_coverage` (bands from the water surface and depth), tests.
 2. The window's tab, presets, docs.

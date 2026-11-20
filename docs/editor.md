@@ -139,7 +139,7 @@ the terrain, the scene or the rules change. The tile keeps its rules in `texture
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
 silt where water runs, rock on slopes). The selected rule's area can be outlined in the viewport. The texture rules and a biome show in the Inspector (one at a
 time, until something else is selected or made; a biome's own area keeps its biome), laying first (Draw an area or the brush), then the
-settings. The ground coverage (`ground_coverage_panel.rs`) stays a window of the Tile panel's Experimental section. They (`styled.rs`) show
+settings. The ground coverage (`ground_coverage_panel.rs`) stays a window of the Tile panel's Experimental section; its kinds are Inland cliffs, Coast, Riverbanks, Shores (the walkable banks and their shallows: reeds and stones, built-in sets when none is chosen) and Around buildings (`ground_coverage <preview|generate> <kind> <preset> [seed] | window | close`). They (`styled.rs`) show
 **Simple** (named choices: a condition's Flat / Gentle / Steep / Cliffs, a strength's Faint ... Full, the edges' Clean ... Very patchy) or
 **Advanced** (every number), in a label column and a value column that keep their places; a condition is a check box and a bar that draws
 the weight it gives (its fades as ramps; drag an end, onto the bar's end for no limit, Shift + drag for its softness); the texture is

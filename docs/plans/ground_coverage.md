@@ -61,6 +61,10 @@ are gone around as now (the same categories, `building_clearance`). Exclusion po
 
 ### Presets
 
+- **Shores** (2026-11-20, docs/plans/auto_detail_2.md, F): the ground units *can* walk within `water_reach` of water (a river's, a
+  plane's, the sea's at 0 m on a tile that meets it) and up to `foot_up` over its surface, and the shallows by it down to `water_below`;
+  its bands from the nearest water's surface, no rise needed, no face. Plants (reeds) go in the shallows and on the bank; with no set
+  chosen, the built-in reeds (`shrub_calamus`, `shrubs_med.water_a`) and stones (`gaul_rock_01/02`). Group `Shores`, regions `Waterside n`.
 - A file per preset under the projects' `raw_data/art/ground_coverage_presets/<name>.wce` (beside `vegetation_sets`), XML as the sets:
   `<GROUND_COVERAGE_PRESET kind="cliffs|coast|riverbank" rocks="<set>" plants="<set>" params="<Params::to_text>"/>`.
 - Built-in defaults per kind (not files; "Save as" makes a file of one). The parameters a kind does not use are not shown for it.

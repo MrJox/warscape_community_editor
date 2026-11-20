@@ -41,6 +41,7 @@ pub fn kind_group_name(kind: Kind) -> &'static str {
         Kind::Coast => "Coast",
         Kind::Riverbank => "Riverbanks",
         Kind::Buildings => "Around buildings",
+        Kind::Shores => "Shores",
     }
 }
 
@@ -51,6 +52,7 @@ pub fn region_name(kind: Kind) -> &'static str {
         Kind::Coast => "Shore",
         Kind::Riverbank => "Bank",
         Kind::Buildings => "Building",
+        Kind::Shores => "Waterside",
     }
 }
 
