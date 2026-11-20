@@ -13,7 +13,7 @@ use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable, EncodeableExt
 use rpfm_lib::schema::Schema;
 use wce_vfs::files::Files;
 
-use crate::battle_export::{BattleScripts, battle_scripts, script_folder, shortform};
+use crate::battle_export::{BattleScripts, script_folder, shortform};
 use crate::scene::{Project, sanitize_key};
 
 /// The table files' name in the pack (`db/<table>/<this>`).
@@ -154,7 +154,7 @@ pub fn battle_files(
     schema: &Schema,
     language: &str,
 ) -> Result<(Vec<(String, Vec<u8>)>, Vec<String>), String> {
-    let scripts = battle_scripts(project);
+    let scripts = crate::battle_export::battle_scripts_with(project, &crate::speeds::speed_table(files));
     let mut out: Vec<(String, Vec<u8>)> = scripts.files.iter().map(|(p, t)| (p.clone(), t.as_bytes().to_vec())).collect();
     out.extend(battle_tables(project, &scripts, files, schema)?);
     let loc = loc_file(&battle_loc_entries(project, &scripts, language))?;
