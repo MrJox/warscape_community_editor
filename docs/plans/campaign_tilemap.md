@@ -373,3 +373,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   mip 1, two texels a cell). Their components follow the LF's slopes by 0.64 / 0.65 (the rest the authored detail). Capture A's
   ground 19.62 -> 18.68. DEVIATION: an LF stroke's texels are made from the heights again. The game's preferences file (written
   2026-11-19) has every quality at 3 but textures at 0: if those were the capture's, only the textures (mips) are minimal there.
+- **Constants, arrays included (2026-11-20):** `campaign_compare.py` skipped array variables (the cascades' splits and matrices among
+  them, which is how the 383-unit splits went unseen); it now compares them element by element (the editor's dump puts each on a
+  16-byte boundary). Capture A against the editor: the cascades' matrices within 1 - 4 % (the scripted run lacks the depth
+  analysis's 1.05 stretch). The other differences are read by no shader that draws them (disassembled at their events): the
+  resolve and the blend pass read none of `g_blend_contrast`, `g_lq_infield_blend_range`, `g_snow_height`, `g_rock_*`; the campaign
+  water no `g_foam_anim_data`; the buildings `g_wind` (0 on a campaign map, as the game's), not `g_wind_offset`; the light pass no
+  `g_amSoftSplit`. Left as they are.

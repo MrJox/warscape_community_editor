@@ -40,12 +40,6 @@ PASS_OF = {
 }
 
 
-def flatten(v):
-    if isinstance(v, dict):
-        return None
-    return [float(x) for x in v]
-
-
 def transposed(v):
     """A 4 x 4's sixteen values the other way round (the editor's buffers hold matrices as the GPU packs them, RenderDoc reads them
     by rows)."""
@@ -86,6 +80,35 @@ def editor_constants(path):
     return out
 
 
+def elements(var, gv, ev):
+    """A variable's values to compare, game against editor: itself, or an array's elements one by one. The game's dump gives an array
+    as `{"name[i]": values}`; the editor's prints the buffer's bytes, each element on a 16-byte boundary (a float[5] as 20 floats)."""
+    if not isinstance(gv, dict):
+        return [(var, [float(x) for x in gv], ev)]
+    index = lambda key: int(key.rsplit("[", 1)[1].rstrip("]")) if "[" in key else 0
+    out, at = [], 0
+    for key, vals in sorted(gv.items(), key=lambda kv: index(kv[0])):
+        vals = [float(x) for x in vals]
+        out.append((key, vals, ev[at : at + len(vals)]))
+        at += (len(vals) + 3) // 4 * 4
+    return out
+
+
+def compare_values(gv, ev):
+    """(relative difference, the game's first values, the editor's) when they differ, else None. A 4 x 4 is tried the other way round."""
+    if not gv or not ev:
+        return None
+    n = min(len(gv), len(ev))
+    if n == 16:
+        straight = sum(abs(gv[i] - ev[i]) for i in range(16))
+        if sum(abs(gv[i] - x) for i, x in enumerate(transposed(ev))) < straight:
+            ev = transposed(ev)
+    diffs = [abs(gv[i] - ev[i]) for i in range(n)]
+    scale = max(1e-6, max(abs(x) for x in gv[:n] + ev[:n]))
+    worst = max(diffs) if diffs else 0.0
+    return (worst / scale, gv[: min(n, 8)], ev[: min(n, 8)]) if worst > 1e-4 * scale else None
+
+
 def compare_constants(game, editor, top):
     rows = []
     for buf, (vals, event) in sorted(game.items()):
@@ -93,20 +116,13 @@ def compare_constants(game, editor, top):
         if ed is None:
             continue
         for var, gv in vals.items():
-            gv = flatten(gv)
             ev = ed.get(var)
-            if gv is None or ev is None or not gv:
+            if ev is None:
                 continue
-            n = min(len(gv), len(ev))
-            if n == 16:
-                straight = sum(abs(gv[i] - ev[i]) for i in range(16))
-                if sum(abs(gv[i] - x) for i, x in enumerate(transposed(ev))) < straight:
-                    ev = transposed(ev)
-            diffs = [abs(gv[i] - ev[i]) for i in range(n)]
-            scale = max(1e-6, max(abs(x) for x in gv[:n] + ev[:n]))
-            worst = max(diffs) if diffs else 0.0
-            if worst > 1e-4 * scale:
-                rows.append((worst / scale, buf, var, event, gv[: min(n, 8)], ev[: min(n, 8)]))
+            for name, g, e in elements(var, gv, ev):
+                row = compare_values(g, e)
+                if row is not None:
+                    rows.append((row[0], buf, name, event, row[1], row[2]))
     rows.sort(reverse=True)
     print(f"constants: {len(rows)} variables differ (of the buffers both frames have); the largest {min(top, len(rows))}:")
     for rel, buf, var, event, gv, ev in rows[:top]:
