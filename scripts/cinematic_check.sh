@@ -63,6 +63,15 @@ for f in range(10):
     rc=$?
     echo "movie edit run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/edit_run$run.log" | tail -5; }
+    # Autosave: a scene left unsaved by a "crash", taken back by the next session (its own settings and projects folders).
+    asd="$OUT/autosave$run"; rm -rf "$asd"; mkdir -p "$asd/settings" "$asd/projects"
+    [ -f "$SETTINGS_SRC/settings.toml" ] && cp "$SETTINGS_SRC/settings.toml" "$asd/settings/"
+    for half in a b; do
+        WCE_PROJECTS="$(cygpath -w "$asd/projects")" WCE_SETTINGS_DIR="$(cygpath -w "$asd/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$ROOT/scripts/cinematic_autosave_$half.txt")" > "$OUT/autosave_${half}$run.log" 2>&1
+        rc=$?
+        echo "autosave run $run ($half): exit $rc"
+        [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/autosave_${half}$run.log" | tail -5; }
+    done
     for f in subs$run sound$run r$run/wce_imported; do [ -s "$OUT/$f.pack" ] || { echo "movie edit run $run: no $f pack"; bad=1; }; done
 done
 for f in subs sound; do
