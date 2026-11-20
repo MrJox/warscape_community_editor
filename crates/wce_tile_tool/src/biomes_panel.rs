@@ -9,7 +9,7 @@ use std::sync::Arc;
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_foundation::math::Float3;
-use wce_scene::render_scene::{Overlay, overlay_colour};
+use wce_scene::render_scene::{Overlay, OverlayVertex, overlay_colour};
 use wce_tile::biomes::{BIOME_ATTR, BUILTIN_FOLDER, Biome, Props, SEED_ATTR, presets_root};
 use wce_tile::texture_rules::Range;
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
@@ -45,12 +45,28 @@ pub struct BiomesUi {
     pub rule: usize,
 }
 
-/// A brush stroke: taking away or adding, the area it works on (none: a new one), the dabs so far (world metres).
+/// A brush stroke: taking away or adding, the area it works on (none: a new one) and its outline when it began, the dabs so far (world
+/// metres), and what it shows: the area as the stroke leaves it, filled and outlined on the ground (made again as dabs come).
 pub(crate) struct BiomeStroke {
     erase: bool,
     area: Option<usize>,
+    points: Vec<(f32, f32)>,
     dabs: Vec<(f32, f32)>,
+    fill: Vec<OverlayVertex>,
+    outline: Vec<OverlayVertex>,
 }
+
+/// The stroke's colours: the area it leaves, filled and outlined.
+fn stroke_fill() -> u32 {
+    overlay_colour(0.3, 0.95, 0.45, 0.22)
+}
+
+fn stroke_line() -> u32 {
+    overlay_colour(0.35, 1.0, 0.5, 1.0)
+}
+
+/// How far over the ground the stroke is drawn, metres.
+const LIFT: f32 = 0.3;
 
 impl TileTool {
     /// Shows the biomes in the Inspector (the Create panel's biome entries, a selected area's "Edit its biome").
@@ -110,18 +126,81 @@ impl TileTool {
             return;
         }
 
-        self.biomes.stroke = Some(BiomeStroke { erase, area, dabs: vec![at] });
+        let points = area
+            .and_then(|elem| document(e)?.tile().biome_areas().into_iter().find(|a| a.elem == elem))
+            .map(|a| a.points)
+            .unwrap_or_default();
+        self.biomes.stroke = Some(BiomeStroke { erase, area, points, dabs: vec![at], fill: vec![], outline: vec![] });
         self.gesture = Some(Gesture::BiomeStroke);
+        self.biome_stroke_preview(e);
     }
 
-    /// A dab at the cursor, a quarter of the radius from the last one at least.
-    pub(crate) fn biome_dab(&mut self) {
+    /// The stroke under way, in words (a script's check): its dabs and what it shows.
+    pub(crate) fn biome_stroke_state(&self) -> String {
+        self.biomes.stroke.as_ref().map_or_else(
+            || "no stroke".to_owned(),
+            |s| format!("{} dab(s), {} fill triangle(s), {} outline segment(s)", s.dabs.len(), s.fill.len() / 3, s.outline.len() / 2),
+        )
+    }
+
+    /// The area as the stroke leaves it, on the ground: its cells filled, its outline (as the stroke's end makes it) drawn over them.
+    fn biome_stroke_preview(&mut self, e: &mut Editor) {
+        let radius = self.biome_radius();
+        let Some(d) = document(e) else { return };
+        let Some(s) = self.biomes.stroke.as_mut() else { return };
+        let t = d.tile();
+        let ground = |x: f32, z: f32| Float3::new(x, t.terrain_height(x, z) + LIFT, z);
+
+        // The same grid as the stroke's end (`TileDocument::biome_stroke`): its outlines, filled (their triangles cut until they follow the
+        // ground).
+        let cell = (radius / 4.0).clamp(0.5, 4.0);
+        let outlines = wce_tile::biomes::stroke_outline(&s.points, &s.dabs, radius, s.erase, cell);
+        s.fill.clear();
+        let colour = stroke_fill();
+        for poly in &outlines {
+            let mut todo =
+                wce_tile::biomes::triangulate(poly).into_iter().map(|t| [poly[t[0]], poly[t[1]], poly[t[2]]]).collect::<Vec<_>>();
+            while let Some([a, b, c]) = todo.pop() {
+                let long = |p: (f32, f32), q: (f32, f32)| (p.0 - q.0).hypot(p.1 - q.1) > 2.0 * cell;
+                if long(a, b) || long(b, c) || long(c, a) {
+                    let mid = |p: (f32, f32), q: (f32, f32)| ((p.0 + q.0) * 0.5, (p.1 + q.1) * 0.5);
+                    let (ab, bc, ca) = (mid(a, b), mid(b, c), mid(c, a));
+                    todo.extend([[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]);
+                    continue;
+                }
+
+                for p in [a, b, c] {
+                    s.fill.push(OverlayVertex { p: ground(p.0, p.1), rgba: colour });
+                }
+            }
+        }
+
+        // The outlines, their edges cut a cell long so that they follow the ground.
+        s.outline.clear();
+        let colour = stroke_line();
+        for poly in &outlines {
+            for k in 0..poly.len() {
+                let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+                let steps = ((b.0 - a.0).hypot(b.1 - a.1) / cell).ceil().max(1.0) as usize;
+                for n in 0..steps {
+                    let (t0, t1) = (n as f32 / steps as f32, (n + 1) as f32 / steps as f32);
+                    let p = |t: f32| ground(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                    s.outline.push(OverlayVertex { p: p(t0), rgba: colour });
+                    s.outline.push(OverlayVertex { p: p(t1), rgba: colour });
+                }
+            }
+        }
+    }
+
+    /// A dab at the cursor, a quarter of the radius from the last one at least; what the stroke shows follows.
+    pub(crate) fn biome_dab(&mut self, e: &mut Editor) {
         let r = self.biome_radius();
         let at = (self.cursor.x, self.cursor.z);
         if let Some(s) = self.biomes.stroke.as_mut()
             && s.dabs.last().is_none_or(|l| (l.0 - at.0).hypot(l.1 - at.1) >= r * 0.25)
         {
             s.dabs.push(at);
+            self.biome_stroke_preview(e);
         }
     }
 
@@ -150,23 +229,12 @@ impl TileTool {
         })
     }
 
-    /// The stroke's dabs as circles while it lasts.
-    pub(crate) fn biome_brush_overlay(&self, d: &wce_tile_editor::tile_document::TileDocument, o: &mut Overlay) {
-        let Some(s) = &self.biomes.stroke else { return };
-        let colour = if s.erase { overlay_colour(1.0, 0.3, 0.2, 1.0) } else { overlay_colour(0.3, 1.0, 0.4, 1.0) };
-        let r = self.biome_radius();
-        for &(x, z) in &s.dabs {
-            let mut prev = None;
-            for i in 0..=24 {
-                let a = i as f32 * std::f32::consts::TAU / 24.0;
-                let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
-                let p = Float3::new(px, d.tile().terrain_height(px, pz) + 0.4, pz);
-                if let Some(q) = prev {
-                    o.line(q, p, colour);
-                }
-
-                prev = Some(p);
-            }
+    /// The stroke under way in the viewport: the area as it leaves it, filled and outlined on the ground (the brush's circle is the
+    /// tool's, at the mouse).
+    pub(crate) fn biome_brush_overlay(&self, o: &mut Overlay) {
+        if let Some(s) = self.biomes.stroke.as_ref().filter(|_| self.biomes.open) {
+            o.triangles.extend_from_slice(&s.fill);
+            o.lines.extend_from_slice(&s.outline);
         }
     }
 

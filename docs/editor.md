@@ -147,7 +147,8 @@ shown as their thumbnails (a key the game's files lack framed red), a click take
 kind's keys (buildings by category too) where a click adds or takes out one.
 
 **Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, `biomes_panel.rs` in the Inspector: the Create panel's Vegetation > Biomes
-entries (an area drawn at once unless the brush is on), a selected area's *Edit its biome*; `biome_area`, `biome_brush`, `biomes_wait`; [plans/auto_detail.md](plans/auto_detail.md), C): a biome is
+entries (an area drawn at once unless the brush is on; while a brush stroke goes, the area as it will be is shown filled and outlined on
+the ground), a selected area's *Edit its biome*; `biome_area`, `biome_brush`, `biomes_wait`; [plans/auto_detail.md](plans/auto_detail.md), C): a biome is
 trees, undergrowth and rocks (a set or keys each), their densities, an edge band (smaller, sparser trees and denser undergrowth towards
 the boundary) and texture rules. An area of one is a vegetation exclusion polygon with `wce_biome` and `wce_biome_seed` (TEd and BOB get
 the plain polygon, so the game's procedural trees give way there); its contents are made live off the editor's thread, drawn locked,

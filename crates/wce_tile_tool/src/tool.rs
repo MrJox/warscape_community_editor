@@ -2371,7 +2371,7 @@ impl TileTool {
         }
 
         self.coverage_overlay(d, &mut o);
-        self.biome_brush_overlay(d, &mut o);
+        self.biome_brush_overlay(&mut o);
         self.rules_overlay(d, &mut o);
         self.coverage_brush_overlay(d, e.viewport.hovered, &mut o);
 
@@ -4684,7 +4684,7 @@ impl TileTool {
             Some(Gesture::BiomeStroke) => {
                 self.on_hover(e, ev);
                 if self.terrain_hit {
-                    self.biome_dab();
+                    self.biome_dab(e);
                 }
             }
 
