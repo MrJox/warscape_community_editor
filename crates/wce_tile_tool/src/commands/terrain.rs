@@ -810,10 +810,26 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "erosion",
-        "erosion <off | on | preset <name> | set <key> <value> | wait>",
-        "the tile's erosion: off (taken away with its layer), on (Weathered, or the settings it had), a preset's settings (Light, Weathered, Rugged), one setting (as in erosion.wce: rain, steps, talus, detail, strength, seed ...); wait: the layer made now, and what it changed",
+        "erosion <off | on | preset <name> | set <key> <value> | window [simple | advanced] | wait>",
+        "the tile's erosion: off (taken away with its layer), on (Weathered, or the settings it had), a preset's settings (Light, Weathered, Rugged), one setting (as in erosion.wce: rain, steps, talus, detail, strength, seed ...), the Inspector's panel; wait: the layer made now, and what it changed",
         |e, a| {
-            let usage = "usage: erosion <off | on | preset <name> | set <key> <value> | wait>";
+            let usage = "usage: erosion <off | on | preset <name> | set <key> <value> | window [simple | advanced] | wait>";
+            if a.first().map(String::as_str) == Some("window") {
+                let mode = a.get(1).cloned();
+                if mode.as_deref().is_some_and(|m| m != "simple" && m != "advanced") {
+                    return fail(usage);
+                }
+
+                return with_tile(e, |t, _| {
+                    t.open_erosion();
+                    if let Some(m) = &mode {
+                        t.erosion_ui.advanced = m == "advanced";
+                    }
+
+                    ok("erosion in the Inspector")
+                });
+            }
+
             let Some(d) = document(e) else { return fail("no tile is open") };
             match (a.first().map(String::as_str), a.get(1), a.get(2)) {
                 (Some("off"), None, None) => {

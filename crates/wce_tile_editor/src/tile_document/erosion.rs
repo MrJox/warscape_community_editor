@@ -88,7 +88,11 @@ impl Tile {
     fn erosion_signature(&mut self) -> Option<u64> {
         let settings = self.project.erosion.clone()?;
         let buildings = self.erosion_buildings();
-        let stack = self.project.layers.as_ref().and_then(|l| l.height.as_ref());
+        // The stack it is made in, there from the start: what is under its layer is then always read off it.
+        let p = &mut self.project;
+        let hf = p.height.as_ref()?;
+        let stack = p.layers.get_or_insert_with(TerrainLayers::default).height.get_or_insert_with(|| Stack::new(hf));
+        let under = stack.identity_under_rank(RANK);
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         fnv(&mut h, erosion::settings_text(true, &settings).as_bytes());
         for v in buildings.iter().flatten() {
@@ -96,17 +100,7 @@ impl Tile {
         }
 
         fnv(&mut h, &self.project.unit_scale.to_le_bytes());
-        match stack {
-            Some(s) => fnv(&mut h, &s.identity_under_rank(RANK).to_le_bytes()),
-            // No stack yet: the field is all there is (its version says when it changes).
-            None => {
-                let hf = self.project.height.as_ref()?;
-                let (a, b) = hf.version();
-                fnv(&mut h, &(a as u64).to_le_bytes());
-                fnv(&mut h, &b.to_le_bytes());
-            }
-        }
-
+        fnv(&mut h, &under.to_le_bytes());
         Some(h)
     }
 

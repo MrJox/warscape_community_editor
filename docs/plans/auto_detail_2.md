@@ -11,6 +11,8 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
+Status (2026-11-20): D done (steps 1 to 4); its look on kit tiles is the user's.
+
 Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
 the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
 
@@ -46,7 +48,11 @@ the Inspector as their place (see "Where the tools live" in auto_detail.md). The
 - UI: Terrain layers, Height tab: an "Erosion" row (or "+ Erosion") over the user's layers opening its settings in the Inspector:
   presets (Light, Weathered, Rugged), Simple/Advanced, Reroll; viewport outline of the flow when asked.
 
-### Steps
+### Steps (done 2026-11-20)
+
+Done as planned, but: a drop's load goes by the **slope** it runs down, not by the metres it falls a step, and its speed is capped (the
+first run dug −11 888 m into a 4 m-a-sample mountain); the stack is made before the first signature (else the first remake ran twice).
+The view of where water runs in the viewport is left out (the texture rules' outline of a Water flow rule shows it).
 
 1. `wce_tile::erosion` with tests (a cone gets channels; a flat mask stays untouched; same seed = same result; thermal flattens a
    spike past the talus).
