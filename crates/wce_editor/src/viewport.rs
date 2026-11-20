@@ -549,6 +549,51 @@ pub fn capture(e: &mut Editor, w: u32, h: u32, frames: u32, path: &Path) -> bool
     out.save_png(&e.dev, &e.ctx, path)
 }
 
+/// One offscreen frame of the scene for a movie (the Cinematic tool's export): `w x h`, seen by `camera` at `time_s` of the scene's
+/// clock, as the game shows it (no grid, selection or tint), its RGBA (top row first). `out` is kept by the caller between frames and
+/// made again when the size changes. `restart` resets the renderer's temporal state (auto exposure, frame counter): the first frame of
+/// a movie, so a movie is a function of its scene. The viewport's own settings come back afterwards.
+pub fn render_offscreen(
+    e: &mut Editor,
+    out: &mut RenderTarget,
+    w: u32,
+    h: u32,
+    camera: Camera,
+    time_s: f32,
+    restart: bool,
+) -> Option<Vec<u8>> {
+    let r = e.renderer.as_mut()?;
+    if w < 16 || h < 16 {
+        return None;
+    }
+
+    if e.scene.environment.active.is_none() {
+        e.scene.environment.active = Some(EnvironmentParams::default());
+    }
+
+    if (out.width(), out.height()) != (w, h) && !out.create(&e.dev, w, h) {
+        return None;
+    }
+
+    let kept = (
+        r.settings.deterministic,
+        r.settings.show_grid,
+        r.settings.game_view,
+        std::mem::take(&mut r.settings.selection),
+        std::mem::take(&mut r.settings.tinted),
+    );
+    r.settings.deterministic = true;
+    r.settings.show_grid = false;
+    r.settings.game_view = true;
+    if restart {
+        r.restart_temporal();
+    }
+
+    r.render(&e.scene, &ViewParams { camera, time_s }, out);
+    (r.settings.deterministic, r.settings.show_grid, r.settings.game_view, r.settings.selection, r.settings.tinted) = kept;
+    out.read_rgba8(&e.dev, &e.ctx)
+}
+
 /// Frames the selected items (the bounds of their models and overlays).
 pub fn focus_selection(e: &mut Editor) {
     if e.selection.is_empty() {

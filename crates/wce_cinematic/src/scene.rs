@@ -352,7 +352,8 @@ impl Project {
                 precipitation: "dry".into(),
                 battle_type: "land_normal".into(),
                 duration_s: 3600.0,
-                environment: String::new(),
+                // Vanilla's Catalaunian Plains weather: a sky and light from the start.
+                environment: r"Weather\default\default\land\day\dry\evening_north_3.environment".into(),
                 wind: [0.0, 9.0],
                 menu_position: [300, 300],
             },

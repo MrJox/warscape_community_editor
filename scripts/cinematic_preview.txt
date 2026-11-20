@@ -1,0 +1,31 @@
+# The Cinematic tool's 3D preview and movie export (docs/plans/cinematic.md, steps 4 and 5), run by scripts/cinematic_check.sh twice
+# in throw-away settings and projects folders: two cohorts, one walking a keyed path, a keyed camera; a viewport shot; a small movie.
+tool cinematic
+layout reset
+frames 2
+scene_new WCE Preview Test
+frames 3
+unit_add att_rom_cohors 0 0 -300
+unit_add att_rom_cohors 0 40 -300
+frames 2
+unit_select 3
+scene_time 0
+path_key 0 -300
+scene_time 10
+path_key 0 -285
+frames 2
+scene_time 0
+camera_key -40 12 -270 0 1 -300 35
+scene_time 10
+camera_key 30 8 -265 10 1 -290 30
+frames 2
+scene_time 5
+frames 4
+assert_unit 3 0 -292.5 WALK
+cinematic_show Viewport
+frames 30
+shot "%SHOT4%"
+frames 2
+scene_export_movie "%MOVIE%" 320 180
+frames 5
+quit

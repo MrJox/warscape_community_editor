@@ -232,6 +232,23 @@ impl Renderer {
         }
 
         wce_prof!("render.skinned_prepare");
+        // Fixed-step runs: every part's model is asked for, then waited on (as the mesh draws do), so a part never shows a frame
+        // later in one run than in another (the Cinematic tool's movies, scripted shots).
+        if self.settings.deterministic {
+            for &id in &self.skinned.ids {
+                if let Some(e) = scene.find(id)
+                    && let Payload::SkinnedInstance(s) = &e.payload
+                    && scene.drawable(e)
+                {
+                    for part in &s.parts {
+                        self.models.try_get(&format!("{}{MODEL_SKINNED_SUFFIX}", part.model), 0.0);
+                    }
+                }
+            }
+
+            self.models.wait_all();
+        }
+
         let (units, o) = (self.camera.units, self.camera.origin);
         let mut texels: Vec<[f32; 4]> = vec![];
         let mut offset_of = HashMap::<usize, usize>::new();
@@ -341,8 +358,10 @@ impl Renderer {
 
         // The same mesh and colours in a row: one instanced draw.
         // Borrowed: cloning the decals' paths per comparison took 17 ms a frame with four ships' crews (2026-11-11).
-        fn key(r: &Run) -> (usize, usize, usize, [[u32; 3]; 4], bool, &[Option<String>; 2]) {
-            (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, &r.decal)
+        // By the model's path, not its address: the draw order (blended parts) is then the same in every run of the editor, so a
+        // scripted shot or a movie gives the same pixels each time (the address order changed from one process to the next).
+        fn key(r: &Run) -> (&str, usize, usize, [[u32; 3]; 4], bool, &[Option<String>; 2]) {
+            (r.model.path.as_str(), r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, &r.decal)
         }
 
         placed.sort_by(|(a, _), (b, _)| key(a).cmp(&key(b)));

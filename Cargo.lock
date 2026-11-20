@@ -2444,10 +2444,13 @@ dependencies = [
  "wce_cinematic",
  "wce_editor",
  "wce_editor_core",
+ "wce_formats",
  "wce_foundation",
+ "wce_render",
  "wce_scene",
  "wce_vfs",
  "wce_video",
+ "wce_walls",
 ]
 
 [[package]]
@@ -2830,7 +2833,9 @@ dependencies = [
  "cc",
  "rpfm_lib",
  "thiserror",
+ "wce_formats",
  "wce_vfs",
+ "wce_walls",
 ]
 
 [[package]]
