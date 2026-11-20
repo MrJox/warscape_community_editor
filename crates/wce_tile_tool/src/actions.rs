@@ -243,6 +243,7 @@ impl TileTool {
         let sel = primary(e);
         let Some(d) = document(e) else { return false };
         let line = sel.filter(|&s| d.tile().is_polygon(s));
+        let mut edit_rules = false;
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
         ins.edit_slider("radius", "radius (m)", &mut self.brush.radius_m, 1.0, 120.0);
@@ -260,6 +261,16 @@ impl TileTool {
             self.ground_type = if i <= 0 { GROUND_ERASE } else { (i - 1).min(GROUND_TYPES.len() as i32 - 1) as u8 };
         } else if self.mode == TileMode::Paint {
             ins.edit_slider("opacity", "strength", &mut self.brush.opacity, 0.01, 1.0);
+
+            // The texture rules lie under what is painted: how many, and where they are edited.
+            let shown = match d.texture_rules() {
+                Some(r) => format!("{} rule(s) under your paint", r.rules.iter().filter(|r| r.enabled).count()),
+                None => "none".to_owned(),
+            };
+            ins.text("texture_rules", "texture rules", &shown);
+            if ins.button("edit_texture_rules", "Texture rules...", true) {
+                edit_rules = true;
+            }
         } else {
             ins.edit_slider("strength", "strength", &mut self.brush.strength, 0.5, 30.0);
         }
@@ -443,6 +454,12 @@ impl TileTool {
             && let Err(why) = self.set_image_brush(e, image)
         {
             e.status(&format!("image brush: {why}"), true);
+        }
+
+        // Leaves the brush for Select mode, where the Inspector shows the rules.
+        if edit_rules {
+            self.set_mode(TileMode::Select);
+            self.open_texture_rules();
         }
 
         true

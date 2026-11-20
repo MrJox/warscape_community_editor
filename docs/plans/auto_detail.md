@@ -240,3 +240,11 @@ touched up with a brush), kept live.
    stand in the area (`~/wce_re/scratch/auto_detail/check/biome_close.png`). Left: the user's look. Found while checking: scripted runs
    froze after a while with the screen blanked (FIFO presentation waits for a display that is off); master's binary froze the same way.
 
+## Where the tools live (user, 2026-11-19)
+
+Out of the Tile panel's Experimental section and their floating windows, into the Inspector, where the editor sets up what it makes:
+biomes and the ground coverage are Create panel entries (Vegetation > Biomes; Vegetation / Buildings > Ground coverage) shown in the
+Inspector with their settings, laying first (Draw an area / Brush; Fill the tile / Brush, Preview, Generate); the texture rules are
+the Terrain layers > Blend row over the base (and Paint mode's *Texture rules...*). One shows at a time; selecting something else, or
+making another entry, gives the Inspector back; a selected biome area shows its biome below its properties (*Edit its biome*, Reroll).
+

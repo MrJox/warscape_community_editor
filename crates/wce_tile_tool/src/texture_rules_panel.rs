@@ -46,8 +46,9 @@ fn area_colour() -> u32 {
 }
 
 impl TileTool {
-    /// Opens the window (Tile panel, "Texture rules...").
+    /// Shows the tile's texture rules in the Inspector (Terrain layers > Blend, "Texture rules"; Paint mode's Edit).
     pub fn open_texture_rules(&mut self) {
+        self.close_detail_panels();
         self.rules_ui.open = true;
     }
 
@@ -79,7 +80,8 @@ impl TileTool {
         Ok(format!("texture rules: the preset '{}' ({} rules)", p.name, p.rules.len()))
     }
 
-    pub(crate) fn draw_texture_rules_window(&mut self, e: &mut Editor) {
+    /// The tile's texture rules in the Inspector: on or off, the preset, the rules and the selected one.
+    pub(crate) fn inspect_texture_rules(&mut self, e: &mut Editor) {
         if !self.rules_ui.open {
             return;
         }
@@ -105,20 +107,15 @@ impl TileTool {
             ui.draft = Some((id, current.clone()));
         }
 
-        gui::set_next_window_size(gui::v2(460.0, 680.0), gui::COND_FIRST_USE_EVER);
-        let mut open = true;
-        if !gui::begin(&format!("{}  Texture rules (experimental)###texturerules", icons::LAYERS), Some(&mut open), 0) {
-            gui::end();
-            self.rules_ui.open = open;
-            return;
-        }
-
-        gui::text_wrapped(
+        if styled::inspector_header(
+            &format!("{}  Texture rules (experimental)", icons::LAYERS),
             "Textures laid by the terrain: each rule puts a texture where its conditions hold (height, slope, hollows, distance to water, \
              roads and buildings), a later rule over an earlier one. They go into a terrain layer of their own under yours: what you \
              paint stays over them. The layer is made again by itself when the terrain or the rules change.",
-        );
-        gui::spacing();
+        ) {
+            self.rules_ui.open = false;
+            return;
+        }
 
         // On or off, and how the rules show, on one line.
         let on = current.is_some();
@@ -136,7 +133,6 @@ impl TileTool {
             }
 
             self.rules_ui.draft = None;
-            gui::end();
             return;
         }
 
@@ -150,8 +146,6 @@ impl TileTool {
             }
         }
 
-        gui::end();
-        self.rules_ui.open = open;
         self.update_rules_area(e);
     }
 

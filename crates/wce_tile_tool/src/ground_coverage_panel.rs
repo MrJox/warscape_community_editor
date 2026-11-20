@@ -99,9 +99,22 @@ const NONE: u32 = u32::MAX;
 pub(crate) const UNKNOWN_ROCK: RockSize = RockSize { radius: 1.0, height: 1.0 };
 
 impl TileTool {
-    /// Opens the window (Tile panel, "Ground coverage...").
+    /// Shows the ground coverage in the Inspector (the Create panel's ground coverage entries).
     pub fn open_coverage(&mut self) {
+        if !self.coverage.open {
+            self.close_detail_panels();
+        }
+
         self.coverage.open = true;
+    }
+
+    /// Shows a kind's ground coverage in the Inspector.
+    pub fn open_coverage_kind(&mut self, e: &mut Editor, kind: Kind) {
+        self.open_coverage();
+        if self.coverage.kind != kind {
+            self.set_coverage_kind(e, kind);
+            self.coverage.select_tab = true;
+        }
     }
 
     /// The window from a script: the kind, its preset (by name, `Default` the built-in one; `-`: the values the window starts from for the
@@ -274,15 +287,15 @@ impl TileTool {
         Ok(format!("ground coverage: preset deleted ({})", path.display()))
     }
 
-    /// Closes the window, and its preview with it (the viewport would go on drawing it); a stroke under way is dropped.
-    fn close_coverage(&mut self) {
+    /// Closes it, and its preview with it (the viewport would go on drawing it); a stroke under way is dropped.
+    pub(crate) fn close_coverage(&mut self) {
         self.coverage.open = false;
         self.coverage.preview = None;
         self.coverage.stroke = None;
     }
 
-    /// The window.
-    pub(crate) fn draw_coverage_window(&mut self, e: &mut Editor) {
+    /// The ground coverage in the Inspector: the kinds, the preset, what it lays and how, Fill the tile or Brush, Preview and Generate.
+    pub(crate) fn inspect_coverage(&mut self, e: &mut Editor) {
         if !self.coverage.open {
             return;
         }
@@ -293,23 +306,15 @@ impl TileTool {
         }
 
         self.load_coverage_values(e);
-        gui::set_next_window_size(gui::v2(430.0, 640.0), gui::COND_FIRST_USE_EVER);
-        let mut open = true;
-        if !gui::begin(&format!("{}  Ground coverage (experimental)###groundcoverage", icons::MOUNTAIN), Some(&mut open), 0) {
-            gui::end();
-            if !open {
-                self.close_coverage();
-            }
-
-            return;
-        }
-
-        gui::text_wrapped(&format!(
+        let tip = format!(
             "Finds the kind's terrain and puts rocks and plants along its foot (by the water, its waterline) and rocks up its faces, with a \
              vegetation exclusion polygon around each clump of plants. It goes into the kind's group in the layer \"{COVERAGE_LAYER}\", \
              replacing what the group holds but its brushed strokes.",
-        ));
-        gui::spacing();
+        );
+        if styled::inspector_header(&format!("{}  Ground coverage (experimental)", icons::MOUNTAIN), &tip) {
+            self.close_coverage();
+            return;
+        }
 
         // The tabs follow the kind (a script may set it), and set it when clicked.
         let mut picked = None;
@@ -335,29 +340,9 @@ impl TileTool {
             _ => {}
         }
 
-        let row = styled::row("Show", "The plain choices, or every number");
-        if let Some(i) = styled::segmented("mode", &["Simple", "Advanced"], Some(usize::from(self.coverage.advanced)), row.width) {
-            self.coverage.advanced = i == 1;
-        }
-
         self.preset_rows(e);
-        let sets = self.vegetation_sets(e);
-        let mut changed = false;
-        if self.coverage.kind == Kind::Buildings {
-            let mut clutter = std::mem::take(&mut self.coverage.clutter);
-            changed |= self.clutter_rows(e, &mut clutter, &sets);
-            self.coverage.clutter = clutter;
-        } else {
-            gui::separator_text("What it lays");
-            set_row("Rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
-            set_row("Plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
-            if !sets.iter().any(|s| s.kind == SetKind::Building) {
-                note("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
-            }
-        }
 
-        changed |= params_rows(self.coverage.kind, &mut self.coverage.params, self.coverage.advanced);
-
+        // Laying it first: the settings below are long.
         gui::separator_text("Lay it");
         let row = styled::row("Where", "The whole tile at once, or where you brush");
         if let Some(i) = styled::segmented("where", &["Fill the tile", "Brush"], Some(usize::from(self.coverage.brush)), row.width)
@@ -421,19 +406,37 @@ impl TileTool {
             }
         }
 
-        // A preview of other values is not what Generate would make: it goes.
-        if (changed || reseeded) && self.coverage.preview.is_some() {
-            self.coverage.preview = None;
-        }
-
         if let Some(p) = &self.coverage.preview {
             gui::spacing();
             gui::text_wrapped(&p.summary);
         }
 
-        gui::end();
-        if !open {
-            self.close_coverage();
+        gui::separator_text("Settings");
+        let row = styled::row("Show", "The plain choices, or every number");
+        if let Some(i) = styled::segmented("mode", &["Simple", "Advanced"], Some(usize::from(self.coverage.advanced)), row.width) {
+            self.coverage.advanced = i == 1;
+        }
+
+        let sets = self.vegetation_sets(e);
+        let mut changed = false;
+        if self.coverage.kind == Kind::Buildings {
+            let mut clutter = std::mem::take(&mut self.coverage.clutter);
+            changed |= self.clutter_rows(e, &mut clutter, &sets);
+            self.coverage.clutter = clutter;
+        } else {
+            gui::separator_text("What it lays");
+            set_row("Rocks", "a set of buildings", &sets, SetKind::Building, &mut self.coverage.rocks);
+            set_row("Plants", "a set of trees", &sets, SetKind::Vegetation, &mut self.coverage.plants);
+            if !sets.iter().any(|s| s.kind == SetKind::Building) {
+                note("No set of buildings yet: select some rocks and \"New set from the selected trees or buildings\".");
+            }
+        }
+
+        changed |= params_rows(self.coverage.kind, &mut self.coverage.params, self.coverage.advanced);
+
+        // A preview of other values is not what Generate would make: it goes.
+        if (changed || reseeded) && self.coverage.preview.is_some() {
+            self.coverage.preview = None;
         }
 
         if clear {
@@ -1066,7 +1069,7 @@ pub(crate) fn outline(g: &Grid, cells: &[usize], colour: u32, o: &mut Overlay) {
 }
 
 /// A kind's tab.
-fn kind_title(kind: Kind) -> &'static str {
+pub(crate) fn kind_title(kind: Kind) -> &'static str {
     match kind {
         Kind::Cliffs => "Inland cliffs",
         Kind::Coast => "Coast",
@@ -1117,7 +1120,7 @@ fn set_row(label: &str, hint: &str, sets: &[VegetationSet], kind: SetKind, chose
 
 /// Plain choices of a value: names and values.
 type Choices = [(&'static str, f32); 4];
-const SLOPES: Choices = [("Gentle", 25.0), ("Steep", 35.0), ("Very steep", 45.0), ("Cliffs", 60.0)];
+const SLOPES: Choices = [("Gentle", 25.0), ("Steep", 35.0), ("Sheer", 45.0), ("Cliffs", 60.0)];
 const ROCKS_FOOT: Choices = [("None", 0.0), ("Few", 1.0 / 25.0), ("Some", 1.0 / 10.0), ("Many", 1.0 / 5.0)];
 const ROCKS_FACE: Choices = [("None", 0.0), ("Few", 1.0 / 50.0), ("Some", 1.0 / 25.0), ("Many", 1.0 / 12.0)];
 const PLANTS: Choices = [("None", 0.0), ("Few", 1.0 / 30.0), ("Some", 1.0 / 15.0), ("Many", 1.0 / 8.0)];

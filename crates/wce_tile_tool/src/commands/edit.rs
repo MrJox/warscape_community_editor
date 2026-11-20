@@ -647,10 +647,10 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "start_making",
-        "start_making <type | building | prefab> [key]",
+        "start_making <type | building | prefab | biome | coverage> [key]",
         "start placing or drawing something, as a click in the Create panel does (the mouse places it)",
         |e, a| {
-            let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
+            let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab | biome | coverage> [key]") };
             let key = a.get(1).cloned().unwrap_or_default();
             with_tile(e, |t, e| crate::create_panel::make_for_script(t, e, &what, &key).map_or_else(fail, |()| ok("")))
         },
