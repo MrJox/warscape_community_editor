@@ -113,6 +113,11 @@ pub struct Rule {
     pub road: Option<Range>,
     pub building: Option<Range>,
 
+    /// Where water runs over the ground (0: none .. 1: a stream; about a quarter where as much runs as on average; the erosion's, or
+    /// worked out from the heights without it) and what it laid there (metres; the erosion's, 0 without it): where gravel and silt go.
+    pub flow: Option<Range>,
+    pub deposit: Option<Range>,
+
     /// A ground type (`ground_types::GROUND_TYPES`' index) laid where the rule's weight is at least `threshold` (sounds, unit speed:
     /// gameplay, so off unless asked). The latest rule that lays one at a place wins there.
     pub ground: Option<GroundRule>,
@@ -142,6 +147,8 @@ impl Default for Rule {
             water: None,
             road: None,
             building: None,
+            flow: None,
+            deposit: None,
             ground: None,
             breakup: None,
             seed: 0,
@@ -207,6 +214,16 @@ pub struct Fields {
     /// How much of the tile's own painting is its main ground, 0..1 a pixel ([`main_ground`]): the rules lay their textures only over
     /// that, so what was painted in other textures stays. None: everywhere (a tile of one texture).
     keep: Option<Keep>,
+
+    /// Where water runs and what it laid, on the heights' grid ([`Rule::flow`], [`Rule::deposit`]), when worked out.
+    runoff: Option<Runoff>,
+}
+
+/// Where water runs over the ground (0 .. 1) and what it laid (metres), a value a height sample.
+#[derive(Clone, PartialEq)]
+pub struct Runoff {
+    pub flow: std::sync::Arc<Vec<f32>>,
+    pub deposit: Option<std::sync::Arc<Vec<f32>>>,
 }
 
 #[derive(Clone)]
@@ -449,7 +466,7 @@ impl Fields {
             }
         }
 
-        Self { w, h, mpp, heights, sums, distances: [None, None, None], areas: vec![], keep: None }
+        Self { w, h, mpp, heights, sums, distances: [None, None, None], areas: vec![], keep: None, runoff: None }
     }
 
     /// From a tile's height field, its samples `mpp` metres apart; `unit`, the tile's scene units a metre (the editor's metres are the
@@ -577,6 +594,26 @@ impl Fields {
             _ => add(whole),
         }
 
+        // Where water runs: where it changed (a height upstream moves it downstream, far off).
+        match (&self.runoff, &old.runoff) {
+            (None, None) => {}
+            (Some(a), Some(b)) => {
+                if let Some(r) = cells(self.w, &a.flow, &b.flow, self.mpp, 0.0) {
+                    add(r);
+                }
+                match (&a.deposit, &b.deposit) {
+                    (None, None) => {}
+                    (Some(p), Some(q)) => {
+                        if let Some(r) = cells(self.w, p, q, self.mpp, 0.0) {
+                            add(r);
+                        }
+                    }
+                    _ => add(whole),
+                }
+            }
+            _ => add(whole),
+        }
+
         // An area changed, came or went: both its outlines' boxes.
         let n = self.areas.len().max(old.areas.len());
         for i in 0..n {
@@ -594,6 +631,48 @@ impl Fields {
         }
 
         out.map(|r| [r[0].max(0.0), r[1].max(0.0), r[2].min(whole[2]), r[3].min(whole[3])])
+    }
+
+    /// Gives where water runs and what it laid ([`Runoff`]; on the heights' grid: ignored when not its size).
+    #[must_use]
+    pub fn with_runoff(mut self, runoff: Runoff) -> Self {
+        let n = self.heights.len();
+        if runoff.flow.len() == n && runoff.deposit.as_ref().is_none_or(|d| d.len() == n) {
+            self.runoff = Some(runoff);
+        }
+        self
+    }
+
+    /// Where water runs over the bare heights ([`crate::erosion::flow_of`]): the runoff of a tile without erosion.
+    #[must_use]
+    pub fn with_runoff_of_heights(self) -> Self {
+        let flow = crate::erosion::flow_of(&self.heights, self.w as usize, self.h as usize);
+        self.with_runoff(Runoff { flow: std::sync::Arc::new(flow), deposit: None })
+    }
+
+    /// A value of the heights' grid at a point (bilinear), metres from the map's corner.
+    fn grid_at(&self, grid: &[f32], wx: f64, wz: f64) -> f64 {
+        let (x, y) = ((wx / self.mpp.0).clamp(0.0, f64::from(self.w - 1)), (wz / self.mpp.1).clamp(0.0, f64::from(self.h - 1)));
+        let (x0, y0) = (x.floor() as usize, y.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(self.w as usize - 1), (y0 + 1).min(self.h as usize - 1));
+        let (fx, fy) = (x - x.floor(), y - y.floor());
+        let w = self.w as usize;
+        let v = |x: usize, y: usize| f64::from(grid[y * w + x]);
+        let a = v(x0, y0) * (1.0 - fx) + v(x1, y0) * fx;
+        let b = v(x0, y1) * (1.0 - fx) + v(x1, y1) * fx;
+        a * (1.0 - fy) + b * fy
+    }
+
+    /// Where water runs at a point, 0 .. 1 ([`Rule::flow`]); 0 when not worked out.
+    #[must_use]
+    pub fn flow(&self, wx: f64, wz: f64) -> f64 {
+        self.runoff.as_ref().map_or(0.0, |r| self.grid_at(&r.flow, wx, wz))
+    }
+
+    /// What water laid at a point, metres ([`Rule::deposit`]); 0 when not worked out.
+    #[must_use]
+    pub fn deposit(&self, wx: f64, wz: f64) -> f64 {
+        self.runoff.as_ref().and_then(|r| r.deposit.as_ref()).map_or(0.0, |d| self.grid_at(d, wx, wz))
     }
 
     /// Gives the distances to a feature.
@@ -645,6 +724,12 @@ fn slot_of(groups: &[String], names: &str) -> Option<usize> {
     names.split('|').map(str::trim).filter(|n| !n.is_empty()).find_map(|n| groups.iter().take(4).position(|g| g.eq_ignore_ascii_case(n)))
 }
 
+/// Whether any rule that lays something reads where water runs or what it laid: what is not, need not be worked out.
+#[must_use]
+pub fn uses_runoff(rules: &[Rule]) -> bool {
+    rules.iter().filter(|r| r.enabled && r.strength > 0.0).any(|r| r.flow.is_some() || r.deposit.is_some())
+}
+
 impl Rule {
     /// The rule's distance condition to a feature.
     #[must_use]
@@ -678,6 +763,8 @@ impl Rule {
             (&self.water, &|| fields.distance(Feature::Water, wx, wz)),
             (&self.road, &|| fields.distance(Feature::Road, wx, wz)),
             (&self.building, &|| fields.distance(Feature::Building, wx, wz)),
+            (&self.flow, &|| fields.flow(wx, wz)),
+            (&self.deposit, &|| fields.deposit(wx, wz)),
         ] {
             if w <= 0.0 {
                 break;
@@ -827,6 +914,8 @@ pub fn rule_lines(rules: &[Rule], indent: &str) -> String {
             ("water", &r.water),
             ("road", &r.road),
             ("building", &r.building),
+            ("flow", &r.flow),
+            ("deposit", &r.deposit),
         ] {
             if let Some(range) = range {
                 out += &format!(" {name}=\"{}\"", range.text());
@@ -915,6 +1004,8 @@ pub fn rules_in(doc: &XmlDoc) -> Vec<Rule> {
                 water: range(e, "water"),
                 road: range(e, "road"),
                 building: range(e, "building"),
+                flow: range(e, "flow"),
+                deposit: range(e, "deposit"),
                 ground: doc.get(e, "ground").and_then(|name| {
                     let kind = crate::ground_types::GROUND_TYPES.iter().position(|(n, _)| n.eq_ignore_ascii_case(name.trim()))?;
                     Some(GroundRule { kind: kind as u8, threshold: num(e, "ground_threshold").unwrap_or(0.5) })
@@ -1101,6 +1192,17 @@ pub fn default_rules() -> Vec<Rule> {
             ..Rule::default()
         },
         Rule {
+            name: "Silt where water runs".to_owned(),
+            group: MUD.to_owned(),
+            variation: 3.0,
+            strength: 0.6,
+            slope: Some(Range { lo: None, hi: Some(30.0), fade: 8.0 }),
+            flow: Some(Range { lo: Some(0.55), hi: None, fade: 0.15 }),
+            breakup: Some(Breakup { scale: 5.0, amount: 0.6 }),
+            seed: 6,
+            ..Rule::default()
+        },
+        Rule {
             name: "Rock on slopes".to_owned(),
             group: ROCK.to_owned(),
             variation: 0.0,
@@ -1139,6 +1241,39 @@ mod tests {
             slope: Some(Range { lo: Some(30.0), hi: None, fade: 0.0 }),
             ..Rule::default()
         }
+    }
+
+    #[test]
+    fn water_flow_and_deposit_as_conditions() {
+        // A V valley down z: the flow gathers in the middle column.
+        let (w, h) = (21u32, 21u32);
+        let heights = (0..w * h).map(|i| ((i % w) as f32 - 10.0).abs() + (i / w) as f32 * 0.1).collect::<Vec<_>>();
+        let fields = Fields::new(w, h, (1.0, 1.0), heights.clone());
+        let rule = Rule { group: "mud".to_owned(), flow: Some(Range { lo: Some(0.55), hi: None, fade: 0.1 }), ..Rule::default() };
+        // Not worked out: no water anywhere.
+        assert_eq!(rule.weight(&fields, 10.0, 3.0), 0.0);
+        let fields = fields.with_runoff_of_heights();
+        assert!(rule.weight(&fields, 10.0, 3.0) > 0.9, "{}", fields.flow(10.0, 3.0));
+        assert!(rule.weight(&fields, 3.0, 3.0) < 0.1);
+        assert!(uses_runoff(&[rule.clone()]) && !uses_runoff(&[Rule::default()]));
+
+        // What was laid, from an erosion's runoff; its change is where the rules are made again.
+        let mut laid = vec![0.0f32; (w * h) as usize];
+        laid[(15 * w + 4) as usize] = 0.5;
+        let flow = std::sync::Arc::new(crate::erosion::flow_of(&heights, w as usize, h as usize));
+        let with = |d: Vec<f32>| {
+            Fields::new(w, h, (1.0, 1.0), heights.clone()).with_runoff(Runoff { flow: flow.clone(), deposit: Some(std::sync::Arc::new(d)) })
+        };
+        let silt = Rule { group: "mud".to_owned(), deposit: Some(Range { lo: Some(0.2), hi: None, fade: 0.0 }), ..Rule::default() };
+        let a = with(laid.clone());
+        assert_eq!(silt.weight(&a, 4.0, 15.0), 1.0);
+        assert_eq!(silt.weight(&a, 8.0, 15.0), 0.0);
+        let changed = a.changed_area(&with(vec![0.0; (w * h) as usize]), 0.0).unwrap();
+        assert!(changed[0] <= 4.0 && changed[2] >= 5.0 && changed[2] - changed[0] < 6.0, "{changed:?}");
+
+        // Through the text.
+        let set = RuleSet { preset: String::new(), rules: vec![rule, silt] };
+        assert_eq!(parse(&text(&set)).unwrap(), set);
     }
 
     #[test]
@@ -1402,6 +1537,6 @@ mod tests {
         let groups = ["settlement_1", "settlement_2", "settlement_3", "forest"].map(str::to_owned);
         assert!(missing_groups(&default_rules(), &groups).is_empty());
         let slots = default_rules().iter().map(|r| slot_of(&groups, &r.group)).collect::<Vec<_>>();
-        assert_eq!(slots, [Some(1), Some(1), Some(1), Some(1), Some(2)]);
+        assert_eq!(slots, [Some(1), Some(1), Some(1), Some(1), Some(1), Some(2)]);
     }
 }
