@@ -485,9 +485,10 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
           **done**; seen in the app: **todo** (no display when it landed).
        4. Captures: the unit voice view with TDD (Aragorn's line, named lines), a container's settings, the timeline with
           the clip's end (boar_charge, 0.53 s). **done**
-       5. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); the engine's
-          callers of `music_culture` / `vo_campaign_character` (by hashed ID: a disassembly spike); whether the empty voice
-          junction tables are read (a test pack). **todo**
+       5. The engine's music and voice groups: their IDs are constants in its code, the values fixed ("What the game lets
+          mods choose"). **done**
+       6. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); whether the
+          empty voice junction tables are read (a test pack). **todo**
 
 ## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)
 
@@ -511,8 +512,14 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
   reports any other as `invalid_voiceover_culture`: no new culture, but cultures without lines of their own can get them
   (10.6); it loads the order banks by fixed names (`Battle_VO_Orders_<Barbarian|Eastern|Nomad|Roman>[_Inf1-12|_Mtd1-7].bnk`):
   new order lines go into those banks.
-- Open leads: where the engine sets `music_culture` and `vo_campaign_character` (their callers, by hashed ID); whether the
-  empty voice junction tables are still read (a test pack with rows).
+- The engine's hashed IDs (2026-11-20, the FNV-1 IDs as 4-byte constants in `empire.retail.dll`): `music_culture` (5 places)
+  with its values Barbarian, arabic and hunnic side by side (0x946792, 0x946799, 0x9467a0: a fixed table), `campaign_music_state`,
+  `vo_campaign_character` with Cha1, Cha2, Dig1, Spy1, Gen1Land, Gen1Naval together (0x9459ef to 0x945bda: a fixed mapping of
+  agents to actors), `vo_campaign_culture` / `_subculture`, `VO_battle_culture` / `_actor` / `_order`, `Battle_Order_VO_Play`;
+  `vo_battle_subculture` is not there (set by name: the voice-over culture). So the music cultures and the campaign voice actors
+  are fixed in the engine's code: a mod changes what their values play (every edit of this tool), not which values exist or who
+  gets them.
+- Open lead: whether the empty voice junction tables are still read (a test pack with rows).
 
 ## Open questions and risks
 
