@@ -41,7 +41,7 @@ use template::{BOX_ABOVE, BOX_BELOW, Grid, SKIRT, Template, mean_of_material};
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_vfs::files::Files;
 
-pub use stream::{ChunkChange, ChunkKey, Lod, Streamer};
+pub use stream::{ChunkChange, ChunkKey, Lod, StreamStats, Streamer};
 pub use wce_tile::sources::tile_dir;
 
 /// Map cells a side of a chunk.
@@ -163,6 +163,10 @@ pub struct BlockSource<'a> {
     /// The tiles' own heights over the LF at a map cell point, when known without opening them (a campaign map's far material's
     /// relief): the unpainted blocks' ground.
     pub relief: &'a dyn Fn(f64, f64) -> Option<f32>,
+
+    /// Calls `each` with the placements in order (until it says stop), their tiles opened ahead of it side by side: the far bake's, one
+    /// by one, took 85 of a cold campaign map's 123 s (`Shared::open_ahead`). Where tiles are opened as they come, just the loop.
+    pub open_ahead: &'a dyn Fn(&[usize], &mut dyn FnMut(usize) -> bool),
 }
 
 /// A cell no placement gives a climate.
@@ -1722,15 +1726,22 @@ impl Frame {
         for j in j0..j1 {
             relief[j * n + k0..j * n + k1].fill(0.0);
         }
-        for (i, p) in self.map.placements.iter().enumerate() {
+        // Their tiles opened ahead of the painting, side by side (`BlockSource::open_ahead`); the painting in placement order.
+        let ids: Vec<usize> = (0..self.map.placements.len())
+            .filter(|&i| {
+                let r = self.map.placements[i].rect();
+                !(r[2] <= window[0] || r[0] >= window[2] || r[3] <= window[1] || r[1] >= window[3]) && drawn(i)
+            })
+            .collect();
+        let mut stopped = false;
+        (source.open_ahead)(&ids, &mut |i| {
             if stop() {
-                return None;
+                stopped = true;
+                return false;
             }
+            let p = &self.map.placements[i];
             let r = p.rect();
-            if !drawn(i) || r[2] <= window[0] || r[0] >= window[2] || r[3] <= window[1] || r[1] >= window[3] {
-                continue;
-            }
-            let Some(t) = (source.template)(i) else { continue };
+            let Some(t) = (source.template)(i) else { return true };
             let inverse = p.to_map().inverse();
             // The texels whose cells lie in its rectangle.
             let (u0, u1) = (texel(r[0], w).floor() as i64, texel(r[2], w).ceil() as i64);
@@ -1761,6 +1772,10 @@ impl Frame {
                     heights[local] = own + self.lift(x, z);
                 }
             }
+            true
+        });
+        if stopped {
+            return None;
         }
 
         // The rest: the sea bed under the sea (the LF under it, or the cells of sea tiles and cliffs with no land tile: Attila's sea

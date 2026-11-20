@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
@@ -97,6 +97,27 @@ impl Lod {
 /// The largest distant square: 2^n blocks a side ([`Lod::Distant`]).
 const DISTANT_LEVELS: u8 = 3;
 
+/// What a streamer did so far ([`Streamer::stats`]).
+#[derive(Clone, Debug, Default)]
+pub struct StreamStats {
+    pub map: String,
+    /// The chunks on the scene per level ([`Streamer::shown`]: near, mid, ground, far, blocks, merged blocks, distant squares).
+    pub shown: [usize; 7],
+    /// Chunks wanted and not built yet.
+    pub building: usize,
+    /// Tiles opened from their files, the seconds spent on them, read from the cache, that could not be opened.
+    pub opened: usize,
+    pub open_s: f64,
+    pub from_cache: usize,
+    pub failed: usize,
+    /// The tiles in memory (MB).
+    pub mb: usize,
+    pub lf_note: String,
+    /// Seconds to read the map, and to the first ring built.
+    pub map_s: f64,
+    pub first_s: Option<f64>,
+}
+
 /// What changed on the scene's side.
 pub enum ChunkChange {
     /// A chunk's entities at a level (replacing what it had).
@@ -174,6 +195,10 @@ struct Shared {
 
 /// How long the edits must pause for the far material to be baked again over their cells.
 const FAR_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Placements the far bake's tiles are opened ahead of its painting by at most (`Shared::open_ahead`): a few hundred tiles, well inside
+/// the tiles' memory.
+const OPEN_AHEAD: usize = 8192;
 
 /// The side of a campaign map's far material (the game's is 8192: `FarMap`).
 pub const FAR_MAP_SIZE: u32 = 4096;
@@ -256,6 +281,46 @@ impl Shared {
     }
 
     /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
+    /// Calls `each` with the placements in order, their tiles opened ahead of it side by side ([`BlockSource::open_ahead`]): threads of
+    /// its own take the next placement, at most [`OPEN_AHEAD`] past the one `each` is at (the tiles' memory), the opening in the pool
+    /// as the workers' (not pool threads waiting on each other's tiles: see `worker`). In batches each waited for its slowest tile, the
+    /// pool mostly idle.
+    fn open_ahead(&self, frame: &Frame, ids: &[usize], each: &mut dyn FnMut(usize) -> bool) {
+        let (next, at, done) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicBool::new(false));
+        let threads = self.pool.current_num_threads().min(ids.len());
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    wce_foundation::jobs::lower_thread_priority();
+                    loop {
+                        let k = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(&i) = ids.get(k) else { break };
+                        while k > at.load(Ordering::Relaxed) + OPEN_AHEAD {
+                            if done.load(Ordering::Relaxed) || self.stop.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                        if done.load(Ordering::Relaxed) || self.stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if !self.is_custom(frame, i) {
+                            self.template(frame, i);
+                        }
+                    }
+                });
+            }
+
+            for (k, &i) in ids.iter().enumerate() {
+                at.store(k, Ordering::Relaxed);
+                if !each(i) {
+                    break;
+                }
+            }
+            done.store(true, Ordering::Relaxed);
+        });
+    }
+
     fn template(&self, frame: &Frame, i: usize) -> Option<Arc<Template>> {
         // Its climate's look: the map gives each placement its own.
         let p = &frame.map.placements[i];
@@ -446,6 +511,13 @@ impl Shared {
                 mean: &|path| self.mean_colour(path),
                 in_block: &|k| self.rq.bake_ground && !zone.contains(&block_of(k)),
                 relief: &|x, y| far.as_ref().map(|f| f.relief_at(x, y, mw, mh)),
+                open_ahead: &|ids, each| {
+                    for &i in ids {
+                        if !each(i) {
+                            break;
+                        }
+                    }
+                },
             };
 
             let entities = frame.build_chunk(job.key, job.lod, &source);
@@ -478,8 +550,10 @@ impl Streamer {
     pub fn new(rq: ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let started = std::time::Instant::now();
         let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+        // All the cores but two (the UI and the renderer's): opening a tile is parallel inside, and the far bake's tiles open side by
+        // side (`open_ahead`). Capped at 8, a 16-thread machine sat at 40 % through a cold campaign map's load (150 s; 87 s now).
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(cores.saturating_sub(2).clamp(2, 8))
+            .num_threads(cores.saturating_sub(2).max(2))
             .thread_name(|k| format!("map context {k}"))
             .start_handler(|_| wce_foundation::jobs::lower_thread_priority())
             .build()
@@ -535,6 +609,7 @@ impl Streamer {
                         mean: &|path| s.mean_colour(path),
                         in_block: &|_| false,
                         relief: &|_, _| None,
+                        open_ahead: &|ids, each| s.open_ahead(&frame, ids, each),
                     };
                     let base = lock(&s.far).clone();
                     let mut how = String::new();
@@ -932,29 +1007,54 @@ impl Streamer {
         n
     }
 
-    /// What it did so far, for the status line.
-    pub fn report(&self) -> String {
+    /// What it did so far, for the panel ([`StreamStats`]).
+    pub fn stats(&self) -> StreamStats {
         let f = self.frame();
         let s = lock(&self.shared.stats);
-        let [near, mid, ground, far, blocks, merged, distant] = self.shown();
-        let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };
-        format!(
-            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {merged} merged blocks, {blocks} far blocks, {distant} distant{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
-            f.map.name,
-            if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() },
-            s.opened,
-            s.open_s,
-            s.from_cache,
-            s.bytes >> 20,
-            f.lf_note(),
-            self.frame_s,
-            self.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
-        )
+        StreamStats {
+            map: f.map.name.clone(),
+            shown: self.shown(),
+            building: self.busy(),
+            opened: s.opened,
+            open_s: s.open_s,
+            from_cache: s.from_cache,
+            failed: s.failed.len(),
+            mb: s.bytes >> 20,
+            lf_note: f.lf_note(),
+            map_s: self.frame_s,
+            first_s: self.first_s,
+        }
+    }
+
+    /// What it did so far, as one line (the logs and the scripts' `terrain_settle`).
+    pub fn report(&self) -> String {
+        self.stats().line()
     }
 
     /// The tiles that could not be opened (the first few).
     pub fn failed(&self) -> Vec<String> {
         lock(&self.shared.stats).failed.iter().take(10).cloned().collect()
+    }
+}
+
+impl StreamStats {
+    /// As one line ([`Streamer::report`]).
+    pub fn line(&self) -> String {
+        let s = self;
+        let [near, mid, ground, far, blocks, merged, distant] = s.shown;
+        let failed = if s.failed == 0 { String::new() } else { format!(", {} could not be opened", s.failed) };
+        format!(
+            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {merged} merged blocks, {blocks} far blocks, {distant} distant{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
+            s.map,
+            if s.building > 0 { format!(", {} building", s.building) } else { String::new() },
+            s.opened,
+            s.open_s,
+            s.from_cache,
+            s.mb,
+            s.lf_note,
+            s.map_s,
+            s.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
+        )
     }
 }
 

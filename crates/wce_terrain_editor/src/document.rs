@@ -405,6 +405,36 @@ impl MapDocument {
 
         s
     }
+
+    /// [`Self::summary`] as (what, how much) rows (the Terrain panel's table).
+    pub fn summary_rows(&self) -> Vec<(&'static str, String)> {
+        let m = &self.placed;
+        // Thousands apart: "431 153".
+        let n = |v: usize| {
+            let d = v.to_string();
+            d.chars().enumerate().fold(String::new(), |mut o, (i, c)| {
+                if i > 0 && (d.len() - i).is_multiple_of(3) {
+                    o.push(' ');
+                }
+                o.push(c);
+                o
+            })
+        };
+        let mut s = vec![("cells", format!("{} x {}", n(m.width as usize), n(m.height as usize))), ("placements", n(m.placements.len()))];
+        if let Some(lf) = &m.lf {
+            s.push(("LF samples", format!("{} x {}", n(lf.w as usize), n(lf.h as usize))));
+        }
+
+        if let Some(l) = &self.locations {
+            s.push(("battle locations", n(l.types.iter().map(|(_, v)| v.len()).sum::<usize>())));
+        }
+
+        if let Some(p) = self.model().and_then(|m| m.project.as_ref()) {
+            s.push((".terry entities", n(p.get().entities.len())));
+        }
+
+        s
+    }
 }
 
 impl Document for MapDocument {
