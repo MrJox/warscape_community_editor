@@ -1,0 +1,42 @@
+# The Cinematic tool's scene editor (docs/plans/cinematic.md, steps 3, 6), run by scripts/cinematic_check.sh twice, in throw-away
+# settings and projects folders: a new scene, a unit walking a keyed path, a subtitle, undo and redo, a battle pack, a save.
+tool cinematic
+layout reset
+frames 2
+scene_new WCE Scene Test
+frames 3
+# Ids: the camera track 1, the intro clip 2, so the unit is 3 and its track 4.
+unit_add att_rom_cohors 0 0 -300
+frames 2
+scene_time 1
+path_key 0 -300
+frames 2
+scene_time 9
+path_key 0 -288
+frames 2
+scene_time 5
+frames 2
+assert_unit 3 0 -294 WALK
+scene_time 9.5
+frames 2
+assert_unit 3 0 -288 STAND
+undo
+frames 2
+assert_unit 3 0 -300 STAND
+redo
+frames 2
+assert_unit 3 0 -288 STAND
+track_add Subtitles
+frames 2
+scene_time 2
+key_add
+frames 2
+scene_time 5
+frames 2
+shot "%SHOT3%"
+frames 2
+scene_export_battle "%PACK%"
+frames 3
+save
+frames 2
+quit

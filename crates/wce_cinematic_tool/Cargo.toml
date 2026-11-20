@@ -12,6 +12,9 @@ wce_audio_tool = { path = "../wce_audio_tool" }
 wce_cinematic = { path = "../wce_cinematic" }
 wce_editor = { path = "../wce_editor" }
 wce_editor_core = { path = "../wce_editor_core" }
+wce_foundation = { path = "../wce_foundation" }
+wce_scene = { path = "../wce_scene" }
+rpfm_lib.workspace = true
 wce_vfs = { path = "../wce_vfs" }
 wce_video = { path = "../wce_video" }
 

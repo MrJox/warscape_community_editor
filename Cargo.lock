@@ -2438,11 +2438,14 @@ dependencies = [
 name = "wce_cinematic_tool"
 version = "0.0.1"
 dependencies = [
+ "rpfm_lib",
  "wce_audio",
  "wce_audio_tool",
  "wce_cinematic",
  "wce_editor",
  "wce_editor_core",
+ "wce_foundation",
+ "wce_scene",
  "wce_vfs",
  "wce_video",
 ]
