@@ -101,8 +101,8 @@ struct UnitLine {
     name: String,
     /// The line copied (its container's settings).
     like: u32,
-    /// (land unit, column) set to the new line.
-    unit: Option<(String, &'static str)>,
+    /// (land unit, the columns) set to the new line.
+    unit: Option<(String, Vec<&'static str>)>,
 }
 
 /// The undo steps kept (each a copy of the edited banks).
@@ -285,29 +285,33 @@ impl AudioTool {
                     ImportTarget::UnitLine(line) => {
                         let schema = self.game_data.as_ref().and_then(|d| d.db.schema.clone());
                         let what = match &line.unit {
-                            Some((unit, column)) => format!("added the line {} ({name}) and set {unit}'s {column}", line.name),
+                            Some((unit, columns)) => {
+                                format!("added the line {} ({name}) and set {unit}'s {}", line.name, columns.join(", "))
+                            }
                             None => format!("added the line {} ({name})", line.name),
                         };
                         self.edit(e, &what, |edits, lib, files| {
                             edits.add_order_line(lib, &line.switches, &line.name, line.like, &wem)?;
-                            if let Some((unit, column)) = &line.unit {
+                            if let Some((unit, columns)) = &line.unit {
                                 let schema =
                                     schema.ok_or_else(|| wce_audio::AudioError::Invalid("the game's DB schema is not set".into()))?;
                                 let table = "land_units_tables";
                                 let path = wce_audio::sound_db::edit_table_path(table);
-                                let current = edits.loose.get(&path).cloned();
-                                let bytes = wce_audio::sound_db::set_cell(
-                                    &schema,
-                                    files,
-                                    current.as_deref(),
-                                    table,
-                                    "key",
-                                    unit,
-                                    column,
-                                    &line.name,
-                                )
-                                .map_err(wce_audio::AudioError::Invalid)?;
-                                edits.loose.insert(path.clone(), bytes);
+                                for column in columns {
+                                    let current = edits.loose.get(&path).cloned();
+                                    let bytes = wce_audio::sound_db::set_cell(
+                                        &schema,
+                                        files,
+                                        current.as_deref(),
+                                        table,
+                                        "key",
+                                        unit,
+                                        column,
+                                        &line.name,
+                                    )
+                                    .map_err(wce_audio::AudioError::Invalid)?;
+                                    edits.loose.insert(path.clone(), bytes);
+                                }
                                 return Ok(format!(" under {} actors; the row is in {path}", line.switches.len()));
                             }
                             Ok(format!(" under {} actors", line.switches.len()))
