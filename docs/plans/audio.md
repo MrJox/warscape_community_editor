@@ -310,7 +310,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       of them) sound original. **Known anomaly, set aside by the user**: UI button sounds do not change through a mod pack's
       banks (event or data banks), while loose WEMs do; cause unknown (UI banks loaded before mods, another event, or cached
       media). Revisit with a runtime trace or a non-UI event (a battle sound) later. An added variation in game: todo.
-5. **Remove and delete** with the reference warnings; **new events** with their triggers. **done** (2026-11-20; 5.5 not yet seen in the app)
+5. **Remove and delete** with the reference warnings; **new events** with their triggers. **done** (2026-11-20)
    1. References finder (`wce_audio::references`): `ReferenceIndex::build` (once, about 5 s: on a worker) indexes the game's
       references by ID: `event_data.dat` (the game's code triggers these events by name), `sound_animation_triggers.csv` rows,
       campaign `.amb` emitters, UI layouts (their words hashed, kept when a bank has that ID); `references::find` adds the
@@ -335,10 +335,9 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       for sounds and containers; the event lands in the object's first bank), "Add to the animation triggers" (an event: a
       new CSV row firing it in battle; the row index is what a `.snd.meta` frame holds), and the warning "Nothing triggers this
       event" for an event nobody names. New objects show from the edits ("New, not saved"); names given here are kept in
-      `<projects>/audio/names.txt` and read with the banks (`NameSource::Label`). **done (builds, lints); not yet seen in the
-      app**: the scripted capture failed with "SDL_Init failed: No displays available" (the screen off, 2026-11-20); capture
-      `--tool audio --cmd "audio_select grp_gw_generic_button_small" --frames 900 --shot` when a display is on.
-6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **in progress**
+      `<projects>/audio/names.txt` and read with the banks (`NameSource::Label`). **done**; seen in the app (2026-11-20, the
+      "Used by" section under a playlist).
+6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **done** (2026-11-20; 6.4 follow-ups open)
    1. How the game's music is built (Attila, TDD's music banks): a playlist's items are a depth-first tree, groups (no segment,
       a child count, a play kind: 0 sequence continuous, 1 sequence step, 2 random continuous, 3 random step) and leaves (a
       segment, kind 0xFFFFFFFF, weight 50,000); a segment holds one track with one streamed source and one clip; its duration
@@ -351,8 +350,11 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       `group_kind` for display. Gate `audio_music_check` (`audio_music`) on Attila + TDD, a 22-item playlist with nested
       random groups: the entry added keeps the tree whole and fits its 3 s sound, removing it gives the banks back byte for byte,
       a segment's replace fits, weight and loop read back. **done**
-   3. Tool: a playlist's item tree (groups and their play kind, segments with their length), per entry Play, Remove, weight and
-      loop, "Add music..." after an entry; a segment's "Replace music..."; transitions and stingers shown. **todo**
+   3. Tool: Audio Object shows a playlist's entries as a tree (groups with how they play and loop, segments with their length),
+      each segment with Play, "Add after..." (a sound file, a new segment in the same group), Remove and its weight; a segment
+      offers "Replace music..."; the playlist's transition rules and stingers are counted. Seen in the app (2026-11-20,
+      `audio_select 487233623`: global_music's 22-entry playlist, 5 random groups). **done**; loop per entry: in the library,
+      not yet in the tool.
    4. Later (follow-ups): editing transition rules (their source / destination / transition-segment blocks are kept as bytes),
       stingers, music switch trees (which playlist plays for which state), segments with several tracks, new playlists.
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
