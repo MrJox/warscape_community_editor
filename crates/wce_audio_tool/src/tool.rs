@@ -13,6 +13,7 @@ use wce_audio::import::read_sound;
 use wce_audio::library::{MediaRef, PlayNode, SoundLibrary, action_name};
 use wce_audio::music::{group_kind, item_tree};
 use wce_audio::names::NameSource;
+use wce_audio::recipes::{self, AnimationSound};
 use wce_audio::references::{self, Reference, ReferenceIndex};
 use wce_audio_format::bank::kind_name;
 use wce_audio_format::hirc::{MusicPlaylist, NodeBase, Object};
@@ -25,6 +26,7 @@ use wce_vfs::files::Files;
 use crate::player::Player;
 
 mod game_data;
+mod recipes_panel;
 
 /// What a click asked for; done after the panel is drawn.
 enum Request {
@@ -52,6 +54,10 @@ enum Request {
     RemoveEntry(u32, u32),
     /// (playlist, item, weight, loop count).
     SetItem(u32, u32, u32, i16),
+    /// (`.snd.meta`, seconds, event): a frame firing an existing event.
+    AnimationEvent(String, f32, String),
+    /// (`.snd.meta`, seconds, the event to copy, the new event's name): pick a sound file for a new sound.
+    AnimationNewSound(String, f32, String, String),
     /// Write a loose file (path, bytes, what for the status line).
     WriteLoose(String, Vec<u8>, String),
     Save,
@@ -61,13 +67,15 @@ enum Request {
 }
 
 /// What an encoded import goes to.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ImportTarget {
     Replace(u32),
     Add(u32),
     /// A playlist and the leaf item the new music goes after.
     AddMusic(u32, u32),
     ReplaceSegment(u32),
+    /// A new sound fired by an animation: (`.snd.meta`, seconds, the event to copy, the new event's name).
+    AnimationSound(String, f32, String, String),
 }
 
 /// The undo steps kept (each a copy of the edited banks).
@@ -119,10 +127,13 @@ pub struct AudioTool {
     /// The game's other sound data (animations, ambience, DB tables), read with the references.
     game_data: Option<Arc<game_data::GameData>>,
     data_view: game_data::View,
+    recipes_view: recipes_panel::View,
     /// The Audio Bank window's dock node: the game data panel docks beside it the first time.
     bank_dock: gui::ImGuiID,
     /// `audio_animation`: an animation to show once the game data is read.
     pending_animation: Option<String>,
+    /// `audio_show`: a panel to bring to the front.
+    pending_panel: Option<String>,
     /// The New event field, and the object a Delete waits to be confirmed for.
     new_event_name: String,
     confirm_delete: Option<u32>,
@@ -191,7 +202,7 @@ impl AudioTool {
         if let Some((name, rx, target)) = &self.encoding
             && let Ok(result) = rx.try_recv()
         {
-            let (name, target) = (name.clone(), *target);
+            let (name, target) = (name.clone(), target.clone());
             self.encoding = None;
             match result {
                 Ok(wem) => match target {
@@ -209,6 +220,12 @@ impl AudioTool {
                     ImportTarget::ReplaceSegment(segment) => {
                         self.edit(e, &format!("replaced the music of #{segment} with {name}"), |edits, lib, _| {
                             edits.replace_segment_audio(lib, segment, &wem).map(|_| String::new())
+                        })
+                    }
+                    ImportTarget::AnimationSound(path, time, like, event) => {
+                        self.edit(e, &format!("added {name} to {path} as {event}"), |edits, lib, files| {
+                            let sound = AnimationSound::NewSound { wem, like_event: like, name: event };
+                            recipes::animation_sound(edits, lib, files, &path, time, sound).map(|row| format!(" (trigger row {row})"))
                         })
                     }
                 },
@@ -311,6 +328,13 @@ impl AudioTool {
                 Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
                 Request::AddMusic(playlist, after) => self.import(e, ImportTarget::AddMusic(playlist, after)),
                 Request::ReplaceSegment(segment) => self.import(e, ImportTarget::ReplaceSegment(segment)),
+                Request::AnimationNewSound(path, time, like, event) => {
+                    self.import(e, ImportTarget::AnimationSound(path, time, like, event))
+                }
+                Request::AnimationEvent(path, time, event) => self.edit(e, &format!("added {event} to {path}"), |edits, lib, files| {
+                    recipes::animation_sound(edits, lib, files, &path, time, AnimationSound::Event(event.clone()))
+                        .map(|row| format!(" (trigger row {row})"))
+                }),
                 Request::RemoveEntry(playlist, item) => self.edit(e, "removed a music entry", |edits, lib, _| {
                     edits.remove_playlist_entry(lib, playlist, item).map(|()| String::new())
                 }),
@@ -1251,6 +1275,7 @@ impl Tool for AudioTool {
         gui::dock_builder_dock_window("Audio Bank", center);
         gui::dock_builder_dock_window("Audio Object", right);
         gui::dock_builder_dock_window("Audio Game Data", center);
+        gui::dock_builder_dock_window("Audio Recipes", center);
         gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -1259,7 +1284,7 @@ impl Tool for AudioTool {
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
         type Slot = fn(&mut AudioTool) -> &mut Option<String>;
-        let commands: [(&str, &str, &str, Slot); 5] = [
+        let commands: [(&str, &str, &str, Slot); 6] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
             ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
@@ -1267,6 +1292,7 @@ impl Tool for AudioTool {
             ("audio_animation", "audio_animation <part of a .snd.meta path>", "Shows an animation's sound frames (Audio Game Data)", |t| {
                 &mut t.pending_animation
             }),
+            ("audio_show", "audio_show <panel title>", "Brings an Audio panel to the front (its dock tab)", |t| &mut t.pending_panel),
         ];
         for (name, usage, help, slot) in commands {
             c.add(name, usage, help, move |e, args| {
@@ -1290,6 +1316,12 @@ impl Tool for AudioTool {
         self.bank_panel(&mut requests);
         self.object_panel(&mut requests);
         self.game_data_panel(&mut requests);
+        self.recipes_panel(&mut requests);
+        if self.library.is_some()
+            && let Some(panel) = self.pending_panel.take()
+        {
+            gui::select_dock_tab(&panel);
+        }
         self.handle(e, requests);
     }
 
