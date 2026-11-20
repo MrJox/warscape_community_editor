@@ -39,6 +39,12 @@ const EMITTER_WIDTH: usize = 256;
 const EMITTER_LAYERS: usize = 6;
 const MAX_EMITTERS: usize = 512;
 
+/// The weather's emitter rows and instance slots: a fixed block ahead of the placed effects'. A particle keeps the instance slot it was
+/// born with (`SpawnVertex::id_seed_steps.x`), and the slot names its constants row and position: when the placed effects' started after
+/// the weather's, a weather change (a rain sphere at the camera) or an effect coming or going moved every slot under the living
+/// particles, and a campaign map's clouds took the rain's row (its camera box: they fell through the ground and came back on top).
+const WEATHER_SLOTS: usize = 16;
+
 /// The spawn shader's pre-simulation step.
 const SUB_STEP: f32 = 0.2;
 
@@ -291,6 +297,9 @@ struct WorldInstance {
     /// The last spawn time (fn 0x1188e240 spreads a frame's particles evenly from it).
     last_spawn: f32,
     st: EmitterState,
+
+    /// Its instance slot (`WEATHER_SLOTS` on): kept for life, and while its particles live after it goes (`Particles::retired`).
+    slot: usize,
 }
 
 /// A `lighting/lights.xml` POINT_LIGHT (read by fn 0x11900a40): the light a rigid model's StaticPointLight mesh names.
@@ -628,6 +637,11 @@ pub struct ParticleSystem {
     world_stale: bool,
     world_libs: BTreeMap<String, VfxFile>,
     world: Vec<WorldInstance>,
+
+    /// Instances gone whose particles still live: their slots keep their data until the last one dies, then are free again.
+    retired: Vec<WorldInstance>,
+    free_slots: Vec<usize>,
+    next_slot: usize,
     world_lights: Vec<WorldLight>,
     world_rigids: Vec<WorldRigid>,
 
@@ -748,6 +762,9 @@ impl ParticleSystem {
             world_stale: false,
             world_libs: BTreeMap::new(),
             world: vec![],
+            retired: vec![],
+            free_slots: vec![],
+            next_slot: WEATHER_SLOTS,
             world_lights: vec![],
             world_rigids: vec![],
             placed: vec![],
@@ -1065,6 +1082,9 @@ impl ParticleSystem {
         self.world_names.clear();
         self.world_libs.clear();
         self.world.clear();
+        self.retired.clear();
+        self.free_slots.clear();
+        self.next_slot = WEATHER_SLOTS;
         self.world_lights.clear();
         self.world_rigids.clear();
     }
@@ -1198,7 +1218,7 @@ impl ParticleSystem {
                 })
                 .collect();
 
-            let rows = self.effect.emitters.len() + self.world_effects.iter().map(|e| e.emitters.len()).sum::<usize>();
+            let rows = WEATHER_SLOTS + self.world_effects.iter().map(|e| e.emitters.len()).sum::<usize>();
             if rows > MAX_EMITTERS {
                 self.error(format!(
                     "{rows} emitter definitions, more than the {MAX_EMITTERS} the shaders' constant arrays hold: the rest are not drawn"
@@ -1260,6 +1280,7 @@ impl ParticleSystem {
                             drift: Float3::default(),
                             last_spawn: clock,
                             st: EmitterState::default(),
+                            slot: usize::MAX,
                         }
                     }
                 };
@@ -1268,6 +1289,20 @@ impl ParticleSystem {
             }
         }
 
+        // The new ones take free slots; the ones gone retire while their particles live.
+        for inst in world.iter_mut().filter(|inst| inst.slot == usize::MAX) {
+            inst.slot = self.free_slots.pop().unwrap_or_else(|| {
+                self.next_slot += 1;
+                self.next_slot - 1
+            });
+        }
+        for (_, inst) in old {
+            if inst.st.deaths.is_empty() {
+                self.free_slots.push(inst.slot);
+            } else {
+                self.retired.push(inst);
+            }
+        }
         self.world = world;
 
         // The effects' lights (their rigid point light models, read once).
@@ -1339,7 +1374,7 @@ impl ParticleSystem {
 
         // The instance texture is written whole every frame: it grows to what the instances need, and shrinks back when they are far
         // fewer (a map context's thousands of torches, taken off, left it four times too large).
-        let rows = (self.effect.emitters.len() + self.world.len()).div_ceil(EMITTER_WIDTH).max(1);
+        let rows = self.next_slot.max(WEATHER_SLOTS).div_ceil(EMITTER_WIDTH).max(1);
         if rows > self.emitter_rows || rows.next_power_of_two() * 2 < self.emitter_rows {
             self.create_emitter_texture(rows.next_power_of_two());
         }
@@ -1659,7 +1694,7 @@ impl ParticleSystem {
 
     /// The constants row of a world instance.
     fn world_row(&self, inst: &WorldInstance) -> usize {
-        self.effect.emitters.len() + self.world_first_row[inst.effect] + inst.emitter
+        WEATHER_SLOTS + self.world_first_row[inst.effect] + inst.emitter
     }
 
     /// Loads the effect of a weather definition, restarting the simulation. It reloads when the name or `revision` (the editor's edit
@@ -1683,7 +1718,7 @@ impl ParticleSystem {
             }
         }
 
-        self.effect.emitters.truncate(MAX_EMITTERS.min(EMITTER_WIDTH));
+        self.effect.emitters.truncate(WEATHER_SLOTS);
         self.build_emitter_gpu();
         let after = self.effect.emitters.iter().map(|e| format!("{}/{}", e.instance, e.name)).collect::<Vec<_>>();
 
@@ -1710,15 +1745,15 @@ impl ParticleSystem {
         let mut normal = TextureArrayBuilder { srgb: false, slices: BTreeMap::new(), textures: vec![] };
         let mut tex_errors = vec![];
         self.has_distortion = false;
-        // The rows: the weather's emitters, then each placed effect's.
-        let mut sources = (0..self.effect.emitters.len()).map(|e| (usize::MAX, e)).collect::<Vec<_>>();
+        // The rows: the weather's emitters in their block (`WEATHER_SLOTS`), then each placed effect's.
+        let mut sources = (0..WEATHER_SLOTS).map(|e| (e < self.effect.emitters.len()).then_some((usize::MAX, e))).collect::<Vec<_>>();
         for (fx, effect) in self.world_effects.iter().enumerate() {
-            sources.extend((0..effect.emitters.len()).map(|e| (fx, e)));
+            sources.extend((0..effect.emitters.len()).map(|e| Some((fx, e))));
         }
 
         sources.truncate(MAX_EMITTERS);
         let n = sources.len();
-        for (e, &(fx, i)) in sources.iter().enumerate() {
+        for (e, &(fx, i)) in sources.iter().enumerate().filter_map(|(e, s)| s.as_ref().map(|s| (e, s))) {
             let k = if fx == usize::MAX { &self.effect.emitters[i].k } else { &self.world_effects[fx].emitters[i].k };
             let (dpath, npath) = (k.diffuse.clone(), k.normal.clone());
             let ds = diffuse.add(&self.dev, &*self.reader, &mut self.texture_cache, &dpath, &mut tex_errors);
@@ -1772,7 +1807,7 @@ impl ParticleSystem {
         let layers = n.max(1);
         let slice = 8 * VFX_CURVE_WIDTH * 4;
         let mut texels = vec![1.0f32; layers * slice];
-        for (chunk, &(fx, i)) in texels.chunks_mut(slice).zip(&sources) {
+        for (chunk, &(fx, i)) in texels.chunks_mut(slice).zip(&sources).filter_map(|(c, s)| s.as_ref().map(|s| (c, s))) {
             let k = if fx == usize::MAX { &self.effect.emitters[i].k } else { &self.world_effects[fx].emitters[i].k };
             chunk.copy_from_slice(k.curves.as_flattened().as_flattened());
         }
@@ -2043,14 +2078,13 @@ impl ParticleSystem {
     /// (fn 0x1046c320; the marker path was not followed to the setters). Verified: the ring's x is the cosine (the sincos call,
     /// fn 0x119eb652, returns (sin, cos); x takes lane 1).
     fn spawn_world(&mut self, f: &Frame, out: &mut Vec<SpawnVertex>, free_slots: &mut u32) {
-        let base = self.effect.emitters.len();
         for j in 0..self.world.len() {
             let row = self.world_row(&self.world[j]);
             if row >= MAX_EMITTERS {
                 continue;
             }
 
-            let (e, k) = (self.world[j].effect, self.world[j].emitter);
+            let (e, k, slot) = (self.world[j].effect, self.world[j].emitter, self.world[j].slot);
             // Borrowed, not cloned: thousands of placed emitters (a city's torches) run this every frame.
             let a = &self.world_effects[e].emitters[k];
             let d = &a.def;
@@ -2206,7 +2240,7 @@ impl ParticleSystem {
                 let steps = if spawn_t < self.clock - SUB_STEP { ((self.clock - spawn_t) / SUB_STEP).floor() } else { 0.0 };
                 let seed = game_rand(&mut self.global_rng);
                 out.push(SpawnVertex {
-                    id_seed_steps: [(base + j) as f32, seed, steps, 0.0],
+                    id_seed_steps: [slot as f32, seed, steps, 0.0],
                     pos_time: [pos.x, pos.y, pos.z, spawn_t],
                     vel_life: [vel.x, vel.y, vel.z, life],
                 });
@@ -2228,7 +2262,7 @@ impl ParticleSystem {
         let dt = dt.clamp(0.0, 0.1);
         self.clock += dt;
         self.alive = 0;
-        for st in self.state.iter_mut().chain(self.world.iter_mut().map(|inst| &mut inst.st)) {
+        for st in self.state.iter_mut().chain(self.world.iter_mut().chain(self.retired.iter_mut()).map(|inst| &mut inst.st)) {
             while st.deaths.front().is_some_and(|(death, _)| *death <= self.clock) {
                 st.deaths.pop_front();
             }
@@ -2237,6 +2271,11 @@ impl ParticleSystem {
         }
 
         self.alive = self.alive.min(self.capacity());
+
+        // Retired instances whose particles are all gone free their slots.
+        let (live, done): (Vec<_>, Vec<_>) = std::mem::take(&mut self.retired).into_iter().partition(|r| !r.st.deaths.is_empty());
+        self.retired = live;
+        self.free_slots.extend(done.into_iter().map(|r| r.slot));
         dt
     }
 
@@ -2302,16 +2341,15 @@ impl ParticleSystem {
             layers[at(5, i) + 3] = 1.0;
         }
 
-        // The placed effects' emitters follow the weather's.
-        let base = self.effect.emitters.len();
-        for j in 0..self.world.len() {
-            let row = self.world_row(&self.world[j]);
-            let i = base + j;
+        // The placed effects' emitters at their slots, the retired ones' too (their particles still read them).
+        let first_rows = &self.world_first_row;
+        for inst in self.world.iter_mut().chain(self.retired.iter_mut()) {
+            let row = WEATHER_SLOTS + first_rows[inst.effect] + inst.emitter;
+            let i = inst.slot;
             if i >= per_layer || row >= MAX_EMITTERS {
                 continue;
             }
 
-            let inst = &mut self.world[j];
             let delta = if inst.st.started { inst.pos - inst.st.last_pos } else { Float3::default() };
             inst.st.last_pos = inst.pos;
             layers[at(0, i)..at(0, i) + 4].copy_from_slice(&[inst.pos.x, inst.pos.y, inst.pos.z, self.clock]);

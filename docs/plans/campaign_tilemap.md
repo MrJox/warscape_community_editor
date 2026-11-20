@@ -349,3 +349,11 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   p95 9.8 -> 11.9 ms (the machine loaded: the sky / light / fog pass alone went 2.9 .. 7.9 ms between runs; relative numbers).
   Scripts measuring a campaign frame wait for the far bake first (`terrain_far_wait`): its first bake after a key change ran inside
   the window (p95 75 ms). Not checked: a battle map after the far level's sea cut (the port map tried draws under a weather layer).
+- **Clouds falling like the rain (2026-11-20, the user's report with the TDD packs):** a particle keeps the emitter instance slot it
+  was born with, and the slot names its constants row and position; the placed effects' slots followed the weather's emitters and
+  the order of the live instances, so a weather change (a rain sphere at the camera: 0, 1 or 2 emitters) or an effect coming or
+  going moved them under the living particles: clouds took the rain's row (its 30-unit camera box) or another instance's place,
+  fell through the ground and came back on top, or vanished early. The weather now has a fixed block (16), every placed instance
+  keeps its slot, and a gone instance's slot keeps its data until its particles have died (`Particles::retired`). Checked: the
+  clouds west of Rome live their 35 - 50 s through effects coming and going (one vanished at 48 s before). Not reproduced: the
+  user's exact view (their weather and season not in the settings).
