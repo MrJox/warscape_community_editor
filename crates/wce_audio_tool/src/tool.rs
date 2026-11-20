@@ -24,6 +24,8 @@ use wce_vfs::files::Files;
 
 use crate::player::Player;
 
+mod game_data;
+
 /// What a click asked for; done after the panel is drawn.
 enum Request {
     Play(MediaRef, String),
@@ -50,6 +52,8 @@ enum Request {
     RemoveEntry(u32, u32),
     /// (playlist, item, weight, loop count).
     SetItem(u32, u32, u32, i16),
+    /// Write a loose file (path, bytes, what for the status line).
+    WriteLoose(String, Vec<u8>, String),
     Save,
     Revert,
     Undo,
@@ -111,7 +115,14 @@ pub struct AudioTool {
     encoding: Option<(String, Receiver<Result<Vec<u8>, String>>, ImportTarget)>,
     /// The game's references (built on a worker after the banks).
     references: Option<Arc<ReferenceIndex>>,
-    references_loading: Option<Receiver<ReferenceIndex>>,
+    references_loading: Option<Receiver<(ReferenceIndex, game_data::GameData)>>,
+    /// The game's other sound data (animations, ambience, DB tables), read with the references.
+    game_data: Option<Arc<game_data::GameData>>,
+    data_view: game_data::View,
+    /// The Audio Bank window's dock node: the game data panel docks beside it the first time.
+    bank_dock: gui::ImGuiID,
+    /// `audio_animation`: an animation to show once the game data is read.
+    pending_animation: Option<String>,
     /// The New event field, and the object a Delete waits to be confirmed for.
     new_event_name: String,
     confirm_delete: Option<u32>,
@@ -159,16 +170,17 @@ impl AudioTool {
             if let Some(files) = self.files.clone() {
                 let (tx, rx) = channel();
                 std::thread::spawn(move || {
-                    let _ = tx.send(ReferenceIndex::build(files.as_ref(), &lib));
+                    let _ = tx.send((ReferenceIndex::build(files.as_ref(), &lib), game_data::GameData::read(files.as_ref())));
                 });
                 self.references_loading = Some(rx);
             }
         }
 
         if let Some(rx) = &self.references_loading
-            && let Ok(index) = rx.try_recv()
+            && let Ok((index, data)) = rx.try_recv()
         {
             self.references = Some(Arc::new(index));
+            self.game_data = Some(Arc::new(data));
             self.references_loading = None;
         }
 
@@ -333,6 +345,10 @@ impl AudioTool {
                     edits
                         .add_trigger(files, &format!("wce_{name}"), &name, "", 0)
                         .map(|row| format!(" (row {row}: a .snd.meta frame fires it with this row)"))
+                }),
+                Request::WriteLoose(path, bytes, what) => self.edit(e, &what, |edits, _, _| {
+                    edits.loose.insert(path, bytes);
+                    Ok(String::new())
                 }),
                 Request::Save => self.save(e),
                 Request::Revert => {
@@ -608,6 +624,7 @@ impl AudioTool {
             gui::end();
             return;
         }
+        self.bank_dock = gui::window_dock_id();
 
         let (Some(lib), Some(bank)) = (self.library.clone(), self.bank) else {
             gui::text_disabled("Pick a bank in Audio Banks, or search for a sound in Audio Search.");
@@ -1233,6 +1250,7 @@ impl Tool for AudioTool {
         gui::dock_builder_dock_window("Audio Search", left);
         gui::dock_builder_dock_window("Audio Bank", center);
         gui::dock_builder_dock_window("Audio Object", right);
+        gui::dock_builder_dock_window("Audio Game Data", center);
         gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -1241,11 +1259,14 @@ impl Tool for AudioTool {
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
         type Slot = fn(&mut AudioTool) -> &mut Option<String>;
-        let commands: [(&str, &str, &str, Slot); 4] = [
+        let commands: [(&str, &str, &str, Slot); 5] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
             ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
             ("audio_expand", "audio_expand <event name | id>", "Selects an event and opens what it plays", |t| &mut t.pending.3),
+            ("audio_animation", "audio_animation <part of a .snd.meta path>", "Shows an animation's sound frames (Audio Game Data)", |t| {
+                &mut t.pending_animation
+            }),
         ];
         for (name, usage, help, slot) in commands {
             c.add(name, usage, help, move |e, args| {
@@ -1268,6 +1289,7 @@ impl Tool for AudioTool {
         self.search_panel(&mut requests);
         self.bank_panel(&mut requests);
         self.object_panel(&mut requests);
+        self.game_data_panel(&mut requests);
         self.handle(e, requests);
     }
 

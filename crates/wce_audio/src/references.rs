@@ -28,6 +28,10 @@ pub enum Reference {
     Ambience { path: String, emitters: usize },
     /// Named by a UI layout.
     UiLayout { path: String },
+    /// Named by a DB table's row (`audio_projectiles`, `audio_explosions`).
+    Db { table: String, key: String, column: String },
+    /// Fired by animations: `count` `.snd.meta` files hold a trigger row naming it.
+    Animations { count: usize },
 }
 
 impl Reference {
@@ -41,6 +45,8 @@ impl Reference {
             }
             Reference::Ambience { path, emitters } => format!("{path}: {emitters} campaign ambience emitters"),
             Reference::UiLayout { path } => format!("UI layout {path}"),
+            Reference::Db { table, key, column } => format!("DB {table}: row {key}, {column}"),
+            Reference::Animations { count } => format!("{count} animations (.snd.meta) fire it"),
         }
     }
 
@@ -110,6 +116,32 @@ impl ReferenceIndex {
                 if lib.has_object(id) {
                     add(id, Reference::UiLayout { path: path.clone() });
                 }
+            }
+        }
+
+        // The DB tables naming events.
+        for (table, key, column, event) in crate::sound_db::SoundDb::read(files).events() {
+            add(fnv::id(&event), Reference::Db { table, key, column });
+        }
+
+        // Animations: each .snd.meta frame's trigger row names events.
+        if let Ok(bytes) = files.read("audio/sound_animation_triggers.csv")
+            && let Ok(triggers) = Triggers::read(&bytes)
+        {
+            let mut counts: HashMap<u32, usize> = HashMap::new();
+            for path in files.list("animations/", ".snd.meta") {
+                let Some(meta) = files.read(&path).ok().and_then(|b| wce_formats::anim_meta::Meta::decode(&b)) else { continue };
+                let mut ids: Vec<u32> = vec![];
+                for f in crate::anim_sounds::frames(&meta) {
+                    let (_, battle, campaign) = crate::anim_sounds::trigger_events(&triggers, f.trigger);
+                    ids.extend([battle, campaign].iter().filter(|e| !e.is_empty()).map(|e| fnv::id(e)));
+                }
+                ids.sort_unstable();
+                ids.dedup();
+                ids.into_iter().for_each(|id| *counts.entry(id).or_default() += 1);
+            }
+            for (id, count) in counts {
+                add(id, Reference::Animations { count });
             }
         }
 

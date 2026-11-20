@@ -2384,8 +2384,11 @@ dependencies = [
  "aotuv_lancer_vorbis_sys",
  "lewton",
  "ogg_next_sys",
+ "rpfm_lib",
  "thiserror",
  "wce_audio_format",
+ "wce_formats",
+ "wce_foundation",
  "wce_vfs",
 ]
 
@@ -2406,6 +2409,7 @@ dependencies = [
  "wce_audio_format",
  "wce_editor",
  "wce_editor_core",
+ "wce_formats",
  "wce_foundation",
  "wce_vfs",
 ]

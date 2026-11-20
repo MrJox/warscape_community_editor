@@ -357,7 +357,28 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       not yet in the tool.
    4. Later (follow-ups): editing transition rules (their source / destination / transition-segment blocks are kept as bytes),
       stingers, music switch trees (which playlist plays for which state), segments with several tracks, new playlists.
-7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
+7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **done** (2026-11-20)
+   1. Animation sounds (`wce_audio::anim_sounds`): a `.snd.meta`'s `SOUND_TRIGGER` frames (time, trigger row), the row's
+      events, `add_frame` / `move_frame` / `set_trigger` (`Meta::encode` writes the file again; unit test). Tool: the panel
+      Audio Game Data (docked beside Audio Bank), tab Animations: every `.snd.meta` (2,943 with the user's mods), a filter, the
+      chosen one's frames as marks on a timeline (seconds), and per frame Play (its battle event), time, trigger row, the
+      trigger's name and event (selects it), Remove; "Add a sound frame" with a row. Edits are loose `.snd.meta` files of the
+      edit session. Script command `audio_animation <part of a path>`. Seen in the app (2026-11-20, `boar_charge.snd.meta`:
+      4 footstep frames, rows 91 to 94). **done**; follow-ups: the clip's real length (from its `.anim`), dragging frames on the
+      timeline, the unit's model (the Unit / Cinematic tools).
+   2. Campaign ambience: tab Campaign ambience: the maps' `.amb`, a map's emitters grouped by sound (emitters, points), Play and
+      select. Placing emitters on the map: the campaign / terrain editor. **done**
+   3. Sound DB tables (`wce_audio::sound_db`, rpfm's DB decoder and schema): Attila's sound tables are small:
+      `audio_projectiles` (28 rows: fire, in-flight, impact, idle, hit-tree events per projectile) and `audio_explosions`
+      (10) name events; `subculture_religion_voiceover_junctions` (120) gives the voice-over culture; `main_units.voiceover`
+      each unit's; `sound_events`, `voice_types`, `unit_voice_categories`, `audio_campaign_building_enums` are key lists;
+      `voice_events`, `unit_voice_events_junctions`, `agent_voice_events_junctions` are empty. Tab DB tables: the events the
+      tables name (Play, select), unit voice-overs, voice-over by subculture and religion. The references gain DB rows and
+      animations (`Reference::Db`, `Reference::Animations`: how many `.snd.meta` fire an event); gate step 6:
+      `projectile_fire_arrow` (DB), `battle_footstep_walk_01` (animations). **done**; editing DB rows: with RPFM for now.
+   4. Localised VO: the voice banks and files of the language the game is set to come from its `local_*` packs and are read
+      with the others (banks, search, playback); tab Languages lists the voice banks. Attila installs one language (English).
+      **done**
 8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **todo**
 9. **Player and visuals** (user, 2026-11-20): a nicer, more useful player: the sound's waveform (amplitude envelope) as the
    progress bar, as is common now; seek by clicking it; the bar reset when the sound ends; play / pause / stop, loop, volume;
