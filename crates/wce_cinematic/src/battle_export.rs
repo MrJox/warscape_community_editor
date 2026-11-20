@@ -188,6 +188,11 @@ fn army_numbers(project: &Project, i: usize) -> (usize, usize) {
 
 /// Every Lua file and the subtitle keys. The intro clip is the first clip (none: the battle starts with a fade in).
 pub fn battle_scripts(project: &Project) -> BattleScripts {
+    battle_scripts_with(project, &crate::eval::SpeedTable::new())
+}
+
+/// [`battle_scripts`] with the units' speeds: a move runs when it is faster than its unit walks (as the preview's gait).
+pub fn battle_scripts_with(project: &Project, speeds: &crate::eval::SpeedTable) -> BattleScripts {
     let mut out = BattleScripts::default();
     let folder = script_folder(project);
     let short = shortform(project);
@@ -209,7 +214,7 @@ pub fn battle_scripts(project: &Project) -> BattleScripts {
     // Cutscenes: one function per clip.
     let mut c = String::from("-- Warscape Community Editor: Cinematic. Generated: edit the project, not this file.\n");
     for clip in &project.clips {
-        c += &cutscene_lua(project, clip, player, &mut out);
+        c += &cutscene_lua(project, clip, player, speeds, &mut out);
     }
 
     // Start: as vanilla's (Battle_Script_Header, battle_manager, generated_battle), then the logic.
@@ -238,7 +243,7 @@ pub fn battle_scripts(project: &Project) -> BattleScripts {
     out
 }
 
-fn cutscene_lua(project: &Project, clip: &Clip, player: usize, out: &mut BattleScripts) -> String {
+fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::eval::SpeedTable, out: &mut BattleScripts) -> String {
     let name = clip_function(clip);
     let length = ms(clip.length);
     // Actions by time; each a line of Lua.
@@ -322,7 +327,13 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, out: &mut BattleS
                         if dist < 0.01 {
                             continue;
                         }
-                        let run = matches!(a.gait, Some(Gait::Run | Gait::Charge)) || (a.gait.is_none() && dist / (b.t - a.t) as f32 > 2.2);
+                        let walk = speeds.get(&su.unit).copied().unwrap_or_default().walk;
+                        let run = matches!(a.gait, Some(Gait::Run | Gait::Charge))
+                            || (a.gait.is_none()
+                                && crate::eval::slot_for_speed(
+                                    dist / (b.t - a.t) as f32,
+                                    crate::eval::Speeds { walk, ..Default::default() },
+                                ) != "WALK");
                         actions.push((
                             ms(a.t),
                             format!("{su_var}.uc:goto_location_angle_width({dest}, {}, {width}, {run})", f(degrees(facing))),

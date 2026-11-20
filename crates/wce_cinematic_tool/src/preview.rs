@@ -38,7 +38,8 @@ pub struct Preview {
     ground: Option<(EntityId, u32)>,
     men: Vec<EntityId>,
     environments: HashMap<String, Option<EnvironmentParams>>,
-    lit: Option<(String, String, u32)>,
+    /// What lights the scene now: the two environments, the blend and the depth of field (rounded), to set it again only on change.
+    lit: Option<(String, String, u32, [u32; 3])>,
     /// The viewport's camera is the user's (else it follows the camera keys).
     pub free_camera: bool,
     pub status: String,
@@ -175,15 +176,31 @@ impl Preview {
             Some(w) => (w.from.clone(), w.to.clone(), w.blend),
             None => (project.battle.environment.clone(), String::new(), 0.0),
         };
-        let lit = (from.clone(), to.clone(), (blend * 1000.0).round() as u32);
+        let dof =
+            frame.dof.as_ref().map_or([0; 3], |d| [d.focus_distance, d.focal_length, d.blur_size].map(|v| (v * 100.0).round() as u32));
+        let lit = (from.clone(), to.clone(), (blend * 1000.0).round() as u32, dof);
         if self.lit.as_ref() != Some(&lit) {
             let a = self.environment(e, &from);
             let b = if to.is_empty() || to == from { None } else { self.environment(e, &to) };
             if let Some(a) = a {
-                let params = match b {
+                let mut params = match b {
                     Some(b) if blend > 0.0 => blend_environments(&a, &b, blend),
                     _ => a,
                 };
+                // Keyed depth of field: the game's DOF constants are the battle camera's change_depth_of_field values
+                // (focus distance, focal length, blur kernel scale; renderer/post.rs).
+                if let Some(d) = &frame.dof {
+                    params.use_dof = true;
+                    params.dof_focus = [d.focus_distance, d.focal_length];
+                    params.dof_blur_size = d.blur_size;
+                }
+                // At once (a movie renders many frames in one editor frame) and for the editor's own lighting update.
+                if let Some(old) = &e.scene.environment.active {
+                    (params.output_gamma, params.output_brightness) = (old.output_gamma, old.output_brightness);
+                }
+                e.scene.environment.active = Some(params.clone());
+                e.scene.environment.blend = None;
+                e.scene.environment.blend_t = 0.0;
                 e.set_weather_params(&format!("cinematic:{from}"), params);
             }
             self.lit = Some(lit);
@@ -213,7 +230,12 @@ impl Preview {
                 }
                 let used = if self.models.contains_key(&key) { key.clone() } else { stand.clone() };
                 let Some(land) = catalog.land_units.get(&u.unit) else { continue };
-                let anim_t = (frame.t - s.slot_start).max(0.0) as f32;
+                // A moving slot's clips play by the ground covered (their own travel over their length), so feet don't slide; other
+                // slots by the time since they started.
+                let anim_t = match natural_speed(&models[0]) {
+                    Some(v) if used.2 == s.slot && s.speed > 0.05 => s.slot_distance / v,
+                    _ => (frame.t - s.slot_start).max(0.0) as f32,
+                };
                 let place = translation(Float3::new(s.position[0] / units, 0.0, s.position[1] / units)) * rotation_y(s.facing);
                 for (k, [x, z]) in formation(s.men, land.rank_depth, land.spacing).into_iter().enumerate() {
                     let variation = (k * 7) % models.len();
@@ -267,6 +289,16 @@ impl Preview {
     pub fn busy(&self) -> bool {
         self.catalog_rx.is_some() || self.loading.is_some()
     }
+}
+
+/// How fast a soldier's first clip covers the ground (metres a second at its size): a walk or run cycle's own speed. None for a clip
+/// that stays on the spot.
+fn natural_speed(m: &UnitModel) -> Option<f32> {
+    let seg = m.man.segments.first()?;
+    let length = seg.clip.anim.duration();
+    let [x, z] = seg.clip.travel(length);
+    let metres = (x * x + z * z).sqrt() * m.scale;
+    (length > 0.0 && metres > 0.1).then(|| metres / length)
 }
 
 /// The renderer's camera for a keyed camera (metres to the scene's units, the FOV from degrees).
