@@ -29,6 +29,7 @@ pub mod decal_rules;
 mod draft;
 mod edits;
 pub mod erosion;
+pub mod fields;
 pub mod fire;
 mod flip;
 mod index;
@@ -634,6 +635,9 @@ pub struct Tile {
 
     /// The decal rules' decals (`decal_rules.rs`): laid, being laid, their entities, whether shown, the signature of what was laid and of
     /// what was last looked at.
+    /// The field areas' farmland (`fields.rs`).
+    pub(crate) fields: fields::FieldsMade,
+
     pub(crate) decal_items: Vec<decal_rules::DecalItem>,
     pub(crate) decal_job: Option<decal_rules::DecalJob>,
     pub(crate) decal_entities: Vec<wce_scene::render_scene::EntityId>,
@@ -1029,6 +1033,7 @@ impl TileDocument {
             roads_seen: 0,
             texture_rules_job: None,
             erosion_job: None,
+            fields: fields::FieldsMade::default(),
             decal_items: vec![],
             decal_job: None,
             decal_entities: vec![],
@@ -1255,6 +1260,7 @@ impl TileDocument {
         t.refresh_roads();
         t.refresh_texture_rules();
         t.refresh_biomes(false);
+        t.refresh_fields(false);
         t.refresh_decals(false);
     }
 

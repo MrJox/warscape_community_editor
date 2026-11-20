@@ -30,6 +30,17 @@ pub(crate) struct BiomeItem {
     position: [f64; 3],
 }
 
+impl BiomeItem {
+    /// An item of an area (its element), its text and its position (scene units): a field's tree, prop or fence piece too.
+    pub(super) fn new(area: usize, text: Vec<u8>, position: [f64; 3]) -> Self {
+        Self { area, text, position }
+    }
+
+    pub(super) fn text(&self) -> &[u8] {
+        &self.text
+    }
+}
+
 /// The areas' contents being made off the editor's thread, and the signature of what they are made from.
 pub(crate) struct BiomeJob {
     job: super::jobs::Job<Vec<BiomeItem>>,
@@ -250,9 +261,14 @@ impl Tile {
             scene.remove(id);
         }
 
+        self.biome_entities = self.show_items(scene, &self.biome_items);
+    }
+
+    /// Items of areas in the viewport, locked (they are the areas', not tile.ted's): their entities.
+    pub(super) fn show_items(&self, scene: &mut RenderScene, items: &[BiomeItem]) -> Vec<EntityId> {
         let unit = self.unit();
         let mut ids: Vec<EntityId> = vec![];
-        for item in &self.biome_items {
+        for item in items {
             let source = self.source(super::item_of(item.area));
             let [x, y, z] = item.position;
             for (local, payload) in self.preview_payloads(&item.text) {
@@ -283,7 +299,7 @@ impl Tile {
             }
         }
 
-        self.biome_entities = ids;
+        ids
     }
 
     /// The layer of the areas' contents an export adds, as TEd and the game read it.
@@ -346,7 +362,7 @@ impl Tile {
     }
 }
 
-fn item_text(kind: &str, key: &str, at: Double3, scale: f32, yaw: f32, unit: f64) -> Option<Vec<u8>> {
+pub(super) fn item_text(kind: &str, key: &str, at: Double3, scale: f32, yaw: f32, unit: f64) -> Option<Vec<u8>> {
     let n = if kind == "BUILDING_INSTANCE" {
         wce_tile::new_instances::NewInstance::new(kind).position(at).attr("key", key).attr("name", key)
     } else {

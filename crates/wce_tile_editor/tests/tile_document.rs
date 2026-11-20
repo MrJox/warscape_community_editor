@@ -2943,3 +2943,43 @@ fn decal_rules_lay_decals_that_an_export_adds_and_the_tile_saves() {
     d.save(&here).unwrap();
     assert!(!file.exists());
 }
+
+#[test]
+fn a_field_area_lays_its_farmland_and_an_export_adds_it() {
+    use wce_tile::biomes::AREA_TYPE;
+    use wce_tile::fields::{FIELDS_ATTR, FieldSettings, SEED_ATTR};
+
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    // No fence (the test tile's kit has no fence models to measure), every strip a crop.
+    let settings = FieldSettings { fence: vec![], orchard: 0.0, props_per_ha: 20.0, ..FieldSettings::default() };
+    let attrs = BTreeMap::from([(FIELDS_ATTR.to_owned(), settings.to_text()), (SEED_ATTR.to_owned(), "5".to_owned())]);
+    let square = Create::Line(vec![
+        Float3::new(2.0, 0.0, 2.0),
+        Float3::new(80.0, 0.0, 2.0),
+        Float3::new(80.0, 0.0, 50.0),
+        Float3::new(2.0, 0.0, 50.0),
+    ]);
+    let area = d.create_with(AREA_TYPE, layer, &square, "", &attrs).unwrap();
+    assert_eq!(d.tile().field_areas().len(), 1);
+    assert!(d.tile().biome_areas().is_empty(), "not a biome's");
+    d.finish_fields();
+    let (decals, trees, props) = d.field_counts();
+    assert!(decals >= 3 && trees == 0 && props > 0, "{decals} {trees} {props}");
+
+    // The ground under it is one of the texture rules.
+    let rules = d.tile().all_texture_rules().0;
+    assert!(rules.iter().any(|r| r.name == "Fields" && r.area.is_some()));
+
+    // The export: a layer of its own with the crops' decals.
+    let text = String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
+    assert!(text.contains(wce_tile_editor::tile_document::fields::EXPORT_LAYER));
+    assert!(text.contains("global_fields_"));
+
+    // Another seed: another layout; the area gone: nothing.
+    assert!(d.set_attribute(area, SEED_ATTR, "6"));
+    d.finish_fields();
+    assert!(d.remove(area));
+    d.finish_fields();
+    assert_eq!(d.field_counts(), (0, 0, 0));
+}

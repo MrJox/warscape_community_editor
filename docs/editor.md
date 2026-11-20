@@ -160,6 +160,19 @@ a job let go is told to stop; exports wait for it. Settings in `erosion.wce` bes
 shows the preset, how much is kept and the seed (Reroll), Advanced every number (the drops, loose ground, fine detail). Where the water ran
 and what it laid stay with the tile for the texture rules (made again on opening, with the layer's signature unchanged).
 
+**Fields and farmland** (`wce_tile::fields`, `tile_document/fields.rs`, `fields_panel.rs` under a field area's properties in the
+Inspector: the Create panel's Vegetation > Biomes > *Fields and farmland* draws one; `start_making fields`, `fields wait`;
+[plans/auto_detail_2.md](plans/auto_detail_2.md), G): an area is a vegetation exclusion polygon (the game's own trees keep off it) with
+`wce_fields` (its settings as one attribute: `strip=12;verge=1.5;crops=...`) and `wce_fields_seed`. It is cut into strips along its
+longest side (or at an angle), `verge` apart, each piece of a strip whose middle and sides are inside the area: a crop (one of the kit's
+field decals, `global_fields_1..6` by default, laid end to end along it, as long as `crop_length` at most, as wide as the strip) or, by the
+orchards' share, an orchard (rows of trees, `olive` by default: the game has no other fruit tree). Haystacks and carts (`hay01`,
+`cart_1_hay`) go on the crops by the hectare, a fence (`lowfence_1..3`) round the area as a closed building spline lays it, and the ground
+under it is worn by a texture rule bound to the area (`mud`, fading in over 2 m; in the texture rules' layer). What it lays is the
+editor's: made again once an edit settles (on the editor's thread: a few hundred items), drawn locked, added at export in a `WCE fields`
+layer. The Inspector: Simple (strips Narrow ... Broad, orchards None ... All, haystacks, ground None ... Bare, the fence on or off, Reroll),
+Advanced (the verge, the angle, the crop pieces' length, tree rows and spacing, and what each lays, picked from the game's).
+
 **Decal rules** (`wce_tile::decal_rules`, `tile_document/decal_rules.rs`, `decal_rules_panel.rs` in the Inspector: the Create panel's
 Decals > *Decal rules* (a tile without any gets the built-in Default); `decal_rules <off | load <preset> | file <path> | window [simple |
 advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), E): decals laid by the ground. A rule's decals (picked from the

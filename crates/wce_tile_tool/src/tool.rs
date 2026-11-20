@@ -610,6 +610,7 @@ pub struct TileTool {
     pub(crate) rules_ui: crate::texture_rules_panel::RulesUi,
     pub(crate) erosion_ui: crate::erosion_panel::ErosionUi,
     pub(crate) decals_ui: crate::decal_rules_panel::DecalsUi,
+    pub(crate) fields_ui: crate::fields_panel::FieldsUi,
 
     /// The selection when the texture rules, a biome or the ground coverage were shown in the Inspector: another one shows it instead.
     pub(crate) detail_selection: Option<u64>,
@@ -1018,6 +1019,7 @@ impl Default for TileTool {
             rules_ui: Default::default(),
             erosion_ui: Default::default(),
             decals_ui: Default::default(),
+            fields_ui: Default::default(),
             detail_selection: None,
             key_picker: Default::default(),
             biome_presets: None,
@@ -5835,6 +5837,7 @@ impl Tool for TileTool {
         // A holder alone selected: the buttons that draw its shapes (made only there).
         self.inspect_holder(e);
         self.inspect_biome_area(e);
+        self.inspect_field_area(e);
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
             self.inspect_measure(e, id);

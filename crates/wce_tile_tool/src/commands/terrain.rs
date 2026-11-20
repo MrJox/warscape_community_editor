@@ -941,6 +941,23 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "fields",
+        "fields wait",
+        "the field areas' farmland made now: how many crop decals, and trees, props and fence pieces",
+        |e, a| match a.first().map(String::as_str) {
+            Some("wait") => {
+                let Some(d) = document(e) else { return fail("no tile is open") };
+                d.finish_fields();
+                let areas = d.tile().field_areas().len();
+                let (decals, trees, buildings) = d.field_counts();
+                ok(format!("{areas} field areas: {decals} crop decals, {trees} trees, {buildings} props and fence pieces"))
+            }
+
+            _ => fail("usage: fields wait"),
+        },
+    );
+
+    c.add(
         "ground_coverage_brush",
         "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
         "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",

@@ -19,6 +19,7 @@ pub mod entity_types;
 pub mod erosion_panel;
 pub mod extract_prompt;
 mod falloff_editor;
+pub mod fields_panel;
 pub mod flip_tool;
 mod gesture;
 pub mod ground_coverage_brush;

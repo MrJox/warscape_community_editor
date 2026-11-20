@@ -11,7 +11,7 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
-Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done. Their look on kit tiles is the user's.
+Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done. Their look on kit tiles is the user's.
 
 Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
 the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
@@ -111,7 +111,14 @@ face" for them and offers thicker reeds. On the river tile (2x2_lt_rb): 7 stretc
   export.
 - Create panel: "Fields" under Vegetation (draw an area), the Inspector as for biomes.
 
-### Steps
+### Steps (done 2026-11-20)
+
+Done as planned, but: the crops are the kit's own field decals (`global_fields_1..6`, 50 × 25 m in its farm tiles; its `field_1..4` are
+5 m squares) laid end to end along a strip rather than textures (the tile has 4 texture groups, none a crop); the ground under the whole
+area is one texture rule bound to it; the farmland is made on the editor's thread (no job: it is a few hundred items); the settings are the
+area's own attribute (no presets yet); the Inspector shows them under the area's properties. Found on the way: adding anything to an empty
+kit tile (`<SCENE_GRAPH .../>`, terrain_plains/1x1/ab) failed; fixed. On that tile an area of about a hectare: 18 to 22 crop decals, about
+35 olive trees, 66 fence pieces, 4 haystacks.
 
 1. `wce_tile::fields`: strips from a polygon, the crops, the rows, the fence lines, scatter; tests.
 2. Editor: areas, job, blend layer, items, export.
