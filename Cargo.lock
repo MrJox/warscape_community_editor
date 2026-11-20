@@ -2411,6 +2411,7 @@ dependencies = [
  "wce_editor_core",
  "wce_formats",
  "wce_foundation",
+ "wce_scene",
  "wce_vfs",
 ]
 
