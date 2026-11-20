@@ -67,14 +67,14 @@ impl LogicUi {
         }
     }
 
-    pub fn panel(&mut self, e: &mut Editor) {
+    pub fn panel(&mut self, e: &mut Editor, lists: &crate::pickers::GameLists) {
         gui::set_next_window_size(v2(700.0, 420.0), gui::COND_FIRST_USE_EVER);
         if !gui::begin("Logic", None, 0) {
             gui::end();
             return;
         }
         let Some(p) = scene_doc(e).map(|d| d.project().clone()) else {
-            gui::text_disabled("No scene");
+            gui::text_disabled("Make or open a scene in the Scene panel");
             gui::end();
             return;
         };
@@ -94,7 +94,7 @@ impl LogicUi {
         let avail = gui::content_region_avail();
         let lua_h = if self.show_lua { (avail.y * 0.35).max(80.0) } else { 0.0 };
         if gui::begin_child("##canvas", v2(avail.x, avail.y - lua_h), 0, 0) {
-            self.canvas(e, &p);
+            self.canvas(e, &p, lists);
         }
         gui::end_child();
         if self.show_lua {
@@ -108,7 +108,7 @@ impl LogicUi {
         gui::end();
     }
 
-    fn canvas(&mut self, e: &mut Editor, p: &Project) {
+    fn canvas(&mut self, e: &mut Editor, p: &Project, lists: &crate::pickers::GameLists) {
         self.context();
         // An undo or redo that moved nodes: lay them out from the project again.
         let layout: Vec<(u32, [f32; 2])> = p.logic.nodes.iter().map(|n| (n.id, n.position)).collect();
@@ -135,8 +135,31 @@ impl LogicUi {
                 let event = t.is_none_or(|t| t.event);
                 for key in t.map_or(&[][..], |t| t.settings) {
                     let mut v = n.values.get(*key).cloned().unwrap_or_default();
-                    gui::set_next_item_width(130.0);
-                    if gui::input_text(&format!("{key}##n{}{key}", n.id), None, &mut v, 512, gui::INPUT_ENTER_RETURNS_TRUE) {
+                    gui::set_next_item_width(160.0);
+                    // An army or a clip is chosen from the scene's; anything else is typed.
+                    let choices: Option<(Vec<String>, Vec<String>)> = match *key {
+                        "army" => Some((
+                            p.armies.iter().map(|a| lists.faction_name(&a.faction)).collect(),
+                            (0..p.armies.len()).map(|i| i.to_string()).collect(),
+                        )),
+                        "clip" => {
+                            Some((p.clips.iter().map(|c| c.name.clone()).collect(), p.clips.iter().map(|c| c.id.to_string()).collect()))
+                        }
+                        _ => None,
+                    };
+                    let edited = match &choices {
+                        Some((labels, values)) => {
+                            let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                            let mut i = values.iter().position(|x| *x == v).map_or(-1, |i| i as i32);
+                            let r = gui::combo(&format!("{key}##n{}{key}", n.id), &mut i, &refs);
+                            if r && i >= 0 {
+                                v = values[i as usize].clone();
+                            }
+                            r
+                        }
+                        None => gui::input_text(&format!("{key}##n{}{key}", n.id), None, &mut v, 512, gui::INPUT_ENTER_RETURNS_TRUE),
+                    };
+                    if edited {
                         let (nid, key) = (n.id, (*key).to_owned());
                         changes.push((
                             "logic value".into(),

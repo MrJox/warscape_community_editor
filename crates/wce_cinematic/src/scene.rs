@@ -372,7 +372,7 @@ impl Project {
                 },
                 Army {
                     alliance: 1,
-                    faction: "att_fact_huns".into(),
+                    faction: "att_fact_hunni".into(),
                     deployment_centre: [0.0, 368.0],
                     deployment_size: [832.0, 352.0],
                     deployment_orientation: std::f32::consts::PI,

@@ -13,7 +13,7 @@ use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_vfs::files::Files;
 
-use wce_cinematic::scene::{Interp, PathKey, Project, SceneUnit, TrackContent, sanitize_key};
+use wce_cinematic::scene::{Interp, PathKey, Project, TrackContent, sanitize_key};
 
 use crate::export::MovieJob;
 use crate::logic_ui::LogicUi;
@@ -72,6 +72,11 @@ pub struct CinematicTool {
     logic: LogicUi,
     movie_tools: MovieTools,
     scene_audio: SceneAudio,
+    lists_loading: Option<Receiver<crate::pickers::GameLists>>,
+    /// The sound events are in the lists.
+    events_listed: bool,
+    scene_list_at: u64,
+    start_shown: bool,
 }
 
 impl CinematicTool {
@@ -100,9 +105,31 @@ impl CinematicTool {
                 let _ = tx.send(wce_cinematic::speeds::speed_table(f.as_ref()));
             });
             self.speeds_loading = Some(rx);
+            let (tx, rx) = channel();
+            let f = files.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::pickers::GameLists::load(f.as_ref()));
+            });
+            self.lists_loading = Some(rx);
+            self.events_listed = false;
         }
         // A scripted run waits for the list, so that its next line can open a movie.
         let scripted = e.scripted_input();
+        if let Some(rx) = &self.lists_loading
+            && let Ok(l) = if scripted { rx.recv().map_err(|_| std::sync::mpsc::TryRecvError::Disconnected) } else { rx.try_recv() }
+        {
+            self.scene.lists = Arc::new(l);
+            self.lists_loading = None;
+        }
+        if !self.events_listed
+            && self.lists_loading.is_none()
+            && let Some(lib) = &self.library
+        {
+            let mut l = (*self.scene.lists).clone();
+            l.add_events(lib);
+            self.scene.lists = Arc::new(l);
+            self.events_listed = true;
+        }
         if let Some(rx) = &self.speeds_loading
             && let Ok(t) = if scripted { rx.recv().map_err(|_| std::sync::mpsc::TryRecvError::Disconnected) } else { rx.try_recv() }
         {
@@ -190,27 +217,8 @@ impl CinematicTool {
             }
             Pending::ScenePlay(on) => self.scene.playing = on,
             Pending::UnitAdd(key, army, x, z) => {
-                let mut made = 0;
-                edit(e, "add unit", |p| {
-                    let id = p.new_id();
-                    let facing = p.armies.get(army).map_or(0.0, |a| a.deployment_orientation);
-                    p.units.push(SceneUnit {
-                        id,
-                        name: key.clone(),
-                        unit: key.clone(),
-                        army,
-                        start: [x, z],
-                        facing,
-                        width: 30.0,
-                        men: 160,
-                        seed: id,
-                        general: false,
-                    });
-                    made = id;
-                });
-                if made != 0 {
-                    self.scene.unit = Some(made);
-                }
+                let lists = self.scene.lists.clone();
+                self.scene.unit = Some(crate::scene_ui::add_unit(e, &lists, &key, army, Some([x, z])));
             }
             Pending::UnitSelect(id) => self.scene.unit = Some(id),
             Pending::TrackAdd(kind) => {
@@ -996,6 +1004,35 @@ impl Tool for CinematicTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.poll(e);
+        // No scene: the start buttons offer the projects folder's scenes; what they ask for is done here.
+        if e.docs.of_tool("cinematic").is_none() && gui::time() as u64 != self.scene_list_at {
+            self.scene_list_at = gui::time() as u64;
+            let mut scenes: Vec<String> = std::fs::read_dir(Self::scenes_dir(e))
+                .map(|r| {
+                    r.flatten()
+                        .filter(|d| d.path().join("project.json").is_file())
+                        .map(|d| d.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            scenes.sort();
+            self.scene.scenes = scenes;
+        }
+        // Opening the tool without a scene: the panels with the start buttons in front, once.
+        if e.docs.of_tool("cinematic").is_none() {
+            if !self.start_shown {
+                gui::select_dock_tab("Scene");
+                gui::select_dock_tab("Layout");
+                self.start_shown = true;
+            }
+        } else {
+            self.start_shown = false;
+        }
+        match self.scene.request.take() {
+            Some(crate::scene_ui::SceneRequest::New(name)) => self.new_scene_project(e, &name),
+            Some(crate::scene_ui::SceneRequest::Open(name)) => self.open_scene(e, &name),
+            None => {}
+        }
         self.movie_tools.poll(e);
         self.movies_panel(e);
         self.movie_panel(e);
@@ -1003,7 +1040,8 @@ impl Tool for CinematicTool {
         self.scene.timeline_panel(e);
         self.scene.key_panel(e);
         self.scene.layout_panel(e);
-        self.logic.panel(e);
+        let lists = self.scene.lists.clone();
+        self.logic.panel(e, &lists);
         self.new_scene_popup(e);
         // The scene in the viewport, at the playhead (the movie export poses it frame by frame meanwhile).
         if self.movie_job.is_some() {
