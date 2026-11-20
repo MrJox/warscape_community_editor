@@ -212,8 +212,9 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   matches since the far ring above. The trade routes were a pale line with faint dashes where the game's are clean dashes: the
   overlay's lines were read trilinear, the game's 16 x anisotropic (capture F, `s_border_diffuse`); from the overlay's grazing
   camera the dashes blurred into their gaps (alpha 0.09 there, against nothing drawn in the game's, and the lines' colour is lit,
-  31 in HDR). Now `s_wrap_aniso` (the texture filtering setting). Left, seen: C's road out of the settlement a grey gravel strip
-  against the game's smooth pale track; F's cliffs (the smeared cliff item); the distance item (F1's mid-distance land
+  31 in HDR). Now `s_wrap_aniso` (the texture filtering setting). C's road out of Rome was `roads_stone` (grey gravel) where the
+  game's is `roads`' pale track: at the start every road is level 1 (docs/re/terry.md, "Roads"; `roads::START_LEVEL`). Left, seen:
+  the road a little wider than the game's; F's cliffs (the smeared cliff item); the distance item (F1's mid-distance land
   blocky).
 
 ## Order

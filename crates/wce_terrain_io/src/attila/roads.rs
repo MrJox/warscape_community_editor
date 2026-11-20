@@ -6,8 +6,10 @@
 //!   `region_to_region_own`, no other source in the db: no technology or effect bundle gives it) of its buildings in the startpos
 //!   (`REGION_SLOT`s' `BUILDING_BASE`, as [`super::cities`] reads them), `building_effects_junction`'s `value`.
 //! - Its level: how many of the campaign's `campaign_map_roads` thresholds the value reaches: Attila's main campaign `att_road_lv_1` 0,
-//!   `att_road_lv_2` 10, `att_road_lv_3` 40 (`turns_required_to_upgrade_to` 1: on the first turn already), so every region has level 1
-//!   at least (the game's turn-1 screenshots: a pale road in every region, none left as the kit's `roads_climate`).
+//!   `att_road_lv_2` 10, `att_road_lv_3` 40 (`turns_required_to_upgrade_to` 1), so every region has level 1 at least.
+//! - At the start every road is drawn at level 1 ([`START_LEVEL`]): a level above it takes its turns first. The game's turn-1
+//!   screenshots show a pale road in every region, none left as the kit's `roads_climate`, and capture C (2026-11-20, the start's fog
+//!   of war) shows Rome's road (its region level 2 or more) as `roads`' pale track, where the regions' levels drew `roads_stone`.
 //! - Its tiles: level n > 0 the `road0_to_road<n>` group of `terrain/tiles/campaign/tile_upgrades.xml`, the highest there is above it
 //!   (`roads_climate` to `roads` at 1, `roads_stone` at 2 and 3; the linking tile `1x1_straight` has no upgrade and stays), the game's
 //!   `FUN_1186de70` (empire.retail.dll). ASSUMPTION: level 3 takes level 2's group (the file has no `road0_to_road3`).
@@ -35,6 +37,9 @@ use rpfm_lib::schema::Schema;
 use wce_tile::battle_map::context::PlacedMap;
 
 use super::cities::{CELL_RAW_HEIGHT, CELL_RAW_WIDTH, as_record, child, leaf, str_of, table_rows, u32_of};
+
+/// The road level every road has at a campaign's start (see the module's notes): the regions' own levels apply after turns.
+pub const START_LEVEL: usize = 1;
 
 /// The road set the kit's maps paint (level 0).
 const BASE_SET: &str = "terrain\\tiles\\campaign\\roads_climate\\";
@@ -411,7 +416,7 @@ impl CampaignRoads {
         ((x / self.hex.world.0 * f64::from(w)).floor() as i32, ((1.0 - y / self.hex.world.1) * f64::from(h)).floor() as i32)
     }
 
-    /// Per map cell, the highest road level of the road hex cells whose centre lies in it, and the farmland group of the farmland
+    /// Per map cell, the highest road level of the road hex cells whose centre lies in it (at most [`START_LEVEL`]), and the farmland group of the farmland
     /// cells': where the game applies a cell's upgrade group (`FUN_10b28060`: a road cell's level change applies `road<old>_to_road<new>`
     /// at the cell's world position, to the tile there).
     pub fn upgrade_cells(&self, size: (u32, u32)) -> (HashMap<MapCell, usize>, HashMap<MapCell, String>) {
@@ -419,7 +424,7 @@ impl CampaignRoads {
         for r in 0..self.hex.h {
             for c in 0..self.hex.w {
                 if self.hex.road((c, r)) != 0 {
-                    let level = self.levels.get(usize::from(self.hex.region((c, r)))).copied().unwrap_or(0);
+                    let level = self.levels.get(usize::from(self.hex.region((c, r)))).copied().unwrap_or(0).min(START_LEVEL);
                     let e = roads.entry(self.map_cell_of((c, r), size)).or_default();
                     *e = (*e).max(level);
                 }
