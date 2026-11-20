@@ -12,6 +12,7 @@ pub mod battle_tables;
 pub mod curves;
 pub mod eval;
 pub mod logic;
+pub mod movie_edit;
 pub mod movie_export;
 pub mod movies;
 pub mod scene;

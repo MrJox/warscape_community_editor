@@ -24,7 +24,10 @@ frames 4
 assert_unit 3 0 -294 WALK
 cinematic_show Viewport
 frames 30
-shot "%SHOT4%"
+wait_loaded
+frames 3
+# Offscreen (the live view carries frame-to-frame state from before the script): the scene at the playhead, as a movie draws it.
+capture 960x540 "%SHOT4%" 20
 frames 2
 scene_export_movie "%MOVIE%" 320 180
 frames 5

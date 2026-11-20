@@ -201,14 +201,16 @@ impl EncoderSettings {
             width,
             height,
             fps,
-            target_kbps: 8000,
-            cq_level: Some(10),
+            // About what full-screen movies are made with in the community (20 Mbit/s, best quality); vanilla's run at 5.5.
+            target_kbps: 20000,
+            cq_level: Some(6),
             min_q: 4,
             max_q: 48,
             cpu_used: 1,
             threads: std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(4).min(16),
             keyframe_max: fps * 10,
-            lag_in_frames: 25,
+            // No alt-ref frames: vanilla's movies have none (one picture per stored frame), as the game's player expects.
+            lag_in_frames: 0,
             best_quality: false,
         }
     }

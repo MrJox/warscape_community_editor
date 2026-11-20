@@ -17,6 +17,7 @@ use wce_cinematic::scene::{Interp, PathKey, Project, SceneUnit, TrackContent, sa
 
 use crate::export::MovieJob;
 use crate::logic_ui::LogicUi;
+use crate::movie_tools::MovieTools;
 use crate::preview::Preview;
 use crate::scene_doc::SceneDocument;
 use crate::scene_ui::{SceneUi, add_track, edit, for_track, scene_doc};
@@ -44,6 +45,10 @@ enum Pending {
     TrackSelect(u32),
     CameraKey([f32; 3], [f32; 3], f32),
     Show(String),
+    SubtitleSet(usize, u32, u32, String),
+    ExportSubtitles(String),
+    ReplaceSound(String, String),
+    Import(String, String, bool),
 }
 
 #[derive(Default)]
@@ -63,6 +68,7 @@ pub struct CinematicTool {
     movie_job: Option<MovieJob>,
     speeds_loading: Option<Receiver<wce_cinematic::eval::SpeedTable>>,
     logic: LogicUi,
+    movie_tools: MovieTools,
 }
 
 impl CinematicTool {
@@ -249,6 +255,46 @@ impl CinematicTool {
             Pending::ExportMovie(path, w, h) => self.start_movie(e, std::path::PathBuf::from(path), w, h),
             Pending::TrackSelect(id) => self.scene.track = Some(id),
             Pending::Show(panel) => gui::select_dock_tab(&panel),
+            Pending::SubtitleSet(i, start, end, text) => {
+                if let Some(v) = self.viewer.as_mut() {
+                    let line = wce_cinematic::movies::Subtitle { start, end: end.max(start), text };
+                    if i < v.subtitles.len() {
+                        v.subtitles[i] = line;
+                    } else {
+                        v.subtitles.push(line);
+                    }
+                    v.subtitles.sort_by_key(|l| l.start);
+                }
+            }
+            Pending::ExportSubtitles(path) => {
+                if let (Some(v), Some(files)) = (self.viewer.as_ref(), self.files.clone()) {
+                    self.movie_tools.export_subtitles(e, v, files, std::path::PathBuf::from(path));
+                }
+            }
+            Pending::ReplaceSound(sound, path) => {
+                if let (Some(v), Some(files)) = (self.viewer.as_ref(), self.files.clone()) {
+                    self.movie_tools.replace_sound(
+                        e,
+                        v,
+                        files,
+                        self.library.clone(),
+                        std::path::PathBuf::from(sound),
+                        std::path::PathBuf::from(path),
+                    );
+                }
+            }
+            Pending::Import(source, path, event) => {
+                if let Some(files) = self.files.clone() {
+                    self.movie_tools.import(
+                        e,
+                        files,
+                        self.library.clone(),
+                        std::path::PathBuf::from(source),
+                        event,
+                        std::path::PathBuf::from(path),
+                    );
+                }
+            }
             Pending::CameraKey(position, target, fov) => {
                 let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
                 let Some(clip) = self.scene.current_clip(&p).map(|c| c.id) else { return };
@@ -494,10 +540,46 @@ impl CinematicTool {
             return;
         };
         let avail = gui::content_region_avail();
-        let transport = gui::frame_height_with_spacing() * 2.0 + 8.0;
+        let editor_h = if self.movie_tools.editing { (avail.y * 0.35).max(120.0) } else { 0.0 };
+        let transport = gui::frame_height_with_spacing() * 3.0 + 8.0 + editor_h;
         v.draw_picture(e, v2(avail.x, (avail.y - transport).max(60.0)));
         let catalog = self.catalog.clone().unwrap_or_default();
         v.draw_transport(&catalog, self.library.as_ref(), self.files.as_ref());
+        gui::checkbox("Edit subtitles", &mut self.movie_tools.editing);
+        gui::same_line();
+        let busy = self.movie_tools.busy();
+        gui::begin_disabled(busy);
+        let filters = [("Mod pack".to_owned(), "*.pack".to_owned())];
+        if gui::button("Subtitles pack...")
+            && let Some(files) = self.files.clone()
+            && let Some(path) = e.pick_export_file("cinematic_subtitles_pack", &format!("{}_subtitles.pack", v.entry.name), &filters)
+        {
+            self.movie_tools.export_subtitles(e, v, files, path);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("These subtitles (the language shown) as a mod pack: subtitle_timings rows and the loc");
+        }
+        gui::same_line();
+        if gui::button("Replace sound...")
+            && let Some(files) = self.files.clone()
+        {
+            let sound_filters = [("Sound files".to_owned(), "*.wav *.ogg".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
+            if let Some(sound) = wce_vfs::steam_detect::file_dialog(false, std::path::Path::new(""), &sound_filters)
+                && let Some(path) = e.pick_export_file("cinematic_sound_pack", &format!("{}_sound.pack", v.entry.name), &filters)
+            {
+                self.movie_tools.replace_sound(e, v, files, self.library.clone(), sound, path);
+            }
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Every version of Play_Movie_ plays a sound file of yours, as a mod pack");
+        }
+        gui::end_disabled();
+        if self.movie_tools.editing {
+            if gui::begin_child("##subtitles", v2(-1.0, editor_h - 8.0), gui::CHILD_BORDERS, 0) {
+                self.movie_tools.subtitle_editor(v);
+            }
+            gui::end_child();
+        }
         gui::end();
     }
 }
@@ -582,6 +664,9 @@ impl Tool for CinematicTool {
         if gui::is_item_hovered() {
             gui::set_tooltip("The timeline's clip rendered as a game movie, with its sound event, videos row and subtitles");
         }
+        gui::separator();
+        let (files, library) = (self.files.clone(), self.library.clone());
+        self.movie_tools.import_menu(e, files, library);
         true
     }
 
@@ -715,6 +800,45 @@ impl Tool for CinematicTool {
         c.add("cinematic_show", "cinematic_show <panel>", "Brings a panel to the front (Viewport, Layout, Movie, Timeline...)", |e, a| {
             queue(e, Pending::Show(a.join(" ")))
         });
+        c.add(
+            "movie_subtitle",
+            "movie_subtitle <line> <start> <end> <text...>",
+            "Sets (or adds, past the last) a subtitle line of the open movie (frames)",
+            |e, a| {
+                let n = |i: usize| a.get(i).and_then(|x| x.parse::<u32>().ok());
+                match (n(0), n(1), n(2)) {
+                    (Some(i), Some(s), Some(en)) => queue(e, Pending::SubtitleSet(i as usize, s, en, a[3..].join(" "))),
+                    _ => CommandResult::fail("usage: movie_subtitle <line> <start> <end> <text...>"),
+                }
+            },
+        );
+        c.add(
+            "movie_export_subtitles",
+            "movie_export_subtitles <file.pack>",
+            "Writes the open movie's subtitles as a pack",
+            |e, a| match a.first() {
+                Some(p) => queue(e, Pending::ExportSubtitles(p.clone())),
+                None => CommandResult::fail("usage: movie_export_subtitles <file.pack>"),
+            },
+        );
+        c.add(
+            "movie_replace_sound",
+            "movie_replace_sound <sound.wav> <file.pack>",
+            "Writes a pack where the open movie plays a sound file",
+            |e, a| match (a.first(), a.get(1)) {
+                (Some(s), Some(p)) => queue(e, Pending::ReplaceSound(s.clone(), p.clone())),
+                _ => CommandResult::fail("usage: movie_replace_sound <sound> <file.pack>"),
+            },
+        );
+        c.add(
+            "movie_import",
+            "movie_import <video | png folder> <file.pack> [event]",
+            "A new movie from a video (ffmpeg) or PNGs, as a pack",
+            |e, a| match (a.first(), a.get(1)) {
+                (Some(s), Some(p)) => queue(e, Pending::Import(s.clone(), p.clone(), a.get(2).is_some_and(|x| x == "event"))),
+                _ => CommandResult::fail("usage: movie_import <source> <file.pack> [event]"),
+            },
+        );
         c.add("logic_node", "logic_node <kind> [key=value...]", "Adds a battle logic node (event.* / action.*)", |e, a| {
             let Some(kind) = a.first().cloned() else { return CommandResult::fail("usage: logic_node <kind> [key=value...]") };
             if wce_cinematic::logic::node_type(&kind).is_none() {
@@ -814,6 +938,7 @@ impl Tool for CinematicTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.poll(e);
+        self.movie_tools.poll(e);
         self.movies_panel(e);
         self.movie_panel(e);
         self.scene.scene_panel(e);

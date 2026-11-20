@@ -285,30 +285,47 @@ pub fn movie_files(
     out.push((format!("db/videos_tables/{file}"), encode_db(videos, vec![row])?));
 
     if !subtitles.is_empty() {
-        let timings = template(schema, files, "subtitle_timings_tables")?;
-        let mut rows = vec![];
-        for (i, (start, end, _)) in subtitles.iter().enumerate() {
-            let mut row = timings.new_row();
-            set(&timings, &mut row, "language", language)?;
-            set(&timings, &mut row, "subtitle_field", SUBTITLE_FIELD)?;
-            set(&timings, &mut row, "text_section", &i.to_string())?;
-            set(&timings, &mut row, "foreign_key", &name)?;
-            set(&timings, &mut row, "start", &start.to_string())?;
-            set(&timings, &mut row, "end", &end.to_string())?;
-            set(&timings, &mut row, "script_id", &script_ref.to_string())?;
-            set(&timings, &mut row, "text_id", &format!("vo_fmv_texts_text_{name}"))?;
-            rows.push(row);
-        }
-        out.push((format!("db/subtitle_timings_tables/{file}"), encode_db(timings, rows)?));
-        let text = subtitles.iter().map(|s| s.2.as_str()).collect::<Vec<_>>().join("|");
-        let loc = crate::battle_tables::loc_file(&BTreeMap::from([(format!("vo_fmv_texts_text_{name}"), text)]))?;
-        // Named for what it holds: the movie catalog reads the `vo_fmv_texts` loc files.
-        out.push((format!("text/db/vo_fmv_texts_{file}.loc"), loc));
+        out.extend(subtitle_files(&name, script_ref, language, subtitles, files, schema)?);
         if language != "en" {
             warnings.push(format!("subtitle timings written for {language}: the game shows them only in that language"));
         }
     }
     Ok(MovieFiles { files: out, event, warnings })
+}
+
+/// A movie's subtitles as the game reads them: `subtitle_timings` rows (frames, in `language`, tied to the `videos` row by its
+/// `script_ref`) and the `vo_fmv_texts` loc entry, its sections joined by `|`.
+///
+/// # Errors
+///
+/// The game has no `subtitle_timings` table, or a value doesn't fit.
+pub fn subtitle_files(
+    name: &str,
+    script_ref: i64,
+    language: &str,
+    subtitles: &[(u32, u32, String)],
+    files: &dyn Files,
+    schema: &Schema,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let file = format!("wce_{}", sanitize_key(name));
+    let timings = template(schema, files, "subtitle_timings_tables")?;
+    let mut rows = vec![];
+    for (i, (start, end, _)) in subtitles.iter().enumerate() {
+        let mut row = timings.new_row();
+        set(&timings, &mut row, "language", language)?;
+        set(&timings, &mut row, "subtitle_field", SUBTITLE_FIELD)?;
+        set(&timings, &mut row, "text_section", &i.to_string())?;
+        set(&timings, &mut row, "foreign_key", name)?;
+        set(&timings, &mut row, "start", &start.to_string())?;
+        set(&timings, &mut row, "end", &end.to_string())?;
+        set(&timings, &mut row, "script_id", &script_ref.to_string())?;
+        set(&timings, &mut row, "text_id", &format!("vo_fmv_texts_text_{name}"))?;
+        rows.push(row);
+    }
+    let text = subtitles.iter().map(|s| s.2.replace('|', "/")).collect::<Vec<_>>().join("|");
+    let loc = crate::battle_tables::loc_file(&BTreeMap::from([(format!("vo_fmv_texts_text_{name}"), text)]))?;
+    // Named for what it holds: the movie catalog reads the `vo_fmv_texts` loc files.
+    Ok(vec![(format!("db/subtitle_timings_tables/{file}"), encode_db(timings, rows)?), (format!("text/db/vo_fmv_texts_{file}.loc"), loc)])
 }
 
 /// Renders a clip through `render` (the scene at a time to RGBA pictures) and encodes it.
