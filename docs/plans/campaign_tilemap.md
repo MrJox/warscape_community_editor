@@ -29,7 +29,8 @@ cubemap, `light_grid.xml`, sprawl models missing from the packs, no aqueducts) i
    and the G-buffer and final (pre-UI) images match per region (ground, sea, forests, buildings, sky) within thresholds set from the
    first baseline and reviewed with the user; then the user's side-by-side look.
 3. **Attila and TDD, then Thrones.** Rome 2 later.
-4. **The skybox casts its shadow**, as the game's (into every cascade), the Rauros stripes included until the cascades match.
+4. **The skybox casts no shadow**, as the game's in effect (revised 2026-11-20 on the user's report: the game draws it into every
+   cascade, but not a texel of the shadow atlas changes at its four draws in capture A; it lands outside each cascade).
 
 ## Where it stands (2026-11-19)
 
@@ -126,8 +127,8 @@ The first baseline over captures A (6628, 7363) and the rain ones sets the thres
    maps checked, memory note of 2026-11-06).
 6. **Settlements**: the buildings' turns from the capture's instances (the rule, or the display slot's field once found); sprawl,
    walls, ports, farmland and road levels against capture C's close view; each ASSUMPTION replaced or kept with its evidence.
-7. **Skybox shadow stripes over Rauros** (it casts, decision 4): the cascades' constants against a TDD capture at Rauros; the
-   stripes go when the editor's cascade fit is the game's.
+7. **The cascades' fit against the game's** (the skybox's stripes over Rauros showed it differs; the skybox no longer casts, decision
+   4): the cascades' constants against a TDD capture at Rauros.
 8. **Shroud plane depth write**, the overlay's size (a capture at another resolution) and the rivers' half-width (their pixels in the
    overlay target): the game's.
 9. **Map**: the far ground's colour rule (one tile per climate, fixed); the horizon (Phase 2's reach).
