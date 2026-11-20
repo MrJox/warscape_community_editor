@@ -11,10 +11,11 @@ use wce_audio::edit::EditSet;
 use wce_audio::encode::{DEFAULT_QUALITY, QUALITIES, encode_wem};
 use wce_audio::import::read_sound;
 use wce_audio::library::{MediaRef, PlayNode, SoundLibrary, action_name};
+use wce_audio::music::{group_kind, item_tree};
 use wce_audio::names::NameSource;
 use wce_audio::references::{self, Reference, ReferenceIndex};
 use wce_audio_format::bank::kind_name;
-use wce_audio_format::hirc::{NodeBase, Object};
+use wce_audio_format::hirc::{MusicPlaylist, NodeBase, Object};
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, v2};
 use wce_editor::tool::Tool;
@@ -27,6 +28,8 @@ use crate::player::Player;
 enum Request {
     Play(MediaRef, String),
     PlayAny(Arc<PlayNode>),
+    /// Play what an object plays (resolved on demand).
+    PlayObject(u32),
     Select(u32),
     Stop,
     /// Replace a media file's audio with a sound file the user picks.
@@ -40,6 +43,13 @@ enum Request {
     NewEvent(usize, String, u32),
     /// A row of the animation triggers firing this event in battle.
     AddTrigger(String),
+    /// (playlist, the leaf item to add after): pick a sound file.
+    AddMusic(u32, u32),
+    ReplaceSegment(u32),
+    /// (playlist, leaf item).
+    RemoveEntry(u32, u32),
+    /// (playlist, item, weight, loop count).
+    SetItem(u32, u32, u32, i16),
     Save,
     Revert,
     Undo,
@@ -51,6 +61,9 @@ enum Request {
 enum ImportTarget {
     Replace(u32),
     Add(u32),
+    /// A playlist and the leaf item the new music goes after.
+    AddMusic(u32, u32),
+    ReplaceSegment(u32),
 }
 
 /// The undo steps kept (each a copy of the edited banks).
@@ -178,6 +191,14 @@ impl AudioTool {
                     ImportTarget::Add(container) => self.edit(e, &format!("added {name}"), |edits, lib, _| {
                         edits.add_variation(lib, container, &wem).map(|id| format!(" as #{id}"))
                     }),
+                    ImportTarget::AddMusic(playlist, after) => self.edit(e, &format!("added the music {name}"), |edits, lib, _| {
+                        edits.add_playlist_entry(lib, playlist, after, &wem).map(|id| format!(" as segment #{id}"))
+                    }),
+                    ImportTarget::ReplaceSegment(segment) => {
+                        self.edit(e, &format!("replaced the music of #{segment} with {name}"), |edits, lib, _| {
+                            edits.replace_segment_audio(lib, segment, &wem).map(|_| String::new())
+                        })
+                    }
                 },
                 Err(why) => e.status(&format!("Audio: cannot import {name}: {why}"), true),
             }
@@ -268,9 +289,22 @@ impl AudioTool {
                     None => e.status(&format!("{} plays no sound", node.label), true),
                 },
                 Request::Select(id) => self.selected = Some(id),
+                Request::PlayObject(id) => {
+                    if let Some(tree) = self.tree(id) {
+                        self.handle(e, vec![Request::PlayAny(tree)]);
+                    }
+                }
                 Request::Stop => self.player.stop(),
                 Request::Replace(media) => self.import(e, ImportTarget::Replace(media)),
                 Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
+                Request::AddMusic(playlist, after) => self.import(e, ImportTarget::AddMusic(playlist, after)),
+                Request::ReplaceSegment(segment) => self.import(e, ImportTarget::ReplaceSegment(segment)),
+                Request::RemoveEntry(playlist, item) => self.edit(e, "removed a music entry", |edits, lib, _| {
+                    edits.remove_playlist_entry(lib, playlist, item).map(|()| String::new())
+                }),
+                Request::SetItem(playlist, item, weight, loop_count) => self.edit(e, "set a music entry", |edits, lib, _| {
+                    edits.set_playlist_item(lib, playlist, item, weight, loop_count).map(|()| String::new())
+                }),
                 Request::RemoveVariation(container, child) => self
                     .edit(e, "removed a variation", |edits, lib, _| edits.remove_variation(lib, container, child).map(|()| String::new())),
                 Request::SetProperty(id, property, value) => {
@@ -832,6 +866,9 @@ impl AudioTool {
             Some(object) => {
                 fields(object, &lib, requests);
                 edit_fields(id, object, requests);
+                if let Object::MusicPlaylist(playlist) = object {
+                    playlist_view(id, playlist, &lib, &self.edits, requests);
+                }
                 if let Some(node) = object.node() {
                     node_fields(node, &lib, requests);
                 }
@@ -1038,6 +1075,65 @@ fn fields(object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
     }
 }
 
+/// A music playlist: its items as a tree (groups and how they play, segments with their length), each segment with Play, Add
+/// music after it, Remove, weight and loop; then its transitions and stingers.
+fn playlist_view(id: u32, playlist: &MusicPlaylist, lib: &SoundLibrary, edits: &EditSet, requests: &mut Vec<Request>) {
+    if !gui::collapsing_header(&format!("Music entries ({})###entries", playlist.items.len()), gui::TREE_DEFAULT_OPEN) {
+        return;
+    }
+    for (depth, item) in item_tree(&playlist.items) {
+        gui::push_id(&format!("it{}", item.item_id));
+        gui::set_cursor_pos_x(gui::cursor_pos_x() + 14.0 * depth as f32);
+        if item.children > 0 {
+            gui::text_disabled(&format!(
+                "{} of {}, loop {}",
+                group_kind(item.kind),
+                item.children,
+                if item.loop_count == 0 { "forever".to_owned() } else { item.loop_count.to_string() }
+            ));
+        } else {
+            let segment = edits.object(lib, item.segment_id);
+            let length = match &segment {
+                Some(Object::MusicSegment(s)) => format!("{:.1} s", s.duration / 1000.0),
+                _ => "?".into(),
+            };
+            if gui::small_button("Play") {
+                requests.push(Request::PlayObject(item.segment_id));
+            }
+            gui::same_line();
+            if gui::small_button("Add after...") {
+                requests.push(Request::AddMusic(id, item.item_id));
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Picks a WAV, Ogg Vorbis or WEM file and adds it as a new segment after this one, in the same group.");
+            }
+            gui::same_line();
+            if gui::small_button("Remove") {
+                requests.push(Request::RemoveEntry(id, item.item_id));
+            }
+            gui::same_line();
+            let mut weight = item.weight as f32 / 1000.0;
+            gui::set_next_item_width(90.0);
+            gui::drag_float("##w", &mut weight, 1.0, 0.0, 100.0, "weight %.0f %%");
+            if gui::is_item_deactivated_after_edit() {
+                requests.push(Request::SetItem(id, item.item_id, (weight * 1000.0).round() as u32, item.loop_count));
+            }
+            gui::same_line();
+            if gui::selectable(&format!("{} ({length})##seg", lib.label(item.segment_id, 10)), false, 0) {
+                requests.push(Request::Select(item.segment_id));
+            }
+        }
+        gui::pop_id();
+    }
+    if !playlist.rules.is_empty() || !playlist.base.stingers.is_empty() {
+        gui::text_disabled(&format!(
+            "{} transition rule(s), {} stinger(s) (shown; editing them comes later)",
+            playlist.rules.len(),
+            playlist.base.stingers.len()
+        ));
+    }
+}
+
 /// The edits an object offers: replace a sound's audio, add a variation to a random container, its volume and pitch.
 fn edit_fields(id: u32, object: &Object, requests: &mut Vec<Request>) {
     match object {
@@ -1059,6 +1155,14 @@ fn edit_fields(id: u32, object: &Object, requests: &mut Vec<Request>) {
                 gui::set_tooltip(
                     "Picks a WAV, Ogg Vorbis or WEM file and adds it as one more sound of this container\n(set up like its first sound).",
                 );
+            }
+        }
+        Object::MusicSegment(_) => {
+            if gui::button("Replace music...") {
+                requests.push(Request::ReplaceSegment(id));
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Picks a WAV, Ogg Vorbis or WEM file for this segment; its length and exit cue follow the new music.");
             }
         }
         _ => {}
