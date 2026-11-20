@@ -301,10 +301,13 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       over the front-end and common layouts the most used are `grp_gw_generic_button_small` (248 components),
       `grp_gw_generic_button` (118), drop-downs, tick boxes, sliders; `frontend ui/main` sets only two (the small button and
       `ind_fe_start_campaign`), so the big main-menu buttons take their sound elsewhere (template, skin or the game's code).
-      Next: (1) find which event the main menu's big buttons fire (their layouts / templates / skins, or the user names a button
-      whose sound to test); (2) a decisive pack redirecting every media of every `global_ui` / `frontend` event to beeps: if the
-      menu still sounds original, event banks from a mod pack are not taken for UI either (loaded before mods?), and step 4's
-      approach for UI sounds needs another route. An added variation in game: todo.
+      (1) The big buttons' event: likely `grp_fe_tutorial_main_buttons` (global_ui; no layout sets it, so the game's code fires
+      it), whose click / hover play the same media (#25654632, #13563058) as the generic buttons. (2) The decisive pack:
+      `spike\ingame4\wce_audio_test_ui4.pack`: all 60 media of every `global_ui` and `frontend` event redirected to one 880 Hz
+      beep (`battle_ui`, `campaign_ui`, `frontend`, `global_ui` + 60 loose WEMs) + the ambience control. Beeping UI: the redirect
+      works and pack 3 tested the wrong event; original UI: event banks of the UI are not taken from a mod pack either (loaded
+      before mods?) and UI sounds need another route. **blocked: waiting on the user's run of pack 4**. An added variation in
+      game: todo.
 5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
