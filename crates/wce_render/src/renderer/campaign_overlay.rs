@@ -288,7 +288,9 @@ impl Renderer {
         ctx.set_index_buffer(Some(&ib), DXGI_FORMAT_R32_UINT, 0);
         self.bind(&vs);
         self.bind(&ps);
-        bind_sampler(&self.ctx, &ps, "s_border_diffuse", self.states.s_wrap_linear.as_ref());
+        // Anisotropic, as the game's (capture F: 16 x at its settings): the overlay's camera sees the lines at a grazing angle, where
+        // a trilinear read blurs the trade routes' dashes into their gaps (a pale line between them).
+        bind_sampler(&self.ctx, &ps, "s_border_diffuse", self.states.s_wrap_aniso.as_ref());
         bind_sampler(&self.ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
         bind_srv(&self.ctx, &ps, "s_shroud", self.shroud_srv().as_ref());
         for (line, (first, count)) in lines.lines.iter().zip(ranges) {

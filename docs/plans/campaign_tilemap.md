@@ -207,6 +207,14 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   ring streams to it: E's right third 2.54 / 3.33 / 4.90 against the game's 2.47 / 3.25 / 4.72 (1.90 / 2.43 / 3.82 before), G's
   corners filled. Its cost (the far ring now covers most of the map: 535 to 721 far blocks against about 14) is not measured yet:
   for an idle window. Seen in G, for later: a dark sawtooth over a hill at the bottom left (also before).
+- **Captures Ares, C, F1, F (2026-11-20, all 1280 x 720):** the HDR within 5 to 15 % over the frames' thirds where comparable (F1
+  and F: the game's flat light-blue polygons over the sea, its 1280 x 720 error, excluded); F's horizon (mountains, haze, sky)
+  matches since the far ring above. The trade routes were a pale line with faint dashes where the game's are clean dashes: the
+  overlay's lines were read trilinear, the game's 16 x anisotropic (capture F, `s_border_diffuse`); from the overlay's grazing
+  camera the dashes blurred into their gaps (alpha 0.09 there, against nothing drawn in the game's, and the lines' colour is lit,
+  31 in HDR). Now `s_wrap_aniso` (the texture filtering setting). Left, seen: C's road out of the settlement a grey gravel strip
+  against the game's smooth pale track; F's cliffs (the smeared cliff item); the distance item (F1's mid-distance land
+  blocky).
 
 ## Order
 
