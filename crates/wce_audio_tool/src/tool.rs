@@ -23,7 +23,9 @@ use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_vfs::files::Files;
 
+use crate::document::AudioDocument;
 use crate::player::Player;
+use wce_editor_core::document::{Document, SaveTarget};
 
 mod game_data;
 mod player_view;
@@ -115,9 +117,6 @@ struct UnitLine {
     unit: Option<(String, Vec<&'static str>)>,
 }
 
-/// The undo steps kept (each a copy of the edited banks).
-const UNDO_STEPS: usize = 20;
-
 /// A bank's lists, made once.
 #[derive(Default)]
 struct BankLists {
@@ -165,10 +164,11 @@ pub struct AudioTool {
     scroll_to_expanded: bool,
     /// What the script commands asked for, applied once the banks are read: (bank, search, select, expand).
     pending: (Option<String>, Option<String>, Option<String>, Option<String>),
-    /// Unsaved edits, and the undo and redo steps.
+    /// Unsaved edits: the Audio edits document's session (crate::document), copied when its history moves; the history's version
+    /// seen, and whether it can undo and redo.
     edits: EditSet,
-    undo: Vec<EditSet>,
-    redo: Vec<EditSet>,
+    doc_version: Option<u64>,
+    can_undo_redo: (bool, bool),
     /// The import quality (Wwise's 0 to 10), `None` for the default.
     quality: Option<u8>,
     /// A sound file being encoded on a worker: its name, the result, and what it goes to.
@@ -188,6 +188,8 @@ pub struct AudioTool {
     pending_panel: Option<String>,
     /// `audio_unit`: a land unit to show in Audio Recipes > A unit's voice.
     pending_unit: Option<String>,
+    /// `audio_volume`: "<object> <dB>", an edit made from a script.
+    pending_volume: Option<String>,
     /// Where to start the sound being decoded (a click on a waveform), 0 to 1.
     pending_seek: Option<f32>,
     /// Waveforms of the sounds shown (Audio Object, the trees), by media ID; the one being decoded; the ones shown last frame
@@ -200,6 +202,12 @@ pub struct AudioTool {
     confirm_delete: Option<u32>,
 }
 
+/// The Audio tool's document (its edit session), when it has one.
+fn audio_doc(e: &mut Editor) -> Option<&mut AudioDocument> {
+    let id = e.docs.of_tool("audio")?;
+    e.docs.find_as_mut::<AudioDocument>(id)
+}
+
 /// The project's file of names given in the editor (one per line).
 fn names_file(e: &Editor) -> std::path::PathBuf {
     e.projects_dir().join("audio").join("names.txt")
@@ -207,6 +215,7 @@ fn names_file(e: &Editor) -> std::path::PathBuf {
 
 impl AudioTool {
     fn poll(&mut self, e: &mut Editor) {
+        self.sync_document(e);
         // The player's end and loop, whatever panel is shown.
         self.player.tick();
         self.play.active = self.player.playing() || self.decoding.is_some();
@@ -222,7 +231,10 @@ impl AudioTool {
                 let mut lib = SoundLibrary::load(files.as_ref());
                 // Names given in the editor (new events), kept in the project.
                 for line in std::fs::read_to_string(&names_file).unwrap_or_default().lines() {
-                    lib.names.add(line, NameSource::Label);
+                    match crate::document::parse_label(line) {
+                        Some((id, name)) => lib.names.add_id(id, name, NameSource::Label),
+                        None => lib.names.add(line, NameSource::Label),
+                    }
                 }
                 let _ = tx.send(lib);
             });
@@ -531,23 +543,24 @@ impl AudioTool {
                     .edit(e, "set an action", |edits, lib, _| edits.set_action_property(lib, id, property, value).map(|()| String::new())),
                 Request::Save => self.save(e),
                 Request::Revert => {
-                    if !self.edits.is_empty() {
-                        self.undo.push(std::mem::take(&mut self.edits));
-                        self.forget_previews();
-                        e.status("Audio: unsaved edits reverted (Undo brings them back)", false);
+                    if let Some(d) = audio_doc(e)
+                        && d.revert().is_ok()
+                    {
+                        e.status("Audio: the unsaved edits are dropped", false);
                     }
+                    self.sync_document(e);
                 }
                 Request::Undo => {
-                    if let Some(previous) = self.undo.pop() {
-                        self.redo.push(std::mem::replace(&mut self.edits, previous));
-                        self.forget_previews();
+                    if let Some(d) = audio_doc(e) {
+                        d.history_mut().undo();
                     }
+                    self.sync_document(e);
                 }
                 Request::Redo => {
-                    if let Some(next) = self.redo.pop() {
-                        self.undo.push(std::mem::replace(&mut self.edits, next));
-                        self.forget_previews();
+                    if let Some(d) = audio_doc(e) {
+                        d.history_mut().redo();
                     }
+                    self.sync_document(e);
                 }
             }
         }
@@ -564,12 +577,18 @@ impl AudioTool {
         let mut next = self.edits.clone();
         match apply(&mut next, &lib, files.as_ref()) {
             Ok(note) => {
-                self.undo.push(std::mem::replace(&mut self.edits, next));
-                if self.undo.len() > UNDO_STEPS {
-                    self.undo.remove(0);
+                // An undo step of the Audio edits document (made with the first edit).
+                if audio_doc(e).is_none() {
+                    let doc = AudioDocument::new(lib.clone(), e.loose_dir(), names_file(e));
+                    if let Err(err) = e.replace_document("audio", Box::new(doc)) {
+                        e.status(&format!("Audio: the edits have no document: {err}"), true);
+                    }
                 }
-                self.redo.clear();
-                self.forget_previews();
+                match audio_doc(e) {
+                    Some(d) => d.push(what, next),
+                    None => self.edits = next,
+                }
+                self.sync_document(e);
                 e.status(&format!("Audio: {what}{note} (not saved yet)"), false);
             }
             Err(err) => e.status(&format!("Audio: cannot {}: {err}", what.trim_start_matches("removed ").trim_start_matches("set ")), true),
@@ -596,50 +615,36 @@ impl AudioTool {
 
     /// Writes the edited banks and sound files into the project's loose folder (read before the packs).
     fn save(&mut self, e: &mut Editor) {
-        let Some(lib) = self.library.clone() else { return };
-        let mut written = vec![];
-        let files: Vec<(String, Vec<u8>)> = self
-            .edits
-            .banks
-            .iter()
-            .map(|(b, bank)| (lib.banks[*b].path.clone(), bank.write()))
-            .chain(self.edits.loose.iter().map(|(p, bytes)| (p.clone(), bytes.clone())))
-            .collect();
-        for (path, bytes) in files {
-            let disk = e.loose_path(&path);
-            if let Some(dir) = disk.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            match wce_foundation::files::write_replacing(&disk, &bytes) {
-                Ok(()) => written.push(path),
-                Err(err) => {
-                    e.status(&format!("Audio: cannot write {}: {err}", disk.display()), true);
-                    return;
-                }
-            }
+        let result = audio_doc(e).map(|d| d.save(&SaveTarget { path: std::path::PathBuf::new() }));
+        match result {
+            Some(Err(err)) => e.status(&format!("Audio: {err}"), true),
+            Some(Ok(())) => {}
+            None => e.status("Audio: nothing to save", false),
         }
-        for path in &written {
-            e.loose_changed(path);
+        self.sync_document(e);
+    }
+
+    /// Follows the Audio edits document: its session when its history moved (an edit, Undo / Redo here or in the editor's Edit
+    /// menu and History panel, Revert, Save), and the files a Save wrote (the editor reads them again).
+    fn sync_document(&mut self, e: &mut Editor) {
+        let Some(d) = audio_doc(e) else {
+            self.can_undo_redo = (false, false);
+            return;
+        };
+        let version = d.history().version();
+        self.can_undo_redo = (d.history().can_undo(), d.history().can_redo());
+        let saved = d.take_saved();
+        if self.doc_version != Some(version) {
+            self.edits = d.edits().clone();
+            self.doc_version = Some(version);
+            self.forget_previews();
         }
-        // The names given here, kept in the project for the next readings of the banks.
-        if !self.edits.names.is_empty() {
-            let path = names_file(e);
-            let mut text = std::fs::read_to_string(&path).unwrap_or_default();
-            for name in self.edits.names.values() {
-                if !text.lines().any(|l| l == name) {
-                    text.push_str(name);
-                    text.push('\n');
-                }
+        if let Some(written) = saved {
+            for path in &written {
+                e.loose_changed(path);
             }
-            let _ = path.parent().map(std::fs::create_dir_all);
-            if let Err(err) = wce_foundation::files::write_replacing(&path, text.as_bytes()) {
-                e.status(&format!("Audio: cannot keep the new names in {}: {err}", path.display()), true);
-            }
+            e.status(&format!("Audio: saved {} files into the project's loose folder", written.len()), false);
         }
-        self.edits = EditSet::default();
-        self.undo.clear();
-        self.redo.clear();
-        e.status(&format!("Audio: saved {} files into the project's loose folder", written.len()), false);
     }
 
     /// The bytes of a media file as edited (an unsaved replace or addition first).
@@ -772,13 +777,13 @@ impl AudioTool {
                 requests.push(Request::Revert);
             }
         }
-        if !self.undo.is_empty() {
+        if self.can_undo_redo.0 {
             gui::same_line();
             if gui::small_button("Undo") {
                 requests.push(Request::Undo);
             }
         }
-        if !self.redo.is_empty() {
+        if self.can_undo_redo.1 {
             gui::same_line();
             if gui::small_button("Redo") {
                 requests.push(Request::Redo);
@@ -1903,7 +1908,7 @@ impl Tool for AudioTool {
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
         type Slot = fn(&mut AudioTool) -> &mut Option<String>;
-        let commands: [(&str, &str, &str, Slot); 7] = [
+        let commands: [(&str, &str, &str, Slot); 8] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
             ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
@@ -1913,6 +1918,9 @@ impl Tool for AudioTool {
             }),
             ("audio_show", "audio_show <panel title>", "Brings an Audio panel to the front (its dock tab)", |t| &mut t.pending_panel),
             ("audio_unit", "audio_unit <land unit key>", "Shows a unit's voice in Audio Recipes", |t| &mut t.pending_unit),
+            ("audio_volume", "audio_volume <object id> <dB>", "Sets an object's volume (an edit of the Audio edits document)", |t| {
+                &mut t.pending_volume
+            }),
         ];
         for (name, usage, help, slot) in commands {
             c.add(name, usage, help, move |e, args| {
@@ -1931,6 +1939,18 @@ impl Tool for AudioTool {
     fn draw_panels(&mut self, e: &mut Editor) {
         self.poll(e);
         let mut requests = vec![];
+        if self.library.is_some()
+            && let Some(text) = self.pending_volume.take()
+        {
+            let mut words = text.split_whitespace();
+            match (
+                words.next().and_then(|w| w.trim_start_matches('#').parse::<u32>().ok()),
+                words.next().and_then(|w| w.parse::<f32>().ok()),
+            ) {
+                (Some(id), Some(db)) => requests.push(Request::SetProperty(id, 0, Some(db))),
+                _ => e.status(&format!("audio_volume: \"{text}\" is not <object id> <dB>"), true),
+            }
+        }
         self.banks_panel(&mut requests);
         self.search_panel(&mut requests);
         self.bank_panel(&mut requests);
@@ -1945,12 +1965,9 @@ impl Tool for AudioTool {
         self.handle(e, requests);
     }
 
+    /// The edits are the Audio edits document's: the editor asks about it as about any document.
     fn unsaved_work(&self) -> Vec<String> {
-        if self.edits.is_empty() {
-            vec![]
-        } else {
-            vec![format!("Audio: {} bank(s) and {} sound file(s) edited, not saved", self.edits.banks.len(), self.edits.loose.len())]
-        }
+        vec![]
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
