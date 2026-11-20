@@ -249,7 +249,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    - Follow-ups (later steps): property IDs beyond volume (0), pitch (2) and low-pass (3) to name (check with the oracle);
      labels set by the user (UI); DB tables as a names source; Wwise-faithful playback (blend layers mixed, sequences in order)
      is the Cinematic layer's (not chosen for v1).
-4. **Replace and add variations**. **in progress** (4.7: the in-game check)
+4. **Replace and add variations**. **done** (2026-11-20; known anomaly: UI button sounds, 4.7)
    1. Decoder alloc sizes (1.4.10): oracle grid (scratch `tools\setup_grid.py`: Wwise at qualities 0 to 10 x 1, 2, 4, 5, 6
       channels x 8 rates, 440 conversions, against aoTuV at Q/10): Wwise uses one setup per quality and channel layout at any
       rate (chosen as for 44.1 kHz); ours matches for qualities 0 and 2 to 10 with 1 to 5 channels; quality 1 and 5.1 differ
@@ -306,12 +306,27 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       `spike\ingame4\wce_audio_test_ui4.pack`: all 60 media of every `global_ui` and `frontend` event redirected to one 880 Hz
       beep (`battle_ui`, `campaign_ui`, `frontend`, `global_ui` + 60 loose WEMs) + the ambience control. Beeping UI: the redirect
       works and pack 3 tested the wrong event; original UI: event banks of the UI are not taken from a mod pack either (loaded
-      before mods?) and UI sounds need another route. **blocked: waiting on the user's run of pack 4**. An added variation in
-      game: todo.
-5. **Remove and delete** with the reference warnings; **new events** with their triggers. **todo**
+      before mods?) and UI sounds need another route. Result (user, 2026-11-20): the main menu ambience beeps, the buttons (most
+      of them) sound original. **Known anomaly, set aside by the user**: UI button sounds do not change through a mod pack's
+      banks (event or data banks), while loose WEMs do; cause unknown (UI banks loaded before mods, another event, or cached
+      media). Revisit with a runtime trace or a non-UI event (a battle sound) later. An added variation in game: todo.
+5. **Remove and delete** with the reference warnings; **new events** with their triggers. **in progress**
+   1. References finder (`wce_audio::references`): who names or uses an object: `event_data.dat` (the game's code triggers
+      these events by name), `sound_animation_triggers.csv` rows, campaign `.amb` emitters, UI layouts' sound events, other
+      objects (parents, actions, switch and dialogue trees, music). **todo**
+   2. Delete (`EditSet::delete_object`): an event with its actions, or a hierarchy object out of its parent, with what it alone
+      owns (children, media); the references listed first as warnings. **todo**
+   3. New events (`EditSet::new_event`): a named event (ID = FNV-1 of the name) with a Play action on an object, in a chosen
+      bank. **todo**
+   4. Wiring a new event: a new `sound_animation_triggers.csv` row (battle/campaign event names) for `.snd.meta` frames (the
+      frames themselves: step 7), or an `.amb` emitter; a warning when nothing triggers it. **todo**
+   5. Tool: Delete (with the warnings), New event (name, bank, target), Wire. **todo**
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
 8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **todo**
+9. **Player and visuals** (user, 2026-11-20): a nicer, more useful player: the sound's waveform (amplitude envelope) as the
+   progress bar, as is common now; seek by clicking it; the bar reset when the sound ends; play / pause / stop, loop, volume;
+   waveforms next to sounds in the trees; overall polish of the Audio tool's panels (icons, colours, spacing). **todo**
 
 ## Open questions and risks
 
