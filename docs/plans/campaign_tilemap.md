@@ -220,6 +220,13 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   game's is `roads`' pale track: at the start every road is level 1 (docs/re/terry.md, "Roads"; `roads::START_LEVEL`). Left, seen:
   the road a little wider than the game's; F's cliffs (the smeared cliff item); the distance item (F1's mid-distance land
   blocky).
+- **The shallow coastal band (capture Ares, 2026-11-20):** the game's sea is turquoise over the sand by the coasts, ours was the
+  deep sea's blue. Not the water's depth (the same 0.944 at the band; drawing the sea floor into it changed nothing) but the floor
+  the water refracts: the game's sea pass writes the sea tiles' sand (0.85 / 0.73 / 0.56), ours a fifth of it, darkened by the fog
+  of war. `ps_sea_geom` reads the fog at its world position over `g_campaign_world_bounds`, and the terrain patches are drawn in
+  a frame moved by their LF window's shift: the fog was read some way off, where the map was unexplored. The bounds now move
+  with the frame (`ShroudGpu::world`, `draw_terrain_patches`). The band shows at both coasts; the shore pixel 7.5 / 9.0 / 9.5
+  against the game's 7.8 / 9.3 / 9.0; ours a little brighter further out (840, 650: 3.7 / 6.8 / 9.0 against 1.8 / 3.9 / 6.4).
 
 ## Order
 
