@@ -13,6 +13,7 @@ pub mod decal_rules;
 pub mod erosion;
 pub mod export_as_prop;
 pub mod falloff;
+pub mod fields;
 pub mod ground_coverage;
 pub mod ground_coverage_presets;
 pub mod ground_type_field;
