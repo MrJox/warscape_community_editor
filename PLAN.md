@@ -43,6 +43,7 @@ Each open item lives in one plan; the others point to it.
 | [terrain_editor.md](docs/plans/terrain_editor.md) | the Terrain tool, Terry's replacement: map documents, LF and tile map painting, the `.terry` scene, BCA generation, BOB_Terrain's outputs | Phases 0 to 2 done (2026-11-02), Phase 3 next |
 | [units.md](docs/plans/units.md) | units in the renderer: skinning through the game's palette texture, variant meshes, animation; for the scale reference, cinematics, the unit editor | planned, not started |
 | [audio.md](docs/plans/audio.md) | the Audio tool and the shared audio layer: banks, WEMs, `event_data.dat`, `.snd.meta`, `.amb`, sound DB tables, VO; playback, Wwise Vorbis encoding, recipes; reused by the Cinematic tool | decided (2026-11-19), spikes in progress |
+| [cinematic.md](docs/plans/cinematic.md) | the Cinematic tool: one keyed scene model, two outputs (game-ready movies rendered by the editor, full playable historical battles: XML, cutscene Lua, node-graph battle logic, menu entry), the movie viewer and editor | decided (2026-11-20), static spikes done; waits on the audio bank writer |
 
 ## Project-level open items
 
@@ -69,8 +70,7 @@ Each open item lives in one plan; the others point to it.
   (`variant_mesh::repair` reads them, but doesn't say what it changed: TDD has 11 of 8,507), references to definitions that don't exist (TDD's
   `rough_helm2_blond`), models and textures that don't exist. The editor only drops these without a word.
 - **Future tools** (seams only): Unit editor (skinned instances, bone palettes, anim / skeleton / variantmeshdefinition formats),
-  battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
-  (keyframed scenes, recording).
+  battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md); Cinematic editor: see cinematic.md.
 
 ## Decisions that still hold
 
