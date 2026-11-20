@@ -15,6 +15,7 @@ pub mod encode;
 pub mod import;
 pub mod library;
 pub mod names;
+pub mod references;
 pub mod setup_allocs;
 
 /// Why a sound could not be decoded.

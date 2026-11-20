@@ -6,10 +6,13 @@
 //! a streamed source (`audio/<id>.wem`) has `file_id` = its media ID and `in_memory_size` 0. After any change of a bank's media,
 //! every source pointing into it is set again ([`EditSet::fix_offsets`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use wce_audio_format::bank::Bank;
+use wce_audio_format::amb::{Ambience, Emitter};
+use wce_audio_format::bank::{Bank, HircObject};
+use wce_audio_format::fnv;
 use wce_audio_format::hirc::{self, Object, Source};
+use wce_audio_format::triggers::Triggers;
 
 use crate::library::SoundLibrary;
 use crate::{AudioError, Result};
@@ -19,11 +22,13 @@ use crate::{AudioError, Result};
 pub struct EditSet {
     pub banks: BTreeMap<usize, Bank>,
     pub loose: BTreeMap<String, Vec<u8>>,
+    /// Names given to new objects (new events), by ID.
+    pub names: BTreeMap<u32, String>,
 }
 
 impl EditSet {
     pub fn is_empty(&self) -> bool {
-        self.banks.is_empty() && self.loose.is_empty()
+        self.banks.is_empty() && self.loose.is_empty() && self.names.is_empty()
     }
 
     /// A bank as edited so far.
@@ -337,4 +342,228 @@ impl EditSet {
         }
         self.put_object(lib, id, &object)
     }
+
+    /// Deletes an object: an event with its actions, an action, or a hierarchy object with everything under it (its children,
+    /// recursively) and the Play actions that target any of them. Every list naming a deleted object (parents' children and
+    /// playlists, switch assignments, blend layers, events' actions) drops it. Media stay where they are (the game's data banks and
+    /// packs are not changed; a loose file made by these edits and no longer used is dropped). Returns the deleted IDs.
+    ///
+    /// # Errors
+    ///
+    /// For an object in no bank, or a music object (step 6 of the plan).
+    pub fn delete_object(&mut self, lib: &SoundLibrary, id: u32) -> Result<Vec<u32>> {
+        let root = self.object(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is in no bank or not readable")))?;
+        if matches!(root, Object::MusicSegment(_) | Object::MusicTrack(_) | Object::MusicSwitch(_) | Object::MusicPlaylist(_)) {
+            return Err(AudioError::Unsupported("deleting music objects (step 6 of the plan)".into()));
+        }
+
+        // What goes: the object, its subtree, an event's actions, the Play actions on any of these.
+        let mut doomed = BTreeSet::from([id]);
+        let mut queue = vec![id];
+        while let Some(next) = queue.pop() {
+            match self.object(lib, next) {
+                Some(Object::Event(e)) => {
+                    for a in e.actions {
+                        if doomed.insert(a) {
+                            queue.push(a);
+                        }
+                    }
+                }
+                Some(o) => {
+                    for c in o.children().to_vec() {
+                        let owned = self.object(lib, c).and_then(|co| co.node().map(|n| n.parent_id == next)).unwrap_or(false);
+                        if owned && doomed.insert(c) {
+                            queue.push(c);
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+        for b in 0..lib.banks.len() {
+            for o in self.bank(lib, b).objects() {
+                if o.kind == 3
+                    && let Some(Ok(Object::Action(a))) = hirc::parse(lib.banks[b].version, 3, &o.body)
+                    && a.action_type >> 8 == 0x04
+                    && doomed.contains(&a.target_id)
+                {
+                    doomed.insert(o.id);
+                }
+            }
+        }
+
+        let media: Vec<u32> = doomed
+            .iter()
+            .filter_map(|d| match self.object(lib, *d) {
+                Some(Object::Sound(s)) => Some(s.source.source_id),
+                _ => None,
+            })
+            .collect();
+
+        for b in 0..lib.banks.len() {
+            let version = lib.banks[b].version;
+            let mut objects = vec![];
+            let mut changed = false;
+            for o in self.bank(lib, b).objects() {
+                if doomed.contains(&o.id) {
+                    changed = true;
+                    continue;
+                }
+                let mut o = o.clone();
+                if matches!(o.kind, 4..=7 | 9)
+                    && let Some(Ok(mut object)) = hirc::parse(version, o.kind, &o.body)
+                    && drop_ids(&mut object, &doomed)
+                {
+                    o.body = object.write();
+                    changed = true;
+                }
+                objects.push(o);
+            }
+            if changed {
+                *self.bank_mut(lib, b).objects_mut() = objects;
+            }
+        }
+
+        for m in media {
+            let still = (0..lib.banks.len()).any(|b| {
+                self.bank(lib, b).objects().iter().any(|o| {
+                    o.kind == 2
+                        && matches!(hirc::parse(lib.banks[b].version, 2, &o.body), Some(Ok(Object::Sound(s))) if s.source.source_id == m)
+                })
+            });
+            if !still {
+                self.loose.remove(&format!("audio/{m}.wem"));
+            }
+        }
+        for d in &doomed {
+            self.names.remove(d);
+        }
+        Ok(doomed.into_iter().collect())
+    }
+
+    /// Adds a named event to a bank, with a Play action on `target` (an object of that bank), made like a Play action the bank
+    /// already has (its parameters copied). Returns the event's ID (the FNV-1 of the name).
+    ///
+    /// # Errors
+    ///
+    /// When the name is not letters, digits and `_` or is taken, the target is not in the bank, or the bank has no Play action.
+    pub fn new_event(&mut self, lib: &SoundLibrary, bank: usize, name: &str, target: u32) -> Result<u32> {
+        let name = name.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(AudioError::Invalid("an event name is letters, digits and _".into()));
+        }
+        let id = fnv::id(name);
+        if lib.has_object(id) || self.find(lib, id).is_some() {
+            return Err(AudioError::Invalid(format!("{name} (#{id}) already exists")));
+        }
+        let version = lib.banks[bank].version;
+        let objects = self.bank(lib, bank).objects();
+        if !objects.iter().any(|o| o.id == target) {
+            return Err(AudioError::Invalid(format!("#{target} is not in {}", lib.banks[bank].name)));
+        }
+        let template = objects
+            .iter()
+            .find_map(|o| match hirc::parse(version, o.kind, &o.body) {
+                Some(Ok(Object::Action(a))) if a.action_type >> 8 == 0x04 && objects.iter().any(|t| t.id == a.target_id) => Some(a),
+                _ => None,
+            })
+            .ok_or_else(|| AudioError::Invalid(format!("{} has no Play action to copy", lib.banks[bank].name)))?;
+
+        let action_id = self.new_id(lib, id);
+        let mut action = template;
+        action.target_id = target;
+        let action = HircObject { kind: 3, id: action_id, body: Object::Action(action).write() };
+        let event = HircObject { kind: 4, id, body: Object::Event(hirc::Event { actions: vec![action_id] }).write() };
+        let objects = self.bank_mut(lib, bank).objects_mut();
+        objects.push(action);
+        objects.push(event);
+        self.names.insert(id, name.to_owned());
+        Ok(id)
+    }
+
+    /// Adds a row to `sound_animation_triggers.csv` firing events in battle and on the campaign map; the other columns (the
+    /// conditions: ground, entity, armour...) are copied from row `like`. Returns the new row's index, which a `.snd.meta`
+    /// `SOUND_TRIGGER` holds.
+    ///
+    /// # Errors
+    ///
+    /// When the CSV can't be read or has no row `like`.
+    pub fn add_trigger(
+        &mut self,
+        files: &dyn wce_vfs::files::Files,
+        name: &str,
+        battle: &str,
+        campaign: &str,
+        like: usize,
+    ) -> Result<usize> {
+        const PATH: &str = "audio/sound_animation_triggers.csv";
+        let bytes = match self.loose.get(PATH) {
+            Some(b) => b.clone(),
+            None => files.read(PATH).map_err(AudioError::Invalid)?,
+        };
+        let triggers = Triggers::read(&bytes)?;
+        let mut cells = triggers.rows.get(like).cloned().ok_or_else(|| AudioError::Invalid(format!("no trigger row {like}")))?;
+        cells[0] = name.to_owned();
+        for (column, value) in [
+            ("sound_event_name_battle", battle),
+            ("sound_event_name_battle_end", ""),
+            ("sound_event_name_campaign", campaign),
+            ("sound_event_name_campaign_end", ""),
+        ] {
+            if let Some(c) = triggers.column(column) {
+                cells[c] = value.to_owned();
+            }
+        }
+        let quote = |c: &String| if c.contains(',') || c.contains('"') { format!("\"{}\"", c.replace('"', "\"\"")) } else { c.clone() };
+        let newline: &[u8] = if bytes.windows(2).any(|w| w == b"\r\n") { b"\r\n" } else { b"\n" };
+        let mut out = bytes.clone();
+        if !out.ends_with(b"\n") {
+            out.extend_from_slice(newline);
+        }
+        out.extend_from_slice(cells.iter().map(quote).collect::<Vec<_>>().join(",").as_bytes());
+        out.extend_from_slice(newline);
+        self.loose.insert(PATH.to_owned(), out);
+        Ok(triggers.rows.len())
+    }
+
+    /// Adds a campaign ambience emitter playing `event_id` along `points` (campaign map coordinates) to an `.amb` file.
+    ///
+    /// # Errors
+    ///
+    /// When the file can't be read.
+    pub fn add_emitter(&mut self, files: &dyn wce_vfs::files::Files, path: &str, event_id: u32, points: Vec<[f32; 3]>) -> Result<()> {
+        let bytes = match self.loose.get(path) {
+            Some(b) => b.clone(),
+            None => files.read(path).map_err(AudioError::Invalid)?,
+        };
+        let mut amb = Ambience::read(&bytes)?;
+        amb.emitters.push(Emitter { event_id, points });
+        self.loose.insert(path.to_owned(), amb.write());
+        Ok(())
+    }
+}
+
+/// Drops deleted IDs from an object's lists; true if it changed.
+fn drop_ids(object: &mut Object, doomed: &BTreeSet<u32>) -> bool {
+    let gone = |id: &u32| doomed.contains(id);
+    let before = object.write();
+    match object {
+        Object::Event(e) => e.actions.retain(|a| !gone(a)),
+        Object::RandomSequence(r) => {
+            r.children.retain(|c| !gone(c));
+            r.playlist.retain(|(c, _)| !gone(c));
+        }
+        Object::Switch(s) => {
+            s.children.retain(|c| !gone(c));
+            s.assignments.iter_mut().for_each(|(_, nodes)| nodes.retain(|n| !gone(n)));
+            s.child_params.retain(|p| !gone(&p.node_id));
+        }
+        Object::ActorMixer(a) => a.children.retain(|c| !gone(c)),
+        Object::Blend(b) => {
+            b.children.retain(|c| !gone(c));
+            b.layers.iter_mut().for_each(|l| l.associations.retain(|(c, _)| !gone(c)));
+        }
+        _ => return false,
+    }
+    object.write() != before
 }
