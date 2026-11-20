@@ -179,7 +179,7 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    frames: every frame of the small ones, the first 120 of the large; a synthetic clip encodes, is written as CAMV and decodes back
    at 51 dB luma PSNR), `movie_catalog_check`, `scripts/cinematic_check.sh` (render: two scripted runs, identical shots).
    Not checked: the sound by ear and its sync with the pictures in live playback (user).
-3. **Scene model and timeline.** **done** (2026-11-20) but autosave. Model: `wce_cinematic::scene` (project, map placement, battle
+3. **Scene model and timeline.** **done** (2026-11-20). Model: `wce_cinematic::scene` (project, map placement, battle
    setup, armies, units, clips of tracks: camera, unit (path, actions, men, visibility), sound, music, subtitles, VFX, fade,
    letterbox, depth of field, weather; texts per language; the logic graph), `project.json` as pretty JSON. `eval::evaluate` is a
    pure function of the keys (Catmull-Rom with the keys' times as knots; the gait from the speed along the path by each unit's own
@@ -188,16 +188,21 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    Tool: the scene is a document (`scene_doc.rs`: undo / redo / History / Save, `<projects>/cinematics/<key>/project.json`); panels
    Scene (setup, armies, units, texts), Timeline (clips, play / scrub, tracks with a support dot, keys selected, dragged, added at the
    playhead holding the value there), Key (the selected key's values), Layout (the field from above at the playhead; Ctrl+click keys
-   the selected unit's path). File > New / Open cinematic scene. Not done: autosave of scenes (the document gives no
-   `autosave_meta`), the per-language text editing beyond English (the model holds every language), clip delete / reorder.
-4. **Scene preview.** **partial** (2026-11-20): `preview.rs` draws the scene in the viewport at the playhead: a flat battle ground
+   the selected unit's path). File > New / Open cinematic scene. Autosave (2026-11-21): a scene's
+   `project.json` is copied and taken back (`Tool::restore`), unsaved until saved. Texts in the game's nine languages (Scene >
+   Texts' language; the Key panel and the exports follow it, English standing in). Clips are deleted (a scene keeps one); not
+   reordered.
+4. **Scene preview.** **partial** (2026-11-20, 2026-11-21): `preview.rs` draws the scene in the viewport at the playhead: a flat battle ground
    (grass, as the weather tool's sample map), each unit's men in formation (`formation` of `land_units` rank depth and spacing)
    posed by the game's animations in the evaluated slot (`UnitModel`, 6 soldiers a unit and slot taken in turn, the slot's time
    from its start), the camera following its keys (Free camera to fly; a camera key holds the viewport's view), the weather blended
-   between keyed environments (`set_weather_params`, `blend_environments`). Not done: the campaign-map ground at the battle's
-   position (Map context), a walk clip's phase from the ground covered (time-based now: feet can slide), per-man phase, VFX
-   instances, sounds heard while scrubbing, the battle-preview mode, mounts are drawn as the unit model has them (rider + horse).
-5. **Movie export.** **done** (2026-11-20) but depth of field, motion blur and the in-game test. `movie_export.rs`: `MovieEncoder`,
+   between keyed environments (`set_weather_params`, `blend_environments`). Keyed depth of field through the environment's DOF block (the
+   game's DOF constants are `change_depth_of_field`'s values), written to the scene at once (a movie renders many frames in one
+   editor frame). A moving slot plays by the ground covered over its clip's own travel speed (no foot sliding). Battle preview
+   (the Timeline's Battle, `eval::evaluate_battle`): units teleported to their first key, then under orders at their own walk /
+   run speed in straight lines (early or late against their keys), movie-only tracks gone. Not done: the campaign-map ground at
+   the battle's position (Map context), VFX instances, sounds heard while scrubbing.
+5. **Movie export.** **done** (2026-11-20) but motion blur and the in-game test. `movie_export.rs`: `MovieEncoder`,
    `render_clip`, `mixdown` (48 kHz stereo: sound events at their times and volumes, music cues with fades; a switched event's
    stereo version, a random container's first child), `movie_files` (an overriding `global_movies.bnk` with `Play_Movie_<name>` on
    a sound made like the SEGA sting's, streamed from `audio/<id>.wem`; IDs seeded by the name, `EditSet::id_seed`; the `videos` row
@@ -207,7 +212,10 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    fixes for it (`wce_render` skinned draws): parts waited on in fixed-step runs, runs sorted by model path, not address, so a
    movie with units is the same in every run. Gates: `movie_export_check` (a stand-in renderer; the new event resolves over the
    game to the new 3.00 s sound; rows, loc and catalog read back; two exports identical) and `cinematic_check.sh`'s preview run
-   (the movie pack byte-identical between runs). Not checked in game: the movie playing, its sound, its subtitles.
+   (the movie pack byte-identical between runs; `render_offscreen` waits until nothing loads before a frame, else a texture's
+   full mips landing mid-movie differed between runs). Encoder defaults (2026-11-21): no alt-ref frames (vanilla has one picture
+   per stored frame, and the community's ffmpeg pipeline sets `-auto-alt-ref 0`), 20 Mbit/s at constrained quality 6. Not
+   checked in game: the movie playing, its sound, its subtitles.
 6. **Battle export: setup and cutscenes.** **done** (2026-11-20) but the in-game test. `battle_export.rs`: the battle XML (armies,
    units with `script_name="wce_u<id>"`, the campaign map position `terrain/battles/<map>/` + `tile_map_position`, the weather);
    `<key>_start.lua` (Battle_Script_Header, battle_manager, `generated_battle` with the first clip as the intro), `_declarations.lua`
@@ -217,8 +225,7 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    `change_depth_of_field`, the cinematic bars, a skip that teleports units to their ends; never `wait_for_vo`); movie-only tracks
    reported. File > Export > Historical battle pack. Gate `battle_export_check` (XML parses, tables and loc decode back, the expected
    calls on the tick grid, two exports identical; the toolkit's Lua checker finds every called name in the engine or vanilla). Not
-   done: the test launch through Launch in game; a unit's run / walk choice in orders is a speed rule of its own (2.2 m/s), not the
-   unit's speeds.
+   done: the test launch through Launch in game. Walk / run orders follow the unit's own walk speed (2026-11-21).
 7. **Battle logic node graph.** **done** (2026-11-20) but conditions and some events (zones, objectives done, unit below N men).
    `logic.rs`: node types (events: battle starts, a cutscene ends, a clip ends, time, army near the enemy, casualties, rout,
    general dies, seen, wins, loses, a message; actions: attack, defend a spot, release to the AI, advice, play a clip, fade in,
@@ -227,12 +234,18 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    imnodes' canvas through `dear-imnodes-sys` (the C API on the editor's own ImGui context; the safe crate needs a `Ui` the tools
    don't have): nodes with their settings, links by dragging, right-click adds, Delete removes, moves kept on release, the
    compiled Lua shown. Commands `logic_node`, `logic_link`, `assert_logic`; `cinematic_check.sh`'s logic run.
-8. **Historical Battles menu export.** **done** (2026-11-20) but the screenshot and the in-game test: `battle_tables.rs` writes the
+8. **Historical Battles menu export.** **done** (2026-11-20) but the in-game test: `battle_tables.rs` writes the
    `battles` row (copied from a vanilla historical battle's, key, specification, screenshot path, year), the
    `historical_battles_ui_locations` row, the `scripted_subtitles` rows and the loc (`battles_localised_name_`,
-   `battles_description_`, the subtitles) in one pack with the scripts. Not done: `screenshot_small.png` rendered by the editor (the
-   row names it, the pack has none), the loading screen title.
-9. **Movie editing.** **todo**: subtitle editing and export, audio replacement, video import through an external ffmpeg.
+   `battles_description_`, the subtitles) in one pack with the scripts. `screenshot_small.png` (512 x 256 RGBA, as vanilla's): the
+   viewport's view at export (2026-11-21). Not done: the loading screen title.
+9. **Movie editing.** **done** (2026-11-21) but the in-game test. `movie_edit.rs`: a movie's subtitles as `subtitle_timings` rows
+   (tied to its `videos` row's `script_ref`, which the catalog now keeps) and its `vo_fmv_texts` loc; its sound replaced in every
+   version of its event; new movies from a PNG sequence or any video through an ffmpeg the user has (`WCE_FFMPEG` or the PATH,
+   run as a process), with the video's sound. The catalog lets a later table file's row replace one with the same key
+   (language, field, section, movie), as the game does. Tool: Movie > Edit subtitles, Subtitles pack..., Replace sound...;
+   File > Export > movie or event picture from a video, movie from PNGs. Gates: `movie_edit_check` (the user's ffmpeg 7.1.1:
+   a test video imported as 60 event-picture frames with 2.02 s of sound) and `cinematic_check.sh`'s movie edit run.
 
 ## Open questions and risks
 
