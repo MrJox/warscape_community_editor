@@ -17,7 +17,7 @@ use wce_render::unit_catalog::{UnitCatalog, formation};
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, blend_environments, read_environment};
 use wce_scene::render_scene::DocumentId;
-use wce_scene::render_scene::{EntityId, LayerId, Payload, SourceRef, Terrain};
+use wce_scene::render_scene::{EntityId, LayerId, Payload, SourceRef, Terrain, VfxEmitter};
 
 /// Soldiers made per unit, slot: the men take them in turn.
 const VARIATIONS: u64 = 6;
@@ -37,6 +37,8 @@ pub struct Preview {
     layer: Option<(DocumentId, LayerId)>,
     ground: Option<(EntityId, u32)>,
     men: Vec<EntityId>,
+    /// The VFX instances shown: (effect, where, scale) and their emitters.
+    vfx: Vec<((String, [i32; 4], u32), EntityId)>,
     environments: HashMap<String, Option<EnvironmentParams>>,
     /// What lights the scene now: the two environments, the blend and the depth of field (rounded), to set it again only on change.
     lit: Option<(String, String, u32, [u32; 3])>,
@@ -53,6 +55,7 @@ impl Preview {
         }
         self.ground = None;
         self.men.clear();
+        self.vfx.clear();
         self.lit = None;
     }
 
@@ -274,6 +277,29 @@ impl Preview {
         }
         for (&id, (world, f)) in self.men.iter().zip(figures) {
             e.scene.update_pose(id, world, f.instance);
+        }
+
+        // VFX instances alive at the playhead: an emitter each, made when one starts (particles live on from there; scrubbing back
+        // does not rewind them), moved when only its place changes.
+        let shown: Vec<&wce_cinematic::eval::VfxState> = frame.vfx.iter().filter(|v| !v.vfx.is_empty()).collect();
+        let wanted_vfx: Vec<(String, [i32; 4], u32)> = shown
+            .iter()
+            .map(|v| {
+                let at = [v.position[0], v.position[1], v.position[2], v.rotation_y].map(|x| (x * 100.0).round() as i32);
+                (v.vfx.clone(), at, (v.scale * 1000.0).round() as u32)
+            })
+            .collect();
+        if self.vfx.iter().map(|(k, _)| k).ne(wanted_vfx.iter()) || self.vfx.iter().any(|(_, id)| e.scene.find(*id).is_none()) {
+            for (_, id) in self.vfx.drain(..) {
+                e.scene.remove(id);
+            }
+            for (k, v) in wanted_vfx.into_iter().zip(&shown) {
+                let world = translation(Float3::new(v.position[0] / units, v.position[1] / units, v.position[2] / units))
+                    * rotation_y(v.rotation_y);
+                let payload = Payload::VfxEmitter(VfxEmitter { effect: v.vfx.clone(), scale: v.scale / units, mesh: None });
+                let id = e.scene.add(layer, world, payload, SourceRef { doc, item: 2 });
+                self.vfx.push((k, id));
+            }
         }
 
         if !self.free_camera
