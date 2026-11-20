@@ -6,7 +6,7 @@
 //! New audio is streamed from a loose file, as for sounds (the game does not take edited data banks from a mod pack).
 
 use wce_audio_format::bank::HircObject;
-use wce_audio_format::hirc::{MusicSegment, MusicTrack, Object, PlaylistItem};
+use wce_audio_format::hirc::{MusicSegment, MusicTrack, Object, PlaylistItem, Stinger, TransitionRule};
 use wce_audio_format::wem::Wem;
 
 use crate::edit::EditSet;
@@ -283,5 +283,82 @@ mod tests {
         assert_eq!(parent_group(&items, 3), Some(1));
         assert_eq!(parent_group(&items, 5), Some(4));
         assert_eq!(item_tree(&items).iter().map(|(d, _)| *d).collect::<Vec<_>>(), vec![0, 1, 2, 2, 1, 2]);
+    }
+}
+
+impl EditSet {
+    /// Sets one of a music switch's or playlist's transition rules (how it leaves a source and enters a destination).
+    ///
+    /// # Errors
+    ///
+    /// When the object has no transition rules or no rule at `index`.
+    pub fn set_transition_rule(&mut self, lib: &SoundLibrary, id: u32, index: usize, rule: TransitionRule) -> Result<()> {
+        let mut object = self.object(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is not readable")))?;
+        let rules = match &mut object {
+            Object::MusicSwitch(m) => &mut m.rules,
+            Object::MusicPlaylist(p) => &mut p.rules,
+            _ => return Err(AudioError::Invalid(format!("#{id} has no transition rules"))),
+        };
+        *rules.get_mut(index).ok_or_else(|| AudioError::Invalid(format!("#{id} has no rule {index}")))? = rule;
+        self.put_object(lib, id, &object)
+    }
+
+    /// Sets a music object's stingers (a trigger playing a segment over the music): add, change or remove them as a whole list.
+    ///
+    /// # Errors
+    ///
+    /// When the object is not a music segment, switch or playlist, or a stinger's segment is not a music segment.
+    pub fn set_stingers(&mut self, lib: &SoundLibrary, id: u32, stingers: Vec<Stinger>) -> Result<()> {
+        for s in &stingers {
+            if !matches!(self.object(lib, s.segment_id), Some(Object::MusicSegment(_))) {
+                return Err(AudioError::Invalid(format!("#{} is not a music segment", s.segment_id)));
+            }
+        }
+        let mut object = self.object(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is not readable")))?;
+        let base = match &mut object {
+            Object::MusicSwitch(m) => &mut m.base,
+            Object::MusicPlaylist(p) => &mut p.base,
+            Object::MusicSegment(s) => &mut s.base,
+            _ => return Err(AudioError::Invalid(format!("#{id} is not a music segment, switch or playlist"))),
+        };
+        base.stingers = stingers;
+        self.put_object(lib, id, &object)
+    }
+}
+
+impl EditSet {
+    /// A new music playlist set up like `like` (its settings and stingers; its rules naming any source and destination), with
+    /// one segment playing `wem` (made like `like`'s first segment, streamed from a loose file), in the same bank. Point a music
+    /// switch's path at it with `set_music_path`. Returns the new playlist's ID.
+    ///
+    /// # Errors
+    ///
+    /// When `like` is not a playlist with a segment, or the sound file does not read.
+    pub fn new_playlist_like(&mut self, lib: &SoundLibrary, like: u32, wem: &[u8]) -> Result<u32> {
+        let Some(Object::MusicPlaylist(template)) = self.object(lib, like) else {
+            return Err(AudioError::Invalid(format!("#{like} is not a music playlist")));
+        };
+        let leaf = *template
+            .items
+            .iter()
+            .find(|i| i.children == 0 && i.segment_id != 0)
+            .ok_or_else(|| AudioError::Invalid("the playlist has no segment to copy".into()))?;
+        let id = self.new_id(lib, like);
+        let mut playlist = template.clone();
+        // The root group (the first item) holding the copied leaf alone, for now.
+        let mut root = template.items[0];
+        if root.children == 0 {
+            return Err(AudioError::Invalid("the playlist's first item is not a group".into()));
+        }
+        root.children = 1;
+        playlist.items = vec![root, leaf];
+        playlist.base.children = vec![leaf.segment_id];
+        playlist.rules.retain(|r| r.sources.iter().chain(&r.destinations).all(|x| *x == u32::MAX));
+        let (b, i) = self.find(lib, like).ok_or_else(|| AudioError::Invalid("the playlist is in no bank".into()))?;
+        self.bank_mut(lib, b).objects_mut().insert(i + 1, HircObject { kind: 13, id, body: Object::MusicPlaylist(playlist).write() });
+        // The new segment after the copied leaf, then the copied leaf out (its segment stays: `like` plays it).
+        self.add_playlist_entry(lib, id, leaf.item_id, wem)?;
+        self.remove_playlist_entry(lib, id, leaf.item_id)?;
+        Ok(id)
     }
 }

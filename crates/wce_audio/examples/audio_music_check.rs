@@ -127,6 +127,75 @@ fn main() {
         failures.push("weight and loop");
     }
 
+    // 5. A transition rule's exit and entry, and a stinger added then removed.
+    let mut edits = EditSet::default();
+    let ruled = lib.banks.iter().flat_map(|b| b.bank.objects().iter().zip(&b.typed)).find_map(|(o, t)| match t {
+        Some(Object::MusicPlaylist(p)) if !p.rules.is_empty() => Some((o.id, p.rules[0].clone())),
+        _ => None,
+    });
+    let rule_ok = ruled.is_some_and(|(id, mut rule)| {
+        rule.source_rule.fade.time = 1234;
+        rule.source_rule.sync = 2;
+        rule.destination_rule.entry = 1;
+        edits.set_transition_rule(&lib, id, 0, rule.clone()).is_ok()
+            && matches!(edits.object(&lib, id), Some(Object::MusicPlaylist(p)) if p.rules[0] == rule)
+    });
+    let mut stinger_ok = false;
+    if let Some(Object::MusicPlaylist(p)) = edits.object(&lib, playlist_id) {
+        let mut edits = EditSet::default();
+        let before = p.base.stingers.clone();
+        let mut more = before.clone();
+        more.push(wce_audio_format::hirc::Stinger {
+            trigger_id: wce_audio_format::fnv::id("wce_test_trigger"),
+            segment_id: leaf.segment_id,
+            sync_play_at: 2,
+            cue_filter_hash: 0,
+            dont_repeat_time: 5000,
+            segment_look_ahead: 0,
+        });
+        let added = edits.set_stingers(&lib, playlist_id, more.clone()).is_ok()
+            && matches!(edits.object(&lib, playlist_id), Some(Object::MusicPlaylist(q)) if q.base.stingers == more);
+        let removed = edits.set_stingers(&lib, playlist_id, before).is_ok()
+            && edits.banks.iter().all(|(b, bank)| bank.write() == lib.banks[*b].bank.write());
+        stinger_ok = added && removed;
+    }
+    println!(
+        "5. a transition rule's fade, sync and entry read back: {rule_ok}; a stinger added, then removed (banks as the game's): {stinger_ok}"
+    );
+    if !rule_ok || !stinger_ok {
+        failures.push("transition rule and stinger");
+    }
+
+    // 6. A new playlist like this one, with one new segment, played for a music switch's path.
+    let mut edits = EditSet::default();
+    let new_playlist = edits.new_playlist_like(&lib, playlist_id, &wem);
+    let shape = new_playlist.as_ref().ok().and_then(|id| match edits.object(&lib, *id) {
+        Some(Object::MusicPlaylist(p)) if p.items.len() == 2 && p.items[0].children == 1 && p.items[1].segment_id != 0 => {
+            let Some(Object::MusicSegment(s)) = edits.object(&lib, p.items[1].segment_id) else { return None };
+            let Some(Object::MusicTrack(t)) = edits.object(&lib, s.base.children[0]) else { return None };
+            let media = t.sources[0].source_id;
+            edits.loose.get(&format!("audio/{media}.wem")).and_then(|w| decode_wem(w).ok()).map(|_| *id)
+        }
+        _ => None,
+    });
+    let switch = lib.banks.iter().flat_map(|b| b.bank.objects().iter().zip(&b.typed)).find_map(|(o, t)| match t {
+        Some(Object::MusicSwitch(m)) => {
+            wce_audio_format::hirc::tree_paths(m.arguments.len(), &m.nodes).first().map(|(k, _)| (o.id, k.clone()))
+        }
+        _ => None,
+    });
+    let pointed = match (shape, switch) {
+        (Some(p), Some((s, keys))) => edits.set_music_path(&lib, s, &keys, p).is_ok(),
+        _ => false,
+    };
+    println!(
+        "6. a new playlist like #{playlist_id}: {new_playlist:?}, one segment whose audio decodes: {}; a switch path plays it: {pointed}",
+        shape.is_some()
+    );
+    if shape.is_none() || !pointed {
+        failures.push("new playlist");
+    }
+
     for f in &failures {
         println!("FAILED: {f}");
     }

@@ -30,8 +30,8 @@ pub enum Object {
 
 mod music;
 pub use music::{
-    ClipAutomation, Marker, Meter, MusicNode, MusicPlaylist, MusicSegment, MusicSwitch, MusicTrack, PlaylistItem, Stinger, TrackClip,
-    TrackSwitch, TransitionRule,
+    ClipAutomation, DestinationRule, Fade, Marker, Meter, MusicNode, MusicPlaylist, MusicSegment, MusicSwitch, MusicTrack, PlaylistItem,
+    SourceRule, Stinger, TrackClip, TrackSwitch, TransitionObject, TransitionRule,
 };
 
 /// Kinds 8 and 20: a mixing bus (`aux` for an auxiliary bus).
