@@ -22,7 +22,7 @@ use crate::library::{PlayNode, SoundLibrary};
 use crate::{AudioError, Result, anim_sounds};
 
 /// The game's music playlists, each named by how the music switches above it choose it: the state values along the switch tree's
-/// paths (e.g. `Hunnic / Battle / Threat`), else the events that reach it. Sorted by name.
+/// paths (e.g. `Hunnic / Battle / Threat`), else the playlist's own label. Sorted by name, named ones first.
 pub fn music_playlists(lib: &SoundLibrary, files: &dyn Files) -> Vec<(u32, Vec<String>)> {
     let _ = files;
     let mut by_playlist: BTreeMap<u32, Vec<String>> = BTreeMap::new();
@@ -66,7 +66,8 @@ pub fn music_playlists(lib: &SoundLibrary, files: &dyn Files) -> Vec<(u32, Vec<S
             (id, names)
         })
         .collect();
-    out.sort_by(|a, b| a.1.first().cmp(&b.1.first()));
+    // Named ones first: a path of unknown state IDs (#...) goes last.
+    out.sort_by_key(|(_, names)| (names.first().is_some_and(|n| n.starts_with('#')), names.first().cloned()));
     out
 }
 

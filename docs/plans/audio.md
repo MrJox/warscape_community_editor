@@ -379,7 +379,21 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    4. Localised VO: the voice banks and files of the language the game is set to come from its `local_*` packs and are read
       with the others (banks, search, playback); tab Languages lists the voice banks. Attila installs one language (English).
       **done**
-8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **todo**
+8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **done** (2026-11-20; a new culture: follow-up)
+   1. Library (`wce_audio::recipes`, `EditSet::new_sound_like`, `hirc::tree_paths`): `music_playlists` names the 157 playlists by
+      the state values on the music switch paths choosing them ("Barbarian, prebattle / Barbarian", "BattleMusic_BigCombat,
+      Bb / ..."); `animation_sound` adds a `.snd.meta` frame firing an existing event (its trigger row reused) or a new sound
+      (made like another event's first sound, under the nearest actor-mixer or alone on the chain's bus; a new event; a trigger
+      row) ; `culture_lines` / `group_values`: the battle voice trees decide on `vo_battle_subculture`, whose values
+      (`Roman`, `barbarian_christian`, `nomad_hunnic_generic`...) are the DB's voice-over cultures. Gate `audio_recipes_check`
+      (`audio_recipes`) on Attila: playlists named, a frame on existing row 91, the whole new-sound chain (frame -> row ->
+      event -> sound -> loose media that decodes), 87 `Roman` lines of `battle_vo_land_idle`. **done**
+   2. Tool: the panel Audio Recipes (docked beside Audio Bank): Music tracks (playlists by name, "Add a track...", select for
+      the entries), A voice line (voice and advice events, Play, select, then Replace audio), A culture's voice lines (a voice
+      event, a culture, its lines with Play and Replace audio), An animation sound (the animation picked in Audio Game Data, a
+      time, an existing event or a new sound file). Script command `audio_show <panel>`. Seen in the app (2026-11-20). **done**
+   3. Follow-up: a new voice-over culture (a branch in every voice tree for a new `vo_battle_subculture` value, and the units'
+      `voiceover` / the DB junctions), which needs decision-tree insertion.
 9. **Player and visuals** (user, 2026-11-20): a nicer, more useful player: the sound's waveform (amplitude envelope) as the
    progress bar, as is common now; seek by clicking it; the bar reset when the sound ends; play / pause / stop, loop, volume;
    waveforms next to sounds in the trees; overall polish of the Audio tool's panels (icons, colours, spacing). **todo**
