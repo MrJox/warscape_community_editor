@@ -19,7 +19,6 @@ use wce_audio_format::bank::kind_name;
 use wce_audio_format::hirc::{MusicPlaylist, NodeBase, Object};
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, v2};
-use wce_editor::icons;
 use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_vfs::files::Files;
@@ -39,6 +38,8 @@ enum Request {
     Select(u32),
     /// Play a media file from a point (0 to 1).
     PlayFrom(MediaRef, String, f32),
+    /// Stops the player (a row's Stop).
+    Stop,
     /// Replace a media file's audio with a sound file the user picks.
     Replace(u32),
     /// Add a sound file the user picks to a random/sequence container.
@@ -90,6 +91,11 @@ struct BankLists {
     events: Vec<(String, u32)>,
     dialogue: Vec<(String, u32)>,
     music: Vec<(String, u32)>,
+    /// The bank's top containers (whose parent is not a container of this bank: a unit voice bank's switch, played through
+    /// another bank's), labelled by the switch values choosing them.
+    containers: Vec<(String, u32)>,
+    /// Every sound object (streamed ones too), labelled by where it sits; its media.
+    sounds: Vec<(String, u32, MediaRef)>,
     all: Vec<(String, u32, u8)>,
 }
 
@@ -103,12 +109,16 @@ pub struct AudioTool {
     bank: Option<usize>,
     list_filter: String,
     lists: HashMap<usize, BankLists>,
+    /// The bank whose first non-empty tab was brought forward.
+    tab_bank: Option<usize>,
+    /// The browsers' Play / Stop buttons.
+    play: player_view::PlayButtons,
     search: String,
     searched: String,
     results: Vec<(String, u32, u8, usize)>,
     selected: Option<u32>,
     trees: HashMap<u32, Arc<PlayNode>>,
-    decoding: Option<(String, Receiver<Result<Pcm, String>>)>,
+    decoding: Option<(String, Option<MediaRef>, Receiver<Result<Pcm, String>>)>,
     player: Player,
     rng: u64,
     /// The tree node opened by `audio_expand`, and whether the list still has to scroll to it.
@@ -141,8 +151,8 @@ pub struct AudioTool {
     pending_seek: Option<f32>,
     /// Waveforms of the sounds shown (Audio Object, the trees), by media ID; the one being decoded; the ones shown last frame
     /// without a waveform yet, the first decoded next.
-    previews: HashMap<u32, Arc<Vec<f32>>>,
-    preview_loading: Option<(u32, Receiver<Vec<f32>>)>,
+    previews: HashMap<u32, Arc<player_view::Preview>>,
+    preview_loading: Option<(u32, Receiver<player_view::Preview>)>,
     preview_wanted: Vec<MediaRef>,
     /// The New event field, and the object a Delete waits to be confirmed for.
     new_event_name: String,
@@ -156,6 +166,9 @@ fn names_file(e: &Editor) -> std::path::PathBuf {
 
 impl AudioTool {
     fn poll(&mut self, e: &mut Editor) {
+        // The player's end and loop, whatever panel is shown.
+        self.player.tick();
+        self.play.active = self.player.playing() || self.decoding.is_some();
         if let Some(files) = e.files()
             && files.mount_id() != self.mount_id
             && self.loading.is_none()
@@ -210,9 +223,9 @@ impl AudioTool {
         }
 
         if let Some((media, rx)) = &self.preview_loading
-            && let Ok(peaks) = rx.try_recv()
+            && let Ok(preview) = rx.try_recv()
         {
-            self.previews.insert(*media, Arc::new(peaks));
+            self.previews.insert(*media, Arc::new(preview));
             self.preview_loading = None;
         }
         self.start_preview();
@@ -251,13 +264,13 @@ impl AudioTool {
             }
         }
 
-        if let Some((label, rx)) = &self.decoding
+        if let Some((label, media, rx)) = &self.decoding
             && let Ok(result) = rx.try_recv()
         {
-            let label = label.clone();
+            let (label, media) = (label.clone(), media.clone());
             self.decoding = None;
             let seek = self.pending_seek.take();
-            match result.and_then(|pcm| self.player.play(Arc::new(pcm), &label)) {
+            match result.and_then(|pcm| self.player.play(Arc::new(pcm), &label, media)) {
                 Ok(()) => {
                     if let Some(at) = seek {
                         self.player.seek(at);
@@ -346,6 +359,10 @@ impl AudioTool {
                     if let Some(tree) = self.tree(id) {
                         self.handle(e, vec![Request::PlayAny(tree)]);
                     }
+                }
+                Request::Stop => {
+                    self.decoding = None;
+                    self.player.stop();
                 }
                 Request::PlayFrom(media, label, at) => {
                     self.pending_seek = Some(at);
@@ -537,7 +554,7 @@ impl AudioTool {
         std::thread::spawn(move || {
             let _ = tx.send(decode_wem(&bytes).map_err(|err| err.to_string()));
         });
-        self.decoding = Some((label.to_owned(), rx));
+        self.decoding = Some((label.to_owned(), Some(media.clone()), rx));
     }
 
     fn tree(&mut self, id: u32) -> Option<Arc<PlayNode>> {
@@ -554,21 +571,63 @@ impl AudioTool {
     fn lists(&mut self, bank: usize) -> Option<&BankLists> {
         let lib = self.library.clone()?;
         let entry = lib.banks.get(bank)?;
+        let files = self.files.clone()?;
         Some(self.lists.entry(bank).or_insert_with(|| {
             let mut l = BankLists::default();
+            // This bank's containers, by ID, as this bank has them (a unit voice bank holds partial copies of the culture and
+            // actor switches above its own, with only its branch).
+            let here: HashMap<u32, &Object> = entry
+                .bank
+                .objects()
+                .iter()
+                .zip(&entry.typed)
+                .filter(|(o, _)| matches!(o.kind, 5 | 6 | 9))
+                .filter_map(|(o, t)| Some((o.id, t.as_ref()?)))
+                .collect();
             for (i, o) in entry.bank.objects().iter().enumerate() {
                 let label = lib.label(o.id, o.kind);
+                let typed = entry.typed[i].as_ref();
                 match o.kind {
                     4 => l.events.push((label.clone(), o.id)),
                     15 => l.dialogue.push((label.clone(), o.id)),
-                    12 | 13 if !has_music_parent(entry.typed[i].as_ref()) => l.music.push((label.clone(), o.id)),
+                    12 | 13 if !has_music_parent(typed) => l.music.push((label.clone(), o.id)),
+                    5 | 6 | 9 => {
+                        let parent = typed.and_then(Object::node).map_or(0, |n| n.parent_id);
+                        if !here.contains_key(&parent) {
+                            // Down through copies holding a single container of this bank to the bank's own.
+                            let mut top = o.id;
+                            while let Some(&[only]) = here.get(&top).map(|t| t.children())
+                                && here.contains_key(&only)
+                            {
+                                top = only;
+                            }
+                            let kind = lib.object(top).map_or(o.kind, |(_, r, _)| r.kind);
+                            let what = match here.get(&top) {
+                                Some(Object::Switch(s)) => {
+                                    format!("Switch on {} ({} values)", lib.label(s.group_id, 0), s.assignments.len())
+                                }
+                                Some(t) => format!("{} ({} children)", lib.label(top, kind), t.children().len()),
+                                None => lib.label(top, kind),
+                            };
+                            let place = place_of(&lib, top);
+                            l.containers.push((if place.is_empty() { what } else { format!("{place}:  {what}") }, top));
+                        }
+                    }
+                    2 => {
+                        if let Some(Object::Sound(s)) = typed {
+                            let place = place_of(&lib, o.id);
+                            let label = if place.is_empty() { label.clone() } else { format!("{place}  {label}") };
+                            l.sounds.push((label, o.id, lib.media_of(&s.source, files.as_ref())));
+                        }
+                    }
                     _ => {}
                 }
                 l.all.push((label, o.id, o.kind));
             }
-            for v in [&mut l.events, &mut l.dialogue, &mut l.music] {
+            for v in [&mut l.events, &mut l.dialogue, &mut l.music, &mut l.containers] {
                 v.sort_by_key(|(n, _)| n.to_lowercase());
             }
+            l.sounds.sort_by_key(|(n, _, _)| n.to_lowercase());
             l
         }))
     }
@@ -581,10 +640,6 @@ impl AudioTool {
             gui::end();
             return;
         }
-
-        // The player.
-        self.player_strip(requests);
-        gui::separator();
 
         // Edits: what is unsaved, and the import quality.
         if let Some((name, _, _)) = &self.encoding {
@@ -687,6 +742,8 @@ impl AudioTool {
             gui::end();
             return;
         };
+        // A tab shows when the bank has something for it (Events and All always).
+        let totals = [lists.events.len(), lists.dialogue.len(), lists.music.len(), lists.containers.len(), lists.sounds.len()];
         let pick = |v: &Vec<(String, u32)>| -> Vec<(String, u32)> {
             v.iter().filter(|(n, _)| filter.is_empty() || n.to_lowercase().contains(&filter)).cloned().collect()
         };
@@ -694,9 +751,26 @@ impl AudioTool {
         let all: Vec<(String, u32, u8)> =
             lists.all.iter().filter(|(n, _, _)| filter.is_empty() || n.to_lowercase().contains(&filter)).cloned().collect();
 
+        let containers = pick(&lists.containers);
+        let sounds: Vec<(String, u32, MediaRef)> =
+            lists.sounds.iter().filter(|(n, _, _)| filter.is_empty() || n.to_lowercase().contains(&filter)).cloned().collect();
+        // A bank just shown opens on its first tab with something in it (a unit voice bank has only containers and sounds).
+        let first = if self.tab_bank == Some(bank) {
+            None
+        } else {
+            self.tab_bank = Some(bank);
+            [events.len(), dialogue.len(), music.len(), containers.len(), sounds.len()].iter().position(|n| *n > 0)
+        };
+        let flag = |i: usize| if first == Some(i) { gui::TAB_SET_SELECTED } else { 0 };
+
         if gui::begin_tab_bar("bank tabs") {
-            for (tab, items) in [("Events", &events), ("Dialogue events", &dialogue), ("Music", &music)] {
-                if gui::begin_tab_item(&format!("{tab} ({})###{tab}", items.len()), 0) {
+            for (i, (tab, items)) in
+                [("Events", &events), ("Dialogue", &dialogue), ("Music", &music), ("Containers", &containers)].into_iter().enumerate()
+            {
+                if i > 0 && totals[i] == 0 {
+                    continue;
+                }
+                if gui::begin_tab_item(&format!("{tab} ({})###{tab}", items.len()), flag(i)) {
                     if gui::begin_child(tab, v2(0.0, 0.0), 0, 0) {
                         for (label, id) in items {
                             self.event_row(label, *id, requests);
@@ -707,12 +781,28 @@ impl AudioTool {
                 }
             }
 
+            if totals[4] > 0 && gui::begin_tab_item(&format!("Sounds ({})###sounds", sounds.len()), flag(4)) {
+                if gui::begin_child("sounds", v2(0.0, 0.0), 0, 0) {
+                    gui::clipped(sounds.len(), |row| {
+                        let (label, id, media) = &sounds[row];
+                        if self.play.button(&format!("snd{id}"), requests) {
+                            requests.push(Request::Play(media.clone(), label.clone()));
+                        }
+                        gui::same_line();
+                        if gui::selectable(&format!("{label}##snd{id}"), self.selected == Some(*id), 0) {
+                            requests.push(Request::Select(*id));
+                        }
+                    });
+                }
+                gui::end_child();
+                gui::end_tab_item();
+            }
             let media = entry.bank.media_index();
-            if gui::begin_tab_item(&format!("Sounds in the bank ({})###media", media.len()), 0) {
+            if !media.is_empty() && gui::begin_tab_item(&format!("Media ({})###media", media.len()), 0) {
                 if gui::begin_child("media", v2(0.0, 0.0), 0, 0) {
                     gui::clipped(media.len(), |row| {
                         let m = media[row];
-                        if gui::small_button(&format!("{}##m{}", icons::PLAY, m.id)) {
+                        if self.play.button(&format!("m{}", m.id), requests) {
                             requests.push(Request::Play(MediaRef::InBank { bank, id: m.id }, format!("#{}", m.id)));
                         }
                         gui::same_line();
@@ -723,7 +813,7 @@ impl AudioTool {
                 gui::end_tab_item();
             }
 
-            if gui::begin_tab_item(&format!("All objects ({})###all", all.len()), 0) {
+            if gui::begin_tab_item(&format!("All ({})###all", all.len()), 0) {
                 if gui::begin_child("all", v2(0.0, 0.0), 0, 0) {
                     gui::clipped(all.len(), |row| {
                         let (label, id, kind) = &all[row];
@@ -746,12 +836,12 @@ impl AudioTool {
 
     /// An event (or dialogue event, music container): a Play button and a tree node that opens on what it plays.
     fn event_row(&mut self, label: &str, id: u32, requests: &mut Vec<Request>) {
-        if gui::small_button(&format!("{}##p{id}", icons::PLAY))
+        if self.play.button(&format!("p{id}"), requests)
             && let Some(tree) = self.tree(id)
         {
             requests.push(Request::PlayAny(tree));
         }
-        if gui::is_item_hovered() {
+        if gui::is_item_hovered() && !self.play.active {
             gui::set_tooltip("Plays one of the sounds it can play (random and switch containers pick one at random).");
         }
         gui::same_line();
@@ -787,12 +877,9 @@ impl AudioTool {
         path.push(node.id);
         let key = path.iter().map(u32::to_string).collect::<Vec<_>>().join(".");
         if let Some(media) = &node.media {
-            if gui::small_button(&format!("{}##s{key}", icons::PLAY)) {
+            if self.play.button(&format!("s{key}"), requests) {
                 requests.push(Request::Play(media.clone(), node.label.clone()));
             }
-            gui::same_line();
-            let peaks = self.peaks_of(media, false);
-            player_view::mini_waveform(peaks.as_deref().map(Vec::as_slice));
             gui::same_line();
             let where_ = match media {
                 MediaRef::InBank { bank, id } => format!("#{id} in {}", lib.as_ref().map_or("?", |l| l.banks[*bank].name.as_str())),
@@ -934,13 +1021,12 @@ impl AudioTool {
             None => gui::text_disabled("Not read field by field (this bank version or kind is kept as bytes)."),
             Some(object) => {
                 fields(object, &lib, requests);
-                if let Object::Sound(s) = object {
-                    let label = self.edits.names.get(&id).cloned().unwrap_or_else(|| lib.label(id, kind));
-                    self.sound_preview(&lib, &s.source, &label, requests);
+                if let Object::Sound(_) = object {
+                    gui::text_disabled("Its waveform, levels and player: Inspector.");
                 }
                 edit_fields(id, object, requests);
                 if let Object::MusicPlaylist(playlist) = object {
-                    playlist_view(id, playlist, &lib, &self.edits, requests);
+                    playlist_view(id, playlist, &lib, &self.edits, &mut self.play, requests);
                 }
                 if let Some(node) = object.node() {
                     node_fields(node, &lib, requests);
@@ -1057,6 +1143,30 @@ impl AudioTool {
     }
 }
 
+/// Where an object sits, by the switch values above it (the nearest last): "Barbarian / Inf1 / attack_dogs".
+fn place_of(lib: &SoundLibrary, id: u32) -> String {
+    let mut parts = vec![];
+    let mut child = id;
+    for _ in 0..8 {
+        let parent = lib.object(child).and_then(|(_, _, t)| t.and_then(Object::node)).map_or(0, |n| n.parent_id);
+        if parent == 0 {
+            break;
+        }
+        match lib.object(parent) {
+            Some((_, _, Some(Object::Switch(s)))) => {
+                if let Some((value, _)) = s.assignments.iter().find(|(_, c)| c.contains(&child)) {
+                    parts.push(lib.label(*value, 0));
+                }
+            }
+            Some((_, p, _)) if matches!(p.kind, 5 | 9) => {}
+            _ => break,
+        }
+        child = parent;
+    }
+    parts.reverse();
+    parts.join(" / ")
+}
+
 fn has_music_parent(object: Option<&Object>) -> bool {
     object.and_then(Object::node).is_some_and(|n| n.parent_id != 0)
 }
@@ -1150,7 +1260,14 @@ fn fields(object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
 
 /// A music playlist: its items as a tree (groups and how they play, segments with their length), each segment with Play, Add
 /// music after it, Remove, weight and loop; then its transitions and stingers.
-fn playlist_view(id: u32, playlist: &MusicPlaylist, lib: &SoundLibrary, edits: &EditSet, requests: &mut Vec<Request>) {
+fn playlist_view(
+    id: u32,
+    playlist: &MusicPlaylist,
+    lib: &SoundLibrary,
+    edits: &EditSet,
+    play: &mut player_view::PlayButtons,
+    requests: &mut Vec<Request>,
+) {
     if !gui::collapsing_header(&format!("Music entries ({})###entries", playlist.items.len()), gui::TREE_DEFAULT_OPEN) {
         return;
     }
@@ -1170,7 +1287,7 @@ fn playlist_view(id: u32, playlist: &MusicPlaylist, lib: &SoundLibrary, edits: &
                 Some(Object::MusicSegment(s)) => format!("{:.1} s", s.duration / 1000.0),
                 _ => "?".into(),
             };
-            if gui::small_button(icons::PLAY) {
+            if play.button(&format!("seg{}", item.item_id), requests) {
                 requests.push(Request::PlayObject(item.segment_id));
             }
             gui::same_line();
@@ -1294,6 +1411,13 @@ impl Tool for AudioTool {
         wce_editor::icons::AUDIO_LINES
     }
 
+    fn inspect(&mut self, e: &mut Editor, _: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        let mut requests = vec![];
+        self.inspector(&mut requests);
+        self.handle(e, requests);
+        true
+    }
+
     fn shows_viewport(&self) -> bool {
         false
     }
@@ -1301,6 +1425,8 @@ impl Tool for AudioTool {
     fn default_layout(&self, dockspace: gui::ImGuiID) {
         let (left, center) = gui::dock_builder_split(dockspace, gui::DIR_LEFT, 0.22);
         let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.30);
+        // The Inspector (the player, the sound's info) above Audio Object.
+        let (right, inspector) = gui::dock_builder_split(right, gui::DIR_DOWN, 0.58);
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.22);
         gui::dock_builder_dock_window("Audio Banks", left);
         gui::dock_builder_dock_window("Audio Search", left);
@@ -1308,7 +1434,7 @@ impl Tool for AudioTool {
         gui::dock_builder_dock_window("Audio Object", right);
         gui::dock_builder_dock_window("Audio Game Data", center);
         gui::dock_builder_dock_window("Audio Recipes", center);
-        gui::dock_builder_dock_window("Inspector", right);
+        gui::dock_builder_dock_window("Inspector", inspector);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);

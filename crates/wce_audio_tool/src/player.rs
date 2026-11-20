@@ -1,5 +1,6 @@
-//! Playback through SDL3: one audio stream on the default device, taking the sound's own rate and channels (SDL converts them to the
-//! device's). The player keeps the decoded sound, so it can seek, loop and replay, and its peak envelope for the waveform.
+//! Playback through SDL3: one audio stream on the default device, opened with the sound's own rate and channels (SDL converts them
+//! to the device's). The player keeps the decoded sound, so it can seek, loop and replay, and its peak envelope for the waveform.
+//! `tick` runs every frame, whatever panel is shown: it queues the next loop ahead of time (no gap) and handles the end.
 
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -10,7 +11,9 @@ use sdl3_sys::audio::{
     SDL_SetAudioStreamGain,
 };
 use sdl3_sys::init::{SDL_INIT_AUDIO, SDL_InitSubSystem};
+use wce_audio::analysis::{Stats, analyse};
 use wce_audio::decode::Pcm;
+use wce_audio::library::MediaRef;
 
 /// How many columns a waveform has.
 pub const PEAKS: usize = 600;
@@ -30,13 +33,19 @@ pub fn peaks(pcm: &Pcm, columns: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Where a loop's next copy is queued: when less than this many seconds are left in the stream.
+const LOOP_AHEAD: f64 = 0.5;
+
 pub struct Player {
     stream: *mut SDL_AudioStream,
     pcm: Option<Arc<Pcm>>,
-    /// The waveform of the loaded sound.
+    /// The waveform of the loaded sound, and its levels.
     pub peaks: Vec<f32>,
+    pub stats: Option<Stats>,
     pub label: String,
-    /// The frame the stream's data starts at (a seek moves it).
+    /// The loaded sound's media, when it came from one.
+    pub media: Option<MediaRef>,
+    /// The frame the stream's data starts at (a seek moves it); the bytes put since (more than one copy when looping).
     start_frame: usize,
     bytes_put: usize,
     pub paused: bool,
@@ -51,7 +60,9 @@ impl Default for Player {
             stream: null_mut(),
             pcm: None,
             peaks: vec![],
+            stats: None,
             label: String::new(),
+            media: None,
             start_frame: 0,
             bytes_put: 0,
             paused: false,
@@ -74,13 +85,17 @@ impl Player {
     /// # Errors
     ///
     /// When SDL's audio can't start or the device can't be opened.
-    pub fn play(&mut self, pcm: Arc<Pcm>, label: &str) -> Result<(), String> {
+    pub fn play(&mut self, pcm: Arc<Pcm>, label: &str, media: Option<MediaRef>) -> Result<(), String> {
         if pcm.samples.is_empty() || pcm.channels == 0 {
             return Err("the sound is empty".into());
         }
+        // A new stream: the old one has the previous sound's rate and channels (kept, it would play this one too fast or slow).
+        self.close();
         self.peaks = peaks(&pcm, PEAKS);
+        self.stats = Some(analyse(&pcm));
         self.pcm = Some(pcm);
         self.label = label.to_owned();
+        self.media = media;
         self.paused = false;
         self.start_at(0)
     }
@@ -99,6 +114,11 @@ impl Player {
         self.pcm.as_ref().map_or(0.0, |p| p.seconds())
     }
 
+    /// The loaded sound's rate and channels.
+    pub fn format(&self) -> Option<(u32, u16)> {
+        self.pcm.as_ref().map(|p| (p.sample_rate, p.channels))
+    }
+
     fn close(&mut self) {
         if !self.stream.is_null() {
             unsafe { SDL_DestroyAudioStream(self.stream) };
@@ -113,9 +133,7 @@ impl Player {
         if !ready {
             return Err(format!("SDL audio did not start: {}", sdl_error()));
         }
-        let channels = usize::from(pcm.channels);
         let frame = frame.min(pcm.frames());
-        let data = &pcm.samples[frame * channels..];
         unsafe {
             if self.stream.is_null() {
                 let spec = SDL_AudioSpec { format: SDL_AUDIO_F32, channels: i32::from(pcm.channels), freq: pcm.sample_rate as i32 };
@@ -127,18 +145,30 @@ impl Player {
                 SDL_ClearAudioStream(self.stream);
             }
             SDL_SetAudioStreamGain(self.stream, self.volume);
-            let bytes = std::mem::size_of_val(data);
-            if !SDL_PutAudioStreamData(self.stream, data.as_ptr().cast(), bytes as i32) {
-                return Err(format!("SDL refused the sound: {}", sdl_error()));
-            }
-            self.bytes_put = bytes;
+        }
+        self.bytes_put = 0;
+        self.start_frame = frame;
+        self.put(frame)?;
+        unsafe {
             if self.paused {
                 SDL_PauseAudioStreamDevice(self.stream);
             } else {
                 SDL_ResumeAudioStreamDevice(self.stream);
             }
         }
-        self.start_frame = frame;
+        Ok(())
+    }
+
+    /// Queues the sound from `frame` to its end.
+    fn put(&mut self, frame: usize) -> Result<(), String> {
+        let Some(pcm) = self.pcm.clone() else { return Ok(()) };
+        let channels = usize::from(pcm.channels);
+        let data = &pcm.samples[frame * channels..];
+        let bytes = std::mem::size_of_val(data);
+        if !unsafe { SDL_PutAudioStreamData(self.stream, data.as_ptr().cast(), bytes as i32) } {
+            return Err(format!("SDL refused the sound: {}", sdl_error()));
+        }
+        self.bytes_put += bytes;
         Ok(())
     }
 
@@ -167,10 +197,11 @@ impl Player {
         }
     }
 
-    /// Jumps to a point (0 to 1) of the sound; plays from there unless paused.
+    /// Jumps to a point (0 to 1) of the sound and plays from there.
     pub fn seek(&mut self, fraction: f32) {
         let Some(pcm) = &self.pcm else { return };
         let frame = (fraction.clamp(0.0, 1.0) as f64 * pcm.frames() as f64) as usize;
+        self.paused = false;
         let _ = self.start_at(frame);
     }
 
@@ -181,24 +212,39 @@ impl Player {
         }
     }
 
-    /// Where playback is (0 to 1), and the end handled: looped, or back to the start. Call every frame.
-    pub fn position(&mut self) -> f32 {
-        let Some(pcm) = self.pcm.clone() else { return 0.0 };
+    fn queued(&self) -> usize {
+        if self.stream.is_null() { 0 } else { unsafe { SDL_GetAudioStreamQueued(self.stream) }.max(0) as usize }
+    }
+
+    /// Every frame: queues the next copy of a looping sound before the stream runs dry, and at the end of a sound played once,
+    /// goes back to the start.
+    pub fn tick(&mut self) {
+        let Some(pcm) = self.pcm.clone() else { return };
+        if self.stream.is_null() || self.paused {
+            return;
+        }
+        let queued = self.queued();
+        let frame_bytes = usize::from(pcm.channels) * 4;
+        let ahead = (LOOP_AHEAD * f64::from(pcm.sample_rate)) as usize * frame_bytes;
+        if self.looping && queued < ahead {
+            let _ = self.put(0);
+        } else if !self.looping && queued == 0 {
+            self.stop();
+        }
+    }
+
+    /// Where playback is (0 to 1).
+    pub fn position(&self) -> f32 {
+        let Some(pcm) = &self.pcm else { return 0.0 };
         if self.stream.is_null() {
             return 0.0;
         }
-        let queued = unsafe { SDL_GetAudioStreamQueued(self.stream) }.max(0) as usize;
-        if queued == 0 && !self.paused {
-            if self.looping {
-                let _ = self.start_at(0);
-            } else {
-                self.stop();
-            }
-            return 0.0;
-        }
-        let frame_bytes = usize::from(pcm.channels) * 4;
-        let played = self.start_frame + self.bytes_put.saturating_sub(queued) / frame_bytes;
-        (played as f64 / pcm.frames().max(1) as f64) as f32
+        let frames = pcm.frames().max(1);
+        let played = self.bytes_put.saturating_sub(self.queued()) / (usize::from(pcm.channels) * 4);
+        // The first copy starts at the seek point, the next ones (a loop) at 0.
+        let first = frames.saturating_sub(self.start_frame);
+        let frame = if played < first { self.start_frame + played } else { (played - first) % frames };
+        (frame as f64 / frames as f64) as f32
     }
 }
 

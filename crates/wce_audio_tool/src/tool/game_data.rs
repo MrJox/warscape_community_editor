@@ -10,7 +10,6 @@ use wce_audio_format::amb::Ambience;
 use wce_audio_format::fnv;
 use wce_audio_format::triggers::Triggers;
 use wce_editor::gui::{self, col32, v2};
-use wce_editor::icons;
 use wce_formats::anim_meta::Meta;
 use wce_vfs::files::Files;
 
@@ -97,7 +96,7 @@ impl AudioTool {
                 gui::end_tab_item();
             }
             if gui::begin_tab_item("DB tables###db", 0) {
-                db_tab(&data.db, requests);
+                db_tab(&data.db, &mut self.play, requests);
                 gui::end_tab_item();
             }
             if gui::begin_tab_item("Languages###lang", 0) {
@@ -177,7 +176,7 @@ impl AudioTool {
         for f in &frames {
             gui::push_id(&format!("f{}", f.entry));
             let (name, event) = frame_label(triggers, f);
-            if gui::small_button(icons::PLAY) && !event.is_empty() {
+            if self.play.button(&format!("frame{}", f.entry), requests) && !event.is_empty() {
                 requests.push(Request::PlayObject(fnv::id(&event)));
             }
             gui::same_line();
@@ -256,7 +255,7 @@ impl AudioTool {
         gui::text_disabled(&format!("{} emitters, {} sounds", amb.emitters.len(), rows.len()));
         for (label, id, emitters, points) in rows {
             gui::push_id(&format!("a{id}"));
-            if gui::small_button(icons::PLAY) {
+            if self.play.button(&format!("amb{id}"), requests) {
                 requests.push(Request::PlayObject(id));
             }
             gui::same_line();
@@ -268,12 +267,12 @@ impl AudioTool {
     }
 }
 
-fn db_tab(db: &SoundDb, requests: &mut Vec<Request>) {
+fn db_tab(db: &SoundDb, play: &mut super::player_view::PlayButtons, requests: &mut Vec<Request>) {
     let events = db.events();
     if gui::collapsing_header(&format!("Events named by the tables ({})", events.len()), gui::TREE_DEFAULT_OPEN) {
         for (table, key, column, event) in &events {
             gui::push_id(&format!("{table}{key}{column}"));
-            if gui::small_button(icons::PLAY) {
+            if play.button(&format!("db{table}{key}{column}"), requests) {
                 requests.push(Request::PlayObject(fnv::id(event)));
             }
             gui::same_line();
