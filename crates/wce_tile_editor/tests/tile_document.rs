@@ -2983,3 +2983,31 @@ fn a_field_area_lays_its_farmland_and_an_export_adds_it() {
     d.finish_fields();
     assert_eq!(d.field_counts(), (0, 0, 0));
 }
+
+#[test]
+fn a_path_is_found_over_the_ground_and_a_building_connected_to_it() {
+    use wce_tile::paths::PathSettings;
+    use wce_tile_editor::tile_document::ROAD_SPLINE;
+
+    let (_dir, mut d) = open();
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let ends = [Float3::new(ex * 0.1, 0.0, ez * 0.2), Float3::new(ex * 0.9, 0.0, ez * 0.2)];
+    let path = d.find_path(&ends, &PathSettings::default()).unwrap();
+    assert!(path.len() >= 2);
+    assert_eq!((path[0].x, path[0].z), (ends[0].x, ends[0].z));
+    // On the ground.
+    for p in &path {
+        assert!((p.y - d.tile().terrain_height(p.x, p.z)).abs() < 0.5, "{p:?}");
+    }
+
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let road = d.create_with(ROAD_SPLINE, layer, &Create::Line(path), "", &BTreeMap::new()).unwrap();
+    assert!(road > 0);
+
+    // A building away from it: a path from it to the road.
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let before = d.tile().tscene().find_all(ROAD_SPLINE).len();
+    let (made, failed) = d.connect_to_roads(&[b], layer).unwrap();
+    assert_eq!((made, failed.len()), (1, 0), "{failed:?}");
+    assert_eq!(d.tile().tscene().find_all(ROAD_SPLINE).len(), before + 1);
+}

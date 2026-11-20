@@ -11,7 +11,7 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
-Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done. Their look on kit tiles is the user's.
+Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done; H done. Their look on kit tiles is the user's.
 
 Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
 the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
@@ -134,7 +134,12 @@ kit tile (`<SCENE_GRAPH .../>`, terrain_plains/1x1/ab) failed; fixed. On that ti
   the game has no tracks) and its width; "Connect to the roads" for the selected buildings does each one to the nearest road.
 - One undo entry; the path is then an ordinary procedural road.
 
-### Steps
+### Steps (done 2026-11-20)
+
+Done as planned, but: water is not barred, it costs (a ford 6 times a step, a metre deep 25 times: the roads make fords and bridges), so
+a path crosses a river where it is narrowest (the river tile's is deep all along: barring it, no path crossed it); the simplify tolerance
+is 3 m (1.5 m left a zigzag of 40 points along the 8-way cells). On the river tile: a 386 m path of 16 points across the river; a house
+added and connected: a dirt track of the game's pieces.
 
 1. `paths` with tests (around a hill, round a building, not across water, onto a road).
 2. The tool (Create panel "Path" under roads, two clicks), Connect to the roads, script command, docs.

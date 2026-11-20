@@ -958,6 +958,49 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "path",
+        "path <find <x m> <z m> <x m> <z m> [<x m> <z m>]... | connect>",
+        "a path found over the ground through points (made a procedural road, as the Create panel's Path), or from each selected building to the nearest procedural road",
+        |e, a| {
+            let usage = "usage: path <find <x m> <z m> <x m> <z m> [<x m> <z m>]... | connect>";
+            match a.first().map(String::as_str) {
+                Some("connect") => {
+                    let buildings = e.selection.items().iter().filter_map(|i| wce_tile_editor::tile_document::elem_of(i.item)).collect::<Vec<_>>();
+                    with_tile(e, |t, e| ok(t.connect_to_roads(e, &buildings)))
+                }
+
+                Some("find") => {
+                    let nums = a[1..].iter().map(|v| number(v)).collect::<Option<Vec<_>>>();
+                    let Some(nums) = nums.filter(|n| n.len() >= 4 && n.len() % 2 == 0) else { return fail(usage) };
+                    let pts = nums.chunks(2).map(|p| wce_foundation::math::Float3::new(p[0], 0.0, p[1])).collect::<Vec<_>>();
+                    with_tile(e, |t, e| {
+                        let Some(d) = document(e) else { return fail("no tile is open") };
+                        let Some(into) = t.new_items_layer(d) else { return fail("this tile has no scene graph") };
+                        match d.find_path(&pts, &wce_tile::paths::PathSettings::default()) {
+                            Ok(points) => {
+                                let n = points.len();
+                                let length: f32 = points.windows(2).map(|w| (w[1].x - w[0].x).hypot(w[1].z - w[0].z)).sum();
+                                let attrs = std::collections::BTreeMap::from([
+                                    ("road_type".to_owned(), "none".to_owned()),
+                                    ("road_width".to_owned(), "3".to_owned()),
+                                    ("name".to_owned(), "Path".to_owned()),
+                                ]);
+                                match d.create_with(wce_tile_editor::tile_document::ROAD_SPLINE, into, &wce_tile_editor::tile_document::Create::Line(points), "", &attrs) {
+                                    Ok(_) => ok(format!("a path of {n} points, {length:.0} m")),
+                                    Err(err) => fail(err),
+                                }
+                            }
+                            Err(err) => fail(err),
+                        }
+                    })
+                }
+
+                _ => fail(usage),
+            }
+        },
+    );
+
+    c.add(
         "ground_coverage_brush",
         "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
         "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",
