@@ -18,6 +18,8 @@ pub enum NameSource {
     EventData,
     Bank,
     Trigger,
+    /// The DB tables' sound keys: units' selection lines, voice-overs, the sound tables' events.
+    Db,
     BuiltIn,
 }
 
@@ -28,6 +30,7 @@ impl NameSource {
             NameSource::EventData => "event_data.dat",
             NameSource::Bank => "a bank",
             NameSource::Trigger => "sound_animation_triggers.csv",
+            NameSource::Db => "the DB tables",
             NameSource::BuiltIn => "the built-in list (TWA_Names.txt)",
         }
     }
@@ -104,6 +107,19 @@ impl Names {
         for path in files.list("audio/", ".bnk") {
             let stem = path.rsplit('/').next().unwrap_or(&path).trim_end_matches(".bnk");
             names.add(stem, NameSource::Bank);
+        }
+
+        // The DB's sound keys (with the game's schema, when set): the order lines units select with, voice-overs, events.
+        let db = crate::sound_db::SoundDb::read(files);
+        for unit in &db.units {
+            unit.selection.iter().for_each(|n| names.add(n, NameSource::Db));
+            names.add(&unit.voiceover, NameSource::Db);
+        }
+        for (_, _, voiceover) in &db.voiceovers {
+            names.add(voiceover, NameSource::Db);
+        }
+        for (_, _, _, event) in db.events() {
+            names.add(&event, NameSource::Db);
         }
 
         names
