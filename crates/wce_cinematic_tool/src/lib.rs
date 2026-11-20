@@ -2,6 +2,7 @@
 
 mod export;
 mod frames;
+mod logic_ui;
 mod preview;
 mod scene_doc;
 mod scene_ui;

@@ -1,0 +1,35 @@
+# The Cinematic tool's battle logic graph (docs/plans/cinematic.md, step 7), run by scripts/cinematic_check.sh twice: nodes and links
+# by command, the compiled Lua asserted, undo, the Logic panel shown with its Lua.
+tool cinematic
+layout reset
+frames 2
+scene_new WCE Logic Test
+frames 3
+assert_logic ga_2:attack_on_message("cutscene_ended");
+logic_node event.cutscene_ended
+logic_node action.attack army=1
+logic_node event.proximity army=0 distance=150
+logic_node action.advice advice=Att.HB.CP.001 delay_ms=2000
+logic_link 1 2
+logic_link 3 4
+frames 2
+assert_logic ga_2:attack_on_message("cutscene_ended");
+assert_logic ga_1:message_on_proximity_to_enemy("wce_n3", 150);
+assert_logic gb:advice_on_message("wce_n3", "Att.HB.CP.001", 2000);
+undo
+frames 2
+undo
+frames 2
+undo
+frames 2
+-assert_logic gb:advice_on_message
+redo
+redo
+redo
+frames 2
+assert_logic gb:advice_on_message("wce_n3", "Att.HB.CP.001", 2000);
+cinematic_show Logic
+frames 10
+shot "%SHOT5%"
+frames 2
+quit

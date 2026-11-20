@@ -3,6 +3,8 @@
 # settings.toml only); both runs must pass and give identical shots.
 #
 #   scripts/cinematic_check.sh [out dir]
+#
+# Run it with no other wce.exe open: an editor in use at the same time made the movie and the preview shot differ (2026-11-20).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/cinematic_check}"
@@ -37,12 +39,19 @@ for run in 1 2; do
     echo "preview run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/preview_run$run.log" | tail -5; }
     [ -s "$OUT/movie$run.pack" ] || { echo "preview run $run: no movie pack"; bad=1; }
+    # The battle logic graph.
+    proj="$OUT/projects_logic$run"; rm -rf "$proj"; mkdir -p "$proj"
+    sed -e "s|%SHOT5%|$(cygpath -m "$OUT/logic$run.png")|" "$ROOT/scripts/cinematic_logic.txt" > "$OUT/logic$run.txt"
+    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/logic$run.txt")" > "$OUT/logic_run$run.log" 2>&1
+    rc=$?
+    echo "logic run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/logic_run$run.log" | tail -5; }
 done
 if cmp -s "$OUT/movie1.pack" "$OUT/movie2.pack"; then echo "movie pack identical between runs"; else echo "movie pack DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/projects1/cinematics/wce_scene_test/project.json" "$OUT/projects2/cinematics/wce_scene_test/project.json"; then echo "project.json identical between runs"
 else echo "project.json DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/scene1.pack" "$OUT/scene2.pack"; then echo "battle pack identical between runs"; else echo "battle pack DIFFERS between runs"; bad=1; fi
-for shot in intro event scene; do
+for shot in intro event scene logic; do
     if cmp -s "$OUT/${shot}1.png" "$OUT/${shot}2.png" && [ -s "$OUT/${shot}1.png" ]; then echo "$shot shot identical between runs"
     else echo "$shot shot DIFFERS between runs (or missing)"; bad=1; fi
 done

@@ -497,6 +497,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dear-imnodes-sys"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14845ded816cb110f1f4ff54ccf4f01065e4890dfa194c0b1c06916acb2b869e"
+dependencies = [
+ "cc",
+ "dear-imgui-build-support",
+ "dear-imgui-sys",
+]
+
+[[package]]
 name = "derive_pod"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2438,6 +2449,8 @@ dependencies = [
 name = "wce_cinematic_tool"
 version = "0.0.1"
 dependencies = [
+ "dear-imgui-sys",
+ "dear-imnodes-sys",
  "rpfm_lib",
  "wce_audio",
  "wce_audio_tool",
