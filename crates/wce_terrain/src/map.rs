@@ -57,11 +57,12 @@ pub struct Item<T> {
     value: T,
     pub origin: Blob,
     edited: bool,
+    original_version: Option<u32>,
 }
 
 impl<T> Item<T> {
     pub fn new(path: impl Into<String>, value: T, origin: Blob) -> Self {
-        Self { path: path.into(), value, origin, edited: false }
+        Self { path: path.into(), value, origin, edited: false, original_version: None }
     }
 
     pub fn get(&self) -> &T {
@@ -76,6 +77,19 @@ impl<T> Item<T> {
 
     pub fn edited(&self) -> bool {
         self.edited
+    }
+}
+
+impl Item<wce_tile::battle_map::tile_list::TileList> {
+    /// A native list loaded from its original payload. Editing the value cannot change this format provenance.
+    pub fn new_native_tile_list(path: impl Into<String>, value: wce_tile::battle_map::tile_list::TileList, origin: Blob) -> Self {
+        let original_version = Some(value.version);
+        Self { path: path.into(), value, origin, edited: false, original_version }
+    }
+
+    /// The loaded native format version; `None` for an item constructed without native provenance.
+    pub fn original_version(&self) -> Option<u32> {
+        self.original_version
     }
 }
 
