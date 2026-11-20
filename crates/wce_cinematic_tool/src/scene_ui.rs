@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use wce_cinematic::eval::{SceneFrame, SpeedTable, evaluate};
+use wce_cinematic::eval::{SceneFrame, SpeedTable, evaluate, evaluate_battle};
 use wce_cinematic::scene::*;
 use wce_cinematic::support::track_support;
 use wce_editor::editor::Editor;
@@ -43,6 +43,8 @@ pub struct SceneUi {
     pub speeds: SpeedTable,
     /// The viewport's camera is the user's, not the keys'.
     pub free_camera: bool,
+    /// The scene as a battle would play it (units under orders, movie-only tracks gone).
+    pub battle_preview: bool,
     last_tick: Option<std::time::Instant>,
 }
 
@@ -64,7 +66,11 @@ impl SceneUi {
 
     pub fn frame(&mut self, p: &Project) -> Option<SceneFrame> {
         let clip = self.current_clip(p)?.clone();
-        Some(evaluate(p, &clip, &self.speeds, self.time))
+        Some(if self.battle_preview {
+            evaluate_battle(p, &clip, &self.speeds, self.time)
+        } else {
+            evaluate(p, &clip, &self.speeds, self.time)
+        })
     }
 
     /// The playhead: advances while playing (the fixed step in scripted runs, else the wall clock), stops at the clip's end.
@@ -373,6 +379,11 @@ impl SceneUi {
                 }
             }
             gui::end_combo();
+        }
+        gui::same_line();
+        gui::checkbox("Battle", &mut self.battle_preview);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Play it as the battle would: units under orders at their own speeds, movie-only tracks gone");
         }
         gui::same_line();
         gui::checkbox("Free camera", &mut self.free_camera);
