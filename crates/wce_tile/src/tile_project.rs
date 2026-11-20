@@ -225,6 +225,11 @@ pub struct TileProject {
     pub texture_rules: Option<crate::texture_rules::RuleSet>,
     pub texture_rules_dirty: bool,
 
+    /// The erosion's settings (`erosion`, their own file), when the tile has it; its layer is in `layers`' height stack. `erosion_dirty`:
+    /// changed since saved (or taken away, the file to remove).
+    pub erosion: Option<crate::erosion::Settings>,
+    pub erosion_dirty: bool,
+
     /// The biomes the tile's areas use (`biomes`, their own file); `biomes_dirty`: changed since saved.
     pub biomes: Vec<crate::biomes::Biome>,
     pub biomes_dirty: bool,
@@ -473,6 +478,8 @@ impl TileProject {
             view: None,
             texture_rules: None,
             texture_rules_dirty: false,
+            erosion: None,
+            erosion_dirty: false,
             biomes: vec![],
             biomes_dirty: false,
         };
@@ -491,6 +498,13 @@ impl TileProject {
                     .map_err(|error| format!("{}: {error}", rules_file.display()))
                     .and_then(|b| crate::texture_rules::parse(&b).map_err(|e| format!("{}: {e}", rules_file.display())))?,
             );
+        }
+
+        let erosion_file = project.dir.join(crate::erosion::FILE);
+        if erosion_file.exists() {
+            let text = std::fs::read_to_string(&erosion_file).map_err(|error| format!("{}: {error}", erosion_file.display()))?;
+            let (on, settings) = crate::erosion::settings_in(&text);
+            project.erosion = on.then_some(settings);
         }
 
         let layers_file = project.dir.join(crate::terrain_layers::FILE);
@@ -965,6 +979,26 @@ impl TileProject {
 
         self.texture_rules_dirty = false;
 
+        // The erosion's settings, as the rules.
+        let erosion_file = out_dir.join(crate::erosion::FILE);
+        match &self.erosion {
+            Some(settings) if self.erosion_dirty || elsewhere => {
+                wce_foundation::files::write_replacing(&erosion_file, crate::erosion::settings_text(true, settings))
+                    .map_err(|_| format!("could not write {}", erosion_file.display()))?;
+                msg += "erosion saved. ";
+                wrote = true;
+            }
+
+            None if self.erosion_dirty && erosion_file.exists() => {
+                std::fs::remove_file(&erosion_file).map_err(|_| format!("could not remove {}", erosion_file.display()))?;
+                wrote = true;
+            }
+
+            _ => {}
+        }
+
+        self.erosion_dirty = false;
+
         // The biomes, as the rules.
         let biomes_file = out_dir.join(crate::biomes::FILE);
         if !self.biomes.is_empty() && (self.biomes_dirty || elsewhere) {
@@ -1261,6 +1295,7 @@ impl TileProject {
                 || name == WCE_FILE
                 || name == crate::terrain_layers::FILE
                 || name == crate::texture_rules::FILE
+                || name == crate::erosion::FILE
                 || name == crate::biomes::FILE
                 || name == "height_map_0.png"
                 || (name == "blend_map.tif" && self.blend.is_some())
@@ -1477,6 +1512,7 @@ impl TileProject {
                     || name == WCE_FILE
                     || name == crate::terrain_layers::FILE
                     || name == crate::texture_rules::FILE
+                    || name == crate::erosion::FILE
                     || name == crate::biomes::FILE
                     || name == "height_map_0.png"
                     || (name == "blend_map.tif" && self.blend.is_some())

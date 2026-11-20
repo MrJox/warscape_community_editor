@@ -838,6 +838,9 @@ impl Tile {
 
     /// The roads as an export reads them: their terrain and their instances made, waiting for what is being made off the editor's thread.
     pub fn finish_road_jobs(&mut self) {
+        // The erosion lies under the prefabs' ground and the roads: made first.
+        self.refresh_erosion_with(true);
+        self.refresh_prefab_ground();
         self.refresh_roads_with(true);
         if self.road_items_stale && self.road_prefabs.is_some() {
             self.start_road_items();

@@ -809,6 +809,58 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "erosion",
+        "erosion <off | on | preset <name> | set <key> <value> | wait>",
+        "the tile's erosion: off (taken away with its layer), on (Weathered, or the settings it had), a preset's settings (Light, Weathered, Rugged), one setting (as in erosion.wce: rain, steps, talus, detail, strength, seed ...); wait: the layer made now, and what it changed",
+        |e, a| {
+            let usage = "usage: erosion <off | on | preset <name> | set <key> <value> | wait>";
+            let Some(d) = document(e) else { return fail("no tile is open") };
+            match (a.first().map(String::as_str), a.get(1), a.get(2)) {
+                (Some("off"), None, None) => {
+                    d.set_erosion(None);
+                    ok("erosion off")
+                }
+
+                (Some("on"), None, None) => {
+                    let s = d.erosion().cloned().unwrap_or_default();
+                    d.set_erosion(Some(s));
+                    ok("erosion on")
+                }
+
+                (Some("preset"), Some(name), None) => {
+                    let Some((_, s)) = wce_tile::erosion::PRESETS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else {
+                        return fail(format!("no erosion preset {name}"));
+                    };
+                    let seed = d.erosion().map_or(s.seed, |o| o.seed);
+                    d.set_erosion(Some(wce_tile::erosion::Settings { seed, ..s.clone() }));
+                    ok(format!("erosion: {name}"))
+                }
+
+                (Some("set"), Some(key), Some(value)) => {
+                    let s = d.erosion().cloned().unwrap_or_default();
+                    let known = wce_tile::erosion::settings_text(true, &s);
+                    if key == "on" || !known.lines().any(|l| l.split_whitespace().next() == Some(key.as_str())) {
+                        return fail(format!("no erosion setting {key}"));
+                    }
+
+                    let (_, t) = wce_tile::erosion::settings_in(&format!("{known}{key} {value}\n"));
+
+                    d.set_erosion(Some(t));
+                    ok(format!("erosion: {key} {value}"))
+                }
+
+                (Some("wait"), None, None) => {
+                    d.finish_erosion();
+                    d.finish_texture_rules();
+                    ok(d.erosion_summary().unwrap_or_else(|| "no erosion layer".to_owned()))
+                }
+
+                _ => fail(usage),
+            }
+        },
+    );
+
+    c.add(
         "ground_coverage_brush",
         "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
         "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",
