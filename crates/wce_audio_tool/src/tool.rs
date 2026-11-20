@@ -11,6 +11,8 @@ use wce_audio::edit::EditSet;
 use wce_audio::encode::{DEFAULT_QUALITY, QUALITIES, encode_wem};
 use wce_audio::import::read_sound;
 use wce_audio::library::{MediaRef, PlayNode, SoundLibrary, action_name};
+use wce_audio::names::NameSource;
+use wce_audio::references::{self, Reference, ReferenceIndex};
 use wce_audio_format::bank::kind_name;
 use wce_audio_format::hirc::{NodeBase, Object};
 use wce_editor::editor::Editor;
@@ -33,6 +35,11 @@ enum Request {
     AddVariation(u32),
     RemoveVariation(u32, u32),
     SetProperty(u32, u8, Option<f32>),
+    Delete(u32),
+    /// (bank, name, target): a new event playing the target.
+    NewEvent(usize, String, u32),
+    /// A row of the animation triggers firing this event in battle.
+    AddTrigger(String),
     Save,
     Revert,
     Undo,
@@ -89,6 +96,17 @@ pub struct AudioTool {
     quality: Option<u8>,
     /// A sound file being encoded on a worker: its name, the result, and what it goes to.
     encoding: Option<(String, Receiver<Result<Vec<u8>, String>>, ImportTarget)>,
+    /// The game's references (built on a worker after the banks).
+    references: Option<Arc<ReferenceIndex>>,
+    references_loading: Option<Receiver<ReferenceIndex>>,
+    /// The New event field, and the object a Delete waits to be confirmed for.
+    new_event_name: String,
+    confirm_delete: Option<u32>,
+}
+
+/// The project's file of names given in the editor (one per line).
+fn names_file(e: &Editor) -> std::path::PathBuf {
+    e.projects_dir().join("audio").join("names.txt")
 }
 
 impl AudioTool {
@@ -99,9 +117,15 @@ impl AudioTool {
         {
             self.mount_id = files.mount_id();
             self.files = Some(files.clone());
+            let names_file = names_file(e);
             let (tx, rx) = channel();
             std::thread::spawn(move || {
-                let _ = tx.send(SoundLibrary::load(files.as_ref()));
+                let mut lib = SoundLibrary::load(files.as_ref());
+                // Names given in the editor (new events), kept in the project.
+                for line in std::fs::read_to_string(&names_file).unwrap_or_default().lines() {
+                    lib.names.add(line, NameSource::Label);
+                }
+                let _ = tx.send(lib);
             });
             self.loading = Some(rx);
         }
@@ -112,12 +136,27 @@ impl AudioTool {
             for (path, why) in &lib.failures {
                 e.status(&format!("{path}: {why}"), true);
             }
-            self.library = Some(Arc::new(lib));
+            let lib = Arc::new(lib);
+            self.library = Some(lib.clone());
             self.loading = None;
             self.lists.clear();
             self.trees.clear();
             self.results.clear();
             self.searched.clear();
+            if let Some(files) = self.files.clone() {
+                let (tx, rx) = channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(ReferenceIndex::build(files.as_ref(), &lib));
+                });
+                self.references_loading = Some(rx);
+            }
+        }
+
+        if let Some(rx) = &self.references_loading
+            && let Ok(index) = rx.try_recv()
+        {
+            self.references = Some(Arc::new(index));
+            self.references_loading = None;
         }
 
         if let Some(lib) = self.library.clone() {
@@ -237,6 +276,30 @@ impl AudioTool {
                 Request::SetProperty(id, property, value) => {
                     self.edit(e, "set a property", |edits, lib, _| edits.set_property(lib, id, property, value).map(|()| String::new()))
                 }
+                Request::Delete(id) => {
+                    self.edit(e, "deleted", |edits, lib, _| edits.delete_object(lib, id).map(|gone| format!(" {} object(s)", gone.len())));
+                    if self.selected == Some(id) {
+                        self.selected = None;
+                    }
+                }
+                Request::NewEvent(bank, name, target) => {
+                    let mut made = None;
+                    self.edit(e, &format!("made the event {name}"), |edits, lib, _| {
+                        edits.new_event(lib, bank, &name, target).map(|id| {
+                            made = Some(id);
+                            format!(" (#{id})")
+                        })
+                    });
+                    if let Some(id) = made {
+                        self.selected = Some(id);
+                        self.new_event_name.clear();
+                    }
+                }
+                Request::AddTrigger(name) => self.edit(e, &format!("added an animation trigger for {name}"), |edits, _, files| {
+                    edits
+                        .add_trigger(files, &format!("wce_{name}"), &name, "", 0)
+                        .map(|row| format!(" (row {row}: a .snd.meta frame fires it with this row)"))
+                }),
                 Request::Save => self.save(e),
                 Request::Revert => {
                     if !self.edits.is_empty() {
@@ -324,6 +387,21 @@ impl AudioTool {
         }
         for path in &written {
             e.loose_changed(path);
+        }
+        // The names given here, kept in the project for the next readings of the banks.
+        if !self.edits.names.is_empty() {
+            let path = names_file(e);
+            let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+            for name in self.edits.names.values() {
+                if !text.lines().any(|l| l == name) {
+                    text.push_str(name);
+                    text.push('\n');
+                }
+            }
+            let _ = path.parent().map(std::fs::create_dir_all);
+            if let Err(err) = wce_foundation::files::write_replacing(&path, text.as_bytes()) {
+                e.status(&format!("Audio: cannot keep the new names in {}: {err}", path.display()), true);
+            }
         }
         self.edits = EditSet::default();
         self.undo.clear();
@@ -715,19 +793,30 @@ impl AudioTool {
             gui::end();
             return;
         };
-        let Some((_, raw, typed)) = lib.object(id) else {
-            gui::text_disabled(&format!("#{id} is in no bank."));
-            gui::end();
-            return;
+        // The object as edited (an unsaved edit shows here at once; a new object exists only in the edits).
+        let edited = self.edits.object(&lib, id);
+        let (kind, typed) = match (lib.object(id), &edited) {
+            (Some((_, raw, typed)), _) => (raw.kind, typed),
+            (None, Some(o)) => (o.kind(), None),
+            (None, None) => {
+                gui::text_disabled(&format!("#{id} is in no bank."));
+                gui::end();
+                return;
+            }
         };
+        let is_new = lib.object(id).is_none();
 
-        gui::text(&lib.label(id, raw.kind));
-        gui::text_disabled(&format!("{}  #{id}  ({} bytes)", kind_name(raw.kind), raw.body.len() + 4));
-        if let Some(source) = lib.names.source(id) {
+        gui::text(&self.edits.names.get(&id).cloned().unwrap_or_else(|| lib.label(id, kind)));
+        gui::text_disabled(&format!("{}  #{id}", kind_name(kind)));
+        if is_new {
+            gui::text_colored([1.0, 0.8, 0.3, 1.0], "New, not saved");
+        } else if let Some(source) = lib.names.source(id) {
             gui::text_disabled(&format!("Name from {}", source.describe()));
         }
         let banks: Vec<&str> = lib.banks_of(id).iter().map(|b| lib.banks[*b].name.as_str()).collect();
-        gui::text_wrapped(&format!("In {}: {}", if banks.len() == 1 { "bank" } else { "banks" }, banks.join(", ")));
+        if !banks.is_empty() {
+            gui::text_wrapped(&format!("In {}: {}", if banks.len() == 1 { "bank" } else { "banks" }, banks.join(", ")));
+        }
         if gui::button("Play")
             && let Some(tree) = self.tree(id)
         {
@@ -735,9 +824,7 @@ impl AudioTool {
         }
         gui::separator();
 
-        // The object as edited (an unsaved edit shows here at once).
-        let edited = self.edits.object(&lib, id);
-        if edited.is_some() && self.edits.banks.keys().any(|b| lib.banks_of(id).contains(b)) {
+        if !is_new && edited.is_some() && self.edits.banks.keys().any(|b| lib.banks_of(id).contains(b)) {
             gui::text_colored([1.0, 0.8, 0.3, 1.0], "Edited, not saved");
         }
         match edited.as_ref().or(typed) {
@@ -766,7 +853,97 @@ impl AudioTool {
             }
         }
 
+        self.references_section(&lib, id, kind, is_new, requests);
         gui::end();
+    }
+
+    /// Who uses the object, Delete (confirmed, with the game's uses as warnings), New event, Add to the animation triggers.
+    fn references_section(&mut self, lib: &SoundLibrary, id: u32, kind: u8, is_new: bool, requests: &mut Vec<Request>) {
+        gui::separator();
+        let refs = self.references.as_ref().map(|index| references::find(lib, &self.edits, index, id));
+        match &refs {
+            None => gui::text_disabled("Finding what uses it..."),
+            Some(refs) if refs.is_empty() => {
+                if kind == 4 {
+                    gui::text_colored([1.0, 0.6, 0.3, 1.0], "Nothing triggers this event: no animation, UI, map or game list names it.");
+                } else {
+                    gui::text_disabled("Used by nothing.");
+                }
+            }
+            Some(refs) => {
+                if gui::collapsing_header(&format!("Used by ({})", refs.len()), 0) {
+                    for r in refs.iter().take(200) {
+                        match r {
+                            Reference::Object { id: other, .. } => {
+                                if gui::selectable(&format!("{}##u{other}", r.describe(lib)), false, 0) {
+                                    requests.push(Request::Select(*other));
+                                }
+                            }
+                            _ => gui::text_wrapped(&r.describe(lib)),
+                        }
+                    }
+                }
+            }
+        }
+
+        // Delete, confirmed.
+        if gui::button("Delete...") {
+            self.confirm_delete = Some(id);
+            gui::open_popup("Delete sound object");
+        }
+        if gui::begin_popup_modal("Delete sound object", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            let target = self.confirm_delete.unwrap_or(id);
+            gui::text(&format!(
+                "Delete {} and everything only it uses?",
+                self.edits.names.get(&target).cloned().unwrap_or_else(|| lib.label(target, kind))
+            ));
+            let game: Vec<String> = refs.iter().flatten().filter(|r| r.from_game()).map(|r| r.describe(lib)).collect();
+            if !game.is_empty() {
+                gui::text_colored([1.0, 0.6, 0.3, 1.0], "The game still uses it:");
+                for g in game.iter().take(12) {
+                    gui::bullet_text(g);
+                }
+                if game.len() > 12 {
+                    gui::text_disabled(&format!("...and {} more", game.len() - 12));
+                }
+            }
+            if gui::button("Delete") {
+                requests.push(Request::Delete(target));
+                self.confirm_delete = None;
+                gui::close_current_popup();
+            }
+            gui::same_line();
+            if gui::button("Cancel") {
+                self.confirm_delete = None;
+                gui::close_current_popup();
+            }
+            gui::end_popup();
+        }
+
+        // A new event playing this object (sounds and containers), or an animation trigger for an event.
+        if matches!(kind, 2 | 5 | 6 | 7 | 9) && !is_new {
+            gui::set_next_item_width(220.0);
+            gui::input_text("##newevent", Some("new_event_name"), &mut self.new_event_name, 128, 0);
+            gui::same_line();
+            if gui::button("New event playing this")
+                && let Some(&bank) = lib.banks_of(id).first()
+            {
+                requests.push(Request::NewEvent(bank, self.new_event_name.clone(), id));
+            }
+        }
+        if kind == 4 {
+            let name = self.edits.names.get(&id).cloned().or_else(|| lib.names.get(id).map(str::to_owned));
+            if let Some(name) = name
+                && gui::button("Add to the animation triggers")
+            {
+                requests.push(Request::AddTrigger(name));
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Adds a row to sound_animation_triggers.csv that fires this event in battle.\nA SOUND_TRIGGER frame of an animation's .snd.meta holding that row plays it.",
+                );
+            }
+        }
     }
 }
 
