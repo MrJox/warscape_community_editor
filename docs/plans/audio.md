@@ -413,7 +413,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       rate bugs the user found are fixed in 10.1.
 
 10. **User review 2 and the open items** (user, 2026-11-20: battle_vo banks empty, loop, the Inspector, unit voices, then every
-    open item of this plan). **in progress** (2026-11-20; what is left: below, 10.9)
+    open item of this plan). **in progress** (2026-11-20; what is left: 10.8 pack 2, 10.9.3 seen in the app, 10.9.5)
     1. Player: a new SDL stream per sound (a looped sound kept the stream, so the next sound played at the previous one's rate:
        too fast and high); loop and end handled every frame whatever panel is shown (the Audio Banks strip drew them only while
        visible), the next loop queued 0.5 s ahead (no gap). **done**; by ear: user.
@@ -464,11 +464,30 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
        class. Pack 2: `spike\ingame6\wce_audio_test_units2.pack`, all three columns set: every selection beeping means the
        three columns are all there is. The tool's new unit line now sets all three by default ("all three", or one column).
        **pack 2: todo (user)**
-    9. Left open, with why: the UI button anomaly (4.7; no pack shadows the UI banks: `sound.pack` is a Release pack, the test
-       packs Mod packs; 10.8 tells whether only UI banks are ignored); transition rules and stingers editing, segments with
-       several tracks, new playlists (6.4; their blocks are kept as bytes); Action parameters and effect plug-in parameters typed
-       (2.3; no edit needs them yet); the editor's Document / History instead of the tool's session (4.5; a refactor of its own);
-       the screenshots of 10.4 to 10.7 not taken yet (no display during the work). **todo**
+    9. The rest of the open items (user, 2026-11-20: "work on the rest of the list"). **done** but where said
+       1. Music transitions and stingers: a transition rule's source rule, destination rule and transition segment typed
+          (`Fade`, `SourceRule`, `DestinationRule`, `TransitionObject`: Wwise 2014's layouts; every music object of both games
+          still byte for byte; Attila's rules leave at the exit cue (220) or the next custom cue (159), fades 0 to 15 s);
+          `set_transition_rule`, `set_stingers`, `new_playlist_like` (a playlist set up like another with one new segment).
+          Audio Object: Transitions (leave at / fade out / curve, enter at / fade in / curve, the segment between), Stingers
+          (trigger, segment, when, not again for; remove; add), New music... on a music switch's paths. Gate `audio_music`
+          steps 5, 6. **done**. Segments with several tracks: none in the game (624 segments, 600 tracks): nothing to do.
+       2. Actions read field by field (`Action::parts` / `set_parts`): properties (14 delay, 15 fade time, 16 probability),
+          ranged modifiers, Play's fade curve and bank (all 2,219 name a bank there is), Set State / Set Switch's group and value
+          (all 85 named), other types' rest as bytes; every action of both games reads (gate `audio_formats`).
+          `set_action_property` (gate `audio_edit`); Audio Object edits delay and fade time. **done**. Effect plug-in
+          parameters stay bytes: each plug-in (reverb, delay...) has its own layout and no edit needs them.
+       3. The editor's Document / History (`crate::document::AudioDocument`, the tool's document "Audio edits"): the session
+          in the editor's command stack (snapshot commands sharing the sessions), so Edit > Undo / Redo, the History panel,
+          File > Save, the modified mark, the quit prompt and Revert work as for any document; the tool follows its history
+          (`sync_document`). Your names for objects are kept by ID in `audio/names.txt` (`#<id> <name>`; plain names are
+          hashed, as before). Unit test `labels_by_id`; script command `audio_volume <object> <dB>` (an edit from a script).
+          **done**; seen in the app: **todo** (no display when it landed).
+       4. Captures: the unit voice view with TDD (Aragorn's line, named lines), a container's settings, the timeline with
+          the clip's end (boar_charge, 0.53 s). **done**
+       5. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); the engine's
+          callers of `music_culture` / `vo_campaign_character` (by hashed ID: a disassembly spike); whether the empty voice
+          junction tables are read (a test pack). **todo**
 
 ## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)
 

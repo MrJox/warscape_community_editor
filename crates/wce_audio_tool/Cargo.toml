@@ -12,6 +12,7 @@ wce_editor = { path = "../wce_editor" }
 wce_editor_core = { path = "../wce_editor_core" }
 wce_foundation = { path = "../wce_foundation" }
 wce_formats = { path = "../wce_formats" }
+wce_scene = { path = "../wce_scene" }
 wce_vfs = { path = "../wce_vfs" }
 
 # Playback through SDL3's audio streams (SDL is already linked for the window; the same build as wce_imgui's).
