@@ -4,6 +4,7 @@ mod export;
 mod frames;
 mod logic_ui;
 mod movie_tools;
+mod pickers;
 mod preview;
 mod scene_audio;
 mod scene_doc;

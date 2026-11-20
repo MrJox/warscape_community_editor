@@ -11,6 +11,7 @@ use wce_editor::editor::Editor;
 use wce_editor::gui::{self, v2};
 use wce_editor::icons;
 
+use crate::pickers::{Filters, GameLists, picker};
 use crate::scene_doc::SceneDocument;
 
 /// The game's languages (`subtitle_timings.language`).
@@ -37,7 +38,6 @@ pub struct SceneUi {
     pub track: Option<u32>,
     pub key: Option<KeyRef>,
     pub unit: Option<u32>,
-    new_unit: String,
     new_text: String,
     /// Layout view: centre (x, z) and metres per pixel.
     view: Option<([f32; 2], f32)>,
@@ -51,6 +51,28 @@ pub struct SceneUi {
     /// The language texts are edited and exported in (`en`, `de`...); English stands in where a text has none.
     pub language: String,
     last_tick: Option<std::time::Instant>,
+    /// The game's units, factions, weather files... for the pickers (kept across scenes).
+    pub lists: std::sync::Arc<GameLists>,
+    filters: Filters,
+    /// Adding a unit: the army chosen, the unit picked, whether every unit is offered.
+    add_army: usize,
+    add_unit: Option<String>,
+    all_units: bool,
+    /// A unit waiting for a click on the Layout: (unit key, army).
+    pub placing: Option<(String, usize)>,
+    /// A unit being dragged on the Layout: its start when the drag began.
+    drag_unit: Option<(u32, [f32; 2])>,
+    /// The scenes of the projects folder (for Open), and what the start buttons asked for.
+    pub scenes: Vec<String>,
+    pub request: Option<SceneRequest>,
+    new_scene_name: String,
+}
+
+/// What the start buttons ask the tool for.
+#[derive(Clone, Debug)]
+pub enum SceneRequest {
+    New(String),
+    Open(String),
 }
 
 /// Applies `f` to a copy of the project and pushes it as an edit called `name`.
@@ -70,8 +92,26 @@ impl SceneUi {
     }
 
     pub fn reset(&mut self) {
-        let speeds = std::mem::take(&mut self.speeds);
-        *self = Self { speeds, ..Self::default() };
+        let (speeds, lists, scenes) = (std::mem::take(&mut self.speeds), self.lists.clone(), std::mem::take(&mut self.scenes));
+        *self = Self { speeds, lists, scenes, ..Self::default() };
+    }
+
+    /// No scene open: name a new one, or open one of the projects folder's.
+    pub fn start_buttons(&mut self) {
+        gui::set_next_item_width(-110.0);
+        let enter = gui::input_text("##newscene", Some("new scene's name"), &mut self.new_scene_name, 64, gui::INPUT_ENTER_RETURNS_TRUE);
+        gui::same_line();
+        if (gui::button("New scene") || enter) && !self.new_scene_name.trim().is_empty() {
+            self.request = Some(SceneRequest::New(self.new_scene_name.trim().to_owned()));
+            self.new_scene_name.clear();
+        }
+        let items: Vec<crate::pickers::Item> =
+            self.scenes.iter().map(|s| crate::pickers::Item { key: s.clone(), name: s.clone() }).collect();
+        if let Some(k) =
+            picker(&mut self.filters, "openscene", if items.is_empty() { "No saved scenes" } else { "Open a scene..." }, &items, -1.0)
+        {
+            self.request = Some(SceneRequest::Open(k));
+        }
     }
 
     pub fn current_clip<'a>(&mut self, p: &'a Project) -> Option<&'a Clip> {
@@ -113,7 +153,7 @@ impl SceneUi {
             return;
         }
         let Some(p) = scene_doc(e).map(|d| d.project().clone()) else {
-            gui::text_disabled("File > New cinematic scene");
+            self.start_buttons();
             gui::end();
             return;
         };
@@ -121,38 +161,61 @@ impl SceneUi {
             let mut b = p.battle.clone();
             let mut m = p.map.clone();
             let mut changed = false;
-            changed |= text_row("Key", &mut b.key, "The battles row's key and the script folder");
-            changed |= text_row("Campaign map", &mut m.campaign_map, "The campaign map whose battle tiles the battle uses");
+            changed |= text_row("Name", &mut b.key, "The battle's key: its script folder and menu entry");
+            gui::row("Battle map");
+            if let Some(k) = picker(&mut self.filters, "map", &m.campaign_map, &self.lists.battle_maps, -1.0) {
+                m.campaign_map = k;
+                changed = true;
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The map whose battle tiles the battle is fought on (a campaign map: the position below picks where)");
+            }
             let mut pos = m.position;
             gui::row("Map position");
+            gui::set_next_item_width(-1.0);
             if gui::drag_float2("##mappos", &mut pos, 0.0005, "%.4f") {
                 m.position = [pos[0].clamp(0.0, 1.0), pos[1].clamp(0.0, 1.0)];
                 changed = true;
             }
             if gui::is_item_hovered() {
-                gui::set_tooltip("tile_map_position: 0 to 1 across the campaign map");
+                gui::set_tooltip("Where on that map, 0 to 1 across and down");
             }
-            changed |= float_row("Playable area", &mut m.playable_area, 10.0, "Metres");
+            gui::row("Weather");
+            let shown = b.environment.replace('\\', "/").to_lowercase();
+            let shown = shown.rsplit('/').next().unwrap_or("").trim_end_matches(".environment").to_owned();
+            if let Some(k) =
+                picker(&mut self.filters, "env", if shown.is_empty() { "Pick a weather" } else { &shown }, &self.lists.environments, -1.0)
+            {
+                b.environment = k;
+                changed = true;
+            }
+            changed |= choice_row("Season", &mut b.season, &["Spring", "Summer", "Autumn", "Winter"]);
+            changed |= choice_row("Time of day", &mut b.time_of_day, &["day", "night"]);
+            changed |= choice_row("Rain / snow", &mut b.precipitation, &["dry", "rain", "snow"]);
             let mut year = b.year;
             gui::row("Year");
+            gui::set_next_item_width(-1.0);
             if gui::input_int("##year", &mut year) {
                 b.year = year;
                 changed = true;
             }
-            changed |= text_row("Season", &mut b.season, "Summer, Winter...");
-            changed |= text_row("Time of day", &mut b.time_of_day, "day, night...");
-            changed |= text_row("Precipitation", &mut b.precipitation, "dry, rain, snow...");
-            changed |= text_row("Environment", &mut b.environment, "The weather file the battle starts with");
-            let mut menu = [b.menu_position[0], b.menu_position[1]];
-            gui::row("Menu position");
-            if gui::drag_int_range("##menux", &mut menu[0], 1.0, 0, 4096, "x %d") {
-                b.menu_position[0] = menu[0];
-                changed = true;
-            }
-            gui::same_line();
-            if gui::drag_int_range("##menuy", &mut menu[1], 1.0, 0, 4096, "y %d") {
-                b.menu_position[1] = menu[1];
-                changed = true;
+            if gui::tree_node("More") {
+                changed |= float_row("Playable area", &mut m.playable_area, 10.0, "The battlefield's side, metres");
+                let mut menu = [b.menu_position[0], b.menu_position[1]];
+                gui::row("Menu position");
+                if gui::drag_int_range("##menux", &mut menu[0], 1.0, 0, 4096, "x %d") {
+                    b.menu_position[0] = menu[0];
+                    changed = true;
+                }
+                gui::same_line();
+                if gui::drag_int_range("##menuy", &mut menu[1], 1.0, 0, 4096, "y %d") {
+                    b.menu_position[1] = menu[1];
+                    changed = true;
+                }
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Where the battle sits on the Historical Battles map, pixels");
+                }
+                gui::tree_pop();
             }
             if changed {
                 edit(e, "battle setup", |p| {
@@ -164,23 +227,21 @@ impl SceneUi {
         if gui::collapsing_header("Armies", gui::TREE_DEFAULT_OPEN) {
             for (i, a) in p.armies.iter().enumerate() {
                 gui::push_id_int(i as i32);
-                let mut faction = a.faction.clone();
-                let mut alliance = a.alliance as i32;
-                gui::set_next_item_width(200.0);
-                let f = gui::input_text("##faction", Some("faction key"), &mut faction, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+                let name = self.lists.faction_name(&a.faction);
+                if let Some(k) = picker(&mut self.filters, &format!("faction{i}"), &name, &self.lists.factions, 190.0) {
+                    edit(e, "army faction", |p| p.armies[i].faction = k);
+                }
                 gui::same_line();
-                gui::set_next_item_width(60.0);
-                let al = gui::drag_int_range("##alliance", &mut alliance, 0.05, 0, 7, "side %d");
+                let mut side = a.alliance.min(3) as i32;
+                gui::set_next_item_width(70.0);
+                if gui::combo("##side", &mut side, &["Side 1", "Side 2", "Side 3", "Side 4"]) {
+                    edit(e, "army side", |p| p.armies[i].alliance = side as u32);
+                }
                 gui::same_line();
-                let player = gui::radio_button("Player", a.player);
-                if f || al || player {
-                    edit(e, "army", |p| {
-                        p.armies[i].faction = faction;
-                        p.armies[i].alliance = alliance.max(0) as u32;
-                        if player {
-                            for (k, x) in p.armies.iter_mut().enumerate() {
-                                x.player = k == i;
-                            }
+                if gui::radio_button("Player", a.player) {
+                    edit(e, "player army", |p| {
+                        for (k, x) in p.armies.iter_mut().enumerate() {
+                            x.player = k == i;
                         }
                     });
                 }
@@ -188,10 +249,11 @@ impl SceneUi {
             }
             if gui::small_button("Add army") {
                 edit(e, "add army", |p| {
+                    let n = p.armies.len() as f32;
                     p.armies.push(Army {
                         alliance: 1,
-                        faction: "att_fact_huns".into(),
-                        deployment_centre: [0.0, 300.0],
+                        faction: "att_fact_hunni".into(),
+                        deployment_centre: [300.0 * (n - 1.0), 368.0],
                         deployment_size: [600.0, 300.0],
                         deployment_orientation: std::f32::consts::PI,
                         player: false,
@@ -200,69 +262,94 @@ impl SceneUi {
             }
         }
         if gui::collapsing_header("Units", gui::TREE_DEFAULT_OPEN) {
-            gui::set_next_item_width(-80.0);
-            gui::input_text("##newunit", Some("main_units key"), &mut self.new_unit, 128, 0);
+            // Adding: the army, then one of its faction's units (or any unit), then Place (click the Layout) or Add (in its zone).
+            let armies: Vec<String> = p.armies.iter().map(|a| self.lists.faction_name(&a.faction)).collect();
+            let army_refs: Vec<&str> = armies.iter().map(String::as_str).collect();
+            let mut army = self.add_army.min(p.armies.len().saturating_sub(1)) as i32;
+            gui::set_next_item_width(-1.0);
+            if gui::combo("##addarmy", &mut army, &army_refs) {
+                self.add_army = army as usize;
+                self.add_unit = None;
+            }
+            let faction = p.armies.get(army as usize).map(|a| a.faction.clone()).unwrap_or_default();
+            let own = self.lists.units_of_faction.get(&faction);
+            let choices: Vec<crate::pickers::Item> = match own {
+                Some(set) if !self.all_units => self.lists.units.iter().filter(|i| set.contains(&i.key)).cloned().collect(),
+                _ => self.lists.units.clone(),
+            };
+            let shown = self.add_unit.as_deref().map_or_else(|| "Pick a unit".to_owned(), |k| self.lists.unit_name(k));
+            if let Some(k) = picker(&mut self.filters, "addunit", &shown, &choices, -110.0) {
+                self.add_unit = Some(k);
+            }
             gui::same_line();
-            if gui::button("Add") && !self.new_unit.trim().is_empty() {
-                let key = self.new_unit.trim().to_owned();
-                let army = self.unit.and_then(|u| p.unit(u)).map_or(0, |u| u.army);
-                let mut new_id = 0;
-                edit(e, "add unit", |p| {
-                    let id = p.new_id();
-                    let a = &p.armies[army.min(p.armies.len().saturating_sub(1))];
-                    let n = p.units.iter().filter(|u| u.army == army).count() as f32;
-                    p.units.push(SceneUnit {
-                        id,
-                        name: key.clone(),
-                        unit: key.clone(),
-                        army,
-                        start: [a.deployment_centre[0] - 150.0 + 35.0 * (n % 9.0), a.deployment_centre[1] - 20.0 * (n / 9.0).floor()],
-                        facing: a.deployment_orientation,
-                        width: 30.0,
-                        men: 160,
-                        seed: id,
-                        general: false,
-                    });
-                    new_id = id;
-                });
-                self.unit = Some(new_id);
-            }
+            gui::checkbox("All##allunits", &mut self.all_units);
             if gui::is_item_hovered() {
-                gui::set_tooltip("Adds the unit to the selected unit's army (the first army when none)");
+                gui::set_tooltip("Every unit, not only the ones this army's faction fields");
             }
+            gui::begin_disabled(self.add_unit.is_none());
+            let placing = self.placing.is_some();
+            if gui::button(if placing { "Click the Layout..." } else { "Place" }) {
+                self.placing = if placing { None } else { self.add_unit.clone().map(|k| (k, army as usize)) };
+                gui::select_dock_tab("Layout");
+            }
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Then click the Layout where the unit stands (Esc: cancel)");
+            }
+            gui::same_line();
+            if gui::button("Add in its zone")
+                && let Some(k) = self.add_unit.clone()
+            {
+                self.unit = Some(add_unit(e, &self.lists, &k, army as usize, None));
+            }
+            gui::end_disabled();
+            gui::separator();
             for u in &p.units {
-                let label = format!("{} #{}  ({})##u{}", u.name, u.id, army_name(&p, u.army), u.id);
+                let label = format!("{}  ·  {}##u{}", u.name, armies.get(u.army).map_or("?", String::as_str), u.id);
                 if gui::selectable(&label, self.unit == Some(u.id), 0) {
                     self.unit = Some(u.id);
                 }
+            }
+            if p.units.is_empty() {
+                gui::text_disabled("No units yet");
             }
             if let Some(u) = self.unit.and_then(|id| p.unit(id)).cloned() {
                 gui::separator_text("Selected unit");
                 let mut v = u.clone();
                 let mut changed = false;
                 changed |= text_row("Name", &mut v.name, "The unit's name in the editor");
-                changed |= text_row("Unit", &mut v.unit, "main_units key");
-                let mut army = v.army as i32;
+                gui::row("Unit");
+                if let Some(k) = picker(&mut self.filters, "unitkind", &self.lists.unit_name(&v.unit), &self.lists.units, -1.0) {
+                    v.unit = k;
+                    changed = true;
+                }
+                let mut a = v.army as i32;
                 gui::row("Army");
-                if gui::drag_int_range("##army", &mut army, 0.05, 0, p.armies.len().saturating_sub(1) as i32, "%d") {
-                    v.army = army.max(0) as usize;
+                gui::set_next_item_width(-1.0);
+                if gui::combo("##army", &mut a, &army_refs) {
+                    v.army = a as usize;
                     changed = true;
                 }
                 gui::row("Start");
+                gui::set_next_item_width(-1.0);
                 changed |= gui::drag_float2("##start", &mut v.start, 0.5, "%.1f");
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Where it stands when the battle starts (drag it in the Layout)");
+                }
                 let mut deg = v.facing.to_degrees();
                 gui::row("Facing");
-                if gui::drag_float("##facing", &mut deg, 1.0, -360.0, 360.0, "%.0f deg") {
+                gui::set_next_item_width(-1.0);
+                if gui::slider_float("##facing", &mut deg, -180.0, 180.0, "%.0f deg") {
                     v.facing = deg.to_radians();
                     changed = true;
                 }
-                changed |= float_row("Width", &mut v.width, 0.5, "Formation width, metres");
                 let mut men = v.men as i32;
                 gui::row("Men");
+                gui::set_next_item_width(-1.0);
                 if gui::drag_int_range("##men", &mut men, 1.0, 1, 1000, "%d") {
                     v.men = men.max(1) as u32;
                     changed = true;
                 }
+                changed |= float_row("Width", &mut v.width, 0.5, "Formation width, metres");
                 gui::row("General");
                 changed |= gui::checkbox("##general", &mut v.general);
                 if changed {
@@ -334,7 +421,7 @@ impl SceneUi {
             return;
         }
         let Some(p) = scene_doc(e).map(|d| d.project().clone()) else {
-            gui::text_disabled("No scene");
+            self.start_buttons();
             gui::end();
             return;
         };
@@ -409,7 +496,6 @@ impl SceneUi {
         if gui::is_item_hovered() {
             gui::set_tooltip("Motion blur in this clip's movie (4 sub-frames a frame, 180 degree shutter; not a game effect)");
         }
-        gui::same_line();
         if gui::button(if self.playing { icons::PAUSE } else { icons::PLAY }) {
             if !self.playing && self.time >= clip.length {
                 self.time = 0.0;
@@ -732,7 +818,20 @@ impl SceneUi {
                 "actions" => {
                     if let Some(c) = actions.get_mut(k.index) {
                         time_row!(c.t);
-                        changed |= text_row("Slot", &mut c.slot, "STAND, ATTACK_1, CELEBRATE, TAUNT, DIE... AUTO: back to the movement");
+                        gui::row("Animation");
+                        if let Some(k) = picker(
+                            &mut self.filters,
+                            "slot",
+                            if c.slot.is_empty() { "Pick..." } else { &c.slot },
+                            &crate::pickers::items_of(crate::pickers::SLOTS),
+                            -1.0,
+                        ) {
+                            c.slot = k;
+                            changed = true;
+                        }
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("The animation the whole unit plays from here; AUTO: back to walking / standing as it moves");
+                        }
                     }
                 }
                 "men" => {
@@ -757,14 +856,40 @@ impl SceneUi {
             TrackContent::Sound { events } => {
                 if let Some(c) = events.get_mut(k.index) {
                     time_row!(c.t);
-                    changed |= text_row("Event", &mut c.event, "A Wwise event's name");
+                    gui::row("Sound");
+                    if let Some(k) = picker(
+                        &mut self.filters,
+                        "sound",
+                        if c.event.is_empty() { "Pick..." } else { &c.event },
+                        &self.lists.sound_events,
+                        -1.0,
+                    ) {
+                        c.event = k;
+                        changed = true;
+                    }
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("A sound event of the game's banks");
+                    }
                     changed |= float_row("Volume", &mut c.volume, 0.01, "0 to 2");
                 }
             }
             TrackContent::Music { cues } => {
                 if let Some(c) = cues.get_mut(k.index) {
                     time_row!(c.t);
-                    changed |= text_row("Event", &mut c.event, "A music event's name");
+                    gui::row("Music");
+                    if let Some(k) = picker(
+                        &mut self.filters,
+                        "music",
+                        if c.event.is_empty() { "Pick..." } else { &c.event },
+                        &self.lists.music_events,
+                        -1.0,
+                    ) {
+                        c.event = k;
+                        changed = true;
+                    }
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("A music event of the game's banks");
+                    }
                     changed |= float_row("Fade in", &mut c.fade_in, 0.05, "Seconds");
                     changed |= float_row("Fade out", &mut c.fade_out, 0.05, "Seconds");
                     let mut stop = c.stop.unwrap_or(clip.length) as f32;
@@ -816,7 +941,20 @@ impl SceneUi {
             TrackContent::Weather { keys } => {
                 if let Some(c) = keys.get_mut(k.index) {
                     time_row!(c.t);
-                    changed |= text_row("Environment", &mut c.environment, "A weather file");
+                    gui::row("Weather");
+                    if let Some(k) = picker(
+                        &mut self.filters,
+                        "weather",
+                        if c.environment.is_empty() { "Pick..." } else { &c.environment },
+                        &self.lists.environments,
+                        -1.0,
+                    ) {
+                        c.environment = k;
+                        changed = true;
+                    }
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("The weather from this key; it blends into the next key's");
+                    }
                     changed |= interp_row(&mut c.interp);
                 }
             }
@@ -829,7 +967,16 @@ impl SceneUi {
                         c.end = end as f64;
                         changed = true;
                     }
-                    changed |= text_row("VFX", &mut c.vfx, "A vfx definition's key");
+                    gui::row("Effect");
+                    if let Some(k) =
+                        picker(&mut self.filters, "vfx", if c.vfx.is_empty() { "Pick..." } else { &c.vfx }, &self.lists.vfx, -1.0)
+                    {
+                        c.vfx = k;
+                        changed = true;
+                    }
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("A visual effect of the game's vfx folder");
+                    }
                     gui::row("Position");
                     changed |= gui::drag_float3("##pos", &mut c.position, 0.5, "%.1f");
                     changed |= float_row("Scale", &mut c.scale, 0.01, "Size");
@@ -867,13 +1014,16 @@ impl SceneUi {
             return;
         }
         let Some(p) = scene_doc(e).map(|d| d.project().clone()) else {
+            self.start_buttons();
             gui::end();
             return;
         };
         let frame = self.frame(&p);
         let size = gui::content_region_avail();
         let origin = gui::cursor_screen_pos();
-        let (centre, mpp) = *self.view.get_or_insert(([0.0, 0.0], 2.0));
+        // First look: the player's deployment zone, close enough to tell the units apart.
+        let home = p.armies.iter().find(|a| a.player).or(p.armies.first()).map_or([0.0, 0.0], |a| a.deployment_centre);
+        let (centre, mpp) = *self.view.get_or_insert((home, 0.8));
         let to_s = |w: [f32; 2]| v2(origin.x + size.x * 0.5 + (w[0] - centre[0]) / mpp, origin.y + size.y * 0.5 - (w[1] - centre[1]) / mpp);
         let to_w = |s: gui::Vec2| [centre[0] + (s.x - origin.x - size.x * 0.5) * mpp, centre[1] - (s.y - origin.y - size.y * 0.5) * mpp];
         let draw = gui::window_draw_list();
@@ -963,9 +1113,53 @@ impl SceneUi {
                 v.0[1] += d.y * mpp;
             }
             let w = to_w(gui::mouse_pos());
-            gui::set_tooltip(&format!("x {:.1}  z {:.1}", w[0], w[1]));
+            // The unit under the mouse, by name.
+            let under = frame.as_ref().and_then(|f| {
+                f.units
+                    .iter()
+                    .filter_map(|s| p.unit(s.unit).map(|u| (u, ((s.position[0] - w[0]).powi(2) + (s.position[1] - w[1]).powi(2)).sqrt())))
+                    .filter(|(u, d)| *d <= u.width * 0.6 + 4.0 * mpp)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(u, _)| u.name.clone())
+            });
+            if self.placing.is_none() {
+                gui::set_tooltip(&match under {
+                    Some(n) => format!("{n}  ·  drag to move, Ctrl+click: a path key at the playhead"),
+                    None => format!("x {:.0}  z {:.0}  ·  right-drag: pan, wheel: zoom", w[0], w[1]),
+                });
+            }
         }
-        if gui::is_item_clicked() {
+        if self.placing.is_some() && gui::is_key_pressed(gui::KEY_ESCAPE, false) {
+            self.placing = None;
+        }
+        // Dragging the selected unit moves where it starts; kept when the mouse is released.
+        if let Some((id, from)) = self.drag_unit {
+            if gui::is_mouse_down(0) {
+                let w = to_w(gui::mouse_pos());
+                let draw = gui::window_draw_list();
+                draw.circle_filled(to_s(w), 6.0, gui::col32(255, 230, 120, 200));
+                draw.line(to_s(from), to_s(w), gui::col32(255, 230, 120, 200), 1.5);
+            } else {
+                let w = to_w(gui::mouse_pos());
+                self.drag_unit = None;
+                if (w[0] - from[0]).abs() + (w[1] - from[1]).abs() > 0.5 {
+                    edit(e, "move unit", |p| {
+                        if let Some(u) = p.units.iter_mut().find(|u| u.id == id) {
+                            u.start = w;
+                        }
+                    });
+                }
+            }
+        }
+        if hovered && self.placing.is_some() {
+            gui::set_tooltip("Click where the unit stands (Esc: cancel)");
+        }
+        if gui::is_item_clicked()
+            && let Some((key, army)) = self.placing.take()
+        {
+            let w = to_w(gui::mouse_pos());
+            self.unit = Some(add_unit(e, &self.lists, &key, army, Some(w)));
+        } else if gui::is_item_clicked() {
             let w = to_w(gui::mouse_pos());
             let ctrl = gui::is_key_down(gui::MOD_CTRL);
             if ctrl && let (Some(u), Some(clip)) = (self.unit, self.clip) {
@@ -997,14 +1191,12 @@ impl SceneUi {
                     .filter(|(u, d)| *d <= u.width * 0.6 + 4.0 * mpp)
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(u, _)| u.id);
+                // Held: a drag that moves it.
+                self.drag_unit = self.unit.and_then(|id| p.unit(id)).map(|u| (u.id, u.start));
             }
         }
         gui::end();
     }
-}
-
-fn army_name(p: &Project, i: usize) -> String {
-    p.armies.get(i).map_or("?".into(), |a| format!("side {} {}", a.alliance, a.faction))
 }
 
 fn text_row(label: &str, v: &mut String, tip: &str) -> bool {
@@ -1152,4 +1344,47 @@ fn remove_key(c: &mut TrackContent, list: &str, i: usize) {
         (TrackContent::DepthOfField { keys }, _) => rm(keys, i),
         (TrackContent::Weather { keys }, _) => rm(keys, i),
     }
+}
+
+/// A row choosing one of a few fixed values (the value as written in the game's files).
+fn choice_row(label: &str, v: &mut String, options: &[&str]) -> bool {
+    gui::row(label);
+    let mut i = options.iter().position(|o| o.eq_ignore_ascii_case(v)).map_or(-1, |i| i as i32);
+    gui::set_next_item_width(-1.0);
+    let mut shown: Vec<&str> = options.to_vec();
+    if i < 0 {
+        shown.push(v.as_str());
+        i = shown.len() as i32 - 1;
+    }
+    if gui::combo(&format!("##{label}"), &mut i, &shown) && (i as usize) < options.len() {
+        *v = options[i as usize].to_owned();
+        return true;
+    }
+    false
+}
+
+/// Adds a unit of `key` to `army`: at `at`, else in a row of the army's deployment zone. Returns its id.
+pub fn add_unit(e: &mut Editor, lists: &GameLists, key: &str, army: usize, at: Option<[f32; 2]>) -> u32 {
+    let name = lists.unit_name(key);
+    let mut made = 0;
+    edit(e, "add unit", |p| {
+        let id = p.new_id();
+        let a = p.armies[army.min(p.armies.len().saturating_sub(1))].clone();
+        let n = p.units.iter().filter(|u| u.army == army).count() as f32;
+        let start = at.unwrap_or([a.deployment_centre[0] - 150.0 + 35.0 * (n % 9.0), a.deployment_centre[1] - 20.0 * (n / 9.0).floor()]);
+        p.units.push(SceneUnit {
+            id,
+            name,
+            unit: key.to_owned(),
+            army,
+            start,
+            facing: a.deployment_orientation,
+            width: 30.0,
+            men: 160,
+            seed: id,
+            general: false,
+        });
+        made = id;
+    });
+    made
 }
