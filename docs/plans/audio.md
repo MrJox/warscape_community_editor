@@ -398,6 +398,24 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
    progress bar, as is common now; seek by clicking it; the bar reset when the sound ends; play / pause / stop, loop, volume;
    waveforms next to sounds in the trees; overall polish of the Audio tool's panels (icons, colours, spacing). **todo**
 
+## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)
+
+- Music: the music switches decide on `music_culture` (Barbarian, Roman, arabic, hunnic), `game_mode`, `campaign_music_state`
+  (standard, prebattle), `battle_intensity`, `battle_state`, `battle_result_state`, `music_key`, `Music_Dynamic` (battle events:
+  charges, routs, generals killed...). No DB column sets a music culture (no table has a music column but unit musicians): the
+  game's code sets `music_culture`, so a new culture value in the banks would never be chosen. Battle scripts can take over:
+  `bm:set_music_auto_playback(false)`, `bm:play_music(event)`, `stop_music`, `cutscene:set_music`. No campaign script uses music
+  or sound, and the toolkit's API list has no such call.
+- Campaign character voices: 49 dialogue events decide on `vo_campaign_character` (Cha1, Cha2, Dig1 to Dig4, Gen1Land,
+  Gen1Naval, Gen2Land, Gen2Naval, Spy1, Spy2), `vo_campaign_culture` and `vo_campaign_subculture`; all 1,819 leaves are random
+  containers of 1 to 10 lines (median 5): more lines per actor is `add_variation`. Which actor a character gets is the game's
+  code: no DB column links characters or agents to a voice (`agent_voice_events_junctions`, `unit_voice_events_junctions`,
+  `voice_events` are empty in vanilla; `voice_types` holds generic, is_commanding_officer, is_hero).
+- Battle unit voices: `main_units.voiceover` (7 values) and `subculture_religion_voiceover_junctions` (by DB) choose the
+  `vo_battle_subculture` value; `land_units.selected_vo_secondary` / `_tertiary` choose selection lines.
+- Open leads: how the engine sets `music_culture` and `vo_campaign_character` (a spike in `empire.retail.dll`: the strings and
+  their callers); whether the empty voice junction tables are still read by the engine (a test pack with rows).
+
 ## Open questions and risks
 
 - Attila's Wwise runtime plays our aoTuV-encoded Vorbis WEMs (step 1.4.8, a streamed WEM replaced by a mod pack). Not yet tested:
