@@ -50,6 +50,11 @@ pub const CHUNK: i32 = 8;
 /// Chunks a side of a block ([`Lod::Block`], [`Lod::Merged`]).
 pub const BLOCK: i32 = 8;
 
+/// The largest distant square ([`Lod::Distant`], blocks a side) that keeps its custom-mesh tiles (the cliffs; casting no shadow).
+/// Further, their cells are sea bed, a cell or two at hundreds of cells off: capture A's camera spent 13 ms a frame on the whole
+/// map's cliffs once the far ring reached the far plane (7.7 ms without them, 10.1 ms with the 2 x 2 squares'; F1's coasts unchanged).
+const DISTANT_CUSTOM: i32 = 2;
+
 /// How far a block's blend box reaches past its heights (scene units).
 const BLOCK_BOX: f64 = 500.0;
 
@@ -1405,8 +1410,10 @@ impl Frame {
     /// and the LF's rectangles were hundreds. The grid holds what a tile's own does, the heights over the LF (the shader adds it): a tile's
     /// where `paint` opens the tiles, none where it doesn't. The sea tiles' and the uncovered cells' stand at the sea bed, which is off the
     /// land's LF (`on_sea`), so the one grid takes them in too; what the sea leaves of the bed is not seen from where a block is drawn. A
-    /// custom-mesh tile keeps its mesh. Every cell is drawn by the block it is in, whichever chunk owns its tile.
-    fn build_block(&self, key: ChunkKey, paint: bool, source: &BlockSource) -> Vec<(Float4x4, Payload)> {
+    /// custom-mesh tile keeps its mesh. Every cell is drawn by the block it is in, whichever chunk owns its tile. `blocks` blocks a side:
+    /// more than one is a distant square ([`Lod::Distant`]): as many times coarser (a vertex every `blocks` cells, `4 / blocks` colour
+    /// texels a cell) and no shadow.
+    fn build_block(&self, key: ChunkKey, paint: bool, source: &BlockSource, blocks: i32) -> Vec<(Float4x4, Payload)> {
         #[derive(Clone, Copy, PartialEq)]
         enum Cell {
             Land,
@@ -1415,7 +1422,7 @@ impl Frame {
         }
 
         let (w, h) = (self.map.width as i32, self.map.height as i32);
-        let side = BLOCK * CHUNK;
+        let side = blocks * BLOCK * CHUNK;
         let area = [key.0 * CHUNK, key.1 * CHUNK, (key.0 * CHUNK + side).min(w), (key.1 * CHUNK + side).min(h)];
         let (aw, ah) = (area[2] - area[0], area[3] - area[1]);
         let mut cells: Vec<Cell> = (0..aw * ah)
@@ -1434,8 +1441,8 @@ impl Frame {
         let mut out = vec![];
         let mut tiles: HashMap<usize, (Arc<Template>, Affine2)> = HashMap::new();
         let back = (self.reach + CHUNK - 1) / CHUNK;
-        for cy in key.1 - back..key.1 + BLOCK {
-            for cx in key.0 - back..key.0 + BLOCK {
+        for cy in key.1 - back..key.1 + blocks * BLOCK {
+            for cx in key.0 - back..key.0 + blocks * BLOCK {
                 for &i in self.by_chunk.get(&(cx, cy)).map_or(&[][..], Vec::as_slice) {
                     let p = &self.map.placements[i];
                     let r = p.rect();
@@ -1448,8 +1455,16 @@ impl Frame {
                         let mine = cx >= key.0 && cy >= key.1;
                         match (source.template)(i) {
                             Some(t) => {
-                                if mine {
+                                if mine && blocks <= DISTANT_CUSTOM {
+                                    let first = out.len();
                                     self.place(i, &t, Lod::Far, &mut out);
+                                    if blocks > 1 {
+                                        for (_, p) in &mut out[first..] {
+                                            if let Payload::Terrain(t) = p {
+                                                t.no_shadow = true;
+                                            }
+                                        }
+                                    }
                                 }
 
                                 Cell::Sea
@@ -1506,12 +1521,16 @@ impl Frame {
         // square): main_attila's land south of the islands west of Rome stood as flats over their sea tiles.
         let bed = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
         let k = self.z_stretch;
-        let (fw, fh) = (((b[2] - b[0]) / (CELL / 2.0)).round() as i32 + 1, ((b[3] - b[1]) / k / (CELL / 2.0)).round() as i32 + 1);
+        // The fine samples' spacing (half the grid's), and as many as cover the block with every other one a vertex: odd counts (a
+        // distant block cut by the map's edge can be an odd number of cells, a grid a vertex short; its last row reaches past the edge).
+        let s = CELL / 2.0 * f64::from(blocks);
+        let (fw, fh) =
+            (((b[2] - b[0]) / (2.0 * s) - 1e-6).ceil() as i32 * 2 + 1, ((b[3] - b[1]) / k / (2.0 * s) - 1e-6).ceil() as i32 * 2 + 1);
         let mut grid = Vec::with_capacity((fw / 2 + 1) as usize * (fh / 2 + 1) as usize);
         let mut relief = vec![0.0f32; (fw * fh) as usize];
         for j in 0..fh {
             for i in 0..fw {
-                let (x, z) = (b[0] + f64::from(i) * CELL / 2.0, b[1] + f64::from(j) * CELL / 2.0 * k);
+                let (x, z) = (b[0] + f64::from(i) * s, b[1] + f64::from(j) * s * k);
                 let (at, _, cell) = cell_at(x, z);
                 let own = match cell {
                     Cell::Tile(k) => {
@@ -1536,7 +1555,8 @@ impl Frame {
         let (lo, hi) = grid.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
 
         // The colour.
-        let (tw, th) = (((fw - 1) * BLOCK_TEXELS / 2) as usize, ((fh - 1) * BLOCK_TEXELS / 2) as usize);
+        let texels = f64::from(BLOCK_TEXELS) / f64::from(blocks);
+        let (tw, th) = ((f64::from(fw - 1) * s / CELL * texels).round() as usize, (f64::from(fh - 1) * s / CELL * texels).round() as usize);
         let mut colour = vec![255u8; tw * th * 4];
         for (j, row) in colour.chunks_exact_mut(tw * 4).enumerate() {
             for (i, texel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
@@ -1570,7 +1590,7 @@ impl Frame {
         m.blend = TerrainImage { w: tw as u32, h: th as u32, rgba: Some(Arc::new(colour)) };
         m.index = TerrainImage::default();
         m.alpha = TerrainImage::default();
-        m.normal = terrain_normal_image(&relief, fw, fh, CELL / 2.0, CELL / 2.0, fw as u32, fh as u32);
+        m.normal = terrain_normal_image(&relief, fw, fh, s, s, fw as u32, fh as u32);
         m.diffuse = Default::default();
         m.normal_tex = Default::default();
         (m.x0, m.z0, m.x1, m.z1) = (-FAR_MARGIN, -FAR_MARGIN, gw + FAR_MARGIN, gh + FAR_MARGIN);
@@ -1582,7 +1602,7 @@ impl Frame {
         // A skirt, as a tile's: two blocks read different tiles along their shared edge, and the gap between them showed as a line. No level
         // of detail: at a vertex a cell it is coarse already, the shader takes the LF at the vertices, and two blocks at different strides
         // parted by far more than a skirt closes (black lines, block-wide, in the distance).
-        let g = Grid { nx, nz, ox: 0.0, oz: 0.0, step: CELL as f32, heights: Arc::new(grid) }.skirted();
+        let g = Grid { nx, nz, ox: 0.0, oz: 0.0, step: (2.0 * s) as f32, heights: Arc::new(grid) }.skirted();
         let t = Terrain {
             nx: g.nx,
             nz: g.nz,
@@ -1595,6 +1615,7 @@ impl Frame {
             material: Some(Arc::new(m)),
             lf: self.lf.clone(),
             legacy: false,
+            no_shadow: blocks > 1,
             ..Default::default()
         };
         let mut world = Float4x4::IDENTITY;
@@ -1808,8 +1829,10 @@ impl Frame {
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its
     /// rectangle gets LF ground), and LF ground over its cells nobody covers. `is_custom` says whether a placement's tile is a custom-mesh one.
     pub fn build_chunk(&self, key: ChunkKey, lod: Lod, source: &BlockSource) -> Vec<(Float4x4, Payload)> {
-        if matches!(lod, Lod::Block | Lod::Merged) {
-            return self.build_block(key, lod == Lod::Merged, source);
+        match lod {
+            Lod::Block | Lod::Merged => return self.build_block(key, lod == Lod::Merged, source, 1),
+            Lod::Distant(n) => return self.build_block(key, false, source, 1 << n),
+            _ => {}
         }
 
         let mut out = self.chunk_levels(key, lod, source);

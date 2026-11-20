@@ -2609,7 +2609,8 @@ impl Renderer {
             return 0;
         };
 
-        let ents = self.terrain_surface_entities(scene);
+        let mut ents = self.terrain_surface_entities(scene);
+        ents.retain(|e| !matches!(&e.payload, wce_scene::render_scene::Payload::Terrain(t) if t.no_shadow));
         let ents = self.terrain_in_view(&ents, view_proj);
         let il = if rome2 {
             self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout())

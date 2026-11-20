@@ -57,14 +57,45 @@ pub enum Lod {
     /// A block with its tiles' heights and colours merged into that terrain: the ground ring where it can go by blocks, one draw where its
     /// tiles are dozens. It opens them, so a block shows as [`Lod::Block`] first.
     Merged,
+
+    /// The LF ground alone over a square of 2^n x 2^n blocks (n from 1 to [`DISTANT_LEVELS`]), as coarse as it is large and casting no
+    /// shadow (`Frame::build_block`): a square goes by one once it is further from the focus than its side. Towards a campaign map's
+    /// horizon, where the far ring reaches the game's far plane, the blocks were 731 terrains in every pass (capture A's camera: 7.4 to
+    /// 105 ms a frame).
+    Distant(u8),
 }
 
 impl Lod {
-    /// Whether it is a whole block.
+    /// Whether it is a whole block (or more).
     fn is_block(self) -> bool {
-        matches!(self, Self::Block | Self::Merged)
+        matches!(self, Self::Block | Self::Merged | Self::Distant(_))
+    }
+
+    /// Chunks a side of what it covers.
+    fn side(self) -> i32 {
+        match self {
+            Self::Block | Self::Merged => BLOCK,
+            Self::Distant(n) => BLOCK << n,
+            _ => 1,
+        }
+    }
+
+    /// Its place in the order: the levels by detail, the distant ones all last.
+    fn rank(self) -> usize {
+        match self {
+            Self::Near => 0,
+            Self::Mid => 1,
+            Self::Ground => 2,
+            Self::Far => 3,
+            Self::Block => 4,
+            Self::Merged => 5,
+            Self::Distant(_) => 6,
+        }
     }
 }
+
+/// The largest distant square: 2^n blocks a side ([`Lod::Distant`]).
+const DISTANT_LEVELS: u8 = 3;
 
 /// What changed on the scene's side.
 pub enum ChunkChange {
@@ -684,7 +715,6 @@ impl Streamer {
         let reach = f64::from(self.rings.into_iter().max().unwrap_or(0)) + SLACK;
         let (cw, ch) = f.chunks();
         let block_cells = BLOCK * CHUNK;
-        let span = |c: f64| ((c - reach) / f64::from(block_cells)).floor() as i32..=((c + reach) / f64::from(block_cells)).floor() as i32;
 
         // The distance from the focus to a square of cells.
         let distance = |x: i32, y: i32, size: i32| {
@@ -696,9 +726,50 @@ impl Streamer {
 
         let (start, ground) = (self.block_start(), f64::from(self.rings[2]));
         let mut want: HashMap<ChunkKey, (Lod, f64)> = HashMap::new();
+
+        // Squares of blocks, from the largest down: one goes by a distant piece once it is further than its side (and past the blocks'
+        // own rings); else its four quarters are looked at, down to the blocks, which go below.
+        let near_blocks = start.max(ground) + f64::from(block_cells);
+        let top = BLOCK << DISTANT_LEVELS;
+        let mut blocks = vec![];
+        let mut squares: Vec<(ChunkKey, u8)> = vec![];
+        let top_cells = f64::from(top * CHUNK);
+        let top_span = |c: f64| ((c - reach) / top_cells).floor() as i32..=((c + reach) / top_cells).floor() as i32;
+        for ty in top_span(fy).filter(|&y| y >= 0 && y * top < ch) {
+            for tx in top_span(fx).filter(|&x| x >= 0 && x * top < cw) {
+                squares.push(((tx * top, ty * top), DISTANT_LEVELS));
+            }
+        }
+
+        while let Some((key, n)) = squares.pop() {
+            if n == 0 {
+                blocks.push((key.0 / BLOCK, key.1 / BLOCK));
+                continue;
+            }
+
+            let side = (BLOCK << n) * CHUNK;
+            let d = distance(key.0 * CHUNK, key.1 * CHUNK, side);
+            let slack = if self.wanted.get(&key) == Some(&Lod::Distant(n)) { SLACK } else { 0.0 };
+            if d > f64::from(side).max(near_blocks) - slack {
+                if d <= reach {
+                    want.insert(key, (Lod::Distant(n), d));
+                }
+
+                continue;
+            }
+
+            let half = BLOCK << (n - 1);
+            for (qx, qy) in [(0, 0), (half, 0), (0, half), (half, half)] {
+                let q = (key.0 + qx, key.1 + qy);
+                if q.0 < cw && q.1 < ch {
+                    squares.push((q, n - 1));
+                }
+            }
+        }
+
         let mut zone = std::collections::HashSet::new();
-        for by in span(fy).filter(|&y| y >= 0 && y * BLOCK < ch) {
-            for bx in span(fx).filter(|&x| x >= 0 && x * BLOCK < cw) {
+        for (bx, by) in blocks {
+            {
                 // Past the rings a block is one piece; it stays one within the slack.
                 let key = (bx * BLOCK, by * BLOCK);
                 let d = distance(bx * block_cells, by * block_cells, block_cells);
@@ -706,7 +777,7 @@ impl Streamer {
                 let slack = if now.is_some_and(Lod::is_block) { SLACK } else { 0.0 };
                 if d > start - slack {
                     // Merged once it shows as LF ground: its tiles take a while, and until then there would be nothing there.
-                    let shows = self.shown.get(&key).copied().is_some_and(Lod::is_block);
+                    let shows = matches!(self.shown.get(&key), Some(Lod::Block | Lod::Merged));
                     let merged = shows && d <= ground + if now == Some(Lod::Merged) { SLACK } else { 0.0 };
                     if d <= reach {
                         want.insert(key, (if merged { Lod::Merged } else { Lod::Block }, d));
@@ -761,7 +832,7 @@ impl Streamer {
             q.retain(|j| want.get(&j.key).is_some_and(|(l, _)| *l == j.lod));
             for (&k, &(l, d)) in &want {
                 // Near before mid before ground before far, each by distance.
-                let order = f64::from(l as i32) * 1.0e6 + d;
+                let order = l.rank() as f64 * 1.0e6 + d;
                 if self.wanted.get(&k) == Some(&l) {
                     if let Some(j) = q.iter_mut().find(|j| j.key == k) {
                         j.order = order;
@@ -802,7 +873,7 @@ impl Streamer {
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
         self.wanted.retain(|&(cx, cy), l| {
-            let side = if l.is_block() { BLOCK - 1 } else { 0 };
+            let side = l.side() - 1;
             cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
         });
     }
@@ -814,7 +885,7 @@ impl Streamer {
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
         self.wanted.retain(|&(cx, cy), l| {
-            let side = if l.is_block() { BLOCK - 1 } else { 0 };
+            let side = l.side() - 1;
             !(l.is_block() || *l == Lod::Far) || cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
         });
     }
@@ -852,10 +923,10 @@ impl Streamer {
     }
 
     /// The chunks on the scene per level.
-    pub fn shown(&self) -> [usize; 6] {
-        let mut n = [0; 6];
+    pub fn shown(&self) -> [usize; 7] {
+        let mut n = [0; 7];
         for l in self.shown.values() {
-            n[*l as usize] += 1;
+            n[l.rank()] += 1;
         }
 
         n
@@ -865,10 +936,10 @@ impl Streamer {
     pub fn report(&self) -> String {
         let f = self.frame();
         let s = lock(&self.shared.stats);
-        let [near, mid, ground, far, blocks, merged] = self.shown();
+        let [near, mid, ground, far, blocks, merged, distant] = self.shown();
         let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };
         format!(
-            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {merged} merged blocks, {blocks} far blocks{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
+            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {merged} merged blocks, {blocks} far blocks, {distant} distant{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
             f.map.name,
             if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() },
             s.opened,

@@ -384,6 +384,9 @@ pub struct Terrain {
     /// Receiver only.
     pub casts_shadow: bool,
 
+    /// A material terrain that casts no shadow (a campaign map's distant blocks: hundreds of them, past where the cascades reach).
+    pub no_shadow: bool,
+
     /// Patches of 64 x 64 cells switch to coarser index buffers with distance.
     pub lod: bool,
 
@@ -474,6 +477,7 @@ impl Default for Terrain {
             diffuse: "terrain/textures/battle/default/grass/0_su_diffuse.dds".to_owned(),
             tile_metres: 8.0,
             casts_shadow: false,
+            no_shadow: false,
             lod: false,
             skin: None,
             material: None,
