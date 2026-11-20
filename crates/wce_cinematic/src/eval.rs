@@ -351,6 +351,112 @@ fn unit_on_path(id: u32, start: [f32; 2], start_facing: f32, path: &[PathKey], s
     state
 }
 
+/// The clip as a historical battle would play it (docs/plans/cinematic.md, "Battle gap"): what `battle_export` writes, run the way
+/// the engine runs it, roughly. A unit is teleported to its first path key, then each later key is an order given when its segment
+/// starts: the unit goes there in a straight line at its own walk or run speed (the export's choice) until it arrives or a newer
+/// order comes, so it can be late or early against its keys; a Hold segment teleports at its end. Animation slots other than a
+/// taunt, VFX and keyed weather are movie only: dropped. Men can only be fewer. The camera, sounds, music, subtitles, fades and
+/// depth of field are as keyed.
+pub fn evaluate_battle(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f64) -> SceneFrame {
+    let mut f = evaluate(project, clip, speeds, t);
+    f.vfx.clear();
+    f.weather = None;
+    for track in clip.tracks.iter().filter(|tr| !tr.muted) {
+        let TrackContent::Unit { unit, path, actions, men, .. } = &track.content else { continue };
+        let Some(su) = project.unit(*unit) else { continue };
+        let Some(state) = f.units.iter_mut().find(|s| s.unit == *unit) else { continue };
+        let sp = speeds.get(&su.unit).copied().unwrap_or_default();
+        let ordered = ordered_move(su.start, su.facing, path, sp, t.max(0.0));
+        state.position = ordered.position;
+        state.facing = ordered.facing;
+        state.speed = ordered.speed;
+        state.slot = ordered.slot.into();
+        state.slot_start = ordered.since;
+        state.slot_distance = ordered.covered;
+        if let Some(k) = actions.iter().rev().find(|k| k.t <= t)
+            && k.slot == "TAUNT"
+        {
+            state.slot = "TAUNT".into();
+            state.slot_start = k.t;
+            state.slot_distance = 0.0;
+        }
+        let mut alive = su.men;
+        for m in men.iter().filter(|m| m.t <= t) {
+            alive = alive.min(m.men);
+        }
+        state.men = alive;
+    }
+    f
+}
+
+struct Ordered {
+    position: [f32; 2],
+    facing: f32,
+    speed: f32,
+    slot: &'static str,
+    since: f64,
+    covered: f32,
+}
+
+/// A unit under orders: teleported to the first key, then sent to each next key when its segment starts (straight, at its gait's
+/// speed), stopping where it gets to.
+fn ordered_move(start: [f32; 2], start_facing: f32, path: &[PathKey], sp: Speeds, t: f64) -> Ordered {
+    let mut o = Ordered { position: start, facing: start_facing, speed: 0.0, slot: "STAND", since: 0.0, covered: 0.0 };
+    let Some(first) = path.first() else { return o };
+    o.position = first.position;
+    // Orders: (when, where to, speed; 0 = teleport at that time).
+    let mut orders: Vec<(f64, [f32; 2], f32, &'static str)> = vec![];
+    for w in path.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        if a.interp == Interp::Step || b.t <= a.t {
+            orders.push((b.t, b.position, 0.0, "STAND"));
+            continue;
+        }
+        let dist = ((b.position[0] - a.position[0]).powi(2) + (b.position[1] - a.position[1]).powi(2)).sqrt();
+        if dist < 0.01 {
+            continue;
+        }
+        let keyed = dist / (b.t - a.t) as f32;
+        let run = matches!(a.gait, Some(Gait::Run | Gait::Charge)) || (a.gait.is_none() && slot_for_speed(keyed, sp) != "WALK");
+        let (v, slot) = if run { (sp.run, "RUN") } else { (sp.walk, "WALK") };
+        orders.push((a.t, b.position, v.max(0.1), slot));
+    }
+    orders.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // From each order to the next (or to t), move towards its target.
+    for (i, &(when, target, v, slot)) in orders.iter().enumerate() {
+        if when > t {
+            break;
+        }
+        if v == 0.0 {
+            o.position = target;
+            (o.speed, o.slot, o.since, o.covered) = (0.0, "STAND", when, 0.0);
+            continue;
+        }
+        let until = orders.get(i + 1).map_or(t, |n| n.0.min(t));
+        let (dx, dz) = (target[0] - o.position[0], target[1] - o.position[1]);
+        let left = (dx * dx + dz * dz).sqrt();
+        if left < 1e-4 {
+            continue;
+        }
+        o.facing = dx.atan2(dz);
+        let step = (v as f64 * (until - when)) as f32;
+        if step >= left {
+            // Arrived on the way: standing since then.
+            o.position = target;
+            let arrived = when + (left / v) as f64;
+            (o.speed, o.slot, o.since, o.covered) = (0.0, "STAND", arrived, 0.0);
+        } else {
+            o.position = [o.position[0] + dx / left * step, o.position[1] + dz / left * step];
+            if o.slot != slot {
+                (o.since, o.covered) = (when, 0.0);
+            }
+            (o.speed, o.slot) = (v, slot);
+            o.covered += step;
+        }
+    }
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,5 +531,34 @@ mod tests {
         let (p, _) = project_with_unit();
         let text = p.to_json();
         assert_eq!(Project::from_json(&text).unwrap(), p);
+    }
+
+    #[test]
+    fn battle_orders_drift_from_keys() {
+        let (mut p, unit) = project_with_unit();
+        let clip_id = p.clips[0].id;
+        let track = p.new_id();
+        // 10 m in 10 s: a 1 m/s walk keyed; the unit walks at 1.6 m/s in battle, so it arrives at 6.25 s and stands.
+        let path = vec![
+            PathKey { t: 0.0, position: [0.0, 0.0], interp: Interp::Linear, gait: None },
+            PathKey { t: 10.0, position: [0.0, 10.0], interp: Interp::Linear, gait: None },
+        ];
+        p.clip_mut(clip_id).unwrap().tracks.push(Track {
+            id: track,
+            name: "u".into(),
+            muted: false,
+            content: TrackContent::Unit { unit, path, actions: vec![], men: vec![], visible: vec![] },
+        });
+        let clip = p.clip(clip_id).unwrap().clone();
+        let speeds = SpeedTable::new();
+        let keyed = evaluate(&p, &clip, &speeds, 5.0);
+        let battle = evaluate_battle(&p, &clip, &speeds, 5.0);
+        assert!((keyed.units[0].position[1] - 5.0).abs() < 1e-3);
+        assert!((battle.units[0].position[1] - 8.0).abs() < 1e-3, "{:?}", battle.units[0].position);
+        assert_eq!(battle.units[0].slot, "WALK");
+        let later = evaluate_battle(&p, &clip, &speeds, 8.0);
+        assert_eq!(later.units[0].position, [0.0, 10.0]);
+        assert_eq!(later.units[0].slot, "STAND");
+        assert!((later.units[0].slot_start - 6.25).abs() < 1e-6);
     }
 }

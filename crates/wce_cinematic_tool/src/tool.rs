@@ -45,6 +45,7 @@ enum Pending {
     TrackSelect(u32),
     CameraKey([f32; 3], [f32; 3], f32),
     Show(String),
+    BattlePreview(bool),
     SubtitleSet(usize, u32, u32, String),
     ExportSubtitles(String),
     ReplaceSound(String, String),
@@ -255,6 +256,7 @@ impl CinematicTool {
             Pending::ExportMovie(path, w, h) => self.start_movie(e, std::path::PathBuf::from(path), w, h),
             Pending::TrackSelect(id) => self.scene.track = Some(id),
             Pending::Show(panel) => gui::select_dock_tab(&panel),
+            Pending::BattlePreview(on) => self.scene.battle_preview = on,
             Pending::SubtitleSet(i, start, end, text) => {
                 if let Some(v) = self.viewer.as_mut() {
                     let line = wce_cinematic::movies::Subtitle { start, end: end.max(start), text };
@@ -826,6 +828,9 @@ impl Tool for CinematicTool {
                 return CommandResult::fail("usage: camera_key x y z tx ty tz fov");
             }
             queue(e, Pending::CameraKey([v[0], v[1], v[2]], [v[3], v[4], v[5]], v[6]))
+        });
+        c.add("scene_battle_preview", "scene_battle_preview 0|1", "Plays the scene as a battle would (units under orders)", |e, a| {
+            queue(e, Pending::BattlePreview(a.first().is_none_or(|x| x != "0")))
         });
         c.add("cinematic_show", "cinematic_show <panel>", "Brings a panel to the front (Viewport, Layout, Movie, Timeline...)", |e, a| {
             queue(e, Pending::Show(a.join(" ")))
