@@ -112,6 +112,10 @@ pub struct Clip {
     pub tracks: Vec<Track>,
     #[serde(default = "yes")]
     pub skippable: bool,
+    /// Movies: each frame the average of sub-frames over a 180 degree shutter (no game shader does it: a deviation the user
+    /// approved, 2026-11-20). Off by default.
+    #[serde(default)]
+    pub motion_blur: bool,
 }
 
 fn yes() -> bool {
@@ -392,6 +396,7 @@ impl Project {
             fps: 30,
             tracks: vec![Track { id: camera, name: "Camera".into(), muted: false, content: TrackContent::Camera { keys: vec![] } }],
             skippable: true,
+            motion_blur: false,
         });
         p
     }

@@ -398,6 +398,18 @@ impl SceneUi {
             });
         }
         gui::same_line();
+        let mut blur = clip.motion_blur;
+        if gui::checkbox("Blur", &mut blur) {
+            edit(e, "motion blur", |p| {
+                if let Some(c) = p.clip_mut(clip.id) {
+                    c.motion_blur = blur;
+                }
+            });
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Motion blur in this clip's movie (4 sub-frames a frame, 180 degree shutter; not a game effect)");
+        }
+        gui::same_line();
         if gui::button(if self.playing { icons::PAUSE } else { icons::PLAY }) {
             if !self.playing && self.time >= clip.length {
                 self.time = 0.0;
@@ -1039,6 +1051,7 @@ pub fn add_clip(p: &mut Project, name: &str) {
         fps: 30,
         tracks: vec![Track { id: cam, name: "Camera".into(), muted: false, content: TrackContent::Camera { keys: vec![] } }],
         skippable: true,
+        motion_blur: false,
     });
 }
 
