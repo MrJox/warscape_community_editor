@@ -376,7 +376,7 @@ impl CinematicTool {
             .and_then(wce_foundation::settings::rpfm_schema_path)
             .and_then(|s| rpfm_lib::schema::Schema::load(&s, None).ok())
             .ok_or("no RPFM schema for the game")?;
-        let (mut out, warnings) = wce_cinematic::battle_tables::battle_files(&p, files.as_ref(), &schema, "en")?;
+        let (mut out, warnings) = wce_cinematic::battle_tables::battle_files(&p, files.as_ref(), &schema, self.scene.lang())?;
         // The Historical Battles menu's picture (vanilla's: 512 x 256 RGBA): the viewport's view as it is now.
         let shot = format!("{}/screenshot_small.png", wce_cinematic::battle_export::script_folder(&p));
         let camera = e.viewport.camera();
@@ -412,7 +412,7 @@ impl CinematicTool {
             e.status("Cinematic: the scene has no clip", true);
             return;
         };
-        match MovieJob::new(path, p, clip, doc, w.max(16), h.max(16)) {
+        match MovieJob::new(path, p, clip, doc, (w.max(16), h.max(16)), self.scene.lang()) {
             Ok(job) => {
                 e.status(&format!("Cinematic: rendering {}...", job.name), false);
                 self.movie_job = Some(job);

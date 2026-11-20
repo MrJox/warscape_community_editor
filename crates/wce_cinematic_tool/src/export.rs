@@ -27,6 +27,7 @@ pub struct MovieJob {
     doc: DocumentId,
     width: u32,
     height: u32,
+    language: String,
     next: usize,
     total: usize,
     encoder: Option<MovieEncoder>,
@@ -34,7 +35,8 @@ pub struct MovieJob {
 }
 
 impl MovieJob {
-    pub fn new(path: PathBuf, project: Project, clip: u32, doc: DocumentId, width: u32, height: u32) -> Result<Self, String> {
+    pub fn new(path: PathBuf, project: Project, clip: u32, doc: DocumentId, size: (u32, u32), language: &str) -> Result<Self, String> {
+        let (width, height) = size;
         let c = project.clip(clip).ok_or("no such clip")?;
         let name = format!("{}_{}", sanitize_key(&project.battle.key), sanitize_key(&c.name));
         let settings = EncoderSettings::movie(width, height, c.fps.max(1));
@@ -46,6 +48,7 @@ impl MovieJob {
             doc,
             width,
             height,
+            language: language.to_owned(),
             next: 0,
             total,
             encoder: Some(MovieEncoder::new(&settings)?),
@@ -111,8 +114,8 @@ impl MovieJob {
             .and_then(wce_foundation::settings::rpfm_schema_path)
             .and_then(|s| Schema::load(&s, None).ok())
             .ok_or("no RPFM schema for the game")?;
-        let subs = subtitle_frames(&self.project, &clip, "en");
-        let mf = movie_files(&self.name, if silent { None } else { Some(&sound) }, &subs, "en", lib, files.as_ref(), &schema)?;
+        let subs = subtitle_frames(&self.project, &clip, &self.language);
+        let mf = movie_files(&self.name, if silent { None } else { Some(&sound) }, &subs, &self.language, lib, files.as_ref(), &schema)?;
         let mut out = mf.files;
         out.push((format!("movies/{}.ca_vp8", self.name), bytes));
         wce_walls::pack::write_pack(&self.path, &self.project.game, out, vec![])?;

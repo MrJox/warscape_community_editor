@@ -13,6 +13,9 @@ use wce_editor::icons;
 
 use crate::scene_doc::SceneDocument;
 
+/// The game's languages (`subtitle_timings.language`).
+pub const LANGUAGES: &[&str] = &["en", "cz", "de", "es", "fr", "it", "pl", "ru", "tr"];
+
 pub fn scene_doc(e: &mut Editor) -> Option<&mut SceneDocument> {
     let id = e.docs.of_tool("cinematic")?;
     e.docs.find_as_mut::<SceneDocument>(id)
@@ -45,6 +48,8 @@ pub struct SceneUi {
     pub free_camera: bool,
     /// The scene as a battle would play it (units under orders, movie-only tracks gone).
     pub battle_preview: bool,
+    /// The language texts are edited and exported in (`en`, `de`...); English stands in where a text has none.
+    pub language: String,
     last_tick: Option<std::time::Instant>,
 }
 
@@ -59,6 +64,11 @@ pub fn edit(e: &mut Editor, name: &str, f: impl FnOnce(&mut Project)) {
 impl SceneUi {
     /// Back to a fresh state for another scene, keeping what belongs to the game rather than the scene (the units' speeds, read
     /// once a mount).
+    /// The language being edited (English until one is picked).
+    pub fn lang(&self) -> &str {
+        if self.language.is_empty() { "en" } else { &self.language }
+    }
+
     pub fn reset(&mut self) {
         let speeds = std::mem::take(&mut self.speeds);
         *self = Self { speeds, ..Self::default() };
@@ -274,10 +284,24 @@ impl SceneUi {
             }
         }
         if gui::collapsing_header("Texts", 0) {
+            let lang = self.lang().to_owned();
+            let mut current = LANGUAGES.iter().position(|l| *l == lang).unwrap_or(0) as i32;
+            gui::set_next_item_width(70.0);
+            if gui::combo("Language", &mut current, LANGUAGES) {
+                self.language = LANGUAGES[current as usize].to_owned();
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The language edited here and in the Key panel, and the one the exports write");
+            }
             let mut changes: Vec<(String, String)> = vec![];
             for (id, langs) in &p.texts {
-                let mut en = langs.get("en").cloned().unwrap_or_default();
+                let mut en = langs.get(&lang).cloned().unwrap_or_default();
                 gui::row(id);
+                if gui::is_item_hovered()
+                    && let Some(english) = langs.get("en")
+                {
+                    gui::set_tooltip(english);
+                }
                 gui::set_next_item_width(-1.0);
                 if gui::input_text(&format!("##t_{id}"), None, &mut en, 512, gui::INPUT_ENTER_RETURNS_TRUE) {
                     changes.push((id.clone(), en));
@@ -293,7 +317,7 @@ impl SceneUi {
             if !changes.is_empty() {
                 edit(e, "text", |p| {
                     for (id, en) in changes {
-                        p.texts.entry(id).or_default().insert("en".into(), en);
+                        p.texts.entry(id).or_default().insert(lang.clone(), en);
                     }
                 });
             }
@@ -339,6 +363,19 @@ impl SceneUi {
         }
         if gui::is_item_hovered() {
             gui::set_tooltip("New clip");
+        }
+        gui::same_line();
+        gui::begin_disabled(p.clips.len() < 2);
+        if gui::small_button("-##clip") {
+            let id = clip.id;
+            edit(e, "delete clip", |p| p.clips.retain(|c| c.id != id));
+            self.clip = None;
+            self.key = None;
+            self.track = None;
+        }
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Delete this clip (a scene keeps one)");
         }
         gui::same_line();
         let mut name = clip.name.clone();
@@ -735,13 +772,14 @@ impl SceneUi {
                         c.end = end as f64;
                         changed = true;
                     }
-                    let mut text = p.text(&c.text, "en").unwrap_or("").to_owned();
-                    gui::row("Text (en)");
+                    let lang = self.lang().to_owned();
+                    let mut text = p.texts.get(&c.text).and_then(|t| t.get(&lang)).cloned().unwrap_or_default();
+                    gui::row(&format!("Text ({lang})"));
                     gui::set_next_item_width(-1.0);
                     if gui::input_text("##text", None, &mut text, 512, gui::INPUT_ENTER_RETURNS_TRUE) {
                         let id = c.text.clone();
                         edit(e, "subtitle text", |p| {
-                            p.texts.entry(id).or_default().insert("en".into(), text);
+                            p.texts.entry(id).or_default().insert(lang, text);
                         });
                     }
                 }
