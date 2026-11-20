@@ -247,6 +247,15 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    File > Export > movie or event picture from a video, movie from PNGs. Gates: `movie_edit_check` (the user's ffmpeg 7.1.1:
    a test video imported as 60 event-picture frames with 2.02 s of sound) and `cinematic_check.sh`'s movie edit run.
 
+## UX (user, 2026-11-21)
+
+The user found the first version built for scripts rather than people (keys typed by hand, no visible first step, no obvious way
+to fill a scene). Done the same day: pickers fed from the packs for every field naming game data (units by name and by the
+factions that field them, factions, weather files, VFX, battle maps, sound and music events, animation slots; armies and clips in
+logic nodes), New scene / Open a scene in the empty panels, units placed by clicking the Layout and moved by dragging, the
+Timeline's bar on two lines. Left: placing and moving units and keys in the 3D viewport (only the Layout does it), picking a map
+position on a picture of the campaign map, a first-run walkthrough of New scene -> units -> camera keys -> export as buttons.
+
 ## Open questions and risks
 
 - Units in battle follow the engine's pathing: arrival times drift from the preview. Teleports under a camera cut are exact.
