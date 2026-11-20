@@ -19,6 +19,7 @@ use crate::export::MovieJob;
 use crate::logic_ui::LogicUi;
 use crate::movie_tools::MovieTools;
 use crate::preview::Preview;
+use crate::scene_audio::SceneAudio;
 use crate::scene_doc::SceneDocument;
 use crate::scene_ui::{SceneUi, add_track, edit, for_track, scene_doc};
 use crate::viewer::MovieViewer;
@@ -70,6 +71,7 @@ pub struct CinematicTool {
     speeds_loading: Option<Receiver<wce_cinematic::eval::SpeedTable>>,
     logic: LogicUi,
     movie_tools: MovieTools,
+    scene_audio: SceneAudio,
 }
 
 impl CinematicTool {
@@ -131,7 +133,11 @@ impl CinematicTool {
         }
 
         // The sound library loads once a movie is open (not in scripted runs: they don't listen).
-        if self.viewer.is_some() && self.library.is_none() && self.library_loading.is_none() && !e.scripted_input() {
+        if (self.viewer.is_some() || e.docs.of_tool("cinematic").is_some())
+            && self.library.is_none()
+            && self.library_loading.is_none()
+            && !e.scripted_input()
+        {
             if let Some(files) = self.files.clone() {
                 let (tx, rx) = channel();
                 std::thread::spawn(move || {
@@ -1003,12 +1009,31 @@ impl Tool for CinematicTool {
         if self.movie_job.is_some() {
             self.step_movie(e);
         } else if let (Some(doc), Some(p)) = (e.docs.of_tool("cinematic"), scene_doc(e).map(|d| d.project().clone())) {
+            // The scene's sound while it plays (live only): it leads the playhead.
+            if !e.scripted_input()
+                && let Some(clip) = self.scene.current_clip(&p).map(|c| c.id)
+            {
+                let version = e.docs.find(doc).map_or(0, |d| d.history().version());
+                if let Some(t) = self.scene_audio.update(
+                    version,
+                    &p,
+                    clip,
+                    self.scene.playing,
+                    self.scene.time,
+                    self.library.as_ref(),
+                    self.files.as_ref(),
+                ) && self.scene.playing
+                {
+                    self.scene.time = t;
+                }
+            }
             if let Some(frame) = self.scene.frame(&p) {
                 self.preview.free_camera = self.scene.free_camera;
                 self.preview.update(e, doc, &p, &frame);
             }
         } else {
             self.preview.clear(e);
+            self.scene_audio.stop();
         }
     }
 

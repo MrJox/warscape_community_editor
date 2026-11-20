@@ -5,6 +5,7 @@ mod frames;
 mod logic_ui;
 mod movie_tools;
 mod preview;
+mod scene_audio;
 mod scene_doc;
 mod scene_ui;
 mod tool;
