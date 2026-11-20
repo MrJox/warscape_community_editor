@@ -559,14 +559,46 @@ impl TedScene {
         if find(self.doc.original_text(), b"\r\n") { b"\r\n" } else { b"\n" }
     }
 
-    /// Where a new child of `layer` goes: the start of the line that holds its `</children>`, with the children's indentation.
-    fn append_point(&self, layer: usize, missing: &str) -> Result<(usize, Vec<u8>)> {
+    /// Where a new child of `layer` goes: the start of the line that holds its `</children>`, with the children's indentation. A container
+    /// written empty (`<SCENE_GRAPH .../>`: an empty kit tile's root) is opened first, with an empty `<children>`. Pending edits baked.
+    fn append_point(&mut self, layer: usize, missing: &str) -> Result<(usize, Vec<u8>)> {
+        self.open_empty_container(layer)?;
         let wrapper = self.children_wrapper(layer).ok_or(missing)?;
         let t = self.doc.original_text();
         let close = rfind_at(t, b"</children>", self.doc.elements()[wrapper].end_off).ok_or(missing)?;
         let mut ind = indent_of(t, close);
         ind.extend_from_slice(b"    ");
         Ok((line_start(t, close), ind))
+    }
+
+    /// Opens a container written as an empty element (`<LayerInstance .../>`) into one with an empty `<children>`, on lines of their own.
+    fn open_empty_container(&mut self, elem: usize) -> Result<()> {
+        const CONTAINERS: [&str; 3] = ["SCENE_GRAPH", "LayerInstance", "UserInstanceGroup"];
+        let e = &self.doc.elements()[elem];
+        if self.children_wrapper(elem).is_some() || !CONTAINERS.contains(&e.name.as_str()) || !e.children.is_empty() {
+            return Ok(());
+        }
+
+        let (name, end) = (e.name.clone(), e.end_off);
+        let t = self.doc.original_text();
+        if end < 2 || &t[end - 2..end] != b"/>" {
+            return Ok(());
+        }
+
+        let ind = indent_of(t, e.start_off);
+        let nl = self.newline();
+        let mut body = b">".to_vec();
+        for part in [&b"    <children>"[..], b"    </children>"] {
+            body.extend_from_slice(nl);
+            body.extend_from_slice(&ind);
+            body.extend_from_slice(part);
+        }
+
+        body.extend_from_slice(nl);
+        body.extend_from_slice(&ind);
+        body.extend_from_slice(format!("</{name}>").as_bytes());
+        self.doc.splice(end - 2, 2, &body).map_err(xml_error)?;
+        Ok(())
     }
 
     fn last_child(&self, layer: usize) -> usize {
@@ -1255,6 +1287,20 @@ impl TedScene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_root_written_closed_takes_children() {
+        // An empty kit tile's (terrain_plains/1x1/ab).
+        let text = b"<project version=\"16\">\n    <modules>\n        <Vegetation generation_seed=\"1\"/>\n    </modules>\n    <scene>\n        <SCENE_GRAPH flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" lf_offset=\"0\" position=\"vector(0,0,0)\" name=\"root\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\"/>\n    </scene>\n</project>\n".to_vec();
+        let mut sc = TedScene::parse_any(text).unwrap();
+        let root = sc.scene_graph();
+        let layer = sc.add_layer(root, "WCE things").unwrap();
+        assert_eq!(sc.name(layer), "WCE things");
+        let back = TedScene::parse_any(sc.save()).unwrap();
+        let root = back.scene_graph().unwrap();
+        assert_eq!(back.find_all("LayerInstance").len(), 1);
+        assert!(back.is_descendant(back.find_all("LayerInstance")[0], root));
+    }
     use crate::world_transform::world_transform;
 
     const COMBINED: &str = "<project version=\"17\" wce_variations=\"a,b\">
