@@ -372,7 +372,8 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   LF's slopes; a campaign frame now reads the map's (`game_lf_normals`: the kit's `normal.dds`, else the packs' `lf_normal.dds`, at
   mip 1, two texels a cell). Their components follow the LF's slopes by 0.64 / 0.65 (the rest the authored detail). Capture A's
   ground 19.62 -> 18.68. DEVIATION: an LF stroke's texels are made from the heights again. The game's preferences file (written
-  2026-11-19) has every quality at 3 but textures at 0: if those were the capture's, only the textures (mips) are minimal there.
+  2026-11-19) has every quality at 3 but textures at 0: the captures' settings (the user, 2026-11-20): only their texture mips are
+  reduced; the other quality-scaled constants in them are the max level's.
 - **Constants, arrays included (2026-11-20):** `campaign_compare.py` skipped array variables (the cascades' splits and matrices among
   them, which is how the 383-unit splits went unseen); it now compares them element by element (the editor's dump puts each on a
   16-byte boundary). Capture A against the editor: the cascades' matrices within 1 - 4 % (the scripted run lacks the depth
