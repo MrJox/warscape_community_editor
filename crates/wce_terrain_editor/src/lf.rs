@@ -8,6 +8,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use wce_editor_core::command::Command;
+use wce_scene::lf_derive::LfDerive;
 use wce_scene::render_scene::LfSamples;
 use wce_terrain::lf_edit::LfRecord;
 use wce_terrain::paged::PagedU16;
@@ -23,6 +24,10 @@ pub struct LfMirror {
     /// The field's samples copied since the last `take_touched` (x0, y0, x1, y1; end exclusive): the views follow them (the picking, the
     /// objects standing on the LF), undo and redo included.
     touched: std::sync::Mutex<Option<[u32; 4]>>,
+
+    /// The drawn views derived from the field (a campaign map's: `LfDerive`), rows the other way up as `samples`', made again over what
+    /// each copy changes.
+    derived: Vec<(Arc<LfSamples>, LfDerive)>,
 }
 
 impl LfMirror {
@@ -33,7 +38,15 @@ impl LfMirror {
             w: field.width(),
             h: field.height(),
             touched: std::sync::Mutex::default(),
+            derived: vec![],
         })
+    }
+
+    /// The mirror also making a drawn view derived from the field (`samples` of `derive`'s size, rows the other way up).
+    #[must_use]
+    pub fn with_derived(mut self, samples: Arc<LfSamples>, derive: LfDerive) -> Self {
+        self.derived.push((samples, derive));
+        self
     }
 
     /// The field's samples in `rect` (x0, y0, x1, y1; end exclusive) into the view's.
@@ -49,6 +62,21 @@ impl LfMirror {
                 }
             }
         });
+
+        // The derived views over what it reaches.
+        let at = |x: i64, y: i64| f64::from(field.at(x.clamp(0, i64::from(w) - 1) as u32, y.clamp(0, i64::from(h) - 1) as u32));
+        for (samples, derive) in &self.derived {
+            let (vw, vh) = derive.size(w, h);
+            let [a0, b0, a1, b1] = derive.reach(rect, w, h);
+            samples.edit([a0 as i32, (vh - b1) as i32, a1 as i32, (vh - b0) as i32], |v| {
+                for b in b0..b1 {
+                    let row = ((vh - 1 - b) * vw) as usize;
+                    for a in a0..a1 {
+                        v[row + a as usize] = derive.sample(&at, w, h, i64::from(a), i64::from(b)).round() as u16;
+                    }
+                }
+            });
+        }
 
         let mut t = self.touched.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *t = Some(t.map_or(rect, |o| [o[0].min(x0), o[1].min(y0), o[2].max(x1), o[3].max(y1)]));

@@ -693,7 +693,7 @@ pub(crate) struct TerrainGpuState {
 
     /// The frame's number (`begin_terrain_frame`) and the terrain entities made ready in it (`terrain_surface_entities`): the material pass
     /// and every shadow cascade take the same list, made once a frame (made per view, a map's 5 500 terrains cost 0.46 ms each time).
-    frame: u64,
+    pub(crate) frame: u64,
     surface: Option<(u64, Vec<EntityId>)>,
 
     /// That list's entities by where they are (indices into it): a view walks the clusters in its frustum, not every terrain (a campaign
@@ -709,6 +709,12 @@ pub(crate) struct TerrainGpuState {
     pub(crate) made: u64,
     pub(crate) viewz: Target,
     pub(crate) acc: [Target; 3],
+
+    /// The G-buffer's z / w before a campaign map's sea pass (`draw_sea_floor`), and the frame it was taken in: what the campaign sea
+    /// reads its depth from, as the game's reads the terrain's depth (capture A: `gbuffer_channel_4_sampler` the terrain passes' depth
+    /// target, not the one the sea pass writes). From the sea floor, the water over a coast's sand showed it as dry land.
+    pub(crate) sea_zw: Target,
+    pub(crate) sea_zw_frame: u64,
     rt_w: u32,
     rt_h: u32,
     pub(crate) box_vb: Option<ID3D11Buffer>,
@@ -1732,6 +1738,7 @@ impl Renderer {
         // The targets.
         if self.terrain.viewz.tex.is_none() || self.terrain.rt_w != self.gbuffer.w || self.terrain.rt_h != self.gbuffer.h {
             self.terrain.viewz = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
+            self.terrain.sea_zw = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R32_FLOAT);
             for i in 0..3 {
                 self.terrain.acc[i] = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R16G16B16A16_FLOAT);
             }
@@ -1811,6 +1818,13 @@ impl Renderer {
         }
         wce_prof!("terrain.sea_floor");
         let Some(ps) = self.shader(SEA_PS) else { return };
+        // The depth the sea reads, without the floor (with MSAA the one-sample depth is the terrain's: the floor goes to the MS targets).
+        if self.gbuffer.ms.is_none()
+            && let (Some(dst), Some(src)) = (&self.terrain.sea_zw.tex, &self.gbuffer.channels[3].tex)
+        {
+            self.ctx.copy_resource(dst, src);
+            self.terrain.sea_zw_frame = self.terrain.frame;
+        }
         let Some(il) = self.layout(vs, "terrain_geom", &geom_layout()) else { return };
         let rtvs = self.gbuffer.scene_rtvs();
         self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());

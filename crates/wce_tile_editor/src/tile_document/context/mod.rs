@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
 use wce_foundation::math::{Float3, Float4x4};
+use wce_scene::lf_derive::LfDerive;
 use wce_scene::render_scene::{LfMap, LfSamples, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial, Water, WaterVertex};
 use wce_tile::battle_map::context::{Affine2, CELL, LfField, MapPlacement, PlacedMap, SEA_LF_HEIGHT, Spot};
 
@@ -356,6 +357,65 @@ fn lf_map(
 
 /// The LF map's normals as the blend shader reads `s_lf_normal_map`: at uv = (x, -z) / normal_world, wrapping, so the image lays the map's
 /// normals around a torus of that size; .a = x, .g = -z of the unit normal * 0.5 + 0.5.
+/// A campaign map's drawn LF: `derive`'s view of the field (`wce_scene::lf_derive`: the land's box averages, the sea pass's read), laid
+/// out as the Terrain tool's frame lays a field (the map's own frame, rows the other way up); none in another frame (a tile's context
+/// turned or moved: it keeps the field's own, `lf_map`).
+#[allow(clippy::too_many_arguments)]
+fn derived_lf(
+    map: &PlacedMap,
+    f: Option<&LfField>,
+    height: f64,
+    from_map: &Affine2,
+    to_map: &Affine2,
+    lf_level: f64,
+    unit: f64,
+    k: f64,
+    derive: LfDerive,
+) -> Option<LfMap> {
+    let f = f.filter(|f| f.w > 1 && f.h > 1)?;
+    let (vw, vh) = derive.size(f.w, f.h);
+    let (ppx, ppy) = (f64::from(vw) / f64::from(map.width), f64::from(vh) / f64::from(map.height));
+    let (s, b) = (CELL / ppx, bounds(from_map, 0.0, 0.0, f64::from(vw - 1) / ppx, f64::from(vh - 1) / ppy));
+    let sz = s * k;
+    let at_node = |i: f64, j: f64| {
+        let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * sz);
+        (cx * ppx, cy * ppy)
+    };
+    let near = |a: (f64, f64), c: (f64, f64)| (a.0 - c.0).abs() < 1e-3 && (a.1 - c.1).abs() < 1e-3;
+    let last = f64::from(vh - 1);
+    if !(near(at_node(0.0, 0.0), (0.0, last)) && near(at_node(1.0, 0.0), (1.0, last)) && near(at_node(0.0, 1.0), (0.0, last - 1.0))) {
+        return None;
+    }
+
+    let field = f.values.read();
+    let (fw, fh) = (f.w, f.h);
+    let at = |x: i64, y: i64| f64::from(field[(y.clamp(0, i64::from(fh) - 1) * i64::from(fw) + x.clamp(0, i64::from(fw) - 1)) as usize]);
+    let mut values = vec![0u16; (vw * vh) as usize];
+    values.par_chunks_mut(vw as usize).enumerate().for_each(|(jv, row)| {
+        let j = i64::from(vh) - 1 - jv as i64;
+        for (i, v) in row.iter_mut().enumerate() {
+            *v = derive.sample(&at, fw, fh, i as i64, j).round() as u16;
+        }
+    });
+    drop(field);
+
+    let mut lf = LfMap {
+        x0: b[0] as f32,
+        z0: b[1] as f32,
+        step: s as f32,
+        step_z: sz as f32,
+        nx: vw as i32,
+        nz: vh as i32,
+        values: LfSamples::new(values),
+        scale: (height / unit) as f32,
+        offset: ((map.vertical_offset + lf_level) / unit) as f32,
+        id: next_id(&NORMAL_IDS),
+        ..Default::default()
+    };
+    lf_normals(&mut lf);
+    Some(lf)
+}
+
 fn lf_normals(lf: &mut LfMap) {
     lf.normal_k = ((lf.nx.max(lf.nz) + LF_NORMAL_SIDE - 1) / LF_NORMAL_SIDE).max(1);
     let (w, h) = lf.normal_size();
@@ -482,6 +542,11 @@ pub struct Frame {
     /// The sea tiles' LF (`PlacedMap::sea_lf`): none, the sea tiles on a flat -20 m.
     pub sea_lf: Option<Arc<LfMap>>,
 
+    /// A campaign map's fields on their own lattices where `lf` and `sea_lf` are views drawn as the game reads them
+    /// (`wce_scene::lf_derive`): what the Terrain tool picks and paints on (none: `lf` and `sea_lf` are the fields' own).
+    pub lf_edit: Option<Arc<LfMap>>,
+    pub sea_lf_edit: Option<Arc<LfMap>>,
+
     /// The placements by the chunk of their origin cell (those over the open tile's cells left out); who draws each cell (row by row: 0
     /// nobody, 1 the open tile, else the chunk of the placement over it: `owner_of`); the cells a tile reaches past its origin at most.
     pub by_chunk: HashMap<ChunkKey, Vec<usize>>,
@@ -542,6 +607,24 @@ impl Frame {
             map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/"));
         let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k, campaign).map(Arc::new);
         let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k, false).map(Arc::new);
+        // A campaign map draws its fields as the game reads them: the land's box averages at two samples a cell, the sea pass's read.
+        let land_box = map.lf.as_ref().map_or(1, |f| f.w / map.width.max(1) / 2);
+        let drawn_lf = (campaign && land_box > 1)
+            .then(|| derived_lf(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k, LfDerive::Box(land_box)))
+            .flatten()
+            .map(Arc::new);
+        let drawn_sea = campaign
+            .then(|| derived_lf(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k, LfDerive::GameSea))
+            .flatten()
+            .map(Arc::new);
+        let (lf, lf_edit) = match drawn_lf {
+            Some(d) => (Some(d), lf),
+            None => (lf, None),
+        };
+        let (sea_lf, sea_lf_edit) = match drawn_sea {
+            Some(d) => (Some(d), sea_lf),
+            None => (sea_lf, None),
+        };
         wce_foundation::log::info(format!("map context: the frame's LF maps made, {}", wce_foundation::heap::note()));
 
         let index = MapIndex::new(&map, open);
@@ -561,6 +644,8 @@ impl Frame {
             lf_range,
             lf,
             sea_lf,
+            lf_edit,
+            sea_lf_edit,
             by_chunk,
             owner,
             reach,
@@ -594,6 +679,8 @@ impl Frame {
             lf_range: self.lf_range,
             lf: self.lf.clone(),
             sea_lf: self.sea_lf.clone(),
+            lf_edit: self.lf_edit.clone(),
+            sea_lf_edit: self.sea_lf_edit.clone(),
             by_chunk,
             owner,
             reach,

@@ -944,7 +944,13 @@ impl Renderer {
         let whitecaps = o.sea.as_ref().and_then(|s| s.whitecaps.clone()).or_else(|| o.no_foam.clone());
         bind_srv(ctx, &ps, "sea_surface_sampler", sea_srv.as_ref());
         bind_srv(ctx, &ps, "swell_surface_sampler", swell_srv.as_ref());
-        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
+        // A campaign sea's depth is the terrain's, not its sea floor's (`TerrainGpuState::sea_zw`).
+        let depth = if campaign.is_some() && self.terrain.sea_zw_frame == self.terrain.frame && self.gbuffer.ms.is_none() {
+            self.terrain.sea_zw.srv.clone()
+        } else {
+            self.gbuffer.depth_srv()
+        };
+        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", depth.as_ref());
         let env_cube = self.env_srv();
         bind_srv(ctx, &ps, "s_environment", env_cube.as_ref());
         bind_srv(ctx, &ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());

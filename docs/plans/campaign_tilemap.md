@@ -332,3 +332,14 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   its cells. The whole map's bake is cached (`cache::write_far`, `<key>.far`, 36 MB for main_attila, the newest four kept): the key
   is every placement's tile (its folder's cache key for its look) and place, the climates, the LF's samples and the frame's numbers;
   main_attila's bake 28.7 s, read back 1.1 s.
+- **The LFs as the game reads them (2026-11-20):** capture A's textures dumped (`rd_tex.py`): the land's (4064 x 2882) is exactly
+  the field's 4 x 4 box averages from sample 0 (the field eight a cell); the sea's (2032 x 1441, 11 mips) its 2 x 2, read by the sea
+  pass on its second mip's grid while gathering from the first (`wce_scene::lf_derive`). Read so, the game's terrain depth at
+  twelve bay points is reproduced to 0.1 m and six sea-pass depths to 0.4 m. A campaign frame now draws views derived so
+  (`Frame::lf`, `sea_lf`) and keeps the fields on their own lattices for picking and painting (`lf_edit`, `sea_lf_edit`); the LF
+  mirrors make the views again over each stroke (`LfMirror::with_derived`). The editor's ground at the bay points: 6.8 m rms -> 0.36.
+  The campaign sea reads its depth from the terrain's z / w taken before the sea pass, as the game's (its depth input is the terrain
+  passes' target). Capture A's ground 21.96 -> 20.42 (wide rings).
+  Left: at the bottom of capture A's frame the editor draws something at +2.8 m on the game's ray over the bay where no terrain is
+  (not a tile: a model, likely; the close view of the bay matches the LF, its shore where the heights put it); faint cell lines in
+  the shallow water of the close view; a cliff's texture smeared beside it.

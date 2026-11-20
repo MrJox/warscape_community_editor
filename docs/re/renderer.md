@@ -670,8 +670,16 @@ The sea tiles and the coast (capture A, pixel history and disassembly, 2026-11-1
 - The terrain shader's LF lookup (`vs41_geom_new`): uv = (x / W + o, 1 - (z / H + o)), clamped below 1 - 1/N; texel k at k / N (a
   gather at (floor(p) + 1) / N and its own bilinear weights). The game's land texture has two texels a cell where the kit's
   `lf_heights.tif` has eight (16256 x 11528): its 4 x 4 box average, so a texel stands for the field 1.5 samples (3/16 cell) further
-  south-east. Twelve terrain-depth points of the bay agree with the field moved so (6.8 m rms -> 3.0 m; best 1/16 cell further
-  south still, 1.2 m: not explained).
+  south-east. The texture dumped (capture A, resource 6368) is exactly the field's 4 x 4 box averages from sample 0; read with the
+  shader's lookup it gives the game's terrain depth at twelve bay points within 0.1 m (the field moved 3/16 cell but not averaged:
+  1.2 m rms, the steep coast's curvature).
+- The sea's texture (6372, 2032 x 1441, 11 mips, the view from mip 0) is the sea field's 2 x 2 box average; the sea pass's
+  `g_height_map_dimension` is its second mip's (1016 x 720), so the lookup's floor and frac run on that grid while the gather reads
+  mip 0: texels floor((floor(p) + 1) / 1016 * 2032 - 0.5) and the next. Its height stands about 0.75 cell off its ground and jumps
+  every two cells; six sea-pass depths agree with this within 0.4 m (`wce_scene::lf_derive::game_sea`).
+- The campaign water (`vs30_main_campaign`, `ps30_campaign_high_water_quality`) binds no sea-bed texture; its
+  `gbuffer_channel_4_sampler` is the terrain passes' depth target (6150), written before the sea pass: its depth is to the land
+  under the sea floor, not to the floor.
 
 The world (the instance matrices, `instances.csv`):
 - The tiles, the cliff meshes, the sea tiles and the river meshes carry the hex world's stretch: their matrices' z axis is 1.1548 x
