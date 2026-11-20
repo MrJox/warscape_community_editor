@@ -358,3 +358,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   keeps its slot, and a gone instance's slot keeps its data until its particles have died (`Particles::retired`). Checked: the
   clouds west of Rome live their 35 - 50 s through effects coming and going (one vanished at 48 s before). Not reproduced: the
   user's exact view (their weather and season not in the settings).
+- **The cascades' splits (2026-11-20):** the camera's near was taken in scene units as the rows' game units: on a campaign map (383
+  scene units a game unit) every split sat 383 units off the eye (the editor's 383, 388, 398, 418, 458 against capture A's 1, 6.25,
+  16.76, 37.77, 79.80), and nothing near the camera had a shadow. Now 1, 6, 16, 36, 76 in a scripted run (no depth analysis there:
+  the game's range is the row's end times 1.05). NOTE: capture A was taken at minimal graphics (the user, 2026-11-20): its rows,
+  atlas size, texture mips, far-blend distances and LOD may be the lowest level's; the campaign rows by quality are to be checked in
+  the game's table before matching more of it. The game's split start (the near plane, with the nearest ground 7 units off) not
+  ported: the editor's analysis starts at the nearest depth.

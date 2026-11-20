@@ -724,7 +724,9 @@ impl Renderer {
         let u = self.camera.units;
         let rows = if scene.campaign { &SHADOW_ROWS_CAMPAIGN } else { &SHADOW_ROWS };
         let row = rows[self.settings.shadow_quality.clamp(0, 3) as usize];
-        let n = cam.znear.max(1.0);
+        // The camera's near in game units, as the rows (on a campaign map a scene unit is not one: its near, 383 scene units, was taken
+        // for 383 game units, and every split sat 383 units off the eye).
+        let n = (cam.znear * u).max(1.0);
         let far_q = n + row[0] + row[1] + row[2] + row[3];
         let (mut start, mut scale) = (n, 1.0f32);
         if self.depth_range.valid {
