@@ -179,6 +179,9 @@ pub enum Make {
 
     /// A biome's area (docs/plans/auto_detail.md, C), by the biome's name: drawn as a vegetation exclusion polygon with `wce_biome`.
     Biome { name: String },
+
+    /// A kind of ground coverage (rocks and plants by cliffs, coasts, riverbanks; props around buildings), set up in the Inspector.
+    Coverage { kind: wce_tile::ground_coverage::Kind },
 }
 
 #[derive(Clone, Debug)]
@@ -218,6 +221,7 @@ impl Entry {
             Make::Prefab { key } => format!("prefab|{key}"),
             Make::VegSet { name } => format!("vegset|{name}"),
             Make::Biome { name } => format!("biome|{name}"),
+            Make::Coverage { kind } => format!("coverage|{}", kind.name()),
         }
     }
 
@@ -228,6 +232,7 @@ impl Entry {
             Make::Prefab { .. } => icons::COMPONENT,
             Make::VegSet { .. } => icons::TREES,
             Make::Biome { .. } => icons::SHRUB,
+            Make::Coverage { .. } => icons::MOUNTAIN,
         }
     }
 }
@@ -452,6 +457,15 @@ impl TileTool {
         for b in self.biome_presets(e).iter() {
             let mut en = entry(1, format!("biome: {}", b.name), Make::Biome { name: b.name.clone() }, "biome area forest wood grove");
             en.folder = "Biomes".to_owned();
+            out.push(en);
+        }
+
+        // The ground coverage's kinds: the buildings' with the buildings, the others with the vegetation.
+        for kind in wce_tile::ground_coverage::Kind::ALL {
+            let category = usize::from(kind != wce_tile::ground_coverage::Kind::Buildings);
+            let label = format!("coverage: {}", crate::ground_coverage_panel::kind_title(kind));
+            let mut en = entry(category, label, Make::Coverage { kind }, "ground coverage rocks plants clutter props generate");
+            en.folder = "Ground coverage".to_owned();
             out.push(en);
         }
 
@@ -775,12 +789,23 @@ impl TileTool {
             self.set_create_marks(e, favourites, recent);
         }
 
+        // The texture rules, a biome or the ground coverage in the Inspector give way to what else is made.
+        if !matches!(&en.make, Make::Biome { .. } | Make::Coverage { .. }) {
+            self.close_detail_panels();
+        }
+
         self.drawing = false;
         self.draw_pts.clear();
         self.placing = None;
         self.veg_sets.current = None;
         self.making = Some(en.label.clone());
         match &en.make {
+            Make::Coverage { kind } => {
+                self.draft = None;
+                self.making = None;
+                self.open_coverage_kind(e, *kind);
+            }
+
             Make::VegSet { name } => {
                 // No name: the new set, not saved yet.
                 let set = if name.is_empty() {
@@ -826,8 +851,16 @@ impl TileTool {
                 draft.attrs.insert(wce_tile::biomes::BIOME_ATTR.to_owned(), b.name.clone());
                 draft.attrs.insert(wce_tile::biomes::SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
                 draft.attrs.insert("name".to_owned(), b.name.clone());
-                self.draft = Some(draft);
-                self.start_drawing();
+
+                // Its settings, Draw an area and the brush in the Inspector; an area is drawn at once unless the brush is on.
+                self.open_biomes();
+                self.biomes.draft = Some(b);
+                if self.biomes.brush {
+                    self.making = None;
+                } else {
+                    self.draft = Some(draft);
+                    self.start_drawing();
+                }
             }
 
             Make::Draw { kind } => {
@@ -865,6 +898,9 @@ impl TileTool {
         e.pending_focus = Some("Inspector".to_owned());
         self.status = match &en.make {
             Make::Draw { .. } => format!("{}: click the terrain for its points; {}; Esc cancels", en.label, self.finish_hint(e)),
+            Make::Coverage { .. } => format!("{}: set it up in the Inspector, then Generate or Brush", en.label),
+            Make::Biome { .. } if !self.drawing => format!("{}: drag the brush in the viewport (Ctrl takes away)", en.label),
+            Make::Biome { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
         };
     }
@@ -2070,6 +2106,10 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
     let make = match what {
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
+        "biome" => Make::Biome { name: key.to_owned() },
+        "coverage" => Make::Coverage {
+            kind: wce_tile::ground_coverage::Kind::from_name(key).ok_or_else(|| format!("no ground coverage kind '{key}'"))?,
+        },
         kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD, &BUILDING_SPLINE]).any(|(_, k, drawn)| *k == kind && *drawn)
             || SHAPES.contains(&kind) =>
         {

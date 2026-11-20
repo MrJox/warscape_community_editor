@@ -179,6 +179,40 @@ impl TileTool {
             gui::pop_id();
         }
 
+        // The texture rules' layer lies right over the base, under every layer of the user's: shown there, edited in the Inspector.
+        if kind == LayerType::Blend {
+            gui::push_id("layer_rules");
+            let rules = d.texture_rules().map(|r| r.rules.iter().filter(|r| r.enabled).count());
+            gui::small_button(icons::SPARKLES);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Texture rules: textures laid by the terrain, under your layers.");
+            }
+
+            gui::same_line();
+            let label = match rules {
+                Some(n) => format!("Texture rules ({n})"),
+                None => "+ Texture rules".to_owned(),
+            };
+            if gui::selectable(&label, self.rules_ui.open, 0) {
+                if rules.is_none() {
+                    let p = wce_tile::texture_rules::Preset::builtin();
+                    d.set_texture_rules(Some(wce_tile::texture_rules::RuleSet { preset: p.name, rules: p.rules }));
+                }
+
+                self.open_texture_rules();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(if rules.is_some() {
+                    "Shows the texture rules in the Inspector: rock on slopes, mud by the water and so on, laid under what you paint."
+                } else {
+                    "Adds texture rules (the built-in Default) and shows them in the Inspector: textures laid by the terrain, under what you paint."
+                });
+            }
+
+            gui::pop_id();
+        }
+
         gui::push_id("layer_base");
         gui::small_button(icons::LAYERS);
         if gui::is_item_hovered() {

@@ -439,3 +439,16 @@ pub fn section(title: &str, buttons: &[(&str, &str, &str, bool)]) -> Option<usiz
 
     clicked
 }
+
+/// The title of a tool's part of the Inspector, with a close button at its right; whether it was clicked.
+pub fn inspector_header(title: &str, tip: &str) -> bool {
+    let close = section(title, &[(wce_editor::icons::X, "closepart", "Close (the Inspector shows the selection again)", true)]).is_some();
+    if !tip.is_empty() {
+        gui::push_text_wrap_pos(0.0);
+        gui::text_disabled(tip);
+        gui::pop_text_wrap_pos();
+    }
+
+    gui::spacing();
+    close
+}

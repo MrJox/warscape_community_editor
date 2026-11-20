@@ -53,8 +53,11 @@ pub(crate) struct BiomeStroke {
 }
 
 impl TileTool {
-    /// Opens the window (Tile panel, "Biomes...").
+    /// Shows the biomes in the Inspector (the Create panel's biome entries, a selected area's "Edit its biome").
     pub fn open_biomes(&mut self) {
+        let brush = self.biomes.brush;
+        self.close_detail_panels();
+        self.biomes.brush = brush;
         self.biomes.open = true;
     }
 
@@ -167,7 +170,8 @@ impl TileTool {
         }
     }
 
-    pub(crate) fn draw_biomes_window(&mut self, e: &mut Editor) {
+    /// The biome in the Inspector: its preset, Draw an area and the brush, the selected area, then its settings.
+    pub(crate) fn inspect_biomes(&mut self, e: &mut Editor) {
         if !self.biomes.open {
             return;
         }
@@ -177,19 +181,15 @@ impl TileTool {
             return;
         }
 
-        gui::set_next_window_size(gui::v2(460.0, 700.0), gui::COND_FIRST_USE_EVER);
-        let mut open = true;
-        if !gui::begin(&format!("{}  Biomes (experimental)###biomes", icons::SHRUB), Some(&mut open), 0) {
-            gui::end();
-            self.biomes.open = open;
+        if styled::inspector_header(
+            &format!("{}  Biome (experimental)", icons::SHRUB),
+            "Trees, undergrowth, rocks and a texture laid in areas. An area is a vegetation exclusion polygon: the game's own trees give way \
+             to the biome's there. Its contents are made again whenever it, its biome or the ground changes.",
+        ) {
+            self.biomes.open = false;
+            self.biomes.brush = false;
             return;
         }
-
-        gui::text_wrapped(
-            "A biome is trees, undergrowth, rocks and a texture laid in areas. An area is a vegetation exclusion polygon: the game's own trees \
-             give way to the biome's there. Its contents are made again whenever it, its biome or the ground changes.",
-        );
-        gui::spacing();
 
         self.biome_preset_rows(e);
         let mut draft = self.biome_draft(e);
@@ -224,6 +224,9 @@ impl TileTool {
             "Left drag in the viewport (Select mode): adds to the area under the mouse, or makes a new one; Ctrl + drag takes away",
         ) {
             self.biomes.brush = !self.biomes.brush;
+            if self.biomes.brush && (self.drawing || self.placing.is_some()) {
+                self.stop_making();
+            }
         }
 
         if self.biomes.brush {
@@ -259,9 +262,6 @@ impl TileTool {
         if changed {
             self.biomes.draft = Some(draft.clone());
         }
-
-        gui::end();
-        self.biomes.open = open;
     }
 
     /// The presets: a combo, Save, Save as, Delete.
@@ -391,6 +391,48 @@ impl TileTool {
         Ok(format!("biome '{}' deleted", b.name))
     }
 
+    /// The biome area selected alone, if one is.
+    pub(crate) fn selected_biome_area(&self, e: &mut Editor) -> Option<wce_tile_editor::tile_document::biomes::BiomeArea> {
+        let sel = primary(e)?;
+        (e.selection.items().len() == 1).then_some(())?;
+        document(e)?.tile().biome_areas().into_iter().find(|a| a.elem == sel)
+    }
+
+    /// Below a biome area's properties in the Inspector (the biome not shown): its biome and seed, Edit its biome, Reroll.
+    pub(crate) fn inspect_biome_area(&mut self, e: &mut Editor) {
+        if self.biomes.open {
+            return;
+        }
+
+        let Some(area) = self.selected_biome_area(e) else { return };
+        gui::separator_text(&format!("{}  Biome", icons::SHRUB));
+        gui::text(&format!("{}, seed {}", area.biome, area.seed));
+        let half = (gui::content_region_avail().x - gui::item_spacing().x) * 0.5;
+        if gui::button_sized(&format!("{}  Edit its biome", icons::PENCIL), gui::v2(half, 0.0)) {
+            let biome = document(e).and_then(|d| d.tile().biome_named(&area.biome));
+            self.open_biomes();
+            if let Some(b) = biome {
+                self.biomes.draft = Some(b);
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows the area's biome in the Inspector: its settings, Draw an area and the brush");
+        }
+
+        gui::same_line();
+        if gui::button_sized(&format!("{}  Reroll", icons::REFRESH_CW), gui::v2(half, 0.0)) {
+            let seed = ((self.random.unit() * 1.0e6) as u32).to_string();
+            if let Some(d) = document(e) {
+                d.set_attribute(area.elem, SEED_ATTR, &seed);
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Another layout of the same biome");
+        }
+    }
+
     /// The selected area's biome (the draft given to it, or the tile's copy updated from the draft) and seed.
     fn selected_area_rows(&mut self, e: &mut Editor, draft: &Biome) {
         let Some(sel) = primary(e) else { return };
@@ -407,7 +449,7 @@ impl TileTool {
 
         gui::end_disabled();
         if gui::is_item_hovered() {
-            gui::set_tooltip("The area takes the biome as the window has it (every area of that biome in the tile follows)");
+            gui::set_tooltip("The area takes the biome as shown here (every area of that biome in the tile follows)");
         }
 
         gui::same_line();
