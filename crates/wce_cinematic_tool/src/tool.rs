@@ -335,7 +335,7 @@ impl CinematicTool {
         }
         match e.replace_document("cinematic", Box::new(SceneDocument::new(p, path))) {
             Ok(_) => {
-                self.scene = SceneUi::default();
+                self.scene.reset();
                 e.status(&format!("Cinematic: new scene {name}"), false);
                 gui::select_dock_tab("Timeline");
                 gui::select_dock_tab("Layout");
@@ -356,7 +356,7 @@ impl CinematicTool {
         match SceneDocument::open(path.clone()) {
             Ok(d) => match e.replace_document("cinematic", Box::new(d)) {
                 Ok(_) => {
-                    self.scene = SceneUi::default();
+                    self.scene.reset();
                     e.status(&format!("Cinematic: opened {}", path.display()), false);
                     gui::select_dock_tab("Timeline");
                     gui::select_dock_tab("Layout");
@@ -667,7 +667,7 @@ impl Tool for CinematicTool {
         meta: &wce_editor_core::autosave::AutosaveMeta,
     ) -> Result<Option<Box<dyn wce_editor_core::document::Document>>, String> {
         let doc = SceneDocument::restored(&copy.join(&meta.inner), meta.target.clone())?;
-        self.scene = SceneUi::default();
+        self.scene.reset();
         Ok(Some(Box::new(doc)))
     }
 
