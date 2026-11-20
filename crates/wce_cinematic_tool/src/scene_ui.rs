@@ -57,6 +57,13 @@ pub fn edit(e: &mut Editor, name: &str, f: impl FnOnce(&mut Project)) {
 }
 
 impl SceneUi {
+    /// Back to a fresh state for another scene, keeping what belongs to the game rather than the scene (the units' speeds, read
+    /// once a mount).
+    pub fn reset(&mut self) {
+        let speeds = std::mem::take(&mut self.speeds);
+        *self = Self { speeds, ..Self::default() };
+    }
+
     pub fn current_clip<'a>(&mut self, p: &'a Project) -> Option<&'a Clip> {
         if self.clip.and_then(|c| p.clip(c)).is_none() {
             self.clip = p.clips.first().map(|c| c.id);
