@@ -60,6 +60,7 @@ pub struct CinematicTool {
     new_scene: Option<String>,
     preview: Preview,
     movie_job: Option<MovieJob>,
+    speeds_loading: Option<Receiver<wce_cinematic::eval::SpeedTable>>,
 }
 
 impl CinematicTool {
@@ -82,9 +83,21 @@ impl CinematicTool {
             self.catalog_loading = Some(rx);
             self.library_loading = None;
             self.preview.game_changed(e);
+            let (tx, rx) = channel();
+            let f = files.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(wce_cinematic::speeds::speed_table(f.as_ref()));
+            });
+            self.speeds_loading = Some(rx);
         }
         // A scripted run waits for the list, so that its next line can open a movie.
         let scripted = e.scripted_input();
+        if let Some(rx) = &self.speeds_loading
+            && let Ok(t) = if scripted { rx.recv().map_err(|_| std::sync::mpsc::TryRecvError::Disconnected) } else { rx.try_recv() }
+        {
+            self.scene.speeds = t;
+            self.speeds_loading = None;
+        }
         if let Some(rx) = &self.catalog_loading
             && let Ok(c) = if scripted { rx.recv().map_err(|_| std::sync::mpsc::TryRecvError::Disconnected) } else { rx.try_recv() }
         {

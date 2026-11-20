@@ -15,6 +15,7 @@ pub mod logic;
 pub mod movie_export;
 pub mod movies;
 pub mod scene;
+pub mod speeds;
 pub mod support;
 
 /// The largest number in a column of a game table (0 when none).
