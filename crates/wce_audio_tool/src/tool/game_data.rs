@@ -48,13 +48,6 @@ pub struct View {
     dragging: Option<(usize, f32)>,
 }
 
-impl View {
-    /// The animation picked in the Animations tab.
-    pub fn animation(&self) -> Option<&str> {
-        self.animation.as_deref()
-    }
-}
-
 /// A frame row's label: the trigger's name and its battle event.
 fn frame_label(triggers: Option<&Triggers>, f: &SoundFrame) -> (String, String) {
     triggers.map_or((format!("row {}", f.trigger), String::new()), |t| {

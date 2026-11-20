@@ -13,7 +13,6 @@ use wce_audio::import::read_sound;
 use wce_audio::library::{MediaRef, PlayNode, SoundLibrary, action_name};
 use wce_audio::music::{group_kind, item_tree};
 use wce_audio::names::NameSource;
-use wce_audio::recipes::{self, AnimationSound};
 use wce_audio::references::{self, Reference, ReferenceIndex};
 use wce_audio_format::bank::kind_name;
 use wce_audio_format::hirc::{MusicPlaylist, NodeBase, Object};
@@ -29,7 +28,6 @@ use wce_editor_core::document::{Document, SaveTarget};
 
 mod game_data;
 mod player_view;
-mod recipes_panel;
 
 /// What a click asked for; done after the panel is drawn.
 enum Request {
@@ -60,10 +58,6 @@ enum Request {
     RemoveEntry(u32, u32),
     /// (playlist, item, weight, loop count).
     SetItem(u32, u32, u32, i16),
-    /// (`.snd.meta`, seconds, event): a frame firing an existing event.
-    AnimationEvent(String, f32, String),
-    /// (`.snd.meta`, seconds, the event to copy, the new event's name): pick a sound file for a new sound.
-    AnimationNewSound(String, f32, String, String),
     /// Write a loose file (path, bytes, what for the status line).
     WriteLoose(String, Vec<u8>, String),
     /// Name an object (a label kept in the project's names.txt); an empty name removes the label.
@@ -72,8 +66,6 @@ enum Request {
     SetContainer(u32, u8, u8, u16, Option<(u32, i32)>),
     /// (music switch, a path of states, what it plays).
     SetMusicPath(u32, Vec<u32>, u32),
-    /// (the new culture's name, the culture it copies).
-    NewCulture(String, u32),
     /// (music switch or playlist, rule index, the rule).
     SetRule(u32, usize, wce_audio_format::hirc::TransitionRule),
     /// (music object, its stingers).
@@ -82,8 +74,6 @@ enum Request {
     SetActionProperty(u32, u8, Option<f32>),
     /// (music switch, a path, the playlist to copy): pick a sound file, a new playlist of it plays for the path.
     PathMusic(u32, Vec<u32>, u32),
-    /// Pick a sound file for a new unit line.
-    UnitLine(UnitLine),
     Save,
     Revert,
     Undo,
@@ -98,23 +88,8 @@ enum ImportTarget {
     /// A playlist and the leaf item the new music goes after.
     AddMusic(u32, u32),
     ReplaceSegment(u32),
-    /// A new sound fired by an animation: (`.snd.meta`, seconds, the event to copy, the new event's name).
-    AnimationSound(String, f32, String, String),
-    UnitLine(UnitLine),
     /// (music switch, a path, the playlist copied).
     PathMusic(u32, Vec<u32>, u32),
-}
-
-/// A new order line under some voice actors, and the unit whose DB column names it.
-#[derive(Clone)]
-struct UnitLine {
-    /// The actors' `VO_battle_order` switches.
-    switches: Vec<u32>,
-    name: String,
-    /// The line copied (its container's settings).
-    like: u32,
-    /// (land unit, the columns) set to the new line.
-    unit: Option<(String, Vec<&'static str>)>,
 }
 
 /// A bank's lists, made once.
@@ -179,19 +154,14 @@ pub struct AudioTool {
     /// The game's other sound data (animations, ambience, DB tables), read with the references.
     game_data: Option<Arc<game_data::GameData>>,
     data_view: game_data::View,
-    recipes_view: recipes_panel::View,
     /// The Audio Bank window's dock node: the game data panel docks beside it the first time.
     bank_dock: gui::ImGuiID,
     /// `audio_animation`: an animation to show once the game data is read.
     pending_animation: Option<String>,
     /// `audio_show`: a panel to bring to the front.
     pending_panel: Option<String>,
-    /// `audio_unit`: a land unit to show in Audio Recipes > A unit's voice.
-    pending_unit: Option<String>,
     /// `audio_volume`: "<object> <dB>", an edit made from a script.
     pending_volume: Option<String>,
-    /// `audio_recipe`: the Audio Recipes section to open (music, voice, culture, unit, animation).
-    pending_recipe: Option<String>,
     /// Where to start the sound being decoded (a click on a waveform), 0 to 1.
     pending_seek: Option<f32>,
     /// Waveforms of the sounds shown (Audio Object, the trees), by media ID; the one being decoded; the ones shown last frame
@@ -315,47 +285,6 @@ impl AudioTool {
                             Ok(format!(" (#{playlist})"))
                         })
                     }
-                    ImportTarget::UnitLine(line) => {
-                        let schema = self.game_data.as_ref().and_then(|d| d.db.schema.clone());
-                        let what = match &line.unit {
-                            Some((unit, columns)) => {
-                                format!("added the line {} ({name}) and set {unit}'s {}", line.name, columns.join(", "))
-                            }
-                            None => format!("added the line {} ({name})", line.name),
-                        };
-                        self.edit(e, &what, |edits, lib, files| {
-                            edits.add_order_line(lib, &line.switches, &line.name, line.like, &wem)?;
-                            if let Some((unit, columns)) = &line.unit {
-                                let schema =
-                                    schema.ok_or_else(|| wce_audio::AudioError::Invalid("the game's DB schema is not set".into()))?;
-                                let table = "land_units_tables";
-                                let path = wce_audio::sound_db::edit_table_path(table);
-                                for column in columns {
-                                    let current = edits.loose.get(&path).cloned();
-                                    let bytes = wce_audio::sound_db::set_cell(
-                                        &schema,
-                                        files,
-                                        current.as_deref(),
-                                        table,
-                                        "key",
-                                        unit,
-                                        column,
-                                        &line.name,
-                                    )
-                                    .map_err(wce_audio::AudioError::Invalid)?;
-                                    edits.loose.insert(path.clone(), bytes);
-                                }
-                                return Ok(format!(" under {} actors; the row is in {path}", line.switches.len()));
-                            }
-                            Ok(format!(" under {} actors", line.switches.len()))
-                        })
-                    }
-                    ImportTarget::AnimationSound(path, time, like, event) => {
-                        self.edit(e, &format!("added {name} to {path} as {event}"), |edits, lib, files| {
-                            let sound = AnimationSound::NewSound { wem, like_event: like, name: event };
-                            recipes::animation_sound(edits, lib, files, &path, time, sound).map(|row| format!(" (trigger row {row})"))
-                        })
-                    }
                 },
                 Err(why) => e.status(&format!("Audio: cannot import {name}: {why}"), true),
             }
@@ -468,16 +397,8 @@ impl AudioTool {
                 Request::Replace(media) => self.import(e, ImportTarget::Replace(media)),
                 Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
                 Request::AddMusic(playlist, after) => self.import(e, ImportTarget::AddMusic(playlist, after)),
-                Request::UnitLine(line) => self.import(e, ImportTarget::UnitLine(line)),
                 Request::PathMusic(switch, keys, like) => self.import(e, ImportTarget::PathMusic(switch, keys, like)),
                 Request::ReplaceSegment(segment) => self.import(e, ImportTarget::ReplaceSegment(segment)),
-                Request::AnimationNewSound(path, time, like, event) => {
-                    self.import(e, ImportTarget::AnimationSound(path, time, like, event))
-                }
-                Request::AnimationEvent(path, time, event) => self.edit(e, &format!("added {event} to {path}"), |edits, lib, files| {
-                    recipes::animation_sound(edits, lib, files, &path, time, AnimationSound::Event(event.clone()))
-                        .map(|row| format!(" (trigger row {row})"))
-                }),
                 Request::RemoveEntry(playlist, item) => self.edit(e, "removed a music entry", |edits, lib, _| {
                     edits.remove_playlist_entry(lib, playlist, item).map(|()| String::new())
                 }),
@@ -530,10 +451,6 @@ impl AudioTool {
                 }),
                 Request::SetMusicPath(id, keys, target) => self.edit(e, "set what a music path plays", |edits, lib, _| {
                     edits.set_music_path(lib, id, &keys, target).map(|()| String::new())
-                }),
-                Request::NewCulture(name, like) => self.edit(e, &format!("made the voice culture {name}"), |edits, lib, _| {
-                    recipes::new_voice_culture(edits, lib, &name, like)
-                        .map(|(events, lines)| format!(" ({lines} lines in {events} voice events, the same files as the copied culture's)"))
                 }),
                 Request::SetRule(id, index, rule) => self.edit(e, "set a music transition", |edits, lib, _| {
                     edits.set_transition_rule(lib, id, index, rule).map(|()| String::new())
@@ -1901,7 +1818,6 @@ impl Tool for AudioTool {
         gui::dock_builder_dock_window("Audio Bank", center);
         gui::dock_builder_dock_window("Audio Object", right);
         gui::dock_builder_dock_window("Audio Game Data", center);
-        gui::dock_builder_dock_window("Audio Recipes", center);
         gui::dock_builder_dock_window("Inspector", inspector);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -1910,7 +1826,7 @@ impl Tool for AudioTool {
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
         type Slot = fn(&mut AudioTool) -> &mut Option<String>;
-        let commands: [(&str, &str, &str, Slot); 9] = [
+        let commands: [(&str, &str, &str, Slot); 7] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
             ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
@@ -1919,10 +1835,6 @@ impl Tool for AudioTool {
                 &mut t.pending_animation
             }),
             ("audio_show", "audio_show <panel title>", "Brings an Audio panel to the front (its dock tab)", |t| &mut t.pending_panel),
-            ("audio_unit", "audio_unit <land unit key>", "Shows a unit's voice in Audio Recipes", |t| &mut t.pending_unit),
-            ("audio_recipe", "audio_recipe <music|voice|culture|unit|animation>", "Opens one of the Audio Recipes", |t| {
-                &mut t.pending_recipe
-            }),
             ("audio_volume", "audio_volume <object id> <dB>", "Sets an object's volume (an edit of the Audio edits document)", |t| {
                 &mut t.pending_volume
             }),
@@ -1961,7 +1873,6 @@ impl Tool for AudioTool {
         self.bank_panel(&mut requests);
         self.object_panel(&mut requests);
         self.game_data_panel(&mut requests);
-        self.recipes_panel(&mut requests);
         if self.library.is_some()
             && let Some(panel) = self.pending_panel.take()
         {
