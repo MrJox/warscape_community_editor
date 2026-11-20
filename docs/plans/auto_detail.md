@@ -247,4 +247,8 @@ biomes and the ground coverage are Create panel entries (Vegetation > Biomes; Ve
 Inspector with their settings, laying first (Draw an area / Brush; Fill the tile / Brush, Preview, Generate); the texture rules are
 the Terrain layers > Blend row over the base (and Paint mode's *Texture rules...*). One shows at a time; selecting something else, or
 making another entry, gives the Inspector back; a selected biome area shows its biome below its properties (*Edit its biome*, Reroll).
+Then (user, same day): the texture rules lose their "experimental" mark; the ground coverage goes back to its window in the Tile
+panel's Experimental section (more passes before it has a place, if it stays); the biomes' Create panel entries get a picture (a 20 m
+patch of the biome's inside, kept by its values), and the vegetation is listed by species (the Create panel's folders, the key
+picker's headings).
 

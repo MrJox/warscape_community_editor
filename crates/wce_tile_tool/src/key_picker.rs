@@ -71,7 +71,7 @@ impl KeyPicker {
         match self.images.get(&image_key(kind, key)) {
             Some(img) => dl.image(img.id, pmin, pmax, gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), 0xFFFF_FFFF),
             None => {
-                if !bad {
+                if !bad && gui::is_item_visible() {
                     self.wanted.borrow_mut().push((kind.to_owned(), key.to_owned()));
                 }
 
@@ -270,24 +270,46 @@ impl TileTool {
         let spacing = gui::item_spacing().x;
         let across = (((gui::content_region_avail().x + spacing) / (CELL + spacing)) as usize).max(1);
         let mut toggle = None;
-        gui::clipped(rows.len().div_ceil(across), |l| {
-            for (n, &i) in rows[l * across..((l + 1) * across).min(rows.len())].iter().enumerate() {
-                if n > 0 {
-                    gui::same_line();
-                }
+        let mut cell = |p: &KeyPicker, i: usize| {
+            let (key, category) = &all[i];
+            let lit = keys.iter().any(|k| k.eq_ignore_ascii_case(key));
+            if p.cell(&format!("##pick{i}"), kind, key, lit, false) {
+                toggle = Some(key.clone());
+            }
 
-                let (key, category) = &all[i];
-                let lit = keys.iter().any(|k| k.eq_ignore_ascii_case(key));
-                if p.cell(&format!("##pick{i}"), kind, key, lit, false) {
-                    toggle = Some(key.clone());
-                }
+            if gui::is_item_hovered() {
+                let what = if lit { "chosen: click to take it out" } else { "click to add it" };
+                gui::set_tooltip(&if category.is_empty() { format!("{key}\n{what}") } else { format!("{key} ({category})\n{what}") });
+            }
+        };
 
-                if gui::is_item_hovered() {
-                    let what = if lit { "chosen: click to take it out" } else { "click to add it" };
-                    gui::set_tooltip(&if category.is_empty() { format!("{key}\n{what}") } else { format!("{key} ({category})\n{what}") });
+        if buildings {
+            // Many: by lines in view only.
+            gui::clipped(rows.len().div_ceil(across), |l| {
+                for (n, &i) in rows[l * across..((l + 1) * across).min(rows.len())].iter().enumerate() {
+                    if n > 0 {
+                        gui::same_line();
+                    }
+
+                    cell(p, i);
+                }
+            });
+        } else {
+            // Trees and shrubs by their species (oak, acacia ...), each under its name.
+            let species = |i: usize| all[i].0.split_once('.').map_or("", |s| s.0);
+            let mut sorted = rows.to_vec();
+            sorted.sort_by(|&a, &b| species(a).cmp(species(b)).then(all[a].0.cmp(&all[b].0)));
+            for group in sorted.chunk_by(|&a, &b| species(a) == species(b)) {
+                gui::separator_text(species(group[0]));
+                for (n, &i) in group.iter().enumerate() {
+                    if n % across != 0 {
+                        gui::same_line();
+                    }
+
+                    cell(p, i);
                 }
             }
-        });
+        }
         gui::end_child();
         gui::end_popup();
 

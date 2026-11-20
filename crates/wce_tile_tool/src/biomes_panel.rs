@@ -379,6 +379,7 @@ impl TileTool {
 
         b.save()?;
         self.biome_presets = None;
+        self.forget_biome_thumbnails();
         self.biomes.draft = Some(b.clone());
         Ok(format!("biome '{}' saved", b.name))
     }

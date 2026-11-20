@@ -136,10 +136,9 @@ base blend map is): what the tile's own painting holds in other textures stays (
 layers (hand paint goes over it; painting with no working layer goes into a `Painted` layer), made again off the editor's thread when
 the terrain, the scene or the rules change. The tile keeps its rules in `texture_rules.wce` beside `tile.wce`; presets are files in the
 projects' `raw_data/art/texture_rule_sets` (the built-in `Default`: mud by the water and in hollows, worn ground by roads and buildings,
-rock on slopes). The selected rule's area can be outlined in the viewport. The ground coverage (`ground_coverage_panel.rs`) is the Create
-panel's "coverage:" entries (Vegetation > Ground coverage: inland cliffs, coast, riverbanks; Buildings > Ground coverage: around
-buildings). The three show in the Inspector (one at a time, until something else is selected or made; a biome's own area keeps its
-biome), laying them first (Draw an area or the brush; Fill the tile or the brush, Preview, Generate), then their settings; they (`styled.rs`) show
+rock on slopes). The selected rule's area can be outlined in the viewport. The texture rules and a biome show in the Inspector (one at a
+time, until something else is selected or made; a biome's own area keeps its biome), laying first (Draw an area or the brush), then the
+settings. The ground coverage (`ground_coverage_panel.rs`) stays a window of the Tile panel's Experimental section. They (`styled.rs`) show
 **Simple** (named choices: a condition's Flat / Gentle / Steep / Cliffs, a strength's Faint ... Full, the edges' Clean ... Very patchy) or
 **Advanced** (every number), in a label column and a value column that keep their places; a condition is a check box and a bar that draws
 the weight it gives (its fades as ramps; drag an end, onto the bar's end for no limit, Shift + drag for its softness); the texture is

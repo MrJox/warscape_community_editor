@@ -2998,6 +2998,19 @@ impl TileTool {
         self.draw_problems_section(e, id);
         gui::separator();
         gui::separator();
+        if gui::collapsing_header("Experimental", 0) {
+            if gui::button(&format!("{}  Ground coverage...", icons::MOUNTAIN)) {
+                self.open_coverage();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Rocks and plants by the tile's cliffs, coasts and riverbanks, and props around buildings, generated into their own layer",
+                );
+            }
+        }
+
+        gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
         self.draw_debug_section(e, id);
@@ -3734,17 +3747,13 @@ impl TileTool {
         shown
     }
 
-    /// Whether the Inspector shows the texture rules, a biome or the ground coverage.
+    /// Whether the Inspector shows the texture rules or a biome.
     pub(crate) fn detail_shown(&self) -> bool {
-        self.rules_ui.open || self.biomes.open || self.coverage.open
+        self.rules_ui.open || self.biomes.open
     }
 
-    /// Closes the texture rules, the biome and the ground coverage in the Inspector (one shows at a time).
+    /// Closes the texture rules and the biome in the Inspector (one shows at a time).
     pub(crate) fn close_detail_panels(&mut self) {
-        if self.coverage.open {
-            self.close_coverage();
-        }
-
         self.biomes.open = false;
         self.biomes.brush = false;
         self.biomes.stroke = None;
@@ -5329,6 +5338,7 @@ impl Tool for TileTool {
         self.draw_launch_prompt(e);
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
+        self.draw_coverage_window(e);
     }
 
     fn fixes(&self) -> Vec<std::sync::Arc<dyn wce_editor::fixes::Fix>> {
@@ -5753,7 +5763,7 @@ impl Tool for TileTool {
             return true;
         }
 
-        // Texture rules, a biome or the ground coverage, until something else is selected (a biome's own area keeps its biome).
+        // The texture rules or a biome, until something else is selected (a biome's own area keeps its biome).
         if self.detail_shown() {
             use std::hash::{Hash, Hasher};
             let mut h = std::hash::DefaultHasher::new();
@@ -5767,10 +5777,8 @@ impl Tool for TileTool {
                 self.detail_selection = Some(now);
                 if self.rules_ui.open {
                     self.inspect_texture_rules(e);
-                } else if self.biomes.open {
-                    self.inspect_biomes(e);
                 } else {
-                    self.inspect_coverage(e);
+                    self.inspect_biomes(e);
                 }
 
                 return true;
@@ -5791,7 +5799,7 @@ impl Tool for TileTool {
         use std::hash::{Hash, Hasher};
         if self.detail_shown() {
             let mut h = std::hash::DefaultHasher::new();
-            (self.rules_ui.open, self.biomes.open, self.coverage.open, self.coverage.kind).hash(&mut h);
+            (self.rules_ui.open, self.biomes.open).hash(&mut h);
             return Some(h.finish());
         }
 

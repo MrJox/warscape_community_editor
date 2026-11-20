@@ -310,6 +310,37 @@ impl Tile {
 }
 
 /// An item's element text at a point (scene units), scaled (a tree; a building stays at 1: the game ignores its scale) and turned.
+impl Tile {
+    /// What a biome's thumbnail shows: a patch of its inside (`side` metres square on flat ground, no edge band, a seed of its own) as
+    /// models around the patch's centre, as a single item's thumbnail has them.
+    #[must_use]
+    pub fn biome_preview_parts(&self, biome: &Biome, sets: &[VegetationSet], side: f32) -> Vec<(wce_foundation::math::Float4x4, Payload)> {
+        let h = side * 0.5;
+        let poly = [(-h, -h), (h, -h), (h, h), (-h, h)];
+        // Its inside: no edge band (a patch this small would be all edge).
+        let inside = Biome { edge: 0.0, ..biome.clone() };
+        let made = wce_tile::biomes::generate(&inside, &inside.resolve(sets), &poly, &|_, _| 0.0, &|_, _| false, 7);
+        let unit = self.unit();
+        let mut out = vec![];
+        for (kind, list) in
+            [("VEGETATION_INSTANCE", &made.trees), ("VEGETATION_INSTANCE", &made.undergrowth), ("BUILDING_INSTANCE", &made.rocks)]
+        {
+            for p in list {
+                let at = Double3::new(f64::from(p.x) * unit, 0.0, f64::from(p.z) * unit);
+                let Some(text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
+                for (local, payload) in self.item_parts(&text) {
+                    let mut world = local;
+                    world.m[0][3] += p.x;
+                    world.m[2][3] += p.z;
+                    out.push((world, payload));
+                }
+            }
+        }
+
+        out
+    }
+}
+
 fn item_text(kind: &str, key: &str, at: Double3, scale: f32, yaw: f32, unit: f64) -> Option<Vec<u8>> {
     let n = if kind == "BUILDING_INSTANCE" {
         wce_tile::new_instances::NewInstance::new(kind).position(at).attr("key", key).attr("name", key)

@@ -1020,6 +1020,11 @@ pub fn is_item_hovered_allow_disabled() -> bool {
     call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenDisabled))
 }
 
+/// Whether the last item is in view (not clipped away).
+pub fn is_item_visible() -> bool {
+    call!(sys::igIsItemVisible())
+}
+
 pub fn is_item_hovered() -> bool {
     call!(sys::igIsItemHovered(0))
 }
