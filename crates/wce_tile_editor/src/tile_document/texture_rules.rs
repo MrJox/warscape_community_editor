@@ -250,6 +250,11 @@ impl Tile {
             eat(&s.base_identity().to_le_bytes());
         }
 
+        if texture_rules::uses_runoff(&rules) {
+            // Where water runs: the erosion's when it made it (it comes after its layer, on a tile opened again), else the heights'.
+            eat(self.erosion_made.as_ref().map_or(&b"heights"[..], |m| m.owner.as_bytes()));
+        }
+
         if Feature::Road.used(&rules)
             && let Some(s) = self.project.layers.as_ref().and_then(|l| l.blend.as_ref())
         {
@@ -332,6 +337,7 @@ impl Tile {
         let (border, ex, ez, mx, mz, unit) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z(), p.unit_scale);
         let (Some(hf), Some(bf)) = (p.height.as_ref(), p.blend.as_ref()) else { return Err("the tile has no height map".to_owned()) };
         let fields = Fields::from_height_field(hf, (mx, mz), unit);
+        let hf_size = (hf.width(), hf.height());
         let (bw, bh) = (bf.width(), bf.height());
         let ppm = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
@@ -355,7 +361,13 @@ impl Tile {
             None
         };
 
-        Ok(Prepared { rules, groups, inputs, fields, blend, ground, size: (bw, bh), ppm, border, mpp: (mx, mz) })
+        let runoff = texture_rules::uses_runoff(&rules).then(|| {
+            self.erosion_made
+                .as_ref()
+                .filter(|m| (m.w, m.h) == hf_size)
+                .map(|m| texture_rules::Runoff { flow: m.flow.clone(), deposit: Some(m.deposit.clone()) })
+        });
+        Ok(Prepared { rules, groups, inputs, fields, blend, ground, size: (bw, bh), ppm, border, mpp: (mx, mz), runoff })
     }
 
     /// Starts making the rules' layer off the editor's thread, on a copy of the blend stack (its samples shared, cheap) and of the heights.
@@ -568,6 +580,9 @@ struct Prepared {
 
     /// The heights' metres a sample.
     mpp: (f64, f64),
+
+    /// When a rule reads where water runs: the erosion's runoff (None inside: worked out from the heights).
+    runoff: Option<Option<texture_rules::Runoff>>,
 }
 
 impl Prepared {
@@ -576,6 +591,12 @@ impl Prepared {
         let (bw, bh) = self.size;
         let (ppm, border) = (self.ppm, self.border);
         let mut fields = self.fields.clone();
+        match &self.runoff {
+            Some(Some(r)) => fields = fields.with_runoff(r.clone()),
+            Some(None) => fields = fields.with_runoff_of_heights(),
+            None => {}
+        }
+
         // Only over the tile's main ground: what its own painting holds in other textures stays (a kit tile's artist's work).
         let base = &self.blend;
         let (_, share) = texture_rules::main_ground(bw, bh, |x, y| {
