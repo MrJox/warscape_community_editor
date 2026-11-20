@@ -974,6 +974,73 @@ fn read_sound(r: &mut Reader) -> Result<Sound> {
     Ok(Sound { source: read_source(r)?, node: read_node(r)? })
 }
 
+/// An action's parameters read field by field (Wwise 2014): its properties (delay 0x0E, fade time 0x0F... as a node's), ranged
+/// modifiers (property, min, max), then by type: Play its fade curve and bank, Set State / Set Switch the group and value, the
+/// others kept as bytes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActionParts {
+    pub props: Vec<(u8, f32)>,
+    pub ranged: Vec<(u8, f32, f32)>,
+    pub specific: ActionSpecific,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActionSpecific {
+    Play { fade_curve: u8, bank_id: u32 },
+    SetState { group: u32, value: u32 },
+    SetSwitch { group: u32, value: u32 },
+    Other(Vec<u8>),
+}
+
+impl Action {
+    /// The parameters read field by field; None when they do not read as Wwise 2014's (kept as bytes then).
+    pub fn parts(&self) -> Option<ActionParts> {
+        let mut r = Reader::new(&self.params);
+        let props = read_props(&mut r).ok()?;
+        let n = r.u8().ok()? as usize;
+        let ids = r.take(n).ok()?.to_vec();
+        let ranged = ids.into_iter().map(|id| Some((id, r.f32().ok()?, r.f32().ok()?))).collect::<Option<Vec<_>>>()?;
+        let rest = r.rest();
+        let word = |at: usize| rest.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        let specific = match (self.action_type >> 8, rest.len()) {
+            (0x04, 5) => ActionSpecific::Play { fade_curve: rest[0], bank_id: word(1)? },
+            (0x12, 8) => ActionSpecific::SetState { group: word(0)?, value: word(4)? },
+            (0x19, 8) => ActionSpecific::SetSwitch { group: word(0)?, value: word(4)? },
+            _ => ActionSpecific::Other(rest.to_vec()),
+        };
+        let parts = ActionParts { props, ranged, specific };
+        // Only a reading that writes back the same bytes counts.
+        (Self::encode_parts(&parts) == self.params).then_some(parts)
+    }
+
+    pub fn set_parts(&mut self, parts: &ActionParts) {
+        self.params = Self::encode_parts(parts);
+    }
+
+    fn encode_parts(parts: &ActionParts) -> Vec<u8> {
+        let mut w = vec![];
+        put_props(&mut w, &parts.props);
+        w.put_u8(parts.ranged.len() as u8);
+        parts.ranged.iter().for_each(|(id, _, _)| w.put_u8(*id));
+        parts.ranged.iter().for_each(|(_, lo, hi)| {
+            w.put_f32(*lo);
+            w.put_f32(*hi);
+        });
+        match &parts.specific {
+            ActionSpecific::Play { fade_curve, bank_id } => {
+                w.put_u8(*fade_curve);
+                w.put_u32(*bank_id);
+            }
+            ActionSpecific::SetState { group, value } | ActionSpecific::SetSwitch { group, value } => {
+                w.put_u32(*group);
+                w.put_u32(*value);
+            }
+            ActionSpecific::Other(bytes) => w.extend_from_slice(bytes),
+        }
+        w
+    }
+}
+
 fn read_action(r: &mut Reader) -> Result<Action> {
     Ok(Action { action_type: r.u16()?, target_id: r.u32()?, target_is_bus: r.u8()?, params: r.rest().to_vec() })
 }
