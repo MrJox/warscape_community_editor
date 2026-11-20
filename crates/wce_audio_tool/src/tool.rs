@@ -76,6 +76,8 @@ enum Request {
     SetRule(u32, usize, wce_audio_format::hirc::TransitionRule),
     /// (music object, its stingers).
     SetStingers(u32, Vec<wce_audio_format::hirc::Stinger>),
+    /// (action, property, value): its delay (14) or fade time (15).
+    SetActionProperty(u32, u8, Option<f32>),
     /// (music switch, a path, the playlist to copy): pick a sound file, a new playlist of it plays for the path.
     PathMusic(u32, Vec<u32>, u32),
     /// Pick a sound file for a new unit line.
@@ -525,6 +527,8 @@ impl AudioTool {
                 Request::SetStingers(id, stingers) => {
                     self.edit(e, "set the stingers", |edits, lib, _| edits.set_stingers(lib, id, stingers).map(|()| String::new()))
                 }
+                Request::SetActionProperty(id, property, value) => self
+                    .edit(e, "set an action", |edits, lib, _| edits.set_action_property(lib, id, property, value).map(|()| String::new())),
                 Request::Save => self.save(e),
                 Request::Revert => {
                     if !self.edits.is_empty() {
@@ -1140,7 +1144,7 @@ impl AudioTool {
         match edited.as_ref().or(typed) {
             None => gui::text_disabled("Not read field by field (this bank version or kind is kept as bytes)."),
             Some(object) => {
-                fields(object, &lib, requests);
+                fields(id, object, &lib, requests);
                 if let Object::Sound(_) = object {
                     gui::text_disabled("Its waveform, levels and player: Inspector.");
                 }
@@ -1339,7 +1343,7 @@ fn describe(node: &PlayNode, lib: Option<&SoundLibrary>) -> String {
 }
 
 /// The fields of a typed object that are not its node parameters.
-fn fields(object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
+fn fields(id: u32, object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
     let row = |name: &str, value: String| {
         gui::text_disabled(name);
         gui::same_line();
@@ -1359,6 +1363,27 @@ fn fields(object: &Object, lib: &SoundLibrary, requests: &mut Vec<Request>) {
         }
         Object::Action(a) => {
             row("Action", format!("{} ({:#06x})", action_name(a.action_type), a.action_type));
+            if let Some(parts) = a.parts() {
+                match parts.specific {
+                    wce_audio_format::hirc::ActionSpecific::Play { bank_id, .. } => {
+                        row("Loads bank", lib.bank_by_id(bank_id).map_or_else(|| format!("#{bank_id}"), |b| lib.banks[b].name.clone()));
+                    }
+                    wce_audio_format::hirc::ActionSpecific::SetState { group, value }
+                    | wce_audio_format::hirc::ActionSpecific::SetSwitch { group, value } => {
+                        row("Sets", format!("{} to {}", lib.label(group, 0), lib.label(value, 0)));
+                    }
+                    wce_audio_format::hirc::ActionSpecific::Other(_) => {}
+                }
+                // Its delay and fade time (seconds), editable.
+                for (property, label) in [(14u8, "Delay"), (15, "Fade time")] {
+                    let mut v = parts.props.iter().find(|(p, _)| *p == property).map_or(0.0, |(_, v)| *v);
+                    gui::set_next_item_width(140.0);
+                    gui::drag_float(&format!("{label}##ap{property}"), &mut v, 0.01, 0.0, 60.0, "%.2f s");
+                    if gui::is_item_deactivated_after_edit() {
+                        requests.push(Request::SetActionProperty(id, property, (v > 0.0).then_some(v)));
+                    }
+                }
+            }
             let kind = lib.object(a.target_id).map_or(0, |(_, o, _)| o.kind);
             row("Target", lib.label(a.target_id, kind));
             if gui::small_button("Select the target") {

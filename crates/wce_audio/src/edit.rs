@@ -318,6 +318,31 @@ impl EditSet {
         Ok(sound_id)
     }
 
+    /// Sets (or removes, `None`) one of an action's properties: 14 its delay, 15 its fade time (seconds), 16 its probability (%).
+    ///
+    /// # Errors
+    ///
+    /// When the object is not an action or its parameters do not read.
+    pub fn set_action_property(&mut self, lib: &SoundLibrary, id: u32, property: u8, value: Option<f32>) -> Result<()> {
+        let Some(Object::Action(mut action)) = self.object(lib, id) else {
+            return Err(AudioError::Invalid(format!("#{id} is not an action")));
+        };
+        let mut parts = action.parts().ok_or_else(|| AudioError::Invalid(format!("#{id}'s parameters do not read")))?;
+        match (parts.props.iter().position(|(p, _)| *p == property), value) {
+            (Some(k), Some(v)) => parts.props[k].1 = v,
+            (Some(k), None) => {
+                parts.props.remove(k);
+            }
+            (None, Some(v)) => {
+                let at = parts.props.partition_point(|(p, _)| *p < property);
+                parts.props.insert(at, (property, v));
+            }
+            (None, None) => return Ok(()),
+        }
+        action.set_parts(&parts);
+        self.put_object(lib, id, &Object::Action(action))
+    }
+
     /// Sets how a random/sequence container plays: `mode` 0 sequence, 1 random; `random_mode` 0 normal, 1 shuffle (no take again
     /// before all played); how many recent takes random play avoids; and one child's weight (1/1000 %, 50,000 the default).
     ///

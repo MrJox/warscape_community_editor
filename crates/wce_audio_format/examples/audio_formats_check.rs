@@ -88,6 +88,12 @@ fn main() {
                                     o.id
                                 ));
                             }
+                            // An action's parameters read field by field (props, ranged modifiers, its type's fields).
+                            if let Ok(hirc::Object::Action(a)) = &parsed
+                                && a.parts().is_none()
+                            {
+                                typed_failed.push(format!("{pack}: {path}: Action {}: its parameters do not read", o.id));
+                            }
                             match parsed {
                                 Ok(object) if object.write() == o.body => tally.0 += 1,
                                 Ok(_) => {

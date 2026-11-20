@@ -188,6 +188,20 @@ fn main() {
     if volume != Some(-3.0) {
         failures.push("set property");
     }
+    // An action's delay.
+    let play = lib.banks.iter().flat_map(|b| b.bank.objects().iter().zip(&b.typed)).find_map(|(o, t)| match t {
+        Some(Object::Action(a)) if a.action_type >> 8 == 0x04 => Some(o.id),
+        _ => None,
+    });
+    let delayed = play.is_some_and(|id| {
+        edits.set_action_property(&lib, id, 14, Some(0.25)).is_ok()
+            && matches!(edits.object(&lib, id), Some(Object::Action(a))
+                if a.parts().is_some_and(|p| p.props.iter().any(|(k, v)| *k == 14 && *v == 0.25)))
+    });
+    println!("   a Play action's delay set to 0.25 s: reads back {delayed}");
+    if !delayed {
+        failures.push("action delay");
+    }
     // Mode, shuffle, repeat avoidance and a child's weight.
     let first = match edits.object(&lib, container) {
         Some(Object::RandomSequence(r)) => r.children[0],
