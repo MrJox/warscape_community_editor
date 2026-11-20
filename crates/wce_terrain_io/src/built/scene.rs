@@ -20,6 +20,11 @@ use wce_terrain::terry::{EntityKind, TerryProject, number_text};
 use wce_tile::battle_map::locations::{BattleLocations, Location};
 use wce_tile::vegetation::ca_xml::Element;
 
+mod preservation;
+mod source;
+pub(super) use preservation::plan;
+pub(super) use source::load;
+
 const CELL: f64 = 256.0;
 
 /// The middle of the values `trunc(v / 256)` maps to `k` (0 for 0: the interval is -256 .. 256).
@@ -309,6 +314,8 @@ fn deployments(p: &TerryProject) -> Vec<(String, Vec<u8>)> {
 }
 
 /// The locations and deployment files of a scene: (`locations.blm`, `deployment/deployment_NNNN.xml` files).
+/// This is an in-memory converter candidate, not a lossless publication authority. Production native
+/// output must go through `built::write` (or the project-purpose IO path) and its preservation plan.
 ///
 /// # Errors
 ///

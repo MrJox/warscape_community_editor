@@ -2605,6 +2605,7 @@ dependencies = [
  "wce_terrain_io",
  "wce_tile",
  "wce_tile_editor",
+ "wce_tile_model",
  "wce_vfs",
 ]
 

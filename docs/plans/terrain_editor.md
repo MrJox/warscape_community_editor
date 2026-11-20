@@ -1,5 +1,9 @@
 # Terrain tool: Terry's replacement (plan, 2026-11-02)
 
+Developer entry point: [Terrain Editor handover](../terrain_editor_handover.md), maintained from the accepted handover and current feature scope. Acceptance, publication and upstream merge are distinct; the dated progress below is historical.
+
+**15 November 2026 â€” locally prepared Reliable Terrain Save/Export:** complete-output staging, durable per-file publication, shared Save/Export Busy state, source/destination freshness, destination ownership, complete resource identity and native BLM/deployment preservation are implemented directly on current master, including the necessary shared publication modules/tests without an unmerged #51 dependency or its Tile I/O changes. Upstream autosave/recovery behavior is retained. Save As writes a copy without retargeting or clearing unsaved history. [Usage, profiles, refusal/recovery rules and focused tests](terrain_save_export.md). This is a local feature package, not upstream acceptance. Native normal-baseline continuity across close/reopen remains unresolved; no persisted baseline is included. Campaign-height preparation #52 remains held and excluded.
+
 The Terrain tool edits a map: the battle map a game's battles are cut from (the campaign's `main_attila_map`, a mod's `rom_third_age_map`, a
 historical battle, a settlement map), its low-frequency (LF) ground, the tiles painted on it and the metadata Terry keeps in the map's
 `.terry` project. It replaces the Assembly Kit's Terry: Attila's crashes at launch, Rome 2's kit has none, Thrones' works but slowly (user,
@@ -7,7 +11,7 @@ historical battle, a settlement map), its low-frequency (LF) ground, the tiles p
 docs/plans/tile.md (items 1, 3, 4, 5) and the map context's open items that are about the map rather than the open tile
 (docs/plans/map_context_todo.md, "Map-level terrain", "Large map contexts: performance").
 
-Status: **Phases 0, 1 and 2 done (2026-11-02); the user's decisions are in "Decisions" at the end.** Next: Phase 3 (LF editing).
+Historical status (2 November): **Phases 0, 1 and 2 done; the user's decisions are in "Decisions" at the end.** The handover and current feature note above describe later availability; this dated plan does not certify all game/map profiles.
 
 ## What Terry does and what the tool does with it
 

@@ -959,6 +959,28 @@ impl TerrainTool {
     /// started; changes made to it during the read are asked about again.
     fn adopt(&mut self, e: &mut Editor, d: Box<MapDocument>) {
         let mut d = d;
+        d.save_dir = save_dir(e, &d);
+        if let Err(err) = d.observe_save_destination() {
+            self.status = err;
+            return;
+        }
+        self.adopt_prepared(e, d);
+    }
+
+    fn adopt_prepared(&mut self, e: &mut Editor, mut d: Box<MapDocument>) {
+        if let Some(path) = &d.save_dir {
+            match e.docs.destination_owner(path, e.docs.of_tool(TERRAIN_TOOL_ID)) {
+                Ok(Some(id)) => {
+                    self.status = format!("already open: {}", e.docs.find(id).map(|d| d.title()).unwrap_or_default());
+                    return;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    self.status = err;
+                    return;
+                }
+            }
+        }
         if e.docs.of_tool(TERRAIN_TOOL_ID).and_then(|id| e.docs.find(id)).is_some_and(|old| old.modified()) {
             // The read map waits in the prompt's open; it comes back here when the open can go on at once.
             let held = std::rc::Rc::new(std::cell::RefCell::new(Some(d)));
@@ -966,7 +988,7 @@ impl TerrainTool {
             let retry = Box::new(move |e: &mut Editor| {
                 let Some(d) = waiting.borrow_mut().take() else { return Err("the map was opened already".to_owned()) };
                 let name = d.name.clone();
-                e.with_tool::<Self, _>(|t, e| t.adopt(e, d))
+                e.with_tool::<Self, _>(|t, e| t.adopt_prepared(e, d))
                     .map(|()| format!("opened {name}"))
                     .ok_or_else(|| "the Terrain tool is busy".to_owned())
             });
@@ -987,7 +1009,6 @@ impl TerrainTool {
 
         self.status = format!("{}: {}", d.name, d.summary());
         self.take_start_season(&d);
-        d.save_dir = save_dir(e, &d);
         match e.replace_document(TERRAIN_TOOL_ID, d) {
             Ok(id) => self.start_view(e, id),
             Err(err) => e.status(&format!("Terrain: {err}"), true),
@@ -1329,6 +1350,7 @@ impl TerrainTool {
         let i = self.inputs(e, name)?;
         let mut d = open_map(&i)?.document();
         d.save_dir = save_dir(e, &d);
+        d.observe_save_destination()?;
         self.take_start_season(&d);
         let summary = format!("{}: {}", d.name, d.summary());
         let rq = self.request(e, &d).ok_or("no kit with a tile database")?;

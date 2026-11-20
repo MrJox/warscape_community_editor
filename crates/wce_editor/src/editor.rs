@@ -54,6 +54,10 @@ pub enum PromptKind {
 /// An open that waits for the answer to the replace prompt (`Editor::clear_to_replace`).
 type PendingOpen = Box<dyn FnOnce(&mut Editor) -> Result<String, String>>;
 
+#[cfg(all(test, windows))]
+#[path = "save_prompt_tests.rs"]
+mod save_prompt_tests;
+
 /// The scripted mouse: positions are pixels of the viewport image.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MouseState {
@@ -243,10 +247,14 @@ impl CommandHost for Editor {
 
 impl Editor {
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext) -> Self {
+        Self::with_settings(dev, ctx, Settings::load_default())
+    }
+
+    fn with_settings(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, settings: Settings) -> Self {
         let mut e = Self {
             dev: dev.clone(),
             ctx: ctx.clone(),
-            settings: Settings::load_default(),
+            settings,
             vfs: None,
             renderer: None,
             scene: RenderScene::default(),
@@ -1053,6 +1061,9 @@ impl Editor {
     /// its tool's folder, with its title as the name.
     pub fn save_as_start(&self, id: DocumentId) -> PathBuf {
         let Some(d) = self.docs.find(id) else { return self.projects_dir() };
+        if let Some(dir) = d.save_destination() {
+            return dir;
+        }
         // A file of the game's files (packs or loose), at its place in the project's loose folder; not a tile's or a map's folder.
         let key = d.source_key();
         if let Some(key) = self.game_path(&key).filter(|k| self.vfs.as_ref().is_some_and(|v| v.owner(k).is_some())) {
@@ -1270,6 +1281,15 @@ impl Editor {
         self.in_script
     }
 
+    fn step_script(&mut self, script: &mut ScriptRunner) -> bool {
+        self.in_script = true;
+        let prompts = self.docs.set_save_prompts(false);
+        let ok = script.step(self);
+        self.docs.set_save_prompts(prompts);
+        self.in_script = false;
+        ok
+    }
+
     /// Scripted (fixed-step) runs ignore the real mouse; the `mouse` commands drive the same Dear ImGui events.
     pub fn scripted_input(&self) -> bool {
         self.clock.fixed_step()
@@ -1421,6 +1441,12 @@ impl Editor {
     ///
     /// The document manager refused it (it should not: the old one is closed first).
     pub fn replace_document(&mut self, tool: &str, doc: Box<dyn Document>) -> Result<DocumentId, String> {
+        let old = (!doc.stand_in()).then(|| self.docs.of_tool(tool)).flatten();
+        if let Some(path) = doc.save_destination()
+            && let Some(owner) = self.docs.destination_owner(&path, old)?
+        {
+            return Err(format!("Save destination is already owned by open document {owner}"));
+        }
         if !doc.stand_in()
             && let Some(old) = self.docs.of_tool(tool)
         {
@@ -1600,11 +1626,18 @@ impl Editor {
         docs.chain(self.tools_unsaved_work()).collect()
     }
 
-    /// Saves every modified document, as Save All does; needs no frame (the documents' data is in memory, not on the GPU). True when all
-    /// were saved; the messages say what was and what failed.
+    /// Emergency Save with no frame: attempts every document without opening a prompt.
+    /// Conflicted/failed documents stay dirty and get recovery copies instead of overwriting
+    /// unreviewed outside changes. True when every ordinary Save succeeded.
     pub fn save_all_documents(&mut self) -> (bool, Vec<String>) {
         let mut messages = vec![];
-        let all = self.docs.save_all(&mut messages);
+        let all = self.docs.save_all_without_prompt(&mut messages);
+        if !all {
+            match self.autosave_run() {
+                Ok(n) => messages.push(format!("Recovery copies preserved: {n} in {}", self.autosave_root().display())),
+                Err(e) => messages.push(format!("Recovery copy failed: {e}")),
+            }
+        }
         self.follow_saves();
         (all, messages)
     }
@@ -1681,6 +1714,9 @@ impl Editor {
 
         let kind = self.prompt;
         self.prompt_error.clear();
+        if matches!(a, Answer::Cancel | Answer::Discard) && self.docs.pending_changed_save().is_some() {
+            let _ = self.docs.answer_changed_save(false);
+        }
         let message = match a {
             Answer::Cancel => {
                 self.cancel_restart();
@@ -1693,6 +1729,9 @@ impl Editor {
             Answer::Save => {
                 let mut saved = vec![];
                 for id in self.prompt_docs.clone() {
+                    if self.docs.find(id).is_none_or(|d| !d.modified()) {
+                        continue;
+                    }
                     match self.docs.save_one(id) {
                         Ok(m) => saved.push(m),
                         Err(m) => {
@@ -1752,6 +1791,54 @@ impl Editor {
         Ok(message)
     }
 
+    fn draw_changed_save_prompt(&mut self) {
+        if self.prompt != PromptKind::None {
+            return;
+        }
+        let Some(pending) = self.docs.pending_changed_save().cloned() else { return };
+        gui::open_popup("Files changed on disk");
+        let mut open = true;
+        if !gui::begin_popup_modal("Files changed on disk", Some(&mut open), gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            if !open {
+                let _ = self.answer_changed_save(false);
+            }
+            return;
+        }
+        self.draw_changed_save_contents(&pending.reason, open);
+        if self.docs.pending_changed_save().is_none() {
+            gui::close_current_popup();
+        }
+        gui::end_popup();
+    }
+
+    /// Complete the interrupted Save before resuming its close/open/quit action.
+    fn answer_changed_save(&mut self, overwrite: bool) -> Result<String, String> {
+        let result = self.docs.answer_changed_save(overwrite);
+        let result = match result {
+            Ok(_) if self.prompt != PromptKind::None => self.answer_prompt(if overwrite { Answer::Save } else { Answer::Cancel }),
+            other => other,
+        };
+        if let Err(error) = &result {
+            self.prompt_error.clone_from(error);
+        }
+        match &result {
+            Ok(message) => self.status(message, false),
+            Err(error) => self.status(error, true),
+        }
+        self.follow_saves();
+        result
+    }
+
+    fn draw_changed_save_contents(&mut self, reason: &str, open: bool) {
+        gui::text(reason);
+        let answer = if gui::button("Overwrite") { Some(true) } else { None };
+        gui::same_line();
+        let answer = if gui::button("Cancel") || !open || gui::is_key_pressed(gui::KEY_ESCAPE, false) { Some(false) } else { answer };
+        if let Some(overwrite) = answer {
+            let _ = self.answer_changed_save(overwrite);
+        }
+    }
+
     fn draw_prompt(&mut self) {
         if self.prompt == PromptKind::None {
             return;
@@ -1764,6 +1851,18 @@ impl Editor {
         gui::set_next_window_pos(gui::v2(vp.Pos.x + vp.Size.x * 0.5, vp.Pos.y + vp.Size.y * 0.5), gui::COND_ALWAYS, gui::v2(0.5, 0.5));
         let mut open = true;
         if !gui::begin_popup_modal("Unsaved changes", Some(&mut open), gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            if !open {
+                let _ = self.answer_prompt(Answer::Cancel);
+            }
+            return;
+        }
+
+        if let Some(pending) = self.docs.pending_changed_save().cloned() {
+            self.draw_changed_save_contents(&pending.reason, open);
+            if self.prompt == PromptKind::None {
+                gui::close_current_popup();
+            }
+            gui::end_popup();
             return;
         }
 
@@ -1857,9 +1956,7 @@ impl Editor {
 
         if !self.script.done() && !self.script.failed() {
             let mut script = std::mem::take(&mut self.script);
-            self.in_script = true;
-            let ok = script.step(self);
-            self.in_script = false;
+            let ok = self.step_script(&mut script);
             self.script = script;
             if !ok {
                 self.request_quit(1);
@@ -2004,6 +2101,7 @@ impl Editor {
         }
 
         self.draw_prompt();
+        self.draw_changed_save_prompt();
     }
 
     /// When what the Inspector shows changes (the selection, the active tool's part of it: a mode, what it places, a brush's settings) to
@@ -2282,17 +2380,14 @@ impl Editor {
             let blocked = self.docs.active().and_then(|d| d.save_as_blocked());
             if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save && blocked.is_none()) {
                 let start = self.save_as_start(active);
-                if let Some(p) = file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
-                    && let Some(d) = self.docs.find_mut(active)
-                {
-                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p.clone() });
-                    let msg = match result {
-                        Ok(()) if d.modified() => {
-                            format!("a copy saved to {}; the document's own file does not have the edits yet (Save)", p.display())
-                        }
-                        Ok(()) => "saved".to_owned(),
-                        Err(e) => e,
-                    };
+                let path = if self.docs.find(active).is_some_and(|d| d.save_destination().is_some()) {
+                    crate::steam_detect::pick_folder_at("Save map copy", &start)
+                } else {
+                    file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
+                };
+                if let Some(p) = path {
+                    let result = self.docs.save_to(active, &wce_editor_core::document::SaveTarget { path: p });
+                    let msg = result.unwrap_or_else(|e| e);
                     self.status(&msg, false);
                 }
             }

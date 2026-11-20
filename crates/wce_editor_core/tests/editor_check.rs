@@ -17,6 +17,9 @@ use wce_foundation::math::{Float3, Float4x4, length, normalize, translation};
 use wce_scene::camera::Camera;
 use wce_scene::render_scene::{LayerId, Overlay, Payload, RenderScene, SourceRef};
 
+#[path = "common/save_routing.rs"]
+mod save_routing;
+
 /// An inspector that records what the document asks for and plays back scripted edits.
 #[derive(Default)]
 struct RecordingInspector {
@@ -128,7 +131,10 @@ struct NumberDoc {
     history: CommandStack<Vec<f32>>,
     role: Role,
     saves: i32,
+    save_attempts: i32,
     publishes: i32,
+    changed_on_disk: bool,
+    save_error: Option<String>,
 }
 
 impl NumberDoc {
@@ -137,7 +143,16 @@ impl NumberDoc {
     }
 
     fn with_role(n: usize, role: Role) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(vec![0.0; n]), role, saves: 0, publishes: 0 }
+        Self {
+            core: DocumentCore::new(),
+            history: CommandStack::new(vec![0.0; n]),
+            role,
+            saves: 0,
+            save_attempts: 0,
+            publishes: 0,
+            changed_on_disk: false,
+            save_error: None,
+        }
     }
 
     fn values(&self) -> &[f32] {
@@ -224,7 +239,21 @@ impl Document for NumberDoc {
     }
 
     fn save(&mut self, _: &SaveTarget) -> Result<(), String> {
+        self.save_attempts += 1;
+        if let Some(error) = &self.save_error {
+            return Err(error.clone());
+        }
         self.saves += 1;
+        Ok(())
+    }
+
+    fn save_changes(&self, _: &SaveTarget) -> Result<Option<String>, String> {
+        Ok(self.changed_on_disk.then(|| "files changed outside the editor".into()))
+    }
+
+    fn save_overwrite(&mut self, target: &SaveTarget) -> Result<(), String> {
+        self.save(target)?;
+        self.changed_on_disk = false;
         Ok(())
     }
 
