@@ -343,3 +343,9 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   Left: at the bottom of capture A's frame the editor draws something at +2.8 m on the game's ray over the bay where no terrain is
   (not a tile: a model, likely; the close view of the bay matches the LF, its shore where the heights put it); faint cell lines in
   the shallow water of the close view; a cliff's texture smeared beside it.
+- **The rings at the game's camera (2026-11-20, measured, not decided):** at capture A's camera the default rings (8 / 24 / 24 / 64
+  around the pivot, 37 cells ahead) leave the frame's bottom (31 cells off) at the far level; `terrain_view 13000 40 48 96 48` gives
+  it the coast tiles' sand as the game's, with 100 near chunks instead of 8: the terrain's surface pass 1.2 -> 6.1 ms, the frame's
+  p95 9.8 -> 11.9 ms (the machine loaded: the sky / light / fog pass alone went 2.9 .. 7.9 ms between runs; relative numbers).
+  Scripts measuring a campaign frame wait for the far bake first (`terrain_far_wait`): its first bake after a key change ran inside
+  the window (p95 75 ms). Not checked: a battle map after the far level's sea cut (the port map tried draws under a weather layer).
