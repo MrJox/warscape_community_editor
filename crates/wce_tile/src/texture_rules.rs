@@ -57,12 +57,12 @@ impl Range {
         lo * hi
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         let end = |e: Option<f32>| e.map_or_else(|| "-".to_owned(), |v| crate::ted_scene::format_number(f64::from(v)));
         format!("{} {}", end(self.lo), end(self.hi))
     }
 
-    fn parse(s: &str, fade: Option<f32>) -> Option<Self> {
+    pub(crate) fn parse(s: &str, fade: Option<f32>) -> Option<Self> {
         let mut parts = s.split_whitespace();
         let end = |p: Option<&str>| -> Option<Option<f32>> {
             match p? {
