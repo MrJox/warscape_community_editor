@@ -2423,6 +2423,8 @@ name = "wce_cinematic"
 version = "0.0.1"
 dependencies = [
  "rpfm_lib",
+ "serde",
+ "serde_json",
  "wce_audio",
  "wce_audio_format",
  "wce_foundation",

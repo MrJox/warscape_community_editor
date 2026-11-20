@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true
+# The project file: pretty JSON (diffable text, docs/plans/cinematic.md "Save").
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 wce_audio = { path = "../wce_audio" }
 wce_audio_format = { path = "../wce_audio_format" }
 wce_foundation = { path = "../wce_foundation" }
