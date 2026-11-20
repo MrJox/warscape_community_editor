@@ -232,6 +232,14 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   the plain material's blend box stands 30 units over the LF: what rose out of it resolved black. A ground with heights of its
   own now has a box over them, and no level of detail (two at different strides parted along their edge, as the blocks'
   comment has it). Also: a far chunk drew its tiles' cells inside a block's square, which the block draws (drawn twice).
+- **F's smeared cliffs (2026-11-20, open):** beige streaks down the cliff faces south-east of Rome where the game's are grey rock. In
+  the game the pixel's terrain albedo is two layer draws (weight 1 each) and the cliff's own `custom_geom_mat` draw (weight 10,
+  LessEqual); in the editor's the layers alone: our custom-material pass never lands there. Without its depth test it does
+  (the streaks turn to rock, as the game's), so the cliff mesh covers them but something nearer holds the depth. Not the two
+  passes' vertex shaders (the same instance rows and level; LessEqual instead of Equal changed nothing). Suspect: a land tile's
+  ground skirt (a ring a grid step out, 20 units down) hanging over the cliff face, textured by the layers' top-down projection;
+  skirts off changed nothing, but the tiles come from the disk cache, which may hold them skirted. Next: find the draw that
+  writes the depth there (pixel history on the one-sample depth returned nothing; try its R32 copy).
 
 ## Order
 
