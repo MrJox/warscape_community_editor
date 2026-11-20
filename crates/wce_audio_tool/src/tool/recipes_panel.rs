@@ -7,7 +7,6 @@ use wce_audio::recipes;
 use wce_audio_format::fnv;
 use wce_audio_format::hirc::Object;
 use wce_editor::gui::{self, v2};
-use wce_editor::icons;
 
 use super::{AudioTool, Request};
 
@@ -94,7 +93,7 @@ impl AudioTool {
                         }
                         shown += 1;
                         gui::push_id(&format!("v{}", o.id));
-                        if gui::small_button(icons::PLAY) {
+                        if self.play.button(&format!("v{}", o.id), requests) {
                             requests.push(Request::PlayObject(o.id));
                         }
                         gui::same_line();
@@ -146,7 +145,7 @@ impl AudioTool {
                     gui::text_disabled(&format!("{} lines for {}", lines.len(), lib.label(culture, 0)));
                     for (keys, node) in lines.iter().take(300) {
                         gui::push_id(&format!("l{node}{}", keys.iter().map(u32::to_string).collect::<String>()));
-                        if gui::small_button(icons::PLAY) {
+                        if self.play.button(&format!("l{node}{}", keys.iter().map(u32::to_string).collect::<String>()), requests) {
                             requests.push(Request::PlayObject(*node));
                         }
                         gui::same_line();

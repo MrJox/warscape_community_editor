@@ -7,6 +7,7 @@
 //! - [`library`]: every bank indexed, and what an event plays ([`library::SoundLibrary::resolve`]).
 //! - [`bits`]: LSB-first bit reading and writing, as Vorbis packs its bits.
 
+pub mod analysis;
 pub mod anim_sounds;
 pub mod bits;
 pub mod codebooks;
