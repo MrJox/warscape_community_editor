@@ -182,7 +182,7 @@ impl Shared {
         let roots: Vec<PathBuf> =
             self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
         let mut keys: HashMap<(String, String, String), u64> = HashMap::new();
-        let mut h = cache::hash(0xCBF2_9CE4_8422_2325, b"far 1");
+        let mut h = cache::hash(0xCBF2_9CE4_8422_2325, b"far 2");
         h = cache::hash(h, &FAR_MAP_SIZE.to_le_bytes());
         for (i, p) in frame.map.placements.iter().enumerate() {
             let climate = frame.climate_name(i);

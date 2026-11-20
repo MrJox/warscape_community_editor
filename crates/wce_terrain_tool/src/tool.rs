@@ -17,6 +17,7 @@ use wce_foundation::log;
 use wce_foundation::math::Float3;
 use wce_map_view::maps::{GAME_FAR_PLANE, PacksTree, game_map_folder, game_maps, load_map};
 use wce_map_view::{MapView, Rings};
+use wce_scene::lf_derive::LfDerive;
 use wce_scene::render_scene::DocumentId;
 use wce_terrain::LfRole;
 use wce_terrain::MapKind;
@@ -1126,19 +1127,30 @@ impl TerrainTool {
         e.scene.campaign_snow = campaign_snow(e, id, &s, &self.season);
         let lift = s.frame().lift(0.0, 0.0);
         let start = s.frame().lf.as_ref().and_then(|lf| land_near_centre(lf));
-        self.pick = s.frame().lf.clone().map(LfPick::new);
+        // The fields on their own lattices are what is picked and painted (a campaign map draws views of them as the game reads them:
+        // the frame's `lf_edit`, `sea_lf_edit`), and the mirrors make those views again over each edit.
+        let frame = s.frame();
+        self.pick = frame.lf_edit.clone().or_else(|| frame.lf.clone()).map(LfPick::new);
         self.cursor = None;
         self.painting = None;
-        self.sea_lf = s.frame().sea_lf.clone();
+        self.sea_lf = frame.sea_lf_edit.clone().or_else(|| frame.sea_lf.clone());
         let doc = e.docs.find_as::<MapDocument>(id);
-        let mirror = |role: LfRole, lf: Option<&Arc<wce_scene::render_scene::LfMap>>| {
+        let mirror = |role: LfRole,
+                      lf: Option<&Arc<wce_scene::render_scene::LfMap>>,
+                      drawn: Option<(&Arc<wce_scene::render_scene::LfMap>, LfDerive)>| {
             doc.and_then(|d| d.lf_field(role))
                 .zip(lf)
                 .and_then(|(field, lf)| LfMirror::of(field, lf.values.clone(), lf.nx, lf.nz))
+                .map(|m| match drawn {
+                    Some((d, derive)) => m.with_derived(d.values.clone(), derive),
+                    None => m,
+                })
                 .map(Arc::new)
         };
-        self.mirror = mirror(LfRole::Land, self.pick.as_ref().map(|p| &p.lf));
-        self.sea_mirror = mirror(LfRole::Sea, self.sea_lf.as_ref());
+        let land_box = frame.lf_edit.as_ref().zip(frame.lf.as_ref()).map(|(e, d)| (d, LfDerive::Box((e.nx / d.nx.max(1)).max(1) as u32)));
+        let sea_drawn = frame.sea_lf_edit.as_ref().and(frame.sea_lf.as_ref()).map(|d| (d, LfDerive::GameSea));
+        self.mirror = mirror(LfRole::Land, self.pick.as_ref().map(|p| &p.lf), land_box);
+        self.sea_mirror = mirror(LfRole::Sea, self.sea_lf.as_ref(), sea_drawn);
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
         self.shown = id;
         self.building = 0;
@@ -2537,6 +2549,43 @@ impl Tool for TerrainTool {
                 CommandResult::success(format!("{}{note}{late}", t.view.status))
             })
         });
+
+        c.add(
+            "terrain_ray",
+            "terrain_ray <x> <y> [width height]",
+            "the Terrain tool: what the camera's ray through a pixel of an image of that size (default 1920 x 1080) meets first, the drawn \
+             ground (the LF and the tiles' own heights) or the sea: its map cell and height (metres)",
+            |e, a| {
+                let v: Vec<f32> = a.iter().filter_map(|x| x.parse().ok()).collect();
+                if v.len() != 2 && v.len() != 4 {
+                    return CommandResult::fail("usage: terrain_ray <x> <y> [width height]");
+                }
+                let (w, h) = if v.len() == 4 { (v[2], v[3]) } else { (1920.0, 1080.0) };
+                let (o, d) = e.viewport.camera().ray(2.0 * (v[0] + 0.5) / w - 1.0, 1.0 - 2.0 * (v[1] + 0.5) / h, w / h);
+                with_terrain(e, |t, _| {
+                    let (Some(s), Some(frame)) = (t.view.streamer.as_ref(), t.view.frame()) else {
+                        return CommandResult::fail("no map shown");
+                    };
+                    let m = |y: f32| (f64::from(y) - f64::from(frame.sea_y())) * frame.unit;
+                    let mut k = 0.0f32;
+                    while k < 2.0e6 {
+                        let q = o + d * k;
+                        let ground = s.ground_at(&frame, f64::from(q.x), f64::from(q.z));
+                        let (cx, cy) = frame.cell_of(f64::from(q.x), f64::from(q.z));
+                        if q.y <= ground.max(frame.sea_y()) {
+                            let what = if ground >= frame.sea_y() { "ground" } else { "sea" };
+                            return CommandResult::success(format!(
+                                "{what} at cell {cx:.2}, {cy:.2}: ground {:.1} m, ray {:.1} m",
+                                m(ground),
+                                m(q.y)
+                            ));
+                        }
+                        k += 2.0;
+                    }
+                    CommandResult::fail("the ray meets nothing")
+                })
+            },
+        );
 
         c.add(
             "terrain_far_relief",

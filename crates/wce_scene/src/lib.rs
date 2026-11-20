@@ -5,5 +5,6 @@ pub mod campaign_lighting;
 pub mod clouds;
 pub mod environment;
 pub mod half;
+pub mod lf_derive;
 pub mod model_top;
 pub mod render_scene;
