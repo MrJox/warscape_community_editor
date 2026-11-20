@@ -374,7 +374,26 @@ impl CinematicTool {
             .and_then(wce_foundation::settings::rpfm_schema_path)
             .and_then(|s| rpfm_lib::schema::Schema::load(&s, None).ok())
             .ok_or("no RPFM schema for the game")?;
-        let warnings = wce_cinematic::battle_tables::write_battle_pack(path, &p, files.as_ref(), &schema, "en")?;
+        let (mut out, warnings) = wce_cinematic::battle_tables::battle_files(&p, files.as_ref(), &schema, "en")?;
+        // The Historical Battles menu's picture (vanilla's: 512 x 256 RGBA): the viewport's view as it is now.
+        let shot = format!("{}/screenshot_small.png", wce_cinematic::battle_export::script_folder(&p));
+        let camera = e.viewport.camera();
+        let mut target = wce_render::render_target::RenderTarget::default();
+        match wce_editor::viewport::render_offscreen(e, &mut target, 512, 256, camera, e.clock.time() as f32, true) {
+            Some(rgba) => {
+                let png = wce_formats::png_file::PngFile {
+                    width: 512,
+                    height: 256,
+                    bit_depth: 8,
+                    color_type: 6,
+                    pixels: rgba,
+                    ..Default::default()
+                };
+                out.push((shot, png.encode().map_err(|e| format!("the menu picture: {e:?}"))?));
+            }
+            None => e.status("Cinematic: no renderer: the battle has no menu picture", true),
+        }
+        wce_walls::pack::write_pack(path, &p.game, out, vec![])?;
         for w in &warnings {
             e.status(&format!("Cinematic: {w}"), true);
         }
@@ -637,6 +656,17 @@ impl Tool for CinematicTool {
             }
             gui::end_menu();
         }
+    }
+
+    fn restore(
+        &mut self,
+        _e: &mut Editor,
+        copy: &std::path::Path,
+        meta: &wce_editor_core::autosave::AutosaveMeta,
+    ) -> Result<Option<Box<dyn wce_editor_core::document::Document>>, String> {
+        let doc = SceneDocument::restored(&copy.join(&meta.inner), meta.target.clone())?;
+        self.scene = SceneUi::default();
+        Ok(Some(Box::new(doc)))
     }
 
     fn export_menu(&mut self, e: &mut Editor) -> bool {

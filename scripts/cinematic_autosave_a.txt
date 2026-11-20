@@ -1,0 +1,11 @@
+# The Cinematic tool's autosave (docs/plans/cinematic.md, step 3), first session: a scene never saved, copied by autosave, then left
+# behind as a crash would. scripts/cinematic_autosave_b.txt takes it back.
+tool cinematic
+frames 2
+scene_new WCE Autosave Test
+frames 3
+unit_add att_rom_cohors 0 10 -300
+frames 2
+autosave_now
+autosave_abandon
+quit

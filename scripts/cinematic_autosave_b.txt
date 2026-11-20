@@ -1,0 +1,10 @@
+# The Cinematic tool's autosave, second session: the copy found, restored (modified, unsaved), its unit back.
+tool cinematic
+frames 2
+autosave_found
+autosave_restore 0
+frames 3
+scene_time 0
+frames 2
+assert_unit 3 10 -300 STAND
+quit

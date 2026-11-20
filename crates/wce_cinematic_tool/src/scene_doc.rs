@@ -36,11 +36,13 @@ pub struct SceneDocument {
     core: DocumentCore,
     history: CommandStack<Project>,
     path: PathBuf,
+    /// Taken back from an autosave copy: unsaved until its first save.
+    restored: bool,
 }
 
 impl SceneDocument {
     pub fn new(project: Project, path: PathBuf) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(project), path }
+        Self { core: DocumentCore::new(), history: CommandStack::new(project), path, restored: false }
     }
 
     /// # Errors
@@ -51,6 +53,18 @@ impl SceneDocument {
         let p = Project::from_json(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut d = Self::new(p, path);
         d.history.mark_saved();
+        Ok(d)
+    }
+
+    /// A scene taken back from its autosave copy (`copy`, the copy's project file) that saves to `path`.
+    ///
+    /// # Errors
+    ///
+    /// The copy doesn't read.
+    pub fn restored(copy: &std::path::Path, path: PathBuf) -> Result<Self, String> {
+        let text = std::fs::read_to_string(copy).map_err(|e| format!("{}: {e}", copy.display()))?;
+        let mut d = Self::new(Project::from_json(&text)?, path);
+        d.restored = true;
         Ok(d)
     }
 
@@ -91,6 +105,28 @@ impl Document for SceneDocument {
     fn can_save(&self) -> bool {
         true
     }
+    fn modified(&self) -> bool {
+        self.restored || self.history.modified()
+    }
+    /// The scene brings its own ground (the preview's): the weather tool's sample map stays hidden while it is open.
+    fn shows_scene(&self) -> bool {
+        true
+    }
+    fn autosave_meta(&self) -> Option<wce_editor_core::autosave::AutosaveMeta> {
+        Some(wce_editor_core::autosave::AutosaveMeta {
+            kind: self.kind(),
+            title: self.title(),
+            target: self.path.clone(),
+            open: self.path.display().to_string(),
+            from_packs: false,
+            inner: "project.json".into(),
+            ..Default::default()
+        })
+    }
+    fn autosave(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        let to = dir.join("project.json");
+        std::fs::write(&to, self.project().to_json()).map_err(|e| format!("cannot write {}: {e}", to.display()))
+    }
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         let to = if target.path.as_os_str().is_empty() { self.path.clone() } else { target.path.clone() };
         if let Some(dir) = to.parent() {
@@ -99,6 +135,7 @@ impl Document for SceneDocument {
         wce_foundation::files::write_replacing(&to, self.project().to_json().as_bytes()).map_err(|e| format!("{}: {e}", to.display()))?;
         if wce_editor_core::document::same_path(&to, &self.path) {
             self.history.mark_saved();
+            self.restored = false;
         }
         Ok(())
     }
