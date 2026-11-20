@@ -458,7 +458,12 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
     8. In game (user): `spike\ingame5\wce_audio_test_units.pack` (scratch), vanilla Attila, the pack enabled alone: every land
        unit's `selection_vo` is `selected_wce_test`, a two-tone beep (880 then 660 Hz) added under all 68 actors of the four sets.
        Select units in a custom battle: a beep means mod packs' voice banks, new streamed takes and a DB row override all work
-       (and answers "an added variation in game", 4.7). **todo (user)**
+       (and answers "an added variation in game", 4.7). Result (user, 2026-11-20): **part of the selections beep**, the others
+       play the units' usual voices: the edited voice banks, the new takes and the DB row work in game (4.7's added variation:
+       done). Likely the game picks among the three selection columns (only `selection_vo` was set), or adds generic lines by
+       class. Pack 2: `spike\ingame6\wce_audio_test_units2.pack`, all three columns set: every selection beeping means the
+       three columns are all there is. The tool's new unit line now sets all three by default ("all three", or one column).
+       **pack 2: todo (user)**
     9. Left open, with why: the UI button anomaly (4.7; no pack shadows the UI banks: `sound.pack` is a Release pack, the test
        packs Mod packs; 10.8 tells whether only UI banks are ignored); transition rules and stingers editing, segments with
        several tracks, new playlists (6.4; their blocks are kept as bytes); Action parameters and effect plug-in parameters typed

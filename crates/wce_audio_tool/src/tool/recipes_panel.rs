@@ -404,19 +404,29 @@ impl AudioTool {
             gui::text_disabled("Pick an actor to hear and edit its lines.");
         }
 
-        // A new selection line for this unit.
+        // A new selection line for this unit: all three columns (the game picks among them when the unit is selected: tested in
+        // game, 2026-11-20, a line set in selection_vo alone plays only part of the time), or one of them.
         gui::separator_text("A new selection line for this unit");
-        for (i, column) in SELECTION_COLUMNS.iter().enumerate() {
-            if gui::radio_button(column, self.recipes_view.column == i) {
-                self.recipes_view.column = i;
-            }
-            gui::same_line();
+        if gui::radio_button("all three (always this line)", self.recipes_view.column == 0) {
+            self.recipes_view.column = 0;
         }
-        gui::new_line();
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The game picks among selection_vo, selected_vo_secondary and selected_vo_tertiary each time the unit is selected.",
+            );
+        }
+        for (i, column) in SELECTION_COLUMNS.iter().enumerate() {
+            gui::same_line();
+            if gui::radio_button(column, self.recipes_view.column == i + 1) {
+                self.recipes_view.column = i + 1;
+            }
+        }
         gui::set_next_item_width(300.0);
         gui::input_text("##newline", Some("the line's name (letters, digits, _)"), &mut self.recipes_view.new_line, 128, 0);
-        let column = SELECTION_COLUMNS[self.recipes_view.column];
-        let like = [unit.selection[self.recipes_view.column].as_str(), unit.selection[0].as_str(), "selected_generic"]
+        let columns: Vec<&'static str> =
+            if self.recipes_view.column == 0 { SELECTION_COLUMNS.to_vec() } else { vec![SELECTION_COLUMNS[self.recipes_view.column - 1]] };
+        let column = columns.join(", ");
+        let like = [unit.selection[self.recipes_view.column.saturating_sub(1)].as_str(), unit.selection[0].as_str(), "selected_generic"]
             .into_iter()
             .find(|s| !s.is_empty())
             .map_or(0, wce_audio_format::fnv::id);
@@ -427,7 +437,7 @@ impl AudioTool {
                 switches: actors.iter().map(|(_, s)| *s).collect(),
                 name: name.clone(),
                 like,
-                unit: Some((unit.land_unit.clone(), column)),
+                unit: Some((unit.land_unit.clone(), columns.clone())),
             }));
         }
         gui::end_disabled();
