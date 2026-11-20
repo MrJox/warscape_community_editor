@@ -160,6 +160,22 @@ a job let go is told to stop; exports wait for it. Settings in `erosion.wce` bes
 shows the preset, how much is kept and the seed (Reroll), Advanced every number (the drops, loose ground, fine detail). Where the water ran
 and what it laid stay with the tile for the texture rules (made again on opening, with the layer's signature unchanged).
 
+**Decal rules** (`wce_tile::decal_rules`, `tile_document/decal_rules.rs`, `decal_rules_panel.rs` in the Inspector: the Create panel's
+Decals > *Decal rules* (a tile without any gets the built-in Default); `decal_rules <off | load <preset> | file <path> | window [simple |
+advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), E): decals laid by the ground. A rule's decals (picked from the
+game's, `ProjectedDecalInstance` keys; a name under `rigidmodels\decals\battle` or a whole key; weighted) go where a texture rule's
+conditions hold (height, slope, hollows, distance to water, roads and buildings, water flow, deposit, breakup) and as far from the trees'
+trunks as it says (the tile's trees, the biome areas', the forest list shown), `density` per 100 m² where they hold fully (fewer as they
+fade, scaled by the strength), no two of the rule closer than its spacing, each as wide as its size range says and `stretch` times as long,
+turned any way, down the slope, or along the nearest road, building side (*Walls*) or water's edge. At most 10 000 a rule and 30 000 in all.
+They are the editor's, not tile.ted's: laid again off the editor's thread when the rules, the heights or the scene change, drawn locked
+(refitted to the ground), and added at export in a layer of their own (`WCE decals`, on the landscape: `MSM_LANDSCAPE`, 5 m deep). The tile
+keeps its rules in `decal_rules.wce`; presets are files in the projects' `raw_data/art/decal_rule_sets`. The built-in Default, of the kit's
+decals: puddles in hollows, dirt at building bases, ruts along roads, runnels where water runs, stones where it laid them (with erosion),
+forest floor under trees (the game has no leaf litter decal: `forest_0_su`, `roots_01`). The panel lists the rules with how many decals
+each laid, warns of decals the game lacks; Simple shows plain choices (how many: Few ... Thick), Advanced every number (each decal's
+weight, the stretch, the spacing, the strength). Decals have no pictures in the key picker yet (an icon and the name).
+
 **Biomes** (`wce_tile::biomes`, `tile_document/biomes.rs`, `biomes_panel.rs` in the Inspector: the Create panel's Vegetation > Biomes
 entries (an area drawn at once unless the brush is on; while a brush stroke goes, the area as it will be is shown filled and outlined on
 the ground), a selected area's *Edit its biome*; `biome_area`, `biome_brush`, `biomes_wait`; [plans/auto_detail.md](plans/auto_detail.md), C): a biome is

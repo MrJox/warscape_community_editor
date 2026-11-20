@@ -179,6 +179,9 @@ pub enum Make {
 
     /// A biome's area (docs/plans/auto_detail.md, C), by the biome's name: drawn as a vegetation exclusion polygon with `wce_biome`.
     Biome { name: String },
+
+    /// Rules that lay things by themselves, shown in the Inspector (`decals`: the decal rules, docs/plans/auto_detail_2.md, E).
+    Rules { what: String },
 }
 
 #[derive(Clone, Debug)]
@@ -218,6 +221,7 @@ impl Entry {
             Make::Prefab { key } => format!("prefab|{key}"),
             Make::VegSet { name } => format!("vegset|{name}"),
             Make::Biome { name } => format!("biome|{name}"),
+            Make::Rules { what } => format!("rules|{what}"),
         }
     }
 
@@ -228,6 +232,7 @@ impl Entry {
             Make::Prefab { .. } => icons::COMPONENT,
             Make::VegSet { .. } => icons::TREES,
             Make::Biome { .. } => icons::SHRUB,
+            Make::Rules { .. } => icons::STICKER,
         }
     }
 }
@@ -459,6 +464,14 @@ impl TileTool {
             en.folder = "Biomes".to_owned();
             out.push(en);
         }
+
+        // The decal rules, at the top of the decals.
+        out.push(entry(
+            2,
+            "Decal rules".to_owned(),
+            Make::Rules { what: "decals".to_owned() },
+            "decal rules automatic puddles dirt ruts runnels stones forest floor",
+        ));
 
         for (category, kind) in KEYED {
             for key in self.catalogue(e, kind).iter() {
@@ -885,6 +898,19 @@ impl TileTool {
                 self.draft = None;
                 self.placing = Some(crate::tool::Placing::Prefab(key.clone()));
             }
+
+            // Nothing placed: the rules in the Inspector (the built-in ones given to a tile without any).
+            Make::Rules { .. } => {
+                if let Some(d) = document(e)
+                    && d.decal_rules().is_none()
+                {
+                    let p = wce_tile::decal_rules::Preset::builtin();
+                    d.set_decal_rules(Some(wce_tile::decal_rules::DecalRuleSet { preset: p.name, rules: p.rules }));
+                }
+
+                self.open_decal_rules();
+                self.making = None;
+            }
         }
 
         // Its values, before the first click.
@@ -893,6 +919,7 @@ impl TileTool {
             Make::Draw { .. } => format!("{}: click the terrain for its points; {}; Esc cancels", en.label, self.finish_hint(e)),
             Make::Biome { .. } if !self.drawing => format!("{}: drag the brush in the viewport (Ctrl takes away)", en.label),
             Make::Biome { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
+            Make::Rules { .. } => format!("{}: in the Inspector; the decals follow the ground by themselves", en.label),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
         };
     }

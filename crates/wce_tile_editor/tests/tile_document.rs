@@ -2896,3 +2896,50 @@ fn erosion_makes_a_height_layer_over_the_users_and_follows_their_edits() {
     d.finish_erosion();
     assert!(owners(&d).iter().any(|o| o.starts_with(wce_tile::erosion::OWNER)));
 }
+
+#[test]
+fn decal_rules_lay_decals_that_an_export_adds_and_the_tile_saves() {
+    use wce_tile::decal_rules::{DecalRule, DecalRuleSet};
+    use wce_tile::texture_rules::{Range, Rule};
+
+    let (dir, mut d) = open_with_texture_groups();
+    let size = d.history().size();
+    // Everywhere below a height the whole tile is under, and one the tile is all over.
+    let everywhere = DecalRule {
+        name: "everywhere".to_owned(),
+        keys: vec![("dirt_1".to_owned(), 1.0)],
+        density: 2.0,
+        spacing: 1.0,
+        ..DecalRule::default()
+    };
+    let nowhere = DecalRule {
+        name: "nowhere".to_owned(),
+        keys: vec![("dirt_2".to_owned(), 1.0)],
+        place: Rule { height: Some(Range { lo: Some(100_000.0), hi: None, fade: 0.0 }), ..Rule::default() },
+        ..DecalRule::default()
+    };
+    let set = DecalRuleSet { preset: String::new(), rules: vec![everywhere, nowhere] };
+    d.set_decal_rules(Some(set.clone()));
+    assert_eq!(d.history().size(), size + 1);
+    d.finish_decals();
+    let counts = d.decal_counts();
+    assert!(counts[0] > 10 && counts[1] == 0, "{counts:?}");
+
+    // The export has them in a layer of their own, on the landscape; tile.ted does not.
+    let text = String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
+    assert!(text.contains(wce_tile_editor::tile_document::decal_rules::EXPORT_LAYER));
+    assert_eq!(text.matches("ProjectedDecalInstance").count(), counts[0]);
+    assert!(text.contains("dirt_1.rigid_model_v2") && text.contains("MSM_LANDSCAPE"));
+    assert!(!String::from_utf8_lossy(&d.tile().tscene().save()).contains("dirt_1"));
+
+    // Saved beside the tile; off takes them and the file away.
+    let here = wce_editor_core::document::SaveTarget { path: std::path::PathBuf::new() };
+    d.save(&here).unwrap();
+    let file = dir.path().join(wce_tile::decal_rules::FILE);
+    assert_eq!(TileProject::open(dir.path()).unwrap().decal_rules, Some(set));
+    d.set_decal_rules(None);
+    d.finish_decals();
+    assert_eq!(d.decal_counts().iter().sum::<usize>(), 0);
+    d.save(&here).unwrap();
+    assert!(!file.exists());
+}

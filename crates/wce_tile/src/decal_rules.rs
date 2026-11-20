@@ -515,6 +515,26 @@ impl Preset {
     pub fn builtin() -> Self {
         Self { name: BUILTIN.to_owned(), rules: default_rules(), ..Self::default() }
     }
+
+    #[must_use]
+    pub fn is_builtin(&self) -> bool {
+        self.path.is_none()
+    }
+
+    /// Writes it to its file (its folder made).
+    ///
+    /// # Errors
+    ///
+    /// The built-in preset (no file), or the file could not be written.
+    pub fn save(&self) -> Result<(), String> {
+        let path = self.path.as_ref().ok_or("the built-in preset has no file")?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+
+        let set = DecalRuleSet { preset: self.name.clone(), rules: self.rules.clone() };
+        std::fs::write(path, text(&set)).map_err(|e| format!("{}: {e}", path.display()))
+    }
 }
 
 /// The folder of the presets in a raw_data folder (the projects').
@@ -545,7 +565,7 @@ pub fn scan_presets(root: &std::path::Path) -> Vec<Preset> {
         }
     }
 
-    found.sort_by(|a, b| (a.folder.to_lowercase(), a.name.to_lowercase()).cmp(&(b.folder.to_lowercase(), b.name.to_lowercase())));
+    found.sort_by_key(|p| (p.folder.to_lowercase(), p.name.to_lowercase()));
     out.extend(found);
     out
 }

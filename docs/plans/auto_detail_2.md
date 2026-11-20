@@ -11,7 +11,7 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
-Status (2026-11-20): D done (steps 1 to 4); its look on kit tiles is the user's.
+Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3). Their look on kit tiles is the user's.
 
 Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
 the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
@@ -73,7 +73,12 @@ The view of where water runs in the viewport is left out (the texture rules' out
   leaf litter under trees; only the keys the game has.
 - UI: the Create panel's decals get a "Decal rules" entry opening them in the Inspector, the rule list and fields as the texture rules'.
 
-### Steps
+### Steps (done 2026-11-20)
+
+Done as planned, but: the distance to trees is the decal rules' alone (in the texture rules it would loop: the generated forest follows the
+blend map they paint); the "Decal rules" entry is a new kind of Create entry (`Make::Rules`) that only opens the Inspector; decals have no
+pictures in the key picker (the thumbnails have no ground for a decal to project onto). On the Nordic city: 2757 decals (743 at building
+bases, 1928 under trees, 68 puddles).
 
 1. `decal_rules` (conditions shared with texture rules), tests.
 2. Editor job, export layer, file, script command `decal_rules <off|load|window|wait>`.

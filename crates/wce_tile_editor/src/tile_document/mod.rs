@@ -25,6 +25,7 @@ mod cover;
 pub use self::cover::{EdgeColours, edge_strip};
 mod bridges;
 pub mod context;
+pub mod decal_rules;
 mod draft;
 mod edits;
 pub mod erosion;
@@ -630,6 +631,15 @@ pub struct Tile {
     /// The erosion's layer being made off the editor's thread, the signature last looked at, what it made besides its layer (where the
     /// water ran, for the texture rules) and the buildings it keeps off by the scene's version (`erosion.rs`).
     pub(crate) erosion_job: Option<erosion::ErosionJob>,
+
+    /// The decal rules' decals (`decal_rules.rs`): laid, being laid, their entities, whether shown, the signature of what was laid and of
+    /// what was last looked at.
+    pub(crate) decal_items: Vec<decal_rules::DecalItem>,
+    pub(crate) decal_job: Option<decal_rules::DecalJob>,
+    pub(crate) decal_entities: Vec<wce_scene::render_scene::EntityId>,
+    pub(crate) decal_items_shown: bool,
+    pub(crate) decal_made: u64,
+    pub(crate) decal_seen: u64,
     pub(crate) erosion_seen: u64,
     pub(crate) erosion_made: Option<erosion::ErosionMade>,
     pub(crate) erosion_buildings: Option<(u64, std::sync::Arc<Vec<[f64; 3]>>)>,
@@ -1019,6 +1029,12 @@ impl TileDocument {
             roads_seen: 0,
             texture_rules_job: None,
             erosion_job: None,
+            decal_items: vec![],
+            decal_job: None,
+            decal_entities: vec![],
+            decal_items_shown: false,
+            decal_made: 0,
+            decal_seen: 0,
             erosion_seen: 0,
             erosion_made: None,
             erosion_buildings: None,
@@ -1239,6 +1255,7 @@ impl TileDocument {
         t.refresh_roads();
         t.refresh_texture_rules();
         t.refresh_biomes(false);
+        t.refresh_decals(false);
     }
 
     /// Per frame: the tile's view (`Tile::update_view`), knowing of the edits.
