@@ -9,12 +9,14 @@
 
 use std::path::PathBuf;
 
+use rpfm_lib::schema::Schema;
 use wce_audio::anim_sounds;
 use wce_audio::decode::{Pcm, decode_wem};
 use wce_audio::edit::EditSet;
 use wce_audio::encode::{DEFAULT_QUALITY, encode_wem};
 use wce_audio::library::SoundLibrary;
 use wce_audio::recipes::{self, AnimationSound};
+use wce_audio::{sound_db, unit_voices};
 use wce_audio_format::fnv;
 use wce_audio_format::hirc::Object;
 use wce_audio_format::triggers::Triggers;
@@ -109,6 +111,44 @@ fn main() {
     println!("4. Roman lines: {found:?}");
     if found.is_none() {
         failures.push("culture lines");
+    }
+
+    // 5. Unit voices: the orders tree, a unit's culture and actors, a new selection line under each of them, the unit's row.
+    let cultures = unit_voices::cultures(&EditSet::default(), &lib);
+    let barbarian = unit_voices::culture_of(&lib, &cultures, "barbarian_christian");
+    let actors = barbarian.and_then(|b| cultures.iter().find(|c| c.culture == b)).map(|c| unit_voices::family_actors(&lib, c, false));
+    let actors = actors.unwrap_or_default();
+    let mut edits = EditSet::default();
+    let wem = encode_wem(&Pcm { channels: 1, sample_rate: 44_100, samples: vec![0.1; 22_050] }, DEFAULT_QUALITY).expect("encode");
+    let switches: Vec<u32> = actors.iter().map(|(_, s)| *s).collect();
+    let added = edits.add_order_line(&lib, &switches, "selected_wce_test", fnv::id("selected_archers"), &wem);
+    let lines_ok = added.as_ref().is_ok_and(|value| {
+        switches.iter().all(|s| {
+            let lines = unit_voices::lines(&edits, &lib, *s);
+            lines.iter().any(|(v, line)| {
+                *v == *value
+                    && matches!(edits.object(&lib, *line), Some(Object::RandomSequence(r)) if r.children.len() == 1
+                        && matches!(edits.object(&lib, r.children[0]), Some(Object::Sound(s)) if edits.loose.contains_key(&format!("audio/{}.wem", s.source.source_id))))
+            })
+        })
+    });
+    let schema = wce_foundation::settings::rpfm_schema_path(vfs.profile()).and_then(|p| Schema::load(&p, None).ok());
+    let unit = schema.as_ref().and_then(|schema| {
+        let units = sound_db::table_rows(schema, &vfs, "land_units_tables");
+        let key = units.first()?.get("key")?.clone();
+        let bytes = sound_db::set_cell(schema, &vfs, None, "land_units_tables", "key", &key, "selection_vo", "selected_wce_test").ok()?;
+        let rows = sound_db::rows_of(schema, "land_units_tables", &bytes);
+        (rows.len() == 1 && rows[0].get("selection_vo").map(String::as_str) == Some("selected_wce_test")).then_some(key)
+    });
+    println!(
+        "5. unit voices: {} cultures; barbarian_christian -> {:?}, {} foot actors; a new line under each: {lines_ok}; a unit's row \
+         rewritten: {unit:?}",
+        cultures.len(),
+        barbarian.map(|b| lib.label(b, 0)),
+        actors.len()
+    );
+    if cultures.len() < 4 || actors.len() != 12 || !lines_ok || unit.is_none() {
+        failures.push("unit voices");
     }
 
     for f in &failures {

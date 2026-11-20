@@ -64,6 +64,8 @@ enum Request {
     AnimationNewSound(String, f32, String, String),
     /// Write a loose file (path, bytes, what for the status line).
     WriteLoose(String, Vec<u8>, String),
+    /// Pick a sound file for a new unit line.
+    UnitLine(UnitLine),
     Save,
     Revert,
     Undo,
@@ -80,6 +82,19 @@ enum ImportTarget {
     ReplaceSegment(u32),
     /// A new sound fired by an animation: (`.snd.meta`, seconds, the event to copy, the new event's name).
     AnimationSound(String, f32, String, String),
+    UnitLine(UnitLine),
+}
+
+/// A new order line under some voice actors, and the unit whose DB column names it.
+#[derive(Clone)]
+struct UnitLine {
+    /// The actors' `VO_battle_order` switches.
+    switches: Vec<u32>,
+    name: String,
+    /// The line copied (its container's settings).
+    like: u32,
+    /// (land unit, column) set to the new line.
+    unit: Option<(String, &'static str)>,
 }
 
 /// The undo steps kept (each a copy of the edited banks).
@@ -147,6 +162,8 @@ pub struct AudioTool {
     pending_animation: Option<String>,
     /// `audio_show`: a panel to bring to the front.
     pending_panel: Option<String>,
+    /// `audio_unit`: a land unit to show in Audio Recipes > A unit's voice.
+    pending_unit: Option<String>,
     /// Where to start the sound being decoded (a click on a waveform), 0 to 1.
     pending_seek: Option<f32>,
     /// Waveforms of the sounds shown (Audio Object, the trees), by media ID; the one being decoded; the ones shown last frame
@@ -251,6 +268,37 @@ impl AudioTool {
                     ImportTarget::ReplaceSegment(segment) => {
                         self.edit(e, &format!("replaced the music of #{segment} with {name}"), |edits, lib, _| {
                             edits.replace_segment_audio(lib, segment, &wem).map(|_| String::new())
+                        })
+                    }
+                    ImportTarget::UnitLine(line) => {
+                        let schema = self.game_data.as_ref().and_then(|d| d.db.schema.clone());
+                        let what = match &line.unit {
+                            Some((unit, column)) => format!("added the line {} ({name}) and set {unit}'s {column}", line.name),
+                            None => format!("added the line {} ({name})", line.name),
+                        };
+                        self.edit(e, &what, |edits, lib, files| {
+                            edits.add_order_line(lib, &line.switches, &line.name, line.like, &wem)?;
+                            if let Some((unit, column)) = &line.unit {
+                                let schema =
+                                    schema.ok_or_else(|| wce_audio::AudioError::Invalid("the game's DB schema is not set".into()))?;
+                                let table = "land_units_tables";
+                                let path = wce_audio::sound_db::edit_table_path(table);
+                                let current = edits.loose.get(&path).cloned();
+                                let bytes = wce_audio::sound_db::set_cell(
+                                    &schema,
+                                    files,
+                                    current.as_deref(),
+                                    table,
+                                    "key",
+                                    unit,
+                                    column,
+                                    &line.name,
+                                )
+                                .map_err(wce_audio::AudioError::Invalid)?;
+                                edits.loose.insert(path.clone(), bytes);
+                                return Ok(format!(" under {} actors; the row is in {path}", line.switches.len()));
+                            }
+                            Ok(format!(" under {} actors", line.switches.len()))
                         })
                     }
                     ImportTarget::AnimationSound(path, time, like, event) => {
@@ -371,6 +419,7 @@ impl AudioTool {
                 Request::Replace(media) => self.import(e, ImportTarget::Replace(media)),
                 Request::AddVariation(container) => self.import(e, ImportTarget::Add(container)),
                 Request::AddMusic(playlist, after) => self.import(e, ImportTarget::AddMusic(playlist, after)),
+                Request::UnitLine(line) => self.import(e, ImportTarget::UnitLine(line)),
                 Request::ReplaceSegment(segment) => self.import(e, ImportTarget::ReplaceSegment(segment)),
                 Request::AnimationNewSound(path, time, like, event) => {
                     self.import(e, ImportTarget::AnimationSound(path, time, like, event))
@@ -1442,7 +1491,7 @@ impl Tool for AudioTool {
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
         type Slot = fn(&mut AudioTool) -> &mut Option<String>;
-        let commands: [(&str, &str, &str, Slot); 6] = [
+        let commands: [(&str, &str, &str, Slot); 7] = [
             ("audio_bank", "audio_bank <bank name>", "Shows a bank in Audio Bank", |t| &mut t.pending.0),
             ("audio_search", "audio_search <text>", "Searches every bank's names (Audio Search)", |t| &mut t.pending.1),
             ("audio_select", "audio_select <name | id>", "Selects a sound object (Audio Object) and shows its bank", |t| &mut t.pending.2),
@@ -1451,6 +1500,7 @@ impl Tool for AudioTool {
                 &mut t.pending_animation
             }),
             ("audio_show", "audio_show <panel title>", "Brings an Audio panel to the front (its dock tab)", |t| &mut t.pending_panel),
+            ("audio_unit", "audio_unit <land unit key>", "Shows a unit's voice in Audio Recipes", |t| &mut t.pending_unit),
         ];
         for (name, usage, help, slot) in commands {
             c.add(name, usage, help, move |e, args| {

@@ -4,11 +4,13 @@
 use std::sync::Arc;
 
 use wce_audio::recipes;
+use wce_audio::sound_db::SELECTION_COLUMNS;
+use wce_audio::unit_voices::{self, CultureActors};
 use wce_audio_format::fnv;
 use wce_audio_format::hirc::Object;
 use wce_editor::gui::{self, v2};
 
-use super::{AudioTool, Request};
+use super::{AudioTool, Request, UnitLine};
 
 /// The voice-over culture group the battle voice trees decide on (its values are the DB's voice-over cultures).
 const CULTURE_GROUP: &str = "vo_battle_subculture";
@@ -24,6 +26,17 @@ pub struct View {
     event: String,
     like: String,
     name: String,
+    /// A unit's voice: the order voices, the filter, the unit (index into the DB's units), the actor's order switch, the
+    /// lines' filter, a new line's name and which selection column it fills.
+    cultures: Option<Arc<Vec<CultureActors>>>,
+    unit_filter: String,
+    unit: Option<usize>,
+    actor: Option<u32>,
+    line_filter: String,
+    new_line: String,
+    column: usize,
+    /// The voice set picked by hand for a unit whose voice-over names none.
+    set_override: Option<u32>,
 }
 
 impl AudioTool {
@@ -43,6 +56,9 @@ impl AudioTool {
         };
 
         // Music tracks.
+        if self.pending_unit.is_some() && self.game_data.is_some() {
+            gui::set_next_item_open(false, gui::COND_ALWAYS);
+        }
         if gui::collapsing_header("Music tracks", gui::TREE_DEFAULT_OPEN) {
             gui::text_wrapped("Add a track to a playlist, or pick one to see its entries (Replace music..., weights) in Audio Object.");
             let music = self.recipes_view.music.get_or_insert_with(|| Arc::new(recipes::music_playlists(&lib, files.as_ref()))).clone();
@@ -166,6 +182,15 @@ impl AudioTool {
             }
         }
 
+        // A unit's voice.
+        let unit_asked = self.pending_unit.is_some() && self.game_data.is_some();
+        if unit_asked {
+            gui::set_next_item_open(true, gui::COND_ALWAYS);
+        }
+        if gui::collapsing_header("A unit's voice (battle orders and selection)", 0) {
+            self.unit_voice(&lib, requests);
+        }
+
         // An animation sound.
         if gui::collapsing_header("An animation sound", 0) {
             match self.data_view.animation().map(str::to_owned) {
@@ -216,5 +241,174 @@ impl AudioTool {
             }
         }
         gui::end();
+    }
+
+    /// A unit's order voices: its culture and actors (from the DB), the actor's lines with Play, Add a take and select, the unit's
+    /// selection lines first, and a new selection line for the unit (under every actor of its culture and family, its DB column
+    /// set to it).
+    fn unit_voice(&mut self, lib: &Arc<wce_audio::library::SoundLibrary>, requests: &mut Vec<Request>) {
+        let Some(data) = self.game_data.clone() else {
+            gui::text_disabled("Reading the game's tables...");
+            return;
+        };
+        let units = &data.db.units;
+        if units.is_empty() {
+            gui::text_disabled("No land units read (the game's DB schema is not set?).");
+            return;
+        }
+        let cultures = self.recipes_view.cultures.get_or_insert_with(|| Arc::new(unit_voices::cultures(&self.edits, lib))).clone();
+        if let Some(key) = self.pending_unit.take() {
+            self.recipes_view.unit = units.iter().position(|u| u.land_unit == key.trim());
+            if let Some(u) = self.recipes_view.unit.map(|i| &units[i]) {
+                self.recipes_view.new_line = format!("selected_{}", u.land_unit);
+                self.recipes_view.actor = unit_voices::culture_of(lib, &cultures, &u.voiceover)
+                    .and_then(|c| cultures.iter().find(|x| x.culture == c))
+                    .and_then(|c| unit_voices::family_actors(lib, c, unit_voices::mounted(&u.category)).first().map(|(_, s)| *s));
+            }
+        }
+        gui::text_wrapped(
+            "Order lines: the culture (main_units.voiceover) picks the voice set, the game gives each unit one of its culture's actors \
+             (foot: Inf, mounted: Mtd), and land_units.selection_vo / selected_vo_secondary / selected_vo_tertiary name its selection lines.",
+        );
+        gui::set_next_item_width(-1.0);
+        gui::input_text("##units", Some("Filter units (e.g. comitatenses, cavalry)"), &mut self.recipes_view.unit_filter, 128, 0);
+        let filter = self.recipes_view.unit_filter.to_lowercase();
+        let shown: Vec<usize> = (0..units.len()).filter(|i| filter.is_empty() || units[*i].land_unit.contains(&filter)).collect();
+        if gui::begin_child("unit list", v2(0.0, 110.0), gui::CHILD_BORDERS, 0) {
+            gui::clipped(shown.len(), |row| {
+                let u = &units[shown[row]];
+                let text = format!("{}  ({}, {})##u{}", u.land_unit, u.voiceover, u.category, shown[row]);
+                if gui::selectable(&text, self.recipes_view.unit == Some(shown[row]), 0) {
+                    self.recipes_view.unit = Some(shown[row]);
+                    self.recipes_view.actor = None;
+                    self.recipes_view.new_line = format!("selected_{}", u.land_unit);
+                }
+            });
+        }
+        gui::end_child();
+
+        let Some(unit) = self.recipes_view.unit.and_then(|i| units.get(i)) else { return };
+        let mounted = unit_voices::mounted(&unit.category);
+        let found = unit_voices::culture_of(lib, &cultures, &unit.voiceover);
+        if found.is_none() {
+            let sets: Vec<String> = cultures.iter().map(|c| lib.label(c.culture, 0)).collect();
+            gui::text_colored(
+                [1.0, 0.6, 0.3, 1.0],
+                &format!("The voice-over {} names no order voice set ({}); pick the one to look at:", unit.voiceover, sets.join(", ")),
+            );
+            for c in cultures.iter() {
+                if gui::radio_button(&lib.label(c.culture, 0), self.recipes_view.set_override == Some(c.culture)) {
+                    self.recipes_view.set_override = Some(c.culture);
+                    self.recipes_view.actor = None;
+                }
+                gui::same_line();
+            }
+            gui::new_line();
+        }
+        let Some(culture) = found.or(self.recipes_view.set_override).and_then(|c| cultures.iter().find(|x| x.culture == c)) else {
+            return;
+        };
+        let actors = unit_voices::family_actors(lib, culture, mounted);
+        gui::text_wrapped(&format!(
+            "{}: voice set {}{}, {} actors ({})",
+            unit.land_unit,
+            lib.label(culture.culture, 0),
+            if found.is_some_and(|f| f == culture.culture)
+                && lib.label(culture.culture, 0).to_lowercase() != unit.voiceover.split('_').next().unwrap_or("")
+            {
+                " (the default: no set is named for this voice-over)"
+            } else {
+                ""
+            },
+            actors.len(),
+            if mounted { "mounted" } else { "foot" }
+        ));
+        for (i, column) in SELECTION_COLUMNS.iter().enumerate() {
+            gui::text_disabled(&format!("{column}:"));
+            gui::same_line();
+            gui::text(if unit.selection[i].is_empty() { "(none)" } else { &unit.selection[i] });
+        }
+        for (actor, switch) in &actors {
+            if gui::small_button(&format!("{}##a{switch}", lib.label(*actor, 0))) {
+                self.recipes_view.actor = Some(*switch);
+            }
+            gui::same_line();
+        }
+        gui::new_line();
+
+        // The chosen actor's lines: the unit's selection lines first, then the others matching the filter.
+        if let Some(switch) = self.recipes_view.actor.filter(|s| actors.iter().any(|(_, x)| x == s)) {
+            let lines = unit_voices::lines(&self.edits, lib, switch);
+            gui::set_next_item_width(-1.0);
+            gui::input_text("##lines", Some("Filter lines (e.g. attack, halt, selected_)"), &mut self.recipes_view.line_filter, 128, 0);
+            let filter = self.recipes_view.line_filter.to_lowercase();
+            let own: Vec<u32> = unit.selection.iter().filter(|s| !s.is_empty()).map(|s| wce_audio_format::fnv::id(s)).collect();
+            let mut shown: Vec<(u32, u32)> = lines
+                .iter()
+                .copied()
+                .filter(|(v, _)| own.contains(v) || filter.is_empty() || lib.label(*v, 0).to_lowercase().contains(&filter))
+                .collect();
+            shown.sort_by_key(|(v, _)| !own.contains(v));
+            if gui::begin_child("actor lines", v2(0.0, 180.0), gui::CHILD_BORDERS, 0) {
+                gui::clipped(shown.len(), |row| {
+                    let (value, line) = shown[row];
+                    gui::push_id(&format!("ol{line}"));
+                    if self.play.button(&format!("ol{switch}.{line}"), requests) {
+                        requests.push(Request::PlayObject(line));
+                    }
+                    gui::same_line();
+                    if matches!(self.edits.object(lib, line), Some(Object::RandomSequence(_))) && gui::small_button("Add a take...") {
+                        requests.push(Request::AddVariation(line));
+                    }
+                    gui::same_line();
+                    let takes = self.edits.object(lib, line).map_or(0, |o| o.children().len());
+                    let mark = if own.contains(&value) { "  (this unit's)" } else { "" };
+                    if gui::selectable(&format!("{}  ({takes} takes){mark}", lib.label(value, 0)), self.selected == Some(line), 0) {
+                        requests.push(Request::Select(line));
+                    }
+                    gui::pop_id();
+                });
+            }
+            gui::end_child();
+        } else {
+            gui::text_disabled("Pick an actor to hear and edit its lines.");
+        }
+
+        // A new selection line for this unit.
+        gui::separator_text("A new selection line for this unit");
+        for (i, column) in SELECTION_COLUMNS.iter().enumerate() {
+            if gui::radio_button(column, self.recipes_view.column == i) {
+                self.recipes_view.column = i;
+            }
+            gui::same_line();
+        }
+        gui::new_line();
+        gui::set_next_item_width(300.0);
+        gui::input_text("##newline", Some("the line's name (letters, digits, _)"), &mut self.recipes_view.new_line, 128, 0);
+        let column = SELECTION_COLUMNS[self.recipes_view.column];
+        let like = [unit.selection[self.recipes_view.column].as_str(), unit.selection[0].as_str(), "selected_generic"]
+            .into_iter()
+            .find(|s| !s.is_empty())
+            .map_or(0, wce_audio_format::fnv::id);
+        let name = self.recipes_view.new_line.trim().to_lowercase();
+        gui::begin_disabled(name.is_empty());
+        if gui::button("Pick a sound file and add it...") {
+            requests.push(Request::UnitLine(UnitLine {
+                switches: actors.iter().map(|(_, s)| *s).collect(),
+                name: name.clone(),
+                like,
+                unit: Some((unit.land_unit.clone(), column)),
+            }));
+        }
+        gui::end_disabled();
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!(
+                "Adds the line {name} under the {} {} actors of {} (one take each, the same sound file), set up like the unit's\ncurrent line, and sets {}'s {column} to it (a land_units row written into db/land_units_tables/wce_audio).",
+                actors.len(),
+                if mounted { "mounted" } else { "foot" },
+                lib.label(culture.culture, 0),
+                unit.land_unit
+            ));
+        }
     }
 }

@@ -117,6 +117,55 @@ impl SoundLibrary {
         Some((b, &entry.bank.objects()[i], entry.typed[i].as_ref()))
     }
 
+    /// An object as the banks have it together: a switch's values, children and child settings, and an event's actions, joined over
+    /// every copy (each bank of a voice set holds a partial copy of the switches above its own, with only its branch; a mod's bank
+    /// may hold the event again playing its own switch); any other object its first copy.
+    pub fn merged(&self, id: u32) -> Option<Object> {
+        let mut object = self.object(id)?.2?.clone();
+        if let Object::Event(e) = &mut object {
+            for &(b, i) in self.locations(id).iter().skip(1) {
+                let Some(Object::Event(other)) = &self.banks[b].typed[i] else { continue };
+                for a in &other.actions {
+                    if !e.actions.contains(a) {
+                        e.actions.push(*a);
+                    }
+                }
+            }
+        }
+        if let Object::Switch(s) = &mut object {
+            for &(b, i) in self.locations(id).iter().skip(1) {
+                let Some(Object::Switch(other)) = &self.banks[b].typed[i] else { continue };
+                for (value, children) in &other.assignments {
+                    match s.assignments.iter_mut().find(|(v, _)| v == value) {
+                        Some((_, mine)) => {
+                            for c in children {
+                                if !mine.contains(c) {
+                                    mine.push(*c);
+                                }
+                            }
+                        }
+                        None => {
+                            let at = s.assignments.partition_point(|(v, _)| v < value);
+                            s.assignments.insert(at, (*value, children.clone()));
+                        }
+                    }
+                }
+                for c in &other.children {
+                    if let Err(at) = s.children.binary_search(c) {
+                        s.children.insert(at, *c);
+                    }
+                }
+                for p in &other.child_params {
+                    if !s.child_params.iter().any(|q| q.node_id == p.node_id) {
+                        let at = s.child_params.partition_point(|q| q.node_id < p.node_id);
+                        s.child_params.insert(at, p.clone());
+                    }
+                }
+            }
+        }
+        Some(object)
+    }
+
     /// If any bank has an object with this ID.
     pub fn has_object(&self, id: u32) -> bool {
         self.objects.contains_key(&id)
@@ -199,7 +248,10 @@ impl SoundLibrary {
         stack.push(id);
         let child = |id: u32, stack: &mut Vec<u32>| self.resolve_inner(id, files, stack);
         match typed {
-            Some(Object::Event(e)) => node.children = e.actions.iter().map(|a| child(*a, stack)).collect(),
+            Some(Object::Event(_)) => {
+                let Some(Object::Event(e)) = self.merged(id) else { unreachable!("an event") };
+                node.children = e.actions.iter().map(|a| child(*a, stack)).collect();
+            }
             Some(Object::Action(a)) => {
                 let target_kind = self.object(a.target_id).map_or(0, |(_, o, _)| o.kind);
                 node.label = format!("{} {}", action_name(a.action_type), self.label(a.target_id, target_kind));
@@ -208,7 +260,8 @@ impl SoundLibrary {
                 }
             }
             Some(Object::Sound(s)) => node.media = Some(self.media_of(&s.source, files)),
-            Some(Object::Switch(s)) => {
+            Some(Object::Switch(_)) => {
+                let Some(Object::Switch(s)) = self.merged(id) else { unreachable!("a switch") };
                 for (value, nodes) in &s.assignments {
                     let mut group = PlayNode { id: *value, kind: 0, label: self.label(*value, 0), children: vec![], media: None };
                     group.children = nodes.iter().map(|n| child(*n, stack)).collect();
