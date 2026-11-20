@@ -49,16 +49,22 @@ const STATES: usize = 512;
 /// make (the texture rules, docs/plans/auto_detail.md). An owner is one of them when it starts with one of these.
 pub const UNDER_OWNERS: &[&str] = &[crate::texture_rules::OWNER];
 
-/// Where a layer goes in its stack by its owner: 0 under the user's layers ([`UNDER_OWNERS`]), 1 the user's (no owner), 2 the procedural
-/// features' on top (roads, walls, prefabs).
+/// The owners whose layers go **over** the user's but under the procedural features' (the erosion, docs/plans/auto_detail_2.md): made
+/// from what the user shaped, under what roads, walls and prefabs lay flat over it.
+pub const OVER_USER_OWNERS: &[&str] = &[crate::erosion::OWNER];
+
+/// Where a layer goes in its stack by its owner: 0 under the user's layers ([`UNDER_OWNERS`]), 1 the user's (no owner), 2 over the user's
+/// ([`OVER_USER_OWNERS`]), 3 the procedural features' on top (roads, walls, prefabs).
 #[must_use]
 pub fn order_of(owner: &str) -> u8 {
     if owner.is_empty() {
         1
     } else if UNDER_OWNERS.iter().any(|o| owner.starts_with(o)) {
         0
-    } else {
+    } else if OVER_USER_OWNERS.iter().any(|o| owner.starts_with(o)) {
         2
+    } else {
+        3
     }
 }
 
@@ -583,8 +589,7 @@ impl<K: Kind> Stack<K> {
         self.index_of(id).filter(|&i| self.layers[i].owner.is_empty())
     }
 
-    /// Whether what procedural features own applies after everything else, but for what goes under the user's layers, which applies
-    /// before them ([`order_of`]).
+    /// Whether the layers are in their owners' order ([`order_of`]): under the user's, the user's, over the user's, the procedural features'.
     #[must_use]
     pub fn owned_on_top(&self) -> bool {
         self.layers.windows(2).all(|w| order_of(&w[0].owner) <= order_of(&w[1].owner))
@@ -598,7 +603,32 @@ impl<K: Kind> Stack<K> {
     /// Where the layers procedural features own on top begin (the end without any): the user's layers and those under them go before.
     #[must_use]
     pub fn first_on_top(&self) -> usize {
-        self.layers.iter().position(|l| order_of(&l.owner) == 2).unwrap_or(self.layers.len())
+        self.layers.iter().position(|l| order_of(&l.owner) == 3).unwrap_or(self.layers.len())
+    }
+
+    /// The composite at a pixel of the layers that go before rank `rank` ([`order_of`]), over the base, as the view shows it: what an
+    /// owner of that rank works from, whether its layer is there yet or not.
+    pub fn under_rank(&self, rank: u8, x: u32, y: u32, out: &mut [K::Sample]) {
+        let end = self.layers.iter().position(|l| order_of(&l.owner) >= rank).unwrap_or(self.layers.len());
+        self.compose(x, y, end, out);
+    }
+
+    /// Which samples the base and the layers before rank `rank` hold, and how they show (visible, opacity, hidden by the view): their
+    /// blocks' identities, as [`Self::base_identity`]. Cheap.
+    #[must_use]
+    pub fn identity_under_rank(&self, rank: u8) -> u64 {
+        let mut h = self.base_identity();
+        let mut eat = |v: u64| h = (h ^ v).wrapping_mul(0x0100_0000_01b3);
+        for l in self.layers.iter().take_while(|l| order_of(&l.owner) < rank) {
+            eat(l.id);
+            eat(u64::from(l.visible && !self.view_hidden.contains(&l.id)));
+            eat(u64::from(l.opacity.to_bits()));
+            eat(u64::from(l.replace));
+            for b in &l.samples.blocks {
+                eat(b.as_ref().map_or(0, |b| Arc::as_ptr(b) as usize as u64));
+            }
+        }
+        h
     }
 
     #[must_use]
@@ -1714,6 +1744,30 @@ mod tests {
         assert!(!s.owned_on_top());
         s.put_owned_on_top();
         assert!(s.owned_on_top());
+    }
+
+    #[test]
+    fn the_erosion_goes_over_the_users_layers_and_under_the_roads() {
+        let (_, mut s) = stack();
+        s.add(1, "road", "road:1#0");
+        s.add(2, "erosion", "erosion#1");
+        s.add(3, "mine", "");
+        s.add(4, "rules", crate::texture_rules::OWNER);
+        assert_eq!(s.layers.iter().map(|l| l.id).collect::<Vec<_>>(), [4, 3, 2, 1]);
+        assert!(s.owned_on_top());
+        assert_eq!(s.first_on_top(), 3);
+
+        // What it works from: what is under it, its own layer or not; that changes when a layer under it does, not when one over it does.
+        let before = s.identity_under_rank(2);
+        s.put(1, 0, 0, &[5.0]);
+        s.put(2, 0, 0, &[7.0]);
+        assert_eq!(s.identity_under_rank(2), before);
+        s.put(3, 0, 0, &[2.0]);
+        assert_ne!(s.identity_under_rank(2), before);
+        let (mut under, mut all) = ([0.0f32], [0.0f32]);
+        s.under_rank(2, 0, 0, &mut under);
+        s.below(9, 0, 0, &mut all);
+        assert_eq!(all[0] - under[0], 12.0);
     }
 
     #[test]

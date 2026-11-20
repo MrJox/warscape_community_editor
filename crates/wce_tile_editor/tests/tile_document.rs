@@ -2840,3 +2840,59 @@ fn a_biome_brush_makes_grows_cuts_and_takes_away_areas() {
 
     assert_eq!(text(&d), original);
 }
+
+#[test]
+fn erosion_makes_a_height_layer_over_the_users_and_follows_their_edits() {
+    use wce_tile::erosion::Settings;
+
+    let (dir, mut d) = open_with_texture_groups();
+    let heights = |d: &TileDocument| {
+        let hf = d.project().height.as_ref().unwrap();
+        (0..hf.height()).flat_map(|y| (0..hf.width()).map(move |x| (x, y))).map(|(x, y)| hf.metres(x, y)).collect::<Vec<_>>()
+    };
+    let owners = |d: &TileDocument| {
+        d.project().layers.as_ref().and_then(|l| l.height.as_ref()).map_or(vec![], |s| s.layers.iter().map(|l| l.owner.clone()).collect())
+    };
+    let original = heights(&d);
+    let size = d.history().size();
+
+    // Fine detail shows on any ground; the drops need slopes, which the fixture hardly has.
+    let s = Settings { detail: 0.5, ..Settings::default() };
+    d.set_erosion(Some(s.clone()));
+    assert_eq!(d.history().size(), size + 1);
+    d.finish_erosion();
+    let eroded = heights(&d);
+    assert_ne!(eroded, original);
+    let first = owners(&d);
+    assert!(first.iter().any(|o| o.starts_with(wce_tile::erosion::OWNER)), "{first:?}");
+
+    // A raise under it: made again from the new ground, over it (the raise is not lost under the erosion).
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let before = d.tile().terrain_height(ex * 0.5, ez * 0.5);
+    let b = BrushSettings { radius_m: 6.0, strength: 40.0, ..BrushSettings::default() };
+    for _ in 0..10 {
+        d.brush_step(BrushKind::Raise, ex * 0.5, ez * 0.5, b.clone(), 0.1);
+    }
+    d.end_stroke();
+    d.finish_erosion();
+    assert!(d.tile().terrain_height(ex * 0.5, ez * 0.5) > before + 0.5);
+    assert_ne!(owners(&d), first, "made again");
+
+    // Saved beside the tile and read back.
+    let here = wce_editor_core::document::SaveTarget { path: std::path::PathBuf::new() };
+    d.save(&here).unwrap();
+    let file = dir.path().join(wce_tile::erosion::FILE);
+    assert_eq!(TileProject::open(dir.path()).unwrap().erosion, Some(s));
+
+    // Off: its layer goes, the ground is what the user made.
+    d.set_erosion(None);
+    d.finish_erosion();
+    assert!(owners(&d).iter().all(|o| !o.starts_with(wce_tile::erosion::OWNER)));
+    d.save(&here).unwrap();
+    assert!(!file.exists(), "taken away with the erosion");
+
+    // Undone: back on, its layer made again.
+    d.history_mut().undo();
+    d.finish_erosion();
+    assert!(owners(&d).iter().any(|o| o.starts_with(wce_tile::erosion::OWNER)));
+}
