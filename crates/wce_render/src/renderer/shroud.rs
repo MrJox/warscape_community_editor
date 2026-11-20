@@ -21,7 +21,7 @@ use super::*;
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 const SHROUD_VS: &str = "dx11_sm_3_0_shroud_plane.hlsl_vs_vs30_shroud_main";
-const SHROUD_PS: &str = "dx11_sm_3_0_shroud_plane.hlsl_ps_ps30_shroud_main";
+const SHROUD_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_shroud_plane.hlsl_ps_ps30_shroud_main";
 
 /// The grid's vertices a side and half its width (world units).
 const GRID: usize = 256;
@@ -134,7 +134,7 @@ impl Renderer {
         cbs.set_f("shroud_PS", "g_uv_offset", &FOG_UV_OFFSET);
         self.upload();
 
-        let cloud = self.textures.get(SHROUD_CLOUD, true).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+        let cloud = self.textures.get(SHROUD_CLOUD, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
         let sky = self.sky_srv();
         let (ctx, st) = (&self.ctx, &self.states);
         ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
