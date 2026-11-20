@@ -163,6 +163,10 @@ impl Lens {
     /// The game's campaign camera's vertical field of view: 1.4 radians (80.2 degrees) at every zoom (`camera_VS_PS.projection`'s
     /// [1][1] 1.18724 in the five campaign captures; docs/re/renderer.md, "The campaign frame"). Its near plane is 1 world unit.
     pub const CAMPAIGN_FOV_Y: f32 = 1.4;
+
+    /// The game's campaign camera's far plane: 500 world units (`projection`'s [2][2] 1.002 over a near of 1, the five campaign
+    /// captures). The ground streams to it: the map is drawn to the horizon, as the game's.
+    pub const CAMPAIGN_FAR: f32 = 500.0;
 }
 
 impl Default for Lens {

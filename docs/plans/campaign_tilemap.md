@@ -198,8 +198,15 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   over patches (within 2 %), and the editor's HDR and final image are 5 to 25 % brighter there (one pixel, (960, 700), lands on
   different tree instances in the two frames). What's left in G is the distance item (Phase 4's, the rings decision): the dark and
   light squares on the left, about 120 cells out, are the merged blocks' per-cell colours with no trees (props stop at 96 cells),
-  where the game draws its tiles, forests and towns; they stay at rings of 600 cells. And past the far ring the editor draws
-  nothing (black corners at the top), where the game has ground under its fog.
+  where the game draws its tiles, forests and towns; they stay at rings of 600 cells. And past the far ring the editor drew
+  nothing (black corners at the top), where the game has ground under its fog: fixed with capture E, below.
+- **Capture E, the map edge (2026-11-20):** the shroud at the map's edge matches (HDR within a few % over the frame's thirds). The
+  sea and coasts past about 190 cells were missing (black, a wall-like edge): the renderer draws a campaign map to the game's far
+  plane (500 world units, `CAMPAIGN_FAR`) but the far ring followed the lens's, the battle camera's 13 000 scene units (34 world
+  units). The campaign lens now has the game's far plane (`Lens::CAMPAIGN_FAR`, `Viewport::set_campaign_lens`), and the far LF
+  ring streams to it: E's right third 2.54 / 3.33 / 4.90 against the game's 2.47 / 3.25 / 4.72 (1.90 / 2.43 / 3.82 before), G's
+  corners filled. Its cost (the far ring now covers most of the map: 535 to 721 far blocks against about 14) is not measured yet:
+  for an idle window. Seen in G, for later: a dark sawtooth over a hill at the bottom left (also before).
 
 ## Order
 
