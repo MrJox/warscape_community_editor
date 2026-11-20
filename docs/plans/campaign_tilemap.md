@@ -205,8 +205,12 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   plane (500 world units, `CAMPAIGN_FAR`) but the far ring followed the lens's, the battle camera's 13 000 scene units (34 world
   units). The campaign lens now has the game's far plane (`Lens::CAMPAIGN_FAR`, `Viewport::set_campaign_lens`), and the far LF
   ring streams to it: E's right third 2.54 / 3.33 / 4.90 against the game's 2.47 / 3.25 / 4.72 (1.90 / 2.43 / 3.82 before), G's
-  corners filled. Its cost (the far ring now covers most of the map: 535 to 721 far blocks against about 14) is not measured yet:
-  for an idle window. Seen in G, for later: a dark sawtooth over a hill at the bottom left (also before).
+  corners filled. Its cost, measured idle (2026-11-20, `render.total`, 200 frames): capture A's camera 7.4 ms before, 50 to 105 ms
+  with the far ring as blocks (731 of them, every pass and cascade), G's 8.8 to 14.2. Now the blocks past the rings go by a quadtree
+  (`Lod::Distant(n)`: squares of 2^n blocks, n up to 3, once further than their side; as coarse as they are large; no shadow), and
+  only the 2 x 2 squares keep their custom-mesh tiles (`DISTANT_CUSTOM`: the whole map's cliffs were most of the cost, 13 ms): A
+  10.1 ms, G 11.0 ms (28 blocks and 55 squares at A). The rest is mostly the shadows (2.8 to 4.0 ms at A: the cascades reach as far
+  as the depth does). Seen in G, for later: a dark sawtooth over a hill at the bottom left (also before).
 - **Captures Ares, C, F1, F (2026-11-20, all 1280 x 720):** the HDR within 5 to 15 % over the frames' thirds where comparable (F1
   and F: the game's flat light-blue polygons over the sea, its 1280 x 720 error, excluded); F's horizon (mountains, haze, sky)
   matches since the far ring above. The trade routes were a pale line with faint dashes where the game's are clean dashes: the
