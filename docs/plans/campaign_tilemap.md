@@ -194,9 +194,12 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   sRGB, the game as `BC3_UNORM` (a RenderDoc capture of the editor, `scripts/re/rd_capture_editor.py`: the same constants, the
   same cloud texels, the alpha 0.3144 against 0.3146, the colour a third, as 0.43 decoded from sRGB is). Read linear, the fogged
   pixel's HDR is 5.7 against the game's 6.6 (2.2 before) and the auto exposure's white point 18.2 against 18.1 (`hdr_dump`, the
-  editor's HDR target, against the capture's). Left: the explored ground below the clouds, darker (HDR (960, 700) 0.26 against
-  0.99) with the fog of war's cells showing as dark squares on the left, where the game's has none. Also seen: past the far ring
-  (192 cells) the editor draws nothing (black corners at the top), where the game has ground under its fog.
+  editor's HDR target, against the capture's). The explored ground is not darker: its G-buffer albedo and normals match the game's
+  over patches (within 2 %), and the editor's HDR and final image are 5 to 25 % brighter there (one pixel, (960, 700), lands on
+  different tree instances in the two frames). What's left in G is the distance item (Phase 4's, the rings decision): the dark and
+  light squares on the left, about 120 cells out, are the merged blocks' per-cell colours with no trees (props stop at 96 cells),
+  where the game draws its tiles, forests and towns; they stay at rings of 600 cells. And past the far ring the editor draws
+  nothing (black corners at the top), where the game has ground under its fog.
 
 ## Order
 
