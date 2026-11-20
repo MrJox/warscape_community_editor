@@ -182,6 +182,18 @@ Steam screenshot in Documents, `325610_20261120<time>_1.png`), files `D:\renderd
 At 1280 x 720 the game draws flat light-blue polygons over parts of the sea (the user: a rendering error at that size; north of
 Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD captures yet.
 
+- **Capture G, the fog of war (2026-11-20, in progress):** the camera matches (every camera constant). The editor's fog of war
+  texture is the game's (97.5 % of its texels equal, mean difference 0.5 of 255), and every constant the shroud plane reads
+  (`lighting_VS_PS`, `fog_VS_PS`, `shroud_PS`, `shroud_plane_buffer`) matches at its draw (12129). Its pixel shader (disassembled):
+  alpha = 2 (1 - shroud)^6.4 x min(the depth point's distance to the plane, 1)^1.35, drawn twice; the colour the clouds' luminance x
+  the sun x 0.004 (HDR) blended with the fog terms; the depth `t_readable_depth_texture` the terrain passes' (6155, no model): the
+  editor binds the G-buffer's (with the trees). Tried: a ground-only depth pass, and a depth read as infinitely far: neither changes
+  the image (reverted). The game's fogged pixel (960, 300): its two draws (12.07, 10.80, 9.76) at alpha 0.315 each, the screen
+  (171, 157, 140); the editor's (93, 89, 80), (63, 63, 39) without the fog. The tone map's constants match too; the whole frame is
+  darker (11 of 255) and a forest pixel 32 against the game's 51 without fog: the exposure (the GPU's luminance) is the next
+  suspect, for an HDR comparison at the same stage (the editor's HDR target not dumped yet). Also seen: past the far ring (192
+  cells) the editor draws nothing (black corners at the top), where the game has ground under its fog.
+
 ## Order
 
 1, 2, 3 (the baseline), then 4 in its order (re-ranked by the baseline's errors), 5, 6; Phase 7's docs with each phase. Captures C and
