@@ -1166,9 +1166,24 @@ impl ParticleSystem {
             let mut effects_old = std::mem::take(&mut self.world_effects).into_iter().map(Some).collect::<Vec<_>>();
             self.world_effects = kept.iter().map(|&old| effects_old[old].take().expect("each kept once")).collect();
             self.world_names = names;
+            // An instance whose effect went gives its slot back; the retired ones are remapped too (their particles still read their
+            // effect's rows; left with the old index, one read past the rows of the effects kept: an index out of bounds in `render`).
+            let free = &mut self.free_slots;
             self.world.retain_mut(|i| {
                 i.effect = remap[i.effect];
-                i.effect != usize::MAX
+                let kept = i.effect != usize::MAX;
+                if !kept {
+                    free.push(i.slot);
+                }
+                kept
+            });
+            self.retired.retain_mut(|i| {
+                i.effect = remap[i.effect];
+                let kept = i.effect != usize::MAX;
+                if !kept {
+                    free.push(i.slot);
+                }
+                kept
             });
             self.world_lights.retain_mut(|l| {
                 l.effect = remap[l.effect];
