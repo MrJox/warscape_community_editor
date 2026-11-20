@@ -14,6 +14,11 @@ ogg_next_sys = "0.1.5"
 thiserror = "2"
 wce_audio_format = { path = "../wce_audio_format" }
 wce_vfs = { path = "../wce_vfs" }
+# The sound DB tables (rpfm's DB decoder and schema, as the terrain crates read theirs).
+rpfm_lib.workspace = true
+wce_foundation = { path = "../wce_foundation" }
+# .snd.meta (the animation metadata layout).
+wce_formats = { path = "../wce_formats" }
 
 [lints]
 workspace = true

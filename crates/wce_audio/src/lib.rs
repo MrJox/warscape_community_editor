@@ -7,6 +7,7 @@
 //! - [`library`]: every bank indexed, and what an event plays ([`library::SoundLibrary::resolve`]).
 //! - [`bits`]: LSB-first bit reading and writing, as Vorbis packs its bits.
 
+pub mod anim_sounds;
 pub mod bits;
 pub mod codebooks;
 pub mod decode;
@@ -18,6 +19,7 @@ pub mod music;
 pub mod names;
 pub mod references;
 pub mod setup_allocs;
+pub mod sound_db;
 
 /// Why a sound could not be decoded.
 #[derive(Debug, thiserror::Error)]

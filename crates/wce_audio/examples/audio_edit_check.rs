@@ -198,6 +198,8 @@ fn main() {
         ("battle_bird_wing_flaps", "sound_animation_triggers.csv"),
         ("campaign_spot_ambience_coastal_waves_cliff", "campaign ambience"),
         ("Battle_Order_VO_Mute", "event_data.dat"),
+        ("projectile_fire_arrow", "DB audio_projectiles"),
+        ("battle_footstep_walk_01", "animations (.snd.meta)"),
     ];
     for (name, want) in expect {
         let refs = references::find(&lib, &EditSet::default(), &index, fnv::id(name));
