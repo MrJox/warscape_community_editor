@@ -25,6 +25,7 @@ pub mod measure;
 pub mod new_instances;
 pub mod new_tile;
 pub mod parents;
+pub mod paths;
 pub mod pixel_layer;
 pub mod prefab_refs;
 pub mod prefab_stage;
