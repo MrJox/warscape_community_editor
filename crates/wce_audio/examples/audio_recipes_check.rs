@@ -151,6 +151,76 @@ fn main() {
         failures.push("unit voices");
     }
 
+    // 6. A new voice culture like Roman: every battle voice event gains its branch, lines copied (new containers, same files).
+    let mut edits = EditSet::default();
+    let new_culture = recipes::new_voice_culture(&mut edits, &lib, "eastern_persian", roman);
+    let check = new_culture.as_ref().ok().and_then(|_| {
+        let (event, _, _) = found.as_ref()?;
+        let id = fnv::id(event);
+        let new_lines = recipes::culture_lines(&edits, &lib, id, culture, fnv::id("eastern_persian"));
+        let old_lines = recipes::culture_lines(&edits, &lib, id, culture, roman);
+        let sources = |line: u32| -> Vec<u32> {
+            match edits.object(&lib, line) {
+                Some(Object::RandomSequence(r)) => r
+                    .children
+                    .iter()
+                    .filter_map(|c| match edits.object(&lib, *c) {
+                        Some(Object::Sound(s)) => Some(s.source.source_id),
+                        _ => None,
+                    })
+                    .collect(),
+                Some(Object::Sound(s)) => vec![s.source.source_id],
+                _ => vec![],
+            }
+        };
+        let same_files = new_lines.iter().zip(&old_lines).all(|((_, a), (_, b))| {
+            a != b && {
+                let (mut x, mut y) = (sources(*a), sources(*b));
+                x.sort_unstable();
+                y.sort_unstable();
+                x == y && !x.is_empty()
+            }
+        });
+        (new_lines.len() == old_lines.len() && same_files).then_some(new_lines.len())
+    });
+    println!(
+        "6. eastern_persian given Roman's lines: {new_culture:?}; {event:?}'s lines copied with the same files: {check:?}",
+        event = found.as_ref().map(|f| &f.0)
+    );
+    if check.is_none() {
+        failures.push("new voice culture");
+    }
+
+    // 7. A music switch path set to another playlist.
+    let mut edits = EditSet::default();
+    let music = lib.banks.iter().flat_map(|b| b.typed.iter().flatten()).find_map(|t| match t {
+        Object::MusicSwitch(m) => {
+            let paths = wce_audio_format::hirc::tree_paths(m.arguments.len(), &m.nodes);
+            (paths.len() > 1).then(|| (m.base.node.parent_id, m.clone(), paths))
+        }
+        _ => None,
+    });
+    let switch_id = music.as_ref().and_then(|(_, m, _)| {
+        lib.banks
+            .iter()
+            .flat_map(|b| b.bank.objects().iter().zip(&b.typed))
+            .find_map(|(o, t)| (t.as_ref() == Some(&Object::MusicSwitch(m.clone()))).then_some(o.id))
+    });
+    let music_ok = match (music, switch_id) {
+        (Some((_, m, paths)), Some(id)) => {
+            let (keys, _) = &paths[0];
+            let other = paths.iter().map(|(_, v)| *v).find(|v| *v != paths[0].1).unwrap_or(paths[0].1);
+            edits.set_music_path(&lib, id, keys, other).is_ok()
+                && matches!(edits.object(&lib, id), Some(Object::MusicSwitch(n))
+                    if wce_audio_format::hirc::tree_leaf(m.arguments.len(), &n.nodes, keys).map(|i| n.nodes[i].value) == Some(other))
+        }
+        _ => false,
+    };
+    println!("7. a music switch's first path set to another of its targets: {music_ok}");
+    if !music_ok {
+        failures.push("music switch path");
+    }
+
     for f in &failures {
         println!("FAILED: {f}");
     }

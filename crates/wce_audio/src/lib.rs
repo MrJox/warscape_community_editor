@@ -22,6 +22,7 @@ pub mod recipes;
 pub mod references;
 pub mod setup_allocs;
 pub mod sound_db;
+pub mod trees;
 pub mod unit_voices;
 
 /// Why a sound could not be decoded.

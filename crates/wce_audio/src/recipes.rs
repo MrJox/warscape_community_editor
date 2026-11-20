@@ -152,3 +152,65 @@ pub fn group_values(edits: &EditSet, lib: &SoundLibrary, dialogue_event: u32, gr
     values.dedup();
     values
 }
+
+/// The voice-over cultures the engine knows (`empire.retail.dll` holds them as a list; any other value is reported as
+/// `invalid_voiceover_culture`): the values `main_units.voiceover` and `subculture_religion_voiceover_junctions.voiceover_culture`
+/// may take, and of `vo_battle_subculture` in the battle voice trees. A culture without lines of its own in a tree falls to
+/// another's; [`new_voice_culture`] gives it its own.
+pub const ENGINE_VOICEOVER_CULTURES: [&str; 14] = [
+    "barbarian",
+    "barbarian_christian",
+    "barbarian_pagan",
+    "barbarian_generic",
+    "nomad",
+    "nomad_hunnic",
+    "nomad_hunnic_generic",
+    "eastern",
+    "eastern_desert",
+    "eastern_persian",
+    "eastern_generic",
+    "roman",
+    "roman_christian",
+    "roman_generic",
+];
+
+/// Lines of its own for a battle voice culture (a value of `vo_battle_subculture`, named `name`: one of
+/// [`ENGINE_VOICEOVER_CULTURES`], since the engine knows no other), made from `like`'s: in every dialogue event deciding on it,
+/// `like`'s branch copied (new containers, the same sound files; change them with Add variation / Remove). Returns (dialogue
+/// events, lines). The DB's `subculture_religion_voiceover_junctions` then gives the culture to a subculture and religion.
+///
+/// # Errors
+///
+/// When the name is not a valid key or no event has lines for `like`.
+pub fn new_voice_culture(edits: &mut EditSet, lib: &SoundLibrary, name: &str, like: u32) -> Result<(usize, usize)> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(AudioError::Invalid(format!("\"{name}\": letters, digits and _ only")));
+    }
+    let group = fnv::id("vo_battle_subculture");
+    let new = fnv::id(name);
+    let mut events: Vec<u32> = vec![];
+    for b in &lib.banks {
+        for (o, t) in b.bank.objects().iter().zip(&b.typed) {
+            if let Some(Object::DialogueEvent(d)) = t
+                && d.arguments.iter().any(|(g, _)| *g == group)
+                && !events.contains(&o.id)
+            {
+                events.push(o.id);
+            }
+        }
+    }
+    let (mut done, mut lines) = (0, 0);
+    for event in events {
+        // Only where it has no lines of its own yet.
+        let values = group_values(edits, lib, event, group);
+        if values.contains(&like) && !values.contains(&new) {
+            lines += edits.add_dialogue_value(lib, event, group, like, new)?;
+            done += 1;
+        }
+    }
+    if done == 0 {
+        return Err(AudioError::Invalid(format!("no voice event has lines for {} that {name} lacks", lib.label(like, 0))));
+    }
+    edits.names.insert(new, name.to_owned());
+    Ok((done, lines))
+}

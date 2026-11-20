@@ -42,6 +42,10 @@ pub struct View {
     animation: Option<String>,
     ambience: Option<String>,
     new_trigger: i32,
+    /// The clip length of the animation shown (read once per animation).
+    clip: Option<(String, Option<f32>)>,
+    /// A frame being dragged on the timeline: (entry, time).
+    dragging: Option<(usize, f32)>,
 }
 
 impl View {
@@ -144,8 +148,13 @@ impl AudioTool {
         let frames = anim_sounds::frames(&meta);
         let triggers = data.triggers.as_ref();
 
-        // The timeline: the clip's sound frames as marks, their names below.
-        let end = frames.iter().map(|f| f.time).fold(0.0f32, f32::max).max(0.5) * 1.15;
+        // The timeline: the clip (its length from the .anim beside it) and its sound frames as marks; drag a mark to move it.
+        if self.data_view.clip.as_ref().is_none_or(|(p, _)| *p != path) {
+            let length = self.files.as_ref().and_then(|f| anim_sounds::clip_length(f.as_ref(), &path));
+            self.data_view.clip = Some((path.clone(), length));
+        }
+        let clip = self.data_view.clip.as_ref().and_then(|(_, l)| *l);
+        let end = frames.iter().map(|f| f.time).fold(clip.unwrap_or(0.0), f32::max).max(0.5) * 1.1;
         let width = gui::content_region_avail().x.max(100.0);
         let origin = gui::cursor_screen_pos();
         let dl = gui::window_draw_list();
@@ -160,14 +169,41 @@ impl AudioTool {
                 dl.text(v2(x + 2.0, origin.y + height - 14.0), col32(120, 125, 140, 255), &format!("{:.1}s", k as f32 / 10.0));
             }
         }
+        if let Some(length) = clip {
+            let x = origin.x + width * length / end;
+            dl.rect_filled(v2(x, origin.y), v2(origin.x + width, origin.y + height), col32(20, 21, 25, 200), 0.0);
+            dl.line(v2(x, origin.y), v2(x, origin.y + height), col32(150, 160, 185, 255), 1.5);
+            dl.text(v2(x + 3.0, origin.y + 2.0), col32(150, 160, 185, 255), &format!("end {length:.2}s"));
+        }
         for f in &frames {
-            let x = origin.x + width * f.time / end;
+            let time = self.data_view.dragging.filter(|(e, _)| *e == f.entry).map_or(f.time, |(_, t)| t);
+            let x = origin.x + width * time / end;
             dl.line(v2(x, origin.y + 4.0), v2(x, origin.y + height - 16.0), col32(240, 180, 70, 255), 2.0);
             dl.circle_filled(v2(x, origin.y + 6.0), 4.0, col32(240, 180, 70, 255));
         }
         gui::invisible_button("timeline", v2(width, height), gui::BUTTON_LEFT);
+        let at = ((gui::mouse_pos().x - origin.x) / width * end).clamp(0.0, clip.unwrap_or(600.0));
+        if gui::is_item_activated() {
+            // The mark nearest the click, within a few pixels.
+            let near =
+                frames.iter().map(|f| (f.entry, (origin.x + width * f.time / end - gui::mouse_pos().x).abs())).filter(|(_, d)| *d < 8.0);
+            self.data_view.dragging = near.min_by(|a, b| a.1.total_cmp(&b.1)).map(|(e, _)| (e, at));
+        }
+        if let Some((entry, _)) = self.data_view.dragging {
+            if gui::is_item_active() {
+                self.data_view.dragging = Some((entry, (at * 1000.0).round() / 1000.0));
+            } else {
+                let (_, time) = self.data_view.dragging.take().expect("dragging");
+                anim_sounds::move_frame(&mut meta, entry, time);
+                requests.push(Request::WriteLoose(path.clone(), meta.encode(), format!("moved a sound frame of {path} to {time:.3} s")));
+                return;
+            }
+        }
         if gui::is_item_hovered() {
-            gui::set_tooltip("The animation's sound frames (seconds into the clip). Edit them in the list below.");
+            gui::set_tooltip(&match self.data_view.dragging {
+                Some((_, t)) => format!("{t:.3} s"),
+                None => "The clip and its sound frames (seconds). Drag a mark to move it; the list below edits them too.".to_owned(),
+            });
         }
 
         // The frames, editable.

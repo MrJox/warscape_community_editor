@@ -563,6 +563,107 @@ impl Object {
 }
 
 /// The paths of a decision tree (dialogue events, music switches) of `depth` levels: (keys, the leaf's value).
+/// The node a path ends at (its leaf, at `depth` keys), if the tree has that path.
+pub fn tree_leaf(depth: usize, nodes: &[TreeNode], keys: &[u32]) -> Option<usize> {
+    if keys.len() != depth {
+        return None;
+    }
+    let mut i = 0;
+    for key in keys {
+        let n = nodes.get(i)?;
+        let (first, count) = ((n.value & 0xFFFF) as usize, (n.value >> 16) as usize);
+        i = (first..first + count).find(|c| nodes.get(*c).is_some_and(|x| x.key == *key))?;
+    }
+    Some(i)
+}
+
+/// Every node's path but the root's: (keys, value) with a leaf's value (what plays, 0 for nothing), and branches without children
+/// (shorter paths, value 0): what [`tree_from_paths`] needs to lay a tree out again as it was.
+pub fn tree_all_paths(depth: usize, nodes: &[TreeNode]) -> Vec<(Vec<u32>, u32)> {
+    let mut out = vec![];
+    let mut stack = vec![(0usize, vec![])];
+    while let Some((i, keys)) = stack.pop() {
+        let Some(n) = nodes.get(i) else { continue };
+        let leaf = keys.len() == depth;
+        let (first, count) = ((n.value & 0xFFFF) as usize, (n.value >> 16) as usize);
+        if leaf || (count == 0 && !keys.is_empty()) {
+            out.push((keys, if leaf { n.value } else { 0 }));
+            continue;
+        }
+        for c in (first..first + count).rev() {
+            if let Some(child) = nodes.get(c) {
+                let mut k = keys.clone();
+                k.push(child.key);
+                stack.push((c, k));
+            }
+        }
+    }
+    out
+}
+
+/// A decision tree made from its paths ([`tree_all_paths`]; a leaf's value is what plays), laid out as Wwise does: the root, a
+/// node's children together (sorted by key: the engine searches them by key), each child's own block before the next sibling's; a
+/// node's weight and probability kept from `old` where it had the same path, else 50 and 100. Every tree of Attila's banks comes
+/// out byte for byte (gate `audio_formats_check`).
+pub fn tree_from_paths(depth: usize, paths: &[(Vec<u32>, u32)], old: &[TreeNode]) -> Vec<TreeNode> {
+    use std::collections::BTreeMap;
+    // The old tree's nodes by path, for their weights.
+    let mut kept: std::collections::HashMap<Vec<u32>, (u16, u16)> = std::collections::HashMap::new();
+    let mut stack = vec![(0usize, vec![])];
+    while let Some((i, keys)) = stack.pop() {
+        let Some(n) = old.get(i) else { continue };
+        kept.insert(keys.clone(), (n.weight, n.probability));
+        if keys.len() < depth {
+            let (first, count) = ((n.value & 0xFFFF) as usize, (n.value >> 16) as usize);
+            for c in first..first + count {
+                if let Some(child) = old.get(c) {
+                    let mut k = keys.clone();
+                    k.push(child.key);
+                    stack.push((c, k));
+                }
+            }
+        }
+    }
+    let weights = |keys: &[u32]| kept.get(keys).copied().unwrap_or((50, 100));
+
+    // A node's children together, then each child's own block before the next sibling's (as the game's trees are).
+    fn place(
+        node: usize,
+        prefix: &[u32],
+        depth: usize,
+        paths: &[(Vec<u32>, u32)],
+        weights: &dyn Fn(&[u32]) -> (u16, u16),
+        nodes: &mut Vec<TreeNode>,
+    ) {
+        let d = prefix.len();
+        if d == depth {
+            return;
+        }
+        let children: BTreeMap<u32, ()> = paths.iter().filter(|(k, _)| k.len() > d && k[..d] == *prefix).map(|(k, _)| (k[d], ())).collect();
+        let first = nodes.len();
+        for key in children.keys() {
+            let mut keys = prefix.to_vec();
+            keys.push(*key);
+            let (weight, probability) = weights(&keys);
+            let value = if d + 1 == depth { paths.iter().find(|(k, _)| *k == keys).map_or(0, |(_, v)| *v) } else { 0 };
+            nodes.push(TreeNode { key: *key, value, weight, probability });
+        }
+        // A branch without children keeps its first index at the end of the nodes placed so far (as the game's do).
+        nodes[node].value = ((children.len() as u32) << 16) | first as u32;
+        for (k, key) in children.keys().enumerate() {
+            let mut keys = prefix.to_vec();
+            keys.push(*key);
+            place(first + k, &keys, depth, paths, weights, nodes);
+        }
+    }
+    let mut nodes = vec![{
+        let (weight, probability) = weights(&[]);
+        TreeNode { key: old.first().map_or(0, |n| n.key), value: 0, weight, probability }
+    }];
+    place(0, &[], depth, paths, &weights, &mut nodes);
+    nodes
+}
+
 pub fn tree_paths(depth: usize, nodes: &[TreeNode]) -> Vec<(Vec<u32>, u32)> {
     let mut out = vec![];
     let mut stack = vec![(0usize, vec![])];

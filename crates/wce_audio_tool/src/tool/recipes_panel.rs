@@ -37,6 +37,7 @@ pub struct View {
     column: usize,
     /// The voice set picked by hand for a unit whose voice-over names none.
     set_override: Option<u32>,
+    new_culture: String,
 }
 
 impl AudioTool {
@@ -157,6 +158,35 @@ impl AudioTool {
                 }
                 gui::new_line();
                 if let Some(culture) = self.recipes_view.culture {
+                    // The engine's cultures without lines of their own in this event (no other name is valid in game).
+                    let have: Vec<String> =
+                        recipes::group_values(&self.edits, &lib, dialogue, group).iter().map(|v| lib.label(*v, 0).to_lowercase()).collect();
+                    let free: Vec<&str> =
+                        recipes::ENGINE_VOICEOVER_CULTURES.iter().copied().filter(|c| !have.iter().any(|h| h == c)).collect();
+                    if !free.contains(&self.recipes_view.new_culture.as_str()) {
+                        self.recipes_view.new_culture = free.first().map_or_else(String::new, |c| (*c).to_owned());
+                    }
+                    gui::set_next_item_width(200.0);
+                    if gui::begin_combo("##newculture", &self.recipes_view.new_culture) {
+                        for c in &free {
+                            if gui::selectable(c, self.recipes_view.new_culture == *c, 0) {
+                                self.recipes_view.new_culture = (*c).to_owned();
+                            }
+                        }
+                        gui::end_combo();
+                    }
+                    gui::same_line();
+                    let name = self.recipes_view.new_culture.clone();
+                    gui::begin_disabled(name.is_empty());
+                    if gui::button(&format!("New culture like {}", lib.label(culture, 0))) {
+                        requests.push(Request::NewCulture(name.clone(), culture));
+                    }
+                    gui::end_disabled();
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(
+                            "Gives the chosen culture (one the engine knows that has no lines of its own here) this one's lines in every\nbattle voice event: new containers, the same sound files (change them with Add variation / Remove). Give it to\na subculture and religion in the DB's subculture_religion_voiceover_junctions.",
+                        );
+                    }
                     let lines = recipes::culture_lines(&self.edits, &lib, dialogue, group, culture);
                     gui::text_disabled(&format!("{} lines for {}", lines.len(), lib.label(culture, 0)));
                     for (keys, node) in lines.iter().take(300) {

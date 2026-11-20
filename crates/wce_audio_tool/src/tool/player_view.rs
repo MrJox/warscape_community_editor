@@ -426,6 +426,9 @@ impl AudioTool {
 
     /// Edits change what a media ID plays: the previews are read again.
     pub(super) fn forget_previews(&mut self) {
+        // The trees too: they show the edits.
+        self.trees.clear();
+        self.lists.clear();
         self.previews.clear();
         self.preview_loading = None;
         self.preview_wanted.clear();
