@@ -1,0 +1,17 @@
+# The Cinematic tool's movie editing (docs/plans/cinematic.md, step 9), run by scripts/cinematic_check.sh twice: a vanilla movie's
+# subtitle line rewritten and shown, its subtitles and a new sound written as packs, a PNG sequence made into a movie pack.
+tool cinematic
+layout reset
+frames 2
+movie_open att_seal_3
+movie_subtitle 0 269 330 The Cinematic tool was here
+movie_seek 300
+frames 3
+assert_movie 300 The Cinematic tool was here
+movie_export_subtitles "%SUBS%"
+frames 3
+movie_replace_sound "%WAV%" "%SOUND%"
+frames 3
+movie_import "%PNGS%" "%IMPORT%"
+frames 3
+quit

@@ -589,6 +589,13 @@ pub fn render_offscreen(
         r.restart_temporal();
     }
 
+    // Nothing in flight: a model or a texture's full mips landing during the movie would show from a frame that changes from run
+    // to run (a texture first asked for while streaming was on, before this run's fixed-step frames).
+    let started = std::time::Instant::now();
+    while (r.models().pending() > 0 || r.textures().upgrades_pending() > 0) && started.elapsed().as_secs() < 60 {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+
     r.render(&e.scene, &ViewParams { camera, time_s }, out);
     (r.settings.deterministic, r.settings.show_grid, r.settings.game_view, r.settings.selection, r.settings.tinted) = kept;
     out.read_rgba8(&e.dev, &e.ctx)

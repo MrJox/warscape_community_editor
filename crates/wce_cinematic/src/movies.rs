@@ -23,6 +23,8 @@ pub struct MovieEntry {
     pub name: String,
     /// Its `videos` row's type (FULLSCREEN_INTRO, CAMPAIGN_ESTABLISH...), when it has one.
     pub video_type: Option<String>,
+    /// Its `videos` row's `script_ref`: the subtitle rows name it.
+    pub script_ref: Option<i64>,
 }
 
 /// One line of subtitles, shown from `start` to `end` (frames).
@@ -64,7 +66,8 @@ impl MovieCatalog {
         if let Some(schema) = &schema {
             for row in table_rows(schema, files, "videos_tables") {
                 if let (Some(name), Some(kind)) = (row.get("video_name"), row.get("video_type")) {
-                    types.insert(name.to_lowercase(), kind.clone());
+                    let script_ref = row.get("script_ref").and_then(|r| r.trim().parse::<i64>().ok());
+                    types.insert(name.to_lowercase(), (kind.clone(), script_ref));
                 }
             }
             let mut languages = BTreeSet::new();
@@ -75,11 +78,14 @@ impl MovieCatalog {
                 };
                 let language = get("language");
                 languages.insert(language.clone());
-                catalog.timings.entry((language, get("foreign_key").to_lowercase())).or_default().push((section, start, end));
+                // The table's key is (language, subtitle_field, text_section, foreign_key): a later table file's row replaces an
+                // earlier one's (a mod's edit of a vanilla movie's line).
+                let list = catalog.timings.entry((language, get("foreign_key").to_lowercase())).or_default();
+                list.retain(|(s, _, _)| *s != section);
+                list.push((section, start, end));
             }
             for list in catalog.timings.values_mut() {
                 list.sort_unstable();
-                list.dedup();
             }
             catalog.languages = languages.into_iter().collect();
         }
@@ -103,8 +109,11 @@ impl MovieCatalog {
             .into_iter()
             .map(|path| {
                 let name = file_stem(&path);
-                let video_type = types.get(&name.to_lowercase()).cloned();
-                MovieEntry { path, name, video_type }
+                let (video_type, script_ref) = match types.get(&name.to_lowercase()) {
+                    Some((t, r)) => (Some(t.clone()), *r),
+                    None => (None, None),
+                };
+                MovieEntry { path, name, video_type, script_ref }
             })
             .collect();
         catalog

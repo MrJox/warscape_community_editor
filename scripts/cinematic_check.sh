@@ -46,7 +46,29 @@ for run in 1 2; do
     rc=$?
     echo "logic run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/logic_run$run.log" | tail -5; }
+    # Movie editing: a tone and a PNG sequence made here first.
+    media="$OUT/media"; mkdir -p "$media/pngs" "$OUT/r$run"
+    python -c "
+import sys, wave, math, struct
+from PIL import Image
+d = sys.argv[1]
+w = wave.open(d + '/tone.wav', 'wb'); w.setnchannels(2); w.setsampwidth(2); w.setframerate(48000)
+w.writeframes(b''.join(struct.pack('<hh', v, v) for v in (int(9000 * math.sin(i * 2 * math.pi * 330 / 48000)) for i in range(48000 * 2))))
+w.close()
+for f in range(10):
+    Image.new('RGB', (64, 48), (f * 20, 80, 160)).save(d + '/pngs/frame_%04d.png' % f)
+" "$media"
+    sed -e "s|%SUBS%|$(cygpath -m "$OUT/subs$run.pack")|" -e "s|%WAV%|$(cygpath -m "$media/tone.wav")|" -e "s|%SOUND%|$(cygpath -m "$OUT/sound$run.pack")|"         -e "s|%PNGS%|$(cygpath -m "$media/pngs")|" -e "s|%IMPORT%|$(cygpath -m "$OUT/r$run/wce_imported.pack")|"         "$ROOT/scripts/cinematic_movie_edit.txt" > "$OUT/edit$run.txt"
+    WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/edit$run.txt")" > "$OUT/edit_run$run.log" 2>&1
+    rc=$?
+    echo "movie edit run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/edit_run$run.log" | tail -5; }
+    for f in subs$run sound$run r$run/wce_imported; do [ -s "$OUT/$f.pack" ] || { echo "movie edit run $run: no $f pack"; bad=1; }; done
 done
+for f in subs sound; do
+    if cmp -s "$OUT/${f}1.pack" "$OUT/${f}2.pack"; then echo "$f pack identical between runs"; else echo "$f pack DIFFERS between runs"; bad=1; fi
+done
+if cmp -s "$OUT/r1/wce_imported.pack" "$OUT/r2/wce_imported.pack"; then echo "import pack identical between runs"; else echo "import pack DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/movie1.pack" "$OUT/movie2.pack"; then echo "movie pack identical between runs"; else echo "movie pack DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/projects1/cinematics/wce_scene_test/project.json" "$OUT/projects2/cinematics/wce_scene_test/project.json"; then echo "project.json identical between runs"
 else echo "project.json DIFFERS between runs"; bad=1; fi
