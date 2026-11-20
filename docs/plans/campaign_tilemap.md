@@ -53,7 +53,8 @@ Never done: a whole frame compared at the same camera. Known gaps (V, from the c
   were not drawn (their models never requested).
 - **Environment leftovers:** the skybox casts as the game's (decision 4), but lays stripes over TDD's Rauros where the game shows none
   (the editor's cascades differ from the game's there); the shroud plane reads
-  depth but does not write it; the overlay's size (1.5 x the screen) and the rivers' half-width are ASSUMPTIONS; the sea border's rebel
+  depth but does not write it (settled 2026-11-20: the game's writes depth, but into a copy of the scene's depth, 6106, that nothing
+  reads after it in capture A's frame: the particles test 6111, the UI 6150; no effect, the editor's equivalent); the overlay's size (1.5 x the screen) and the rivers' half-width are ASSUMPTIONS; the sea border's rebel
   exception, the placed effects' activation granularity, the storm clouds' drift direction and the started effects' removal are not
   traced; the fog of war and the shroud at the map's edge are not compared with the game.
 - **Map:** far ground with no tile data olive in some runs and pink in others (parked 2026-11-07); TDD's Rauros: a straight east water
@@ -128,7 +129,7 @@ The first baseline over captures A (6628, 7363) and the rain ones sets the thres
    walls, ports, farmland and road levels against capture C's close view; each ASSUMPTION replaced or kept with its evidence.
 7. **The cascades' fit against the game's** (the skybox's stripes over Rauros showed it differs; the skybox no longer casts, decision
    4): the cascades' constants against a TDD capture at Rauros.
-8. **Shroud plane depth write**, the overlay's size (a capture at another resolution) and the rivers' half-width (their pixels in the
+8. **Shroud plane depth write** (settled: no effect in the game's frame), the overlay's size (a capture at another resolution) and the rivers' half-width (their pixels in the
    overlay target): the game's.
 9. **Map**: the far ground's colour rule (one tile per climate, fixed); the horizon (Phase 2's reach).
 10. **Environment leftovers** with their captures: the fog of war over Germania, the shroud at a map edge, the placed effects'
