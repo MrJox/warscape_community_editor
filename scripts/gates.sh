@@ -79,6 +79,7 @@ run audio_music       ex wce_audio audio_music_check "$GAME"            # playli
 run audio_recipes     ex wce_audio audio_recipes_check "$GAME"          # music named by its switches, animation sounds (existing / new), culture lines
 run video_check       ex wce_video video_check "$GAME"                  # every movie written back byte for byte through rpfm_lib and decoded; an encoded clip read back (docs/plans/cinematic.md)
 run movie_catalog     ex wce_cinematic movie_catalog_check "$GAME"      # every movie with its videos row, sound event versions and subtitles inside its frames
+run battle_export     ex wce_cinematic battle_export_check "$GAME" "$OUT/battle_export"   # a sample historical battle: XML, Lua (ticks, orders, logic), tables and loc read back, a pack
 run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)
 run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
 run unit_db           ex wce_unit_tool unit_db_check "$OUT/unit_db"   # the Unit tool's DB files: game rows read back, files written again to the same bytes

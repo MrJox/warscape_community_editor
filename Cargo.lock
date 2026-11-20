@@ -2427,9 +2427,11 @@ dependencies = [
  "serde_json",
  "wce_audio",
  "wce_audio_format",
+ "wce_formats",
  "wce_foundation",
  "wce_vfs",
  "wce_video",
+ "wce_walls",
 ]
 
 [[package]]
