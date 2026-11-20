@@ -50,6 +50,14 @@ pub fn add_frame(meta: &mut Meta, time: f32, trigger: usize) -> usize {
 }
 
 /// Moves a sound frame to another time.
+/// The length of the clip a `.snd.meta` belongs to (the `.anim` beside it), in seconds: its end time, else its frames at its rate.
+pub fn clip_length(files: &dyn wce_vfs::files::Files, snd_meta: &str) -> Option<f32> {
+    let anim = format!("{}.anim", snd_meta.strip_suffix(".snd.meta")?);
+    let raw = wce_formats::anim::RawAnim::decode(&files.read(&anim).ok()?)?;
+    let length = if raw.end > 0.0 { raw.end } else { raw.translations.len().saturating_sub(1) as f32 / raw.fps.max(1e-3) };
+    (length > 0.0).then_some(length)
+}
+
 pub fn move_frame(meta: &mut Meta, entry: usize, time: f32) {
     if let Some(e) = meta.entries.get_mut(entry) {
         e.start = time;

@@ -248,15 +248,40 @@ fn channel_mask(channels: u16) -> u32 {
     }
 }
 
-/// Encodes a sound at a quality (Wwise's 0 to 10, one of [`QUALITIES`]).
+/// 5.1 (FL FR FC LFE BL BR) or 7.1 (and SL SR) folded to 5.0 (FL FR FC BL BR): the LFE into both fronts at -3 dB, the sides into
+/// the backs. Wwise's own 6-channel setups are not reproduced by aoTuV (docs/formats/wem.md), so these encode as 5.0, which the
+/// game plays with its known setups.
+pub fn downmix_to_5(pcm: &Pcm) -> Option<Pcm> {
+    let channels = usize::from(pcm.channels);
+    if channels != 6 && channels != 8 {
+        return None;
+    }
+    let lfe = std::f32::consts::FRAC_1_SQRT_2;
+    let mut samples = Vec::with_capacity(pcm.frames() * 5);
+    for f in pcm.samples.chunks_exact(channels) {
+        let (side_l, side_r) = if channels == 8 { (f[6], f[7]) } else { (0.0, 0.0) };
+        samples.extend_from_slice(&[f[0] + lfe * f[3], f[1] + lfe * f[3], f[2], f[4] + side_l, f[5] + side_r]);
+    }
+    // Kept under full scale when the folding adds up past it.
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak > 1.0 {
+        samples.iter_mut().for_each(|s| *s /= peak);
+    }
+    Some(Pcm { channels: 5, sample_rate: pcm.sample_rate, samples })
+}
+
+/// Encodes a sound at a quality (Wwise's 0 to 10, one of [`QUALITIES`]); 5.1 and 7.1 are folded to 5.0 first ([`downmix_to_5`]).
 ///
 /// # Errors
 ///
-/// For 6 channels or more (not yet), a quality without Wwise's setup, or an encoder failure.
+/// For 7 or more than 8 channels, a quality without Wwise's setup, or an encoder failure.
 pub fn encode_wem(pcm: &Pcm, quality: u8) -> Result<Vec<u8>> {
+    if let Some(five) = downmix_to_5(pcm) {
+        return encode_wem(&five, quality);
+    }
     let channels = pcm.channels;
     if !(1..=5).contains(&channels) {
-        return Err(AudioError::Unsupported(format!("{channels} channels (1 to 5 for now)")));
+        return Err(AudioError::Unsupported(format!("{channels} channels (1 to 6, or 8)")));
     }
     if !QUALITIES.contains(&quality) {
         return Err(AudioError::Unsupported(format!("quality {quality} (Wwise's own setup is not reproduced)")));
@@ -413,6 +438,19 @@ unsafe fn run_encoder(pcm: &Pcm, quality: f32) -> Result<(Vec<u8>, Vec<(Vec<u8>,
 mod tests {
     use super::*;
     use crate::decode::decode_wem;
+
+    #[test]
+    fn surround_folds_to_five() {
+        let pcm = Pcm { channels: 6, sample_rate: 10, samples: vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6] };
+        let five = downmix_to_5(&pcm).unwrap();
+        assert_eq!(five.channels, 5);
+        let lfe = 0.4 * std::f32::consts::FRAC_1_SQRT_2;
+        let want = [0.1 + lfe, 0.2 + lfe, 0.3, 0.5, 0.6];
+        assert!(five.samples.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-6));
+        assert!(downmix_to_5(&Pcm { channels: 2, sample_rate: 10, samples: vec![0.0; 4] }).is_none());
+        let wem = encode_wem(&tone(6, 44_100, 0.5), 4).unwrap();
+        assert_eq!(crate::decode::decode_wem(&wem).unwrap().channels, 5);
+    }
 
     fn tone(channels: u16, rate: u32, seconds: f32) -> Pcm {
         let frames = (rate as f32 * seconds) as usize;

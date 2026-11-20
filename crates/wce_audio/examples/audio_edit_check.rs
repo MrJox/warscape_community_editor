@@ -188,6 +188,22 @@ fn main() {
     if volume != Some(-3.0) {
         failures.push("set property");
     }
+    // Mode, shuffle, repeat avoidance and a child's weight.
+    let first = match edits.object(&lib, container) {
+        Some(Object::RandomSequence(r)) => r.children[0],
+        _ => 0,
+    };
+    edits.set_container(&lib, container, 1, 1, 1, Some((first, 25_000))).expect("set container");
+    let set = match edits.object(&lib, container) {
+        Some(Object::RandomSequence(r)) => {
+            r.mode == 1 && r.random_mode == 1 && r.avoid_repeat_count == 1 && r.playlist.iter().any(|(c, w)| *c == first && *w == 25_000)
+        }
+        _ => false,
+    };
+    println!("   container set to random, shuffle, avoid 1, first child's weight 25 %: reads back {set}");
+    if !set {
+        failures.push("set container");
+    }
 
     // 6. References.
     let t = std::time::Instant::now();

@@ -231,27 +231,32 @@ impl SoundLibrary {
 
     /// The tree of what an object plays.
     pub fn resolve(&self, id: u32, files: &dyn Files) -> PlayNode {
-        let mut stack = vec![];
-        self.resolve_inner(id, files, &mut stack)
+        self.resolve_edited(id, files, &|_| None)
     }
 
-    fn resolve_inner(&self, id: u32, files: &dyn Files, stack: &mut Vec<u32>) -> PlayNode {
-        let Some((_, raw, typed)) = self.object(id) else {
+    /// As [`Self::resolve`], with objects as edited where `edited` has them (unsaved edits shown in the trees).
+    pub fn resolve_edited(&self, id: u32, files: &dyn Files, edited: &dyn Fn(u32) -> Option<Object>) -> PlayNode {
+        let mut stack = vec![];
+        self.resolve_inner(id, files, edited, &mut stack)
+    }
+
+    fn resolve_inner(&self, id: u32, files: &dyn Files, edited: &dyn Fn(u32) -> Option<Object>, stack: &mut Vec<u32>) -> PlayNode {
+        let owned = edited(id).or_else(|| self.merged(id));
+        let kind = owned.as_ref().map(Object::kind).or_else(|| self.object(id).map(|(_, raw, _)| raw.kind));
+        let Some(kind) = kind else {
             return PlayNode { id, kind: 0, label: format!("{} (not in any bank)", self.label(id, 0)), children: vec![], media: None };
         };
-        let mut node = PlayNode { id, kind: raw.kind, label: self.label(id, raw.kind), children: vec![], media: None };
+        let typed = owned.as_ref();
+        let mut node = PlayNode { id, kind, label: self.label(id, kind), children: vec![], media: None };
         if stack.contains(&id) || stack.len() >= MAX_DEPTH {
             node.label.push_str(" (repeats)");
             return node;
         }
 
         stack.push(id);
-        let child = |id: u32, stack: &mut Vec<u32>| self.resolve_inner(id, files, stack);
+        let child = |id: u32, stack: &mut Vec<u32>| self.resolve_inner(id, files, edited, stack);
         match typed {
-            Some(Object::Event(_)) => {
-                let Some(Object::Event(e)) = self.merged(id) else { unreachable!("an event") };
-                node.children = e.actions.iter().map(|a| child(*a, stack)).collect();
-            }
+            Some(Object::Event(e)) => node.children = e.actions.iter().map(|a| child(*a, stack)).collect(),
             Some(Object::Action(a)) => {
                 let target_kind = self.object(a.target_id).map_or(0, |(_, o, _)| o.kind);
                 node.label = format!("{} {}", action_name(a.action_type), self.label(a.target_id, target_kind));
@@ -260,8 +265,7 @@ impl SoundLibrary {
                 }
             }
             Some(Object::Sound(s)) => node.media = Some(self.media_of(&s.source, files)),
-            Some(Object::Switch(_)) => {
-                let Some(Object::Switch(s)) = self.merged(id) else { unreachable!("a switch") };
+            Some(Object::Switch(s)) => {
                 for (value, nodes) in &s.assignments {
                     let mut group = PlayNode { id: *value, kind: 0, label: self.label(*value, 0), children: vec![], media: None };
                     group.children = nodes.iter().map(|n| child(*n, stack)).collect();

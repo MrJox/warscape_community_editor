@@ -58,6 +58,11 @@ impl EditSet {
         hirc::parse(lib.banks[b].version, o.kind, &o.body).and_then(|r| r.ok())
     }
 
+    /// An object as edited, only when it is in an edited bank (an object the edits changed, made, or whose bank they touched).
+    pub fn edited_object(&self, lib: &SoundLibrary, id: u32) -> Option<Object> {
+        self.banks.values().any(|bank| bank.objects().iter().any(|o| o.id == id)).then(|| self.object(lib, id)).flatten()
+    }
+
     pub(crate) fn put_object(&mut self, lib: &SoundLibrary, id: u32, object: &Object) -> Result<()> {
         let (b, i) = self.find(lib, id).ok_or_else(|| AudioError::Invalid(format!("#{id} is in no bank")))?;
         self.bank_mut(lib, b).objects_mut()[i].body = object.write();
@@ -272,6 +277,39 @@ impl EditSet {
         }
         self.put_object(lib, container_id, &Object::RandomSequence(container))?;
         Ok(sound_id)
+    }
+
+    /// Sets how a random/sequence container plays: `mode` 0 sequence, 1 random; `random_mode` 0 normal, 1 shuffle (no take again
+    /// before all played); how many recent takes random play avoids; and one child's weight (1/1000 %, 50,000 the default).
+    ///
+    /// # Errors
+    ///
+    /// When the object is not such a container or the child is not one of its children.
+    pub fn set_container(
+        &mut self,
+        lib: &SoundLibrary,
+        container_id: u32,
+        mode: u8,
+        random_mode: u8,
+        avoid_repeat: u16,
+        weight: Option<(u32, i32)>,
+    ) -> Result<()> {
+        let Some(Object::RandomSequence(mut container)) = self.object(lib, container_id) else {
+            return Err(AudioError::Invalid(format!("#{container_id} is not a random/sequence container")));
+        };
+        container.mode = mode.min(1);
+        container.random_mode = random_mode.min(1);
+        container.avoid_repeat_count = avoid_repeat.min(container.children.len().saturating_sub(1) as u16);
+        if let Some((child, w)) = weight {
+            if !container.children.contains(&child) {
+                return Err(AudioError::Invalid(format!("#{child} is not a child of #{container_id}")));
+            }
+            match container.playlist.iter_mut().find(|(c, _)| *c == child) {
+                Some((_, old)) => *old = w.clamp(0, 100_000),
+                None => container.playlist.push((child, w.clamp(0, 100_000))),
+            }
+        }
+        self.put_object(lib, container_id, &Object::RandomSequence(container))
     }
 
     /// Removes a child from a random/sequence container, and the sound object itself when it was a sound of that container; its

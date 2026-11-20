@@ -534,6 +534,11 @@ pub fn drag_float(label: &str, v: &mut f32, speed: f32, lo: f32, hi: f32, format
     call!(sys::igDragFloat(l.as_ptr(), v, speed, lo, hi, f.as_ptr(), 0))
 }
 
+pub fn drag_int_range(label: &str, v: &mut i32, speed: f32, lo: i32, hi: i32, format: &str) -> bool {
+    let (l, f) = (cs(label), cs(format));
+    call!(sys::igDragInt(l.as_ptr(), v, speed, lo, hi, f.as_ptr(), 0))
+}
+
 pub fn drag_float2(label: &str, v: &mut [f32; 2], speed: f32, format: &str) -> bool {
     let (l, f) = (cs(label), cs(format));
     call!(sys::igDragFloat2(l.as_ptr(), v.as_mut_ptr(), speed, 0.0, 0.0, f.as_ptr(), 0))

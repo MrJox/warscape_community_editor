@@ -73,6 +73,21 @@ fn main() {
                         *kinds.entry(o.kind).or_default() += 1;
                         if let Some(parsed) = hirc::parse(version, o.kind, &o.body) {
                             let tally = typed.entry(o.kind).or_default();
+                            // A decision tree laid out again from its paths must come out as it was (the edits rebuild trees so).
+                            let tree = match &parsed {
+                                Ok(hirc::Object::DialogueEvent(d)) => Some((d.arguments.len(), &d.nodes)),
+                                Ok(hirc::Object::MusicSwitch(m)) => Some((m.arguments.len(), &m.nodes)),
+                                _ => None,
+                            };
+                            if let Some((depth, nodes)) = tree
+                                && hirc::tree_from_paths(depth, &hirc::tree_all_paths(depth, nodes), nodes) != *nodes
+                            {
+                                typed_failed.push(format!(
+                                    "{pack}: {path}: {} {}: its tree is not rebuilt as it was",
+                                    kind_name(o.kind),
+                                    o.id
+                                ));
+                            }
                             match parsed {
                                 Ok(object) if object.write() == o.body => tally.0 += 1,
                                 Ok(_) => {

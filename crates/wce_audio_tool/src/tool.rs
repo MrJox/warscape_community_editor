@@ -64,6 +64,14 @@ enum Request {
     AnimationNewSound(String, f32, String, String),
     /// Write a loose file (path, bytes, what for the status line).
     WriteLoose(String, Vec<u8>, String),
+    /// Name an object (a label kept in the project's names.txt); an empty name removes the label.
+    Rename(u32, String),
+    /// (container, mode, random mode, avoid repeat, a child's weight).
+    SetContainer(u32, u8, u8, u16, Option<(u32, i32)>),
+    /// (music switch, a path of states, what it plays).
+    SetMusicPath(u32, Vec<u32>, u32),
+    /// (the new culture's name, the culture it copies).
+    NewCulture(String, u32),
     /// Pick a sound file for a new unit line.
     UnitLine(UnitLine),
     Save,
@@ -128,6 +136,10 @@ pub struct AudioTool {
     tab_bank: Option<usize>,
     /// The browsers' Play / Stop buttons.
     play: player_view::PlayButtons,
+    /// The Audio Object's name field: (object, text).
+    rename: (u32, String),
+    /// A music switch path's "play instead" field: (path index, text).
+    path_target: (usize, String),
     search: String,
     searched: String,
     results: Vec<(String, u32, u8, usize)>,
@@ -467,6 +479,24 @@ impl AudioTool {
                     edits.loose.insert(path, bytes);
                     Ok(String::new())
                 }),
+                Request::Rename(id, name) => self.edit(e, &format!("named #{id} {name}"), |edits, _, _| {
+                    if name.trim().is_empty() {
+                        edits.names.remove(&id);
+                    } else {
+                        edits.names.insert(id, name.trim().to_owned());
+                    }
+                    Ok(String::new())
+                }),
+                Request::SetContainer(id, mode, random_mode, avoid, weight) => self.edit(e, "set a container", |edits, lib, _| {
+                    edits.set_container(lib, id, mode, random_mode, avoid, weight).map(|()| String::new())
+                }),
+                Request::SetMusicPath(id, keys, target) => self.edit(e, "set what a music path plays", |edits, lib, _| {
+                    edits.set_music_path(lib, id, &keys, target).map(|()| String::new())
+                }),
+                Request::NewCulture(name, like) => self.edit(e, &format!("made the voice culture {name}"), |edits, lib, _| {
+                    recipes::new_voice_culture(edits, lib, &name, like)
+                        .map(|(events, lines)| format!(" ({lines} lines in {events} voice events, the same files as the copied culture's)"))
+                }),
                 Request::Save => self.save(e),
                 Request::Revert => {
                     if !self.edits.is_empty() {
@@ -612,7 +642,9 @@ impl AudioTool {
         }
 
         let (lib, files) = (self.library.as_ref()?, self.files.as_ref()?);
-        let tree = Arc::new(lib.resolve(id, files.as_ref()));
+        // Unsaved edits show at once.
+        let edits = &self.edits;
+        let tree = Arc::new(lib.resolve_edited(id, files.as_ref(), &|o| edits.edited_object(lib, o)));
         self.trees.insert(id, tree.clone());
         Some(tree)
     }
@@ -1047,6 +1079,17 @@ impl AudioTool {
 
         gui::text(&self.edits.names.get(&id).cloned().unwrap_or_else(|| lib.label(id, kind)));
         gui::text_disabled(&format!("{}  #{id}", kind_name(kind)));
+        // Your own name for it (kept in the project's names.txt, read with the banks).
+        if self.rename.0 != id {
+            self.rename = (id, self.edits.names.get(&id).cloned().unwrap_or_default());
+        }
+        gui::set_next_item_width(220.0);
+        if gui::input_text("##rename", Some("your name for it (Enter)"), &mut self.rename.1, 128, gui::INPUT_ENTER_RETURNS_TRUE) {
+            requests.push(Request::Rename(id, self.rename.1.clone()));
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A label of yours, shown everywhere instead of its ID; kept in the project's audio/names.txt on Save.");
+        }
         if is_new {
             gui::text_colored([1.0, 0.8, 0.3, 1.0], "New, not saved");
         } else if let Some(source) = lib.names.source(id) {
@@ -1074,19 +1117,36 @@ impl AudioTool {
                     gui::text_disabled("Its waveform, levels and player: Inspector.");
                 }
                 edit_fields(id, object, requests);
+                if let Object::MusicSwitch(switch) = object {
+                    music_switch_view(id, switch, &lib, &mut self.path_target, requests);
+                }
                 if let Object::MusicPlaylist(playlist) = object {
                     playlist_view(id, playlist, &lib, &self.edits, &mut self.play, requests);
                 }
                 if let Some(node) = object.node() {
                     node_fields(node, &lib, requests);
                 }
-                let random = matches!(object, Object::RandomSequence(_));
+                if let Object::RandomSequence(r) = object {
+                    container_settings(id, r, requests);
+                }
                 if !object.children().is_empty() && gui::collapsing_header(&format!("Children ({})", object.children().len()), 0) {
                     for c in object.children() {
                         let kind = self.edits.object(&lib, *c).map_or_else(|| lib.object(*c).map_or(0, |(_, o, _)| o.kind), |o| o.kind());
-                        if random {
+                        if let Object::RandomSequence(r) = object {
                             if gui::small_button(&format!("Remove##rm{c}")) {
                                 requests.push(Request::RemoveVariation(id, *c));
+                            }
+                            gui::same_line();
+                            // Its weight in random play (Wwise's percentage: 50 is the default).
+                            let mut weight = r.playlist.iter().find(|(x, _)| x == c).map_or(50_000, |(_, w)| *w) as f32 / 1000.0;
+                            gui::set_next_item_width(80.0);
+                            gui::drag_float(&format!("##w{c}"), &mut weight, 0.5, 0.0, 100.0, "weight %.0f");
+                            if gui::is_item_hovered() {
+                                gui::set_tooltip("How likely random play picks it, against the others' weights (50 is the default).");
+                            }
+                            if gui::is_item_deactivated_after_edit() {
+                                let w = Some((*c, (weight * 1000.0).round() as i32));
+                                requests.push(Request::SetContainer(id, r.mode, r.random_mode, r.avoid_repeat_count, w));
                             }
                             gui::same_line();
                         }
@@ -1358,6 +1418,18 @@ fn playlist_view(
                 requests.push(Request::SetItem(id, item.item_id, (weight * 1000.0).round() as u32, item.loop_count));
             }
             gui::same_line();
+            // Plays (loops) this many times in a row; 0 loops forever.
+            let mut loops = i32::from(item.loop_count);
+            gui::set_next_item_width(70.0);
+            let format = if loops == 0 { "loop forever" } else { "%d x" };
+            gui::drag_int_range("##loop", &mut loops, 0.2, 0, 99, format);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How many times this segment plays in a row (0: loops until the music changes).");
+            }
+            if gui::is_item_deactivated_after_edit() {
+                requests.push(Request::SetItem(id, item.item_id, item.weight, loops.clamp(0, 99) as i16));
+            }
+            gui::same_line();
             if gui::selectable(&format!("{} ({length})##seg", lib.label(item.segment_id, 10)), false, 0) {
                 requests.push(Request::Select(item.segment_id));
             }
@@ -1438,13 +1510,130 @@ fn node_fields(node: &NodeBase, lib: &SoundLibrary, requests: &mut Vec<Request>)
 }
 
 /// Property IDs (bank version 112). Only the ones checked are named; the others show their number (docs/plans/audio.md, step 4).
-fn property_name(id: u8) -> String {
-    match id {
-        0 => "Volume (dB)".into(),
-        2 => "Pitch (cents)".into(),
-        3 => "Low-pass".into(),
-        _ => format!("Property {id}"),
+/// A music switch's paths of states and what each plays, each one settable to another music object (a name or #ID).
+fn music_switch_view(
+    id: u32,
+    switch: &wce_audio_format::hirc::MusicSwitch,
+    lib: &SoundLibrary,
+    field: &mut (usize, String),
+    requests: &mut Vec<Request>,
+) {
+    let depth = switch.arguments.len();
+    let paths = wce_audio_format::hirc::tree_paths(depth, &switch.nodes);
+    let groups: Vec<String> = switch.arguments.iter().map(|(g, _)| lib.label(*g, 0)).collect();
+    if !gui::collapsing_header(&format!("What it plays ({} paths of {})", paths.len(), groups.join(" / ")), 0) {
+        return;
     }
+    gui::text_wrapped(
+        "Each path of states (any: the state does not matter) and the music it plays. Type a playlist's name or #ID to play it instead.",
+    );
+    for (i, (keys, target)) in paths.iter().enumerate() {
+        gui::push_id(&format!("mp{i}"));
+        let states: Vec<String> = keys.iter().map(|k| if *k == 0 { "any".to_owned() } else { lib.label(*k, 0) }).collect();
+        let kind = lib.object(*target).map_or(0, |(_, o, _)| o.kind);
+        if gui::selectable(&format!("{}  ->  {}", states.join(" / "), lib.label(*target, kind)), false, 0) {
+            requests.push(Request::Select(*target));
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Selects what it plays.");
+        }
+        gui::same_line();
+        if field.0 != i {
+            gui::set_next_item_width(160.0);
+            let mut text = String::new();
+            if gui::input_text("##to", Some("play instead..."), &mut text, 128, 0) {
+                *field = (i, text);
+            }
+        } else {
+            gui::set_next_item_width(160.0);
+            gui::input_text("##to", Some("play instead..."), &mut field.1, 128, 0);
+            gui::same_line();
+            let token = field.1.trim().trim_start_matches('#');
+            let new = token.parse::<u32>().ok().filter(|t| lib.has_object(*t)).or_else(|| {
+                let h = wce_audio_format::fnv::id(token);
+                lib.has_object(h).then_some(h)
+            });
+            gui::begin_disabled(new.is_none());
+            if gui::small_button("Set")
+                && let Some(new) = new
+            {
+                requests.push(Request::SetMusicPath(id, keys.clone(), new));
+                *field = (usize::MAX, String::new());
+            }
+            gui::end_disabled();
+        }
+        gui::pop_id();
+    }
+}
+
+/// A random/sequence container's play settings: random or sequence, shuffle, how many recent takes to avoid.
+fn container_settings(id: u32, r: &wce_audio_format::hirc::RandomSequence, requests: &mut Vec<Request>) {
+    let mut random = r.mode == 1;
+    if gui::checkbox("Random (else in sequence)", &mut random) {
+        requests.push(Request::SetContainer(id, u8::from(random), r.random_mode, r.avoid_repeat_count, None));
+    }
+    if random {
+        gui::same_line();
+        let mut shuffle = r.random_mode == 1;
+        if gui::checkbox("Shuffle", &mut shuffle) {
+            requests.push(Request::SetContainer(id, r.mode, u8::from(shuffle), r.avoid_repeat_count, None));
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Plays every take once before any again.");
+        }
+        gui::same_line();
+        let mut avoid = i32::from(r.avoid_repeat_count);
+        gui::set_next_item_width(80.0);
+        let most = r.children.len().saturating_sub(1) as i32;
+        gui::drag_int_range("Avoid last##avoid", &mut avoid, 0.1, 0, most, "%d");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("How many of the last takes played are not picked again.");
+        }
+        if gui::is_item_deactivated_after_edit() {
+            requests.push(Request::SetContainer(id, r.mode, r.random_mode, avoid.clamp(0, most) as u16, None));
+        }
+    }
+}
+
+/// A node property's name: Wwise 2014's property IDs (bank version 112, as wwiser lists them; volume, pitch and low-pass checked
+/// in the oracle's banks).
+fn property_name(id: u8) -> String {
+    const NAMES: [&str; 33] = [
+        "Volume (dB)",
+        "LFE volume (dB)",
+        "Pitch (cents)",
+        "Low-pass",
+        "Bus volume (dB)",
+        "Priority",
+        "Priority distance offset",
+        "Loop count",
+        "Feedback volume",
+        "Feedback low-pass",
+        "Mute ratio",
+        "Pan left-right",
+        "Pan front-rear",
+        "Centre %",
+        "Initial delay (s)",
+        "Transition time",
+        "Probability",
+        "Dialogue mode",
+        "User aux send 0 (dB)",
+        "User aux send 1 (dB)",
+        "User aux send 2 (dB)",
+        "User aux send 3 (dB)",
+        "Game aux send (dB)",
+        "Output bus volume (dB)",
+        "Output bus low-pass",
+        "HDR bus threshold",
+        "HDR bus ratio",
+        "HDR bus release time",
+        "HDR bus game parameter",
+        "HDR bus parameter min",
+        "HDR bus parameter max",
+        "HDR active range",
+        "Make-up gain (dB)",
+    ];
+    NAMES.get(usize::from(id)).map_or_else(|| format!("Property {id}"), |n| (*n).to_owned())
 }
 
 impl Tool for AudioTool {
