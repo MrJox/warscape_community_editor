@@ -562,7 +562,36 @@ impl Object {
     }
 }
 
+/// The paths of a decision tree (dialogue events, music switches) of `depth` levels: (keys, the leaf's value).
+pub fn tree_paths(depth: usize, nodes: &[TreeNode]) -> Vec<(Vec<u32>, u32)> {
+    let mut out = vec![];
+    let mut stack = vec![(0usize, vec![])];
+    while let Some((i, keys)) = stack.pop() {
+        let Some(n) = nodes.get(i) else { continue };
+        if keys.len() == depth {
+            if n.value != 0 {
+                out.push((keys, n.value));
+            }
+            continue;
+        }
+        let (first, count) = ((n.value & 0xFFFF) as usize, (n.value >> 16) as usize);
+        for c in (first..first + count).rev() {
+            if let Some(child) = nodes.get(c) {
+                let mut k = keys.clone();
+                k.push(child.key);
+                stack.push((c, k));
+            }
+        }
+    }
+    out
+}
+
 impl DialogueEvent {
+    /// Every path of the tree to a leaf: the keys (state or switch IDs, one per argument; 0 for "any") and the audio node played.
+    pub fn paths(&self) -> Vec<(Vec<u32>, u32)> {
+        tree_paths(self.arguments.len(), &self.nodes)
+    }
+
     /// The audio nodes the tree's leaves play (the nodes at the tree's full depth), in tree order, without repeats.
     pub fn leaves(&self) -> Vec<u32> {
         let mut out = vec![];

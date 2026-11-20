@@ -343,6 +343,63 @@ impl EditSet {
         self.put_object(lib, id, &object)
     }
 
+    /// A new sound made like `template` (a sound object), playing `wem` streamed from a loose file, placed under the nearest
+    /// actor-mixer above the template (so no random or switch container gains a variation), or on its own, sent to the chain's
+    /// output bus, when there is none. Returns the new sound's ID.
+    ///
+    /// # Errors
+    ///
+    /// When the template is not a sound.
+    pub fn new_sound_like(&mut self, lib: &SoundLibrary, template: u32, wem: &[u8]) -> Result<u32> {
+        let Some(Object::Sound(mut sound)) = self.object(lib, template) else {
+            return Err(AudioError::Invalid(format!("#{template} is not a sound")));
+        };
+        let mut parent = sound.node.parent_id;
+        while let Some(o) = self.object(lib, parent) {
+            if matches!(o, Object::ActorMixer(_)) {
+                break;
+            }
+            parent = o.node().map_or(0, |n| n.parent_id);
+        }
+        // No actor-mixer above: the new sound stands alone, sent to the output bus of the template's chain.
+        let mixer = match self.object(lib, parent) {
+            Some(Object::ActorMixer(m)) => Some(m),
+            _ => None,
+        };
+        if mixer.is_none() {
+            let mut bus = sound.node.override_bus_id;
+            let mut up = sound.node.parent_id;
+            while bus == 0
+                && let Some(o) = self.object(lib, up)
+            {
+                let node = o.node().cloned();
+                bus = node.as_ref().map_or(0, |n| n.override_bus_id);
+                up = node.map_or(0, |n| n.parent_id);
+            }
+            sound.node.override_bus_id = bus;
+            parent = 0;
+        }
+
+        let sound_id = self.new_id(lib, template);
+        let media = self.new_id(lib, sound_id);
+        sound.node.parent_id = parent;
+        sound.source.source_id = media;
+        sound.source.stream_type = 2;
+        sound.source.file_id = media;
+        sound.source.file_offset = None;
+        sound.source.in_memory_size = 0;
+        self.loose.insert(format!("audio/{media}.wem"), wem.to_vec());
+
+        let (b, i) = self.find(lib, template).ok_or_else(|| AudioError::Invalid("the template is in no bank".into()))?;
+        self.bank_mut(lib, b).objects_mut().insert(i + 1, HircObject { kind: 2, id: sound_id, body: Object::Sound(sound).write() });
+        if let Some(mut mixer) = mixer {
+            let at = mixer.children.partition_point(|c| *c < sound_id);
+            mixer.children.insert(at, sound_id);
+            self.put_object(lib, parent, &Object::ActorMixer(mixer))?;
+        }
+        Ok(sound_id)
+    }
+
     /// Deletes an object: an event with its actions, an action, or a hierarchy object with everything under it (its children,
     /// recursively) and the Play actions that target any of them. Every list naming a deleted object (parents' children and
     /// playlists, switch assignments, blend layers, events' actions) drops it. Media stay where they are (the game's data banks and

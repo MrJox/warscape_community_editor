@@ -17,6 +17,7 @@ pub mod import;
 pub mod library;
 pub mod music;
 pub mod names;
+pub mod recipes;
 pub mod references;
 pub mod setup_allocs;
 pub mod sound_db;
