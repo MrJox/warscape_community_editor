@@ -310,7 +310,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       of them) sound original. **Known anomaly, set aside by the user**: UI button sounds do not change through a mod pack's
       banks (event or data banks), while loose WEMs do; cause unknown (UI banks loaded before mods, another event, or cached
       media). Revisit with a runtime trace or a non-UI event (a battle sound) later. An added variation in game: todo.
-5. **Remove and delete** with the reference warnings; **new events** with their triggers. **in progress**
+5. **Remove and delete** with the reference warnings; **new events** with their triggers. **done** (2026-11-20; 5.5 not yet seen in the app)
    1. References finder (`wce_audio::references`): `ReferenceIndex::build` (once, about 5 s: on a worker) indexes the game's
       references by ID: `event_data.dat` (the game's code triggers these events by name), `sound_animation_triggers.csv` rows,
       campaign `.amb` emitters, UI layouts (their words hashed, kept when a bank has that ID); `references::find` adds the
@@ -330,7 +330,14 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
       copied from another row; returns the row index a `.snd.meta` holds; the frames themselves: step 7) and
       `EditSet::add_emitter` (a campaign `.amb` emitter along points). Gate step 8: row 168 added, an emitter added. **done**;
       the "nothing triggers it" warning: with the tool (5.5).
-   5. Tool: Delete (with the warnings), New event (name, bank, target), Wire. **todo**
+   5. Tool: Audio Object lists "Used by" (the game's references and the banks', objects selectable; the index builds on a
+      worker after the banks), Delete... (a confirmation listing the game's uses as warnings), "New event playing this" (a name,
+      for sounds and containers; the event lands in the object's first bank), "Add to the animation triggers" (an event: a
+      new CSV row firing it in battle; the row index is what a `.snd.meta` frame holds), and the warning "Nothing triggers this
+      event" for an event nobody names. New objects show from the edits ("New, not saved"); names given here are kept in
+      `<projects>/audio/names.txt` and read with the banks (`NameSource::Label`). **done (builds, lints); not yet seen in the
+      app**: the scripted capture failed with "SDL_Init failed: No displays available" (the screen off, 2026-11-20); capture
+      `--tool audio --cmd "audio_select grp_gw_generic_button_small" --frames 900 --shot` when a display is on.
 6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **todo**
 7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **todo**
 8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **todo**
