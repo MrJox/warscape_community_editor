@@ -10,6 +10,7 @@ pub mod chmf;
 pub mod dds_decode;
 pub mod env_value;
 pub mod image_containers;
+pub mod lf_region_png;
 pub mod markers;
 pub mod models_naval;
 pub mod old_lists;

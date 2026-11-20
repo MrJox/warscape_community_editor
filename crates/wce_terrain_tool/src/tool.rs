@@ -32,6 +32,13 @@ use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::context::{ContextRequest, Streamer, TileProvider, cache};
 use wce_vfs::files::Files;
 
+#[path = "lf_region.rs"]
+mod lf_region;
+
+#[cfg(test)]
+#[path = "lf_region_tests.rs"]
+mod lf_region_tests;
+
 /// Scene units per metre (the tiles' editor units: the map context's frame is in them).
 /// The File > Export > Built files entry's key for its last destination (`Editor::export_dir`).
 const EXPORT_KEY: &str = "terrain";
@@ -398,6 +405,7 @@ pub struct TerrainTool {
 
     /// The LF brush, the stroke being painted, the brush ring's layer and entity.
     paint: LfPaint,
+    lf_region: lf_region::Panel,
 
     /// The cell layers' painting; the fill run again after an edit of the layers it reads (and one wanted once the stroke ends).
     cells: crate::cell_paint::CellPaint,
@@ -470,6 +478,7 @@ impl Default for TerrainTool {
             lines: crate::lines::CampaignLinesView::default(),
             map_panel: crate::map_panel::MapPanel::new(),
             paint: LfPaint::default(),
+            lf_region: Default::default(),
             cells: crate::cell_paint::CellPaint::default(),
             explicit: Default::default(),
             terry: Default::default(),
@@ -1398,6 +1407,7 @@ impl TerrainTool {
 
         let lf_was = self.paint.on;
         self.draw_paint_section(e);
+        self.draw_lf_region_section(e);
         let cells_was = self.cells.on;
         self.cells.draw_section(e, self.shown);
         let placing_was = self.explicit.placing;
@@ -2399,6 +2409,7 @@ impl Tool for TerrainTool {
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
+        lf_region::register(c);
         c.add("terrain_maps", "terrain_maps [text]", "the Terrain tool: the map list as it shows it (the name and, in brackets, where the map is read from), those containing the text", |e, a| {
             let filter = a.first().map(|f| f.to_lowercase()).unwrap_or_default();
             with_terrain(e, |t, e| {
