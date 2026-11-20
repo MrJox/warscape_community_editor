@@ -108,7 +108,7 @@ impl TileTool {
         }
 
         if styled::inspector_header(
-            &format!("{}  Texture rules (experimental)", icons::LAYERS),
+            &format!("{}  Texture rules", icons::LAYERS),
             "Textures laid by the terrain: each rule puts a texture where its conditions hold (height, slope, hollows, distance to water, \
              roads and buildings), a later rule over an earlier one. They go into a terrain layer of their own under yours: what you \
              paint stays over them. The layer is made again by itself when the terrain or the rules change.",

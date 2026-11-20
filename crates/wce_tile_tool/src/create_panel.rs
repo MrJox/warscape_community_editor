@@ -179,9 +179,6 @@ pub enum Make {
 
     /// A biome's area (docs/plans/auto_detail.md, C), by the biome's name: drawn as a vegetation exclusion polygon with `wce_biome`.
     Biome { name: String },
-
-    /// A kind of ground coverage (rocks and plants by cliffs, coasts, riverbanks; props around buildings), set up in the Inspector.
-    Coverage { kind: wce_tile::ground_coverage::Kind },
 }
 
 #[derive(Clone, Debug)]
@@ -221,7 +218,6 @@ impl Entry {
             Make::Prefab { key } => format!("prefab|{key}"),
             Make::VegSet { name } => format!("vegset|{name}"),
             Make::Biome { name } => format!("biome|{name}"),
-            Make::Coverage { kind } => format!("coverage|{}", kind.name()),
         }
     }
 
@@ -232,10 +228,12 @@ impl Entry {
             Make::Prefab { .. } => icons::COMPONENT,
             Make::VegSet { .. } => icons::TREES,
             Make::Biome { .. } => icons::SHRUB,
-            Make::Coverage { .. } => icons::MOUNTAIN,
         }
     }
 }
+
+/// The side of the patch of a biome its thumbnail shows, metres.
+const BIOME_PREVIEW_SIDE: f32 = 20.0;
 
 /// The mark of a prefab of the projects folder.
 pub(crate) const PROJECT_PREFAB_ICON: &str = icons::LINK_2;
@@ -450,22 +448,15 @@ impl TileTool {
             let label = if set.folder.is_empty() { format!("set: {}", set.name) } else { format!("set: {}   {}", set.name, set.folder) };
             let keys = set.entries.iter().map(|en| en.key.as_str()).collect::<Vec<_>>().join(" ");
             let what = if set.kind == SetKind::Building { "building" } else { "vegetation" };
-            out.push(entry(set_category(set.kind), label, Make::VegSet { name: set.name.clone() }, &format!("{what} set {keys}")));
+            let mut en = entry(set_category(set.kind), label, Make::VegSet { name: set.name.clone() }, &format!("{what} set {keys}"));
+            en.folder = "Sets".to_owned();
+            out.push(en);
         }
 
         // The biomes (the built-in ones and the projects' presets), in the vegetation, to draw an area of.
         for b in self.biome_presets(e).iter() {
             let mut en = entry(1, format!("biome: {}", b.name), Make::Biome { name: b.name.clone() }, "biome area forest wood grove");
             en.folder = "Biomes".to_owned();
-            out.push(en);
-        }
-
-        // The ground coverage's kinds: the buildings' with the buildings, the others with the vegetation.
-        for kind in wce_tile::ground_coverage::Kind::ALL {
-            let category = usize::from(kind != wce_tile::ground_coverage::Kind::Buildings);
-            let label = format!("coverage: {}", crate::ground_coverage_panel::kind_title(kind));
-            let mut en = entry(category, label, Make::Coverage { kind }, "ground coverage rocks plants clutter props generate");
-            en.folder = "Ground coverage".to_owned();
             out.push(en);
         }
 
@@ -478,6 +469,14 @@ impl TileTool {
                 };
 
                 let mut en = entry(category, label, Make::Place { kind: kind.to_owned(), key: key.clone() }, kind);
+                // A tree or a shrub in its species' folder (oak, acacia ...).
+                if kind == "VEGETATION_INSTANCE"
+                    && let Some((species, _)) = key.split_once('.')
+                {
+                    en.folder = species.to_owned();
+                    en.search.push_str(&format!(" {}", species.to_lowercase()));
+                }
+
                 if kind == "BUILDING_INSTANCE" {
                     let c = document(e).and_then(|d| d.tile().building_category(key)).unwrap_or_else(|| NO_CATEGORY.to_owned());
                     en.search.push_str(&format!(" {}", c.to_lowercase()));
@@ -789,8 +788,8 @@ impl TileTool {
             self.set_create_marks(e, favourites, recent);
         }
 
-        // The texture rules, a biome or the ground coverage in the Inspector give way to what else is made.
-        if !matches!(&en.make, Make::Biome { .. } | Make::Coverage { .. }) {
+        // The texture rules or a biome in the Inspector give way to what else is made.
+        if !matches!(&en.make, Make::Biome { .. }) {
             self.close_detail_panels();
         }
 
@@ -800,12 +799,6 @@ impl TileTool {
         self.veg_sets.current = None;
         self.making = Some(en.label.clone());
         match &en.make {
-            Make::Coverage { kind } => {
-                self.draft = None;
-                self.making = None;
-                self.open_coverage_kind(e, *kind);
-            }
-
             Make::VegSet { name } => {
                 // No name: the new set, not saved yet.
                 let set = if name.is_empty() {
@@ -898,7 +891,6 @@ impl TileTool {
         e.pending_focus = Some("Inspector".to_owned());
         self.status = match &en.make {
             Make::Draw { .. } => format!("{}: click the terrain for its points; {}; Esc cancels", en.label, self.finish_hint(e)),
-            Make::Coverage { .. } => format!("{}: set it up in the Inspector, then Generate or Brush", en.label),
             Make::Biome { .. } if !self.drawing => format!("{}: drag the brush in the viewport (Ctrl takes away)", en.label),
             Make::Biome { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
@@ -1354,6 +1346,16 @@ impl TileTool {
                 lib.load(key).map(|p| wce_tile_editor::tile_document::prefab_reference_text(&p.group_text, key)).ok()
             }
 
+            // A patch of the biome.
+            Make::Biome { name } => {
+                let biome = self.biome_presets(e).iter().find(|b| b.name == *name).cloned();
+                let sets = self.vegetation_sets(e);
+                return match (biome, document(e)) {
+                    (Some(b), Some(d)) => d.tile().biome_preview_parts(&b, &sets, BIOME_PREVIEW_SIDE),
+                    _ => vec![],
+                };
+            }
+
             _ => None,
         };
 
@@ -1370,9 +1372,25 @@ impl TileTool {
                 !key.is_empty()
                     && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance")
             }
-            Make::Prefab { .. } => true,
+            Make::Prefab { .. } | Make::Biome { .. } => true,
             _ => false,
         }
+    }
+
+    /// Lets the biomes' pictures go from the Create panel, for them to be made again (a biome saved).
+    pub(crate) fn forget_biome_thumbnails(&mut self) {
+        self.create.grid_images.retain(|k, _| !k.starts_with("biome|"));
+    }
+
+    /// The id an entry's thumbnail is kept by: its own, a biome's with its values (an edited biome gets a new picture).
+    fn thumbnail_id(&mut self, e: &mut Editor, en: &Entry) -> String {
+        let Make::Biome { name } = &en.make else { return en.id() };
+        let Some(b) = self.biome_presets(e).iter().find(|b| b.name == *name).cloned() else { return en.id() };
+        // The patch's size too: a picture of another patch is another.
+        let mut text = wce_tile::biomes::text(&[b]);
+        text.extend(BIOME_PREVIEW_SIDE.to_le_bytes());
+        let h = text.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &c| (h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3));
+        format!("{}|{h:016x}", en.id())
     }
 
     /// An entry's thumbnail when it is ready; asks for it when it was never made (`first`: before the others).
@@ -1383,7 +1401,7 @@ impl TileTool {
             self.thumbs.dir = dir;
         }
 
-        let id = en.id();
+        let id = self.thumbnail_id(e, en);
         if let Some(img) = self.thumbs.get(e, &id) {
             return Some(img);
         }
@@ -2086,6 +2104,7 @@ pub fn thumbnail_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &
     let make = match what {
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
+        "biome" => Make::Biome { name: key.to_owned() },
         kind => Make::Place { kind: kind.to_owned(), key: key.to_owned() },
     };
 
@@ -2095,11 +2114,12 @@ pub fn thumbnail_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &
     }
 
     t.thumbnail(e, &en, true);
-    if t.thumbs.failed(&en.id()) {
+    let id = t.thumbnail_id(e, &en);
+    if t.thumbs.failed(&id) {
         return Err(format!("no model to show for {key}"));
     }
 
-    Ok(t.thumbs.file(&en.id()))
+    Ok(t.thumbs.file(&id))
 }
 
 pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) -> Result<(), String> {
@@ -2107,9 +2127,6 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
         "biome" => Make::Biome { name: key.to_owned() },
-        "coverage" => Make::Coverage {
-            kind: wce_tile::ground_coverage::Kind::from_name(key).ok_or_else(|| format!("no ground coverage kind '{key}'"))?,
-        },
         kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD, &BUILDING_SPLINE]).any(|(_, k, drawn)| *k == kind && *drawn)
             || SHAPES.contains(&kind) =>
         {
