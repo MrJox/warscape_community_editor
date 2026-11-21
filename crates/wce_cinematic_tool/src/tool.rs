@@ -978,6 +978,23 @@ impl Tool for CinematicTool {
         Ok(Some(Box::new(doc)))
     }
 
+    /// The tool's menu, as the Tile tool's: Launch in game.
+    fn draw_menus(&mut self, e: &mut Editor) {
+        if !gui::begin_menu("Cinematic") {
+            return;
+        }
+        let label = if self.launched.is_some() { "Launch in game (running)" } else { "Launch in game" };
+        if gui::menu_item(label, None, false, scene_doc(e).is_some() && self.launched.is_none()) {
+            self.launch_asked(e, false);
+        }
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(
+                "Writes the scene's historical battle into a launch pack (data\\wce_launch.pack, removed when the game exits) and starts the game straight into it, with the mod packs chosen in the editor; used_mods.txt is not touched.",
+            );
+        }
+        gui::end_menu();
+    }
+
     fn shortcuts(&self) -> &'static [wce_editor::shortcuts::Action] {
         SHORTCUTS
     }
@@ -1043,12 +1060,6 @@ impl Tool for CinematicTool {
         }
         if gui::is_item_hovered() {
             gui::set_tooltip("The battle XML, Lua, menu rows, subtitles and loc as one mod pack");
-        }
-        if gui::menu_item("Launch the battle in game", None, false, has && self.launched.is_none()) {
-            self.launch_asked(e, false);
-        }
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Starts the game straight into this battle with the mods chosen in the editor (removed when the game exits)");
         }
         if gui::menu_item("Movie pack (1080p)...", None, false, has && self.movie_job.is_none()) {
             let name = scene_doc(e).map(|d| sanitize_key(&d.project().battle.key)).unwrap_or_default();

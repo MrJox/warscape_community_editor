@@ -331,7 +331,7 @@ army, right-click menus), the shared **Inspector** (the selected item's rows; a 
 effects, camera keys, deployment zones; a unit with a path in the clip is keyed at the playhead; one undo entry a drag), clicks and box
 select in the viewport, the viewport's chips (play, free camera, key this view, battle preview), the **Timeline** (clips, tracks, keys;
 a double-click adds a key), the **Layout** (the field from above), **Logic** (the battle's node graph). File > Export > Historical
-battle pack, Movie pack, Launch the battle in game (also the viewport's launch chip: the battle's pack as the launch pack, the game
+battle pack, Movie pack. **Cinematic > Launch in game** (as Tile > Launch in game; also the viewport's launch chip: the battle's pack as the launch pack, the game
 started from the battle's own XML with the editor's mods, the pack removed when the game exits). Keys: Delete, Ctrl+D, Space, R / Shift+R, Escape (Settings > Shortcuts). Gate: `scripts/cinematic_check.sh`.
 
 ## Cross-tool composition (Phase 7)
