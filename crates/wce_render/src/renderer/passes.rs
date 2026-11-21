@@ -842,6 +842,7 @@ impl Renderer {
         // Render the casters into the four quadrants.
         let vs = self.shader(SHADOW_VS);
         let ps = self.shader(SHADOW_PS);
+        let alpha_ps = self.shader(SHADOW_ALPHA_PS);
         self.ctx.set_render_targets(&[], None);
         if let Some(dsv) = &self.shadow_map.dsv {
             self.ctx.clear_depth_stencil_view(dsv, D3D11_CLEAR_DEPTH, 1.0, 0);
@@ -930,14 +931,33 @@ impl Renderer {
                 );
                 self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
                 // A model's static ropes (`#ropes`) cast none here: their vertices aren't the rigid layout. The moving ropes cast theirs below.
-                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| {
-                    !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope | MeshKind::CampaignVegetation)
-                });
+                let rigid =
+                    |m: &GpuMesh| !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope | MeshKind::CampaignVegetation);
+                let alpha_tested = |m: &GpuMesh| alpha_ps.is_some() && m.alpha_mode == 1;
+                let (instances, triangles) =
+                    self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| rigid(m) && !alpha_tested(m));
+                self.draw_stats.shadow_instances += instances;
+                self.draw_stats.shadow_triangles += triangles;
+                // The alpha-tested ones on their diffuse's alpha, as the game casts them.
+                if let Some(aps) = &alpha_ps {
+                    self.bind(aps);
+                    ps_samplers(&self.ctx, aps, &self.states.s_wrap_linear);
+                    let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |r, m| {
+                        if !(rigid(m) && alpha_tested(m)) {
+                            return false;
+                        }
+
+                        let srv = m.tex[crate::model_cache::TEX_DIFFUSE].read().ok().and_then(|t| t.srv.clone());
+                        bind_srv(&r.ctx, aps, "s_diffuse_map", srv.as_ref().or(r.res.white_srv.as_ref()));
+                        true
+                    });
+                    self.draw_stats.shadow_instances += instances;
+                    self.draw_stats.shadow_triangles += triangles;
+                    self.bind(&ps);
+                }
                 self.draw_skinned_shadow();
                 self.draw_ropes_shadow();
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
-                self.draw_stats.shadow_instances += instances;
-                self.draw_stats.shadow_triangles += triangles;
                 // The campaign's terrain casts only at the top shadow quality (fn 0x118debf0 skips the shadow pass unless
                 // `terrain_enable_shadows`, set for the campaign at the shadow view's quality index 2: gfx_shadow_quality 3).
                 if terrain_material && (!scene.campaign || self.settings.shadow_quality >= 3) {

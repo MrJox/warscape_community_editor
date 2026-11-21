@@ -495,3 +495,11 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   resolve and the blend pass read none of `g_blend_contrast`, `g_lq_infield_blend_range`, `g_snow_height`, `g_rock_*`; the campaign
   water no `g_foam_anim_data`; the buildings `g_wind` (0 on a campaign map, as the game's), not `g_wind_offset`; the light pass no
   `g_amSoftSplit`. Left as they are.
+- **Rauros' west shore and the marshes' squares (2026-11-21, captures T1 and T2):** (1) a 36 m trench along the lake tile's west
+  edge (`lakes/22x32_rauros`): the editor's ground from the game's camera, ray by ray, matched capture T1's world points (75.2 m a
+  game unit) everywhere but there, where the game's is the LF's (226.7 m, the LF 230). The tile's height map lacks 10864 of its 10912
+  blocks and its mesh leaves the strip out; `decompile::mesh_filled` gave those samples the missing blocks' reading, the map's
+  minimum (the lake's bed). They are now at the LF (0 m over it); the neighbour trees' folder `_6`. (2) Square shadows over the
+  marshes: the editor cast every rigid mesh opaque; the game casts an alpha-tested material's (`swamp_plant`, a flat quad of lily
+  pads, `swamp_flower`, `swamp_reed`) with `rigidcommon`'s `ps30_shadow_alpha_test` and its diffuse (discard under 0.5 alpha), as
+  the editor now does.
