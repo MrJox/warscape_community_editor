@@ -169,6 +169,8 @@ impl MovieJob {
 }
 
 /// The fade (towards black) and the cinematic bars (an eighth of the height at full strength, top and bottom) over a picture.
+/// Never the subtitles: the game draws a movie's lines itself from its `subtitle_timings` rows and loc (the viewport's subtitle is
+/// the editor's overlay, which the offscreen render does not draw).
 fn overlay(rgba: &mut [u8], w: u32, h: u32, f: &SceneFrame) {
     let keep = (1.0 - f.fade.clamp(0.0, 1.0)) as f64;
     let bar = (f.letterbox.clamp(0.0, 1.0) as f64 * h as f64 / 8.0).round() as u32;

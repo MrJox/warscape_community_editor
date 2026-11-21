@@ -455,12 +455,15 @@ impl SceneView {
                 dl.rect_filled(v2(lo.x, hi.y - bar), hi, 0xFF00_0000, 0.0);
             }
             if let Some(text) = f.subtitle.as_ref().and_then(|id| p.text(id, ui.lang())).filter(|t| !t.is_empty()) {
-                let px = (size.y / 28.0).clamp(14.0, 40.0);
+                // As the Movie viewer draws a movie's: bottom centre, a 24th of the picture's height; with the bars, in the middle of
+                // the bottom bar (where a letterboxed cutscene's lines sit).
+                let px = (size.y / 24.0).clamp(12.0, 48.0);
                 let scale = px / gui::text_line_height().max(1.0);
                 let tw = gui::calc_text_width(text) * scale;
-                let at = v2(origin.x + (size.x - tw) * 0.5, hi.y - bar.max(size.y * 0.04) - px * 1.6);
-                dl.text_sized(px, v2(at.x + 1.5, at.y + 1.5), 0xC000_0000, text);
-                dl.text_sized(px, at, 0xFFFF_FFFF, text);
+                let y = if bar >= px * 1.2 { hi.y - bar * 0.5 - px * 0.5 } else { hi.y - px * 2.2 };
+                let at = v2(origin.x + (size.x - tw) * 0.5, y);
+                dl.text_sized(px, v2(at.x + 2.0, at.y + 2.0), gui::col32(0, 0, 0, 220), text);
+                dl.text_sized(px, at, gui::col32(240, 236, 220, 255), text);
             }
         }
         dl.pop_clip_rect();
