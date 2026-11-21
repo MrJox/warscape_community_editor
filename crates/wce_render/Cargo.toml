@@ -19,6 +19,7 @@ thiserror = "2"
 windows-core.workspace = true
 
 [dev-dependencies]
+wce_terrain_io = { path = "../wce_terrain_io" }
 wce_weather = { path = "../wce_weather" }
 
 [lints]

@@ -4,7 +4,11 @@ Goal: the campaign map in the Terrain tool shows a campaign's start position as 
 the settlements) and edits it by clicking on them: move, owner, an army's units, a settlement's buildings. Attila and TDD first;
 Thrones and Rome 2 later (their startpos layouts differ).
 
-User decisions (2026-11-21): edits go to the Assembly Kit's `start_pos_*` tables in the project, with the compiled `startpos.esf`
+**Scope now (user, 2026-11-21, later): read and draw only, no edits.** The start's armies, agents, navies, settlements and
+animated props are read and drawn as the game shows them; editing (phases 3 to 6 and the open questions below) is decided later.
+The start is read from the campaign's compiled startpos, as the settlements already are (what the game loads).
+
+User decisions (2026-11-21, before the scope above): edits go to the Assembly Kit's `start_pos_*` tables in the project, with the compiled `startpos.esf`
 as the fallback for maps without tables (TDD); the game's own models from the start; first edits: move, owner, army units,
 settlement buildings.
 

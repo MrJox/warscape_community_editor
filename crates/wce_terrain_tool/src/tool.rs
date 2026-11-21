@@ -409,6 +409,9 @@ pub struct TerrainTool {
     placements: crate::placements::PlacementsPanel,
     props: crate::prop_models::PropModels,
 
+    /// The campaign start's armies, navies and agents (read only).
+    figures: crate::start_figures::StartFigures,
+
     /// The last checks of the shown map.
     findings: Vec<crate::validate::Finding>,
     refill: crate::refill::Refill,
@@ -475,6 +478,7 @@ impl Default for TerrainTool {
             layout: Default::default(),
             placements: Default::default(),
             props: Default::default(),
+            figures: Default::default(),
             findings: vec![],
             refill: Default::default(),
             refill_wanted: false,
@@ -2512,7 +2516,10 @@ impl Tool for TerrainTool {
             e.scene.vegetation_season.clone_from(&self.season);
         }
         let view = &self.view;
-        self.props.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), view.tiles_loaded());
+        self.props.update(e, self.shown, frame.clone(), &|x, z| view.ground_at(x, z), view.tiles_loaded());
+        self.props.pose_animated(e, self.shown);
+        wce_foundation::wce_prof!("terrain_tool.figures");
+        self.figures.update(e, self.shown, frame, &|x, z| view.ground_at(x, z));
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -2603,6 +2610,10 @@ impl Tool for TerrainTool {
                     t.props.update(e, t.shown, frame.clone(), &|x, z| view.ground_at(x, z), view.tiles_loaded());
                     if !t.props.wait_cities(max) {
                         late.push("the settlements");
+                    }
+                    t.figures.update(e, t.shown, frame.clone(), &|x, z| view.ground_at(x, z));
+                    if !t.figures.wait(max) {
+                        late.push("the start's figures");
                     }
                     if !t.lines.wait(e, t.shown, &name, max) {
                         late.push("the borders");
@@ -3276,6 +3287,35 @@ impl Tool for TerrainTool {
             })
         });
 
+        c.add(
+            "terrain_figures",
+            "terrain_figures [on|off] [radius cells]",
+            "the Terrain tool: the campaign start's armies, navies and agents near the camera: set, then how many it drew",
+            |e, a| {
+                with_terrain(e, |t, _| {
+                    for v in a {
+                        match v.as_str() {
+                            "on" => t.figures.on = true,
+                            "off" => t.figures.on = false,
+                            n => {
+                                if let Ok(r) = n.parse() {
+                                    t.figures.radius_cells = r;
+                                }
+                            }
+                        }
+                    }
+
+                    CommandResult::success(format!(
+                        "start figures {}: {} of {} within {} cells (as of the last frame)",
+                        if t.figures.on { "on" } else { "off" },
+                        t.figures.count,
+                        t.figures.total,
+                        t.figures.radius_cells
+                    ))
+                })
+            },
+        );
+
         c.add("terrain_props", "terrain_props [on|off] [radius cells]", "the Terrain tool: a campaign's prop models and trees near the camera: set, then how many it drew", |e, a| {
             with_terrain(e, |t, _| {
                 for v in a {
@@ -3298,8 +3338,8 @@ impl Tool for TerrainTool {
                 r.sort_by(f32::total_cmp);
                 let rq = |f: f32| r.get(((r.len() as f32 * f) as usize).min(r.len().saturating_sub(1))).copied().unwrap_or(0.0);
                 CommandResult::success(format!(
-                    "prop models {}: {} props, {} trees and {} settlement buildings within {} cells, {} placed effects (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
-                    if t.props.on { "on" } else { "off" }, t.props.count, t.props.tree_count, t.props.city_count, t.props.radius_cells, t.props.effect_count, t.props.effect_near, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
+                    "prop models {}: {} props ({} moving), {} trees and {} settlement buildings within {} cells, {} placed effects (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
+                    if t.props.on { "on" } else { "off" }, t.props.count, t.props.animated_count, t.props.tree_count, t.props.city_count, t.props.radius_cells, t.props.effect_count, t.props.effect_near, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
                 ))
             })
         });

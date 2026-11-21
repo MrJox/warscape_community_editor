@@ -715,6 +715,25 @@ fn material_path(
     Some(engine_default(&path, srgb).filter(|d| textures.get_quiet(d, srgb).is_some()).unwrap_or(path))
 }
 
+/// Where else a material's texture is looked for, in order: as a `.dds` where it says, then its name next to the model, as it is and
+/// as a `.dds`. The campaign's fauna name `.tga` files of an art folder no pack has (`campaign_deer_male`:
+/// `variantmeshes/_variantmodels/deer/bodyparts/deer/tex/deer_diffuse.tga`, `deer_gloss_map` without an extension); the game draws
+/// them brown: the packs have `deer_diffuse.dds` beside the model.
+fn texture_candidates(model: &str, path: &str) -> Vec<String> {
+    let dds = |p: &str| {
+        let (stem, ext) = p.rsplit_once('.').filter(|(_, e)| !e.contains('/')).unwrap_or((p, ""));
+        (!ext.eq_ignore_ascii_case("dds")).then(|| format!("{stem}.dds"))
+    };
+    let mut out: Vec<String> = dds(path).into_iter().collect();
+    if let Some((dir, _)) = model.rsplit_once('/') {
+        let local = format!("{dir}/{}", path.rsplit_once('/').map_or(path, |(_, n)| n));
+        let local_dds = dds(&local);
+        out.push(local);
+        out.extend(local_dds);
+    }
+    out
+}
+
 fn material_texture_path(
     textures: &TextureCache,
     model: &str,
@@ -726,9 +745,7 @@ fn material_texture_path(
         return Some(path);
     }
 
-    let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
-    let local = format!("{dir}/{name}");
-    textures.get_quiet(&local, true).is_some().then_some(local)
+    texture_candidates(model, &path).into_iter().find(|c| textures.get_quiet(c, true).is_some())
 }
 
 /// A material's tint colours: its vector params 1, 2 and 3 (the trees' leaf and branch materials have them), white for a missing one.
@@ -756,10 +773,7 @@ fn material_texture(
     let Some(path) = material_path(textures, material, kind, srgb) else { return fallback };
     textures
         .get_quiet(&path, srgb)
-        .or_else(|| {
-            let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
-            textures.get_quiet(&format!("{dir}/{name}"), srgb)
-        })
+        .or_else(|| texture_candidates(model, &path).into_iter().find_map(|c| textures.get_quiet(&c, srgb)))
         .unwrap_or_else(|| {
             textures.report_missing(&path, &format!("{model}, {kind:?}"), textures.solid_name(&fallback));
             fallback
@@ -2085,6 +2099,24 @@ fn build_patch(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_texture_is_looked_for_as_dds_and_beside_its_model() {
+        let model = "rigidmodels/campaign/fauna/campaign_deer_male.rigid_model_v2";
+        assert_eq!(
+            super::texture_candidates(model, "variantmeshes/deer/tex/deer_diffuse.tga"),
+            [
+                "variantmeshes/deer/tex/deer_diffuse.dds",
+                "rigidmodels/campaign/fauna/deer_diffuse.tga",
+                "rigidmodels/campaign/fauna/deer_diffuse.dds"
+            ]
+        );
+        assert_eq!(
+            super::texture_candidates(model, "a/deer_gloss_map"),
+            ["a/deer_gloss_map.dds", "rigidmodels/campaign/fauna/deer_gloss_map", "rigidmodels/campaign/fauna/deer_gloss_map.dds"]
+        );
+        assert_eq!(super::texture_candidates(model, "a/b.dds"), ["rigidmodels/campaign/fauna/b.dds"]);
+    }
+
     use super::{ROPE_STRIDE, rope_geometry};
 
     fn floats(v: &[u8], vertex: usize) -> Vec<f32> {

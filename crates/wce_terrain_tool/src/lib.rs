@@ -12,6 +12,7 @@ mod placements;
 mod prop_models;
 mod refill;
 mod skybox;
+mod start_figures;
 mod terry_view;
 mod tool;
 mod validate;
