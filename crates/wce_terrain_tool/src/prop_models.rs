@@ -316,6 +316,9 @@ pub struct PropModels {
     snow: Option<(String, Option<SnowGrid>)>,
     pub effect_count: usize,
 
+    /// The placed effects handed over, by effect (for `terrain_props`).
+    pub effect_names: std::collections::BTreeMap<String, usize>,
+
     /// The drawn effect nearest the camera's target: its effect and position in the view (`terrain_props`).
     pub effect_near: Option<(String, [f32; 3])>,
 
@@ -349,6 +352,7 @@ impl Default for PropModels {
             snow: None,
             season_bit: 2,
             effect_count: 0,
+            effect_names: std::collections::BTreeMap::new(),
             effect_near: None,
             cities: None,
             city_count: 0,
@@ -576,6 +580,7 @@ impl PropModels {
         // `scale * units`) is the marker's, as the game's instances (RenderDoc: the instance's scale the marker's). The destruction zone's
         // flags are not read: every vanilla marker shows inside and outside it.
         self.effect_count = 0;
+        self.effect_names.clear();
         self.effect_near = None;
         let mut near = f64::MAX;
         let effects = self.effects.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
@@ -613,6 +618,7 @@ impl PropModels {
 
             out.push((fx.key, world, Payload::VfxEmitter(vfx), u64::MAX));
             self.effect_count += 1;
+            *self.effect_names.entry(fx.effect.clone()).or_default() += 1;
         }
 
         // The forests near the camera: by cells (the trees' own frame), within the same radius.

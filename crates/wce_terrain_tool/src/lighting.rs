@@ -59,7 +59,14 @@ impl CampaignLighting {
     /// The files the spheres and the global lighting resolved to, for the log.
     pub fn summary(&self) -> String {
         let missing = self.spheres.iter().filter(|s| s.is_none()).count() + usize::from(self.global.is_none());
-        let names: Vec<&str> = self.files.iter().map(|(p, _)| p.rsplit('/').next().unwrap_or(p)).collect();
+        let names: Vec<String> = self
+            .files
+            .iter()
+            .map(|(p, e)| {
+                let name = p.rsplit('/').next().unwrap_or(p);
+                if e.weather_definition.is_empty() { name.to_owned() } else { format!("{name} (weather {})", e.weather_definition) }
+            })
+            .collect();
         format!(
             "{} spheres, global {}; files {}{}",
             self.collection.spheres.len(),
@@ -67,6 +74,23 @@ impl CampaignLighting {
             names.join(", "),
             if missing > 0 { format!("; {missing} not found") } else { String::new() }
         )
+    }
+
+    /// The files' weights at the camera's eye, the heaviest first (for `terrain_weather`).
+    pub fn weights_note(&self, e: &Editor) -> String {
+        let (w, g) = self.weights(e);
+        let mut items: Vec<(f64, String)> = self
+            .spheres
+            .iter()
+            .enumerate()
+            .filter_map(|(k, s)| s.map(|f| (w[k], self.files[f].0.rsplit('/').next().unwrap_or("").to_owned())))
+            .filter(|(w, _)| *w > 1e-4)
+            .collect();
+        if let Some(f) = self.global {
+            items.push((g, format!("{} (global)", self.files[f].0.rsplit('/').next().unwrap_or(""))));
+        }
+        items.sort_by(|a, b| b.0.total_cmp(&a.0));
+        items.iter().map(|(w, n)| format!("{n} {w:.3}")).collect::<Vec<_>>().join(", ")
     }
 
     /// The weights at the camera's eye (`.terry` units: x and z through the frame, y by the frame's unit, ASSUMPTION) and the global's.
