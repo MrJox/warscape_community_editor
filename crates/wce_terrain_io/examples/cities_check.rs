@@ -92,5 +92,14 @@ fn main() {
             println!("  piece {} {:?} level {} turn {} -> {:?}", p.piece, p.cell, p.level, p.turn, p.model);
         }
     }
+    // `WCE_BOX=c0,r0,c1,r1`: the sprawl hexes in the box (in a footprint, in a zone, water, road shape and turn, coast shape and turn,
+    // road edges, river edges, road mask).
+    if let Some(b) = std::env::var("WCE_BOX").ok().map(|v| v.split(',').filter_map(|x| x.parse::<u16>().ok()).collect::<Vec<_>>()) {
+        let mut cells: Vec<_> = cities.hexes.iter().filter(|(c, _)| c.0 >= b[0] && c.1 >= b[1] && c.0 <= b[2] && c.1 <= b[3]).collect();
+        cells.sort();
+        for (c, h) in cells {
+            println!("  hex {c:?} {h:?}");
+        }
+    }
     println!("on land {land}, in the sea {sea}; models in the packs {have}, missing {missing}");
 }

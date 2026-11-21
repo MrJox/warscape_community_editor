@@ -687,9 +687,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             }
 
             // The sprawl: the cells of the linked slots' zones (their bit in `zone_slots`: the startpos's slot index), not a footprint's,
-            // the piece the cell's road or coast shape names, turned by its rotation, at level 1: a new campaign levels a slot's cells
-            // before it links it (fns 0x10a1bd60, 0x10a1bad0), and only cells reached again draw 1 to 3; the building's tier plays no
-            // part. Not drawn: the cells the game's paths between the slots add (not decoded).
+            // the piece the cell's road or coast shape names, turned by its rotation, at level 1: a new campaign levels each step's
+            // zone before it links the step's slot (fn 0x10a1bd60), and a sprawl hex is of one zone, so only the cells its path search
+            // reaches again (fn 0x10a1bad0) draw 1 to 3 in a capital; the building's tier plays no part. Not drawn: those paths' cells
+            // (fn 0x10a4cfe0, not decoded; capture A: none to four a settlement, Rome's at level 2 on some cells).
             let faction = owner.clone();
             // Per sprawl cell: the zones' slots, the map's road and river edges, their union.
             let mut cell_info: HashMap<(u16, u16), (i64, i64, i64, i64)> = HashMap::new();
@@ -766,6 +767,19 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
 
             // The slots' turns: a port's from the water around its anchor, the others' a draw (docs/re/terry.md, "Settlement models").
             let water = |cell: (u16, u16)| cities.hexes.get(&cell).is_some_and(|h| h[2] != 0);
+
+            // A linked slot without a building (the main slot or the port: every secondary one linked holds one) draws the culture's
+            // `empty_slot` piece (fn 0x10b29540 -> 0x10af68c0: `roman_slum`, the model `roman_farm_01`), on land only.
+            let empty: Vec<usize> = cities
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.region == key && s.building.is_none() && s.model.is_none() && !water(s.cell))
+                .map(|(i, _)| i)
+                .collect();
+            for i in empty {
+                cities.slots[i].model = tables.sprawl_model("empty_slot", 1, &owner).map(str::to_owned);
+            }
             let turns: Vec<(usize, u32)> = cities
                 .slots
                 .iter()

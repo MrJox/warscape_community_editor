@@ -404,7 +404,15 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   - The ground under a settlement: no separate decal layer (fn 0x10b21950 draws slots, sprawl, walls, sieges, blockades and
     aqueducts); the decals are the pieces' own (each sprawl piece's one-hex `ProjectedDecalV2`, the slot models' and the empty slots'
     5.51 x 5.72), so a missing piece is a missing decal.
-  - Not drawn yet: a linked slot without a building (its `empty_slot` model: `roman_slum`...), the paths' cells.
+  - A linked slot without a building draws its culture's `empty_slot` piece (fn 0x10b29540 -> 0x10af68c0: `roman_slum`, the model
+    `roman_farm_01`). Every secondary slot linked holds a building (one step a building), so only a main slot or a port can be one;
+    Attila's start has none (`cities_check`: 0 slots without a building).
+  - Levels: each sprawl hex is of one zone (`SPRAWL_HEX_MAP_DATA`'s zone mask has one bit), so the zone pass (fn 0x10a1bd60) reaches a
+    cell once, while its slot is not linked yet: level 1. Only the path search's cells (fn 0x10a1bad0) can draw 2 or 3.
+  - Paths (fn 0x10a56d10 -> 0x10a57080 -> 0x10a4cfe0, then the check fn 0x10a7b990 -> 0x10a465c0): a flood from the step's zone over a
+    list of hexes (`*set + 0xdc`) with a step limit (`DAT_11d2f7c4`), traced back from the farthest node by direction bits; its cells
+    and the list it was given are not identified yet. Capture A: they add none to four cells a settlement (Rome: four south of slot
+    3, in slot 5's zone, drawn with only the one-hex decal box, index count 36). Not drawn by the editor.
 - **Farmland** (2026-11-05): `campaign_maps/<map>/dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`, version text `20141114153252`
   on `main_attila_map`): `REGION_RESOURCE_INFO_BLOCK` groups (u16 0xfe00 + a `REGIONS_BLOCK` index; 182), each with
   `REGION_RESOURCE_INFO_AREAS_BLOCK` groups (a building superchain, u32 level 1..3, an upgrade group; 531: all `att_sch_agriculture`,
