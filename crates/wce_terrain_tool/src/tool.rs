@@ -2708,13 +2708,21 @@ impl Tool for TerrainTool {
                             }
                         }
                         let (cx, cy) = (v[0].floor() as i32, v[1].floor() as i32);
-                        for p in &frame.map.placements {
+                        for (i, p) in frame.map.placements.iter().enumerate() {
                             let r = p.rect();
                             if (r[0]..r[2]).contains(&cx) && (r[1]..r[3]).contains(&cy) {
                                 let (lx, lz) = p.to_map().inverse().apply(v[0], v[1]);
                                 out.push(format!(
-                                    "{} {} at {},{} {}x{} turn {:#x} flipped {} local ({lx:.1}, {lz:.1})",
-                                    p.location, p.variation, p.x, p.y, p.w, p.h, p.rotation, p.flipped
+                                    "{} {} at {},{} {}x{} turn {:#x} flipped {} climate {} local ({lx:.1}, {lz:.1})",
+                                    p.location,
+                                    p.variation,
+                                    p.x,
+                                    p.y,
+                                    p.w,
+                                    p.h,
+                                    p.rotation,
+                                    p.flipped,
+                                    frame.climate_name(i)
                                 ));
                             }
                         }
