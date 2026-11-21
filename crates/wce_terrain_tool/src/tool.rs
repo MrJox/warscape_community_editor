@@ -2769,6 +2769,33 @@ impl Tool for TerrainTool {
         );
 
         c.add(
+            "terrain_far_dump",
+            "terrain_far_dump <file.png>",
+            "the Terrain tool: a campaign map's far material's colour as the resolve shows it (the stored colour squared, as the shader \
+             does), row 0 the map's north edge: to compare with the game's `s_far_diffuse_map` (docs/plans/campaign_tilemap.md)",
+            |e, a| {
+                let Some(path) = a.first().cloned() else { return CommandResult::fail("usage: terrain_far_dump <file.png>") };
+                with_terrain(e, |t, _| {
+                    let Some(far) = t.view.streamer.as_ref().and_then(|s| s.far_map()) else {
+                        return CommandResult::fail("no far material yet (terrain_far_wait)");
+                    };
+                    let png = wce_formats::png_file::PngFile {
+                        width: far.size,
+                        height: far.size,
+                        bit_depth: 8,
+                        color_type: 2,
+                        pixels: far.diffuse.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect(),
+                        ..Default::default()
+                    };
+                    match png.encode().map(|b| std::fs::write(&path, b)) {
+                        Ok(Ok(())) => CommandResult::success(format!("{} x {} written to {path}", far.size, far.size)),
+                        _ => CommandResult::fail(format!("cannot write {path}")),
+                    }
+                })
+            },
+        );
+
+        c.add(
             "terrain_pick",
             "terrain_pick <x> <y>",
             "the Terrain tool: where the ray of a viewport pixel meets the shown map's LF",
@@ -3338,7 +3365,7 @@ impl Tool for TerrainTool {
                 r.sort_by(f32::total_cmp);
                 let rq = |f: f32| r.get(((r.len() as f32 * f) as usize).min(r.len().saturating_sub(1))).copied().unwrap_or(0.0);
                 CommandResult::success(format!(
-                    "prop models {}: {} props ({} moving), {} trees and {} settlement buildings within {} cells, {} placed effects (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
+                    "prop models {}: {} props ({} moving), {} trees (ahead to 240 world units), {} settlement buildings within {} cells, {} placed effects (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
                     if t.props.on { "on" } else { "off" }, t.props.count, t.props.animated_count, t.props.tree_count, t.props.city_count, t.props.radius_cells, t.props.effect_count, t.props.effect_near, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
                 ))
             })

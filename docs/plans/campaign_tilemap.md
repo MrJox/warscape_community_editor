@@ -530,3 +530,12 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   19.37 / 35.63 / 68.15), the cascades' matrices within 0.002; the game's own frame has a seagull at the right edge at 6.76, the
   frame before it not. T1: the far end within 0.01, the near end 3.64 against 3.13 (the nearest edge pixel: the start's figures at
   the left edge).
+- **The far ground (2026-11-21, capture F):** the far material is the game's: the editor's bake (`terrain_far_dump`, 4096 a side)
+  against the game's `s_far_diffuse_map` (decoded 2026-11-19) over land boxes, Spain / Anatolia / Russia / Germania / Gaul / Sahara,
+  within 2 of 255 a channel (the sea blank in the game's, its bed in the editor's: the sea draws over it). What F lacked was the
+  forests: the game draws its campaign trees over the whole view (the G-buffer's `rigidcampaignvegetation` instances: 236 world
+  units from the eye in A and C, 186 in F, about 21 000 trees each; frustum-shaped around the camera's target, no count or distance
+  cap found), the editor within the props' 96 cells (64 units on `main_attila_map`). `prop_models::TREE_REACH`: 240 units ahead of
+  the view (a half-plane on its direction by eighths, in the rebuild key), the props' radius behind. F: 69 858 trees handed to the
+  renderer (culled there; 1 106 before), the far land wooded as the game's; T1 (TDD) 72 373. Left: its CPU and GPU cost, not
+  measured (the user's machine busy): an idle run of `perf` at captures A and F against `TREE_REACH` 0.
