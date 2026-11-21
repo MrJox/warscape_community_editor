@@ -140,11 +140,6 @@ fn land_turn(region: &str, index: usize) -> u32 {
     (((x >> 16) & 0xffff) * 6 / 0xffff).min(5)
 }
 
-/// A building level's tier: the number its key ends with (`att_bld_roman_city_major_3`: 3; 1 without one).
-fn tier_of(building: &str) -> u32 {
-    building.rsplit('_').next().and_then(|t| t.parse().ok()).unwrap_or(1)
-}
-
 /// A piece's name for an edge shape (`FUN_10af6ae0`): its edges' numbers, 1 to 6 (`sprawl_edge_0` without one).
 fn shape_digits(shape: u32) -> String {
     let d: String = (0..6).filter(|k| shape & (1 << k) != 0).map(|k| char::from(b'1' + k as u8)).collect();
@@ -264,32 +259,87 @@ fn edge_piece(mask: u32) -> (u32, u32) {
     (shape, (0..6).find(|&k| rot(shape, k) == mask).unwrap_or(0))
 }
 
-/// Every slot's wall walk in the startpos (`SETTLEMENT_EXPANSION_MAP_DATA`'s `SLOT_MAP_DATA` and its `SECONDARY_SLOT_ARRAY`'s, their
-/// `SLOT_WALL_ARRAY`), each in order; none of fewer than three cells.
-fn wall_walks(data: &RecordNode) -> Vec<Vec<(u16, u16)>> {
-    let walk = |slot: &RecordNode| -> Option<Vec<(u16, u16)>> {
-        let walls = child(slot, "SLOT_WALL_ARRAY")?;
-        let cells: Vec<(u16, u16)> = walls
-            .children()
-            .iter()
-            .filter_map(|g| {
-                let mut v = g.iter().filter_map(|n| match n {
-                    NodeType::U16(x) => Some(*x),
-                    _ => None,
-                });
-                Some((v.next()?, v.next()?))
-            })
-            .collect();
-        (cells.len() > 2).then_some(cells)
-    };
+/// A startpos slot of a settlement's expansion map (`SLOT_MAP_DATA`): its index (0 the main slot, 1 the port, then the secondary
+/// ones), whether its cell is set, its zone's mask (the record's last number: the slots its zone touches, a bit an index; Mediolanum's
+/// main slot 12: slots 2 and 3) and its wall walk.
+struct ExpansionSlot {
+    index: usize,
+    set: bool,
+    mask: u32,
+    walk: Vec<(u16, u16)>,
+}
 
+/// Every slot of a settlement's expansion map, the main slot and the port first.
+fn expansion_slots(data: &RecordNode) -> Vec<ExpansionSlot> {
     let records = data.children().iter().flatten().filter_map(as_record);
     let primary = records.clone().filter(|r| r.name() == "SLOT_MAP_DATA");
     let secondary = records
         .filter(|r| r.name() == "SECONDARY_SLOT_ARRAY")
         .flat_map(|a| a.children().iter().flatten().filter_map(as_record))
         .filter(|r| r.name() == "SLOT_MAP_DATA");
-    primary.chain(secondary).filter_map(walk).collect()
+    primary
+        .chain(secondary)
+        .filter_map(|slot| {
+            let g = slot.children().first()?;
+            let nums: Vec<u32> = g.iter().filter(|n| as_record(n).is_none()).filter_map(u32_of).collect();
+            let walk = wall_walks_of(slot);
+            Some(ExpansionSlot {
+                index: *nums.first()? as usize,
+                set: nums.get(1).is_some_and(|&c| c != 65535),
+                mask: nums.last().copied().unwrap_or(0),
+                walk,
+            })
+        })
+        .collect()
+}
+
+/// A slot's wall walk (`SLOT_WALL_ARRAY`, in order); none of fewer than three cells.
+fn wall_walks_of(slot: &RecordNode) -> Vec<(u16, u16)> {
+    let Some(walls) = child(slot, "SLOT_WALL_ARRAY") else { return vec![] };
+    let cells: Vec<(u16, u16)> = walls
+        .children()
+        .iter()
+        .filter_map(|g| {
+            let mut v = g.iter().filter_map(|n| match n {
+                NodeType::U16(x) => Some(*x),
+                _ => None,
+            });
+            Some((v.next()?, v.next()?))
+        })
+        .collect();
+    if cells.len() > 2 { cells } else { vec![] }
+}
+
+/// The order a new campaign links a settlement's secondary slots in (fn 0x10a7cda0, 0x10a57e60; docs/re/terry.md, "Settlements at
+/// the start"): from the main slot and the port, each step one of the slots the linked ones' zone masks name (not the main slot or
+/// the port, not linked yet), `steps` of them (the region's secondary slots with a building). The game draws the step's slot from the
+/// campaign's shared random state, not reproducible (two new campaigns of one start differ): DEVIATION, the same draw on a seed of the
+/// region's key and the step. RenderDoc, capture A's 42 settlements and four other captures': the game's linked slots are as many as
+/// their secondary buildings (34 of 42 alike, the others far off, undrawn), which ones as likely as by chance: the lowest-index
+/// candidate, the highest or this draw each match 30 - 50 % of them.
+fn expansion_order(slots: &[ExpansionSlot], steps: usize, region: &str) -> Vec<usize> {
+    let mut linked: std::collections::BTreeSet<usize> = slots.iter().filter(|s| s.index < 2 && s.set).map(|s| s.index).collect();
+    let mut order = vec![];
+    for step in 0..steps {
+        let mask = slots.iter().filter(|s| linked.contains(&s.index)).fold(0u32, |m, s| m | s.mask);
+        let mut candidates: Vec<usize> = slots
+            .iter()
+            .filter(|s| s.set && s.index >= 2 && s.index < 32 && mask & (1 << s.index) != 0 && !linked.contains(&s.index))
+            .map(|s| s.index)
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.is_empty() {
+            break;
+        }
+        let seed =
+            region.bytes().chain((step as u32).to_le_bytes()).fold(0x811c_9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+        let x = seed.wrapping_mul(0x343fd).wrapping_add(0x0026_9ec3);
+        let pick = candidates[(((x >> 16) & 0xffff) as usize * candidates.len()) >> 16];
+        linked.insert(pick);
+        order.push(pick);
+    }
+    order
 }
 
 /// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
@@ -562,14 +612,33 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let Some(manager) = g.iter().filter_map(as_record).find(|r| r.name() == "REGION_SLOT_MANAGER") else { continue };
             let cells = map_slots.get(key);
             let own_cells = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT").map(startpos_slot_cells).unwrap_or_default();
-            let slots = child(manager, "REGION_SLOT_ARRAY")
+            let slots: Vec<&RecordNode> = child(manager, "REGION_SLOT_ARRAY")
                 .into_iter()
                 .flat_map(|a| a.children().iter().flatten().filter_map(as_record))
-                .filter(|r| r.name() == "REGION_SLOT");
-            let mut secondary = 0;
-            // The tier of each slot's building, by the startpos's slot index (the sprawl's `zone_slots` bits).
-            let mut tiers: HashMap<usize, u32> = HashMap::new();
-            for (index, slot) in slots.enumerate() {
+                .filter(|r| r.name() == "REGION_SLOT")
+                .collect();
+            let expansion = g
+                .iter()
+                .filter_map(as_record)
+                .find(|r| r.name() == "SETTLEMENT")
+                .and_then(|s| child(s, "SETTLEMENT_EXPANSION_MANAGER"))
+                .and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA"));
+            // The slots a new campaign links (`expansion_order`): the main slot and the port, then one a secondary slot with a building,
+            // in the region's order; its j-th secondary building stands at the j-th linked slot (fn 0x10a56c50, 0x10a420a0), not at its
+            // own index. The wall rings the main slot, the port and the first k linked, k the secondary slots with a building before the
+            // first without (fn 0x10a3e9f0). RenderDoc, capture A: Mediolanum's zones the game filled are its main slot's and three
+            // others', its walls theirs and no other slot's.
+            let exp_slots = expansion.map(expansion_slots).unwrap_or_default();
+            let kinds: Vec<(String, Option<String>, Option<String>)> = slots.iter().map(|s| slot_of(s)).collect();
+            let secondary_kind = |k: &str| k != "primary" && k != "port";
+            let built = kinds.iter().filter(|(k, b, _)| secondary_kind(k) && b.is_some()).count();
+            let walled_steps = kinds.iter().filter(|(k, _, _)| secondary_kind(k)).take_while(|(_, b, _)| b.is_some()).count();
+            let order = expansion_order(&exp_slots, built, key);
+            let first: std::collections::HashSet<usize> = exp_slots.iter().filter(|s| s.index < 2 && s.set).map(|s| s.index).collect();
+            let linked: std::collections::HashSet<usize> = first.iter().copied().chain(order.iter().copied()).collect();
+            let ringed: std::collections::HashSet<usize> = first.iter().copied().chain(order.iter().take(walled_steps).copied()).collect();
+            let mut placed_secondary = 0;
+            for (index, slot) in slots.iter().enumerate() {
                 let (kind, building, faction) = slot_of(slot);
                 if building.as_ref().is_some_and(|b| tables.with_aqueduct.contains(b)) {
                     aqueduct_regions.insert(key.to_owned());
@@ -580,10 +649,11 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                 let map_index = match kind.as_str() {
                     "primary" => Some(0),
                     "port" => Some(1),
-                    _ => {
-                        secondary += 1;
-                        Some(1 + secondary)
+                    _ if building.is_some() => {
+                        placed_secondary += 1;
+                        order.get(placed_secondary - 1).copied()
                     }
+                    _ => None,
                 };
                 let map_cell = map_index.and_then(|i| cells.and_then(|c| c.get(i).copied().flatten()));
                 let own = map_index.and_then(|i| own_cells.get(&i)).copied().filter(|&(c, r)| c != u16::MAX && r != u16::MAX);
@@ -613,25 +683,16 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     _ => {}
                 }
 
-                if let (Some(i), Some(b)) = (map_index, &building) {
-                    tiers.insert(i, tier_of(b));
-                }
-
                 cities.slots.push(CitySlot { region: key.to_owned(), index, kind, cell, world: centre(cell), building, model, turn: 0 });
             }
 
-            // The sprawl: the cells of the zones of slots with a building (their bit in `zone_slots`: the startpos's slot index), the
-            // piece the cell's road or coast shape names, turned by its rotation; level from the slot's building tier (ASSUMPTION: the
-            // runtime sprawl's level is grown by chance, not stored).
+            // The sprawl: the cells of the linked slots' zones (their bit in `zone_slots`: the startpos's slot index), not a footprint's,
+            // the piece the cell's road or coast shape names, turned by its rotation, at level 1: a new campaign levels a slot's cells
+            // before it links it (fns 0x10a1bd60, 0x10a1bad0), and only cells reached again draw 1 to 3; the building's tier plays no
+            // part. Not drawn: the cells the game's paths between the slots add (not decoded).
             let faction = owner.clone();
-            let expansion = g
-                .iter()
-                .filter_map(as_record)
-                .find(|r| r.name() == "SETTLEMENT")
-                .and_then(|s| child(s, "SETTLEMENT_EXPANSION_MANAGER"))
-                .and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA"));
-            // Per sprawl cell: the zones' slots, the map's road and river edges.
-            let mut cell_info: HashMap<(u16, u16), (i64, i64, i64)> = HashMap::new();
+            // Per sprawl cell: the zones' slots, the map's road and river edges, their union.
+            let mut cell_info: HashMap<(u16, u16), (i64, i64, i64, i64)> = HashMap::new();
             if let Some(blocks) = expansion.and_then(|d| child(d, "SPRAWL_BLOCK")) {
                 for sg in blocks.children() {
                     let Some(hex) = sg.iter().filter_map(as_record).find(|r| r.name() == "SPRAWL_HEX_MAP_DATA") else { continue };
@@ -665,7 +726,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     else {
                         continue;
                     };
-                    cell_info.insert((c as u16, r as u16), (zone_slots, road_edges, river_edges));
+                    cell_info.insert((c as u16, r as u16), (zone_slots, road_edges, river_edges, road_mask));
                     cities.hexes.insert(
                         (c as u16, r as u16),
                         [in_footprint, in_zone, water, road_shape, road_turn, coast_shape, coast_turn, road_edges, river_edges, road_mask],
@@ -674,11 +735,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         continue;
                     }
 
-                    let Some(tier) = (0..32).filter(|k| zone_slots & (1 << k) != 0).filter_map(|k| tiers.get(&(k as usize)).copied()).max()
-                    else {
+                    if !(0..32).any(|k| zone_slots & (1 << k) != 0 && linked.contains(&(k as usize))) {
                         continue;
-                    };
-                    let level = tier.div_ceil(2).clamp(1, 3);
+                    }
+                    let level = 1;
                     let (piece, turn) = if water != 0 {
                         let shape = coast_shape as u32;
                         let piece = if [3, 7, 15, 31].contains(&shape) {
@@ -722,21 +782,21 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             // each cell a `wall_<shape>` of the directions to the walk's previous and next cells, `gatehouse_` where a road crosses
             // (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads out of the zones (a straight 14 is turned half a
             // turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them; a connecting tower between two cells of a walk.
-            let main = tiers.get(&0).copied();
             let walled = cities
                 .slots
                 .iter()
                 .rev()
                 .take_while(|s| s.region == key)
                 .any(|s| s.index == 0 && s.building.as_deref().is_some_and(|b| b.contains("_major_")));
-            let walks = expansion.map(wall_walks).unwrap_or_default();
-            let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| i.0 != 0);
+            let walks: Vec<Vec<(u16, u16)>> =
+                exp_slots.iter().filter(|s| ringed.contains(&s.index) && !s.walk.is_empty()).map(|s| s.walk.clone()).collect();
+            let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| (0..32).any(|k| i.0 & (1 << k) != 0 && ringed.contains(&k)));
             let outer = |c: (u16, u16)| (0..6).any(|d| !hex_neighbour(c, d).is_some_and(inside));
             let on_wall: std::collections::HashSet<(u16, u16)> = walks.iter().flatten().copied().filter(|&c| outer(c)).collect();
-            if let (true, Some(tier), false) = (walled, main, on_wall.is_empty()) {
-                // The wall's cells hold no sprawl.
+            if walled && !on_wall.is_empty() {
+                // The wall's cells hold no sprawl. Walls, gates and towers are of level 1 (fn 0x10af4df0's `%s_%d`).
                 cities.sprawl.retain(|p| p.region != key || !on_wall.contains(&p.cell));
-                let level = tier.div_ceil(2).clamp(1, 3);
+                let level = 1;
                 for walk in &walks {
                     let n = walk.len();
                     for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
@@ -750,13 +810,15 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         let zone_mask = (0..6).filter(|&d| hex_neighbour(cell, d).is_some_and(inside)).fold(0u32, |m, d| m | (1 << d));
                         let edge = 1 << ((rot + 5) % 6);
                         let outward = zone_mask & edge != edge;
-                        let (roads, rivers) = cell_info.get(&cell).map_or((0, 0), |i| (i.1 as u32, i.2 as u32));
-                        let kind = if roads & !mask != 0 {
-                            "gatehouse_"
-                        } else if rivers & !mask != 0 {
-                            "river_gatehouse_"
-                        } else {
+                        // A gate where the cell has road or river edges (field 7), a road's where it has road edges (field 4): fn
+                        // 0x10a7c5c0; the game does not ask whether they cross the wall.
+                        let (roads, both) = cell_info.get(&cell).map_or((0, 0), |i| (i.1 as u32, i.3 as u32));
+                        let kind = if both == 0 || shape == 0 {
                             "wall_"
+                        } else if roads != 0 {
+                            "gatehouse_"
+                        } else {
+                            "river_gatehouse_"
                         };
                         let base = format!("{kind}{}", shape_digits(shape));
                         let (piece, turn) = match (outward, shape) {

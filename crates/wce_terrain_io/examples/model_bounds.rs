@@ -40,6 +40,13 @@ fn main() {
             };
 
             let Some(lod) = model.lods().first() else { continue };
+            // Each level's index count (a capture's draw names its mesh by it).
+            let counts: Vec<String> = model
+                .lods()
+                .iter()
+                .map(|l| l.mesh_blocks().iter().map(|b| b.mesh().indices().len().to_string()).collect::<Vec<_>>().join("+"))
+                .collect();
+            println!("    indices by level {}", counts.join(" | "));
             let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
             for b in lod.mesh_blocks() {
                 let (mn, mx) = (b.mesh().min_bb(), b.mesh().max_bb());
