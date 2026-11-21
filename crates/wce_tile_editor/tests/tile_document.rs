@@ -2889,3 +2889,50 @@ fn a_road_leaves_the_tile_by_the_middle_of_the_edge_its_link_says() {
     let points = d.tile().road_link_points().iter().map(|q| (q.x, q.z)).collect::<Vec<_>>();
     assert_eq!(points, [(0.0, 64.0), (192.0, 0.0)]);
 }
+
+#[test]
+fn any_closed_polygon_is_painted_grown_and_cut_in_pieces() {
+    use wce_tile_editor::tile_document::area_brush::NewArea;
+
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let kind = "NOGO_REGION_POLYGON_INSTANCE";
+    let attrs = BTreeMap::from([("name".to_owned(), "Marsh".to_owned())]);
+    let before = d.tile().tscene().find_all(kind).len();
+
+    // A stroke on nothing: a new one, of the values asked for.
+    let line = (0..8).map(|i| (10.0 + i as f32 * 3.0, 20.0)).collect::<Vec<_>>();
+    let new = NewArea { kind, into: layer, key: "", attrs: &attrs };
+    let made = d.area_stroke(None, Some(new), &line, 4.0, false).unwrap();
+    assert_eq!(made.len(), 1);
+    let area = made[0];
+    assert_eq!(d.tile().tscene().find_all(kind).len(), before + 1);
+    assert_eq!(d.tile().tscene().get(area, "name").as_deref(), Some("Marsh"));
+    assert!(d.tile().paintable(area));
+    let size = |d: &TileDocument, e: usize| {
+        let p = d.tile().polygon_world_points(e);
+        let (x0, x1) = p.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q.x), hi.max(q.x)));
+        x1 - x0
+    };
+    let wide = size(&d, area);
+    assert!(wide > 25.0 && wide < 35.0, "{wide}");
+
+    // Grown along x, then cut across its middle: two pieces, the second a copy of it.
+    let more = (0..6).map(|i| (34.0 + i as f32 * 3.0, 20.0)).collect::<Vec<_>>();
+    assert_eq!(d.area_stroke(Some(area), None, &more, 4.0, false).unwrap(), [area]);
+    assert!(size(&d, area) > wide + 10.0);
+    let history = d.history().size();
+    let cut = (0..6).map(|i| (27.0, 10.0 + i as f32 * 4.0)).collect::<Vec<_>>();
+    let pieces = d.area_stroke(Some(area), None, &cut, 3.0, true).unwrap();
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+    assert_eq!(d.history().size(), history + 1, "one undo entry");
+    assert_eq!(d.tile().tscene().find_all(kind).len(), before + 2);
+    assert!(pieces.iter().all(|&p| d.tile().tscene().get(p, "name").as_deref() == Some("Marsh")));
+
+    // Undone: one again.
+    d.history_mut().undo();
+    assert_eq!(d.tile().tscene().find_all(kind).len(), before + 1);
+
+    // Taking away from nothing: refused.
+    assert!(d.area_stroke(None, None, &cut, 3.0, true).is_err());
+}

@@ -51,8 +51,8 @@ pub(crate) enum Gesture {
     /// A ground coverage brush stroke (its rocks and plants so far: `CoverageUi::stroke`), put into the tile when it ends.
     CoverageStroke,
 
-    /// A biome brush stroke (its dabs so far: `BiomesUi::stroke`), put into the tile when it ends.
-    BiomeStroke,
+    /// An area brush stroke (its dabs so far: `AreaBrushUi::stroke`), put into the tile when it ends.
+    AreaStroke,
 
     /// A polygon's or spline's point dragged (`TileTool::poly_point`), or a spline's handle of it (`handle`: its controlOut (true) or
     /// controlIn). Nothing moves until the mouse has gone [`POINT_DRAG_PIXELS`] from where it was pressed (`press`): a click only picks
@@ -99,7 +99,7 @@ impl Gesture {
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Grab(_) => "the grab",
-            Self::TerrainStroke | Self::VegStroke(_) | Self::CoverageStroke | Self::BiomeStroke => "the brush stroke",
+            Self::TerrainStroke | Self::VegStroke(_) | Self::CoverageStroke | Self::AreaStroke => "the brush stroke",
             Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } => "the handle drag",
             Self::AltRotate(_) => "the rotation",
         }
@@ -149,8 +149,8 @@ impl TileTool {
                 return;
             }
 
-            Some(Gesture::BiomeStroke) => {
-                self.status = self.end_biome_stroke(e).unwrap_or_else(|err| err);
+            Some(Gesture::AreaStroke) => {
+                self.status = self.end_area_stroke(e).unwrap_or_else(|err| err);
                 return;
             }
 

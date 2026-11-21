@@ -1,27 +1,20 @@
 //! The biomes' window (docs/plans/auto_detail.md, C; `wce_tile::biomes`, `tile_document::biomes`): opened from the Tile panel. The biome
 //! presets (the built-in ones and the projects' files) and the chosen one's values (its trees, undergrowth and rocks as a set or keys,
 //! their densities, the edge band, its texture rules), Save, Save as, Delete; **Draw an area** of it (an exclusion polygon with
-//! `wce_biome`), or **Brush** (a left drag adds to the area under the mouse, or makes a new one; Ctrl + drag takes away); the selected
-//! area's biome and seed.
+//! `wce_biome`), its points clicked or painted (the area brush, `area_brush.rs`); the selected area's biome and seed.
 
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
-use wce_foundation::math::Float3;
-use wce_scene::render_scene::{Overlay, OverlayVertex, overlay_colour};
 use wce_tile::biomes::{BIOME_ATTR, BUILTIN_FOLDER, Biome, Props, SEED_ATTR, presets_root};
 use wce_tile::texture_rules::Range;
 use wce_tile::vegetation_sets::{SetKind, VegetationSet};
 use wce_tile_editor::tile_document::Draft;
 
-use crate::gesture::Gesture;
 use crate::styled;
 use crate::texture_rules_panel::RuleView;
-use crate::tool::{TileMode, TileTool, document, document_id, primary};
-
-/// The brush's radius at first, metres.
-pub const DEFAULT_RADIUS: f32 = 12.0;
+use crate::tool::{TileTool, document, document_id, primary};
 
 /// The window's state.
 #[derive(Default)]
@@ -33,11 +26,6 @@ pub struct BiomesUi {
     save_as: Option<String>,
     delete_ask: bool,
 
-    /// Brush mode, its radius (0: the default), the stroke under way.
-    pub brush: bool,
-    pub radius: f32,
-    pub(crate) stroke: Option<BiomeStroke>,
-
     /// Every number (advanced) or the plain choices.
     pub advanced: bool,
 
@@ -45,51 +33,11 @@ pub struct BiomesUi {
     pub rule: usize,
 }
 
-/// A brush stroke: taking away or adding, the area it works on (none: a new one) and its outline when it began, the dabs so far (world
-/// metres), and what it shows: the area as the stroke leaves it, filled and outlined on the ground (made again as dabs come).
-pub(crate) struct BiomeStroke {
-    erase: bool,
-    area: Option<usize>,
-    points: Vec<(f32, f32)>,
-    dabs: Vec<(f32, f32)>,
-    fill: Vec<OverlayVertex>,
-    outline: Vec<OverlayVertex>,
-}
-
-/// The stroke's colours: the area it leaves, filled and outlined.
-fn stroke_fill() -> u32 {
-    overlay_colour(0.3, 0.95, 0.45, 0.22)
-}
-
-fn stroke_line() -> u32 {
-    overlay_colour(0.35, 1.0, 0.5, 1.0)
-}
-
-/// How far over the ground the stroke is drawn, metres.
-const LIFT: f32 = 0.3;
-
 impl TileTool {
     /// Shows the biomes in the Inspector (the Create panel's biome entries, a selected area's "Edit its biome").
     pub fn open_biomes(&mut self) {
-        let brush = self.biomes.brush;
         self.close_detail_panels();
-        self.biomes.brush = brush;
         self.biomes.open = true;
-    }
-
-    /// Whether a left drag in the viewport is the biome brush's: the window is open in Brush mode and nothing else is being placed or
-    /// drawn (Select mode).
-    pub(crate) fn biome_brushing(&self, e: &Editor) -> bool {
-        self.biomes.open
-            && self.biomes.brush
-            && self.mode == TileMode::Select
-            && self.placing.is_none()
-            && !self.drawing
-            && document_id(e).is_some()
-    }
-
-    pub(crate) fn biome_radius(&self) -> f32 {
-        if self.biomes.radius > 0.0 { self.biomes.radius } else { DEFAULT_RADIUS }
     }
 
     /// The biome being worked with: the draft, else the first preset.
@@ -99,143 +47,6 @@ impl TileTool {
         }
 
         self.biomes.draft.clone().unwrap_or_default()
-    }
-
-    /// A stroke begins at the cursor: on the area under it (Ctrl: taking away from it), else a new area of the draft's biome.
-    pub(crate) fn begin_biome_stroke(&mut self, e: &mut Editor, erase: bool) {
-        let at = (self.cursor.x, self.cursor.z);
-        let area = document(e).and_then(|d| {
-            let areas = d.tile().biome_areas();
-            areas
-                .iter()
-                .find(|a| wce_tile::biomes::inside(&a.points, at.0, at.1))
-                .or_else(|| {
-                    areas.iter().filter(|a| wce_tile::biomes::boundary_distance(&a.points, at.0, at.1) < self.biome_radius()).min_by(
-                        |a, b| {
-                            let d = |x: &&wce_tile_editor::tile_document::biomes::BiomeArea| {
-                                wce_tile::biomes::boundary_distance(&x.points, at.0, at.1)
-                            };
-                            d(a).total_cmp(&d(b))
-                        },
-                    )
-                })
-                .map(|a| a.elem)
-        });
-        if erase && area.is_none() {
-            self.status = "no biome area under the brush to take away from".to_owned();
-            return;
-        }
-
-        let points = area
-            .and_then(|elem| document(e)?.tile().biome_areas().into_iter().find(|a| a.elem == elem))
-            .map(|a| a.points)
-            .unwrap_or_default();
-        self.biomes.stroke = Some(BiomeStroke { erase, area, points, dabs: vec![at], fill: vec![], outline: vec![] });
-        self.gesture = Some(Gesture::BiomeStroke);
-        self.biome_stroke_preview(e);
-    }
-
-    /// The stroke under way, in words (a script's check): its dabs and what it shows.
-    pub(crate) fn biome_stroke_state(&self) -> String {
-        self.biomes.stroke.as_ref().map_or_else(
-            || "no stroke".to_owned(),
-            |s| format!("{} dab(s), {} fill triangle(s), {} outline segment(s)", s.dabs.len(), s.fill.len() / 3, s.outline.len() / 2),
-        )
-    }
-
-    /// The area as the stroke leaves it, on the ground: its cells filled, its outline (as the stroke's end makes it) drawn over them.
-    fn biome_stroke_preview(&mut self, e: &mut Editor) {
-        let radius = self.biome_radius();
-        let Some(d) = document(e) else { return };
-        let Some(s) = self.biomes.stroke.as_mut() else { return };
-        let t = d.tile();
-        let ground = |x: f32, z: f32| Float3::new(x, t.terrain_height(x, z) + LIFT, z);
-
-        // The same grid as the stroke's end (`TileDocument::biome_stroke`): its outlines, filled (their triangles cut until they follow the
-        // ground).
-        let cell = (radius / 4.0).clamp(0.5, 4.0);
-        let outlines = wce_tile::biomes::stroke_outline(&s.points, &s.dabs, radius, s.erase, cell);
-        s.fill.clear();
-        let colour = stroke_fill();
-        for poly in &outlines {
-            let mut todo =
-                wce_tile::biomes::triangulate(poly).into_iter().map(|t| [poly[t[0]], poly[t[1]], poly[t[2]]]).collect::<Vec<_>>();
-            while let Some([a, b, c]) = todo.pop() {
-                let long = |p: (f32, f32), q: (f32, f32)| (p.0 - q.0).hypot(p.1 - q.1) > 2.0 * cell;
-                if long(a, b) || long(b, c) || long(c, a) {
-                    let mid = |p: (f32, f32), q: (f32, f32)| ((p.0 + q.0) * 0.5, (p.1 + q.1) * 0.5);
-                    let (ab, bc, ca) = (mid(a, b), mid(b, c), mid(c, a));
-                    todo.extend([[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]);
-                    continue;
-                }
-
-                for p in [a, b, c] {
-                    s.fill.push(OverlayVertex { p: ground(p.0, p.1), rgba: colour });
-                }
-            }
-        }
-
-        // The outlines, their edges cut a cell long so that they follow the ground.
-        s.outline.clear();
-        let colour = stroke_line();
-        for poly in &outlines {
-            for k in 0..poly.len() {
-                let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
-                let steps = ((b.0 - a.0).hypot(b.1 - a.1) / cell).ceil().max(1.0) as usize;
-                for n in 0..steps {
-                    let (t0, t1) = (n as f32 / steps as f32, (n + 1) as f32 / steps as f32);
-                    let p = |t: f32| ground(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
-                    s.outline.push(OverlayVertex { p: p(t0), rgba: colour });
-                    s.outline.push(OverlayVertex { p: p(t1), rgba: colour });
-                }
-            }
-        }
-    }
-
-    /// A dab at the cursor, a quarter of the radius from the last one at least; what the stroke shows follows.
-    pub(crate) fn biome_dab(&mut self, e: &mut Editor) {
-        let r = self.biome_radius();
-        let at = (self.cursor.x, self.cursor.z);
-        if let Some(s) = self.biomes.stroke.as_mut()
-            && s.dabs.last().is_none_or(|l| (l.0 - at.0).hypot(l.1 - at.1) >= r * 0.25)
-        {
-            s.dabs.push(at);
-            self.biome_stroke_preview(e);
-        }
-    }
-
-    /// The stroke into the tile (`TileDocument::biome_stroke`, one undo entry); a new area's biome taken in first.
-    ///
-    /// # Errors
-    ///
-    /// No tile, or the stroke made nothing.
-    pub(crate) fn end_biome_stroke(&mut self, e: &mut Editor) -> Result<String, String> {
-        let Some(stroke) = self.biomes.stroke.take() else { return Ok(String::new()) };
-        let biome = self.biome_draft(e);
-        let radius = self.biome_radius();
-        let d = document(e).ok_or("no tile is open")?;
-        let into = self.new_items_layer(d).ok_or("no layer to put a new area in")?;
-        if stroke.area.is_none() {
-            d.adopt_biome(&biome);
-        }
-
-        let areas = d.biome_stroke(stroke.area, into, &biome.name, &stroke.dabs, radius, stroke.erase)?;
-        e.selection.clear();
-        Ok(match (stroke.erase, stroke.area, areas.len()) {
-            (true, _, 0) => "biome brush: the area went".to_owned(),
-            (true, _, n) => format!("biome brush: taken away ({n} area(s) left of it)"),
-            (false, None, _) => format!("biome brush: a new area of {}", biome.name),
-            (false, Some(_), _) => "biome brush: the area grown".to_owned(),
-        })
-    }
-
-    /// The stroke under way in the viewport: the area as it leaves it, filled and outlined on the ground (the brush's circle is the
-    /// tool's, at the mouse).
-    pub(crate) fn biome_brush_overlay(&self, o: &mut Overlay) {
-        if let Some(s) = self.biomes.stroke.as_ref().filter(|_| self.biomes.open) {
-            o.triangles.extend_from_slice(&s.fill);
-            o.lines.extend_from_slice(&s.outline);
-        }
     }
 
     /// The biome in the Inspector: its preset, Draw an area and the brush, the selected area, then its settings.
@@ -255,7 +66,6 @@ impl TileTool {
              to the biome's there. Its contents are made again whenever it, its biome or the ground changes.",
         ) {
             self.biomes.open = false;
-            self.biomes.brush = false;
             return;
         }
 
@@ -265,44 +75,35 @@ impl TileTool {
         // Laying it first: the settings below are long.
         gui::separator_text("Lay it");
         let half = (gui::content_region_avail().x - gui::item_spacing().x) * 0.5;
-        if gui::button_sized(&format!("{}  Draw an area", icons::PLUS), gui::v2(half, 0.0)) {
-            if let Some(d) = document(e) {
-                d.adopt_biome(&draft);
-            }
-
-            let kind = wce_tile::biomes::AREA_TYPE;
-            let mut d = Draft::new(kind, "");
-            d.attrs.insert(BIOME_ATTR.to_owned(), draft.name.clone());
-            d.attrs.insert(SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
-            d.attrs.insert("name".to_owned(), draft.name.clone());
-            self.draft = Some(d);
-            self.start_drawing();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Click its points on the ground, Enter or a double click to close it");
+        let painting = self.drawing && self.area_brush.paint;
+        let drawing = self.drawing && !self.area_brush.paint;
+        if styled::toggle_chip(
+            "biome_draw",
+            &format!("{}  Draw an area", icons::PLUS),
+            drawing,
+            half,
+            "Click its points on the ground, Enter or a double click to close it",
+        ) {
+            self.start_biome_area(e, false);
         }
 
         gui::same_line();
         if styled::toggle_chip(
             "brush",
-            "Brush",
-            self.biomes.brush,
+            &format!("{}  Paint", icons::BRUSH),
+            painting,
             half,
-            "Left drag in the viewport (Select mode): adds to the area under the mouse, or makes a new one; Ctrl + drag takes away",
+            "Left drag in the viewport: adds to the biome area under the mouse, or makes a new one; Ctrl + drag takes away",
         ) {
-            self.biomes.brush = !self.biomes.brush;
-            if self.biomes.brush && (self.drawing || self.placing.is_some()) {
-                self.stop_making();
-            }
+            self.start_biome_area(e, true);
         }
 
-        if self.biomes.brush {
+        if painting {
             let row = styled::row("Radius", "The brush's radius (Ctrl + click to type)");
-            let mut r = self.biome_radius();
+            let mut r = self.area_radius();
             gui::set_next_item_width(row.width);
             if gui::slider_float("##radius", &mut r, 1.0, 100.0, "%.1f m") {
-                self.biomes.radius = r;
+                self.area_brush.radius = r;
             }
         }
 
@@ -330,6 +131,28 @@ impl TileTool {
         if changed {
             self.biomes.draft = Some(draft.clone());
         }
+    }
+
+    /// An area of the biome being worked with drawn (`paint`: painted with the area brush, else its points clicked); again: stops.
+    pub(crate) fn start_biome_area(&mut self, e: &mut Editor, paint: bool) {
+        if self.drawing && self.area_brush.paint == paint {
+            self.stop_making();
+            return;
+        }
+
+        let biome = self.biome_draft(e);
+        if let Some(d) = document(e) {
+            d.adopt_biome(&biome);
+        }
+
+        let mut d = Draft::new(wce_tile::biomes::AREA_TYPE, "");
+        d.attrs.insert(BIOME_ATTR.to_owned(), biome.name.clone());
+        d.attrs.insert(SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
+        d.attrs.insert("name".to_owned(), biome.name.clone());
+        self.stop_making();
+        self.draft = Some(d);
+        self.start_drawing();
+        self.set_area_paint(paint);
     }
 
     /// The presets: a combo, Save, Save as, Delete.

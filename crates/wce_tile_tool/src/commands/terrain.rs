@@ -624,6 +624,58 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "area_brush",
+        "area_brush <paint|points> | area_brush reshape <on|off> | area_brush <add|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
+        "the area brush: closed shapes drawn are painted or their points clicked; the selected closed polygon's shape painted or not; one stroke through ground points, as a drag (Ctrl: erase), on what is being drawn or the selected polygon",
+        |e, a| {
+            let usage = "usage: area_brush <paint|points> | area_brush reshape <on|off> | area_brush <add|erase> <radius m> <x m> <z m> ...";
+            match a.first().map(String::as_str) {
+                Some("paint" | "points") => with_tile(e, |t, _| {
+                    t.set_area_paint(a[0] == "paint");
+                    ok(format!("closed shapes: {}", if t.area_brush.paint { "painted" } else { "points clicked" }))
+                }),
+                Some("reshape") => with_tile(e, |t, _| {
+                    t.area_brush.reshape = a.get(1).is_some_and(|v| v == "on");
+                    ok(format!("paint its shape: {}", t.area_brush.reshape))
+                }),
+                Some(what @ ("add" | "erase")) => {
+                    let erase = what == "erase";
+                    let Some(radius) = a.get(1).and_then(|v| number(v)) else { return fail(usage) };
+                    let pts = a[2..].chunks(2).filter_map(|p| Some((number(p.first()?)?, number(p.get(1)?)?))).collect::<Vec<_>>();
+                    if pts.is_empty() {
+                        return fail(usage);
+                    }
+
+                    with_tile(e, |t, e| {
+                        if !t.area_painting(e) {
+                            return fail("nothing to paint: draw a closed shape with area_brush paint, or select one with area_brush reshape on");
+                        }
+
+                        t.area_brush.radius = radius;
+                        for (k, &(x, z)) in pts.iter().enumerate() {
+                            t.cursor = Float3::new(x, 0.0, z);
+                            if k == 0 {
+                                t.begin_area_stroke(e, erase);
+                            } else {
+                                t.area_dab(e);
+                            }
+                        }
+
+                        if t.area_brush.stroke.is_none() {
+                            return fail(t.status.clone());
+                        }
+
+                        t.gesture = None;
+                        t.end_area_stroke(e).map_or_else(fail, ok)
+                    })
+                }
+
+                _ => fail(usage),
+            }
+        },
+    );
+
+    c.add(
         "biome_brush",
         "biome_brush <add|erase> <biome|-> <radius m> <x m> <z m> [<x m> <z m>]... | held <add|erase> <radius m> <x m> <z m>...",
         "one stroke of the biome brush through ground points: add grows the area under the first point (else makes a new one of the biome), erase takes away from it",
@@ -640,19 +692,22 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
                 return with_tile(e, |t, e| {
                     t.open_biomes();
-                    t.biomes.brush = true;
-                    t.biomes.radius = radius;
+                    if !t.painting_draft() {
+                        t.start_biome_area(e, true);
+                    }
+
+                    t.area_brush.radius = radius;
                     for (k, &(x, z)) in pts.iter().enumerate() {
                         t.cursor.x = x;
                         t.cursor.z = z;
                         if k == 0 {
-                            t.begin_biome_stroke(e, what == "erase");
+                            t.begin_area_stroke(e, what == "erase");
                         } else {
-                            t.biome_dab(e);
+                            t.area_dab(e);
                         }
                     }
 
-                    ok(format!("biome brush: a stroke held ({})", t.biome_stroke_state()))
+                    ok(format!("biome brush: a stroke held ({})", t.area_stroke_state()))
                 });
             }
 

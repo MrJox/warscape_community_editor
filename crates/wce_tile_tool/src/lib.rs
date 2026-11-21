@@ -4,6 +4,7 @@
 //! action is a command too (`commands`), so scripts and menus use the same code.
 
 pub mod actions;
+mod area_brush;
 pub mod areas_chip;
 mod biomes_panel;
 mod bridge_check;

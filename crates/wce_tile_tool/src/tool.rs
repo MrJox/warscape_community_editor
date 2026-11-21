@@ -624,6 +624,8 @@ pub struct TileTool {
     pub(crate) key_picker: crate::key_picker::KeyPicker,
 
     /// The biomes' window.
+    /// The area brush (any closed polygon painted).
+    pub(crate) area_brush: crate::area_brush::AreaBrushUi,
     pub(crate) biomes: crate::biomes_panel::BiomesUi,
 
     /// The biome presets (`create_panel::biome_presets`), read on first use.
@@ -1027,6 +1029,7 @@ impl Default for TileTool {
             detail_selection: None,
             key_picker: Default::default(),
             biome_presets: None,
+            area_brush: Default::default(),
             biomes: Default::default(),
             snap_outlines: Default::default(),
             bridge_check: None,
@@ -2296,13 +2299,13 @@ impl TileTool {
             && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE")
             && self.veg.is_some_and(|b| b.on);
         let coverage = self.coverage_brushing(e);
-        let biome = self.biome_brushing(e);
+        let biome = self.area_painting(e);
         let radius = if veg {
             self.veg.map_or(1.0, |b| b.radius)
         } else if coverage {
             self.coverage_radius()
         } else if biome {
-            self.biome_radius()
+            self.area_radius()
         } else {
             self.brush.radius_m
         };
@@ -2409,7 +2412,7 @@ impl TileTool {
         }
 
         self.coverage_overlay(d, &mut o);
-        self.biome_brush_overlay(&mut o);
+        self.area_brush_overlay(&mut o);
         self.rules_overlay(d, &mut o);
         self.coverage_brush_overlay(d, e.viewport.hovered, &mut o);
 
@@ -2867,6 +2870,9 @@ impl TileTool {
                 self.end_grab(e, false);
             } else if self.drawing || self.placing.is_some() {
                 self.stop_making();
+            } else if self.area_brush.reshape {
+                self.area_brush.reshape = false;
+                self.status = "paint its shape: off".to_owned();
             } else if self.mode != TileMode::Select {
                 self.mode = TileMode::Select;
             }
@@ -3820,8 +3826,6 @@ impl TileTool {
     /// Closes the texture rules and the biome in the Inspector (one shows at a time).
     pub(crate) fn close_detail_panels(&mut self) {
         self.biomes.open = false;
-        self.biomes.brush = false;
-        self.biomes.stroke = None;
         self.rules_ui.open = false;
         self.detail_selection = None;
     }
@@ -4538,6 +4542,15 @@ impl TileTool {
             return true;
         }
 
+        // The area brush (a closed shape painted, or the selected one's shape) grows an area or makes one (Ctrl: takes away).
+        if self.area_painting(e) {
+            if self.terrain_hit {
+                self.begin_area_stroke(e, ev.ctrl);
+            }
+
+            return true;
+        }
+
         if self.drawing {
             // A closed shape closes on its first point: that click finishes it.
             if self.closes_drawing(e, ev) {
@@ -4549,15 +4562,6 @@ impl TileTool {
                 if self.draw_pts.len() == 3 && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER) {
                     self.finish_drawing(e);
                 }
-            }
-
-            return true;
-        }
-
-        // The biomes' brush (its window in Brush mode) grows an area or makes one (Ctrl: takes away).
-        if self.biome_brushing(e) {
-            if self.terrain_hit {
-                self.begin_biome_stroke(e, ev.ctrl);
             }
 
             return true;
@@ -4749,10 +4753,10 @@ impl TileTool {
                 }
             }
 
-            Some(Gesture::BiomeStroke) => {
+            Some(Gesture::AreaStroke) => {
                 self.on_hover(e, ev);
                 if self.terrain_hit {
-                    self.biome_dab(e);
+                    self.area_dab(e);
                 }
             }
 
@@ -4827,7 +4831,7 @@ impl TileTool {
     fn on_click(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
         // Placing, drawing or brushing: the click was a point placed or a dab, not a pick (the new building under the mouse would be
         // selected).
-        if self.placing.is_some() || self.drawing || self.coverage_brushing(e) || self.biome_brushing(e) {
+        if self.placing.is_some() || self.drawing || self.coverage_brushing(e) || self.area_painting(e) {
             return true;
         }
 
@@ -5895,6 +5899,7 @@ impl Tool for TileTool {
         // A holder alone selected: the buttons that draw its shapes (made only there).
         self.inspect_holder(e);
         self.inspect_biome_area(e);
+        self.inspect_area_reshape(e);
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
             self.inspect_measure(e, id);
@@ -6098,7 +6103,7 @@ impl Tool for TileTool {
     fn claims_left_button(&self, e: &Editor) -> bool {
         self.flip.is_some()
             || self.coverage_brushing(e)
-            || self.biome_brushing(e)
+            || self.area_painting(e)
             || self.mode != TileMode::Select
             || self.drawing
             || self.grabbing()
