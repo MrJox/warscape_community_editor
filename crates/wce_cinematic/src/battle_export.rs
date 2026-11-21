@@ -155,6 +155,25 @@ pub fn battle_xml(project: &Project) -> String {
             f(b.wind[1])
         );
     }
+    // One battle tile (its folder, as Launch in game names a tile) or a whole battle map (as vanilla's historical battles): the name
+    // alone, no map position.
+    let tile = project.map.tile.trim().trim_end_matches('/');
+    let alone = if !tile.is_empty() {
+        Some(tile.to_owned())
+    } else if project.map.whole_map {
+        Some(battle_map_name(project))
+    } else {
+        None
+    };
+    if let Some(name) = alone {
+        let _ = write!(
+            x,
+            "\t<battle_map_definition>\n\t\t<name>{}</name>\n\t</battle_map_definition>\n\t<playable_area dimension=\"{}\"></playable_area>\n</battle>\n",
+            esc(&name),
+            project.map.playable_area.round()
+        );
+        return x;
+    }
     let _ = write!(
         x,
         "\t<battle_map_definition>\n\t\t<name>{}</name>\n\t\t<tile_map_position x=\"{:.6}\" y=\"{:.6}\">/</tile_map_position>\n\

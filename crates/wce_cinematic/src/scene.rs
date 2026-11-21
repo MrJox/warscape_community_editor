@@ -34,7 +34,7 @@ pub struct Project {
     pub next_id: u32,
 }
 
-/// Where the battle is: a position on the campaign map (the battle XML's `tile_map_position`, 0 to 1 of the map).
+/// Where the battle is: a position on the campaign map (the battle XML's `tile_map_position`, 0 to 1 of the map), or one battle tile.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MapPlacement {
     /// The campaign map folder (`main_attila_map`).
@@ -42,6 +42,14 @@ pub struct MapPlacement {
     pub position: [f32; 2],
     /// The playable area's side, metres.
     pub playable_area: f32,
+    /// A battle tile's folder (`terrain/tiles/battle/plains/8x8/8x8_aa`): the battle is fought on that tile alone, not at the map
+    /// position. Empty: the map position.
+    #[serde(default)]
+    pub tile: String,
+    /// The battle map is fought whole, as vanilla's historical battles are (`terrain/battles/catalaunian_plains/`, made in TEd): its
+    /// name alone, no position.
+    #[serde(default)]
+    pub whole_map: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -345,7 +353,13 @@ impl Project {
             format: FORMAT,
             name: name.to_owned(),
             game: game.to_owned(),
-            map: MapPlacement { campaign_map: "main_attila_map".into(), position: [0.5, 0.5], playable_area: 1924.0 },
+            map: MapPlacement {
+                campaign_map: "main_attila_map".into(),
+                position: [0.5, 0.5],
+                playable_area: 1924.0,
+                tile: String::new(),
+                whole_map: false,
+            },
             battle: BattleSetup {
                 key: sanitize_key(name),
                 title_text: "battle_title".into(),

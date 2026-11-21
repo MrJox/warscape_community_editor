@@ -13,7 +13,7 @@ use rpfm_lib::files::db::DB;
 use rpfm_lib::files::loc::Loc;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
-use wce_cinematic::battle_export::{battle_scripts, unit_script_name};
+use wce_cinematic::battle_export::{battle_scripts, battle_xml, unit_script_name};
 use wce_cinematic::battle_tables::{battle_files, write_battle_pack};
 use wce_cinematic::scene::*;
 use wce_vfs::files::Files;
@@ -197,6 +197,23 @@ fn main() {
     }
     if !text.contains("<tile_map_position x=\"0.500000\" y=\"0.500000\">") || !text.contains("terrain/battles/main_attila_map/") {
         failed.push("battle XML: no campaign map position".into());
+    }
+    // On one battle tile instead: its folder, no map position.
+    {
+        let mut on_tile = project.clone();
+        on_tile.map.tile = "terrain/tiles/battle/plains/8x8/8x8_aa".into();
+        let t = battle_xml(&on_tile);
+        if !t.contains("<name>terrain/tiles/battle/plains/8x8/8x8_aa</name>") || t.contains("tile_map_position") {
+            failed.push(format!("battle XML on a tile: {t}"));
+        }
+        // A whole battle map, as vanilla's historical battles.
+        let mut whole = project.clone();
+        whole.map.campaign_map = "catalaunian_plains".into();
+        whole.map.whole_map = true;
+        let t = battle_xml(&whole);
+        if !t.contains("<name>terrain/battles/catalaunian_plains/</name>") || t.contains("tile_map_position") {
+            failed.push(format!("battle XML on a whole map: {t}"));
+        }
     }
 
     // The Lua: every unit declared, the clip's function, the logic's messages.

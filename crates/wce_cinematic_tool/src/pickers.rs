@@ -34,6 +34,8 @@ pub struct GameLists {
     pub environments: Vec<Item>,
     pub vfx: Vec<Item>,
     pub battle_maps: Vec<Item>,
+    /// The battle tiles of the packs (their folders: `terrain/tiles/battle/<set>/<tile>/<variation>`), named by their path's parts.
+    pub battle_tiles: Vec<Item>,
     /// Filled once the sound library is there.
     pub sound_events: Vec<Item>,
     pub music_events: Vec<Item>,
@@ -158,6 +160,16 @@ impl GameLists {
             .filter_map(|p| p.strip_prefix("terrain/battles/").and_then(|r| r.split('/').next()).map(str::to_owned))
             .collect();
         g.battle_maps = maps.into_iter().map(|m| Item { name: m.clone(), key: m }).collect();
+        let mut tiles: Vec<String> = files
+            .list("terrain/tiles/battle/", "/definition.xml")
+            .into_iter()
+            .filter_map(|p| p.strip_suffix("/definition.xml").map(str::to_owned))
+            .filter(|f| !f.contains("/_"))
+            .collect();
+        tiles.sort();
+        tiles.dedup();
+        g.battle_tiles =
+            tiles.into_iter().map(|f| Item { name: f.trim_start_matches("terrain/tiles/battle/").replace('/', " / "), key: f }).collect();
         g
     }
 

@@ -78,6 +78,8 @@ pub struct SceneUi {
 pub enum SceneRequest {
     New(String),
     Open(String),
+    /// The sample scene (made in the projects folder the first time).
+    Sample,
 }
 
 /// Applies `f` to a copy of the project and pushes it as an edit called `name`.
@@ -116,6 +118,12 @@ impl SceneUi {
             picker(&mut self.filters, "openscene", if items.is_empty() { "No saved scenes" } else { "Open a scene..." }, &items, -1.0)
         {
             self.request = Some(SceneRequest::Open(k));
+        }
+        if gui::button(&format!("{}  Open the sample scene", icons::CLAPPERBOARD)) {
+            self.request = Some(SceneRequest::Sample);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Two armies, a camera move, riders, fires and a subtitle, ready to play and change");
         }
     }
 

@@ -68,6 +68,31 @@ undo
 assert_camera_key 1 0 10 20 -400 10 0 -300
 scene_delete
 assert_count selected 0
+# The real mouse in the 3D viewport: a unit placed by a click on the ground, selected by a click on it, the selection cleared by a
+# click on empty ground, placing stopped by a right click.
+cinematic_show Viewport
+frames 30
+create_army 0
+create_pick unit att_rom_cohors
+frames 2
+click_ground 0 -200
+frames 4
+assert_count units 3
+assert_unit_near 0 -200 2
+click_ground 0 -200 right
+frames 4
+click_ground -30 -250
+frames 4
+assert_count selected 0
+click_ground 0 -200
+frames 4
+assert_count selected 1
+mouse off
 save
 frames 2
+# The sample scene: made in the projects folder, ten units, its clip's tracks.
+scene_sample
+frames 4
+assert_count units 10
+assert_count effects 2
 quit

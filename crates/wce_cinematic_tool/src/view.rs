@@ -155,15 +155,20 @@ impl SceneView {
                 }
                 false
             }
-            ViewportEventKind::Press | ViewportEventKind::Drag | ViewportEventKind::Release => create.making.is_some(),
-            ViewportEventKind::Click if ev.button == 0 => {
-                if let Some(m) = create.making.clone() {
-                    if let Some(at) = ground_point(e, ev.x, ev.y) {
-                        let lists = ui.lists.clone();
-                        if let Some(item) = create.place(e, &lists, &p, &m, at, ui.clip, ui.time) {
-                            create.requests.push(CreateRequest::Placed(item));
-                        }
+            // While placing the tool owns the left button: the editor sends its press (not a click), which puts one there.
+            ViewportEventKind::Press => {
+                let Some(m) = create.making.clone() else { return false };
+                if let Some(at) = ground_point(e, ev.x, ev.y) {
+                    let lists = ui.lists.clone();
+                    if let Some(item) = create.place(e, &lists, &p, &m, at, ui.clip, ui.time) {
+                        create.requests.push(CreateRequest::Placed(item));
                     }
+                }
+                true
+            }
+            ViewportEventKind::Drag | ViewportEventKind::Release => create.making.is_some(),
+            ViewportEventKind::Click if ev.button == 0 => {
+                if create.making.is_some() {
                     return true;
                 }
                 let how = if ev.ctrl {
