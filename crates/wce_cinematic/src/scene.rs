@@ -399,6 +399,11 @@ impl Project {
             logic: LogicGraph::default(),
             next_id: 1,
         };
+        // Attila: vanilla's Catalaunian Plains map, whole (the campaign map's centre is the sea).
+        if game == "attila" {
+            p.map.campaign_map = "catalaunian_plains".into();
+            p.map.whole_map = true;
+        }
         p.texts.insert("battle_title".into(), BTreeMap::from([("en".into(), name.to_owned())]));
         p.texts.insert("battle_description".into(), BTreeMap::from([("en".into(), String::new())]));
         let camera = p.new_id();

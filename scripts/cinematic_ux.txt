@@ -6,6 +6,9 @@ layout reset
 frames 2
 scene_new WCE UX Test
 frames 3
+# On a flat battle tile (about 0 m): the camera keys below are a few metres up.
+scene_ground tile terrain/tiles/battle/plains/8x8/8x8_aa
+frames 3
 # Two cohorts placed by clicks (a new scene's camera track and clip are ids 1 and 2: the units are 3 and 4).
 create_pick unit att_rom_cohors
 create_click 0 -300
@@ -95,6 +98,13 @@ scene_sample
 frames 4
 assert_count units 10
 assert_count effects 2
+# Its ground: vanilla's Catalaunian Plains map, whole (about 470 m above the sea there); then one battle tile alone.
+assert_ground_height 0 -300 400 560
+scene_ground tile terrain/tiles/battle/plains/8x8/8x8_aa
+frames 4
+assert_ground_height 0 0 -20 40
+scene_ground whole catalaunian_plains
+frames 4
 # Launch in game, dry: the launch pack in the build folder, the game to start from the battle's own XML.
 scene_launch --dry-run
 quit

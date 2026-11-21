@@ -54,6 +54,8 @@ pub struct DocView {
     pub units: f32,
     /// Unit id -> (place, facing) at the playhead.
     pub placed: std::collections::HashMap<u32, ([f32; 2], f32)>,
+    /// Unit id -> the ground's height where it stands (metres; none: 0).
+    pub heights: std::collections::HashMap<u32, f32>,
 }
 
 pub struct SceneDocument {
@@ -139,7 +141,7 @@ impl SceneDocument {
                         f.units.iter().find(|s| s.unit == id).map(|s| (s.position, s.facing))
                     })
                     .unwrap_or((u.start, u.facing));
-                (at[0], 0.0, at[1], facing)
+                (at[0], self.view.heights.get(&id).copied().unwrap_or(0.0), at[1], facing)
             }
             SceneItem::Vfx { track, index } => {
                 let v = vfx_of(p, track, index)?;
@@ -374,7 +376,7 @@ mod tests {
             }
         }
         let mut d = SceneDocument::new(p, PathBuf::from("t/project.json"));
-        d.view = DocView { clip: Some(clip), time: 2.0, units: 1.0, placed: Default::default() };
+        d.view = DocView { clip: Some(clip), time: 2.0, units: 1.0, ..Default::default() };
         d.move_items(&[SceneItem::Unit(id)], &translation(Float3::new(5.0, 0.0, 0.0)), 3);
         let p = d.project();
         assert_eq!(p.unit(id).unwrap().start, [0.0, 0.0], "the start stays");

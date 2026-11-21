@@ -10,6 +10,7 @@ use wce_editor::tool::{ViewportEvent, ViewportEventKind};
 use wce_foundation::math::Float3;
 
 use crate::create::{Create, CreateRequest, Making};
+use crate::ground::Ground;
 use crate::items::{self, How, SceneItem};
 use crate::scene_doc::DocView;
 use crate::scene_ui::{SceneUi, scene_doc};
@@ -29,9 +30,13 @@ pub struct SceneView {
     boxed: Option<((i32, i32), (i32, i32))>,
 }
 
-/// The ground (y = 0) under a pixel of the image, metres.
-pub fn ground_point(e: &Editor, x: i32, y: i32) -> Option<[f32; 2]> {
+/// The ground under a pixel of the image, metres: the drawn terrain, else the plane at 0.
+pub fn ground_point(e: &mut Editor, x: i32, y: i32) -> Option<[f32; 2]> {
     let units = e.scene.game_units.max(1e-3);
+    let Editor { viewport, scene, .. } = e;
+    if let Some(p) = viewport.ground_under(scene, x, y) {
+        return Some([p.x * units, p.z * units]);
+    }
     let (o, d) = e.viewport.ray(x, y)?;
     if d.y.abs() < 1e-6 {
         return None;
@@ -78,7 +83,7 @@ fn to_image(e: &Editor, m: [f32; 3]) -> Option<(f32, f32)> {
 }
 
 /// The effects alive at the playhead: their items and places.
-fn effects(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], String)> {
+fn effects(p: &Project, ui: &SceneUi, g: &Ground) -> Vec<(SceneItem, [f32; 3], String)> {
     let Some(clip) = ui.clip.and_then(|c| p.clip(c)) else { return vec![] };
     clip.tracks
         .iter()
@@ -87,7 +92,10 @@ fn effects(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], String)> {
                 .iter()
                 .enumerate()
                 .filter(|(_, v)| ui.time >= v.start - 1e-6 && ui.time <= v.end + 1e-6)
-                .map(|(k, v)| (SceneItem::Vfx { track: t.id, index: k }, v.position, v.vfx.clone()))
+                .map(|(k, v)| {
+                    let at = [v.position[0], v.position[1] + g.height(v.position[0], v.position[2]), v.position[2]];
+                    (SceneItem::Vfx { track: t.id, index: k }, at, v.vfx.clone())
+                })
                 .collect::<Vec<_>>(),
             _ => vec![],
         })
@@ -114,8 +122,8 @@ fn camera_keys(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], [f32; 3],
 }
 
 /// The item under a pixel: an effect's or a camera key's marker within 12 pixels, else the unit whose formation the ground point is in.
-fn pick(e: &Editor, p: &Project, ui: &SceneUi, view: &DocView, x: i32, y: i32) -> Option<SceneItem> {
-    let near = effects(p, ui)
+fn pick(e: &mut Editor, p: &Project, ui: &SceneUi, view: &DocView, g: &Ground, x: i32, y: i32) -> Option<SceneItem> {
+    let near = effects(p, ui, g)
         .into_iter()
         .map(|(i, at, _)| (i, at))
         .chain(camera_keys(p, ui).into_iter().map(|(i, at, _, _)| (i, at)))
@@ -143,7 +151,7 @@ fn pick(e: &Editor, p: &Project, ui: &SceneUi, view: &DocView, x: i32, y: i32) -
 
 impl SceneView {
     /// The viewport's mouse: true when the scene took it.
-    pub fn input(&mut self, e: &mut Editor, ui: &mut SceneUi, create: &mut Create, ev: &ViewportEvent) -> bool {
+    pub fn input(&mut self, e: &mut Editor, ui: &mut SceneUi, create: &mut Create, ground: &Ground, ev: &ViewportEvent) -> bool {
         let Some((p, view)) = scene_doc(e).map(|d| (d.project().clone(), d.view.clone())) else { return false };
         match ev.kind {
             ViewportEventKind::Hover => {
@@ -151,7 +159,7 @@ impl SceneView {
                     create.ghost = ground_point(e, ev.x, ev.y);
                     self.hovered = None;
                 } else {
-                    self.hovered = pick(e, &p, ui, &view, ev.x, ev.y);
+                    self.hovered = pick(e, &p, ui, &view, ground, ev.x, ev.y);
                 }
                 false
             }
@@ -178,7 +186,7 @@ impl SceneView {
                 } else {
                     How::Set
                 };
-                match pick(e, &p, ui, &view, ev.x, ev.y) {
+                match pick(e, &p, ui, &view, ground, ev.x, ev.y) {
                     Some(i) => items::select(e, i, how),
                     None if how == How::Set => e.selection.clear(),
                     None => {}
@@ -191,7 +199,7 @@ impl SceneView {
                     create.stop();
                     return true;
                 }
-                let hit = pick(e, &p, ui, &view, ev.x, ev.y);
+                let hit = pick(e, &p, ui, &view, ground, ev.x, ev.y);
                 if let Some(i) = hit
                     && !items::selected(e).contains(&i)
                 {
@@ -207,7 +215,7 @@ impl SceneView {
     }
 
     /// The box select of a left drag in Select mode: the units whose place is inside (Shift adds, Ctrl takes away).
-    pub fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
+    pub fn box_drag(&mut self, e: &mut Editor, ground: &Ground, from: (i32, i32), to: (i32, i32), done: bool) {
         self.boxed = (!done).then_some((from, to));
         if !done {
             return;
@@ -220,7 +228,7 @@ impl SceneView {
             .iter()
             .filter(|u| {
                 let (at, _) = place_of(&view, u);
-                to_image(e, [at[0], 0.0, at[1]]).is_some_and(|(x, y)| x >= x0 && x <= x1 && y >= y0 && y <= y1)
+                to_image(e, [at[0], ground.height(at[0], at[1]), at[1]]).is_some_and(|(x, y)| x >= x0 && x <= x1 && y >= y0 && y <= y1)
             })
             .map(|u| SceneItem::Unit(u.id))
             .collect();
@@ -234,7 +242,7 @@ impl SceneView {
     }
 
     /// Over the picture: formations, names, paths, the placing ghost, the box, the right click's menu.
-    pub fn overlay(&mut self, e: &mut Editor, ui: &mut SceneUi, create: &mut Create, origin: gui::Vec2, size: gui::Vec2) {
+    pub fn overlay(&mut self, e: &mut Editor, ui: &mut SceneUi, create: &mut Create, ground: &Ground, origin: gui::Vec2, size: gui::Vec2) {
         let Some((p, view)) = scene_doc(e).map(|d| (d.project().clone(), d.view.clone())) else { return };
         if e.viewport.game_view {
             return;
@@ -257,7 +265,7 @@ impl SceneView {
             }
             let (at, f) = place_of(&view, u);
             let corners = footprint(u, at, f);
-            let pts: Vec<gui::Vec2> = corners.iter().filter_map(|c| scr(e, [c[0], 0.0, c[1]])).collect();
+            let pts: Vec<gui::Vec2> = corners.iter().filter_map(|c| scr(e, [c[0], ground.height(c[0], c[1]), c[1]])).collect();
             if pts.len() < 4 {
                 continue;
             }
@@ -271,11 +279,14 @@ impl SceneView {
             let (sin, cos) = f.sin_cos();
             let _ = cos;
             let front = [(corners[2][0] + corners[3][0]) * 0.5, (corners[2][1] + corners[3][1]) * 0.5];
-            if let (Some(a), Some(b)) = (scr(e, [front[0], 0.0, front[1]]), scr(e, [front[0] + 6.0 * sin, 0.0, front[1] + 6.0 * cos])) {
+            if let (Some(a), Some(b)) = (
+                scr(e, [front[0], ground.height(front[0], front[1]), front[1]]),
+                scr(e, [front[0] + 6.0 * sin, ground.height(front[0], front[1]), front[1] + 6.0 * cos]),
+            ) {
                 dl.line(a, b, col, 1.5);
             }
             if (sel || hot)
-                && let Some(c) = scr(e, [at[0], 2.0, at[1]])
+                && let Some(c) = scr(e, [at[0], ground.height(at[0], at[1]) + 2.0, at[1]])
             {
                 let label = format!("{}  ·  {} men", u.name, u.men);
                 let tw = gui::calc_text_width(&label);
@@ -289,7 +300,10 @@ impl SceneView {
                 if let TrackContent::Unit { unit, path, .. } = &t.content
                     && selected.contains(&SceneItem::Unit(*unit))
                 {
-                    let pts: Vec<gui::Vec2> = path.iter().filter_map(|k| scr(e, [k.position[0], 0.0, k.position[1]])).collect();
+                    let pts: Vec<gui::Vec2> = path
+                        .iter()
+                        .filter_map(|k| scr(e, [k.position[0], ground.height(k.position[0], k.position[1]), k.position[1]]))
+                        .collect();
                     dl.polyline(&pts, gui::col32(255, 230, 120, 170), false, 1.5);
                     for (q, key) in pts.iter().zip(path) {
                         let on = (key.t - ui.time).abs() < 1e-3;
@@ -303,7 +317,7 @@ impl SceneView {
             }
         }
         // The effects alive at the playhead.
-        for (item, at, name) in effects(&p, ui) {
+        for (item, at, name) in effects(&p, ui, ground) {
             let Some(c) = scr(e, at) else { continue };
             let sel = selected.contains(&item);
             let col = if sel { gui::col32(255, 230, 120, 255) } else { gui::col32(200, 160, 255, 220) };
@@ -351,18 +365,21 @@ impl SceneView {
                             general: false,
                         };
                         let corners = footprint(&ghost, g, f);
-                        let pts: Vec<gui::Vec2> = corners.iter().filter_map(|c| scr(e, [c[0], 0.0, c[1]])).collect();
+                        let pts: Vec<gui::Vec2> = corners.iter().filter_map(|c| scr(e, [c[0], ground.height(c[0], c[1]), c[1]])).collect();
                         if pts.len() == 4 {
                             dl.concave_poly_filled(&pts, gui::col32(255, 230, 120, 60));
                             dl.polyline(&pts, gui::col32(255, 230, 120, 230), true, 2.0);
                         }
                         let (sin, cos) = f.sin_cos();
-                        if let (Some(a), Some(b)) = (scr(e, [g[0], 0.0, g[1]]), scr(e, [g[0] + 14.0 * sin, 0.0, g[1] + 14.0 * cos])) {
+                        if let (Some(a), Some(b)) = (
+                            scr(e, [g[0], ground.height(g[0], g[1]), g[1]]),
+                            scr(e, [g[0] + 14.0 * sin, ground.height(g[0], g[1]), g[1] + 14.0 * cos]),
+                        ) {
                             dl.line(a, b, gui::col32(255, 230, 120, 230), 2.0);
                         }
                     }
                     Making::Vfx(_) => {
-                        if let Some(c) = scr(e, [g[0], 0.0, g[1]]) {
+                        if let Some(c) = scr(e, [g[0], ground.height(g[0], g[1]), g[1]]) {
                             dl.circle_filled(c, 8.0, gui::col32(200, 160, 255, 120));
                         }
                     }

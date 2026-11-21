@@ -147,7 +147,15 @@ impl Preview {
     }
 
     /// The scene at `frame` in the viewport: units, ground, weather and (when following) the camera.
-    pub fn update(&mut self, e: &mut Editor, doc: DocumentId, project: &Project, frame: &SceneFrame) {
+    /// `ground`: the real ground's height at a point (metres; none: the flat grass, at 0).
+    pub fn update(
+        &mut self,
+        e: &mut Editor,
+        doc: DocumentId,
+        project: &Project,
+        frame: &SceneFrame,
+        ground: Option<&dyn Fn(f32, f32) -> f32>,
+    ) {
         let scripted = e.scripted_input();
         self.load_catalog(e);
         self.poll(scripted);
@@ -165,7 +173,11 @@ impl Preview {
 
         // The ground: as wide as the playable area (at least 1 km).
         let half = (project.map.playable_area * 0.5).max(1000.0) as u32;
-        if self.ground.is_none_or(|(id, h)| h != half || e.scene.find(id).is_none()) {
+        if ground.is_some() {
+            if let Some((id, _)) = self.ground.take() {
+                e.scene.remove(id);
+            }
+        } else if self.ground.is_none_or(|(id, h)| h != half || e.scene.find(id).is_none()) {
             if let Some((id, _)) = self.ground.take() {
                 e.scene.remove(id);
             }
@@ -243,7 +255,10 @@ impl Preview {
                 for (k, [x, z]) in formation(s.men, land.rank_depth, land.spacing).into_iter().enumerate() {
                     let variation = (k * 7) % models.len();
                     let pose = poses.entry((used.clone(), variation)).or_insert_with(|| models[variation].instances(anim_t, true));
-                    let man = place * translation(Float3::new(x / units, 0.0, z / units));
+                    let mut man = place * translation(Float3::new(x / units, 0.0, z / units));
+                    if let Some(h) = ground {
+                        man.m[1][3] = h(man.m[0][3] * units, man.m[2][3] * units) / units;
+                    }
                     for f in pose.iter() {
                         let mut world = man;
                         let scale = f.scale / units;
@@ -294,7 +309,8 @@ impl Preview {
                 e.scene.remove(id);
             }
             for (k, v) in wanted_vfx.into_iter().zip(&shown) {
-                let world = translation(Float3::new(v.position[0] / units, v.position[1] / units, v.position[2] / units))
+                let lift = ground.map_or(0.0, |h| h(v.position[0], v.position[2]));
+                let world = translation(Float3::new(v.position[0] / units, (v.position[1] + lift) / units, v.position[2] / units))
                     * rotation_y(v.rotation_y);
                 let payload = Payload::VfxEmitter(VfxEmitter { effect: v.vfx.clone(), scale: v.scale / units, mesh: None });
                 let id = e.scene.add(layer, world, payload, SourceRef { doc, item: 2 });
