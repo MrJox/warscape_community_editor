@@ -48,9 +48,6 @@ pub(crate) enum Gesture {
     /// A vegetation brush stroke: its trees planted or taken away so far, put into the tile when it ends.
     VegStroke(Stroke),
 
-    /// A ground coverage brush stroke (its rocks and plants so far: `CoverageUi::stroke`), put into the tile when it ends.
-    CoverageStroke,
-
     /// An area brush stroke (its dabs so far: `AreaBrushUi::stroke`), put into the tile when it ends.
     AreaStroke,
 
@@ -99,7 +96,7 @@ impl Gesture {
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Grab(_) => "the grab",
-            Self::TerrainStroke | Self::VegStroke(_) | Self::CoverageStroke | Self::AreaStroke => "the brush stroke",
+            Self::TerrainStroke | Self::VegStroke(_) | Self::AreaStroke => "the brush stroke",
             Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } => "the handle drag",
             Self::AltRotate(_) => "the rotation",
         }
@@ -141,11 +138,6 @@ impl TileTool {
             None => return,
             Some(Gesture::VegStroke(stroke)) => {
                 self.status = self.commit_veg_stroke(e, id, stroke);
-                return;
-            }
-
-            Some(Gesture::CoverageStroke) => {
-                self.status = self.end_coverage_stroke(e).unwrap_or_else(|err| err);
                 return;
             }
 

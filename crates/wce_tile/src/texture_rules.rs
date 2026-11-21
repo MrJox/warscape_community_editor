@@ -167,7 +167,7 @@ impl AreaMask {
     /// 1 inside past the edge band, 0 outside, smoothly between.
     #[must_use]
     pub fn weight(&self, x: f32, z: f32) -> f64 {
-        if self.points.len() < 3 || !crate::ground_coverage::inside(&self.points, x, z) {
+        if self.points.len() < 3 || !crate::placing::inside(&self.points, x, z) {
             return 0.0;
         }
 

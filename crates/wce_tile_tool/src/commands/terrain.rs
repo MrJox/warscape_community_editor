@@ -557,43 +557,6 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "ground_coverage",
-        "ground_coverage <preview|generate> <cliffs|coast|riverbank|shores|buildings> <preset|-> [seed] | window [simple | advanced] | close",
-        "the ground coverage's window from a script: a kind's preset (Default: the built-in one; -: the tile's last run, else the kind's last preset), then Preview (prints the summary, draws it) or Generate (replaces the kind's group in \"(AUTOGEN) Ground Coverage\" without asking)",
-        |e, a| {
-            if a.first().is_some_and(|w| w == "close") {
-                return with_tile(e, |t, _| {
-                    t.close_coverage();
-                    ok("ground coverage's window closed")
-                });
-            }
-
-            if a.first().is_some_and(|w| w == "window") {
-                let mode = a.get(1).cloned();
-                return with_tile(e, |t, _| {
-                    t.open_coverage();
-                    if let Some(m) = mode {
-                        t.coverage.advanced = m == "advanced";
-                    }
-
-                    ok("ground coverage's window open")
-                });
-            }
-
-            let (Some(what), Some(kind), Some(preset)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
-                return fail("usage: ground_coverage <preview|generate> <cliffs|coast|riverbank|shores|buildings> <preset|-> [seed] | window [simple | advanced]");
-            };
-
-            let Some(kind) = wce_tile::ground_coverage::Kind::from_name(&kind) else {
-                return fail("the kind is cliffs, coast, riverbank, shores or buildings");
-            };
-
-            let seed = a.get(3).and_then(|s| s.parse::<u64>().ok());
-            with_tile(e, |t, e| t.coverage_for_script(e, &what, kind, &preset, seed).map_or_else(fail, ok))
-        },
-    );
-
-    c.add(
         "biome_area",
         "biome_area <biome> <x m> <z m> <x m> <z m> <x m> <z m>...",
         "an area of a biome (a preset's or a built-in one's name; quoted when it has spaces) drawn through ground points: the tile takes the biome in, the area is a vegetation exclusion polygon with wce_biome",
@@ -869,41 +832,6 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             }
         },
     );
-
-    c.add(
-        "ground_coverage_brush",
-        "ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...",
-        "one stroke of the ground coverage's brush through ground points (a dab at each), with the window's kind and values (ground_coverage picks them): painting puts the kind's rocks and plants into its Brushed group, erasing takes its coverage away",
-        |e, a| {
-            let usage = "usage: ground_coverage_brush <paint|erase> <radius m> <x m> <z m> [<x m> <z m>]...";
-            let (Some(what), Some(radius)) = (a.first().cloned(), a.get(1).and_then(|v| number(v))) else { return fail(usage) };
-            let pts =
-                a[2..].chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
-            if pts.is_empty()
-                || a.len() % 2 != 0
-                || pts.iter().any(|p| p.0.is_none() || p.1.is_none())
-                || !matches!(what.as_str(), "paint" | "erase")
-            {
-                return fail(usage);
-            }
-
-            let pts = pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).collect::<Vec<_>>();
-            with_tile(e, |t, e| t.coverage_stroke_for_script(e, what == "erase", radius, &pts).map_or_else(fail, ok))
-        },
-    );
-
-    c.add("veg_set_save", "veg_set_save <name>", "save the new vegetation set under a name", |e, a| {
-        let Some(name) = a.first().cloned() else { return fail("usage: veg_set_save <name>") };
-        with_tile(e, |t, e| {
-            t.scratch_name = name;
-            t.save_new_set(e).map_or_else(fail, ok)
-        })
-    });
-
-    c.add("veg_set", "veg_set <name>", "place or paint the trees of a vegetation set (as its Create panel entry)", |e, a| {
-        let Some(name) = a.first().cloned() else { return fail("usage: veg_set <name>") };
-        with_tile(e, |t, e| crate::create_panel::make_set_for_script(t, e, &name).map_or_else(fail, |()| ok("")))
-    });
 
     c.add(
         "veg_paint",

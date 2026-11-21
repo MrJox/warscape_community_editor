@@ -89,8 +89,11 @@ pub(crate) struct Inputs {
     hash: u64,
 }
 
-/// The categories of the real buildings the rules measure to (the ground coverage's: not rocks, props or ground pieces).
-const BUILDING_CATEGORIES: [&str; 6] = wce_tile::ground_coverage::AVOIDED_CATEGORIES;
+/// The layer the ground coverage (shelved 2026-11-21) put its rocks in: buildings, but not real ones, in tiles made with it.
+const COVERAGE_LAYER: &str = "(AUTOGEN) Ground Coverage";
+
+/// The categories of the real buildings the rules measure to (not rocks, props or ground pieces).
+const BUILDING_CATEGORIES: [&str; 6] = wce_tile::placing::AVOIDED_CATEGORIES;
 
 fn fnv(h: &mut u64, bytes: &[u8]) {
     for &b in bytes {
@@ -184,7 +187,7 @@ impl Tile {
     /// The real buildings (as the rules' distances take them): x, z, radius, world metres.
     pub(super) fn texture_rules_buildings(&self) -> Vec<[f64; 3]> {
         let sc = self.tscene();
-        let coverage = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == super::ground_coverage::COVERAGE_LAYER);
+        let coverage = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == COVERAGE_LAYER);
         let kit = self.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project.dir));
         self.instances()
             .iter()

@@ -611,13 +611,10 @@ pub struct TileTool {
     /// the item left out. Made again only when one of those changes, not on every frame the mouse moves.
     snap_outlines: std::cell::RefCell<Option<((DocumentId, u64, u64, Option<usize>), Arc<Vec<(Vec<Float3>, bool)>>)>>,
 
-    /// The ground coverage's window.
-    pub(crate) coverage: crate::ground_coverage_panel::CoverageUi,
-
     /// The texture rules' window.
     pub(crate) rules_ui: crate::texture_rules_panel::RulesUi,
 
-    /// The selection when the texture rules, a biome or the ground coverage were shown in the Inspector: another one shows it instead.
+    /// The selection when the texture rules or a biome were shown in the Inspector: another one shows it instead.
     pub(crate) detail_selection: Option<u64>,
 
     /// The key lists' pictures and picker (`key_picker.rs`).
@@ -1024,7 +1021,6 @@ impl Default for TileTool {
             share_notice_open: false,
             scratch_set: None,
             scratch_name: String::new(),
-            coverage: Default::default(),
             rules_ui: Default::default(),
             detail_selection: None,
             key_picker: Default::default(),
@@ -2298,18 +2294,15 @@ impl TileTool {
         let veg = self.placing == Some(Placing::Draft)
             && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE")
             && self.veg.is_some_and(|b| b.on);
-        let coverage = self.coverage_brushing(e);
         let biome = self.area_painting(e);
         let radius = if veg {
             self.veg.map_or(1.0, |b| b.radius)
-        } else if coverage {
-            self.coverage_radius()
         } else if biome {
             self.area_radius()
         } else {
             self.brush.radius_m
         };
-        if (self.mode != TileMode::Select || veg || coverage || biome) && self.terrain_hit && e.viewport.hovered {
+        if (self.mode != TileMode::Select || veg || biome) && self.terrain_hit && e.viewport.hovered {
             let n = 64;
             let mut prev = Float3::default();
             for i in 0..=n {
@@ -2411,10 +2404,8 @@ impl TileTool {
             }
         }
 
-        self.coverage_overlay(d, &mut o);
         self.area_brush_overlay(&mut o);
         self.rules_overlay(d, &mut o);
-        self.coverage_brush_overlay(d, e.viewport.hovered, &mut o);
 
         if t.display().show_border {
             let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
@@ -3068,19 +3059,6 @@ impl TileTool {
         gui::separator();
         self.draw_problems_section(e, id);
         gui::separator();
-        gui::separator();
-        if gui::collapsing_header("Experimental", 0) {
-            if gui::button(&format!("{}  Ground coverage...", icons::MOUNTAIN)) {
-                self.open_coverage();
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(
-                    "Rocks and plants by the tile's cliffs, coasts and riverbanks, and props around buildings, generated into their own layer",
-                );
-            }
-        }
-
         gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
@@ -4567,15 +4545,6 @@ impl TileTool {
             return true;
         }
 
-        // The ground coverage's brush (its window in Brush mode) puts the kind's coverage (Ctrl: takes it away).
-        if self.coverage_brushing(e) {
-            if self.terrain_hit {
-                self.begin_coverage_stroke(e, ev.ctrl);
-            }
-
-            return true;
-        }
-
         // The vegetation brush paints (Ctrl: takes away) instead of placing one.
         if self.painting_trees(e) {
             if self.terrain_hit {
@@ -4746,13 +4715,6 @@ impl TileTool {
                 }
             }
 
-            Some(Gesture::CoverageStroke) => {
-                self.on_hover(e, ev);
-                if self.terrain_hit {
-                    self.coverage_dab();
-                }
-            }
-
             Some(Gesture::AreaStroke) => {
                 self.on_hover(e, ev);
                 if self.terrain_hit {
@@ -4831,7 +4793,7 @@ impl TileTool {
     fn on_click(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
         // Placing, drawing or brushing: the click was a point placed or a dab, not a pick (the new building under the mouse would be
         // selected).
-        if self.placing.is_some() || self.drawing || self.coverage_brushing(e) || self.area_painting(e) {
+        if self.placing.is_some() || self.drawing || self.area_painting(e) {
             return true;
         }
 
@@ -5412,7 +5374,6 @@ impl Tool for TileTool {
         self.draw_launch_prompt(e);
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
-        self.draw_coverage_window(e);
     }
 
     fn fixes(&self) -> Vec<std::sync::Arc<dyn wce_editor::fixes::Fix>> {
@@ -5829,7 +5790,6 @@ impl Tool for TileTool {
         self.draw_box_select(origin);
         self.draw_context_menu(e);
         self.context.draw_minimap(e, origin, size);
-        self.coverage_tooltip(e);
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
@@ -6102,7 +6062,6 @@ impl Tool for TileTool {
 
     fn claims_left_button(&self, e: &Editor) -> bool {
         self.flip.is_some()
-            || self.coverage_brushing(e)
             || self.area_painting(e)
             || self.mode != TileMode::Select
             || self.drawing

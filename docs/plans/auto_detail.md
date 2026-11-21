@@ -1,5 +1,8 @@
 # Tile editor: automatic detail (plan, 2026-11-18)
 
+**2026-11-21:** B (clutter around buildings) is shelved with the ground coverage (`feature/shelved_ground_coverage`); A and C stay.
+
+
 Make tiles more detailed with less hand work: the ground textured by rules from the terrain itself, props laid around buildings by what
 they are, and whole biomes painted at once. Three features, in this order, on `feature/auto_detail`:
 
