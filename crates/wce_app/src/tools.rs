@@ -44,12 +44,10 @@ fn placeholders() -> Vec<Box<dyn Tool>> {
     use wce_editor::icons;
     use wce_editor::tool::PlaceholderTool;
 
-    vec![
-        Box::new(PlaceholderTool::new(
-            "cinematic",
-            "Cinematic",
-            icons::CLAPPERBOARD,
-            "Keyframed scene composition and movie recording over PropertyPaths, with a camera rig, a second viewport and PNG sequence export.",
-        )),
-    ]
+    vec![Box::new(PlaceholderTool::new(
+        "cinematic",
+        "Cinematic",
+        icons::CLAPPERBOARD,
+        "Keyframed scene composition and movie recording over PropertyPaths, with a camera rig, a second viewport and PNG sequence export.",
+    ))]
 }
