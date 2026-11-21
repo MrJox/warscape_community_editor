@@ -10,12 +10,17 @@ use rpfm_lib::files::rigidmodel::RigidModel;
 /// h - j, `lakes/22x32_rauros`' mesh covers 669 of its 682 cells as its mask has them so, 511 the other way); None where no triangle covers a
 /// sample (the mask's left-out squares). None when the model has no such block.
 ///
-/// Where triangles overlap (x, z) the lowest is taken. Rauros' mesh has 943 triangles fanning from a few vertices across the tile, over
-/// the lake at the land's height and alone over the cells its ground leaves out (its west strip, the stair south of the lake): taken
-/// whole they covered the lake, left out the trench and the stair stood at the LF or the map's minimum. The lowest matches the game's
-/// ground (RenderDoc, capture T1, its depth against the editor's rays: 202.4 / 203.3 m, 201.1 / 199.5 m, the west strip 226.7 / 225.8 m;
-/// 8 m off on the steep shore). ASSUMPTION: the reason (the game's height texture made from the mesh with a less-than depth test) is not
-/// traced.
+/// The meshes hold long triangles fanning from a few vertices across the tile (Rauros' 943, Thrones' `vik_snowdonia_01` alike): not
+/// ground the game shows (over Rauros' lake they lie at the land's height; taking the lowest of every triangle, Snowdonia's plateau sank
+/// to the fans: a crater), so those longer than `LONGEST_EDGE` are left out; where the others overlap the highest is the ground (the
+/// visible top). The samples none covers next to ground (Rauros' west strip, the stair south of its lake) take their covered
+/// neighbours' heights, spreading inward up to `FILL_PASSES` samples (`fill_from_neighbours`); farther ones stay uncovered.
+/// The longest edge (x, z) of a triangle taken (the ground's are a cell or less; Rauros' 16246: all but 29 up to 128).
+const LONGEST_EDGE: f64 = 512.0;
+
+/// How far (samples) the heights of the covered samples spread into those no triangle covers: two cells at 4 m a sample.
+const FILL_PASSES: usize = 64;
+
 pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool) -> Option<Vec<Option<f32>>> {
     let block = model.lods().first()?.mesh_blocks().first()?;
     let mesh = block.mesh();
@@ -28,7 +33,8 @@ pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool
     for t in idx.chunks_exact(3) {
         let (Some(a), Some(b), Some(c)) = (verts.get(t[0]), verts.get(t[1]), verts.get(t[2])) else { continue };
         let det = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
-        if det.abs() < 1e-12 {
+        let edge = |p: &[f64; 3], q: &[f64; 3]| (p[0] - q[0]).hypot(p[2] - q[2]);
+        if det.abs() < 1e-12 || edge(a, b).max(edge(b, c)).max(edge(c, a)) > LONGEST_EDGE {
             continue;
         }
 
@@ -63,7 +69,7 @@ pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool
 
                 let y = (l1 * a[1] + l2 * b[1] + l3 * c[1]) as f32;
                 let o = &mut out[row * w + i];
-                *o = Some(o.map_or(y, |v: f32| v.min(y)));
+                *o = Some(o.map_or(y, |v: f32| v.max(y)));
             }
         }
     }
@@ -100,7 +106,50 @@ pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool
         }
     }
 
+    fill_from_neighbours(&mut out, w, h, FILL_PASSES);
     Some(out)
+}
+
+/// Fills the samples with none next to ones with a value, a layer at a time (each the mean of its neighbours with one), `passes` layers.
+fn fill_from_neighbours(out: &mut [Option<f32>], w: usize, h: usize, passes: usize) {
+    let neighbours = |k: usize| {
+        let (i, j) = (k % w, k / w);
+        [(i > 0).then(|| k - 1), (i + 1 < w).then(|| k + 1), (j > 0).then(|| k - w), (j + 1 < h).then(|| k + w)]
+    };
+    let mut frontier: Vec<usize> =
+        (0..w * h).filter(|&k| out[k].is_none() && neighbours(k).iter().flatten().any(|&n| out[n].is_some())).collect();
+    let mut queued = vec![false; w * h];
+    for &k in &frontier {
+        queued[k] = true;
+    }
+
+    for _ in 0..passes {
+        if frontier.is_empty() {
+            break;
+        }
+
+        let values: Vec<Option<f32>> = frontier
+            .iter()
+            .map(|&k| {
+                let near: Vec<f32> = neighbours(k).iter().flatten().filter_map(|&n| out[n]).collect();
+                (!near.is_empty()).then(|| near.iter().sum::<f32>() / near.len() as f32)
+            })
+            .collect();
+        for (&k, v) in frontier.iter().zip(&values) {
+            out[k] = *v;
+        }
+
+        let mut next = vec![];
+        for &k in &frontier {
+            for n in neighbours(k).into_iter().flatten() {
+                if out[n].is_none() && !queued[n] {
+                    queued[n] = true;
+                    next.push(n);
+                }
+            }
+        }
+        frontier = next;
+    }
 }
 
 /// How many passes fill a seam (each closes a sample from both sides).
