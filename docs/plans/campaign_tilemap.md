@@ -539,3 +539,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   the view (a half-plane on its direction by eighths, in the rebuild key), the props' radius behind. F: 69 858 trees handed to the
   renderer (culled there; 1 106 before), the far land wooded as the game's; T1 (TDD) 72 373. Left: its CPU and GPU cost, not
   measured (the user's machine busy): an idle run of `perf` at captures A and F against `TREE_REACH` 0.
+- **Thrones, first look (2026-11-21, no Thrones campaign capture yet):** `vik_attila_map` opens in the Terrain tool (1616 x 1801
+  cells, 400 596 placements, LF 12928 x 14408, 3 115 `.terry` entities; the far material in 45 s; 24 057 trees near the default
+  camera), drawn with the borders, forests, settlements and far ground. Seen: white wedges in the sea beside the cliff tiles (cells
+  (802, 858), (823, 872): a `cliff_custom\6x4_diag_right_l0_r2` and a `sea\2x2` over land LF of 10 - 14 m; the cell counts as sea, so
+  the sea's surface is shaded there over land: white in the final image, black (sea) in the albedo view). Not compared: what the
+  game draws in those cells, and everything else of Phase 6, until captures V1 (a coast at a middle zoom: the Welsh coast by the
+  Irish Sea, cells about (800, 860)) and V2 (a settlement close) exist.
