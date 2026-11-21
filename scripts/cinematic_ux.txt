@@ -95,4 +95,6 @@ scene_sample
 frames 4
 assert_count units 10
 assert_count effects 2
+# Launch in game, dry: the launch pack in the build folder, the game to start from the battle's own XML.
+scene_launch --dry-run
 quit

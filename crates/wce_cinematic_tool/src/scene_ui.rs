@@ -63,6 +63,8 @@ pub struct SceneUi {
     pub request_duplicate: bool,
     pub outliner_filter: String,
     pub outliner_hovered: bool,
+    /// The viewport's launch chip was clicked.
+    pub launch_request: Option<bool>,
     /// The window picking the battle's place on its map.
     pub map_pick: crate::map_pick::MapPicker,
     /// A unit being dragged on the Layout: its start when the drag began.

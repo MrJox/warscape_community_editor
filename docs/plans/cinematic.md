@@ -312,9 +312,13 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 The official pipeline makes a historical battle's map in TEd (vanilla's `terrain/battles/<name>/`: a tile map of tiles) and its
 setup in the battle XML; the Lua is written apart. What the Tile tool has that would serve the scene, by worth:
 
-1. **Launch in game** (`wce_launch`, the Tile tool's launch prompt): start the exported battle straight from the editor
-   (`game_startup_mode battle script/<key>/<key>_battle.xml`, the pack delivered as the tile launches are). The in-game tests then
-   cost one click. High.
+1. **Launch in game** (`wce_launch`): start the exported battle straight from the editor. **done** (2026-11-21, `launch.rs`): the
+   battle's pack (scripts, tables, loc, without the menu picture) as `data\wce_launch.pack` with the editor's marker, the mods
+   chosen in the editor after it, `game_startup_mode battle script/<key>/<key>_battle.xml` (its own XML: the start script is
+   named relative to it, so not the tiles' `script/wce/wce_launch.xml`); the checks of the Tile and Terrain tools' launches (the
+   game not running, Steam running, stray movie-type packs: a question with Launch anyway); the pack removed when the game exits.
+   The viewport's launch chip, File > Export > Launch the battle in game, `scene_launch [--dry-run] [--ignore-movie-packs]`
+   (the gate's dry run: the pack in the build folder). In game: **todo** (the user).
 2. **The ground** (`wce_map_view::MapView`, the Map context): the campaign map at the battle's position, a whole battle map, or the
    battle tile, streamed under the units instead of the flat grass; the preview, the movie and the 512 x 256 picture all see it. High
    (step 4's last part).

@@ -5,6 +5,7 @@ mod export;
 mod frames;
 mod inspect;
 mod items;
+mod launch;
 mod logic_ui;
 mod map_pick;
 mod movie_tools;
