@@ -14,7 +14,8 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done; H done; I done. The whole plan is built; its look on kit tiles and in game is the user's.
 
 **Shelved (2026-11-21, the user's call after a look): D (erosion) and I (districts)** are taken out of this branch; they stay as built on
-`feature/shelved_erosion_districts`. Not to be brought back without the user. What stays of D: the texture rules' and decal rules'
+`feature/shelved_erosion_districts`. Not to be brought back without the user. **H (paths)** too, the same day (less control than drawing a procedural
+road): kept with its zigzag fix on `feature/shelved_paths`. What stays of D: the texture rules' and decal rules'
 *Water flow* condition, worked out from the heights (`texture_rules::flow_of`); *Deposit* went with the erosion. A tile saved with an
 erosion layer drops it when opened (`terrain_layers::RETIRED_OWNERS`).
 
