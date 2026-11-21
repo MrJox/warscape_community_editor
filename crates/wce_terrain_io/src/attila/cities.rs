@@ -203,6 +203,13 @@ pub(crate) fn leaf<'a>(group: &'a [NodeType], after: Option<&str>, n: usize) -> 
     group[start..].iter().take_while(|c| after.is_some() || as_record(c).is_none()).filter(|c| as_record(c).is_none()).nth(n - 1)
 }
 
+/// A main slot's building of a major settlement, which the game walls and whose sprawl levels it draws (fn 0x10a60880; ASSUMPTION:
+/// its region is its province's capital, read here from the building: Attila's and TDD's `_major_` chains, Thrones' great halls,
+/// `vik_great_hall_<n>`, one in each of its 33 provinces; capture V2: Anglesey's walled).
+fn is_major(building: &str) -> bool {
+    building.contains("_major_") || building.contains("great_hall")
+}
+
 /// A `FACTION` record group's key: its first text (Attila's and TDD's `^+2`; Thrones' after a `CAMPAIGN_EFFECT_BUNDLES` record, which
 /// comes between the runtime id and the key: read as `^+2`, every Thrones faction had no key, as the rebels, and its map no borders).
 pub(crate) fn faction_key(group: &[NodeType]) -> Option<&str> {
@@ -469,7 +476,9 @@ impl DisplayTables {
             let model = Some(get(&r, "building_model_id")).filter(|m| !m.is_empty()).unwrap_or_else(|| get(&r, "key"));
             let row = [get(&r, "faction"), get(&r, "sub_culture"), get(&r, "culture"), model];
             let piece = get(&r, "sprawl_piece_type");
-            if !piece.is_empty() {
+            // An abandoned settlement's pieces (Thrones' `wall_14_abandoned_generic_lvl_1`: ruins) are not a held one's: by faction and
+            // culture as empty as the held one's row before them, the walls of every capital were ruins (capture V2: Aberffro).
+            if !piece.is_empty() && !get(&r, "key").contains("abandoned") {
                 t.sprawl.entry((piece, get(&r, "sprawl_piece_level").parse().unwrap_or(0))).or_default().push(row.clone());
             }
 
@@ -724,7 +733,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             // by the step its slot was linked at, else 1); the building's tier plays no part. Not drawn: the cells the game's path
             // search between the slots adds (fn 0x10a4cfe0, not decoded; capture A: none to four a settlement).
             let faction = owner.clone();
-            let capital = kinds.iter().any(|(k, b, _)| k == "primary" && b.as_deref().is_some_and(|b| b.contains("_major_")));
+            let capital = kinds.iter().any(|(k, b, _)| k == "primary" && b.as_deref().is_some_and(is_major));
             // Per sprawl cell: the zones' slots, the map's road and river edges, their union.
             let mut cell_info: HashMap<(u16, u16), (i64, i64, i64, i64)> = HashMap::new();
             if let Some(blocks) = expansion.and_then(|d| child(d, "SPRAWL_BLOCK")) {
@@ -839,12 +848,15 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                 .iter()
                 .rev()
                 .take_while(|s| s.region == key)
-                .any(|s| s.index == 0 && s.building.as_deref().is_some_and(|b| b.contains("_major_")));
+                .any(|s| s.index == 0 && s.building.as_deref().is_some_and(is_major));
             let walks: Vec<Vec<(u16, u16)>> =
                 exp_slots.iter().filter(|s| ringed.contains(&s.index) && !s.walk.is_empty()).map(|s| s.walk.clone()).collect();
             let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| (0..32).any(|k| i.0 & (1 << k) != 0 && ringed.contains(&k)));
             let outer = |c: (u16, u16)| (0..6).any(|d| !hex_neighbour(c, d).is_some_and(inside));
-            let on_wall: std::collections::HashSet<(u16, u16)> = walks.iter().flatten().copied().filter(|&c| outer(c)).collect();
+            // Not on water (fn 0x10b2a7e0 draws a wall cell that is active and not water): a port's zone rings the harbour, where the game
+            // has no wall (capture V2, Aberffro's ring stood in the sea).
+            let on_wall: std::collections::HashSet<(u16, u16)> =
+                walks.iter().flatten().copied().filter(|&c| outer(c) && !water(c)).collect();
             if walled && !on_wall.is_empty() {
                 // A wall's cell keeps its sprawl (capture A, Rome: `roman_sprawl_edge_14_lvl2` and a wall on one cell), its piece's
                 // shape traced again from the cell's road and river edges and the wall's two (fn 0x10a7c610: the hex's road shape
