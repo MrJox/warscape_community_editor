@@ -252,12 +252,17 @@ struct Shared {
 /// How long the edits must pause for the far material to be baked again over their cells.
 const FAR_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// Placements the far bake's tiles are opened ahead of its painting by at most (`Shared::open_ahead`): a few hundred tiles, well inside
-/// the tiles' memory.
-const OPEN_AHEAD: usize = 8192;
+/// Tiles the far bake opens ahead of its painting at most (`Shared::open_ahead`): about 1 GB at a campaign tile's 7.7 MB, within the
+/// bake's own set when the workers' is full (`BAKE_BUDGET`).
+const OPEN_AHEAD: usize = 128;
 
 /// The side of a campaign map's far material (the game's is 8192: `FarMap`).
 pub const FAR_MAP_SIZE: u32 = 4096;
+
+thread_local! {
+    /// A far-bake prefetch thread's own one-thread pool: its tile opens with its inner loops in a row (`Shared::open_ahead`).
+    static SOLO: std::cell::OnceCell<rayon::ThreadPool> = const { std::cell::OnceCell::new() };
+}
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
@@ -337,31 +342,48 @@ impl Shared {
     }
 
     /// Calls `each` with the placements in order, their tiles opened ahead of it side by side ([`BlockSource::open_ahead`]): threads of
-    /// its own take the next placement, at most [`OPEN_AHEAD`] past the one `each` is at (the tiles' memory), the opening in the pool
-    /// as the workers' (not pool threads waiting on each other's tiles: see `worker`). In batches each waited for its slowest tile, the
-    /// pool mostly idle.
+    /// its own take the next tile in the order the placements first use them, at most [`OPEN_AHEAD`] tiles past the one `each` is at
+    /// (the tiles' memory), the opening in the pool as the workers' (not pool threads waiting on each other's tiles: see `worker`). In
+    /// batches each waited for its slowest tile; by placements (8 192 ahead, a few dozen tiles) one slow tile held the painting while
+    /// the threads, at the window's end or on each other's tiles, slept: 35 to 55 % of the cores.
     fn open_ahead(&self, frame: &Frame, set: &TileSet, ids: &[usize], each: &mut dyn FnMut(usize) -> bool) {
+        // Each tile once, at the first placement that uses it (by position in `ids`); custom-mesh ones are not read for the bake.
+        let mut seen = std::collections::HashSet::new();
+        let firsts: Vec<(usize, usize)> = ids
+            .iter()
+            .enumerate()
+            .filter(|&(_, &i)| seen.insert(Self::tile_key(frame, i)) && !self.is_custom(frame, i))
+            .map(|(k, &i)| (k, i))
+            .collect();
+        drop(seen);
         let (next, at, done) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicBool::new(false));
-        let threads = self.pool.current_num_threads().min(ids.len());
+        let threads = self.pool.current_num_threads().min(firsts.len());
         std::thread::scope(|sc| {
             for _ in 0..threads {
                 sc.spawn(|| {
                     wce_foundation::jobs::lower_thread_priority();
+                    // Its tiles open with their inner loops in a row (`SOLO`): split across the pool as well, the threads mostly
+                    // waited on each other's halves (45 % of the cores, the bake 44 s; 85 %, 27 s so).
+                    SOLO.with(|solo| {
+                        if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(1).build() {
+                            let _ = solo.set(pool);
+                        }
+                    });
                     loop {
-                        let k = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(&i) = ids.get(k) else { break };
-                        while k > at.load(Ordering::Relaxed) + OPEN_AHEAD {
+                        let t = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(&(_, i)) = firsts.get(t) else { break };
+                        // The tiles the painting has reached: those first used at or before its placement.
+                        loop {
                             if done.load(Ordering::Relaxed) || self.stop.load(Ordering::Relaxed) {
                                 return;
                             }
+                            let reached = firsts.partition_point(|&(k, _)| k <= at.load(Ordering::Relaxed));
+                            if t <= reached + OPEN_AHEAD {
+                                break;
+                            }
                             std::thread::sleep(std::time::Duration::from_millis(2));
                         }
-                        if done.load(Ordering::Relaxed) || self.stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        if !self.is_custom(frame, i) {
-                            self.bake_tile(frame, set, i);
-                        }
+                        self.bake_tile(frame, set, i);
                     }
                 });
             }
@@ -453,9 +475,13 @@ impl Shared {
         let own_params = own_root.parent().and_then(wce_tile::vegetation::kit_params_dir).is_some();
         let game_kit = self.rq.game_kit.as_deref().filter(|_| !own_params);
         let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees, game_kit)));
-        let (result, cached) = self.pool.install(|| match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
+        let load = || match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),
             None => (load_any_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
+        };
+        let (result, cached) = SOLO.with(|solo| match solo.get() {
+            Some(pool) => pool.install(load),
+            None => self.pool.install(load),
         });
 
         // The bake is not cached: it takes a fraction of what reading the template does, and follows the textures.
