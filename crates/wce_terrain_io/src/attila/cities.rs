@@ -342,6 +342,33 @@ fn expansion_order(slots: &[ExpansionSlot], steps: usize, region: &str) -> Vec<u
     order
 }
 
+/// A sprawl cell's level at the start (fns 0x10a56c50, 0x10a56d10, 0x10a1bd60; docs/re/terry.md, "Settlements at the start"): each
+/// step after the first levels the zones of the slots linked so far, before it links its own; in a capital (fn 0x10a60880: the
+/// editor's `_major_` settlements) a cell whose slot is linked draws `1 + [r < 0.75] + [r' < 0.1]` and keeps the highest, so a zone
+/// draws once a later step: the main slot's and the port's every step, the last slot linked's never (level 1). RenderDoc, capture A:
+/// Rome, Mediolanum, Lugdunum, Ravenna and Londinium, one zone at level 1 in each (the last linked), the others' cells at 2 and 3.
+/// The draws are the campaign's shared random state's: DEVIATION, the same draws on a seed of the region's key, the cell and the step.
+/// `linked_at`: the step the cell's slot was linked at (0 the main slot and the port); `steps`: the secondary slots linked.
+fn sprawl_level(region: &str, cell: (u16, u16), linked_at: usize, steps: usize, capital: bool) -> u32 {
+    if !capital {
+        return 1;
+    }
+    let mut level = 1;
+    for step in linked_at + 1..=steps {
+        let seed = region
+            .bytes()
+            .chain(u32::from(cell.0).to_le_bytes())
+            .chain(u32::from(cell.1).to_le_bytes())
+            .chain((step as u32).to_le_bytes())
+            .fold(0x811c_9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+        let a = seed.wrapping_mul(0x343fd).wrapping_add(0x0026_9ec3);
+        let b = a.wrapping_mul(0x343fd).wrapping_add(0x0026_9ec3);
+        let r = |x: u32| ((x >> 16) & 0xffff) as f32 / 65535.0;
+        level = level.max(1 + u32::from(r(a) < 0.75) + u32::from(r(b) < 0.1));
+    }
+    level
+}
+
 /// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
 /// `SLOT_MAP_DATA`, the main slot and the port, and its `SECONDARY_SLOT_ARRAY`'s): the slot's index (the leading u32) -> its cell.
 pub(crate) fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
@@ -687,11 +714,11 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             }
 
             // The sprawl: the cells of the linked slots' zones (their bit in `zone_slots`: the startpos's slot index), not a footprint's,
-            // the piece the cell's road or coast shape names, turned by its rotation, at level 1: a new campaign levels each step's
-            // zone before it links the step's slot (fn 0x10a1bd60), and a sprawl hex is of one zone, so only the cells its path search
-            // reaches again (fn 0x10a1bad0) draw 1 to 3 in a capital; the building's tier plays no part. Not drawn: those paths' cells
-            // (fn 0x10a4cfe0, not decoded; capture A: none to four a settlement, Rome's at level 2 on some cells).
+            // the piece the cell's road or coast shape names, turned by its rotation, at its level (`sprawl_level`: in a capital 1 to 3
+            // by the step its slot was linked at, else 1); the building's tier plays no part. Not drawn: the cells the game's path
+            // search between the slots adds (fn 0x10a4cfe0, not decoded; capture A: none to four a settlement).
             let faction = owner.clone();
+            let capital = kinds.iter().any(|(k, b, _)| k == "primary" && b.as_deref().is_some_and(|b| b.contains("_major_")));
             // Per sprawl cell: the zones' slots, the map's road and river edges, their union.
             let mut cell_info: HashMap<(u16, u16), (i64, i64, i64, i64)> = HashMap::new();
             if let Some(blocks) = expansion.and_then(|d| child(d, "SPRAWL_BLOCK")) {
@@ -739,7 +766,12 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     if !(0..32).any(|k| zone_slots & (1 << k) != 0 && linked.contains(&(k as usize))) {
                         continue;
                     }
-                    let level = 1;
+                    // The cell's slot (a sprawl hex is of one zone): the step it was linked at.
+                    let linked_at = (0..32)
+                        .find(|&k| zone_slots & (1 << k) != 0)
+                        .and_then(|k| if first.contains(&k) { Some(0) } else { order.iter().position(|&o| o == k).map(|p| p + 1) })
+                        .unwrap_or(0);
+                    let level = sprawl_level(key, (c as u16, r as u16), linked_at, order.len(), capital);
                     let (piece, turn) = if water != 0 {
                         let shape = coast_shape as u32;
                         let piece = if [3, 7, 15, 31].contains(&shape) {
@@ -808,9 +840,12 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let outer = |c: (u16, u16)| (0..6).any(|d| !hex_neighbour(c, d).is_some_and(inside));
             let on_wall: std::collections::HashSet<(u16, u16)> = walks.iter().flatten().copied().filter(|&c| outer(c)).collect();
             if walled && !on_wall.is_empty() {
-                // The wall's cells hold no sprawl. Walls, gates and towers are of level 1 (fn 0x10af4df0's `%s_%d`).
-                cities.sprawl.retain(|p| p.region != key || !on_wall.contains(&p.cell));
+                // A wall's cell keeps its sprawl (capture A, Rome: `roman_sprawl_edge_14_lvl2` and a wall on one cell), its piece's
+                // shape traced again from the cell's road and river edges and the wall's two (fn 0x10a7c610: the hex's road shape
+                // from `maphex + 9 | inmask`), so that its houses follow the wall. Walls, gates and towers are of level 1 (fn
+                // 0x10af4df0's `%s_%d`).
                 let level = 1;
+                let mut wall_masks: HashMap<(u16, u16), u32> = HashMap::new();
                 for walk in &walks {
                     let n = walk.len();
                     for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
@@ -820,6 +855,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                             continue;
                         }
 
+                        *wall_masks.entry(cell).or_default() |= mask;
                         let (shape, rot) = edge_piece(mask);
                         let zone_mask = (0..6).filter(|&d| hex_neighbour(cell, d).is_some_and(inside)).fold(0u32, |m, d| m | (1 << d));
                         let edge = 1 << ((rot + 5) % 6);
@@ -868,6 +904,15 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                             model,
                         });
                     }
+                }
+
+                for p in cities.sprawl.iter_mut().filter(|p| p.region == key && p.piece.starts_with("sprawl_edge_")) {
+                    let Some(&wall) = wall_masks.get(&p.cell) else { continue };
+                    let roads = cell_info.get(&p.cell).map_or(0, |i| i.3 as u32);
+                    let (shape, rot) = edge_piece((roads | wall) & 63);
+                    p.piece = format!("sprawl_edge_{}", shape_digits(shape));
+                    p.turn = rot;
+                    p.model = tables.sprawl_model(&p.piece, p.level, &faction).map(str::to_owned);
                 }
             }
         }

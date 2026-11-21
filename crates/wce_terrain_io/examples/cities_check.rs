@@ -11,7 +11,8 @@ fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let game = GameProfile::from_env().clone();
     let mut cfg = Config::new(&a[0], game.clone());
-    cfg.mod_packs = Some(vec![]);
+    // `WCE_MODS=<a.pack,b.pack>`: those mod packs over the game's (the editor's settings' list), none without it.
+    cfg.mod_packs = Some(std::env::var("WCE_MODS").map(|m| m.split(',').map(str::to_owned).collect()).unwrap_or_default());
     let vfs = Vfs::mount(&cfg).expect("vfs");
     let (campaign, map) = (&a[1], &a[2]);
     let (lf_height, offset): (f64, f64) = (a[3].parse().expect("lf_height"), a[4].parse().expect("offset"));
@@ -88,7 +89,11 @@ fn main() {
             .collect();
         let span = |f: fn(&(u16, u16)) -> u16| (walls.iter().map(f).min(), walls.iter().map(f).max());
         println!("walls of {filter}: {} cells, columns {:?}, rows {:?}", walls.len(), span(|c| c.0), span(|c| c.1));
-        for p in cities.sprawl.iter().filter(|p| p.region.contains(&filter) && !p.piece.starts_with("sprawl_edge")) {
+        for p in cities
+            .sprawl
+            .iter()
+            .filter(|p| p.region.contains(&filter) && (std::env::var("WCE_ALL").is_ok() || !p.piece.starts_with("sprawl_edge")))
+        {
             println!("  piece {} {:?} level {} turn {} -> {:?}", p.piece, p.cell, p.level, p.turn, p.model);
         }
     }
