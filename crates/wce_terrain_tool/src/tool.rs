@@ -385,6 +385,9 @@ pub struct TerrainTool {
     rings_campaign: bool,
     rings_edited: [bool; 2],
 
+    /// The shown campaign map's camera limits (`campaign_camera_limits`, read on a worker), by its document.
+    camera_limits: Option<(DocumentId, Arc<std::sync::OnceLock<Option<[f32; 4]>>>)>,
+
     /// A campaign map's season in the view (`sp`, `su`, `au`, `wi`): the ground's textures of that season and its snow mask.
     season: String,
 
@@ -475,6 +478,7 @@ impl Default for TerrainTool {
             rings_other: Rings::default(),
             rings_campaign: false,
             rings_edited: [false, false],
+            camera_limits: None,
             season: "su".to_owned(),
             weather: None,
             lighting: None,
@@ -601,6 +605,37 @@ fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
 /// How far from the camera's target a campaign map's settlements and props are drawn (world units): the props' 96 cells on Attila's map,
 /// which on Thrones' and TDD's (3 cells a unit) would be half the distance.
 const CAMPAIGN_PROP_REACH: f64 = 64.0;
+
+/// The game's campaign camera limits (`campaign_variables`: `camera_minimum_distance`, `camera_maximum_distance`,
+/// `camera_minimum_tilt_angle`, `camera_maximum_tilt_angle`), read on a worker; none when the table or a value is missing.
+fn campaign_camera_limits(e: &Editor) -> Arc<std::sync::OnceLock<Option<[f32; 4]>>> {
+    let cell = Arc::new(std::sync::OnceLock::new());
+    let (Some(files), Some(schema_path)) = (e.files(), wce_foundation::settings::rpfm_schema_path(e.game())) else {
+        let _ = cell.set(None);
+        return cell;
+    };
+    let out = cell.clone();
+    std::thread::spawn(move || {
+        let limits = (|| {
+            let schema = rpfm_lib::schema::Schema::load(&schema_path, None).ok()?;
+            let list = |p: &str| files.list(p, "");
+            let read = |p: &str| files.read(p).ok().map(|b| b.to_vec());
+            let rows = wce_terrain_io::attila::cities::table_rows(&schema, "campaign_variables_tables", &list, &read);
+            let value = |key: &str| {
+                rows.iter().find(|r| r.get("variable_key").is_some_and(|v| v == key)).and_then(|r| r.get("value")?.parse::<f32>().ok())
+            };
+            Some([
+                value("camera_minimum_distance")?,
+                value("camera_maximum_distance")?,
+                value("camera_minimum_tilt_angle")?,
+                value("camera_maximum_tilt_angle")?,
+            ])
+        })();
+        wce_foundation::log::info(format!("terrain: the campaign camera's limits (distance, tilt): {limits:?}"));
+        let _ = out.set(limits);
+    });
+    cell
+}
 
 /// A reader of a campaign's startpos by its path (`campaigns/<key>/startpos.esf`): the packs' (a mod's: TDD's), else the game's `data`
 /// folder's loose file (the game's own campaigns').
@@ -1201,6 +1236,11 @@ impl TerrainTool {
                 }
                 // The settlements' and the props' models to 64 world units (96 cells on Attila's map, as before; 192 on Thrones').
                 self.props.radius_cells = (CAMPAIGN_PROP_REACH * per_unit).ceil();
+                if self.camera_limits.as_ref().is_none_or(|(d, _)| *d != id) {
+                    self.camera_limits = Some((id, campaign_camera_limits(e)));
+                }
+            } else {
+                self.camera_limits = None;
             }
         }
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
@@ -2457,6 +2497,10 @@ impl Tool for TerrainTool {
         {
             self.lines.poll(e, self.shown, &name);
         }
+
+        // The campaign camera's limits while its map shows (the battle's otherwise).
+        let limits = self.camera_limits.as_ref().filter(|(d, _)| *d == self.shown).and_then(|(_, c)| c.get().copied().flatten());
+        e.viewport.set_campaign_limits(limits);
 
         // The map closed: its view goes with it.
         if self.shown != 0 && e.docs.find(self.shown).is_none() {
