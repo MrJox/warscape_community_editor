@@ -25,10 +25,8 @@ mod cover;
 pub use self::cover::{EdgeColours, edge_strip};
 mod bridges;
 pub mod context;
-pub mod decal_rules;
 mod draft;
 mod edits;
-pub mod fields;
 pub mod fire;
 mod flip;
 mod index;
@@ -628,17 +626,6 @@ pub struct Tile {
     /// since waits), and the heights' hash by their version (`texture_rules.rs`).
     pub(crate) texture_rules_job: Option<texture_rules::TextureRulesJob>,
 
-    /// The decal rules' decals (`decal_rules.rs`): laid, being laid, their entities, whether shown, the signature of what was laid and of
-    /// what was last looked at.
-    /// The field areas' farmland (`fields.rs`).
-    pub(crate) fields: fields::FieldsMade,
-
-    pub(crate) decal_items: Vec<decal_rules::DecalItem>,
-    pub(crate) decal_job: Option<decal_rules::DecalJob>,
-    pub(crate) decal_entities: Vec<wce_scene::render_scene::EntityId>,
-    pub(crate) decal_items_shown: bool,
-    pub(crate) decal_made: u64,
-    pub(crate) decal_seen: u64,
     pub(crate) texture_rules_seen: u64,
 
     /// What the rules' layer in the stack was made from, for a remake of only where that changed.
@@ -1024,13 +1011,6 @@ impl TileDocument {
             roads_stale: false,
             roads_seen: 0,
             texture_rules_job: None,
-            fields: fields::FieldsMade::default(),
-            decal_items: vec![],
-            decal_job: None,
-            decal_entities: vec![],
-            decal_items_shown: false,
-            decal_made: 0,
-            decal_seen: 0,
             texture_rules_basis: None,
             texture_rules_seen: 0,
             texture_rules_heights: ((0, u64::MAX), 0),
@@ -1247,8 +1227,6 @@ impl TileDocument {
         t.refresh_roads();
         t.refresh_texture_rules();
         t.refresh_biomes(false);
-        t.refresh_fields(false);
-        t.refresh_decals(false);
     }
 
     /// Per frame: the tile's view (`Tile::update_view`), knowing of the edits.

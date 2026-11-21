@@ -731,18 +731,6 @@ pub(crate) fn rule_fields(id: &str, r: &mut Rule, view: &RuleView) -> bool {
     edited
 }
 
-/// Where a rule holds (its conditions; `heights`: the tile's, for the height's choices) and its edges' noise: a decal rule's placing, as
-/// a texture rule's. Whether any changed.
-pub(crate) fn where_rows(r: &mut Rule, heights: (f32, f32), advanced: bool) -> bool {
-    let mut edited = false;
-    for c in conditions(heights) {
-        edited |= condition_rows(r, &c, advanced);
-    }
-
-    edited |= breakup_rows(r, advanced);
-    edited
-}
-
 /// The texture: the tile's groups as swatches, then the chosen group's four textures; advanced: the names it may go by and a mix of two
 /// textures.
 fn texture_rows(r: &mut Rule, view: &RuleView) -> bool {
