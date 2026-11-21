@@ -178,6 +178,9 @@ Steam screenshot in Documents, `325610_20261120<time>_1.png`), files `D:\renderd
 | A_res | 4153 | 1280 x 720 | Rome's coast at capture A's middle zoom |
 | C | 8325 | 1280 x 720 | Rome close (the province panel open) |
 | F1, F | 8961, 9207 | 1280 x 720 | the far zoom over Italy, looking down; tilted to the horizon |
+| T0 (TDD) | 9836 | 1280 x 720 | Mordor's mountains and the plains of Gorgoroth, as Mordor (`camp_tdd_mtn_frame9836.rdc`) |
+| T1 (TDD) | 4837 | 1280 x 720 | Rauros, the falls and their water, as Rohan (`camp_tdd_rauros_frame4837.rdc`) |
+| T2 (TDD) | 4964 | 1280 x 720 | the marshes below Rauros, as Rohan (`camp_tdd_marsh_frame4964.rdc`) |
 
 At 1280 x 720 the game draws flat light-blue polygons over parts of the sea (the user: a rendering error at that size; north of
 Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD captures yet.
@@ -227,6 +230,11 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   a frame moved by their LF window's shift: the fog was read some way off, where the map was unexplored. The bounds now move
   with the frame (`ShroudGpu::world`, `draw_terrain_patches`). The band shows at both coasts; the shore pixel 7.5 / 9.0 / 9.5
   against the game's 7.8 / 9.3 / 9.0; ours a little brighter further out (840, 650: 3.7 / 6.8 / 9.0 against 1.8 / 3.9 / 6.4).
+- **TDD's Mordor (capture T0, 2026-11-21):** the mountains and plains drew light tan where the game's are dark ash: their placements'
+  climate is index 8, TDD's `wasteland` (texture set `mordor_a`, in its campaign `tile_database.bin`), and the map's climate names came
+  from the kits' databases alone (eight). Fixed: the names extend from the packs' database. Left: the far ring's strips (24 to 40
+  cells) use the plain material, a grass tile with only its `climate` channel retextured, so Mordor's ash shows green there; the game
+  draws the tiles themselves out to its far blend (9 to 37 world units). Minas Tirith not captured: a custom model, no sprawl.
 - **G's sawtooth (2026-11-20):** dark teeth across mountain tiles past the tile rings (`atlantic_mountains\large_point_60_r`, and a
   smaller one on the right). The far chunks draw a tile's cells as plain ground raised by the far relief (40 to 90 m there), and
   the plain material's blend box stands 30 units over the LF: what rose out of it resolved black. A ground with heights of its
