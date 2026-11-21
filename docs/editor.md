@@ -24,9 +24,9 @@
 
 ## Tools
 
-Registered by `app/main.cpp` through `tools/tool_factories.h`: Weather (Phase 5), Tile, Unit, VFX, Terrain, Cinematic (placeholders with a
-panel that says what is planned). Now `wce_app::tools`, one Cargo feature per tool: Weather, Prefab, Tile, Terrain, UI, Unit; VFX and
-Cinematic are still placeholders. **Ctrl+1..9** switch tools.
+Registered by `app/main.cpp` through `tools/tool_factories.h`: Weather (Phase 5), Tile, Unit, VFX, Terrain (placeholders with a
+panel that says what is planned). Now `wce_app::tools`, one Cargo feature per tool: Weather, Prefab, Tile, Terrain, UI, Audio, Unit, VFX,
+Cinematic (below). **Ctrl+1..9** switch tools.
 
 To add a tool: derive from `Tool`, give it an id and title, return the file extensions it opens, implement `open` (return a `Document`), add panels in
 `draw_panels`, commands in `register_commands`; add a factory to `tool_factories.h` and register it in `main.cpp`.
@@ -318,6 +318,20 @@ reads it, with a warning, and Save writes that repaired text.
 - While the tool is active the other tools' layers are hidden (`Tool::deactivated` shows them again).
 - Script commands: `unit_preview`, `unit_seed`, `unit_select`, `unit_pin`, `unit_set`, `unit_edit`, `unit_play`, `unit_isolate`,
   `unit_reorder`, `unit_click_part`, `unit_weather`, `unit_grid`, `unit_takes`, `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
+
+## Cinematic tool (`crates/wce_cinematic_tool`)
+
+Movies, scenes and historical battles ([plans/cinematic.md](plans/cinematic.md)). The Movies list and the Movie viewer (sound,
+subtitles; Movie > Edit subtitles, Replace sound; File > Export > movie from a video or PNGs). A scene is a document
+(`<projects>/cinematics/<key>/project.json`) filled the Tile tool's way: the **Create** panel (search, Units as the game's cards with the
+chosen army's faction's first, Effects, Armies by faction; click an entry, then click the viewport's ground or the Layout for each copy,
+R / Shift+R turn, Esc or a right click stops, Space over the viewport for the quick-add popup; the Inspector shows what every copy
+takes), the **Scene** panel (the battle, the armies with their units, the clip's camera keys and effects; eyes, drag a unit onto an
+army, right-click menus), the shared **Inspector** (the selected item's rows; a key clicked on the Timeline), the editor's gizmo (units,
+effects, camera keys, deployment zones; a unit with a path in the clip is keyed at the playhead; one undo entry a drag), clicks and box
+select in the viewport, the viewport's chips (play, free camera, key this view, battle preview), the **Timeline** (clips, tracks, keys;
+a double-click adds a key), the **Layout** (the field from above), **Logic** (the battle's node graph). File > Export > Historical
+battle pack, Movie pack. Keys: Delete, Ctrl+D, Space, R / Shift+R, Escape (Settings > Shortcuts). Gate: `scripts/cinematic_check.sh`.
 
 ## Cross-tool composition (Phase 7)
 
