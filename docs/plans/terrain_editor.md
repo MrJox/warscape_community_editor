@@ -15,7 +15,7 @@ Status: **Phases 0, 1 and 2 done (2026-11-02); the user's decisions are in "Deci
 |---|---|---|
 | Open / save a `.terry` project, the map's images next to it | a map document: the map folder (kit layout, projects first: `wce_tile::sources` order), every file read and written losslessly | 1 |
 | 3D view of the map (engine scene), the tile window (real tiles only inside it), the water plane, the virtual-texture toggle | the map context's streamer and the game's shaders over the whole map; the near ring is the tile window; the sea as today | 2 |
-| 2D tile map view | a Map panel: the cell layers as an image (one texel a cell), pan / zoom, the same tools as the 3D view; the overview map stays | 2 |
+| 2D tile map view | a Map panel: the cell layers as an image (one texel a cell), pan / zoom, the same tools as the 3D view; the viewport's overview map dropped (2026-11-21: it showed the map twice beside the Map panel; the Tile tool's map context keeps it) | 2 |
 | Paint tile sets (layers, fill), place / move / rotate / remove explicit tiles | cell layer painting (tile set, tile / variation colours, climate, culture, snow per season), explicit tiles with the gizmo and the fit test (`test_final_tile_position`) | 4 |
 | Paint LF heights and sea LF (falloff / image / disk / square brushes, size, aspect, rotation; one add / subtract operation; undo optional) | the tile tool's brushes and operations (raise, lower, smooth, flatten, level, ramp, noise, image brushes, falloff curves) on a paged LF field, always with undo; aspect ratio and rotation added | 3 |
 | Apply (per-tile) LF patches | the custom-mesh and sea tiles' `lf_mask.tif` into the LF (docs/re/terry.md, "Per-tile LF patches") | 3 |
@@ -187,7 +187,7 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
    `Rings`, `maps`; the Tile tool's map context captures unchanged, 92 to 107 dB against the baseline as two baseline runs are);
    `ContextRequest` with no cells is the map's own frame (origin at the map's centre, heights from the sea); `wce_terrain_editor::
    MapDocument`; `wce_terrain_tool` (the `terrain` feature of `wce_app`, replacing the placeholder): a Terrain panel with the map list
-   (the packs' maps, the kits'), Open (read on a worker; a kit map also into the model), the rings, the view distance, the overview map;
+   (the packs' maps, the kits'), Open (read on a worker; a kit map also into the model), the rings, the view distance;
    the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
    campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
    DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
