@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use wce_formats::xml_doc::XmlDoc;
 
-use crate::ground_coverage::Placed;
+use crate::placing::Placed;
 use crate::texture_rules::Rule;
 use crate::vegetation_sets::{SetEntry, VegetationSet};
 
@@ -404,7 +404,7 @@ pub fn scan_presets(root: &Path) -> Vec<Biome> {
 /// Whether a point is inside a polygon (x, z; closed implicitly).
 #[must_use]
 pub fn inside(poly: &[(f32, f32)], x: f32, z: f32) -> bool {
-    crate::ground_coverage::inside(poly, x, z)
+    crate::placing::inside(poly, x, z)
 }
 
 /// Metres from a point to a polygon's boundary.

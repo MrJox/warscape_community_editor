@@ -39,7 +39,6 @@ pub use jobs::running as jobs_running;
 /// Work off the editor's thread that `tile_wait_jobs` waits for.
 pub use jobs::{Job, Poll as JobPoll};
 mod grass;
-pub mod ground_coverage;
 pub mod kit;
 mod kit_walls;
 pub mod layers;

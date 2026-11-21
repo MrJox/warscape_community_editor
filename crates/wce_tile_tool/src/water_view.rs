@@ -243,18 +243,6 @@ pub fn stage_b_of(
     StageBRequest::of(d, game).run(game, nogos)
 }
 
-/// Stage B's fields of the tile as it is now, on this thread, and the raw tile they were made from.
-///
-/// # Errors
-///
-/// As [`StageBRequest::run`].
-pub(crate) fn stage_b_fields(
-    d: &TileDocument,
-    game: Option<&wce_tile_io::attila::workflow::Game>,
-) -> Result<(WaterFields, wce_tile_model::Tile), String> {
-    StageBRequest::of(d, game).fields(game)
-}
-
 /// Metres of water over each vertex of stage B's grid; NaN where there is none.
 pub(crate) fn water_depth(f: &WaterFields) -> Vec<f32> {
     match &f.water {
@@ -266,11 +254,6 @@ pub(crate) fn water_depth(f: &WaterFields) -> Vec<f32> {
 /// Metres between the vertices of stage B's grid over a tile of `extent` without its border (metres), along x and z.
 fn spacing(f: &WaterFields, extent: (f64, f64)) -> (f32, f32) {
     (extent.0 as f32 / (f.w - 1).max(1) as f32, extent.1 as f32 / (f.h - 1).max(1) as f32)
-}
-
-/// Metres between the vertices of stage B's grid (over the tile without its border), along x and z.
-pub(crate) fn vertex_spacing(d: &TileDocument, f: &WaterFields) -> (f32, f32) {
-    spacing(f, (d.tile().extent_x(), d.tile().extent_z()))
 }
 
 /// The water depth of stage B's fields, and with `nogos` the automatic no-go areas (in metres, the tile's frame).

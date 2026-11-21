@@ -15,8 +15,9 @@ Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G don
 
 **Shelved (2026-11-21, the user's call after a look): D (erosion) and I (districts)** are taken out of this branch; they stay as built on
 `feature/shelved_erosion_districts`. Not to be brought back without the user. **H (paths)** too, the same day (less control than drawing a procedural
-road): kept with its zigzag fix on `feature/shelved_paths`. **E (decal rules) and G (fields)** too, the same day: kept on `feature/shelved_fields_decal_rules`. What stays of
-this plan: F (shores), new decals at their own size (`decal_sizes`), decal pictures, and the road link snapping. What stays of D: the texture rules' and decal rules'
+road): kept with its zigzag fix on `feature/shelved_paths`. **E (decal rules) and G (fields)** too, the same day: kept on `feature/shelved_fields_decal_rules`. F (shores) went
+with the ground coverage (shelved the same day, `feature/shelved_ground_coverage`). What stays of this plan: new decals at their own
+size (`decal_sizes`), decal pictures, the road link snapping and the area brush for every closed polygon. What stays of D: the texture rules' and decal rules'
 *Water flow* condition, worked out from the heights (`texture_rules::flow_of`); *Deposit* went with the erosion. A tile saved with an
 erosion layer drops it when opened (`terrain_layers::RETIRED_OWNERS`).
 

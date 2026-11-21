@@ -112,9 +112,6 @@ pub struct TileSettings {
 
     /// The mod pack "Save to mod pack" wrote last, by game key.
     pub mod_packs: BTreeMap<String, String>,
-
-    /// The ground coverage's last values.
-    pub ground_coverage: GroundCoverage,
 }
 
 /// Where Launch in game puts the tile.
@@ -158,14 +155,6 @@ pub struct LaunchSettings {
 
     /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
     pub step_seconds: BTreeMap<String, f32>,
-}
-
-/// The ground coverage's window (`ground_coverage_panel.rs`): the last preset of each kind (by the kinds' names: `cliffs`, `coast`,
-/// `riverbank`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct GroundCoverage {
-    pub last_preset: BTreeMap<String, String>,
 }
 
 /// What new things stand on (`placement_modes.rs`).
@@ -319,7 +308,6 @@ impl Default for TileSettings {
             mod_packs: BTreeMap::new(),
             launch: LaunchSettings::default(),
             launch_army: LaunchArmy::default(),
-            ground_coverage: GroundCoverage::default(),
         }
     }
 }

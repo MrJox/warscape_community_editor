@@ -1,5 +1,10 @@
 # Experimental: automatic ground coverage
 
+**Shelved (2026-11-21, the user's call): the whole ground coverage** (cliffs, coast, riverbanks, shores, around buildings; window,
+brush, presets) is out of `feature/auto_detail_2` until a better approach is found; as built on `feature/shelved_ground_coverage`.
+What the biomes and texture rules share of it lives on in `wce_tile::placing`.
+
+
 A Tile panel button that finds the tile's steep height differentials (slopes, cliffs) and decorates them: rocks and vegetation along the foot of
 each one, rocks only up its face to just under the top edge. Everything goes into the layer `(AUTOGEN) Ground Coverage`, with vegetation
 exclusion polygons around the vegetation it adds (BOB drops manual trees that are outside every exclusion polygon, docs/re/vegetation.md).

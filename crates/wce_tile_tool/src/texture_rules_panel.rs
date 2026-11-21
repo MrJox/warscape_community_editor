@@ -4,14 +4,15 @@
 //! dragged or typed in, and gives it to the tile when no field is active. The tile's layer follows by itself. "Show its area" outlines
 //! where the selected rule lays its texture (its weight at least a half, as though it were alone) in the viewport.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
+use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, Overlay, OverlayVertex, overlay_colour};
-use wce_tile::ground_coverage::Grid;
+use wce_tile::placing::Grid;
 use wce_tile::texture_rules::{Breakup, Preset, Range, Rule, RuleSet, presets_root, scan_presets};
 use wce_tile_editor::tile_document::TileDocument;
 
@@ -399,7 +400,7 @@ impl TileTool {
                     );
                     let cells = area.weights.iter().enumerate().filter(|(_, w)| **w >= 0.5).map(|(i, _)| i).collect::<Vec<_>>();
                     let mut out = Overlay::default();
-                    crate::ground_coverage_panel::outline(&grid, &cells, area_colour(), &mut out);
+                    outline(&grid, &cells, area_colour(), &mut out);
                     out.lines
                 }
 
@@ -985,4 +986,35 @@ fn ground_rows(r: &mut Rule, advanced: bool) -> bool {
     }
 
     edited
+}
+
+/// The outline of a set of grid cells (each a square around its sample), on the terrain.
+fn outline(g: &Grid, cells: &[usize], colour: u32, o: &mut Overlay) {
+    let set = cells.iter().copied().collect::<HashSet<_>>();
+    let h = g.cell * 0.5;
+    let at = |x: f32, z: f32| Float3::new(x, g.height(x, z) + 0.3, z);
+    for &i in cells {
+        let (cx, cz) = g.at(i);
+        let (x, z) = (i % g.nx, i / g.nx);
+        let out = |dx: isize, dz: isize| {
+            let (nx, nz) = (x as isize + dx, z as isize + dz);
+            nx < 0 || nz < 0 || nx as usize >= g.nx || nz as usize >= g.nz || !set.contains(&(nz as usize * g.nx + nx as usize))
+        };
+
+        if out(1, 0) {
+            o.line(at(cx + h, cz - h), at(cx + h, cz + h), colour);
+        }
+
+        if out(-1, 0) {
+            o.line(at(cx - h, cz - h), at(cx - h, cz + h), colour);
+        }
+
+        if out(0, 1) {
+            o.line(at(cx - h, cz + h), at(cx + h, cz + h), colour);
+        }
+
+        if out(0, -1) {
+            o.line(at(cx - h, cz - h), at(cx + h, cz - h), colour);
+        }
+    }
 }
