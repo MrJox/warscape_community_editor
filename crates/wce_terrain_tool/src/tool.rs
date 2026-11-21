@@ -689,8 +689,13 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
             let model = wce_terrain_io::attila::read(map_kind(&i.name).1, map_kind(&i.name).0, &files).map_err(|e| e.to_string())?;
             log::info(format!("terrain open {}: model read, {}", i.name, wce_foundation::heap::note()));
             let inputs = crate::refill::FillInputs::of(&model).ok_or_else(|| format!("{}: no tile_map.png", dir.display()))?;
-            let (placed, messages) = inputs.fill(&db, &i.name);
-            log::info(format!("terrain open {}: filled, {}", i.name, wce_foundation::heap::note()));
+            let (placed, messages, cached) = inputs.fill_cached(&db, &i.name);
+            log::info(format!(
+                "terrain open {}: filled{}, {}",
+                i.name,
+                if cached { " (from the cache)" } else { "" },
+                wce_foundation::heap::note()
+            ));
             let sea = model.lf(LfRole::Sea).map(|f| lf_field(f.get()));
             (Arc::new(placed), None, MapSource::Kit(dir), Some(model), sea, messages)
         }
