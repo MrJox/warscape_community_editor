@@ -213,6 +213,9 @@ pub struct MeshInstance {
 
     /// On fire (the engine's render flag 0x200): drawn with its material's fire shader, charred by POSITION6.x (the burn amount).
     pub burning: bool,
+
+    /// Its material masks' colours (`rigid_faction_colours`, linear), a faction's (a campaign army's banner); none: white.
+    pub faction_colours: Option<[[f32; 3]; 4]>,
 }
 
 /// POSITION4..7 of an instance with nothing special: zero, except the opacity in POSITION4.w. rigidstandard's gbuffer_alpha_test multiplies
@@ -222,7 +225,17 @@ pub const DEFAULT_INSTANCE_PARAMS: [f32; 16] = [0.0, 0.0, 0.0, 1000.0, 0.0, 0.0,
 impl Default for MeshInstance {
     fn default() -> Self {
         let p = |i: usize| std::array::from_fn(|k| DEFAULT_INSTANCE_PARAMS[i * 4 + k]);
-        Self { model: String::new(), casts_shadow: true, lod: false, p4: p(0), p5: p(1), p6: p(2), p7: p(3), burning: false }
+        Self {
+            model: String::new(),
+            casts_shadow: true,
+            lod: false,
+            p4: p(0),
+            p5: p(1),
+            p6: p(2),
+            p7: p(3),
+            burning: false,
+            faction_colours: None,
+        }
     }
 }
 

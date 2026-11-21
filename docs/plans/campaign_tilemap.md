@@ -568,3 +568,17 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   whether its campaign weather comes from the lighting at all) is not traced; (6) the army's banner: Thrones shows the faction's
   flag (red and white at V2) where the editor puts Attila's legacy emblem decorator (a "D"), and a soldier beside the general:
   Thrones' banner and its army figures not traced (V2's banner draw is the place to start).
+- **Thrones, V2's open points (2026-11-21, evening):** (5) the rain: the editor's lighting at V2 is the game's to 4 digits (the sun's
+  colour, the fog), so the spheres' weights are right; the weather was the heaviest's (`ire_sp`'s rain, 0.424) where the game's is
+  dry. The spheres folded in their order as a chain of the cross-fade (each next one's switches from a half of the total so far:
+  `bri_sp` 0.420, `scot_sp` 0.156 at 0.27, `ire_sp` at 0.424) keep Britain's dry, as the game; Attila's Londinium rain (england_sp
+  0.958) is the same either way. `blend_weighted` now folds in the order given (the spheres', the global last). ASSUMPTION: the
+  game's fold is in the spheres' order (one capture decides it). (6) The army's banner: the game colours the standard
+  (`vik_standard_welsh_01`) with `rigid_faction_colours` = the faction's `faction_uniform_colours` (primary, secondary, tertiary) and
+  its `faction_banners` primary (V2: Gwined C7C2A4 / AB3237 / 4D6032 / FCFCFC; Attila's captures the same rule: the ERE 803267 /
+  EAD360 / AD6E8E / 803267, the Suebi 405735 / 967832 / A16161 / 404335); the figures take the same colours (some meshes
+  permuted). The editor's were `factions`' (Thrones' Gwined: a black secondary and uniform) and the banner's draw had none (white;
+  a rigid draw kept the last figure's): `CampaignCatalog` reads the game's tables, `MeshInstance::faction_colours` gives a mesh its
+  own (batched by them, `rigid_faction_colours` per batch, white otherwise). Left: the soldier beside the general (a skinned figure
+  with `nomadic_emblem_07` on its shield, at (266.9, 261.4), no startpos character there), and the settlements' flags (V2's 198-index
+  draws with `faction_banners`' colours on the poles the editor leaves bare).

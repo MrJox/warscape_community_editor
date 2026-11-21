@@ -108,13 +108,15 @@ impl EnvironmentCollection {
     }
 }
 
-/// The weighted sum of environments (weights summing to 1; those of 0 left out), as a chain of the cross-fade: each next one blended in
-/// by its share of the weight so far, which for the numeric fields is the weighted sum. ASSUMPTION: the sun's azimuth goes the shorter
-/// way round (the cross-fade's), and switches and names are the heaviest's. The sun colour is blended linear (each file's to the power
-/// 2.2, the sum back to 1 / 2.2: RenderDoc, camp_attila over Britain, england_sp 0.958 + europe_sp 0.042).
+/// The weighted sum of environments (weights summing to 1; those of 0 left out), as a chain of the cross-fade in the order given (the
+/// spheres', then the global): each next one blended in by its share of the weight so far, which for the numeric fields is the
+/// weighted sum. Switches and names (the weather) are the cross-fade's: a next one's when its share reaches a half, so not always the
+/// heaviest's (Thrones' V2 over Anglesey: `bri_sp` 0.420 (dry), `scot_sp` 0.156, `ire_sp` 0.424 (rain): the game's dry, its lighting
+/// the weighted sum to 4 digits; ASSUMPTION: the game folds in the spheres' order, as this). ASSUMPTION: the sun's azimuth goes the
+/// shorter way round. The sun colour is blended linear (each file's to the power 2.2, the sum back to 1 / 2.2: RenderDoc, camp_attila
+/// over Britain, england_sp 0.958 + europe_sp 0.042).
 pub fn blend_weighted(items: &[(f64, &EnvironmentParams)]) -> Option<EnvironmentParams> {
-    let mut items: Vec<(f64, &EnvironmentParams)> = items.iter().copied().filter(|(w, _)| *w > 1e-6).collect();
-    items.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let items: Vec<(f64, &EnvironmentParams)> = items.iter().copied().filter(|(w, _)| *w > 1e-6).collect();
     let gamma = |c: wce_foundation::math::Float3, k: f32| {
         wce_foundation::math::Float3::new(c.x.max(0.0).powf(k), c.y.max(0.0).powf(k), c.z.max(0.0).powf(k))
     };
@@ -132,7 +134,7 @@ pub fn blend_weighted(items: &[(f64, &EnvironmentParams)]) -> Option<Environment
     for (w, p) in rest {
         total += w;
         let t = (w / total) as f32;
-        // The heaviest's switches and names: blend_environments takes the nearer side's, and t stays below a half here.
+        // Switches and names: blend_environments takes the nearer side's.
         acc = blend_environments(&acc, p, t);
     }
 
@@ -189,5 +191,20 @@ mod tests {
         c.sun_colour_scale = 4.0;
         let r = blend_weighted(&[(0.5, &a), (0.25, &b), (0.25, &c)]).unwrap();
         assert!((r.sun_colour_scale - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn weather_is_the_folds_not_the_heaviests() {
+        // Thrones' V2: Britain's dry, Scotland's none, Ireland's rain a little heavier than Britain's; the game's dry.
+        let mut bri = EnvironmentParams::default();
+        let scot = EnvironmentParams::default();
+        let mut ire = EnvironmentParams::default();
+        bri.weather_definition = "dry gusty".to_owned();
+        ire.weather_definition = "C_rain gusty".to_owned();
+        let r = blend_weighted(&[(0.420, &bri), (0.156, &scot), (0.424, &ire)]).unwrap();
+        assert_eq!(r.weather_definition, "dry gusty");
+        // Past a half of the total so far, the next one's.
+        let r = blend_weighted(&[(0.3, &bri), (0.7, &ire)]).unwrap();
+        assert_eq!(r.weather_definition, "C_rain gusty");
     }
 }

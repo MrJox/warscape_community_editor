@@ -29,7 +29,10 @@ fn main() {
     }
     let no_art = start.on_map().filter(|c| c.art_set.is_empty()).count();
     println!("on the map without an art set: {no_art}");
-    for c in start.on_map().take(rows) {
+    // `WCE_ALL`: every character, on the map or not.
+    let all: Vec<&wce_terrain_io::attila::characters::StartCharacter> =
+        if std::env::var("WCE_ALL").is_ok() { start.characters.iter().collect() } else { start.on_map().collect() };
+    for c in all.into_iter().take(rows) {
         let f = start.force_of(c);
         println!(
             "  {} {} {} art {} at ({:.2}, {:.2}) cell {:?} facing {:.3}; force {:?} navy {:?} units {}",

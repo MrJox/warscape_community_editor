@@ -44,6 +44,7 @@ impl CampaignSkybox {
             p6: [p[8], p[9], p[10], p[11]],
             p7: [p[12], p[13], p[14], p[15]],
             burning: false,
+            faction_colours: None,
         };
         let layer = e.scene.add_layer(doc, "campaign sky");
         let entity = e.scene.add(layer, Float4x4::IDENTITY, Payload::MeshInstance(mesh), SourceRef { doc, item: u64::MAX });

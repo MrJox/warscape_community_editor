@@ -669,7 +669,7 @@ impl Renderer {
 }
 
 /// `rigid_faction_colours.faction_colours`: float3[4], each at the start of a 16-byte row.
-fn faction_constants(colours: &[[f32; 3]; 4]) -> [f32; 15] {
+pub(crate) fn faction_constants(colours: &[[f32; 3]; 4]) -> [f32; 15] {
     std::array::from_fn(|i| if i % 4 == 3 { 0.0 } else { colours[i / 4][i % 4] })
 }
 
