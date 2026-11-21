@@ -306,9 +306,13 @@ fn changed_chunks(old: &PlacedMap, new: &PlacedMap) -> Vec<ChunkKey> {
 fn run(i: Inputs) -> Done {
     let started = Instant::now();
     let (mut map, messages) = i.fill.fill(&i.db, &i.name);
-    // What the fill does not make: the sea LF and the LF's metres (a campaign map's are its database's).
+    // What the fill does not make: the sea LF, the LF's metres (a campaign map's are its database's) and the climates past the kit's (the
+    // packs' database's, as the map was opened with).
     map.sea_lf.clone_from(&i.old.sea_lf);
     (map.lf_height, map.vertical_offset) = (i.old.lf_height, i.old.vertical_offset);
+    if i.old.climates.len() > map.climates.len() && i.old.climates.starts_with(&map.climates) {
+        map.climates.clone_from(&i.old.climates);
+    }
     let changed = changed_chunks(&i.old, &map);
     let map = Arc::new(map);
     let frame = Arc::new(i.frame.with_map(wce_terrain_editor::document::shown_placed(&map, i.roads.as_deref())));

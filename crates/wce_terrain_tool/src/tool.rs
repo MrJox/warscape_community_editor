@@ -702,6 +702,20 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     // The sea tiles stand on the map's sea LF (the Tile tool's map context keeps them on a flat -20 m).
     Arc::make_mut(&mut placed).sea_lf = sea;
 
+    // The placements' climates by index as the game reads them: its tile database in the packs (a mod's, TDD's ninth campaign climate
+    // `wasteland`, Mordor's), past the kit's. With the kit's alone the index had no name: Mordor's mountains took the default climate's
+    // light rock (TDD capture of 2026-11-21: the game's dark `mordor_a`).
+    if let Some(files) = i.files.as_deref() {
+        let kind = if map_kind(&i.name).0 == MapKind::Campaign { "campaign" } else { "battle" };
+        let packs = wce_tile_editor::climate_db::effective_climates(wce_formats::tile_climate::ClimateList::default(), kind, Some(files));
+        let names: Vec<String> = packs.climates.iter().map(|c| c.name.clone()).collect();
+        let known = &placed.climates;
+        if names.len() > known.len() && names.iter().zip(known).all(|(a, b)| a.eq_ignore_ascii_case(b)) {
+            log::info(format!("terrain open {}: climates past the kit's from the packs' database: {:?}", i.name, &names[known.len()..]));
+            Arc::make_mut(&mut placed).climates = names;
+        }
+    }
+
     // The LF's metres come from the selected database settings, even when the map resources are a saved project copy.
     let kind = map_kind(&i.name).0;
     if let Some((h, o)) = i.render_lf {
@@ -2700,7 +2714,7 @@ impl Tool for TerrainTool {
                             if (r[0]..r[2]).contains(&cx) && (r[1]..r[3]).contains(&cy) {
                                 let (lx, lz) = p.to_map().inverse().apply(v[0], v[1]);
                                 out.push(format!(
-                                    "{} {} at {},{} {}x{} turn {:#x} flipped {} climate {} local ({lx:.1}, {lz:.1})",
+                                    "{} {} at {},{} {}x{} turn {:#x} flipped {} climate {} (the map's {} {:?}) local ({lx:.1}, {lz:.1})",
                                     p.location,
                                     p.variation,
                                     p.x,
@@ -2709,7 +2723,9 @@ impl Tool for TerrainTool {
                                     p.h,
                                     p.rotation,
                                     p.flipped,
-                                    frame.climate_name(i)
+                                    frame.climate_name(i),
+                                    p.climate,
+                                    frame.map.climate_of(p)
                                 ));
                             }
                         }
@@ -3156,6 +3172,28 @@ impl Tool for TerrainTool {
 
                     let snow = e.scene.campaign_snow.as_ref().map_or("no snow mask".to_owned(), |s| format!("snow {}", s.mask));
                     CommandResult::success(format!("season {} ({snow}, as of the last view)", t.season))
+                })
+            },
+        );
+
+        c.add(
+            "terrain_faction",
+            "terrain_faction [key]",
+            "the Terrain tool: the faction a campaign map's borders and fog of war are for, as the panel's choice (none: the factions there are)",
+            |e, a| {
+                with_terrain(e, |t, e| {
+                    let keys: Vec<String> = t.lines.factions.iter().map(|f| f.key.clone()).collect();
+                    let Some(key) = a.first() else { return CommandResult::success(keys.join(", ")) };
+                    if !keys.contains(key) {
+                        return CommandResult::fail(format!("no faction {key} (the map's: {})", keys.join(", ")));
+                    }
+                    let id = t.shown;
+                    let Some(name) = e.docs.find_as::<MapDocument>(id).map(|d| map_kind(&d.name).1.to_owned()) else {
+                        return CommandResult::fail("no map shown");
+                    };
+                    t.lines.faction = Some(key.clone());
+                    t.lines.start(e, id, &name, Some(key.clone()));
+                    CommandResult::success(format!("borders and fog of war for {key}"))
                 })
             },
         );
