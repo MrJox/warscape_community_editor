@@ -198,11 +198,6 @@ impl Tile {
 
     /// The real buildings (as the rules' distances take them): x, z, radius, world metres.
     pub(super) fn texture_rules_buildings(&self) -> Vec<[f64; 3]> {
-        self.texture_rules_buildings_elems().into_iter().map(|(_, b)| b).collect()
-    }
-
-    /// [`Self::texture_rules_buildings`] with their elements.
-    pub(super) fn texture_rules_buildings_elems(&self) -> Vec<(usize, [f64; 3])> {
         let sc = self.tscene();
         let coverage = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == super::ground_coverage::COVERAGE_LAYER);
         let kit = self.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project.dir));
@@ -218,7 +213,7 @@ impl Tile {
                     let across = [m.bmin.x.abs(), m.bmax.x.abs(), m.bmin.z.abs(), m.bmax.z.abs()].into_iter().fold(0.0f32, f32::max);
                     f64::from(across) * s / self.unit()
                 });
-                (e, [f64::from(p.x), f64::from(p.z), radius])
+                [f64::from(p.x), f64::from(p.z), radius]
             })
             .collect()
     }
@@ -267,11 +262,6 @@ impl Tile {
         if let Some(s) = self.project.layers.as_ref().and_then(|l| l.blend.as_ref()) {
             // The rules lay their textures over the base's main ground only.
             eat(&s.base_identity().to_le_bytes());
-        }
-
-        if texture_rules::uses_runoff(&rules) {
-            // Where water runs: the erosion's when it made it (it comes after its layer, on a tile opened again), else the heights'.
-            eat(self.erosion_made.as_ref().map_or(&b"heights"[..], |m| m.owner.as_bytes()));
         }
 
         if Feature::Road.used(&rules)
@@ -356,7 +346,6 @@ impl Tile {
         let (border, ex, ez, mx, mz, unit) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z(), p.unit_scale);
         let (Some(hf), Some(bf)) = (p.height.as_ref(), p.blend.as_ref()) else { return Err("the tile has no height map".to_owned()) };
         let fields = Fields::from_height_field(hf, (mx, mz), unit);
-        let hf_size = (hf.width(), hf.height());
         let (bw, bh) = (bf.width(), bf.height());
         let ppm = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
@@ -380,12 +369,7 @@ impl Tile {
             None
         };
 
-        let runoff = texture_rules::uses_runoff(&rules).then(|| {
-            self.erosion_made
-                .as_ref()
-                .filter(|m| (m.w, m.h) == hf_size)
-                .map(|m| texture_rules::Runoff { flow: m.flow.clone(), deposit: Some(m.deposit.clone()) })
-        });
+        let runoff = texture_rules::uses_runoff(&rules);
         Ok(Prepared { rules, groups, inputs, fields, blend, ground, size: (bw, bh), ppm, border, mpp: (mx, mz), runoff })
     }
 
@@ -600,8 +584,8 @@ struct Prepared {
     /// The heights' metres a sample.
     mpp: (f64, f64),
 
-    /// When a rule reads where water runs: the erosion's runoff (None inside: worked out from the heights).
-    runoff: Option<Option<texture_rules::Runoff>>,
+    /// Whether a rule reads where water runs (worked out from the heights).
+    runoff: bool,
 }
 
 impl Prepared {
@@ -610,10 +594,8 @@ impl Prepared {
         let (bw, bh) = self.size;
         let (ppm, border) = (self.ppm, self.border);
         let mut fields = self.fields.clone();
-        match &self.runoff {
-            Some(Some(r)) => fields = fields.with_runoff(r.clone()),
-            Some(None) => fields = fields.with_runoff_of_heights(),
-            None => {}
+        if self.runoff {
+            fields = fields.with_runoff_of_heights();
         }
 
         // Only over the tile's main ground: what its own painting holds in other textures stays (a kit tile's artist's work).

@@ -2001,7 +2001,6 @@ impl Tile {
         }
 
         self.sync_terrain_layers();
-        self.refresh_erosion();
         self.refresh_prefab_ground();
         self.refresh_roads();
         self.refresh_texture_rules();

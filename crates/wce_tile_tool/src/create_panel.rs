@@ -189,9 +189,6 @@ pub enum Make {
 
     /// A path (docs/plans/auto_detail_2.md, H): its points clicked, the way between them found over the ground, made a procedural road.
     Path,
-
-    /// A district (docs/plans/auto_detail_2.md, I): drawn as a vegetation exclusion polygon with `wce_district`, then filled.
-    District,
 }
 
 #[derive(Clone, Debug)]
@@ -234,7 +231,6 @@ impl Entry {
             Make::Rules { what } => format!("rules|{what}"),
             Make::Fields { kind } => format!("fields|{kind}"),
             Make::Path => "path|".to_owned(),
-            Make::District => "district|".to_owned(),
         }
     }
 
@@ -248,7 +244,6 @@ impl Entry {
             Make::Rules { .. } => icons::STICKER,
             Make::Fields { .. } => icons::LEAF,
             Make::Path => crate::entity_types::type_icon(wce_tile_editor::tile_document::ROAD_SPLINE),
-            Make::District => icons::BOX,
         }
     }
 }
@@ -489,14 +484,6 @@ impl TileTool {
             en.folder = "Biomes".to_owned();
             out.push(en);
         }
-
-        // A district, at the top of the buildings.
-        out.push(entry(
-            0,
-            "District (filled with buildings)".to_owned(),
-            Make::District,
-            "district town village quarter houses fill settlement",
-        ));
 
         // A path over the ground, with the roads.
         out.push(entry(10, "Path (found over the ground)".to_owned(), Make::Path, "path track dirt way trail road route find"));
@@ -949,17 +936,6 @@ impl TileTool {
                 self.path_drawing = true;
             }
 
-            Make::District => {
-                let mut draft = Draft::new(wce_tile::biomes::AREA_TYPE, "");
-                draft
-                    .attrs
-                    .insert(wce_tile::districts::DISTRICT_ATTR.to_owned(), wce_tile::districts::DistrictSettings::default().to_text());
-                draft.attrs.insert(wce_tile::districts::SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
-                draft.attrs.insert("name".to_owned(), "District".to_owned());
-                self.draft = Some(draft);
-                self.start_drawing();
-            }
-
             Make::Fields { kind } => {
                 let settings = wce_tile::fields::presets().into_iter().find(|p| p.name == *kind).map(|p| p.settings).unwrap_or_default();
                 let mut draft = Draft::new(wce_tile::biomes::AREA_TYPE, "");
@@ -993,9 +969,6 @@ impl TileTool {
             Make::Rules { .. } => format!("{}: in the Inspector; the decals follow the ground by themselves", en.label),
             Make::Fields { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             Make::Path => format!("{}: click its ends (and points it must pass); {}; Esc cancels", en.label, self.finish_hint(e)),
-            Make::District => {
-                format!("{}: click the terrain for its points; {}; it is filled then; Esc cancels", en.label, self.finish_hint(e))
-            }
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
         };
     }
@@ -1308,11 +1281,6 @@ impl TileTool {
         self.poly_point = None;
         self.making = None;
         self.status = match added {
-            // A district: filled at once.
-            Ok(el) if draft.attrs.contains_key(wce_tile::districts::DISTRICT_ATTR) => match d.fill_district(el) {
-                Ok(n) => format!("a district of {n} buildings in {}", Self::layer_label(d, d.tile().layer_of(el).unwrap_or(el))),
-                Err(err) => format!("a district drawn, not filled: {err}"),
-            },
             Ok(el) => format!("added {kind} in {}", Self::layer_label(d, d.tile().layer_of(el).unwrap_or(el))),
             Err(err) => err,
         };
@@ -2256,7 +2224,6 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
             Make::Fields { kind: p.map(|p| p.name.to_owned()).unwrap_or_default() }
         }
         "path" => Make::Path,
-        "district" => Make::District,
         kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD, &BUILDING_SPLINE]).any(|(_, k, drawn)| *k == kind && *drawn)
             || SHAPES.contains(&kind) =>
         {

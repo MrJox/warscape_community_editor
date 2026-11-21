@@ -816,74 +816,6 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "erosion",
-        "erosion <off | on | preset <name> | set <key> <value> | window [simple | advanced] | wait>",
-        "the tile's erosion: off (taken away with its layer), on (Weathered, or the settings it had), a preset's settings (Light, Weathered, Rugged), one setting (as in erosion.wce: rain, steps, talus, detail, strength, seed ...), the Inspector's panel; wait: the layer made now, and what it changed",
-        |e, a| {
-            let usage = "usage: erosion <off | on | preset <name> | set <key> <value> | window [simple | advanced] | wait>";
-            if a.first().map(String::as_str) == Some("window") {
-                let mode = a.get(1).cloned();
-                if mode.as_deref().is_some_and(|m| m != "simple" && m != "advanced") {
-                    return fail(usage);
-                }
-
-                return with_tile(e, |t, _| {
-                    t.open_erosion();
-                    if let Some(m) = &mode {
-                        t.erosion_ui.advanced = m == "advanced";
-                    }
-
-                    ok("erosion in the Inspector")
-                });
-            }
-
-            let Some(d) = document(e) else { return fail("no tile is open") };
-            match (a.first().map(String::as_str), a.get(1), a.get(2)) {
-                (Some("off"), None, None) => {
-                    d.set_erosion(None);
-                    ok("erosion off")
-                }
-
-                (Some("on"), None, None) => {
-                    let s = d.erosion().cloned().unwrap_or_default();
-                    d.set_erosion(Some(s));
-                    ok("erosion on")
-                }
-
-                (Some("preset"), Some(name), None) => {
-                    let Some((_, s)) = wce_tile::erosion::PRESETS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else {
-                        return fail(format!("no erosion preset {name}"));
-                    };
-                    let seed = d.erosion().map_or(s.seed, |o| o.seed);
-                    d.set_erosion(Some(wce_tile::erosion::Settings { seed, ..s.clone() }));
-                    ok(format!("erosion: {name}"))
-                }
-
-                (Some("set"), Some(key), Some(value)) => {
-                    let s = d.erosion().cloned().unwrap_or_default();
-                    let known = wce_tile::erosion::settings_text(true, &s);
-                    if key == "on" || !known.lines().any(|l| l.split_whitespace().next() == Some(key.as_str())) {
-                        return fail(format!("no erosion setting {key}"));
-                    }
-
-                    let (_, t) = wce_tile::erosion::settings_in(&format!("{known}{key} {value}\n"));
-
-                    d.set_erosion(Some(t));
-                    ok(format!("erosion: {key} {value}"))
-                }
-
-                (Some("wait"), None, None) => {
-                    d.finish_erosion();
-                    d.finish_texture_rules();
-                    ok(d.erosion_summary().unwrap_or_else(|| "no erosion layer".to_owned()))
-                }
-
-                _ => fail(usage),
-            }
-        },
-    );
-
-    c.add(
         "decal_rules",
         "decal_rules <off | load <preset> | file <path> | window [simple | advanced] | wait>",
         "the tile's decal rules: off (taken away with their decals), a preset's (Default: the built-in one), a rule set's file (a preset's or a tile's decal_rules.wce), the Inspector's panel; wait: the decals laid now, how many each rule laid, and the decals the game lacks",
@@ -997,36 +929,6 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
                 _ => fail(usage),
             }
-        },
-    );
-
-    c.add(
-        "district",
-        "district fill",
-        "fills the selected district with buildings (replacing those it was filled with): how many, and of which keys",
-        |e, a| match a.first().map(String::as_str) {
-            Some("fill") => {
-                let Some(el) = crate::tool::primary(e) else { return fail("select a district") };
-                let Some(d) = document(e) else { return fail("no tile is open") };
-                match d.fill_district(el) {
-                    Ok(n) => {
-                        let keys = d.tile().district_areas().into_iter().find(|a| a.elem == el).map_or_else(Vec::new, |a| {
-                            if a.settings.keys.is_empty() { d.tile().district_default_keys() } else { a.settings.keys }
-                        });
-                        let sizes = keys
-                            .iter()
-                            .map(|k| match d.building_footprint(k) {
-                                Some(f) => format!("{k} ({:.1} x {:.1} m)", f.x.1 - f.x.0, f.z.1 - f.z.0),
-                                None => format!("{k} (size not known: {0} x {0} m)", wce_tile_editor::tile_document::districts::GUESS),
-                            })
-                            .collect::<Vec<_>>();
-                        ok(format!("{n} buildings of {}", sizes.join(", ")))
-                    }
-                    Err(err) => fail(err),
-                }
-            }
-
-            _ => fail("usage: district fill"),
         },
     );
 

@@ -2842,62 +2842,6 @@ fn a_biome_brush_makes_grows_cuts_and_takes_away_areas() {
 }
 
 #[test]
-fn erosion_makes_a_height_layer_over_the_users_and_follows_their_edits() {
-    use wce_tile::erosion::Settings;
-
-    let (dir, mut d) = open_with_texture_groups();
-    let heights = |d: &TileDocument| {
-        let hf = d.project().height.as_ref().unwrap();
-        (0..hf.height()).flat_map(|y| (0..hf.width()).map(move |x| (x, y))).map(|(x, y)| hf.metres(x, y)).collect::<Vec<_>>()
-    };
-    let owners = |d: &TileDocument| {
-        d.project().layers.as_ref().and_then(|l| l.height.as_ref()).map_or(vec![], |s| s.layers.iter().map(|l| l.owner.clone()).collect())
-    };
-    let original = heights(&d);
-    let size = d.history().size();
-
-    // Fine detail shows on any ground; the drops need slopes, which the fixture hardly has.
-    let s = Settings { detail: 0.5, ..Settings::default() };
-    d.set_erosion(Some(s.clone()));
-    assert_eq!(d.history().size(), size + 1);
-    d.finish_erosion();
-    let eroded = heights(&d);
-    assert_ne!(eroded, original);
-    let first = owners(&d);
-    assert!(first.iter().any(|o| o.starts_with(wce_tile::erosion::OWNER)), "{first:?}");
-
-    // A raise under it: made again from the new ground, over it (the raise is not lost under the erosion).
-    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
-    let before = d.tile().terrain_height(ex * 0.5, ez * 0.5);
-    let b = BrushSettings { radius_m: 6.0, strength: 40.0, ..BrushSettings::default() };
-    for _ in 0..10 {
-        d.brush_step(BrushKind::Raise, ex * 0.5, ez * 0.5, b.clone(), 0.1);
-    }
-    d.end_stroke();
-    d.finish_erosion();
-    assert!(d.tile().terrain_height(ex * 0.5, ez * 0.5) > before + 0.5);
-    assert_ne!(owners(&d), first, "made again");
-
-    // Saved beside the tile and read back.
-    let here = wce_editor_core::document::SaveTarget { path: std::path::PathBuf::new() };
-    d.save(&here).unwrap();
-    let file = dir.path().join(wce_tile::erosion::FILE);
-    assert_eq!(TileProject::open(dir.path()).unwrap().erosion, Some(s));
-
-    // Off: its layer goes, the ground is what the user made.
-    d.set_erosion(None);
-    d.finish_erosion();
-    assert!(owners(&d).iter().all(|o| !o.starts_with(wce_tile::erosion::OWNER)));
-    d.save(&here).unwrap();
-    assert!(!file.exists(), "taken away with the erosion");
-
-    // Undone: back on, its layer made again.
-    d.history_mut().undo();
-    d.finish_erosion();
-    assert!(owners(&d).iter().any(|o| o.starts_with(wce_tile::erosion::OWNER)));
-}
-
-#[test]
 fn decal_rules_lay_decals_that_an_export_adds_and_the_tile_saves() {
     use wce_tile::decal_rules::{DecalRule, DecalRuleSet};
     use wce_tile::texture_rules::{Range, Rule};
@@ -3010,50 +2954,6 @@ fn a_path_is_found_over_the_ground_and_a_building_connected_to_it() {
     let (made, failed) = d.connect_to_roads(&[b], layer).unwrap();
     assert_eq!((made, failed.len()), (1, 0), "{failed:?}");
     assert_eq!(d.tile().tscene().find_all(ROAD_SPLINE).len(), before + 1);
-}
-
-#[test]
-fn a_district_is_filled_and_filled_again_in_place() {
-    use wce_tile::biomes::AREA_TYPE;
-    use wce_tile::districts::{DISTRICT_ATTR, DistrictSettings, SEED_ATTR};
-
-    let (_dir, mut d) = open();
-    let layer = d.tile().tscene().find_all("LayerInstance")[0];
-    let key = d.tile().tscene().get(d.tile().tscene().find_all("BUILDING_INSTANCE")[0], "key").unwrap();
-    let settings = DistrictSettings { keys: vec![key.clone()], max_slope: 60.0, ..DistrictSettings::default() };
-    let attrs = BTreeMap::from([
-        (DISTRICT_ATTR.to_owned(), settings.to_text()),
-        (SEED_ATTR.to_owned(), "3".to_owned()),
-        ("name".to_owned(), "Town".to_owned()),
-    ]);
-    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
-    let square = Create::Line(vec![
-        Float3::new(ex * 0.1, 0.0, ez * 0.1),
-        Float3::new(ex * 0.9, 0.0, ez * 0.1),
-        Float3::new(ex * 0.9, 0.0, ez * 0.9),
-        Float3::new(ex * 0.1, 0.0, ez * 0.9),
-    ]);
-    let area = d.create_with(AREA_TYPE, layer, &square, "", &attrs).unwrap();
-    assert_eq!(d.tile().district_areas().len(), 1);
-    let size = d.history().size();
-    let n = d.fill_district(area).unwrap();
-    assert!(n > 0);
-    assert_eq!(d.history().size(), size + 1, "one undo entry");
-    assert_eq!(d.district_buildings(area), n);
-    let all = d.tile().tscene().find_all("BUILDING_INSTANCE").len();
-
-    // Again: the same group, its buildings replaced, not added to.
-    let again = d.fill_district(area).unwrap();
-    assert_eq!(again, n, "the same seed, the same buildings");
-    assert_eq!(d.tile().tscene().find_all("BUILDING_INSTANCE").len(), all);
-    let groups =
-        d.tile().tscene().find_all("UserInstanceGroup").into_iter().filter(|&g| d.tile().tscene().name(g) == "Town buildings").count();
-    assert_eq!(groups, 1);
-
-    // Undone twice: no buildings of the district.
-    d.history_mut().undo();
-    d.history_mut().undo();
-    assert_eq!(d.district_buildings(area), 0);
 }
 
 #[test]

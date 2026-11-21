@@ -131,7 +131,7 @@ Terrain layers > Blend row "Texture rules" (over the base, under the user's laye
 mode's *Texture rules...*; `texture_rules <off | load <preset> | file <path> | window | area <rule> | wait>`; [plans/auto_detail.md](plans/auto_detail.md)):
 textures laid by the terrain. A rule puts a texture group (several names separated by `|`, the first the tile has) and variation where
 its conditions hold: height, slope, hollows and ridges, distance to water, procedural roads and real buildings, and where rain water runs
-(*Water flow*, 0 .. 1: the erosion's, else worked out from the heights) and what it laid (*Deposit*, metres: the erosion's), each a range
+(*Water flow*, 0 .. 1, worked out from the heights), each a range
 with soft ends, edges moved by noise. Later rules go over earlier ones, and only over the tile's **main ground** (the texture group most of its
 base blend map is): what the tile's own painting holds in other textures stays (a kit tile's artist's work). They make one blend layer owned by them that lies **under** the user's
 layers (hand paint goes over it; painting with no working layer goes into a `Painted` layer), made again off the editor's thread when
@@ -146,19 +146,6 @@ the weight it gives (its fades as ramps; drag an end, onto the bar's end for no 
 picked from the tile's groups' and variations' swatches. Keys a biome grows or a clutter rule lays (when not a set) are picked from the game's own (`key_picker.rs`):
 shown as their thumbnails (a key the game's files lack framed red), a click takes one out, the + cell opens a searchable grid of the
 kind's keys (buildings by category too) where a click adds or takes out one.
-
-**Erosion** (`wce_tile::erosion`, `tile_document/erosion.rs`, `erosion_panel.rs` in the Inspector: the Tile panel's Terrain layers >
-Height row "Erosion", over the user's layers; "+ Erosion" adds the Weathered preset; `erosion <off | on | preset <name> | set <key>
-<value> | window [simple | advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), D): the ground the user shaped,
-weathered. Rain drops run down the slopes a sample at a time, taking ground where they speed up and laying it where they slow (how much
-by the slope, so the samples' spacing does not matter; a drop's speed is capped); loose ground slides to its lower neighbours where it is
-steeper than its talus; fine noise, stronger on steep ground, breaks up smooth surfaces. Buildings keep their ground (none within 2 m of
-their model, fading in over 4 m). It is a height layer owned by it (`erosion#<signature>`) in a rank of its own: **over** the user's layers
-(it reads what they shaped) and **under** the roads', walls' and prefabs' ground (they lay their ground over it, made again when it
-changes). Made again off the editor's thread when the ground under it, the buildings or the settings change, waiting for a stroke's end;
-a job let go is told to stop; exports wait for it. Settings in `erosion.wce` beside `tile.wce`; presets Light, Weathered, Rugged; Simple
-shows the preset, how much is kept and the seed (Reroll), Advanced every number (the drops, loose ground, fine detail). Where the water ran
-and what it laid stay with the tile for the texture rules (made again on opening, with the layer's signature unchanged).
 
 **Fields and farmland** (`wce_tile::fields`, `tile_document/fields.rs`, `fields_panel.rs` under a field area's properties in the
 Inspector: the Create panel's Vegetation > Biomes > *fields: <kind>* draws one of a kind; `start_making fields [kind, _ for spaces]`,
@@ -191,19 +178,6 @@ and the procedural roads' painting is cheap to walk along. The cells found are s
 (`road_type` `dirt_track` where the game has its pieces, else `none`: ground and texture only; 3 m wide) you then edit as any. *Connect
 to the roads* makes one from each selected building to the nearest point of a procedural road's middle line.
 
-**Districts** (`wce_tile::districts`, `tile_document/districts.rs`, `districts_panel.rs` under a district's properties in the Inspector:
-the Create panel's Buildings > *District (filled with buildings)* draws one and fills it; `start_making district`, `district fill`;
-[plans/auto_detail_2.md](plans/auto_detail_2.md), I): a district is a vegetation exclusion polygon (no trees in a town) with
-`wce_district` (its settings as one attribute) and `wce_district_seed`. Filling it lays plain buildings (moved by hand after) in a group
-of its own in its layer, `<its name> buildings`, as one undo entry; filling again replaces that group. Along each procedural road through
-it first (each side, walked from one end): a building's front (its local +z, or the side *Front* says) at the road's edge plus the
-setback, turned to face it; then, when *Inside* is on, the inside at random, each facing the nearest road (within 80 m), else along the
-district's longest side. Every footprint (the logic file's, else the model's; 8 × 8 m guessed when neither is known, with a warning) stays
-inside the district, off the roads (half their width and half a metre), the buildings there (the real ones) and each other by the
-spacing, and off ground steeper than the most slope across it; 600 at most. Its buildings: the keys picked (from the game's), else the
-tile's own houses (its `generic` buildings whose key says house, home, hut or dwelling, the most used first), else one culture's of the
-kits' that the game has models for (the key prefix with the most).
-
 **Decal rules** (`wce_tile::decal_rules`, `tile_document/decal_rules.rs`, `decal_rules_panel.rs` in the Inspector: the Create panel's
 Decals > *Decal rules* (a tile without any gets the built-in Default); `decal_rules <off | load <preset> | file <path> | window [simple |
 advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), E): decals laid by the ground. A rule's decals (picked from the
@@ -216,7 +190,7 @@ turned any way, down the slope, or along the nearest road, building side (*Walls
 They are the editor's, not tile.ted's: laid again off the editor's thread when the rules, the heights or the scene change, drawn locked
 (refitted to the ground), and added at export in a layer of their own (`WCE decals`, on the landscape: `MSM_LANDSCAPE`, 5 m deep). The tile
 keeps its rules in `decal_rules.wce`; presets are files in the projects' `raw_data/art/decal_rule_sets`. The built-in Default, of the kit's
-decals: puddles in hollows, dirt at building bases, ruts along roads, runnels where water runs, stones where it laid them (with erosion),
+decals: puddles in hollows, dirt at building bases, ruts along roads, runnels where water runs, stones where water runs out onto flatter ground,
 forest floor under trees (the game has no leaf litter decal: `forest_0_su`, `roots_01`). The panel lists the rules with how many decals
 each laid, warns of decals the game lacks; Simple shows plain choices (how many: Few ... Thick), Advanced every number (each decal's
 weight, the stretch, the spacing, the strength). Decals have pictures in the key picker and the Create panel's grid, as the models do

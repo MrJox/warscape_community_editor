@@ -26,10 +26,8 @@ pub use self::cover::{EdgeColours, edge_strip};
 mod bridges;
 pub mod context;
 pub mod decal_rules;
-pub mod districts;
 mod draft;
 mod edits;
-pub mod erosion;
 pub mod fields;
 pub mod fire;
 mod flip;
@@ -630,15 +628,8 @@ pub struct Tile {
     /// since waits), and the heights' hash by their version (`texture_rules.rs`).
     pub(crate) texture_rules_job: Option<texture_rules::TextureRulesJob>,
 
-    /// The erosion's layer being made off the editor's thread, the signature last looked at, what it made besides its layer (where the
-    /// water ran, for the texture rules) and the buildings it keeps off by the scene's version (`erosion.rs`).
-    pub(crate) erosion_job: Option<erosion::ErosionJob>,
-
     /// The decal rules' decals (`decal_rules.rs`): laid, being laid, their entities, whether shown, the signature of what was laid and of
     /// what was last looked at.
-    /// The buildings a district without keys is filled with, by the scene's structure version (`districts.rs`).
-    pub(crate) district_keys: std::cell::RefCell<Option<(u64, Vec<String>)>>,
-
     /// The field areas' farmland (`fields.rs`).
     pub(crate) fields: fields::FieldsMade,
 
@@ -648,9 +639,6 @@ pub struct Tile {
     pub(crate) decal_items_shown: bool,
     pub(crate) decal_made: u64,
     pub(crate) decal_seen: u64,
-    pub(crate) erosion_seen: u64,
-    pub(crate) erosion_made: Option<erosion::ErosionMade>,
-    pub(crate) erosion_buildings: Option<(u64, std::sync::Arc<Vec<[f64; 3]>>)>,
     pub(crate) texture_rules_seen: u64,
 
     /// What the rules' layer in the stack was made from, for a remake of only where that changed.
@@ -1036,18 +1024,13 @@ impl TileDocument {
             roads_stale: false,
             roads_seen: 0,
             texture_rules_job: None,
-            erosion_job: None,
             fields: fields::FieldsMade::default(),
-            district_keys: std::cell::RefCell::new(None),
             decal_items: vec![],
             decal_job: None,
             decal_entities: vec![],
             decal_items_shown: false,
             decal_made: 0,
             decal_seen: 0,
-            erosion_seen: 0,
-            erosion_made: None,
-            erosion_buildings: None,
             texture_rules_basis: None,
             texture_rules_seen: 0,
             texture_rules_heights: ((0, u64::MAX), 0),
@@ -1260,7 +1243,6 @@ impl TileDocument {
         let t = self.tile_mut();
         t.history_version = version;
         t.sync_terrain_layers();
-        t.refresh_erosion();
         t.refresh_prefab_ground();
         t.refresh_roads();
         t.refresh_texture_rules();
