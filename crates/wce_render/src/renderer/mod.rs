@@ -300,6 +300,10 @@ pub(crate) const SHADOW_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow"
 /// An alpha-tested rigid caster's (its material's alpha mode 1): `vs30_shadow` with this, which discards where its diffuse's alpha is
 /// under 0.5 (RenderDoc, TDD's marsh: the game casts `swamp_plant`, `swamp_flower` and `swamp_reed` so, their diffuse bound; drawn opaque,
 /// each flat plant's quad cast a square).
+/// The game's Depth Buffer Analysis (`analyse_depth_gpu`).
+pub(crate) const DEPTH_ANALYSIS_STORE_PS: &str = "dx11_sm_3_0_shadow_map_depth_buffer_analysis.hlsl_ps_ps30_downsize_store_data";
+pub(crate) const DEPTH_ANALYSIS_DOWN_PS: &str = "dx11_sm_3_0_shadow_map_depth_buffer_analysis.hlsl_ps_ps30_downsize_data";
+
 pub(crate) const SHADOW_ALPHA_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow_alpha_test";
 
 /// The tree casters: their vertex shaders (wind, LOD blend) and alpha-tested pixel shaders (the leaves' also dissolve).
