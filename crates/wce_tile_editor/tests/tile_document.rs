@@ -2947,3 +2947,32 @@ fn a_new_decal_starts_at_its_own_size() {
     let other = d.create("ProjectedDecalInstance", layer, &at, r"rigidmodels\decals\battle\not_in_the_kit.rigid_model_v2").unwrap();
     assert_eq!(scale(&d, other), format!("vector({},{},{})", num(8.0 * unit), num(10.0 * unit), num(-8.0 * unit)));
 }
+
+#[test]
+fn a_road_leaves_the_tile_by_the_middle_of_the_edge_its_link_says() {
+    let (dir, _) = open();
+    let mut p = TileProject::open(dir.path()).unwrap();
+    // 2 x 2 cells: a road out of the left edge's lower row and the bottom edge's right column (rows count from +z: y = 1 is z 0..128,
+    // y = 2 the row past z = 0); a road that must not be there, a river and a target say nothing.
+    let link = |set: &str, x: i32, y: i32, test: &str| {
+        format!(
+            "<TILE_LINK serialise_version='1' link_set='{set}' x='{x}' y='{y}' base_x='0' base_y='0' is_entry='false' blend_size='64' \
+             no_offline_blend='false' test='{test}'><blend_quad/></TILE_LINK>"
+        )
+    };
+    let entry = format!(
+        "<TILE serialise_version='3' location='terrain\\tiles\\battle\\test\\2x2' tile_set='test' width='2' height='2'>\
+         <TEXTURE_GROUP red='grass' green='mud' blue='forest' alpha='rock'/><VARIATIONS/>\
+         <TILE_LINK_TARGETS><TILE_LINK_TARGET serialise_version='1' tile_set='roads' x='1' y='0'/></TILE_LINK_TARGETS><TILE_LINKS>{}{}{}{}{}</TILE_LINKS></TILE>",
+        link("roads", -1, 1, "TLT_EQUALS"),
+        link("roads_stone", 1, 2, "TLT_EQUALS"),
+        link("roads", 2, 0, "TLT_NOT_EQUALS"),
+        link("river", 1, -1, "TLT_EQUALS"),
+        link("roads", -1, 1, "TLT_EQUALS"),
+    );
+    p.entry = Some(wce_formats::tile_entry::TileEntry::parse(entry.into_bytes()).unwrap());
+    (p.info.cells_x, p.info.cells_y) = (2, 2);
+    let d = TileDocument::new(p, None);
+    let points = d.tile().road_link_points().iter().map(|q| (q.x, q.z)).collect::<Vec<_>>();
+    assert_eq!(points, [(0.0, 64.0), (192.0, 0.0)]);
+}

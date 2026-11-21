@@ -356,6 +356,13 @@ pub struct TileTool {
     /// The grid snaps heights too (a freeform item moved up or down with the gizmo).
     pub(crate) snap_heights: bool,
 
+    /// Snap to road links (wce's): a procedural road's point, drawn or dragged, goes onto the middle of a tile edge a road leaves by
+    /// (`Tile::road_link_points`) within [`ROAD_LINK_REACH`], so that it meets the neighbour's road. On by default.
+    pub(crate) snap_road_links: bool,
+
+    /// The road link the cursor is snapped to now (drawing a procedural road or dragging its point), on the ground.
+    pub(crate) road_link_hit: Option<Float3>,
+
     /// Headings snap to whole rotate steps (north-aligned) when this close (degrees); 0: off.
     pub(crate) angle_tolerance: f32,
 
@@ -908,6 +915,8 @@ impl Default for TileTool {
             snap_tolerance: 0.0,
             snap_vertices: false,
             snap_edges: false,
+            snap_road_links: true,
+            road_link_hit: None,
             snap_heights: false,
             angle_tolerance: 0.0,
             snapped_cursor: Float3::default(),
@@ -2323,6 +2332,34 @@ impl TileTool {
             o.line(Float3::new(p.x - 1.0, p.y + 0.5, p.z + 1.0), Float3::new(p.x + 1.0, p.y + 0.5, p.z - 1.0), red);
         }
 
+        // Where a road leaves the tile, while a procedural road is drawn or selected (snap to road links): a ring, filled when snapped to.
+        let road_selected = primary(e).is_some_and(|s| t.tscene().type_of(s) == wce_tile_editor::tile_document::ROAD_SPLINE);
+        if self.snap_road_links
+            && ((self.drawing && self.draft.as_ref().is_some_and(|dr| dr.kind == wce_tile_editor::tile_document::ROAD_SPLINE))
+                || road_selected)
+        {
+            let ring = Self::handle_size(e) * 2.5;
+            let cyan = overlay_colour(0.2, 0.9, 1.0, 1.0);
+            for p in t.road_link_points() {
+                let hit = self.road_link_hit.is_some_and(|q| (q.x - p.x).abs() < 0.01 && (q.z - p.z).abs() < 0.01);
+                let mut prev = None;
+                for i in 0..=32 {
+                    let a = i as f32 * std::f32::consts::TAU / 32.0;
+                    let (x, z) = (p.x + a.cos() * ring, p.z + a.sin() * ring);
+                    let q = Float3::new(x, t.terrain_height(x, z) + 0.5, z);
+                    if let Some(prev) = prev {
+                        o.line(prev, q, cyan);
+                    }
+
+                    if hit {
+                        o.line(Float3::new(p.x, p.y + 0.5, p.z), q, cyan);
+                    }
+
+                    prev = Some(q);
+                }
+            }
+        }
+
         if self.drawing {
             let r = Self::handle_size(e);
             let hot = overlay_colour(1.0, 0.9, 0.1, 1.0);
@@ -2414,12 +2451,23 @@ impl TileTool {
         self.close_hover = self.closes_drawing(e, ev);
         self.terrain_hit = false;
         let Some((o, dir)) = e.viewport.ray(ev.x, ev.y) else { return };
+        let sel = primary(e);
         let Some(d) = document(e) else { return };
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
             let snapped = self.snap_point(d, hit, self.grab().map(|g| g.elem));
             self.snapped_cursor = Float3::new(snapped.x, d.tile().terrain_height(snapped.x, snapped.z), snapped.z);
+        }
+
+        // A procedural road's point onto the edge a road leaves the tile by, before any other snapping.
+        self.road_link_hit = None;
+        if self.terrain_hit
+            && self.road_link_snapping(sel, d)
+            && let Some(q) = self.road_link_near(d, self.cursor)
+        {
+            self.road_link_hit = Some(q);
+            self.snapped_cursor = q;
         }
 
         let grab = self.grab().map(|g| (g.elem, g.y_offset, g.gesture, g.last, g.others.clone()));
@@ -2589,6 +2637,22 @@ impl TileTool {
     /// axis, within the tolerance when there is one).
     pub(crate) fn snap_point(&self, d: &TileDocument, p: Float3, skip: Option<usize>) -> Float3 {
         self.snap_axes(d, p, skip, true, true)
+    }
+
+    /// Whether a procedural road's point is being placed (drawing one) or dragged (its point, not a handle), with snap to road links on.
+    pub(crate) fn road_link_snapping(&self, sel: Option<usize>, d: &TileDocument) -> bool {
+        use wce_tile_editor::tile_document::ROAD_SPLINE;
+        self.snap_road_links
+            && ((self.drawing && self.draft.as_ref().is_some_and(|dr| dr.kind == ROAD_SPLINE))
+                || (matches!(self.gesture, Some(Gesture::Point { handle: None, .. }))
+                    && sel.is_some_and(|s| d.tile().tscene().type_of(s) == ROAD_SPLINE)))
+    }
+
+    /// The road link (`Tile::road_link_points`) nearest a point, within [`ROAD_LINK_REACH`] or the snap tolerance when more.
+    pub(crate) fn road_link_near(&self, d: &TileDocument, p: Float3) -> Option<Float3> {
+        let reach = self.snap_tolerance.max(ROAD_LINK_REACH);
+        let near = d.tile().road_link_points().into_iter().map(|q| ((q.x - p.x).hypot(q.z - p.z), q));
+        near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
     }
 
     /// The tile's outlines for the snapping, from the cache while the tile and `skip` are the same.
@@ -4467,6 +4531,9 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
     clicked
 }
 
+/// Metres within which a procedural road's point snaps to a road link (or the snap tolerance, when more).
+pub(crate) const ROAD_LINK_REACH: f32 = 12.0;
+
 impl TileTool {
     /// A press in the viewport (no flip under way): ends a grab, starts a gesture (a stroke, a handle's drag, Alt rotation), places or draws.
     fn on_press(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
@@ -4481,7 +4548,7 @@ impl TileTool {
             if self.closes_drawing(e, ev) {
                 self.finish_drawing(e);
             } else if self.terrain_hit {
-                self.draw_pts.push(self.cursor);
+                self.draw_pts.push(self.road_link_hit.unwrap_or(self.cursor));
 
                 // An angle finder is done at its third point.
                 if self.draw_pts.len() == 3 && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER) {
@@ -4735,7 +4802,8 @@ impl TileTool {
                     }
                 }
 
-                let target = Float3::new(self.cursor.x + grab.x, self.cursor.y, self.cursor.z + grab.z);
+                let target =
+                    self.road_link_hit.unwrap_or_else(|| Float3::new(self.cursor.x + grab.x, self.cursor.y, self.cursor.z + grab.z));
                 let sel = primary(e);
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
@@ -4832,6 +4900,7 @@ impl Tool for TileTool {
             snap_tolerance: old.snap_tolerance,
             snap_vertices: old.snap_vertices,
             snap_edges: old.snap_edges,
+            snap_road_links: old.snap_road_links,
             snap_heights: old.snap_heights,
             angle_tolerance: old.angle_tolerance,
             angle_step: old.angle_step,

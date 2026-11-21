@@ -184,6 +184,13 @@ impl TileTool {
             );
         }
 
+        gui::checkbox("snap roads to road links", &mut self.snap_road_links);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "A procedural road's point, drawn or dragged, goes onto the middle of a tile edge a road leaves by (the tile's road links: roads, roads_stone, roads_mountain), within 12 m or the tolerance, so it meets the next tile's road. The links show as rings while a road is drawn or selected. Before the other snapping.",
+            );
+        }
+
         gui::set_next_item_width(120.0);
         gui::drag_float("tolerance (m)", &mut self.snap_tolerance, 0.05, 0.0, 32.0, "%.2f");
         if gui::is_item_hovered() {
@@ -217,6 +224,10 @@ impl TileTool {
 
         if self.snap_edges {
             parts.push("edges".to_owned());
+        }
+
+        if self.snap_road_links {
+            parts.push("roads to road links".to_owned());
         }
 
         if self.snap_grid {
