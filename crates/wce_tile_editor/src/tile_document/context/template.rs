@@ -202,9 +202,10 @@ pub struct Template {
     /// A custom-mesh tile's mesh (the cliffs), drawn instead of its heights' patches.
     pub custom: Option<Arc<wce_scene::render_scene::CustomTerrainMesh>>,
 
-    /// A custom-mesh tile's floor on a campaign map (`custom_floor`): a grid over its cells and which of its points the mesh covers (in
-    /// x, z); the map context raises the uncovered parts that lie against land (`Frame::place`).
-    pub floor: Option<(Grid, Arc<Vec<bool>>)>,
+    /// A custom-mesh tile's floor on a campaign map (`custom_floor`): a grid over its cells and each point's state: covered by the mesh
+    /// (in x, z: `FLOOR_COVERED`), else bare on the cliff's land side (1) or sea side (0); the map context raises the land side's
+    /// (`Frame::place`).
+    pub floor: Option<(Grid, Arc<Vec<u8>>)>,
 
     /// Everything but the terrain, the markers and the grass; the first `mid` of them are drawn in the mid ring too (buildings, rivers).
     pub entities: Vec<(Float4x4, Payload)>,
@@ -493,31 +494,111 @@ const FLOOR_STEP: f64 = 16.0;
 /// A custom-mesh tile's floor for a campaign map: a flat grid over its cells (and the `o` around them) and which of its points the mesh's
 /// first level covers in x, z. A cliff's mesh need not cover its tile (main_attila's `6x4_inner_right_t1_r3` south-east of Rome: 47 %
 /// of it, an inner cliff with land behind it).
-fn custom_floor(mesh: &wce_scene::render_scene::CustomTerrainMesh, ex: f64, ez: f64, o: f64) -> (Grid, Arc<Vec<bool>>) {
+fn custom_floor(mesh: &wce_scene::render_scene::CustomTerrainMesh, ex: f64, ez: f64, o: f64) -> (Grid, Arc<Vec<u8>>) {
     let (nx, nz) = (((ex + 2.0 * o) / FLOOR_STEP).round() as i32 + 1, ((ez + 2.0 * o) / FLOOR_STEP).round() as i32 + 1);
     let grid = Grid::sample(nx, nz, -o, -o, FLOOR_STEP, &|_, _| 0.0);
-    // The triangles in the tile's frame (x, depth + z).
-    let tris: Vec<[[f32; 2]; 3]> = mesh.lods.first().map_or_else(Vec::new, |l| {
+    // The triangles in the tile's frame (x, depth + z; y).
+    let tris: Vec<[[f32; 3]; 3]> = mesh.lods.first().map_or_else(Vec::new, |l| {
         let at = |i: u32| {
             let p = l.vertices[i as usize].position;
-            [p[0], mesh.depth + p[2]]
+            [p[0], mesh.depth + p[2], p[1]]
         };
         l.indices.chunks_exact(3).map(|f| [at(f[0]), at(f[1]), at(f[2])]).collect()
     });
-    let inside = |x: f32, z: f32, t: &[[f32; 2]; 3]| {
-        let side = |a: [f32; 2], b: [f32; 2]| (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]);
+    // A point's height on a triangle over it, if it is over it.
+    let on = |x: f32, z: f32, t: &[[f32; 3]; 3]| -> Option<f32> {
+        let side = |a: [f32; 3], b: [f32; 3]| (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]);
         let (d0, d1, d2) = (side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0]));
-        (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0) || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0)
+        let over = (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0) || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0);
+        let area = d0 + d1 + d2;
+        if !over {
+            return None;
+        }
+        // Barycentric weights: each vertex's opposite edge's share.
+        Some(if area.abs() < 1e-9 { t[0][2].min(t[1][2]).min(t[2][2]) } else { (d1 * t[0][2] + d2 * t[1][2] + d0 * t[2][2]) / area })
     };
-    let covered = (0..nz)
-        .flat_map(|j| (0..nx).map(move |i| (i, j)))
-        .map(|(i, j)| {
-            let (x, z) = ((-o + f64::from(i) * FLOOR_STEP) as f32, (-o + f64::from(j) * FLOOR_STEP) as f32);
-            tris.iter().any(|t| inside(x, z, t))
+    let (y_lo, y_hi) = tris.iter().flatten().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v[2]), hi.max(v[2])));
+    let mid = 0.5 * (y_lo + y_hi);
+    let (w, h) = (nx as usize, nz as usize);
+    // Each point's lowest height of the mesh over it (none: bare).
+    let lowest: Vec<Option<f32>> = (0..w * h)
+        .map(|k| {
+            let (x, z) = ((-o + (k % w) as f64 * FLOOR_STEP) as f32, (-o + (k / w) as f64 * FLOOR_STEP) as f32);
+            tris.iter().filter_map(|t| on(x, z, t)).reduce(f32::min)
         })
         .collect();
-    (grid, Arc::new(covered))
+    // A bare point takes the side of the covered point nearest it (breadth first over the grid): where the mesh's lowest surface over
+    // that point is high, it is the cliff's top (the land behind it); where low, its face reaches down there (the sea in front). By the
+    // nearest vertex, points just in front of a face's top took the land's side and the floor stood out of the face (capture F, south-
+    // east of Rome: the game sees the face 0.3 units further and lower there).
+    let mut side: Vec<Option<bool>> = lowest.iter().map(|l| l.map(|y| y > mid)).collect();
+    let mut queue: std::collections::VecDeque<usize> = (0..w * h).filter(|&k| side[k].is_some()).collect();
+    while let Some(k) = queue.pop_front() {
+        let (i, j) = (k % w, k / w);
+        for (di, dj) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+            let (a, b) = (i as i32 + di, j as i32 + dj);
+            if a < 0 || b < 0 || a >= w as i32 || b >= h as i32 {
+                continue;
+            }
+            let n = b as usize * w + a as usize;
+            if side[n].is_none() {
+                side[n] = side[k];
+                queue.push_back(n);
+            }
+        }
+    }
+    // And never near a face (`FACE_REACH` points): a steep face's triangles project to thin bands, and grid points between them and the
+    // top are bare; taking the top's side, they rose to the land's height in spikes through the face (capture F: strips one or two
+    // points wide, the face two or three points off).
+    const FACE_REACH: i32 = 3;
+    let by_face = |k: usize| {
+        let (i, j) = ((k % w) as i32, (k / w) as i32);
+        let r = FACE_REACH;
+        (-r..=r)
+            .flat_map(|dj| (-r..=r).map(move |di| (i + di, j + dj)))
+            .any(|(a, b)| a >= 0 && b >= 0 && a < w as i32 && b < h as i32 && lowest[b as usize * w + a as usize].is_some_and(|y| y <= mid))
+    };
+    let mut state: Vec<u8> = (0..w * h)
+        .map(|k| match lowest[k] {
+            Some(_) => FLOOR_COVERED,
+            None => u8::from(side[k].unwrap_or(false) && !by_face(k)),
+        })
+        .collect();
+    // A land region smaller than `MIN_LAND` points is a gap in the mesh, not land behind it (an inner cliff's: hundreds of points):
+    // spots of one or two points stood at the land's height in front of capture F's cliffs.
+    const MIN_LAND: usize = 16;
+    let mut seen = vec![false; w * h];
+    for start in 0..w * h {
+        if state[start] != 1 || seen[start] {
+            continue;
+        }
+        let (mut region, mut stack) = (vec![], vec![start]);
+        seen[start] = true;
+        while let Some(k) = stack.pop() {
+            region.push(k);
+            let (i, j) = ((k % w) as i32, (k / w) as i32);
+            for (a, b) in [(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)] {
+                if a < 0 || b < 0 || a >= w as i32 || b >= h as i32 {
+                    continue;
+                }
+                let n = b as usize * w + a as usize;
+                if state[n] == 1 && !seen[n] {
+                    seen[n] = true;
+                    stack.push(n);
+                }
+            }
+        }
+        if region.len() < MIN_LAND {
+            for k in region {
+                state[k] = 0;
+            }
+        }
+    }
+    (grid, Arc::new(state))
 }
+
+/// A custom-mesh tile's floor point the mesh covers (`Template::floor`); 0 a bare point on the cliff's sea side, 1 on its land side.
+pub const FLOOR_COVERED: u8 = 2;
 
 /// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its mesh (the kit's CS2, else the packs' model), on the map's LF, with the material
 /// of its blend map projected onto it. Its heights are zero: they draw nothing (the game draws no patches for such a tile) but the floor
@@ -533,7 +614,11 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
 
     let files = files.ok_or("no game files (the ground's textures)")?;
-    let albedo = super::custom_mesh::albedo(super::custom_mesh::CLIFF_TEXTURE, &look.climate, files.as_ref());
+    let albedo = if entry.kind() == "campaign" && files.exists(super::custom_mesh::CAMPAIGN_CLIFF_ALBEDO) {
+        super::custom_mesh::CAMPAIGN_CLIFF_ALBEDO.to_owned()
+    } else {
+        super::custom_mesh::albedo(super::custom_mesh::CLIFF_TEXTURE, &look.climate, files.as_ref())
+    };
     // The kit's CS2, else the packs' model (a tile no kit has: Rome 2's).
     let mesh = match wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_CS2) {
         Some(cs2) => {

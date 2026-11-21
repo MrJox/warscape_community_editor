@@ -1266,9 +1266,9 @@ impl Frame {
         // little under it, the rest (under the mesh, against the sea) at the battle's depth under it. At the battle's fixed depth for all,
         // main_attila's inner cliff south-east of Rome (`6x4_inner_right_t1_r3`, its mesh 47 % of its cells) left a flat hole showing the
         // sea where the game has land.
-        if let (Some(_), Some((f, covered)), "campaign") = (&t.custom, &t.floor, self.climates.kind.as_str()) {
+        if let (Some(_), Some((f, state)), "campaign") = (&t.custom, &t.floor, self.climates.kind.as_str()) {
             let material = terrain.material.clone().or_else(|| self.plain_over(i, grid));
-            let heights = self.custom_floor_heights(i, f, covered, frame.m[1][1]);
+            let heights = self.custom_floor_heights(i, f, state, frame.m[1][1]);
             let ground = Terrain {
                 nx: f.nx,
                 nz: f.nz,
@@ -1278,6 +1278,7 @@ impl Frame {
                 heights: Arc::new(heights),
                 custom: None,
                 material,
+                no_blend_box: true,
                 ..terrain.clone()
             };
             out.push((frame, Payload::Terrain(ground)));
@@ -1293,12 +1294,13 @@ impl Frame {
         self.place_entities(t, lod, frame, out);
     }
 
-    /// A campaign cliff floor's heights over the LF (tile units; `scale_y` the frame's): the points its mesh leaves bare whose nearest edge
-    /// of the tile has a land tile beyond it, a little under the LF (`CAMPAIGN_FLOOR_UNDER`: the land behind an inner cliff); the others
-    /// (under the mesh, against sea tiles or the open sea) twice `FLOOR_DEPTH` under it.
+    /// A campaign cliff floor's heights over the LF (tile units; `scale_y` the frame's): the points its mesh leaves bare on the cliff's
+    /// land side (`custom_floor`: the mesh's vertex nearest them is in its upper half) whose nearest edge of the tile has a land tile
+    /// beyond it, a little under the LF (`CAMPAIGN_FLOOR_UNDER`: the land behind an inner cliff); the others (under the mesh, on its sea
+    /// side, against sea tiles or the open sea) twice `FLOOR_DEPTH` under it.
     /// ASSUMPTION: what the game draws where a cliff's mesh does not reach was not traced (its screenshots: land behind that cliff, sea in
     /// front of the others).
-    fn custom_floor_heights(&self, i: usize, f: &Grid, covered: &[bool], scale_y: f32) -> Vec<f32> {
+    fn custom_floor_heights(&self, i: usize, f: &Grid, state: &[u8], scale_y: f32) -> Vec<f32> {
         let p = &self.map.placements[i];
         let to_map = p.to_map();
         let me = p.rect();
@@ -1330,13 +1332,24 @@ impl Frame {
         // cliff's end from the sea to the land, so regions mislead).
         let (x0, z0) = (f64::from(f.ox), f64::from(f.oz));
         let (x1, z1) = (x0 + (nx - 1) as f64 * f64::from(f.step), z0 + (nz - 1) as f64 * f64::from(f.step));
+        // The tile's own rectangle (the grid reaches `-x0` past it all round): only its points can be land. Its margin overlaps the
+        // neighbours, which draw their own ground; a margin point by a corner took the land beyond the other edge, and the floor stood
+        // at the land LF's height over the sea in front of the cliff, sloping down through its face (capture F: beige panels on the
+        // cliffs south-east of Rome, nearer than the mesh, where the game draws only the cliff).
+        let (ex, ez) = (x1 + x0, z1 + z0);
+        let inside = |x: f64, z: f64| (-1e-6..=ex + 1e-6).contains(&x) && (-1e-6..=ez + 1e-6).contains(&z);
         let mut heights = vec![sea_h; nx * nz];
         for k in 0..nx * nz {
-            if covered[k] {
+            // Covered, or on the sea side: a diagonal cliff's sea side reaches an edge with land beyond it (`2x2_bl_rt` south-east of
+            // Rome), and by the edge alone its floor stood at the land's height in front of the face.
+            if state[k] != 1 {
                 continue;
             }
 
             let (x, z) = (x0 + (k % nx) as f64 * f64::from(f.step), z0 + (k / nx) as f64 * f64::from(f.step));
+            if !inside(x, z) {
+                continue;
+            }
             let out = 64.0;
             let edges = [(x - x0, (x0 - out, z)), (x1 - x, (x1 + out, z)), (z - z0, (x, z0 - out)), (z1 - z, (x, z1 + out))];
             let (_, (ox, oz)) = edges.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).expect("four edges");

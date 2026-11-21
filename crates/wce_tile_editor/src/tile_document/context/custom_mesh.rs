@@ -18,6 +18,13 @@ const LOD_DISTANCES: [f32; 5] = [100.0, 200.0, 400.0, 500.0, 1000.0];
 /// The cliffs' albedo, before its climate and `_diffuse.dds` (the packs' model's texture name; the CS2's material is 3ds Max's).
 pub const CLIFF_TEXTURE: &str = "terrain/textures/battle/cliff/0_su";
 
+/// A campaign map's cliffs' albedo: every cliff draw of the game's campaign frames binds this texture, whatever the region's climate
+/// or the season (RenderDoc: captures A (spring, 60 draws) and F (61), Attila's main campaign; its top mip's SHA1 is the pack file's,
+/// 1024 x 1024 BC3 sRGB). The battle cliff texture the editor drew before was twice as bright and of another rock. Where the engine
+/// names it was not traced (fn 0x117ca6f0 builds the name from a base passed down from 0x1185b0c0's callers; the campaign database's
+/// `layer_exempt_1` is `rock_b`: a guess for the group).
+pub const CAMPAIGN_CLIFF_ALBEDO: &str = "terrain/textures/campaign/default/rock_b/3_su_diffuse.dds";
+
 /// A unit vector component as the game's byte: truncated, as BOB's (-0.0056 is 126, 0.0043 is 128).
 fn unorm(v: f32) -> u8 {
     ((v * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8

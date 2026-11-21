@@ -261,7 +261,19 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   the plain material's blend box stands 30 units over the LF: what rose out of it resolved black. A ground with heights of its
   own now has a box over them, and no level of detail (two at different strides parted along their edge, as the blocks'
   comment has it). Also: a far chunk drew its tiles' cells inside a block's square, which the block draws (drawn twice).
-- **F's smeared cliffs (2026-11-20, open):** beige streaks down the cliff faces south-east of Rome where the game's are grey rock. In
+- **F's cliffs, settled (2026-11-21, RenderDoc: captures A, F, T0 and editor captures of F's view):** three causes.
+  (1) The texture: every cliff draw of the game's campaign frames (A 60, F 61, TDD's T0 8) binds
+  `terrain/textures/campaign/default/rock_b/3_su_diffuse.dds` (its top mip's SHA1 the pack file's), whatever the climate or season;
+  the editor drew the battle cliff texture (`0_su_default`), another rock twice as bright. Where the engine names it is not traced
+  (fn 0x117ca6f0 builds it from a base passed down from 0x1185b0c0's callers). (2) The layers' weight: a campaign cliff tile gave its
+  material's blend box twice (the cliff and its floor), so the ground's layers weighed 2 a box against the cliff's 10 (the game: one
+  box a tile; at the same world point its layers add 2.9, the editor's 5.4); the floor now has none (`Terrain::no_blend_box`).
+  (3) The beige panels: the editor's cliff floor (its invention: the game draws nothing but the mesh) stood at the land's height in
+  front of the faces (the game sees the face 0.3 units further and lower there). A bare floor point is now land only when the
+  covered point nearest it has only the top over it (the mesh's lowest surface there high), it is not within three points of a face,
+  and its land region has at least 16 points (the slits between a face's thin bands were spikes); margins never land. The inner
+  cliff south-east of Rome keeps its land; A's west coast unchanged.
+- **F's smeared cliffs (2026-11-20, superseded by the above):** beige streaks down the cliff faces south-east of Rome where the game's are grey rock. In
   the game the pixel's terrain albedo is two layer draws (weight 1 each) and the cliff's own `custom_geom_mat` draw (weight 10,
   LessEqual); in the editor's the layers alone: our custom-material pass never lands there. Without its depth test it does
   (the streaks turn to rock, as the game's), so the cliff mesh covers them but something nearer holds the depth. Not the two

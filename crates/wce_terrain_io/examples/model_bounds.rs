@@ -96,6 +96,10 @@ fn main() {
                 })
                 .collect();
             println!("    pivots {}", pivots.join(" "));
+            for b in lod.mesh_blocks() {
+                let t: Vec<String> = b.material().textures().iter().map(|t| format!("{:?} {}", t.tex_type(), t.path())).collect();
+                println!("    textures {}", t.join("; "));
+            }
         }
     }
 }
