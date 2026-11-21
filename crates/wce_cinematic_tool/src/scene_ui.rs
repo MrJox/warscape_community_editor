@@ -38,7 +38,6 @@ pub struct SceneUi {
     pub track: Option<u32>,
     pub key: Option<KeyRef>,
     pub unit: Option<u32>,
-    new_text: String,
     /// Layout view: centre (x, z) and metres per pixel.
     view: Option<([f32; 2], f32)>,
     /// A key being dragged on the timeline: its time when the drag started.
@@ -53,13 +52,19 @@ pub struct SceneUi {
     last_tick: Option<std::time::Instant>,
     /// The game's units, factions, weather files... for the pickers (kept across scenes).
     pub lists: std::sync::Arc<GameLists>,
-    filters: Filters,
-    /// Adding a unit: the army chosen, the unit picked, whether every unit is offered.
-    add_army: usize,
-    add_unit: Option<String>,
-    all_units: bool,
-    /// A unit waiting for a click on the Layout: (unit key, army).
-    pub placing: Option<(String, usize)>,
+    pub filters: Filters,
+    /// The Inspector shows the selected key (it was clicked after the selection last changed).
+    pub key_focus: bool,
+    /// Units hidden in the editor's preview (the Scene panel's eyes; not saved, not in the exports).
+    pub hidden: std::collections::HashSet<u32>,
+    /// Asked for by a panel: the camera to look at a unit, the selection deleted or duplicated.
+    pub look_at: Option<u32>,
+    pub request_delete: bool,
+    pub request_duplicate: bool,
+    pub outliner_filter: String,
+    pub outliner_hovered: bool,
+    /// The window picking the battle's place on its map.
+    pub map_pick: crate::map_pick::MapPicker,
     /// A unit being dragged on the Layout: its start when the drag began.
     drag_unit: Option<(u32, [f32; 2])>,
     /// The scenes of the projects folder (for Open), and what the start buttons asked for.
@@ -142,274 +147,6 @@ impl SceneUi {
                 self.playing = false;
             }
         }
-    }
-
-    // ---- Scene panel ----
-
-    pub fn scene_panel(&mut self, e: &mut Editor) {
-        gui::set_next_window_size(v2(340.0, 600.0), gui::COND_FIRST_USE_EVER);
-        if !gui::begin("Scene", None, 0) {
-            gui::end();
-            return;
-        }
-        let Some(p) = scene_doc(e).map(|d| d.project().clone()) else {
-            self.start_buttons();
-            gui::end();
-            return;
-        };
-        if gui::collapsing_header("Battle", gui::TREE_DEFAULT_OPEN) {
-            let mut b = p.battle.clone();
-            let mut m = p.map.clone();
-            let mut changed = false;
-            changed |= text_row("Name", &mut b.key, "The battle's key: its script folder and menu entry");
-            gui::row("Battle map");
-            if let Some(k) = picker(&mut self.filters, "map", &m.campaign_map, &self.lists.battle_maps, -1.0) {
-                m.campaign_map = k;
-                changed = true;
-            }
-            if gui::is_item_hovered() {
-                gui::set_tooltip("The map whose battle tiles the battle is fought on (a campaign map: the position below picks where)");
-            }
-            let mut pos = m.position;
-            gui::row("Map position");
-            gui::set_next_item_width(-1.0);
-            if gui::drag_float2("##mappos", &mut pos, 0.0005, "%.4f") {
-                m.position = [pos[0].clamp(0.0, 1.0), pos[1].clamp(0.0, 1.0)];
-                changed = true;
-            }
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Where on that map, 0 to 1 across and down");
-            }
-            gui::row("Weather");
-            let shown = b.environment.replace('\\', "/").to_lowercase();
-            let shown = shown.rsplit('/').next().unwrap_or("").trim_end_matches(".environment").to_owned();
-            if let Some(k) =
-                picker(&mut self.filters, "env", if shown.is_empty() { "Pick a weather" } else { &shown }, &self.lists.environments, -1.0)
-            {
-                b.environment = k;
-                changed = true;
-            }
-            changed |= choice_row("Season", &mut b.season, &["Spring", "Summer", "Autumn", "Winter"]);
-            changed |= choice_row("Time of day", &mut b.time_of_day, &["day", "night"]);
-            changed |= choice_row("Rain / snow", &mut b.precipitation, &["dry", "rain", "snow"]);
-            let mut year = b.year;
-            gui::row("Year");
-            gui::set_next_item_width(-1.0);
-            if gui::input_int("##year", &mut year) {
-                b.year = year;
-                changed = true;
-            }
-            if gui::tree_node("More") {
-                changed |= float_row("Playable area", &mut m.playable_area, 10.0, "The battlefield's side, metres");
-                let mut menu = [b.menu_position[0], b.menu_position[1]];
-                gui::row("Menu position");
-                if gui::drag_int_range("##menux", &mut menu[0], 1.0, 0, 4096, "x %d") {
-                    b.menu_position[0] = menu[0];
-                    changed = true;
-                }
-                gui::same_line();
-                if gui::drag_int_range("##menuy", &mut menu[1], 1.0, 0, 4096, "y %d") {
-                    b.menu_position[1] = menu[1];
-                    changed = true;
-                }
-                if gui::is_item_hovered() {
-                    gui::set_tooltip("Where the battle sits on the Historical Battles map, pixels");
-                }
-                gui::tree_pop();
-            }
-            if changed {
-                edit(e, "battle setup", |p| {
-                    p.battle = b;
-                    p.map = m;
-                });
-            }
-        }
-        if gui::collapsing_header("Armies", gui::TREE_DEFAULT_OPEN) {
-            for (i, a) in p.armies.iter().enumerate() {
-                gui::push_id_int(i as i32);
-                let name = self.lists.faction_name(&a.faction);
-                if let Some(k) = picker(&mut self.filters, &format!("faction{i}"), &name, &self.lists.factions, 190.0) {
-                    edit(e, "army faction", |p| p.armies[i].faction = k);
-                }
-                gui::same_line();
-                let mut side = a.alliance.min(3) as i32;
-                gui::set_next_item_width(70.0);
-                if gui::combo("##side", &mut side, &["Side 1", "Side 2", "Side 3", "Side 4"]) {
-                    edit(e, "army side", |p| p.armies[i].alliance = side as u32);
-                }
-                gui::same_line();
-                if gui::radio_button("Player", a.player) {
-                    edit(e, "player army", |p| {
-                        for (k, x) in p.armies.iter_mut().enumerate() {
-                            x.player = k == i;
-                        }
-                    });
-                }
-                gui::pop_id();
-            }
-            if gui::small_button("Add army") {
-                edit(e, "add army", |p| {
-                    let n = p.armies.len() as f32;
-                    p.armies.push(Army {
-                        alliance: 1,
-                        faction: "att_fact_hunni".into(),
-                        deployment_centre: [300.0 * (n - 1.0), 368.0],
-                        deployment_size: [600.0, 300.0],
-                        deployment_orientation: std::f32::consts::PI,
-                        player: false,
-                    })
-                });
-            }
-        }
-        if gui::collapsing_header("Units", gui::TREE_DEFAULT_OPEN) {
-            // Adding: the army, then one of its faction's units (or any unit), then Place (click the Layout) or Add (in its zone).
-            let armies: Vec<String> = p.armies.iter().map(|a| self.lists.faction_name(&a.faction)).collect();
-            let army_refs: Vec<&str> = armies.iter().map(String::as_str).collect();
-            let mut army = self.add_army.min(p.armies.len().saturating_sub(1)) as i32;
-            gui::set_next_item_width(-1.0);
-            if gui::combo("##addarmy", &mut army, &army_refs) {
-                self.add_army = army as usize;
-                self.add_unit = None;
-            }
-            let faction = p.armies.get(army as usize).map(|a| a.faction.clone()).unwrap_or_default();
-            let own = self.lists.units_of_faction.get(&faction);
-            let choices: Vec<crate::pickers::Item> = match own {
-                Some(set) if !self.all_units => self.lists.units.iter().filter(|i| set.contains(&i.key)).cloned().collect(),
-                _ => self.lists.units.clone(),
-            };
-            let shown = self.add_unit.as_deref().map_or_else(|| "Pick a unit".to_owned(), |k| self.lists.unit_name(k));
-            if let Some(k) = picker(&mut self.filters, "addunit", &shown, &choices, -110.0) {
-                self.add_unit = Some(k);
-            }
-            gui::same_line();
-            gui::checkbox("All##allunits", &mut self.all_units);
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Every unit, not only the ones this army's faction fields");
-            }
-            gui::begin_disabled(self.add_unit.is_none());
-            let placing = self.placing.is_some();
-            if gui::button(if placing { "Click the Layout..." } else { "Place" }) {
-                self.placing = if placing { None } else { self.add_unit.clone().map(|k| (k, army as usize)) };
-                gui::select_dock_tab("Layout");
-            }
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip("Then click the Layout where the unit stands (Esc: cancel)");
-            }
-            gui::same_line();
-            if gui::button("Add in its zone")
-                && let Some(k) = self.add_unit.clone()
-            {
-                self.unit = Some(add_unit(e, &self.lists, &k, army as usize, None));
-            }
-            gui::end_disabled();
-            gui::separator();
-            for u in &p.units {
-                let label = format!("{}  ·  {}##u{}", u.name, armies.get(u.army).map_or("?", String::as_str), u.id);
-                if gui::selectable(&label, self.unit == Some(u.id), 0) {
-                    self.unit = Some(u.id);
-                }
-            }
-            if p.units.is_empty() {
-                gui::text_disabled("No units yet");
-            }
-            if let Some(u) = self.unit.and_then(|id| p.unit(id)).cloned() {
-                gui::separator_text("Selected unit");
-                let mut v = u.clone();
-                let mut changed = false;
-                changed |= text_row("Name", &mut v.name, "The unit's name in the editor");
-                gui::row("Unit");
-                if let Some(k) = picker(&mut self.filters, "unitkind", &self.lists.unit_name(&v.unit), &self.lists.units, -1.0) {
-                    v.unit = k;
-                    changed = true;
-                }
-                let mut a = v.army as i32;
-                gui::row("Army");
-                gui::set_next_item_width(-1.0);
-                if gui::combo("##army", &mut a, &army_refs) {
-                    v.army = a as usize;
-                    changed = true;
-                }
-                gui::row("Start");
-                gui::set_next_item_width(-1.0);
-                changed |= gui::drag_float2("##start", &mut v.start, 0.5, "%.1f");
-                if gui::is_item_hovered() {
-                    gui::set_tooltip("Where it stands when the battle starts (drag it in the Layout)");
-                }
-                let mut deg = v.facing.to_degrees();
-                gui::row("Facing");
-                gui::set_next_item_width(-1.0);
-                if gui::slider_float("##facing", &mut deg, -180.0, 180.0, "%.0f deg") {
-                    v.facing = deg.to_radians();
-                    changed = true;
-                }
-                let mut men = v.men as i32;
-                gui::row("Men");
-                gui::set_next_item_width(-1.0);
-                if gui::drag_int_range("##men", &mut men, 1.0, 1, 1000, "%d") {
-                    v.men = men.max(1) as u32;
-                    changed = true;
-                }
-                changed |= float_row("Width", &mut v.width, 0.5, "Formation width, metres");
-                gui::row("General");
-                changed |= gui::checkbox("##general", &mut v.general);
-                if changed {
-                    edit(e, "unit", |p| {
-                        if let Some(x) = p.units.iter_mut().find(|x| x.id == u.id) {
-                            *x = v;
-                        }
-                    });
-                }
-                if gui::small_button("Delete unit") {
-                    edit(e, "delete unit", |p| {
-                        p.units.retain(|x| x.id != u.id);
-                        for c in &mut p.clips {
-                            c.tracks.retain(|t| !matches!(&t.content, TrackContent::Unit { unit, .. } if *unit == u.id));
-                        }
-                    });
-                    self.unit = None;
-                }
-            }
-        }
-        if gui::collapsing_header("Texts", 0) {
-            let lang = self.lang().to_owned();
-            let mut current = LANGUAGES.iter().position(|l| *l == lang).unwrap_or(0) as i32;
-            gui::set_next_item_width(70.0);
-            if gui::combo("Language", &mut current, LANGUAGES) {
-                self.language = LANGUAGES[current as usize].to_owned();
-            }
-            if gui::is_item_hovered() {
-                gui::set_tooltip("The language edited here and in the Key panel, and the one the exports write");
-            }
-            let mut changes: Vec<(String, String)> = vec![];
-            for (id, langs) in &p.texts {
-                let mut en = langs.get(&lang).cloned().unwrap_or_default();
-                gui::row(id);
-                if gui::is_item_hovered()
-                    && let Some(english) = langs.get("en")
-                {
-                    gui::set_tooltip(english);
-                }
-                gui::set_next_item_width(-1.0);
-                if gui::input_text(&format!("##t_{id}"), None, &mut en, 512, gui::INPUT_ENTER_RETURNS_TRUE) {
-                    changes.push((id.clone(), en));
-                }
-            }
-            gui::set_next_item_width(-60.0);
-            gui::input_text("##newtext", Some("text id"), &mut self.new_text, 64, 0);
-            gui::same_line();
-            if gui::button("Add##text") && !self.new_text.trim().is_empty() {
-                changes.push((sanitize_key(&self.new_text), String::new()));
-                self.new_text.clear();
-            }
-            if !changes.is_empty() {
-                edit(e, "text", |p| {
-                    for (id, en) in changes {
-                        p.texts.entry(id).or_default().insert(lang.clone(), en);
-                    }
-                });
-            }
-        }
-        gui::end();
     }
 
     // ---- Timeline panel ----
@@ -571,6 +308,7 @@ impl SceneUi {
         }
         let mut y = origin.y + ruler_h + 2.0;
         let mut pending: Option<(String, Box<dyn FnOnce(&mut Project)>)> = None;
+        let mut key_here: Option<(u32, f64)> = None;
         for track in &clip.tracks {
             let selected = self.track == Some(track.id);
             gui::set_cursor_screen_pos(v2(origin.x, y));
@@ -631,6 +369,12 @@ impl SceneUi {
             // Clicks on the row: a key under the mouse is selected (and dragged), else the playhead moves.
             gui::set_cursor_screen_pos(v2(area_x, y));
             gui::invisible_button(&format!("##row{}", track.id), v2(area_w, row_h - 2.0), 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Click: the playhead here  ·  double-click: a key here  ·  drag a key: move it");
+                if gui::is_mouse_double_clicked(0) {
+                    key_here = Some((track.id, (from_x(gui::mouse_pos().x) * fps).round() / fps));
+                }
+            }
             if gui::is_item_activated() {
                 let mx = gui::mouse_pos().x;
                 let hit = key_times(&track.content).into_iter().min_by(|a, b| (to_x(a.2) - mx).abs().total_cmp(&(to_x(b.2) - mx).abs()));
@@ -639,6 +383,7 @@ impl SceneUi {
                     Some((list, i, t)) if (to_x(t) - mx).abs() <= 7.0 => {
                         let k = KeyRef { track: track.id, list, index: i };
                         self.key = Some(k.clone());
+                        self.key_focus = true;
                         self.dragging = Some((k, t));
                         self.time = t;
                     }
@@ -667,6 +412,16 @@ impl SceneUi {
         gui::dummy(v2(1.0, 1.0));
         if let Some((name, f)) = pending {
             edit(e, &name, f);
+        }
+        if let Some((track, t)) = key_here {
+            self.track = Some(track);
+            self.time = t;
+            self.dragging = None;
+            if let Some(p) = scene_doc(e).map(|d| d.project().clone())
+                && let Some(c) = p.clip(clip.id).cloned()
+            {
+                self.add_key(e, &p, &c);
+            }
         }
         gui::end();
     }
@@ -748,31 +503,20 @@ impl SceneUi {
         });
     }
 
-    // ---- Key panel ----
+    // ---- The selected key (in the Inspector) ----
 
-    pub fn key_panel(&mut self, e: &mut Editor) {
-        gui::set_next_window_size(v2(320.0, 300.0), gui::COND_FIRST_USE_EVER);
-        if !gui::begin("Key", None, 0) {
-            gui::end();
-            return;
-        }
-        let (Some(p), Some(k)) = (scene_doc(e).map(|d| d.project().clone()), self.key.clone()) else {
-            gui::text_disabled("Select a key on the timeline");
-            gui::end();
-            return;
-        };
-        let Some(clip) = self.current_clip(&p).cloned() else {
-            gui::end();
-            return;
-        };
+    pub fn key_body(&mut self, e: &mut Editor) {
+        let (Some(p), Some(k)) = (scene_doc(e).map(|d| d.project().clone()), self.key.clone()) else { return };
+        let Some(clip) = self.current_clip(&p).cloned() else { return };
         let Some(track) = clip.tracks.iter().find(|t| t.id == k.track).cloned() else {
-            gui::end();
+            self.key = None;
             return;
         };
         let mut content = track.content.clone();
         let mut changed = false;
         let mut delete = false;
-        gui::text(&format!("{} / {} #{}", track.name, k.list, k.index));
+        gui::text(&format!("Key: {} / {} #{}", track.name, k.list, k.index));
+        gui::separator();
         macro_rules! time_row {
             ($t:expr) => {{
                 let mut t = $t as f32;
@@ -983,10 +727,9 @@ impl SceneUi {
                 }
             }
         }
-        if gui::button("Delete key") {
+        if gui::button(&format!("{}  Delete key", icons::TRASH_2)) {
             delete = true;
         }
-        gui::end();
         if changed || delete {
             let track_id = k.track;
             let list = k.list;
@@ -1007,7 +750,7 @@ impl SceneUi {
 
     // ---- Layout panel (the field from above) ----
 
-    pub fn layout_panel(&mut self, e: &mut Editor) {
+    pub fn layout_panel(&mut self, e: &mut Editor, create: &mut crate::create::Create) {
         gui::set_next_window_size(v2(500.0, 500.0), gui::COND_FIRST_USE_EVER);
         if !gui::begin("Layout", None, 0) {
             gui::end();
@@ -1122,15 +865,12 @@ impl SceneUi {
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(u, _)| u.name.clone())
             });
-            if self.placing.is_none() {
+            if create.making.is_none() {
                 gui::set_tooltip(&match under {
                     Some(n) => format!("{n}  ·  drag to move, Ctrl+click: a path key at the playhead"),
                     None => format!("x {:.0}  z {:.0}  ·  right-drag: pan, wheel: zoom", w[0], w[1]),
                 });
             }
-        }
-        if self.placing.is_some() && gui::is_key_pressed(gui::KEY_ESCAPE, false) {
-            self.placing = None;
         }
         // Dragging the selected unit moves where it starts; kept when the mouse is released.
         if let Some((id, from)) = self.drag_unit {
@@ -1143,22 +883,49 @@ impl SceneUi {
                 let w = to_w(gui::mouse_pos());
                 self.drag_unit = None;
                 if (w[0] - from[0]).abs() + (w[1] - from[1]).abs() > 0.5 {
-                    edit(e, "move unit", |p| {
-                        if let Some(u) = p.units.iter_mut().find(|u| u.id == id) {
-                            u.start = w;
-                        }
-                    });
+                    // As the gizmo moves it: a unit with a path in the clip is keyed at the playhead.
+                    if let Some(d) = scene_doc(e) {
+                        let units = d.view.units.max(1e-3);
+                        let delta = wce_foundation::math::translation(wce_foundation::math::Float3::new(
+                            (w[0] - from[0]) / units,
+                            0.0,
+                            (w[1] - from[1]) / units,
+                        ));
+                        d.end_gesture();
+                        d.move_items(&[crate::items::SceneItem::Unit(id)], &delta, 0);
+                        d.end_gesture();
+                    }
                 }
             }
         }
-        if hovered && self.placing.is_some() {
-            gui::set_tooltip("Click where the unit stands (Esc: cancel)");
+        if hovered && create.making.is_some() {
+            let w = to_w(gui::mouse_pos());
+            create.ghost = Some(w);
+            gui::set_tooltip("Click where it goes  ·  R / Shift+R: turn  ·  Esc or right click: stop");
+            // Where it will stand.
+            if let Some(crate::create::Making::Unit(_)) = &create.making {
+                let army = create.draft.army.min(p.armies.len().saturating_sub(1));
+                let facing = p.armies.get(army).map_or(0.0, |a| a.deployment_orientation) + create.draft.turn.to_radians();
+                let (sin, cos) = facing.sin_cos();
+                let (hw, hd) = (create.draft.width * 0.5, 6.0);
+                let corner = |x: f32, z: f32| to_s([w[0] + x * cos + z * sin, w[1] - x * sin + z * cos]);
+                let pts = [corner(-hw, -hd), corner(hw, -hd), corner(hw, hd), corner(-hw, hd)];
+                let draw = gui::window_draw_list();
+                draw.polyline(&pts, gui::col32(255, 230, 120, 220), true, 1.5);
+                draw.line(corner(0.0, hd), corner(0.0, hd + 8.0), gui::col32(255, 230, 120, 220), 1.5);
+            }
+            if gui::is_mouse_clicked(1) {
+                create.stop();
+            }
         }
         if gui::is_item_clicked()
-            && let Some((key, army)) = self.placing.take()
+            && let Some(m) = create.making.clone()
         {
             let w = to_w(gui::mouse_pos());
-            self.unit = Some(add_unit(e, &self.lists, &key, army, Some(w)));
+            let lists = self.lists.clone();
+            if let Some(item) = create.place(e, &lists, &p, &m, w, self.clip, self.time) {
+                create.requests.push(crate::create::CreateRequest::Placed(item));
+            }
         } else if gui::is_item_clicked() {
             let w = to_w(gui::mouse_pos());
             let ctrl = gui::is_key_down(gui::MOD_CTRL);
@@ -1192,21 +959,11 @@ impl SceneUi {
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(u, _)| u.id);
                 // Held: a drag that moves it.
-                self.drag_unit = self.unit.and_then(|id| p.unit(id)).map(|u| (u.id, u.start));
+                self.drag_unit = self.unit.and_then(|id| f.units.iter().find(|s| s.unit == id)).map(|s| (s.unit, s.position));
             }
         }
         gui::end();
     }
-}
-
-fn text_row(label: &str, v: &mut String, tip: &str) -> bool {
-    gui::row(label);
-    gui::set_next_item_width(-1.0);
-    let r = gui::input_text(&format!("##{label}"), None, v, 256, gui::INPUT_ENTER_RETURNS_TRUE);
-    if gui::is_item_hovered() {
-        gui::set_tooltip(tip);
-    }
-    r
 }
 
 fn float_row(label: &str, v: &mut f32, speed: f32, tip: &str) -> bool {
@@ -1344,23 +1101,6 @@ fn remove_key(c: &mut TrackContent, list: &str, i: usize) {
         (TrackContent::DepthOfField { keys }, _) => rm(keys, i),
         (TrackContent::Weather { keys }, _) => rm(keys, i),
     }
-}
-
-/// A row choosing one of a few fixed values (the value as written in the game's files).
-fn choice_row(label: &str, v: &mut String, options: &[&str]) -> bool {
-    gui::row(label);
-    let mut i = options.iter().position(|o| o.eq_ignore_ascii_case(v)).map_or(-1, |i| i as i32);
-    gui::set_next_item_width(-1.0);
-    let mut shown: Vec<&str> = options.to_vec();
-    if i < 0 {
-        shown.push(v.as_str());
-        i = shown.len() as i32 - 1;
-    }
-    if gui::combo(&format!("##{label}"), &mut i, &shown) && (i as usize) < options.len() {
-        *v = options[i as usize].to_owned();
-        return true;
-    }
-    false
 }
 
 /// Adds a unit of `key` to `army`: at `at`, else in a row of the army's deployment zone. Returns its id.

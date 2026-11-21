@@ -23,8 +23,13 @@ pub struct Item {
 #[derive(Clone, Debug, Default)]
 pub struct GameLists {
     pub units: Vec<Item>,
-    /// Faction key -> the units it fields (`unit_variants`).
+    /// Faction key -> the units (`main_units` keys) it fields (`unit_variants`, by land unit).
     pub units_of_faction: HashMap<String, BTreeSet<String>>,
+    /// Unit -> its cards by faction (`unit_variants.unit_card`; faction "" the generic one): `ui/units/icons/<card>.png`.
+    pub cards: HashMap<String, Vec<(String, String)>>,
+    /// Unit -> its men at the largest unit size (`main_units.num_men`) and its caste (infantry, cavalry...).
+    pub men: HashMap<String, u32>,
+    pub caste: HashMap<String, String>,
     pub factions: Vec<Item>,
     pub environments: Vec<Item>,
     pub vfx: Vec<Item>,
@@ -88,10 +93,22 @@ impl GameLists {
         let schema = files.game().and_then(wce_foundation::settings::rpfm_schema_path).and_then(|p| Schema::load(&p, None).ok());
         if let Some(schema) = &schema {
             let unit_names = loc_names(files, "land_units", "land_units_onscreen_name_");
-            let land_of: HashMap<String, String> = table_rows(schema, files, "main_units_tables")
-                .into_iter()
-                .filter_map(|r| Some((r.get("unit")?.clone(), r.get("land_unit")?.clone())))
-                .collect();
+            let mains = table_rows(schema, files, "main_units_tables");
+            let land_of: HashMap<String, String> =
+                mains.iter().filter_map(|r| Some((r.get("unit")?.clone(), r.get("land_unit")?.clone()))).collect();
+            for r in &mains {
+                let Some(u) = r.get("unit") else { continue };
+                if let Some(n) = r.get("num_men").and_then(|n| n.parse::<u32>().ok()) {
+                    g.men.insert(u.clone(), n);
+                }
+                if let Some(c) = r.get("caste") {
+                    g.caste.insert(u.clone(), c.clone());
+                }
+            }
+            let mut mains_of_land: HashMap<&str, Vec<&str>> = HashMap::new();
+            for (u, l) in &land_of {
+                mains_of_land.entry(l.as_str()).or_default().push(u.as_str());
+            }
             let mut units: Vec<Item> = land_of
                 .iter()
                 .map(|(unit, land)| Item { key: unit.clone(), name: unit_names.get(land).cloned().unwrap_or_else(|| unit.clone()) })
@@ -99,8 +116,14 @@ impl GameLists {
             units.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.key.cmp(&b.key)));
             g.units = units;
             for r in table_rows(schema, files, "unit_variants_tables") {
-                if let (Some(u), Some(f)) = (r.get("unit"), r.get("faction")) {
-                    g.units_of_faction.entry(f.clone()).or_default().insert(u.clone());
+                let (Some(land), f) = (r.get("unit"), r.get("faction").cloned().unwrap_or_default()) else { continue };
+                for &u in mains_of_land.get(land.as_str()).into_iter().flatten() {
+                    if !f.is_empty() {
+                        g.units_of_faction.entry(f.clone()).or_default().insert(u.to_owned());
+                    }
+                    if let Some(card) = r.get("unit_card").filter(|c| !c.is_empty() && *c != "placeholder") {
+                        g.cards.entry(u.to_owned()).or_default().push((f.clone(), card.clone()));
+                    }
                 }
             }
             let faction_names = loc_names(files, "factions", "factions_screen_name_");
@@ -109,7 +132,7 @@ impl GameLists {
                 .filter_map(|r| r.get("key").cloned())
                 .map(|k| Item { name: faction_names.get(&k).cloned().unwrap_or_else(|| k.clone()), key: k })
                 .collect();
-            factions.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            factions.sort_by_key(|a| a.name.to_lowercase());
             factions.dedup_by(|a, b| a.key == b.key);
             g.factions = factions;
         }
@@ -149,6 +172,17 @@ impl GameLists {
 
     pub fn unit_name(&self, key: &str) -> String {
         self.units.iter().find(|i| i.key == key).map_or_else(|| key.to_owned(), |i| i.name.clone())
+    }
+
+    /// The picture of a unit as `faction` fields it (its generic card, else any).
+    pub fn card(&self, unit: &str, faction: &str) -> Option<String> {
+        let cards = self.cards.get(unit)?;
+        cards
+            .iter()
+            .find(|(f, _)| f == faction)
+            .or_else(|| cards.iter().find(|(f, _)| f.is_empty()))
+            .or_else(|| cards.first())
+            .map(|(_, c)| format!("ui/units/icons/{c}.png"))
     }
 
     pub fn faction_name(&self, key: &str) -> String {
@@ -197,4 +231,68 @@ pub fn picker(filters: &mut Filters, id: &str, shown: &str, items: &[Item], widt
 /// The labels of a short fixed list, as items.
 pub fn items_of(list: &[&str]) -> Vec<Item> {
     list.iter().map(|s| Item { key: (*s).to_owned(), name: (*s).to_owned() }).collect()
+}
+
+/// The game's pictures of units (their cards), read from the packs on a worker as the panels ask for them and kept as images.
+pub struct Cards {
+    files: std::sync::Arc<dyn Files>,
+    asked: std::collections::HashSet<String>,
+    requests: Option<std::sync::mpsc::Sender<String>>,
+    done: Option<std::sync::mpsc::Receiver<(String, Option<(u32, u32, Vec<u8>)>)>>,
+}
+
+impl Cards {
+    pub fn new(files: std::sync::Arc<dyn Files>) -> Self {
+        Self { files, asked: Default::default(), requests: None, done: None }
+    }
+
+    fn key(path: &str) -> String {
+        format!("cinematic/{path}")
+    }
+
+    /// The picture at `path` (`ui/units/icons/...png`) once read; asks for it the first time.
+    pub fn get(&mut self, images: &mut wce_editor::images::ImageTextures, path: &str) -> Option<wce_editor::images::ImageRef> {
+        if let Some(rx) = &self.done {
+            while let Ok((p, img)) = rx.try_recv() {
+                if let Some((w, h, px)) = img {
+                    images.submit(&Self::key(&p), w, h, px);
+                }
+            }
+        }
+        if let Some(r) = images.get(&Self::key(path)) {
+            return Some(r);
+        }
+        if self.asked.insert(path.to_owned()) {
+            if self.requests.is_none() {
+                let (tx, rx) = std::sync::mpsc::channel::<String>();
+                let (dtx, drx) = std::sync::mpsc::channel();
+                let files = self.files.clone();
+                std::thread::spawn(move || {
+                    for p in rx {
+                        let img = files.read(&p).ok().and_then(|b| decode_png(&b));
+                        if dtx.send((p, img)).is_err() {
+                            break;
+                        }
+                    }
+                });
+                self.requests = Some(tx);
+                self.done = Some(drx);
+            }
+            if let Some(tx) = &self.requests {
+                let _ = tx.send(path.to_owned());
+            }
+        }
+        None
+    }
+}
+
+/// An 8-bit RGB or RGBA PNG as RGBA.
+fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let png = wce_formats::png_file::PngFile::parse(bytes).ok()?;
+    let rgba = match (png.bit_depth, png.color_type) {
+        (8, 6) => png.pixels,
+        (8, 2) => png.pixels.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+        _ => return None,
+    };
+    Some((png.width, png.height, rgba))
 }

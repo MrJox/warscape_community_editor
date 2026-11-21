@@ -13,11 +13,13 @@ wce_cinematic = { path = "../wce_cinematic" }
 wce_editor = { path = "../wce_editor" }
 wce_editor_core = { path = "../wce_editor_core" }
 wce_foundation = { path = "../wce_foundation" }
+wce_map_view = { path = "../wce_map_view" }
 wce_formats = { path = "../wce_formats" }
 wce_render = { path = "../wce_render" }
 # The pack writer (wce_walls::pack).
 wce_walls = { path = "../wce_walls" }
 wce_scene = { path = "../wce_scene" }
+wce_tile = { path = "../wce_tile" }
 rpfm_lib.workspace = true
 wce_vfs = { path = "../wce_vfs" }
 wce_video = { path = "../wce_video" }

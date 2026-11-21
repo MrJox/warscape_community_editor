@@ -250,11 +250,39 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
 ## UX (user, 2026-11-21)
 
 The user found the first version built for scripts rather than people (keys typed by hand, no visible first step, no obvious way
-to fill a scene). Done the same day: pickers fed from the packs for every field naming game data (units by name and by the
-factions that field them, factions, weather files, VFX, battle maps, sound and music events, animation slots; armies and clips in
-logic nodes), New scene / Open a scene in the empty panels, units placed by clicking the Layout and moved by dragging, the
-Timeline's bar on two lines. Left: placing and moving units and keys in the 3D viewport (only the Layout does it), picking a map
-position on a picture of the campaign map, a first-run walkthrough of New scene -> units -> camera keys -> export as buttons.
+to fill a scene), then asked for the Tile tool's ways of making and editing things to be reused ("a very nice ref").
+
+1. Pickers fed from the packs for every field naming game data (units by name and by the factions that field them, factions,
+   weather files, VFX, battle maps, sound and music events, animation slots; armies and clips in logic nodes); New scene / Open a
+   scene in the empty panels; the Timeline's bar on two lines. **done** (2026-11-21)
+2. The Tile tool's model (2026-11-21). **done**:
+   - The scene's items (`items.rs`: the battle, armies, units, VFX instances) are the editor's selection; the document gives their
+     place to the editor's gizmo (`item_transform` / `transform_items`): units move and turn in the 3D viewport, a unit with a path in
+     the clip shown is keyed at the playhead (its start stays). A drag is one undo entry (merged snapshots, closed when it ends).
+   - **Create** panel (`create.rs`, as the Tile tool's): one search, Units / Effects / Armies tabs, the units as the game's cards
+     (`unit_variants.unit_card`, `ui/units/icons`), the chosen army's faction's first; a click starts placing, clicks on the viewport's
+     ground or the Layout put copies (R / Shift+R turn, Esc or a right click stops), the Inspector shows the draft every copy takes
+     (army, men from `main_units.num_men`, width, turn, general; an effect's length and scale); Space over the viewport: the quick-add
+     popup, placing at the mouse. Armies are added by faction.
+   - **Scene** panel (`outliner.rs`, as the Tile tool's): the battle, each army with its units (side colour, the player's star, an
+     eye that hides a unit in the editor only, drag units onto another army, right-click menus: place units, duplicate, look at it,
+     delete), the clip's effects; Ctrl / Shift click.
+   - **Inspector** (`inspect.rs`): the selected item's rows in the shared Inspector (battle setup and texts, army faction / side /
+     zone, unit kind / army / start / facing / men / width / general, its card; "Key its place here" and "Animate" at the playhead;
+     effect kind / times / place / scale); a key clicked on the timeline shows there (the Key panel is gone).
+   - **Viewport** (`view.rs`): clicks select units (by their formation on the ground) and effects (their markers), box select in
+     Select mode, formations drawn in their side's colour, the selected ones named with their path's keys, the placing ghost and its
+     hint, a right-click menu (duplicate, look at it, delete, add here). Delete, Ctrl+D, Space, R / Shift+R, Esc in the shortcut
+     registry.
+   - A new or opened scene shows the Scene, Timeline and Viewport tabs, the camera behind the player's zone.
+   - Found on the way: the unit list by faction compared land-unit keys with main-unit keys (fixed); the gizmo read a unit's place
+     from the previous frame (it is evaluated when asked now).
+   - Gate: `scripts/cinematic_ux.txt` in `cinematic_check.sh` (placing by clicks, moves and turns as one undo entry each, duplicate,
+     delete, a move keying a path, an army deleted with its units; the saved project identical between two runs).
+3. The battle's map position picked on a picture (`map_pick.rs`: the battle map's `lf_height_map.dds` coloured as the Tile tool's
+   minimap; click, wheel zoom, right-drag pan; the Battle's Inspector, "Pick on the map..."). **done** (2026-11-21)
+4. The Timeline: a double-click on a track's row adds a key there (the hover says how). **done** (2026-11-21)
+5. Left: camera keys placed and moved in the viewport, a first-run walkthrough. **todo**
 
 ## Open questions and risks
 

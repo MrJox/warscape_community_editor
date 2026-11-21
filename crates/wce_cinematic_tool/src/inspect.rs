@@ -1,0 +1,486 @@
+//! The Inspector of the scene, as the Tile tool's: the selected item's properties in the shared Inspector panel (its rows, hints and
+//! drags; a drag is one undo entry), game data from pickers. While a unit or an effect is placed, what every copy takes (the Create
+//! panel's draft); a key selected on the timeline, its values.
+
+use std::hash::{Hash, Hasher};
+
+use wce_cinematic::scene::{Interp, Project, TrackContent, sanitize_key};
+use wce_editor::editor::Editor;
+use wce_editor::gui::{self, v2};
+use wce_editor::icons;
+use wce_editor_core::inspector::Inspector;
+
+use crate::create::{Create, Making};
+use crate::items::{self, SceneItem, vfx_of_mut};
+use crate::pickers::{SLOTS, items_of, picker};
+use crate::scene_ui::{LANGUAGES, SceneUi, add_track, for_track, scene_doc};
+
+/// What the rows changed: the field last changed (a drag's edits merge by it), a picked value (an entry of its own), a drag ended.
+struct Rows<'a> {
+    ins: &'a mut dyn Inspector,
+    dragged: Option<String>,
+    picked: Option<String>,
+    ended: bool,
+}
+
+impl Rows<'_> {
+    fn note(&mut self, field: &str, changed: bool) {
+        if changed {
+            self.dragged = Some(field.to_owned());
+        }
+        if self.ins.gesture_ended() {
+            self.ended = true;
+        }
+    }
+}
+
+fn merge_key(item: SceneItem, field: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (item.encode(), field).hash(&mut h);
+    h.finish() | 1
+}
+
+/// Applies what the rows did to the document.
+fn commit(e: &mut Editor, item: SceneItem, q: Project, r: &Rows) {
+    let Some(doc) = scene_doc(e) else { return };
+    if let Some(name) = &r.picked {
+        doc.push(name, q);
+    } else if let Some(field) = &r.dragged {
+        doc.push_merged(field, q, merge_key(item, field));
+    }
+    if r.ended {
+        doc.end_gesture();
+    }
+}
+
+/// The Inspector's contents for the scene; false when there is no scene (the Inspector says so itself).
+pub fn inspect(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create: &mut Create) -> bool {
+    let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return false };
+    if create.making.is_some() {
+        draft(e, ins, ui, create, &p);
+        return true;
+    }
+    if ui.key_focus && ui.key.is_some() {
+        ui.key_body(e);
+        return true;
+    }
+    let Some(item) = items::primary(e).filter(|i| i.exists(&p)) else {
+        gui::text_disabled("Nothing selected");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Select in the Scene panel, the viewport or the Layout; the Create panel adds units and effects");
+        }
+        return true;
+    };
+    let n = items::selected(e).len();
+    gui::text(&item.describe(&p, |k| ui.lists.faction_name(k)));
+    if n > 1 {
+        gui::same_line();
+        gui::text_disabled(&format!("(and {} more: the gizmo moves them all)", n - 1));
+    }
+    gui::separator();
+    let doc = e.docs.of_tool("cinematic").unwrap_or_default();
+    ins.begin(doc, item.encode());
+    let mut q = p.clone();
+    let mut r = Rows { ins, dragged: None, picked: None, ended: false };
+    match item {
+        SceneItem::Unit(id) => unit(e, &mut r, ui, create, &mut q, id),
+        SceneItem::Army(i) => army(e, &mut r, ui, create, &mut q, i),
+        SceneItem::Battle => battle(&mut r, ui, &mut q),
+        SceneItem::Vfx { track, index } => vfx(e, &mut r, ui, &mut q, track, index),
+    }
+    commit(e, item, q, &r);
+    true
+}
+
+/// A data field: its label in the Inspector's column, then a picker.
+fn pick_row(ui: &mut SceneUi, label: &str, id: &str, shown: &str, list: &[crate::pickers::Item], tip: &str) -> Option<String> {
+    gui::row(label);
+    if gui::is_item_hovered() {
+        gui::set_tooltip(tip);
+    }
+    let k = picker(&mut ui.filters, id, shown, list, -1.0);
+    if gui::is_item_hovered() {
+        gui::set_tooltip(tip);
+    }
+    k
+}
+
+fn unit(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: &mut Project, id: u32) {
+    let Some(ix) = q.units.iter().position(|u| u.id == id) else { return };
+    let faction = q.armies.get(q.units[ix].army).map(|a| a.faction.clone()).unwrap_or_default();
+    // The unit's card beside its kind's name.
+    if let Some(card) = ui.lists.card(&q.units[ix].unit, &faction)
+        && let Some(img) = create.card(e, &card)
+    {
+        let h = 72.0;
+        gui::image(img.id, v2(h * img.w as f32 / img.h.max(1) as f32, h));
+        gui::same_line();
+    }
+    gui::begin_group();
+    gui::text(&ui.lists.unit_name(&q.units[ix].unit));
+    gui::text_disabled(&q.units[ix].unit);
+    if let Some(m) = ui.lists.men.get(&q.units[ix].unit) {
+        gui::text_disabled(&format!("{m} men at the largest unit size"));
+    }
+    gui::end_group();
+
+    let armies: Vec<String> =
+        q.armies.iter().enumerate().map(|(i, a)| format!("{}: {}", i + 1, ui.lists.faction_name(&a.faction))).collect();
+    let u = &mut q.units[ix];
+    let c = r.ins.edit_string("name", "Name", &mut u.name);
+    r.note("name", c);
+    let lists = ui.lists.clone();
+    if let Some(k) = pick_row(ui, "Unit", "unitkind", &lists.unit_name(&u.unit), &lists.units, "Which of the game's units it is") {
+        u.unit = k;
+        r.picked = Some("unit kind".into());
+    }
+    let mut a = u.army as i32;
+    r.ins.hint("The army it fights in");
+    if r.ins.edit_choice("army", "Army", &mut a, &armies) {
+        u.army = a.max(0) as usize;
+        r.picked = Some("unit army".into());
+    }
+    r.ins.hint("Where it stands when the battle starts, metres (move it with the gizmo or in the Layout)");
+    let c = r.ins.edit_float2("start", "Start", &mut u.start, 0.5);
+    r.note("start", c);
+    let mut deg = u.facing.to_degrees();
+    r.ins.hint("Where it faces at the start, degrees (0: north)");
+    if r.ins.edit_slider("facing", "Facing", &mut deg, -180.0, 180.0) {
+        u.facing = deg.to_radians();
+        r.note("facing", true);
+    } else {
+        r.note("facing", false);
+    }
+    let mut men = i64::from(u.men);
+    r.ins.hint("Men in a movie; a battle starts it with this many (kill_number_of_men)");
+    let c = r.ins.edit_int_slider("men", "Men", &mut men, 1, 1000);
+    u.men = men.clamp(1, 10_000) as u32;
+    r.note("men", c);
+    r.ins.hint("The formation's width, metres");
+    let c = r.ins.edit_float("width", "Width", &mut u.width, 0.5, 2.0, 1000.0);
+    r.note("width", c);
+    let c = r.ins.edit_bool("general", "General", &mut u.general);
+    r.note("general", c);
+
+    // Its part in the clip shown: keys at the playhead.
+    let (clip, t) = (ui.clip, ui.time);
+    if let Some(c) = clip.and_then(|c| q.clip(c)).cloned() {
+        r.ins.section(&format!("In {} at {t:.2} s", c.name));
+        let track = c.tracks.iter().find(|tr| matches!(&tr.content, TrackContent::Unit { unit, .. } if *unit == id)).map(|t| t.id);
+        let keys = c
+            .tracks
+            .iter()
+            .find_map(|tr| match &tr.content {
+                TrackContent::Unit { unit, path, actions, .. } if *unit == id => Some((path.len(), actions.len())),
+                _ => None,
+            })
+            .unwrap_or((0, 0));
+        r.ins.text("keys", "Keys", &format!("{} on its path, {} animations", keys.0, keys.1));
+        let at = scene_doc(e).and_then(|d| d.view.placed.get(&id).copied()).map_or(q.units[ix].start, |(p, _)| p);
+        r.ins.hint("A path key here, where it stands now: then move it with the gizmo to key where it goes");
+        if r.ins.button("keyhere", &format!("{}  Key its place here", icons::CROSSHAIR), true) {
+            let tid = track.or_else(|| add_track(q, c.id, "Unit", Some(id), ""));
+            if let Some(tid) = tid {
+                for_track(q, c.id, tid, |tr| {
+                    if let TrackContent::Unit { path, .. } = &mut tr.content {
+                        path.retain(|k| (k.t - t).abs() > 1e-6);
+                        path.push(wce_cinematic::scene::PathKey { t, position: at, interp: Interp::Linear, gait: None });
+                    }
+                });
+            }
+            r.picked = Some("path key".into());
+        }
+        if let Some(slot) = pick_row(
+            ui,
+            "Animate",
+            "animhere",
+            "Play an animation here...",
+            &items_of(SLOTS),
+            "The whole unit plays it from the playhead (AUTO: back to walking / standing)",
+        ) {
+            let tid = track.or_else(|| add_track(q, c.id, "Unit", Some(id), ""));
+            if let Some(tid) = tid {
+                for_track(q, c.id, tid, |tr| {
+                    if let TrackContent::Unit { actions, .. } = &mut tr.content {
+                        actions.retain(|k| (k.t - t).abs() > 1e-6);
+                        actions.push(wce_cinematic::scene::ActionKey { t, slot });
+                    }
+                });
+            }
+            r.picked = Some("animation key".into());
+        }
+    }
+    r.ins.section("");
+    if r.ins.button("dup", &format!("{}  Duplicate", icons::COPY), true) {
+        ui.request_duplicate = true;
+    }
+    if r.ins.button("del", &format!("{}  Delete", icons::TRASH_2), true) {
+        ui.request_delete = true;
+    }
+}
+
+fn army(_e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: &mut Project, i: usize) {
+    let lists = ui.lists.clone();
+    let units = q.units.iter().filter(|u| u.army == i).count();
+    let Some(a) = q.armies.get_mut(i) else { return };
+    if let Some(k) = pick_row(
+        ui,
+        "Faction",
+        "armyfaction",
+        &lists.faction_name(&a.faction),
+        &lists.factions,
+        "The faction it fights as (its units, colours and banners)",
+    ) {
+        a.faction = k;
+        r.picked = Some("army faction".into());
+    }
+    let mut side = a.alliance.min(3) as i32;
+    r.ins.hint("Armies of one side fight together");
+    if r.ins.edit_choice("side", "Side", &mut side, &["Side 1".into(), "Side 2".into(), "Side 3".into(), "Side 4".into()]) {
+        a.alliance = side.max(0) as u32;
+        r.picked = Some("army side".into());
+    }
+    let mut player = a.player;
+    r.ins.hint("The army the player commands (one)");
+    if r.ins.edit_bool("player", "Player's", &mut player) && player {
+        for (k, x) in q.armies.iter_mut().enumerate() {
+            x.player = k == i;
+        }
+        r.picked = Some("player army".into());
+    }
+    let Some(a) = q.armies.get_mut(i) else { return };
+    r.ins.section("Deployment zone");
+    r.ins.hint("Its centre, metres (move it with the gizmo)");
+    let c = r.ins.edit_float2("zone", "Centre", &mut a.deployment_centre, 1.0);
+    r.note("zone", c);
+    r.ins.hint("Its width and depth, metres");
+    let c = r.ins.edit_float2("zonesize", "Size", &mut a.deployment_size, 1.0);
+    r.note("zonesize", c);
+    let mut deg = a.deployment_orientation.to_degrees();
+    if r.ins.edit_slider("zonefacing", "Facing", &mut deg, -180.0, 180.0) {
+        a.deployment_orientation = deg.to_radians();
+        r.note("zonefacing", true);
+    } else {
+        r.note("zonefacing", false);
+    }
+    r.ins.section("");
+    r.ins.text("units", "Units", &units.to_string());
+    r.ins.hint("The Create panel's units, this army's faction's first: click one, then where it stands");
+    if r.ins.button("placeunits", &format!("{}  Place units...", icons::PLUS), true) {
+        create.draft.army = i;
+        create.category = 0;
+        gui::set_window_focus("Create");
+    }
+    r.ins.hint("Deletes the army and its units");
+    if r.ins.button("delarmy", &format!("{}  Delete army", icons::TRASH_2), q.armies.len() > 1) {
+        ui.request_delete = true;
+    }
+}
+
+fn battle(r: &mut Rows, ui: &mut SceneUi, q: &mut Project) {
+    let lists = ui.lists.clone();
+    let lang = ui.lang().to_owned();
+    r.ins.hint("The battle's key: its script folder and its menu entry");
+    let mut key = q.battle.key.clone();
+    if r.ins.edit_string("key", "Key", &mut key) {
+        q.battle.key = sanitize_key(&key);
+        r.note("key", true);
+    } else {
+        r.note("key", false);
+    }
+    for (field, label, id) in [("title", "Title", q.battle.title_text.clone()), ("desc", "Description", q.battle.description_text.clone())]
+    {
+        let mut v = q.texts.get(&id).and_then(|t| t.get(&lang)).cloned().unwrap_or_default();
+        r.ins.hint(&format!("The Historical Battles menu's {} ({lang})", label.to_lowercase()));
+        if r.ins.edit_string(field, label, &mut v) {
+            q.texts.entry(id).or_default().insert(lang.clone(), v);
+            r.note(field, true);
+        } else {
+            r.note(field, false);
+        }
+    }
+    r.ins.section("Where");
+    if let Some(k) =
+        pick_row(ui, "Battle map", "map", &q.map.campaign_map, &lists.battle_maps, "The map whose battle tiles it is fought on")
+    {
+        q.map.campaign_map = k;
+        r.picked = Some("battle map".into());
+    }
+    r.ins.hint("Where on that map, 0 to 1 across and down");
+    let c = r.ins.edit_float2("mappos", "Map position", &mut q.map.position, 0.0005);
+    q.map.position = q.map.position.map(|v| v.clamp(0.0, 1.0));
+    r.note("mappos", c);
+    r.ins.hint("A picture of the map's heights: click where the battle is");
+    if r.ins.button("mappick", &format!("{}  Pick on the map...", icons::MAP), true) {
+        ui.map_pick.open(q.map.position);
+    }
+    r.ins.hint("The battlefield's side, metres");
+    let c = r.ins.edit_float("area", "Playable area", &mut q.map.playable_area, 10.0, 200.0, 10_000.0);
+    r.note("area", c);
+    r.ins.section("When");
+    let shown = q.battle.environment.replace('\\', "/").to_lowercase();
+    let shown = shown.rsplit('/').next().unwrap_or("").trim_end_matches(".environment").to_owned();
+    if let Some(k) = pick_row(
+        ui,
+        "Weather",
+        "env",
+        if shown.is_empty() { "Pick a weather" } else { &shown },
+        &lists.environments,
+        "The sky, light and fog at the start (Weather keys change it in a clip)",
+    ) {
+        q.battle.environment = k;
+        r.picked = Some("weather".into());
+    }
+    for (field, label, v, options) in [
+        ("season", "Season", &mut q.battle.season, &["Spring", "Summer", "Autumn", "Winter"][..]),
+        ("tod", "Time of day", &mut q.battle.time_of_day, &["day", "night"][..]),
+        ("precip", "Rain / snow", &mut q.battle.precipitation, &["dry", "rain", "snow"][..]),
+    ] {
+        let choices: Vec<String> = options.iter().map(|s| (*s).to_owned()).collect();
+        let mut k = options.iter().position(|o| o.eq_ignore_ascii_case(v)).map_or(0, |k| k as i32);
+        if r.ins.edit_choice(field, label, &mut k, &choices) {
+            *v = options[k.max(0) as usize].to_owned();
+            r.picked = Some(label.to_lowercase());
+        }
+    }
+    let mut year = i64::from(q.battle.year);
+    let c = r.ins.edit_int("year", "Year", &mut year, 0.2);
+    q.battle.year = year as i32;
+    r.note("year", c);
+    r.ins.section("Menu");
+    let mut menu = [q.battle.menu_position[0] as f32, q.battle.menu_position[1] as f32];
+    r.ins.hint("Where it sits on the Historical Battles map, pixels");
+    let c = r.ins.edit_float2("menu", "Menu position", &mut menu, 1.0);
+    q.battle.menu_position = [menu[0].clamp(0.0, 4096.0) as i32, menu[1].clamp(0.0, 4096.0) as i32];
+    r.note("menu", c);
+    if r.ins.open_section("Texts##texts") {
+        let mut current = LANGUAGES.iter().position(|l| *l == lang).unwrap_or(0) as i32;
+        let langs: Vec<String> = LANGUAGES.iter().map(|s| (*s).to_owned()).collect();
+        r.ins.hint("The language edited here and on keys, and the one the exports write (English stands in)");
+        if r.ins.edit_choice("lang", "Language", &mut current, &langs) {
+            ui.language = LANGUAGES[current.max(0) as usize].to_owned();
+        }
+        let ids: Vec<String> = q.texts.keys().cloned().collect();
+        for id in ids {
+            let mut v = q.texts.get(&id).and_then(|t| t.get(&lang)).cloned().unwrap_or_default();
+            if let Some(en) = q.texts.get(&id).and_then(|t| t.get("en")).filter(|_| lang != "en") {
+                r.ins.hint(en);
+            }
+            if r.ins.edit_string(&format!("text.{id}"), &id, &mut v) {
+                q.texts.entry(id.clone()).or_default().insert(lang.clone(), v);
+                r.note(&format!("text.{id}"), true);
+            } else {
+                r.note(&format!("text.{id}"), false);
+            }
+        }
+    }
+}
+
+fn vfx(_e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, q: &mut Project, track: u32, index: usize) {
+    let lists = ui.lists.clone();
+    let Some(v) = vfx_of_mut(q, track, index) else { return };
+    if let Some(k) = pick_row(
+        ui,
+        "Effect",
+        "vfxkind",
+        if v.vfx.is_empty() { "Pick an effect" } else { &v.vfx },
+        &lists.vfx,
+        "A visual effect of the game's vfx folder",
+    ) {
+        v.vfx = k;
+        r.picked = Some("effect".into());
+    }
+    let (mut s, mut en) = (v.start as f32, v.end as f32);
+    r.ins.hint("When it starts in the clip, seconds");
+    let c = r.ins.edit_float("start", "Start", &mut s, 0.01, 0.0, 3600.0);
+    r.note("start", c);
+    r.ins.hint("When it stops, seconds");
+    let c2 = r.ins.edit_float("end", "End", &mut en, 0.01, 0.0, 3600.0);
+    r.note("end", c2);
+    (v.start, v.end) = (f64::from(s), f64::from(en.max(s)));
+    r.ins.hint("Where, metres (move it with the gizmo)");
+    let c = r.ins.edit_float3("pos", "Position", &mut v.position, 0.5);
+    r.note("pos", c);
+    let mut deg = v.rotation_y.to_degrees();
+    if r.ins.edit_slider("turn", "Turn", &mut deg, -180.0, 180.0) {
+        v.rotation_y = deg.to_radians();
+        r.note("turn", true);
+    } else {
+        r.note("turn", false);
+    }
+    let c = r.ins.edit_float("scale", "Scale", &mut v.scale, 0.01, 0.01, 100.0);
+    r.note("scale", c);
+    r.ins.section("");
+    if r.ins.button("dup", &format!("{}  Duplicate", icons::COPY), true) {
+        ui.request_duplicate = true;
+    }
+    if r.ins.button("del", &format!("{}  Delete", icons::TRASH_2), true) {
+        ui.request_delete = true;
+    }
+}
+
+/// While placing: what is placed and what every copy takes.
+fn draft(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create: &mut Create, p: &Project) {
+    let Some(m) = create.making.clone() else { return };
+    let faction = p.armies.get(create.draft.army).map(|a| a.faction.clone()).unwrap_or_default();
+    match &m {
+        Making::Unit(k) => {
+            if let Some(card) = ui.lists.card(k, &faction)
+                && let Some(img) = create.card(e, &card)
+            {
+                gui::image(img.id, v2(48.0 * img.w as f32 / img.h.max(1) as f32, 48.0));
+                gui::same_line();
+            }
+            gui::begin_group();
+            gui::text(&format!("Placing {}", ui.lists.unit_name(k)));
+            gui::text_disabled("click where it stands");
+            gui::end_group();
+        }
+        Making::Vfx(k) => {
+            gui::text(&format!("Placing {k}"));
+            gui::text_disabled("click where it plays");
+        }
+    }
+    gui::separator();
+    let d = &mut create.draft;
+    match &m {
+        Making::Unit(k) => {
+            let armies: Vec<String> =
+                p.armies.iter().enumerate().map(|(i, a)| format!("{}: {}", i + 1, ui.lists.faction_name(&a.faction))).collect();
+            let mut a = d.army.min(p.armies.len().saturating_sub(1)) as i32;
+            ins.hint("The army every unit placed joins");
+            if ins.edit_choice("draft.army", "Army", &mut a, &armies) {
+                d.army = a.max(0) as usize;
+            }
+            let own = ui.lists.men.get(k).copied().unwrap_or(160);
+            let mut men = i64::from(d.men);
+            ins.hint(&format!("Men in each copy (the unit's own: {own})"));
+            ins.edit_int_slider("draft.men", "Men", &mut men, 1, 1000);
+            d.men = men.clamp(1, 10_000) as u32;
+            ins.edit_float("draft.width", "Width", &mut d.width, 0.5, 2.0, 1000.0);
+            ins.hint("Degrees from the army's facing (R / Shift+R)");
+            ins.edit_slider("draft.turn", "Turn", &mut d.turn, -180.0, 180.0);
+            ins.edit_bool("draft.general", "General", &mut d.general);
+            ins.hint("One in a row of the army's deployment zone, without a click");
+            if ins.button("draft.zone", &format!("{}  Add one in its zone", icons::PLUS), true) {
+                let army = d.army.min(p.armies.len().saturating_sub(1));
+                let n = p.units.iter().filter(|u| u.army == army).count() as f32;
+                if let Some(a) = p.armies.get(army) {
+                    let at = [a.deployment_centre[0] - 150.0 + 35.0 * (n % 9.0), a.deployment_centre[1] - 20.0 * (n / 9.0).floor()];
+                    let lists = ui.lists.clone();
+                    let item = create.place(e, &lists, p, &m, at, ui.clip, ui.time);
+                    create.requests.extend(item.map(crate::create::CreateRequest::Placed));
+                }
+            }
+        }
+        Making::Vfx(_) => {
+            ins.hint("How long each plays, seconds");
+            ins.edit_float("draft.len", "Length", &mut d.vfx_length, 0.05, 0.1, 600.0);
+            ins.edit_float("draft.scale", "Scale", &mut d.vfx_scale, 0.01, 0.01, 100.0);
+            ins.edit_slider("draft.turn", "Turn", &mut d.turn, -180.0, 180.0);
+        }
+    }
+    if ins.button("draft.stop", "Stop placing", true) {
+        create.stop();
+    }
+}

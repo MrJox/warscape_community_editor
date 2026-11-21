@@ -266,7 +266,7 @@ pub fn movie_files(
         for (b, bank) in &edits.banks {
             out.push((lib.banks[*b].path.clone(), bank.write()));
         }
-        out.extend(edits.loose.into_iter());
+        out.extend(edits.loose);
     }
 
     // videos: a full-screen movie; its script_ref ties the subtitles to it (after every number the game uses).
