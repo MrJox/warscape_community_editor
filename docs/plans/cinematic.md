@@ -282,7 +282,14 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 3. The battle's map position picked on a picture (`map_pick.rs`: the battle map's `lf_height_map.dds` coloured as the Tile tool's
    minimap; click, wheel zoom, right-drag pan; the Battle's Inspector, "Pick on the map..."). **done** (2026-11-21)
 4. The Timeline: a double-click on a track's row adds a key there (the hover says how). **done** (2026-11-21)
-5. Left: camera keys placed and moved in the viewport, a first-run walkthrough. **todo**
+5. Camera keys as scene items (2026-11-21). **done**: drawn in the viewport while the camera is free (each key, its target, the
+   path), picked, moved and turned by the gizmo (the target goes along; a turn pans it about itself), in the Scene panel (Camera in
+   the clip) and the Inspector (time, place, target, field of view, interpolation; Look through it, Take the view). The viewport's
+   chips at the top left: play, free camera, key this view (a camera track made when the clip has none), battle preview. The
+   playhead runs whichever panels show.
+6. A first-run walkthrough: not built as text (UI explanations are one-line tooltips); every empty state offers its next step as a
+   button instead (New scene / Open, Place units... under an army without units, Pick on the map..., the chips, the Timeline's
+   double-click). **done** that way.
 
 ## Open questions and risks
 

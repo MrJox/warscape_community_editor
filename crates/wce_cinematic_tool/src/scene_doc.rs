@@ -9,7 +9,7 @@ use std::sync::Arc;
 use wce_cinematic::scene::{Interp, PathKey, Project, TrackContent};
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 
-use crate::items::{SceneItem, vfx_of, vfx_of_mut};
+use crate::items::{SceneItem, camera_key_of, camera_key_of_mut, vfx_of, vfx_of_mut};
 use wce_editor_core::command::{Command, CommandStack, History};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_scene::render_scene::{LayerId, RenderScene, SourceRef};
@@ -149,6 +149,11 @@ impl SceneDocument {
                 let a = p.armies.get(i)?;
                 (a.deployment_centre[0], 0.0, a.deployment_centre[1], a.deployment_orientation)
             }
+            SceneItem::CameraKey { track, index } => {
+                let k = camera_key_of(p, track, index)?;
+                let yaw = (k.target[0] - k.position[0]).atan2(k.target[2] - k.position[2]);
+                (k.position[0], k.position[1], k.position[2], yaw)
+            }
             SceneItem::Battle => return None,
         };
         Some(translation(Float3::new(x / units, y / units, z / units)) * rotation_y(yaw))
@@ -205,6 +210,16 @@ impl SceneDocument {
                     if let Some(a) = p.armies.get_mut(i) {
                         a.deployment_centre = [at[0], at[2]];
                         a.deployment_orientation = wrap_angle(a.deployment_orientation + turn);
+                    }
+                }
+                SceneItem::CameraKey { track, index } => {
+                    if let Some(k) = camera_key_of_mut(&mut p, track, index) {
+                        // The target keeps its offset from the camera, turned with it.
+                        let off = [k.target[0] - k.position[0], k.target[1] - k.position[1], k.target[2] - k.position[2]];
+                        let (s, c) = turn.sin_cos();
+                        let off = [off[0] * c + off[2] * s, off[1], -off[0] * s + off[2] * c];
+                        k.position = at;
+                        k.target = [at[0] + off[0], at[1] + off[1], at[2] + off[2]];
                     }
                 }
                 SceneItem::Battle => {}

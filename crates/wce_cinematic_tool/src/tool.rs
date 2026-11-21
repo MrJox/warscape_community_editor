@@ -745,6 +745,20 @@ pub fn delete_items(p: &mut Project, sel: &[SceneItem]) {
         a.player = true;
     }
     p.units.retain(|u| !gone.contains(&u.id));
+    let mut keys: Vec<(u32, usize)> =
+        sel.iter().filter_map(|i| if let SceneItem::CameraKey { track, index } = i { Some((*track, *index)) } else { None }).collect();
+    keys.sort_unstable_by_key(|k| std::cmp::Reverse(k.1));
+    for c in &mut p.clips {
+        for t in &mut c.tracks {
+            if let TrackContent::Camera { keys: list } = &mut t.content {
+                for (track, index) in &keys {
+                    if *track == t.id && *index < list.len() {
+                        list.remove(*index);
+                    }
+                }
+            }
+        }
+    }
     let mut effects: Vec<(u32, usize)> =
         sel.iter().filter_map(|i| if let SceneItem::Vfx { track, index } = i { Some((*track, *index)) } else { None }).collect();
     effects.sort_unstable_by_key(|e| std::cmp::Reverse(e.1));
@@ -1078,6 +1092,11 @@ impl Tool for CinematicTool {
             e.with_tool::<CinematicTool, _>(|t, _| t.scene.map_pick.open(at));
             CommandResult::success("map picker open")
         });
+        c.add("scene_free_camera", "scene_free_camera 0|1", "The viewport's camera free (1) or following the camera keys (0)", |e, a| {
+            let on = a.first().is_some_and(|x| x == "1");
+            e.with_tool::<CinematicTool, _>(|t, _| t.scene.free_camera = on);
+            CommandResult::success(if on { "free" } else { "following the keys" })
+        });
         c.add("create_army", "create_army <n>", "The army the units placed join (the Create panel's army)", |e, a| {
             let Some(n) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return CommandResult::fail("usage: create_army <n>") };
             e.with_tool::<CinematicTool, _>(|t, _| t.create.draft.army = n);
@@ -1105,21 +1124,29 @@ impl Tool for CinematicTool {
                 }
             },
         );
-        c.add("scene_select", "scene_select battle | army <n> | unit <id> | none [add]", "Selects a scene item (add: adds it)", |e, a| {
-            let item = match (a.first().map(String::as_str), a.get(1).and_then(|x| x.parse::<u32>().ok())) {
-                (Some("battle"), _) => Some(SceneItem::Battle),
-                (Some("army"), Some(n)) => Some(SceneItem::Army(n as usize)),
-                (Some("unit"), Some(id)) => Some(SceneItem::Unit(id)),
-                (Some("none"), _) => None,
-                _ => return CommandResult::fail("usage: scene_select battle | army <n> | unit <id> | none [add]"),
-            };
-            let add = a.last().is_some_and(|x| x == "add");
-            match item {
-                Some(i) => items::select(e, i, if add { How::Add } else { How::Set }),
-                None => e.selection.clear(),
-            }
-            CommandResult::success(format!("{item:?}"))
-        });
+        c.add(
+            "scene_select",
+            "scene_select battle | army <n> | unit <id> | camera <track> <index> | none [add]",
+            "Selects a scene item (add: adds it)",
+            |e, a| {
+                let item = match (a.first().map(String::as_str), a.get(1).and_then(|x| x.parse::<u32>().ok())) {
+                    (Some("battle"), _) => Some(SceneItem::Battle),
+                    (Some("army"), Some(n)) => Some(SceneItem::Army(n as usize)),
+                    (Some("unit"), Some(id)) => Some(SceneItem::Unit(id)),
+                    (Some("camera"), Some(track)) => {
+                        Some(SceneItem::CameraKey { track, index: a.get(2).and_then(|x| x.parse().ok()).unwrap_or(0) })
+                    }
+                    (Some("none"), _) => None,
+                    _ => return CommandResult::fail("usage: scene_select battle | army <n> | unit <id> | none [add]"),
+                };
+                let add = a.last().is_some_and(|x| x == "add");
+                match item {
+                    Some(i) => items::select(e, i, if add { How::Add } else { How::Set }),
+                    None => e.selection.clear(),
+                }
+                CommandResult::success(format!("{item:?}"))
+            },
+        );
         c.add("scene_move", "scene_move <dx> <dz> [turn degrees]", "Moves and turns the selection as the gizmo does (metres)", |e, a| {
             let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
             let (Some(dx), Some(dz)) = (n(0), n(1)) else { return CommandResult::fail("usage: scene_move <dx> <dz> [turn]") };
@@ -1179,6 +1206,31 @@ impl Tool for CinematicTool {
                 CommandResult::fail(format!("{what}: {got}, expected {want}"))
             }
         });
+        c.add(
+            "assert_camera_key",
+            "assert_camera_key <track> <index> <x> <y> <z> <tx> <ty> <tz>",
+            "Fails unless the camera key is there and looks there (0.05 m)",
+            |e, a| {
+                let n: Vec<f32> = a.iter().skip(2).filter_map(|x| x.parse().ok()).collect();
+                let (Some(track), Some(index)) =
+                    (a.first().and_then(|x| x.parse::<u32>().ok()), a.get(1).and_then(|x| x.parse::<usize>().ok()))
+                else {
+                    return CommandResult::fail("usage: assert_camera_key <track> <index> <x> <y> <z> <tx> <ty> <tz>");
+                };
+                if n.len() != 6 {
+                    return CommandResult::fail("six numbers: the position and the target");
+                }
+                let Some(k) = scene_doc(e).and_then(|d| crate::items::camera_key_of(d.project(), track, index).cloned()) else {
+                    return CommandResult::fail(format!("no camera key {track} {index}"));
+                };
+                let got = [k.position[0], k.position[1], k.position[2], k.target[0], k.target[1], k.target[2]];
+                if got.iter().zip(&n).all(|(g, w)| (g - w).abs() < 0.05) {
+                    CommandResult::success(format!("{got:?}"))
+                } else {
+                    CommandResult::fail(format!("camera key at {got:?}, expected {n:?}"))
+                }
+            },
+        );
         c.add(
             "assert_start",
             "assert_start <unit id> <x> <z> [facing degrees] [army]",
@@ -1452,6 +1504,12 @@ impl Tool for CinematicTool {
         self.movie_panel(e);
         let lists = self.scene.lists.clone();
         let project = scene_doc(e).map(|d| d.project().clone());
+        // The playhead moves whichever panels are shown.
+        if let Some(p) = &project
+            && let Some(len) = self.scene.current_clip(p).map(|c| c.length)
+        {
+            self.scene.tick(e, len);
+        }
         crate::outliner::panel(e, &mut self.scene, &mut self.create);
         {
             let (create, scene) = (&mut self.create, &mut self.scene);

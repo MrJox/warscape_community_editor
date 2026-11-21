@@ -87,6 +87,7 @@ pub fn inspect(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create
         SceneItem::Army(i) => army(e, &mut r, ui, create, &mut q, i),
         SceneItem::Battle => battle(&mut r, ui, &mut q),
         SceneItem::Vfx { track, index } => vfx(e, &mut r, ui, &mut q, track, index),
+        SceneItem::CameraKey { track, index } => camera_key(e, &mut r, ui, &mut q, track, index),
     }
     commit(e, item, q, &r);
     true
@@ -413,6 +414,63 @@ fn vfx(_e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, q: &mut Project, track: 
     r.ins.section("");
     if r.ins.button("dup", &format!("{}  Duplicate", icons::COPY), true) {
         ui.request_duplicate = true;
+    }
+    if r.ins.button("del", &format!("{}  Delete", icons::TRASH_2), true) {
+        ui.request_delete = true;
+    }
+}
+
+fn camera_key(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, q: &mut Project, track: u32, index: usize) {
+    let Some(k) = items::camera_key_of_mut(q, track, index) else { return };
+    let mut t = k.t as f32;
+    r.ins.hint("When the camera is here, seconds");
+    let c = r.ins.edit_float("t", "Time", &mut t, 0.01, 0.0, 3600.0);
+    k.t = f64::from(t);
+    r.note("t", c);
+    r.ins.hint("Where the camera is, metres (move it with the gizmo: its target goes along)");
+    let c = r.ins.edit_float3("pos", "Position", &mut k.position, 0.5);
+    r.note("pos", c);
+    r.ins.hint("The point it looks at, metres");
+    let c = r.ins.edit_float3("target", "Target", &mut k.target, 0.5);
+    r.note("target", c);
+    r.ins.hint("Vertical field of view, degrees");
+    let c = r.ins.edit_slider("fov", "Field of view", &mut k.fov, 5.0, 120.0);
+    r.note("fov", c);
+    let names: Vec<String> = ["Step", "Linear", "Smooth"].iter().map(|s| (*s).to_owned()).collect();
+    let mut i = match k.interp {
+        Interp::Step => 0,
+        Interp::Linear => 1,
+        _ => 2,
+    };
+    r.ins.hint("How it goes to the next key");
+    if r.ins.edit_choice("interp", "To the next", &mut i, &names) {
+        k.interp = [Interp::Step, Interp::Linear, Interp::Smooth][i.clamp(0, 2) as usize];
+        r.picked = Some("camera key interpolation".into());
+    }
+    let key = k.clone();
+    r.ins.section("");
+    r.ins.hint("The viewport sees what this key sees (the free camera: fly from there and key again)");
+    if r.ins.button("lookthrough", &format!("{}  Look through it", icons::CAMERA), true) {
+        let units = e.scene.game_units.max(1e-3);
+        let cam = crate::preview::camera_of(
+            &wce_cinematic::eval::CameraState { position: key.position, target: key.target, fov: key.fov },
+            units,
+        );
+        ui.free_camera = true;
+        ui.time = key.t;
+        e.viewport.controller().set_camera(&cam);
+        e.viewport.controller().lens_mut().fov_y = cam.fov_y;
+    }
+    r.ins.hint("This key takes the viewport's view");
+    if r.ins.button("takeview", &format!("{}  Take the view", icons::CROSSHAIR), true) {
+        let units = e.scene.game_units.max(1e-3);
+        let vc = e.viewport.camera();
+        if let Some(k) = items::camera_key_of_mut(q, track, index) {
+            k.position = [vc.eye.x * units, vc.eye.y * units, vc.eye.z * units];
+            k.target = [vc.target.x * units, vc.target.y * units, vc.target.z * units];
+            k.fov = vc.fov_y.to_degrees();
+        }
+        r.picked = Some("camera key view".into());
     }
     if r.ins.button("del", &format!("{}  Delete", icons::TRASH_2), true) {
         ui.request_delete = true;

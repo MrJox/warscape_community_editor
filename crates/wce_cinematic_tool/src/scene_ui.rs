@@ -169,7 +169,6 @@ impl SceneUi {
             gui::end();
             return;
         };
-        self.tick(e, clip.length);
 
         // Clip bar.
         let names: Vec<String> = p.clips.iter().map(|c| format!("{}##{}", c.name, c.id)).collect();
@@ -428,6 +427,28 @@ impl SceneUi {
 
     pub fn add_key_public(&mut self, e: &mut Editor, p: &Project, clip: &Clip) {
         self.add_key(e, p, clip);
+    }
+
+    /// A camera key at the playhead holding the viewport's view (the clip's camera track, made when it has none).
+    pub fn key_camera_view(&mut self, e: &mut Editor) {
+        let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+        let Some(clip) = self.current_clip(&p).map(|c| c.id) else { return };
+        let track = p.clip(clip).and_then(|c| c.tracks.iter().find(|t| matches!(t.content, TrackContent::Camera { .. })).map(|t| t.id));
+        let track = match track {
+            Some(t) => Some(t),
+            None => {
+                let mut made = None;
+                edit(e, "add track", |p| made = add_track(p, clip, "Camera", None, ""));
+                made
+            }
+        };
+        let Some(track) = track else { return };
+        self.track = Some(track);
+        if let Some(p) = scene_doc(e).map(|d| d.project().clone())
+            && let Some(c) = p.clip(clip).cloned()
+        {
+            self.add_key(e, &p, &c);
+        }
     }
 
     fn add_key(&mut self, e: &mut Editor, p: &Project, clip: &Clip) {
