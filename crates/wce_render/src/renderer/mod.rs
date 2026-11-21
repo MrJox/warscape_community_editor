@@ -297,6 +297,11 @@ pub(crate) const CLOUD_VS: &str = "dx11_sm_3_0_cloud_plane.hlsl_vs_vs30_main";
 pub(crate) const CLOUD_PS: &str = "dx11_sm_3_0_cloud_plane.hlsl_ps_ps30_main";
 pub(crate) const SHADOW_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow";
 
+/// An alpha-tested rigid caster's (its material's alpha mode 1): `vs30_shadow` with this, which discards where its diffuse's alpha is
+/// under 0.5 (RenderDoc, TDD's marsh: the game casts `swamp_plant`, `swamp_flower` and `swamp_reed` so, their diffuse bound; drawn opaque,
+/// each flat plant's quad cast a square).
+pub(crate) const SHADOW_ALPHA_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow_alpha_test";
+
 /// The tree casters: their vertex shaders (wind, LOD blend) and alpha-tested pixel shaders (the leaves' also dissolve).
 /// `g_refraction_depth` of the light and the water refraction on the campaign map (RenderDoc, capture A; the battle's 0.75).
 pub(crate) const CAMPAIGN_REFRACTION_DEPTH: f32 = 36.0;

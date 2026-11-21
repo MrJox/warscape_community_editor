@@ -269,7 +269,11 @@ fn mesh_filled(binary: &Tile, src: &[u16], (w, h): (u32, u32), spacing: f64, (mi
     let model = RigidModel::decode(&mut std::io::Cursor::new(&bytes[..]), &Some(rpfm_lib::files::DecodeableExtraData::default())).ok()?;
     let mesh = super::terrain_heights::mesh_heights(&model, w, h, spacing, true)?;
     let metres = |s: u16| min + (max - min) * f32::from(s) / 65535.0;
-    let heights: Vec<f32> = src.iter().zip(&mesh).map(|(&s, m)| m.unwrap_or_else(|| metres(s))).collect();
+    // A sample no triangle covers keeps the height map's, but one of a missing block (read as 0, the map's minimum) is none of the
+    // tile's ground: the game draws only the mesh, and the plain ground at the LF shows there. Its height over the LF, 0 m (RenderDoc,
+    // TDD's Rauros: the 47 samples along the lake tile's west edge the mesh leaves out drew a 36 m trench at the lake's bed; the game's
+    // ground there is the LF's, 226.7 m against the LF's 230).
+    let heights: Vec<f32> = src.iter().zip(&mesh).map(|(&s, m)| m.unwrap_or_else(|| if s == 0 { 0.0 } else { metres(s) })).collect();
     let (lo, hi) = heights.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
     let range = (hi - lo).max(1e-6);
     Some((heights.iter().map(|&v| ((v - lo) / range * 65535.0).round().clamp(0.0, 65535.0) as u16).collect(), lo, hi))
