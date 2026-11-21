@@ -24,6 +24,9 @@ const UNITS: &[(usize, &str, &str, f32, f32, bool)] = &[
 pub fn sample_project(game: &str) -> Project {
     let mut p = Project::new("WCE Sample Battle", game);
     p.battle.key = "wce_sample_battle".into();
+    // Fought on vanilla's Catalaunian Plains map, whole, as its historical battle is.
+    p.map.campaign_map = "catalaunian_plains".into();
+    p.map.whole_map = true;
     p.texts.insert("battle_title".into(), BTreeMap::from([("en".into(), "The Sample Battle".to_owned())]));
     p.texts.insert(
         "battle_description".into(),
@@ -57,15 +60,16 @@ pub fn sample_project(game: &str) -> Project {
         let id = p.new_id();
         tracks.push(Track { id, name: name.into(), muted: false, content });
     };
-    // The camera: behind the Roman line, over it, then towards the Huns.
+    // The camera: behind the Roman line, over it, then towards the Huns. Heights are the map's, from the sea (its ground is at
+    // about 460 to 480 m here), as the battle's `cam:move_to` takes them.
     track(
         &mut p,
         "Camera",
         TrackContent::Camera {
             keys: vec![
-                CameraKey { t: 0.0, position: [-60.0, 14.0, -420.0], target: [0.0, 2.0, -300.0], fov: 35.0, interp: Interp::Smooth },
-                CameraKey { t: 5.0, position: [40.0, 16.0, -330.0], target: [0.0, 2.0, -280.0], fov: 40.0, interp: Interp::Smooth },
-                CameraKey { t: 12.0, position: [45.0, 10.0, 130.0], target: [0.0, 3.0, 230.0], fov: 38.0, interp: Interp::Smooth },
+                CameraKey { t: 0.0, position: [-60.0, 474.0, -420.0], target: [0.0, 470.0, -300.0], fov: 35.0, interp: Interp::Smooth },
+                CameraKey { t: 5.0, position: [40.0, 484.0, -330.0], target: [0.0, 470.0, -280.0], fov: 40.0, interp: Interp::Smooth },
+                CameraKey { t: 12.0, position: [45.0, 490.0, 130.0], target: [0.0, 479.0, 230.0], fov: 38.0, interp: Interp::Smooth },
             ],
         },
     );

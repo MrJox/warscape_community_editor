@@ -21,6 +21,9 @@ use wce_vfs::{Config, GameProfile, Vfs};
 
 pub fn sample() -> Project {
     let mut p = Project::new("WCE Test Battle", "attila");
+    // At a place on the campaign map (the other two kinds are checked below).
+    p.map.campaign_map = "main_attila_map".into();
+    p.map.whole_map = false;
     p.battle.environment = "Weather\\default\\default\\land\\day\\dry\\evening_north_3.environment".into();
     p.texts.insert("battle_description".into(), BTreeMap::from([("en".into(), "A test of the Cinematic tool.".into())]));
     p.texts.insert("intro_1".into(), BTreeMap::from([("en".into(), "June 20, 451 AD.".into())]));

@@ -87,6 +87,8 @@ pub struct CinematicTool {
     synced_unit: Option<u32>,
     /// The game started on the scene's battle (its launch pack removed when it exits), and a launch waiting for "launch anyway".
     launched: Option<wce_launch::launch::Running>,
+    /// The battle's real ground under the scene.
+    ground: crate::ground::Ground,
     launch_question: Option<String>,
 }
 
@@ -398,14 +400,21 @@ impl CinematicTool {
         gui::select_dock_tab("Scene");
         gui::select_dock_tab("Timeline");
         gui::select_dock_tab("Viewport");
+        self.frame_player_zone(e);
+    }
+
+    /// The viewport behind the player's army's zone, looking over it (on the ground when it is shown).
+    fn frame_player_zone(&mut self, e: &mut Editor) {
         let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
         let Some(a) = p.armies.iter().find(|a| a.player).or(p.armies.first()) else { return };
         let units = e.scene.game_units.max(1e-3);
         let (s, c) = a.deployment_orientation.sin_cos();
         let at = a.deployment_centre;
         let mut cam = e.viewport.camera();
-        cam.target = wce_foundation::math::Float3::new((at[0] + s * 60.0) / units, 0.0, (at[1] + c * 60.0) / units);
-        cam.eye = wce_foundation::math::Float3::new((at[0] - s * 140.0) / units, 70.0 / units, (at[1] - c * 140.0) / units);
+        let (tx, tz) = (at[0] + s * 60.0, at[1] + c * 60.0);
+        let (ex, ez) = (at[0] - s * 140.0, at[1] - c * 140.0);
+        cam.target = wce_foundation::math::Float3::new(tx / units, self.ground.height(tx, tz) / units, tz / units);
+        cam.eye = wce_foundation::math::Float3::new(ex / units, (self.ground.height(ex, ez) + 70.0) / units, ez / units);
         e.viewport.controller().set_camera(&cam);
     }
 
@@ -526,7 +535,7 @@ impl CinematicTool {
     fn step_movie(&mut self, e: &mut Editor) {
         let Some(mut job) = self.movie_job.take() else { return };
         let budget = if e.scripted_input() { None } else { Some(3) };
-        match job.step(e, &mut self.preview, &self.scene.speeds, budget) {
+        match job.step(e, &mut self.preview, &mut self.ground, &self.scene.speeds, budget) {
             Ok(false) => {
                 let (n, total) = job.progress();
                 e.status(&format!("Cinematic: rendering {} frame {n} of {total}", job.name), false);
@@ -981,11 +990,11 @@ impl Tool for CinematicTool {
         if ev.kind == wce_editor::tool::ViewportEventKind::Hover {
             self.view.hover_ground = crate::view::ground_point(e, ev.x, ev.y);
         }
-        self.view.input(e, &mut self.scene, &mut self.create, ev)
+        self.view.input(e, &mut self.scene, &mut self.create, &self.ground, ev)
     }
 
     fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
-        self.view.overlay(e, &mut self.scene, &mut self.create, origin, size);
+        self.view.overlay(e, &mut self.scene, &mut self.create, &self.ground, origin, size);
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {
@@ -997,7 +1006,7 @@ impl Tool for CinematicTool {
     }
 
     fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
-        self.view.box_drag(e, from, to, done);
+        self.view.box_drag(e, &self.ground, from, to, done);
     }
 
     fn edit_menu(&mut self, e: &mut Editor) {
@@ -1197,7 +1206,8 @@ impl Tool for CinematicTool {
                 let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
                 let (Some(x), Some(z)) = (n(0), n(1)) else { return CommandResult::fail("usage: click_ground <x> <z> [right]") };
                 let units = e.scene.game_units.max(1e-3);
-                let Some((px, py)) = e.viewport.project(wce_foundation::math::Float3::new(x / units, 0.0, z / units)) else {
+                let h = e.with_tool::<CinematicTool, _>(|t, _| t.ground.height(x, z)).unwrap_or(0.0);
+                let Some((px, py)) = e.viewport.project(wce_foundation::math::Float3::new(x / units, h / units, z / units)) else {
                     return CommandResult::fail("that point is not in view");
                 };
                 if px < 0.0 || py < 0.0 || px >= e.viewport.width() as f32 || py >= e.viewport.height() as f32 {
@@ -1224,6 +1234,64 @@ impl Tool for CinematicTool {
                     Some((u, dist)) if dist <= d => CommandResult::success(format!("unit {} at {:?}", u.id, u.start)),
                     Some((u, dist)) => CommandResult::fail(format!("the nearest, unit {}, is {dist:.2} m away at {:?}", u.id, u.start)),
                     None => CommandResult::fail("no units"),
+                }
+            },
+        );
+        c.add(
+            "ground_height",
+            "ground_height <x> <z>...",
+            "The battle's ground height at points (metres; 0 on the flat stand-in)",
+            |e, a| {
+                let n: Vec<f32> = a.iter().filter_map(|x| x.parse().ok()).collect();
+                let r = e.with_tool::<CinematicTool, _>(|t, _| {
+                    (
+                        t.ground.shown(),
+                        n.chunks_exact(2).map(|p| format!("({}, {}): {:.1}", p[0], p[1], t.ground.height(p[0], p[1]))).collect::<Vec<_>>(),
+                    )
+                });
+                match r {
+                    Some((shown, v)) => CommandResult::success(format!("{} {}", if shown { "ground" } else { "flat" }, v.join(", "))),
+                    None => CommandResult::fail("the Cinematic tool is not built in"),
+                }
+            },
+        );
+        c.add(
+            "scene_ground",
+            "scene_ground whole <map> | position <map> <x> <y> | tile <folder>",
+            "Where the battle is fought, as Battle > Fought on sets it",
+            |e, a| {
+                let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+                let (kind, what) = (a.first().map(String::as_str), a.get(1).cloned().unwrap_or_default());
+                if what.is_empty() {
+                    return CommandResult::fail("usage: scene_ground whole <map> | position <map> <x> <y> | tile <folder>");
+                }
+                let mut ok = true;
+                edit(e, "battle ground", |p| match kind {
+                    Some("whole") => (p.map.campaign_map, p.map.whole_map, p.map.tile) = (what.clone(), true, String::new()),
+                    Some("position") => {
+                        (p.map.campaign_map, p.map.whole_map, p.map.tile) = (what.clone(), false, String::new());
+                        p.map.position = [n(2).unwrap_or(0.5), n(3).unwrap_or(0.5)];
+                    }
+                    Some("tile") => p.map.tile = what.clone(),
+                    _ => ok = false,
+                });
+                if ok { CommandResult::success(what) } else { CommandResult::fail("whole, position or tile") }
+            },
+        );
+        c.add(
+            "assert_ground_height",
+            "assert_ground_height <x> <z> <min> <max>",
+            "Fails unless the real ground is shown and its height there is in the range (metres)",
+            |e, a| {
+                let n: Vec<f32> = a.iter().filter_map(|x| x.parse().ok()).collect();
+                if n.len() != 4 {
+                    return CommandResult::fail("usage: assert_ground_height <x> <z> <min> <max>");
+                }
+                match e.with_tool::<CinematicTool, _>(|t, _| (t.ground.shown(), t.ground.height(n[0], n[1]), t.ground.status.clone())) {
+                    Some((true, h, _)) if h >= n[2] && h <= n[3] => CommandResult::success(format!("{h:.1} m")),
+                    Some((true, h, _)) => CommandResult::fail(format!("the ground is at {h:.1} m there")),
+                    Some((false, _, status)) => CommandResult::fail(format!("no real ground shown ({status})")),
+                    None => CommandResult::fail("the Cinematic tool is not built in"),
                 }
             },
         );
@@ -1726,14 +1794,24 @@ impl Tool for CinematicTool {
                         time: self.scene.time,
                         units,
                         placed: frame.units.iter().map(|s| (s.unit, (s.position, s.facing))).collect(),
+                        heights: Default::default(),
                     };
                 }
                 frame.units.retain(|s| !self.scene.hidden.contains(&s.unit));
+                self.ground.update(e, doc, &p);
+                if self.ground.take_arrived() {
+                    self.frame_player_zone(e);
+                }
+                if let Some(d) = scene_doc(e) {
+                    d.view.heights = d.view.placed.iter().map(|(&id, (at, _))| (id, self.ground.height(at[0], at[1]))).collect();
+                }
                 self.preview.free_camera = self.scene.free_camera;
-                self.preview.update(e, doc, &p, &frame);
+                let heights = self.ground.heights();
+                self.preview.update(e, doc, &p, &frame, heights.as_ref().map(|h| h as &dyn Fn(f32, f32) -> f32));
             }
         } else {
             self.preview.clear(e);
+            self.ground.clear(e);
             self.scene_audio.stop();
         }
     }

@@ -319,9 +319,16 @@ setup in the battle XML; the Lua is written apart. What the Tile tool has that w
    game not running, Steam running, stray movie-type packs: a question with Launch anyway); the pack removed when the game exits.
    The viewport's launch chip, File > Export > Launch the battle in game, `scene_launch [--dry-run] [--ignore-movie-packs]`
    (the gate's dry run: the pack in the build folder). In game: **todo** (the user).
-2. **The ground** (`wce_map_view::MapView`, the Map context): the campaign map at the battle's position, a whole battle map, or the
-   battle tile, streamed under the units instead of the flat grass; the preview, the movie and the 512 x 256 picture all see it. High
-   (step 4's last part).
+2. **The ground** (`wce_map_view::MapView`, the Map context). **done** (2026-11-21, `ground.rs`): the Tile tool's map streamer on
+   the battle's map from the packs (`load_map`, the packs' tiles through `PacksTree`, the kits' first), 2 m a scene unit as the
+   Terrain tool draws battle maps. A place on a campaign map: the map with its origin at the position; a whole battle map: at its
+   centre; a battle tile: a map of its one placement. Read on a worker when the choice has held still a moment (scripts at once,
+   streamed to idle); the flat grass until then. The men stand on it, the viewport's clicks find it (`ground_under`), the
+   formations, paths and the placing ghost are drawn on it, effects are placed at their height over it, the gizmo is at its height;
+   the camera is framed on it when it arrives; the movie streams it around each frame's camera. Camera keys stay absolute heights,
+   as `cam:move_to` takes them (Catalaunian Plains' ground is about 460 to 515 m). New Attila scenes and the sample are fought on
+   vanilla's Catalaunian Plains map, whole (the campaign map's centre is the Aegean). Gate: `assert_ground` on the sample's map and a
+   tile (`scene_ground`).
 3. **Deployment zones and objectives drawn** (the Create panel's gameplay markers and areas, holders' shapes): zones as the battle
    XML has them (centre, width, height, orientation) drawn and dragged in the viewport; capture points and victory locations for the
    logic's zone and objective events (step 7's missing events). High.

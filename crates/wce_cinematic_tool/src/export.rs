@@ -62,7 +62,14 @@ impl MovieJob {
     }
 
     /// Renders up to `budget` frames (all with `None`). Ok(true) when every frame is in.
-    pub fn step(&mut self, e: &mut Editor, preview: &mut Preview, speeds: &SpeedTable, budget: Option<usize>) -> Result<bool, String> {
+    pub fn step(
+        &mut self,
+        e: &mut Editor,
+        preview: &mut Preview,
+        ground: &mut crate::ground::Ground,
+        speeds: &SpeedTable,
+        budget: Option<usize>,
+    ) -> Result<bool, String> {
         let clip = self.project.clip(self.clip).ok_or("the clip is gone")?.clone();
         let fps = clip.fps.max(1) as f64;
         let mut done = 0;
@@ -70,7 +77,13 @@ impl MovieJob {
             let t = self.next as f64 / fps;
             let frame = evaluate(&self.project, &clip, speeds, t);
             // Pose the scene; wait for the units' models (a live export comes back next frame).
-            preview.update(e, self.doc, &self.project, &frame);
+            let units = e.scene.game_units.max(1e-3);
+            if let Some(c) = &frame.camera {
+                e.viewport.controller().set_camera(&camera_of(c, units));
+            }
+            ground.follow(e);
+            let heights = ground.heights();
+            preview.update(e, self.doc, &self.project, &frame, heights.as_ref().map(|h| h as &dyn Fn(f32, f32) -> f32));
             if preview.busy() {
                 if e.scripted_input() {
                     continue;
@@ -92,7 +105,7 @@ impl MovieJob {
                 for k in 1..SUB {
                     let ts = t + k as f64 / SUB as f64 * 0.5 / fps;
                     let sub = evaluate(&self.project, &clip, speeds, ts);
-                    preview.update(e, self.doc, &self.project, &sub);
+                    preview.update(e, self.doc, &self.project, &sub, heights.as_ref().map(|h| h as &dyn Fn(f32, f32) -> f32));
                     let cam = sub.camera.as_ref().map_or(cam, |c| camera_of(c, units));
                     let more = wce_editor::viewport::render_offscreen(e, &mut self.target, self.width, self.height, cam, ts as f32, false)
                         .ok_or("the renderer could not draw the frame")?;
