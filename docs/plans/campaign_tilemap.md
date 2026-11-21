@@ -241,6 +241,21 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   Seen in G meanwhile, older (cmpG7 of 2026-11-20 has it): the far blocks west of the river are a light / dark patchwork by tile
   (`grass_05` bakes 73 74 31, `grass_06` 45 47 30), where the game's forest covers it evenly. Minas Tirith not captured: a custom
   model, no sprawl.
+- **TDD's marshes (capture T2, 2026-11-21):** the rivers drew pale and washed out, 3.5 x the game's in the overlay (mean of its river
+  pixels (4.9, 9.5, 12.5) against (1.0, 2.6, 4.0)). Shaders, constants, textures (colour map, environment, sky, normals) and the
+  camera all the same; the samplers not: `main_river` reads `s_lf_colour` at (x / width, -z / height), and the game's sampler wraps
+  (16 x anisotropic) where the editor's clamped, so every river took the colour map's top row. Fixed (the normals wrap anisotropic
+  and the environment wraps too, as the game's); Attila's are right now as well (capture A's river (55, 110, 138), the game's
+  (53, 107, 140), before (49, 62, 93)). The game's river mesh is 5 vertices across (P1.x 0 .. width, P1.w 0 .. 1), P0.w a value of
+  the river's (0.1 .. 0.8, the shader takes only its sign), P1.z the end fade; the editor's 2 across and P0.w the flow's sign give
+  the same pixels. Left: the rivers end about 40 cells off and the right third is plain ground with the far relief (no pools, no
+  reeds), where the game draws its tiles out to its far blend: the rings decision (the game draws 9 to 37 world units, 27 to 110
+  cells; the editor's tile rings end near 40).
+- **TDD's Rauros (capture T1, 2026-11-21):** straight water strips west of the lake. The lake is one tile
+  (`lakes\22x32_rauros`, 22 x 31 cells) whose origin chunk lies 39 cells from the camera: drawn at that chunk's level (far, step 64)
+  right under the camera, its banks sank and its water planes showed through. Fixed: a chunk's level (and a block's, a distant
+  square's) goes by the cells its tiles draw (`Frame::chunk_extent`). Left: `enviro_vfx_lake_fog` draws a cloud over the lake
+  where the game's frame has none (a visibility rule of the game's not traced: height, distance or season).
 - **G's sawtooth (2026-11-20):** dark teeth across mountain tiles past the tile rings (`atlantic_mountains\large_point_60_r`, and a
   smaller one on the right). The far chunks draw a tile's cells as plain ground raised by the far relief (40 to 90 m there), and
   the plain material's blend box stands 30 units over the LF: what rose out of it resolved black. A ground with heights of its
