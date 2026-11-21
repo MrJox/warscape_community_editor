@@ -37,6 +37,7 @@ enum Pending {
     Language(String),
     SceneNew(String),
     SceneOpen(String),
+    Sample,
     SceneTime(f64),
     ScenePlay(bool),
     UnitAdd(String, usize, f32, f32),
@@ -217,6 +218,7 @@ impl CinematicTool {
             }
             Pending::SceneNew(name) => self.new_scene_project(e, &name),
             Pending::SceneOpen(what) => self.open_scene(e, &what),
+            Pending::Sample => self.sample_scene(e),
             Pending::SceneTime(t) => {
                 self.scene.time = t.max(0.0);
                 self.scene.playing = false;
@@ -356,6 +358,29 @@ impl CinematicTool {
         match e.replace_document("cinematic", Box::new(SceneDocument::new(p, path))) {
             Ok(_) => {
                 e.status(&format!("Cinematic: new scene {name}"), false);
+                self.scene_opened(e);
+            }
+            Err(err) => e.status(&format!("Cinematic: {err}"), true),
+        }
+    }
+
+    /// The sample scene: opened from the projects folder, made and saved there the first time.
+    fn sample_scene(&mut self, e: &mut Editor) {
+        let game = self.files.as_ref().and_then(|f| f.game().map(|g| g.key.to_owned())).unwrap_or_else(|| "attila".into());
+        let p = wce_cinematic::sample::sample_project(&game);
+        let path = Self::scenes_dir(e).join(&p.battle.key).join("project.json");
+        if path.exists() {
+            self.open_scene(e, &path.display().to_string());
+            return;
+        }
+        let mut doc = SceneDocument::new(p, path.clone());
+        if let Err(err) = wce_editor_core::document::Document::save(&mut doc, &Default::default()) {
+            e.status(&format!("Cinematic: {err}"), true);
+            return;
+        }
+        match e.replace_document("cinematic", Box::new(doc)) {
+            Ok(_) => {
+                e.status(&format!("Cinematic: the sample scene, saved as {}", path.display()), false);
                 self.scene_opened(e);
             }
             Err(err) => e.status(&format!("Cinematic: {err}"), true),
@@ -866,6 +891,9 @@ impl Tool for CinematicTool {
         if gui::menu_item("New cinematic scene...", None, false, true) {
             self.new_scene = Some(String::new());
         }
+        if gui::menu_item("Open the sample cinematic scene", None, false, true) {
+            self.sample_scene(e);
+        }
         if gui::begin_menu("Open cinematic scene") {
             let dir = Self::scenes_dir(e);
             let mut scenes: Vec<String> = std::fs::read_dir(&dir)
@@ -1056,6 +1084,9 @@ impl Tool for CinematicTool {
             }
             queue(e, Pending::SceneNew(a.join(" ")))
         });
+        c.add("scene_sample", "scene_sample", "Opens the sample scene (made in <projects>/cinematics the first time)", |e, _| {
+            queue(e, Pending::Sample)
+        });
         c.add("scene_open", "scene_open <folder | project.json>", "Opens a cinematic scene", |e, a| {
             if a.is_empty() {
                 return CommandResult::fail("usage: scene_open <folder | path>");
@@ -1097,6 +1128,44 @@ impl Tool for CinematicTool {
             e.with_tool::<CinematicTool, _>(|t, _| t.scene.free_camera = on);
             CommandResult::success(if on { "free" } else { "following the keys" })
         });
+        c.add(
+            "click_ground",
+            "click_ground <x> <z> [right]",
+            "Clicks the viewport (the scripted mouse) where a point of the ground is (metres)",
+            |e, a| {
+                let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+                let (Some(x), Some(z)) = (n(0), n(1)) else { return CommandResult::fail("usage: click_ground <x> <z> [right]") };
+                let units = e.scene.game_units.max(1e-3);
+                let Some((px, py)) = e.viewport.project(wce_foundation::math::Float3::new(x / units, 0.0, z / units)) else {
+                    return CommandResult::fail("that point is not in view");
+                };
+                if px < 0.0 || py < 0.0 || px >= e.viewport.width() as f32 || py >= e.viewport.height() as f32 {
+                    return CommandResult::fail(format!("that point is outside the picture ({px:.0}, {py:.0})"));
+                }
+                let mut args = vec!["click".to_owned(), (px.round() as i32).to_string(), (py.round() as i32).to_string()];
+                if a.get(2).is_some_and(|b| b == "right") {
+                    args.push("right".to_owned());
+                }
+                CommandRegistry::run_args(e, "mouse", &args)
+            },
+        );
+        c.add(
+            "assert_unit_near",
+            "assert_unit_near <x> <z> <metres>",
+            "Fails unless a unit starts within that distance of the point",
+            |e, a| {
+                let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+                let (Some(x), Some(z), Some(d)) = (n(0), n(1), n(2)) else {
+                    return CommandResult::fail("usage: assert_unit_near <x> <z> <metres>");
+                };
+                let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return CommandResult::fail("no scene open") };
+                match p.units.iter().map(|u| (u, (u.start[0] - x).hypot(u.start[1] - z))).min_by(|a, b| a.1.total_cmp(&b.1)) {
+                    Some((u, dist)) if dist <= d => CommandResult::success(format!("unit {} at {:?}", u.id, u.start)),
+                    Some((u, dist)) => CommandResult::fail(format!("the nearest, unit {}, is {dist:.2} m away at {:?}", u.id, u.start)),
+                    None => CommandResult::fail("no units"),
+                }
+            },
+        );
         c.add("create_army", "create_army <n>", "The army the units placed join (the Create panel's army)", |e, a| {
             let Some(n) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return CommandResult::fail("usage: create_army <n>") };
             e.with_tool::<CinematicTool, _>(|t, _| t.create.draft.army = n);
@@ -1486,6 +1555,7 @@ impl Tool for CinematicTool {
         match self.scene.request.take() {
             Some(crate::scene_ui::SceneRequest::New(name)) => self.new_scene_project(e, &name),
             Some(crate::scene_ui::SceneRequest::Open(name)) => self.open_scene(e, &name),
+            Some(crate::scene_ui::SceneRequest::Sample) => self.sample_scene(e),
             None => {}
         }
         self.movie_tools.poll(e);

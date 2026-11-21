@@ -301,19 +301,49 @@ fn battle(r: &mut Rows, ui: &mut SceneUi, q: &mut Project) {
         }
     }
     r.ins.section("Where");
-    if let Some(k) =
-        pick_row(ui, "Battle map", "map", &q.map.campaign_map, &lists.battle_maps, "The map whose battle tiles it is fought on")
-    {
-        q.map.campaign_map = k;
-        r.picked = Some("battle map".into());
+    let kinds = ["A whole battle map".to_owned(), "A place on a campaign map".to_owned(), "One battle tile".to_owned()];
+    let mut kind = if !q.map.tile.is_empty() {
+        2
+    } else if q.map.whole_map {
+        0
+    } else {
+        1
+    };
+    r.ins.hint("A whole battle map (as vanilla's historical battles, made in TEd), a place on a campaign map, or one battle tile alone");
+    if r.ins.edit_choice("where", "Fought on", &mut kind, &kinds) {
+        q.map.whole_map = kind == 0;
+        q.map.tile = if kind == 2 { lists.battle_tiles.first().map(|t| t.key.clone()).unwrap_or_default() } else { String::new() };
+        r.picked = Some("battle ground".into());
     }
-    r.ins.hint("Where on that map, 0 to 1 across and down");
-    let c = r.ins.edit_float2("mappos", "Map position", &mut q.map.position, 0.0005);
-    q.map.position = q.map.position.map(|v| v.clamp(0.0, 1.0));
-    r.note("mappos", c);
-    r.ins.hint("A picture of the map's heights: click where the battle is");
-    if r.ins.button("mappick", &format!("{}  Pick on the map...", icons::MAP), true) {
-        ui.map_pick.open(q.map.position);
+    if q.map.tile.is_empty() {
+        let tip = if q.map.whole_map { "The battle map it is fought on, whole" } else { "The map whose battle tiles it is fought on" };
+        if let Some(k) = pick_row(ui, "Battle map", "map", &q.map.campaign_map, &lists.battle_maps, tip) {
+            q.map.campaign_map = k;
+            r.picked = Some("battle map".into());
+        }
+        if !q.map.whole_map {
+            r.ins.hint("Where on that map, 0 to 1 across and down");
+            let c = r.ins.edit_float2("mappos", "Map position", &mut q.map.position, 0.0005);
+            q.map.position = q.map.position.map(|v| v.clamp(0.0, 1.0));
+            r.note("mappos", c);
+            r.ins.hint("A picture of the map's heights: click where the battle is");
+            if r.ins.button("mappick", &format!("{}  Pick on the map...", icons::MAP), true) {
+                ui.map_pick.open(q.map.position);
+            }
+        }
+    } else {
+        let shown = q.map.tile.trim_start_matches("terrain/tiles/battle/").replace('/', " / ");
+        if let Some(k) = pick_row(
+            ui,
+            "Battle tile",
+            "tile",
+            &shown,
+            &lists.battle_tiles,
+            "The game's battle tile it is fought on (type to search: plains, 8x8, river...)",
+        ) {
+            q.map.tile = k;
+            r.picked = Some("battle tile".into());
+        }
     }
     r.ins.hint("The battlefield's side, metres");
     let c = r.ins.edit_float("area", "Playable area", &mut q.map.playable_area, 10.0, 200.0, 10_000.0);

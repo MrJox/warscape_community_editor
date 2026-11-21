@@ -293,6 +293,44 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 7. Smaller ones (2026-11-21). **done**: the Timeline's Add track lists the units without a track in the clip by name (it needed a
    unit selected first); Logic has an Add a node button over its canvas (the right click alone was hidden); which faction fields a
    unit comes from `units_custom_battle_permissions` as well as `unit_variants` (the Huns listed none).
+8. Placing in the 3D viewport did not work (user, 2026-11-21): while the Create panel places, the tool owns the left button and
+   the editor sends it a press, never a click; the placing waited for a click. It places on the press now. The gate drives the
+   real mouse (`click_ground`: the scripted mouse at a point of the ground): a unit placed by a click, selected by a click,
+   the selection cleared by a click on empty ground, placing stopped by a right click. **done**
+9. The battle on one battle tile (user, 2026-11-21: "a selection instead of typing"): Battle > Fought on: a place on a campaign
+   map (the map's picker and its picture) or one battle tile (`map.tile`, a searchable list of the packs' tile folders,
+   `terrain/tiles/battle/...` with a `definition.xml`); the battle XML names the tile alone, as Launch in game does
+   (`battle_export_check`). A third choice, a whole battle map: vanilla's historical battles are fought on their own map
+   (`terrain/battles/catalaunian_plains/`, made in TEd) named alone, without `tile_map_position` (`map.whole_map`). **done**; in
+   game: **todo**
+10. A sample scene (`wce_cinematic::sample`: ten vanilla units in two armies, a camera move, the Hun lancers riding in, a cohort
+    cheering, two fires, a subtitle, the bars and a fade in): Open the sample scene in the empty panels and the File menu, made in
+    `<projects>/cinematics/wce_sample_battle` the first time; `examples/sample_scene.rs` writes it. **done**
+
+## The Tile tool's other tools for historical battles (assessment, 2026-11-21)
+
+The official pipeline makes a historical battle's map in TEd (vanilla's `terrain/battles/<name>/`: a tile map of tiles) and its
+setup in the battle XML; the Lua is written apart. What the Tile tool has that would serve the scene, by worth:
+
+1. **Launch in game** (`wce_launch`, the Tile tool's launch prompt): start the exported battle straight from the editor
+   (`game_startup_mode battle script/<key>/<key>_battle.xml`, the pack delivered as the tile launches are). The in-game tests then
+   cost one click. High.
+2. **The ground** (`wce_map_view::MapView`, the Map context): the campaign map at the battle's position, a whole battle map, or the
+   battle tile, streamed under the units instead of the flat grass; the preview, the movie and the 512 x 256 picture all see it. High
+   (step 4's last part).
+3. **Deployment zones and objectives drawn** (the Create panel's gameplay markers and areas, holders' shapes): zones as the battle
+   XML has them (centre, width, height, orientation) drawn and dragged in the viewport; capture points and victory locations for the
+   logic's zone and objective events (step 7's missing events). High.
+4. **Reference image** (`reference_image.rs`): a historical map of the battle laid under the Layout or the viewport, to place the
+   armies as they stood. Medium, cheap.
+5. **Grab, snapping, measure** (G over the ground, the snap chip, the tape measure and the angle): lines of units at even spacing,
+   distances between the armies, camera paths of a known length. Medium, cheap (the editor's chips and gestures).
+6. **Selection tools and saved camera views** (select all of an army or a kind, saved selections; `camera_views.rs`). Low-medium.
+7. **Prefabs** as formation presets (a triplex acies of N units placed at once). Low-medium.
+8. **AI hints and regions** for the logic's "defend a spot" and the AI's behaviour. Medium, needs in-game checks.
+
+Not for the scene: terrain and vegetation painting, building placement and destruction, links, kits, flips: map authoring, which
+stays in the Tile and Terrain tools (a map made there is then picked as "a whole battle map").
 
 ## Open questions and risks
 
