@@ -43,13 +43,13 @@ battle `rigidterrain` passes, as the game's (V, docs/re/terrain.md).
 Never done: a whole frame compared at the same camera. Known gaps (V, from the code unless marked):
 - **Frame:** the editor draws z 15 % short (decision 1). The campaign view keeps the battle lens (vertical fov 65°, near 1 scene unit;
   `camera_controller.rs`): the game's is 80°, near 1 world unit. The view streams short of the horizon.
-- **Forests:** the clumps are drawn as static meshes (`model_cache.rs` ~1128), not with `rigidcampaignvegetation.hlsl`: no turn, no
-  lean towards the camera, `campaign_tree_ps` unset. Their size and lean are ASSUMPTIONS.
-- **Coast strip:** `campaignterrain.hlsl` `ps30_main_coast` is drawn nowhere in the editor (H: whether the game draws it on Attila).
-- **Grass:** drawn on campaign maps; capture A's frame has no grass pass (kept unchecked for TDD's marsh reeds).
+- **Forests:** settled (`MeshKind::CampaignVegetation`, drawn and cast with `rigidcampaignvegetation.hlsl`; Progress, "Forests").
+- **Coast strip:** settled 2026-11-21: `campaignterrain.hlsl`'s `ps30_main_coast` is drawn in none of the captures (A, Ares, C, E, E2,
+  F, F1, G, T1: their `shader_names.csv`), coasts in view in A, F and G. The game does not draw it on Attila; nor does the editor.
+- **Grass:** settled: no grass pass on a campaign map (`passes.rs`), as capture A's frame; TDD's marsh reeds are the tiles' models.
 - **Normals:** settled 2026-11-20 (Progress, "The LF normals").
-- **Settlements:** buildings unturned (the turn is not in the startpos, not found in the DLL); sprawl levels, walls around zones
-  without a building, the farmland rule and the road cap are ASSUMPTIONS. Seen 2026-11-18: in scripted runs Rome's settlement buildings
+- **Settlements:** buildings unturned (the turn is not in the startpos, not found in the DLL); the farmland rule and the road cap
+  are ASSUMPTIONS (sprawl levels and walls settled 2026-11-21: docs/re/terry.md, "Settlements at the start"). Seen 2026-11-18: in scripted runs Rome's settlement buildings
   were not drawn (their models never requested).
 - **Environment leftovers:** the skybox casts as the game's (decision 4), but lays stripes over TDD's Rauros where the game shows none
   (the editor's cascades differ from the game's there); the shroud plane reads

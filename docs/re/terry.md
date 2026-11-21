@@ -391,9 +391,8 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
     index. Capture A: the slots whose anchor the game drew are as many as the secondary buildings in 34 of 42 settlements (the rest
     far off, undrawn); which ones matches no rule (lowest index, highest, a seeded draw: each 30 - 50 %). The editor: the game's walk
     with the draw on a seed of the region's key (`cities::expansion_order`).
-  - Sprawl: every cell of a linked slot's zone but the footprints, level 1 (cells reached again by the game's paths between the slots
-    draw 1 to 3: P 0.225 / 0.70 / 0.075; those paths, fn 0x10a57080, not decoded, fill a few cells of other zones: Rome's slot 5).
-    Capture A, Rome: `roman_sprawl_edge_14` at level 1 on most cells, at 2 on some.
+  - Sprawl: every cell of a linked slot's zone but the footprints, at the level below ("Levels"); the game's paths between the slots
+    (fn 0x10a57080, not decoded) fill a few cells of other zones (Rome's slot 5).
   - Walls (only where fn 0x10a60880 holds; in the captures exactly the `_major_` cities): the outer edge of the zones of the main
     slot, the port and the first k linked slots, k the secondary slots with a building before the first without (fn 0x10a3e9f0); a
     wall cell between two linked zones is none. `SLOT_WALL_ARRAY` is loaded but the ring traced at run time (fn 0x10a7d360): the
