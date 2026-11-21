@@ -298,7 +298,7 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
   passes that clear their textures: the terrain resolve, the cliffs, the decals, grass, the sea and lakes, borders, the light, the
   shroud plane) with the game's constants. Checked: Italy unchanged (all seen on turn 1, as the user's screenshot), Germania beyond
   the Danube darkened (x 0.81 over that band). Not compared with the game's at the same camera yet.
-- Open: the sea colour's rebel exception (campaign_borders.md); the
+- Open: the sea colour's rebel exception (campaign_borders.md; settled 2026-11-21: abandoned regions); the
   fog of war against the game at the same camera. Not checked: the z stretch of the hex world against the game's (the editor's frame has square cells: the game's map is
   15 % longer north to south); the view's lens (the game's 80 degrees); the view streams short of the horizon.
 

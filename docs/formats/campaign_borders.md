@@ -113,8 +113,11 @@ id, `^+4` the stance: `war` 0, `neutral` 1, `defensive_allies` 2, `military_alli
 
 A sea chain (fn 0x10b99a80, on its sea's factions): at war with P (fn 0x10715ff0: F ≠ P and F or P is the rebels, or P's stance to F
 is war) counted; the list exactly [P] own; none at war: allied when a faction other than P is allied (fn 0x10715bb0: neither the
-rebels, stance 2 to 7), else neutral (an empty list neutral); else war. One exception not traced: a single at-war rebel faction whose
-+0x54 items all have +0x628 set is neutral in the game; the editor says war.
+rebels, stance 2 to 7), else neutral (an empty list neutral); exactly one at war, the rebels (+0x800 null, fn 0x10716690) in the list,
+and every region the rebels hold abandoned (their +0x54 list, each region's +0x628, fn 0x10951060: the startpos's `REGION`
+`REGION_REBEL_MANAGER+1`; none held counts as all): neutral; else war. `main_attila`'s rebels hold its 11 ruins in the east at the
+start (Tanais, Samandar, Sarai...), all abandoned: Mare Sarmaticum and Pontus Cimmerius, where the rebels are the only faction at war
+with the Western Roman Empire, are neutral.
 
 The faction list: `CAMPAIGN_PREOPEN_MAP_INFO/FACTION_INFOS`, per faction its key, two flags (the second: playable), its list order and
 its regions at the start. No default is in the data read; the editor picks the playable faction with the most regions (the Western
@@ -154,5 +157,5 @@ The later captures, all curves: B 555 + 12 sea, rain 67 + 7, w1 58 + 7.
 
 ## Known gaps
 
-- The sea colour's rebel exception (see Colours) is not traced.
+- The sea colour's rebel exception: traced (see Colours, 2026-11-21).
 - The default faction: no data names it (see Colours).

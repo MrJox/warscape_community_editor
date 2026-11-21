@@ -6,7 +6,9 @@
 //!   `OLD_DIPLOMACY_MANAGER/DIPLOMACY_RELATIONSHIPS_ARRAY/OLD_DIPLOMACY_RELATIONSHIP`s: `^+1` the other faction's runtime id, `^+4` the
 //!   stance (`war` 0, `neutral` 1, `defensive_allies` 2, `military_allies` 3, `protector` 4, `client_state` 5, `master` 6, `vassal` 7);
 //! - `WORLD/REBEL_FACTION/FACTION`: the rebels (an empty key: no `factions` record, the game's faction +0x800 null);
-//! - `WORLD/REGION_MANAGER/REGIONS_ARRAY/REGION`: `^+1` the region's runtime id, `^+2` its key, `SETTLEMENT+9` its owner's runtime id;
+//! - `WORLD/REGION_MANAGER/REGIONS_ARRAY/REGION`: `^+1` the region's runtime id, `^+2` its key, `SETTLEMENT+9` its owner's runtime id,
+//!   `REGION_REBEL_MANAGER+1` abandoned (the game's region +0x628, fn 0x10951060: its settlement does not grow, fn 0x10a83260;
+//!   `main_attila`'s 11 ruins in the east at the start);
 //! - `CAMPAIGN_PREOPEN_MAP_INFO/FACTION_INFOS`: per faction its key, two flags (the second: playable), its order on the faction list and
 //!   the regions it holds at the start.
 
@@ -97,6 +99,9 @@ pub struct StartRegion {
     pub key: String,
     /// Its owner's runtime id.
     pub owner: u32,
+
+    /// Abandoned (a ruin).
+    pub abandoned: bool,
 }
 
 /// A faction of the campaign's faction list (`FACTION_INFOS`).
@@ -187,7 +192,8 @@ impl Diplomacy {
             for g in region.children() {
                 let (Some(id), Some(key)) = (leaf(g, None, 1).and_then(u32_of), leaf(g, None, 2).and_then(str_of)) else { continue };
                 let owner = leaf(g, Some("SETTLEMENT"), 9).and_then(u32_of).unwrap_or(0);
-                d.regions.push(StartRegion { id, key: key.to_owned(), owner });
+                let abandoned = matches!(leaf(g, Some("REGION_REBEL_MANAGER"), 1), Some(NodeType::Bool(b)) if *b.value());
+                d.regions.push(StartRegion { id, key: key.to_owned(), owner, abandoned });
             }
         }
 
@@ -252,20 +258,24 @@ impl Diplomacy {
 
     /// The colour class of a sea region's borders for `player` (fn 0x10b99a80), from the sea's factions (`factions`): only the player's
     /// own; none at war with the player (a rebel at war with everyone, fn 0x10715ff0) allied when one other is allied (fn 0x10715bb0),
-    /// else neutral (no factions: neutral); else war. Not traced: one at-war rebel faction whose +0x54 items all have +0x628 set is
-    /// neutral in the game; here war.
+    /// else neutral (no factions: neutral); one at war, the rebels among them, and every region of the rebels abandoned (their +0x54
+    /// list's +0x628, fn 0x10951060; none held counts as all): neutral; else war.
     #[must_use]
     pub fn sea_colour_class(&self, player: u32, factions: &[u32]) -> ColourClass {
         let at_war = |f: u32| f != player && (self.is_rebel(f) || self.is_rebel(player) || self.stance(player, f) == Stance::War);
         let ally = |f: u32| !self.is_rebel(f) && !self.is_rebel(player) && (f == player || self.stance(player, f).is_allied());
+        let wars = factions.iter().filter(|&&f| at_war(f)).count();
         if factions == [player] {
             ColourClass::Own
-        } else if factions.iter().any(|&f| at_war(f)) {
-            ColourClass::War
-        } else if factions.iter().any(|&f| f != player && ally(f)) {
-            ColourClass::Allied
-        } else {
+        } else if wars == 0 {
+            if factions.iter().any(|&f| f != player && ally(f)) { ColourClass::Allied } else { ColourClass::Neutral }
+        } else if wars == 1
+            && let Some(&rebel) = factions.iter().find(|&&f| self.is_rebel(f))
+            && self.regions.iter().filter(|r| r.owner == rebel).all(|r| r.abandoned)
+        {
             ColourClass::Neutral
+        } else {
+            ColourClass::War
         }
     }
 }
