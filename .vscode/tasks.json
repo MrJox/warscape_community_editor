@@ -5,7 +5,7 @@
             "label": "Build WCE (Debug)",
             "type": "process",
             "command": "cargo",
-            "args": ["build", "-p", "wce_app"],
+            "args": ["build", "-p", "wce_app", "--all-features"],
             "options": { "cwd": "${workspaceFolder}" },
             "group": "build",
             "problemMatcher": "$rustc"
@@ -22,7 +22,7 @@
             "label": "Run WCE (Debug build, without debugger)",
             "type": "process",
             "command": "cargo",
-            "args": ["run", "-p", "wce_app"],
+            "args": ["run", "-p", "wce_app", "--all-features"],
             "options": { "cwd": "${workspaceFolder}" },
             "problemMatcher": "$rustc"
         },
