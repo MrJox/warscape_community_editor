@@ -229,7 +229,7 @@ fn main() {
     // Every action on the tick grid.
     for line in all.lines().filter(|l| l.contains("cs:action(")) {
         let ms: u64 = line.rsplit(',').next().and_then(|s| s.trim().trim_end_matches(");").trim().parse().ok()).unwrap_or(1);
-        if ms % 100 != 0 {
+        if !ms.is_multiple_of(100) {
             failed.push(format!("Lua: action off the tick grid: {line}"));
         }
     }

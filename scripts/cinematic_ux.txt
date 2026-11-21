@@ -1,0 +1,60 @@
+# The Cinematic tool's ways of filling a scene from its panels (docs/plans/cinematic.md, UX), run by scripts/cinematic_check.sh twice:
+# units placed from the Create panel by clicks on the ground, selected, moved and turned as the gizmo does (one undo entry each),
+# duplicated and deleted; a unit with a path keyed at the playhead by a move; an army's units moved with it deleted.
+tool cinematic
+layout reset
+frames 2
+scene_new WCE UX Test
+frames 3
+# Two cohorts placed by clicks (a new scene's camera track and clip are ids 1 and 2: the units are 3 and 4).
+create_pick unit att_rom_cohors
+create_click 0 -300
+create_click 40 -300
+create_pick none
+frames 2
+assert_count units 2
+assert_count selected 1
+assert_start 3 0 -300 0 0
+# Moved, then turned where it stands; the turn undone alone.
+scene_select unit 3
+scene_move 10 5
+assert_start 3 10 -295 0
+scene_move 0 0 90
+assert_start 3 10 -295 90
+undo
+assert_start 3 10 -295 0
+# Two selected, duplicated beside themselves, the copies deleted.
+scene_select unit 3
+scene_select unit 4 add
+scene_duplicate
+assert_count units 4
+assert_count selected 2
+scene_delete
+assert_count units 2
+# A unit with a path: a move at the playhead keys the path there, its start stays.
+scene_select unit 4
+frames 2
+scene_time 0
+path_key 40 -300
+frames 2
+scene_time 4
+frames 2
+scene_move 0 12
+frames 2
+assert_start 4 40 -300
+assert_unit 4 40 -288
+# The second army gets a unit placed for it, then the army goes with it.
+create_army 1
+create_pick unit att_rom_cohors
+create_click 0 300
+create_pick none
+frames 2
+assert_count units 3
+scene_select army 1
+scene_delete
+frames 2
+assert_count armies 1
+assert_count units 2
+save
+frames 2
+quit

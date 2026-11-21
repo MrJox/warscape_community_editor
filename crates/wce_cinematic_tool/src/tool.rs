@@ -15,13 +15,16 @@ use wce_vfs::files::Files;
 
 use wce_cinematic::scene::{Interp, PathKey, Project, TrackContent, sanitize_key};
 
+use crate::create::{Create, CreateRequest};
 use crate::export::MovieJob;
+use crate::items::{self, How, SceneItem};
 use crate::logic_ui::LogicUi;
 use crate::movie_tools::MovieTools;
 use crate::preview::Preview;
 use crate::scene_audio::SceneAudio;
 use crate::scene_doc::SceneDocument;
 use crate::scene_ui::{SceneUi, add_track, edit, for_track, scene_doc};
+use crate::view::SceneView;
 use crate::viewer::MovieViewer;
 
 /// What a command asked for, done at the next frame (commands reach the tool between frames).
@@ -77,6 +80,10 @@ pub struct CinematicTool {
     events_listed: bool,
     scene_list_at: u64,
     start_shown: bool,
+    create: Create,
+    view: SceneView,
+    /// The unit last mirrored between the editor's selection and the panels' selected unit.
+    synced_unit: Option<u32>,
 }
 
 impl CinematicTool {
@@ -164,14 +171,13 @@ impl CinematicTool {
             && self.library.is_none()
             && self.library_loading.is_none()
             && !e.scripted_input()
+            && let Some(files) = self.files.clone()
         {
-            if let Some(files) = self.files.clone() {
-                let (tx, rx) = channel();
-                std::thread::spawn(move || {
-                    let _ = tx.send(SoundLibrary::load(files.as_ref()));
-                });
-                self.library_loading = Some(rx);
-            }
+            let (tx, rx) = channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(SoundLibrary::load(files.as_ref()));
+            });
+            self.library_loading = Some(rx);
         }
         if let (Some(v), Some(lib), Some(files)) = (self.viewer.as_mut(), &self.library, &self.files) {
             v.attach_audio(lib, files);
@@ -349,13 +355,30 @@ impl CinematicTool {
         }
         match e.replace_document("cinematic", Box::new(SceneDocument::new(p, path))) {
             Ok(_) => {
-                self.scene.reset();
                 e.status(&format!("Cinematic: new scene {name}"), false);
-                gui::select_dock_tab("Timeline");
-                gui::select_dock_tab("Layout");
+                self.scene_opened(e);
             }
             Err(err) => e.status(&format!("Cinematic: {err}"), true),
         }
+    }
+
+    /// A scene was opened or made: the panels to fill it in front, the viewport looking at the player's army's zone from behind it.
+    fn scene_opened(&mut self, e: &mut Editor) {
+        self.scene.reset();
+        self.create.stop();
+        e.selection.clear();
+        gui::select_dock_tab("Scene");
+        gui::select_dock_tab("Timeline");
+        gui::select_dock_tab("Viewport");
+        let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+        let Some(a) = p.armies.iter().find(|a| a.player).or(p.armies.first()) else { return };
+        let units = e.scene.game_units.max(1e-3);
+        let (s, c) = a.deployment_orientation.sin_cos();
+        let at = a.deployment_centre;
+        let mut cam = e.viewport.camera();
+        cam.target = wce_foundation::math::Float3::new((at[0] + s * 60.0) / units, 0.0, (at[1] + c * 60.0) / units);
+        cam.eye = wce_foundation::math::Float3::new((at[0] - s * 140.0) / units, 70.0 / units, (at[1] - c * 140.0) / units);
+        e.viewport.controller().set_camera(&cam);
     }
 
     /// Opens a scene by its project.json path or its folder name under `<projects>/cinematics`.
@@ -370,10 +393,8 @@ impl CinematicTool {
         match SceneDocument::open(path.clone()) {
             Ok(d) => match e.replace_document("cinematic", Box::new(d)) {
                 Ok(_) => {
-                    self.scene.reset();
                     e.status(&format!("Cinematic: opened {}", path.display()), false);
-                    gui::select_dock_tab("Timeline");
-                    gui::select_dock_tab("Layout");
+                    self.scene_opened(e);
                 }
                 Err(err) => e.status(&format!("Cinematic: {err}"), true),
             },
@@ -619,6 +640,186 @@ impl CinematicTool {
     }
 }
 
+impl CinematicTool {
+    /// The tool's keys (Settings > Shortcuts): placing turns and stops; over the viewport or the Scene panel, delete, duplicate and
+    /// the quick-add popup.
+    fn scene_keys(&mut self, e: &mut Editor) {
+        use wce_editor::shortcuts::pressed;
+        if gui::io().WantTextInput || scene_doc(e).is_none() {
+            return;
+        }
+        if self.create.making.is_some() {
+            if pressed("cinematic.turn", true) {
+                self.create.turn_by(15.0);
+            }
+            if pressed("cinematic.turn_back", true) {
+                self.create.turn_by(-15.0);
+            }
+            if pressed("cinematic.cancel", false) {
+                self.create.stop();
+            }
+        }
+        let here = e.viewport.hovered || self.scene.outliner_hovered;
+        if here && pressed("cinematic.delete", false) {
+            self.scene.request_delete = true;
+        }
+        if here && pressed("cinematic.duplicate", false) {
+            self.scene.request_duplicate = true;
+        }
+        if e.viewport.hovered
+            && !gui::is_mouse_down(1)
+            && pressed("cinematic.quick_add", false)
+            && let Some(g) = self.view.hover_ground
+        {
+            self.create.ask_quick_add(g);
+        }
+    }
+
+    /// What the panels asked for: select what was placed, delete or duplicate the selection, look at a unit.
+    fn scene_requests(&mut self, e: &mut Editor) {
+        for r in std::mem::take(&mut self.create.requests) {
+            match r {
+                CreateRequest::Placed(item) => {
+                    items::select(e, item, How::Set);
+                    self.scene.key_focus = false;
+                }
+            }
+        }
+        if std::mem::take(&mut self.scene.request_delete) {
+            let sel = items::selected(e);
+            if sel.is_empty() && self.scene.key_focus && self.scene.key.is_some() {
+                return;
+            }
+            edit(e, "delete", |p| delete_items(p, &sel));
+            e.selection.clear();
+            self.scene.unit = None;
+        }
+        if std::mem::take(&mut self.scene.request_duplicate) {
+            let sel = items::selected(e);
+            let mut made = vec![];
+            edit(e, "duplicate", |p| made = duplicate_items(p, &sel));
+            e.selection.clear();
+            for i in made {
+                items::select(e, i, How::Add);
+            }
+        }
+        if let Some(id) = self.scene.look_at.take()
+            && let Some(d) = scene_doc(e)
+            && let Some(m) = d.transform_of(SceneItem::Unit(id))
+        {
+            let mut cam = e.viewport.camera();
+            let target = wce_foundation::math::Float3::new(m.m[0][3], m.m[1][3], m.m[2][3]);
+            let units = e.scene.game_units.max(1e-3);
+            let back = cam.eye - cam.target;
+            let len = (back.x * back.x + back.y * back.y + back.z * back.z).sqrt().max(1e-6);
+            let dist = (80.0 / units).max(1e-3);
+            cam.eye = target + wce_foundation::math::Float3::new(back.x / len * dist, back.y / len * dist, back.z / len * dist);
+            cam.target = target;
+            self.scene.free_camera = true;
+            e.viewport.controller().set_camera(&cam);
+        }
+    }
+}
+
+/// Removes the items: units with their tracks, effects, armies with their units (a scene keeps one army).
+pub fn delete_items(p: &mut Project, sel: &[SceneItem]) {
+    let mut gone: Vec<u32> = sel.iter().filter_map(|i| if let SceneItem::Unit(id) = i { Some(*id) } else { None }).collect();
+    let mut armies: Vec<usize> = sel.iter().filter_map(|i| if let SceneItem::Army(a) = i { Some(*a) } else { None }).collect();
+    armies.sort_unstable_by(|a, b| b.cmp(a));
+    armies.dedup();
+    for a in armies {
+        if p.armies.len() <= 1 || a >= p.armies.len() {
+            continue;
+        }
+        gone.extend(p.units.iter().filter(|u| u.army == a).map(|u| u.id));
+        p.armies.remove(a);
+        for u in &mut p.units {
+            if u.army > a {
+                u.army -= 1;
+            }
+        }
+    }
+    if !p.armies.iter().any(|a| a.player)
+        && let Some(a) = p.armies.first_mut()
+    {
+        a.player = true;
+    }
+    p.units.retain(|u| !gone.contains(&u.id));
+    let mut effects: Vec<(u32, usize)> =
+        sel.iter().filter_map(|i| if let SceneItem::Vfx { track, index } = i { Some((*track, *index)) } else { None }).collect();
+    effects.sort_unstable_by_key(|e| std::cmp::Reverse(e.1));
+    for c in &mut p.clips {
+        c.tracks.retain(|t| !matches!(&t.content, TrackContent::Unit { unit, .. } if gone.contains(unit)));
+        for t in &mut c.tracks {
+            if let TrackContent::Vfx { instances } = &mut t.content {
+                for (track, index) in &effects {
+                    if *track == t.id && *index < instances.len() {
+                        instances.remove(*index);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Copies of the units and effects, beside them; the copies' items.
+pub fn duplicate_items(p: &mut Project, sel: &[SceneItem]) -> Vec<SceneItem> {
+    let mut made = vec![];
+    for i in sel {
+        match *i {
+            SceneItem::Unit(id) => {
+                let Some(u) = p.unit(id).cloned() else { continue };
+                let nid = p.new_id();
+                let (sin, cos) = u.facing.sin_cos();
+                let step = u.width + 5.0;
+                p.units.push(wce_cinematic::scene::SceneUnit {
+                    id: nid,
+                    seed: nid,
+                    start: [u.start[0] + step * cos, u.start[1] - step * sin],
+                    general: false,
+                    ..u
+                });
+                made.push(SceneItem::Unit(nid));
+            }
+            SceneItem::Vfx { track, index } => {
+                let Some(mut v) = crate::items::vfx_of(p, track, index).cloned() else { continue };
+                v.position[0] += 5.0;
+                for c in &mut p.clips {
+                    for t in &mut c.tracks {
+                        if t.id == track
+                            && let TrackContent::Vfx { instances } = &mut t.content
+                        {
+                            instances.push(v.clone());
+                            instances.sort_by(|a, b| a.start.total_cmp(&b.start));
+                            if let Some(k) = instances.iter().rposition(|x| *x == v) {
+                                made.push(SceneItem::Vfx { track, index: k });
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    made
+}
+
+/// The Cinematic tool's keys (Settings > Shortcuts).
+const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
+    use wce_editor::shortcuts::{Action, Scope};
+    const fn a(id: &'static str, label: &'static str, defaults: &'static [&'static str]) -> Action {
+        Action { id, scope: Scope::Tool("cinematic"), group: "Cinematic", label, defaults, held: false }
+    }
+    &[
+        a("cinematic.delete", "Delete the selection", &["Delete"]),
+        a("cinematic.duplicate", "Duplicate the selection", &["Ctrl+D"]),
+        a("cinematic.quick_add", "Add here... (the quick-add popup)", &["Space"]),
+        a("cinematic.turn", "Turn what is placed", &["R"]),
+        a("cinematic.turn_back", "Turn what is placed back", &["Shift+R"]),
+        a("cinematic.cancel", "Stop placing", &["Escape"]),
+    ]
+};
+
 impl Tool for CinematicTool {
     fn id(&self) -> &str {
         "cinematic"
@@ -685,6 +886,57 @@ impl Tool for CinematicTool {
         Ok(Some(Box::new(doc)))
     }
 
+    fn shortcuts(&self) -> &'static [wce_editor::shortcuts::Action] {
+        SHORTCUTS
+    }
+
+    fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        crate::inspect::inspect(e, ins, &mut self.scene, &mut self.create)
+    }
+
+    fn viewport_input(&mut self, e: &mut Editor, ev: &wce_editor::tool::ViewportEvent) -> bool {
+        if ev.kind == wce_editor::tool::ViewportEventKind::Hover {
+            self.view.hover_ground = crate::view::ground_point(e, ev.x, ev.y);
+        }
+        self.view.input(e, &mut self.scene, &mut self.create, ev)
+    }
+
+    fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        self.view.overlay(e, &mut self.scene, &mut self.create, origin, size);
+    }
+
+    fn claims_left_button(&self, _e: &Editor) -> bool {
+        self.create.making.is_some()
+    }
+
+    fn left_drag_selects(&self, e: &Editor) -> bool {
+        self.create.making.is_none() && e.viewport.gizmo == wce_editor::viewport::GizmoMode::Off && e.docs.of_tool("cinematic").is_some()
+    }
+
+    fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
+        self.view.box_drag(e, from, to, done);
+    }
+
+    fn edit_menu(&mut self, e: &mut Editor) {
+        let some = !items::selected(e).is_empty();
+        if gui::menu_item(
+            &format!("{}  Duplicate", wce_editor::icons::COPY),
+            wce_editor::shortcuts::label("cinematic.duplicate").as_deref(),
+            false,
+            some,
+        ) {
+            self.scene.request_duplicate = true;
+        }
+        if gui::menu_item(
+            &format!("{}  Delete", wce_editor::icons::TRASH_2),
+            wce_editor::shortcuts::label("cinematic.delete").as_deref(),
+            false,
+            some,
+        ) {
+            self.scene.request_delete = true;
+        }
+    }
+
     fn export_menu(&mut self, e: &mut Editor) -> bool {
         let has = scene_doc(e).is_some();
         if gui::menu_item("Historical battle pack...", None, false, has) {
@@ -720,17 +972,18 @@ impl Tool for CinematicTool {
         let (left, center) = gui::dock_builder_split(dockspace, gui::DIR_LEFT, 0.22);
         let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.24);
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.32);
-        gui::dock_builder_dock_window("Movies", left);
-        gui::dock_builder_dock_window("Scene", left);
+        let (left_bottom, left_top) = gui::dock_builder_split(left, gui::DIR_DOWN, 0.5);
+        gui::dock_builder_dock_window("Movies", left_top);
+        gui::dock_builder_dock_window("Scene", left_top);
+        gui::dock_builder_dock_window("Create", left_bottom);
         gui::dock_builder_dock_window("Movie", center);
         gui::dock_builder_dock_window("Layout", center);
-        gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Logic", center);
-        gui::dock_builder_dock_window("Key", right);
+        gui::dock_builder_dock_window("Viewport", center);
+        gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
-        gui::dock_builder_dock_window("Inspector", bottom);
         // Docked last: the bottom node's tab in front.
         gui::dock_builder_dock_window("Timeline", bottom);
     }
@@ -802,6 +1055,156 @@ impl Tool for CinematicTool {
         c.add("scene_play", "scene_play [0|1]", "Plays (or stops) the clip", |e, a| {
             queue(e, Pending::ScenePlay(a.first().is_none_or(|x| x != "0")))
         });
+        // The panels' ways of filling a scene, as a click would do them (the Create panel, the viewport, the Inspector's buttons).
+        c.add(
+            "create_pick",
+            "create_pick unit|vfx <key> | create_pick none",
+            "Starts placing a unit or an effect, as a click in the Create panel",
+            |e, a| {
+                let m = match (a.first().map(String::as_str), a.get(1)) {
+                    (Some("unit"), Some(k)) => Some(crate::create::Making::Unit(k.clone())),
+                    (Some("vfx"), Some(k)) => Some(crate::create::Making::Vfx(k.clone())),
+                    (Some("none"), _) => None,
+                    _ => return CommandResult::fail("usage: create_pick unit|vfx <key> | create_pick none"),
+                };
+                match e.with_tool::<CinematicTool, _>(|t, _| t.create.making = m) {
+                    Some(()) => CommandResult::success("placing"),
+                    None => CommandResult::fail("the Cinematic tool is not built in"),
+                }
+            },
+        );
+        c.add("scene_map_pick", "scene_map_pick", "Opens the window picking the battle's place on its map", |e, _| {
+            let Some(at) = scene_doc(e).map(|d| d.project().map.position) else { return CommandResult::fail("no scene open") };
+            e.with_tool::<CinematicTool, _>(|t, _| t.scene.map_pick.open(at));
+            CommandResult::success("map picker open")
+        });
+        c.add("create_army", "create_army <n>", "The army the units placed join (the Create panel's army)", |e, a| {
+            let Some(n) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return CommandResult::fail("usage: create_army <n>") };
+            e.with_tool::<CinematicTool, _>(|t, _| t.create.draft.army = n);
+            CommandResult::success(format!("army {n}"))
+        });
+        c.add(
+            "create_click",
+            "create_click <x> <z>",
+            "Places what is being placed at a point of the ground (metres), as a click there",
+            |e, a| {
+                let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+                let (Some(x), Some(z)) = (n(0), n(1)) else { return CommandResult::fail("usage: create_click <x> <z>") };
+                let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return CommandResult::fail("no scene open") };
+                let r = e.with_tool::<CinematicTool, _>(|t, e| {
+                    let m = t.create.making.clone()?;
+                    let lists = t.scene.lists.clone();
+                    let clip = t.scene.current_clip(&p).map(|c| c.id);
+                    let item = t.create.place(e, &lists, &p, &m, [x, z], clip, t.scene.time)?;
+                    items::select(e, item, How::Set);
+                    Some(item)
+                });
+                match r.flatten() {
+                    Some(item) => CommandResult::success(format!("{item:?}")),
+                    None => CommandResult::fail("nothing is being placed (create_pick first), or no clip for an effect"),
+                }
+            },
+        );
+        c.add("scene_select", "scene_select battle | army <n> | unit <id> | none [add]", "Selects a scene item (add: adds it)", |e, a| {
+            let item = match (a.first().map(String::as_str), a.get(1).and_then(|x| x.parse::<u32>().ok())) {
+                (Some("battle"), _) => Some(SceneItem::Battle),
+                (Some("army"), Some(n)) => Some(SceneItem::Army(n as usize)),
+                (Some("unit"), Some(id)) => Some(SceneItem::Unit(id)),
+                (Some("none"), _) => None,
+                _ => return CommandResult::fail("usage: scene_select battle | army <n> | unit <id> | none [add]"),
+            };
+            let add = a.last().is_some_and(|x| x == "add");
+            match item {
+                Some(i) => items::select(e, i, if add { How::Add } else { How::Set }),
+                None => e.selection.clear(),
+            }
+            CommandResult::success(format!("{item:?}"))
+        });
+        c.add("scene_move", "scene_move <dx> <dz> [turn degrees]", "Moves and turns the selection as the gizmo does (metres)", |e, a| {
+            let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+            let (Some(dx), Some(dz)) = (n(0), n(1)) else { return CommandResult::fail("usage: scene_move <dx> <dz> [turn]") };
+            let turn = n(2).unwrap_or(0.0).to_radians();
+            let sel = items::selected(e);
+            let units = e.scene.game_units.max(1e-3);
+            let Some(d) = scene_doc(e) else { return CommandResult::fail("no scene open") };
+            // About each item's own place: a turn alone keeps it where it is.
+            for i in &sel {
+                let Some(m) = d.transform_of(*i) else { continue };
+                let at = wce_foundation::math::Float3::new(m.m[0][3], m.m[1][3], m.m[2][3]);
+                let delta = wce_foundation::math::translation(at + wce_foundation::math::Float3::new(dx / units, 0.0, dz / units))
+                    * wce_foundation::math::rotation_y(turn)
+                    * wce_foundation::math::translation(wce_foundation::math::Float3::new(-at.x, -at.y, -at.z));
+                d.end_gesture();
+                d.move_items(&[*i], &delta, 0);
+                d.end_gesture();
+            }
+            CommandResult::success(format!("{} moved", sel.len()))
+        });
+        c.add("scene_delete", "scene_delete", "Deletes the selection", |e, _| {
+            let sel = items::selected(e);
+            edit(e, "delete", |p| delete_items(p, &sel));
+            e.selection.clear();
+            CommandResult::success(format!("{} deleted", sel.len()))
+        });
+        c.add("scene_duplicate", "scene_duplicate", "Duplicates the selection (the copies selected)", |e, _| {
+            let sel = items::selected(e);
+            let mut made = vec![];
+            edit(e, "duplicate", |p| made = duplicate_items(p, &sel));
+            e.selection.clear();
+            for i in &made {
+                items::select(e, *i, How::Add);
+            }
+            CommandResult::success(format!("{} made", made.len()))
+        });
+        c.add("assert_count", "assert_count units|armies|effects|selected <n>", "Fails unless the scene has that many", |e, a| {
+            let (Some(what), Some(want)) = (a.first(), a.get(1).and_then(|x| x.parse::<usize>().ok())) else {
+                return CommandResult::fail("usage: assert_count units|armies|effects|selected <n>");
+            };
+            let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return CommandResult::fail("no scene open") };
+            let got = match what.as_str() {
+                "units" => p.units.len(),
+                "armies" => p.armies.len(),
+                "effects" => p
+                    .clips
+                    .iter()
+                    .flat_map(|c| &c.tracks)
+                    .map(|t| if let TrackContent::Vfx { instances } = &t.content { instances.len() } else { 0 })
+                    .sum(),
+                "selected" => items::selected(e).len(),
+                _ => return CommandResult::fail("units, armies, effects or selected"),
+            };
+            if got == want {
+                CommandResult::success(format!("{what}: {got}"))
+            } else {
+                CommandResult::fail(format!("{what}: {got}, expected {want}"))
+            }
+        });
+        c.add(
+            "assert_start",
+            "assert_start <unit id> <x> <z> [facing degrees] [army]",
+            "Fails unless the unit starts there (0.05 m, 0.5 degrees)",
+            |e, a| {
+                let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
+                let (Some(id), Some(x), Some(z)) = (a.first().and_then(|x| x.parse::<u32>().ok()), n(1), n(2)) else {
+                    return CommandResult::fail("usage: assert_start <unit id> <x> <z> [facing] [army]");
+                };
+                let Some(u) = scene_doc(e).and_then(|d| d.project().unit(id).cloned()) else {
+                    return CommandResult::fail(format!("no unit {id}"));
+                };
+                let facing_ok = n(3).is_none_or(|f| (crate::scene_doc::wrap_angle(u.facing - f.to_radians())).abs() < 0.5f32.to_radians());
+                let army_ok = a.get(4).and_then(|x| x.parse::<usize>().ok()).is_none_or(|k| k == u.army);
+                if (u.start[0] - x).abs() < 0.05 && (u.start[1] - z).abs() < 0.05 && facing_ok && army_ok {
+                    CommandResult::success(format!("unit {id} at {:?}", u.start))
+                } else {
+                    CommandResult::fail(format!(
+                        "unit {id} at {:?} facing {:.1} in army {}, expected {x} {z} {a:?}",
+                        u.start,
+                        u.facing.to_degrees(),
+                        u.army
+                    ))
+                }
+            },
+        );
         c.add("unit_add", "unit_add <main_units key> <army> <x> <z>", "Adds a unit to the scene and selects it", |e, a| {
             let n = |i: usize| a.get(i).and_then(|x| x.parse::<f32>().ok());
             match (a.first(), a.get(1).and_then(|x| x.parse().ok()), n(2), n(3)) {
@@ -1034,15 +1437,49 @@ impl Tool for CinematicTool {
             None => {}
         }
         self.movie_tools.poll(e);
+        self.create.set_files(self.files.as_ref(), self.mount_id as usize);
+        self.create.sync_draft(&self.scene.lists);
+        // The editor's selection and the panels' selected unit follow each other.
+        let sel_unit = match items::primary(e) {
+            Some(SceneItem::Unit(id)) => Some(id),
+            _ => None,
+        };
+        if sel_unit != self.synced_unit {
+            self.scene.unit = sel_unit;
+            self.synced_unit = sel_unit;
+        }
         self.movies_panel(e);
         self.movie_panel(e);
-        self.scene.scene_panel(e);
-        self.scene.timeline_panel(e);
-        self.scene.key_panel(e);
-        self.scene.layout_panel(e);
         let lists = self.scene.lists.clone();
+        let project = scene_doc(e).map(|d| d.project().clone());
+        crate::outliner::panel(e, &mut self.scene, &mut self.create);
+        {
+            let (create, scene) = (&mut self.create, &mut self.scene);
+            create.panel(e, &lists, project.as_ref(), &mut || scene.start_buttons());
+        }
+        self.scene.timeline_panel(e);
+        self.scene.layout_panel(e, &mut self.create);
         self.logic.panel(e, &lists);
         self.new_scene_popup(e);
+        if let Some(p) = &project {
+            let (clip, time) = (self.scene.current_clip(p).map(|c| c.id), self.scene.time);
+            self.create.quick_add(e, &lists, p, clip, time);
+        }
+        self.scene_keys(e);
+        self.scene_requests(e);
+        if let Some(p) = &project
+            && let Some(pos) = self.scene.map_pick.window(e, self.files.as_ref(), &p.map.campaign_map, p.map.position)
+        {
+            edit(e, "map position", |p| p.map.position = pos);
+        }
+        if self.scene.unit != self.synced_unit {
+            match self.scene.unit {
+                Some(id) => items::select(e, SceneItem::Unit(id), How::Set),
+                None if matches!(items::primary(e), Some(SceneItem::Unit(_))) => e.selection.clear(),
+                None => {}
+            }
+            self.synced_unit = self.scene.unit;
+        }
         // The scene in the viewport, at the playhead (the movie export poses it frame by frame meanwhile).
         if self.movie_job.is_some() {
             self.step_movie(e);
@@ -1065,7 +1502,18 @@ impl Tool for CinematicTool {
                     self.scene.time = t;
                 }
             }
-            if let Some(frame) = self.scene.frame(&p) {
+            if let Some(mut frame) = self.scene.frame(&p) {
+                // Where things are at the playhead, for the gizmo and the viewport's clicks.
+                let units = e.scene.game_units;
+                if let Some(d) = scene_doc(e) {
+                    d.view = crate::scene_doc::DocView {
+                        clip: self.scene.clip,
+                        time: self.scene.time,
+                        units,
+                        placed: frame.units.iter().map(|s| (s.unit, (s.position, s.facing))).collect(),
+                    };
+                }
+                frame.units.retain(|s| !self.scene.hidden.contains(&s.unit));
                 self.preview.free_camera = self.scene.free_camera;
                 self.preview.update(e, doc, &p, &frame);
             }

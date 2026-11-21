@@ -73,7 +73,16 @@ for f in range(10):
         [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/autosave_${half}$run.log" | tail -5; }
     done
     for f in subs$run sound$run r$run/wce_imported; do [ -s "$OUT/$f.pack" ] || { echo "movie edit run $run: no $f pack"; bad=1; }; done
+    # Filling a scene from the panels: the Create panel's placing, the selection moved, turned, duplicated and deleted.
+    proj="$OUT/projects_ux$run"; rm -rf "$proj"; mkdir -p "$proj"
+    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$ROOT/scripts/cinematic_ux.txt")" > "$OUT/ux_run$run.log" 2>&1
+    rc=$?
+    echo "ux run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/ux_run$run.log" | tail -5; }
 done
+if cmp -s "$OUT/projects_ux1/cinematics/wce_ux_test/project.json" "$OUT/projects_ux2/cinematics/wce_ux_test/project.json" && [ -s "$OUT/projects_ux1/cinematics/wce_ux_test/project.json" ]; then
+    echo "ux project.json identical between runs"
+else echo "ux project.json DIFFERS between runs (or missing)"; bad=1; fi
 for f in subs sound; do
     if cmp -s "$OUT/${f}1.pack" "$OUT/${f}2.pack"; then echo "$f pack identical between runs"; else echo "$f pack DIFFERS between runs"; bad=1; fi
 done
