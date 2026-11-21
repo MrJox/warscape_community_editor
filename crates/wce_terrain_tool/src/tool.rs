@@ -377,7 +377,6 @@ pub struct TerrainTool {
     map: i32,
     maps_for: Vec<PathBuf>,
     rings: Rings,
-    overview: bool,
 
     /// A campaign map's season in the view (`sp`, `su`, `au`, `wi`): the ground's textures of that season and its snow mask.
     season: String,
@@ -463,7 +462,6 @@ impl Default for TerrainTool {
             map: 0,
             maps_for: vec![],
             rings: Rings::default(),
-            overview: true,
             season: "su".to_owned(),
             weather: None,
             lighting: None,
@@ -1399,7 +1397,6 @@ impl TerrainTool {
             .map_or(GAME_FAR_PLANE * 4.0, |d| (d.placed.width.max(d.placed.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
         gui::slider_float("view distance", &mut self.rings.view_distance, GAME_FAR_PLANE, whole, "%.0f");
         gui::checkbox("follow the camera", &mut self.rings.follow);
-        gui::checkbox("overview map", &mut self.overview);
         self.draw_status(e);
         if let Some(line) = self.cursor_line() {
             gui::text_disabled(&line);
@@ -2271,16 +2268,6 @@ impl Tool for TerrainTool {
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
-    }
-
-    fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
-        if !self.overview {
-            return;
-        }
-
-        let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
-        let (name, placed) = (d.name.clone(), d.placed.clone());
-        self.view.draw_overview(e, origin, size, &name, &placed, None);
     }
 
     fn viewport_input(&mut self, e: &mut Editor, ev: &wce_editor::tool::ViewportEvent) -> bool {
