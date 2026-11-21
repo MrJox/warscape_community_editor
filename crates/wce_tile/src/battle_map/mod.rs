@@ -117,7 +117,13 @@ pub fn build_images(db: &TileDatabase, images: &MapImages) -> (TileMap, TileList
 /// `images.lf` holds as 0 .. 1) and BOB's messages. Images without an LF take `lf`'s, read under its lock for the LF step alone (the
 /// fill before it takes a minute on the campaign map, while the LF may be painted).
 pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Option<context::LfField>) -> (context::PlacedMap, Vec<String>) {
-    let fill = match (&lf, images.lf.is_none() && images.lf_u16.is_none()) {
+    let (list, messages) = fill_list(db, images, lf.as_ref());
+    (context::PlacedMap::from_tile_list(name, &list, db, lf), messages)
+}
+
+/// [`place_images`]' fill as BOB's battle field (`terrain.tile_list`), and BOB's messages: what a fill's cache keeps.
+pub fn fill_list(db: &TileDatabase, images: &MapImages, lf: Option<&context::LfField>) -> (TileList, Vec<String>) {
+    let fill = match (lf, images.lf.is_none() && images.lf_u16.is_none()) {
         (Some(f), true) => {
             let mut fill = TileMapFill::new(db, images);
             fill.build(images.explicit_tiles);
@@ -129,8 +135,7 @@ pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Optio
 
         _ => fill_images(db, images),
     };
-    let list = tile_list(db, &fill, images.campaign);
-    (context::PlacedMap::from_tile_list(name, &list, db, lf), fill.messages)
+    (tile_list(db, &fill, images.campaign), fill.messages)
 }
 
 /// The battle field of a fill as BOB writes it (`terrain.tile_list`); a campaign map's (`TILE_MAP::build_battle_field`, 0x102e3640) has

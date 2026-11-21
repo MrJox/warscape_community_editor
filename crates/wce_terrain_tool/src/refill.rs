@@ -13,9 +13,10 @@ use wce_terrain::{LayerRole, LfRole};
 use wce_terrain_editor::MapDocument;
 use wce_tile::battle_map::context::{LfField, MapPlacement, PlacedMap};
 use wce_tile::battle_map::fill::MapImages;
-use wce_tile::battle_map::place_images;
 use wce_tile::battle_map::tile_db::TileDatabase;
-use wce_tile_editor::tile_document::context::{CHUNK, ChunkKey, Frame};
+use wce_tile::battle_map::tile_list::TileList;
+use wce_tile::battle_map::{fill_list, place_images};
+use wce_tile_editor::tile_document::context::{CHUNK, ChunkKey, Frame, cache};
 
 /// A fill done.
 pub struct Done {
@@ -96,6 +97,121 @@ impl FillInputs {
 
         place_images(db, name, &images, self.lf.clone())
     }
+
+    /// [`Self::fill`] from the cache when the same inputs were filled before (a kit campaign map's fill is half a minute on one thread,
+    /// at every open), else filled and kept there; whether it came from the cache.
+    pub fn fill_cached(&self, db: &TileDatabase, name: &str) -> (PlacedMap, Vec<String>, bool) {
+        if self.list.is_some() {
+            let (m, messages) = self.fill(db, name);
+            return (m, messages, false);
+        }
+
+        let dir = fill_cache_dir();
+        let key = self.key(db);
+        if let Some((list, messages)) = read_fill(&dir, key) {
+            return (PlacedMap::from_tile_list(name, &list, db, self.lf.clone()), messages, true);
+        }
+
+        let images = MapImages {
+            width: self.w,
+            height: self.h,
+            tile_map: &self.tiles,
+            climate_map: self.climate.as_deref(),
+            explicit_tiles: self.explicit.as_deref(),
+            lf: None,
+            lf_u16: None,
+            campaign: false,
+        };
+        let (list, messages) = fill_list(db, &images, self.lf.as_ref());
+        if let Err(e) = write_fill(&dir, key, &list, &messages) {
+            wce_foundation::log::info(format!("{name}: its fill not cached: {e}"));
+        }
+
+        (PlacedMap::from_tile_list(name, &list, db, self.lf.clone()), messages, false)
+    }
+
+    /// What a fill depends on: the cells' colours, the climates, the explicit tiles, the LF's samples and the tile database.
+    fn key(&self, db: &TileDatabase) -> u64 {
+        let mut h = cache::hash(0xCBF2_9CE4_8422_2325, FILL_MAGIC);
+        h = cache::hash(h, &FILL_VERSION.to_le_bytes());
+        h = cache::hash(h, &[self.w, self.h].map(u32::to_le_bytes).concat());
+        h = cache::hash(h, self.tiles.as_flattened());
+        h = cache::hash(h, self.climate.as_deref().map_or(&[][..], <[[u8; 3]]>::as_flattened));
+        h = cache::hash(h, self.explicit.as_deref().unwrap_or_default().as_bytes());
+        h = cache::hash(h, format!("{db:?}").as_bytes());
+        // The LF a word at a time (190 million samples on main_attila).
+        if let Some(lf) = &self.lf {
+            let v = lf.values.read();
+            let mut x = h ^ u64::from(lf.w) << 32 ^ u64::from(lf.h);
+            for c in v.chunks(4) {
+                let word = c.iter().enumerate().fold(0u64, |a, (k, &s)| a | u64::from(s) << (16 * k));
+                x = (x ^ word).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29);
+            }
+            h = cache::hash(h, &x.to_le_bytes());
+        }
+        h
+    }
+}
+
+const FILL_MAGIC: &[u8; 7] = b"WCEFILL";
+// 1: the first.
+const FILL_VERSION: u16 = 1;
+
+/// How many fills the cache keeps (the newest; a campaign map's is about 10 MB).
+const FILL_KEEP: usize = 8;
+
+/// Where the fills are kept.
+fn fill_cache_dir() -> std::path::PathBuf {
+    wce_foundation::settings::Paths::standard().cache_dir().join("map_fill")
+}
+
+fn fill_path(dir: &std::path::Path, key: u64) -> std::path::PathBuf {
+    dir.join(format!("{key:016x}.fill"))
+}
+
+/// A kept fill: its battle field and BOB's messages.
+fn read_fill(dir: &std::path::Path, key: u64) -> Option<(TileList, Vec<String>)> {
+    let bytes = std::fs::read(fill_path(dir, key)).ok()?;
+    let rest = bytes.strip_prefix(FILL_MAGIC.as_slice())?;
+    let (version, rest) = rest.split_first_chunk::<2>()?;
+    let (len, rest) = rest.split_first_chunk::<8>()?;
+    if u16::from_le_bytes(*version) != FILL_VERSION {
+        return None;
+    }
+    let (list, messages) = rest.split_at_checked(usize::try_from(u64::from_le_bytes(*len)).ok()?)?;
+    let list = TileList::parse(list).ok()?;
+    let messages = std::str::from_utf8(messages).ok()?.lines().map(str::to_owned).collect();
+    Some((list, messages))
+}
+
+/// Keeps a fill (through a temporary file), when its battle field reads back the same; drops the cache's older ones past the newest few.
+fn write_fill(dir: &std::path::Path, key: u64, list: &TileList, messages: &[String]) -> Result<(), String> {
+    let bytes = list.write();
+    if TileList::parse(&bytes).as_ref() != Ok(list) {
+        return Err("its battle field does not read back the same".to_owned());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut out = FILL_MAGIC.to_vec();
+    out.extend(FILL_VERSION.to_le_bytes());
+    out.extend((bytes.len() as u64).to_le_bytes());
+    out.extend(bytes);
+    out.extend(messages.join("\n").bytes());
+    let (to, tmp) = (fill_path(dir, key), dir.join(format!("{key:016x}.fill.{}.tmp", std::process::id())));
+    std::fs::write(&tmp, out).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &to).map_err(|e| e.to_string())?;
+
+    let mut fills: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "fill"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    fills.sort_by_key(|f| std::cmp::Reverse(f.0));
+    for (_, p) in fills.into_iter().skip(FILL_KEEP) {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(())
 }
 
 /// What a fill again reads.
@@ -274,5 +390,24 @@ mod tests {
         (big.w, big.h) = (12, 12);
         let new = PlacedMap { width: 64, height: 64, placements: vec![p(1, 1, "a"), big], ..Default::default() };
         assert_eq!(changed_chunks(&old, &new), vec![(1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1)]);
+    }
+}
+
+#[cfg(test)]
+mod fill_cache_tests {
+    use super::*;
+
+    #[test]
+    fn a_kept_fill_reads_back_with_its_messages() {
+        let dir = std::env::temp_dir().join(format!("wce_fill_cache_test_{}", std::process::id()));
+        let mut list = TileList { version: 11, battle_size: [4, 2], battle_centre: [2, 1], ..TileList::default() };
+        list.origin_offset = [-2.0, -1.0];
+        let messages = vec!["Failed to find tile for point 1, 2".to_owned(), "another".to_owned()];
+        write_fill(&dir, 42, &list, &messages).expect("kept");
+        let (back, said) = read_fill(&dir, 42).expect("read back");
+        assert_eq!(back, list);
+        assert_eq!(said, messages);
+        assert!(read_fill(&dir, 43).is_none(), "another key");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
