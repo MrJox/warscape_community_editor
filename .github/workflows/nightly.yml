@@ -125,7 +125,8 @@ jobs:
         run: .github/nightly-version.sh "$BASE_VERSION" "$VERSION"
 
       - name: Build
-        run: cargo build --release -p wce_app
+        # Only the editors that ship (wce_app's `release` feature).
+        run: cargo build --release -p wce_app --no-default-features --features release
 
       # SDL3 links statically, so wce.exe needs no SDL3.dll beside it.
       - name: Package

@@ -5,7 +5,7 @@ spawn shapes and references are handles in the viewport, its curves and colours 
 were a category of the Weather tool's Files panel, edited as a raw XML tree (docs/plans/weather.md, "Open" item 1).
 
 State: planned and built 2026-11-18 with the user (decisions below) on `feature/vfx_tool`, steps 1 to 7 done; user review pending.
-Behind the `vfx` feature of `wce_app`, off by default. What the tool does: [docs/editor.md](../editor.md), "VFX tool".
+Behind the `vfx` feature of `wce_app`: on by default, not in releases yet. What the tool does: [docs/editor.md](../editor.md), "VFX tool".
 
 ## Decisions (user, 2026-11-18)
 

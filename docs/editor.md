@@ -59,7 +59,7 @@ Differences: the legacy app held one active file; here every open file is a docu
 
 ## VFX tool (`wce_vfx_tool`)
 
-Behind the `vfx` feature of `wce_app` (off by default: `cargo run -p wce_app --features vfx`); the plan and its decisions are
+Behind the `vfx` feature of `wce_app` (on by default, not in releases yet); the plan and its decisions are
 [plans/vfx_tool.md](plans/vfx_tool.md). It opens `vfx/*.xml` (`Tool::opens_under`: a file under `vfx/` comes here whichever tool is active)
 as an `XmlFileDocument`, so saving, autosave, undo and the byte-identical round trip are the Weather tool's: Save writes the project's loose
 copy, different from the pack's file in the edited spans only.
