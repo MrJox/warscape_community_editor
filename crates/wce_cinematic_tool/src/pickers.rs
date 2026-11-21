@@ -39,6 +39,8 @@ pub struct GameLists {
     /// Filled once the sound library is there.
     pub sound_events: Vec<Item>,
     pub music_events: Vec<Item>,
+    /// The game's music moods (`music_set_*` events), by group.
+    pub moods: Vec<wce_cinematic::music::Mood>,
 }
 
 /// Every slot a unit's animation fragments commonly have, for the action keys.
@@ -186,6 +188,7 @@ impl GameLists {
         let (music, sound): (Vec<String>, Vec<String>) = events.into_keys().partition(|n| n.to_lowercase().contains("music"));
         self.sound_events = sound.into_iter().map(|n| Item { name: n.clone(), key: n }).collect();
         self.music_events = music.into_iter().map(|n| Item { name: n.clone(), key: n }).collect();
+        self.moods = wce_cinematic::music::moods(lib);
     }
 
     pub fn unit_name(&self, key: &str) -> String {
@@ -238,6 +241,50 @@ pub fn picker(filters: &mut Filters, id: &str, shown: &str, items: &[Item], widt
             let i = shown_items[k];
             let label = if i.name == i.key { i.key.clone() } else { format!("{}  ({})", i.name, i.key) };
             if gui::selectable(&format!("{label}##{k}"), i.key == shown, 0) {
+                picked = Some(i.key.clone());
+            }
+        });
+        gui::end_combo();
+    }
+    picked
+}
+
+/// [`picker`] with a play button on every row (sounds): the row whose button was clicked goes in `play`.
+pub fn picker_audible(
+    filters: &mut Filters,
+    id: &str,
+    shown: &str,
+    items: &[Item],
+    width: f32,
+    play: &mut Option<String>,
+) -> Option<String> {
+    let mut picked = None;
+    gui::set_next_item_width(width);
+    if gui::begin_combo(&format!("##{id}"), shown) {
+        let filter = filters.0.entry(id.to_owned()).or_default();
+        if gui::is_window_appearing() {
+            gui::set_keyboard_focus_here(0);
+        }
+        gui::set_next_item_width(-1.0);
+        gui::input_text(&format!("##{id}_filter"), Some("type to search; the triangle plays it"), filter, 128, 0);
+        let words: Vec<String> = filter.to_lowercase().split_whitespace().map(str::to_owned).collect();
+        let shown_items: Vec<&Item> = items
+            .iter()
+            .filter(|i| {
+                let hay = format!("{} {}", i.name.to_lowercase(), i.key.to_lowercase());
+                words.iter().all(|w| hay.contains(w.as_str()))
+            })
+            .collect();
+        if shown_items.is_empty() {
+            gui::text_disabled(if items.is_empty() { "Loading..." } else { "Nothing matches" });
+        }
+        gui::clipped(shown_items.len(), |k| {
+            let i = shown_items[k];
+            if gui::small_button(&format!("{}##play{k}", wce_editor::icons::PLAY)) {
+                *play = Some(i.key.clone());
+            }
+            gui::same_line();
+            if gui::selectable(&format!("{}##{k}", i.name), i.key == shown, 0) {
                 picked = Some(i.key.clone());
             }
         });

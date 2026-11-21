@@ -90,6 +90,23 @@ assert_count selected 0
 click_ground 0 -200
 frames 4
 assert_count selected 1
+# A camera path laid by clicks on the ground: three keys, three seconds apart.
+create_pick camera
+frames 2
+click_ground -40 -250
+frames 3
+click_ground 0 -230
+frames 3
+click_ground 40 -250
+frames 3
+create_pick none
+assert_count camera_keys 3
+# Recording the camera: from 6 s the clip plays to its end (10 s), a key every half second.
+scene_time 6
+frames 2
+scene_record
+frames 300
+assert_count camera_keys 10
 mouse off
 save
 frames 2

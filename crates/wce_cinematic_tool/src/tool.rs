@@ -89,6 +89,11 @@ pub struct CinematicTool {
     launched: Option<wce_launch::launch::Running>,
     /// The battle's real ground under the scene.
     ground: crate::ground::Ground,
+    /// The movie export's options (its window open).
+    movie_options: Option<MovieOptions>,
+    /// Listening to a pick: its rendering and the player.
+    audition_rx: Option<Receiver<Option<wce_audio::decode::Pcm>>>,
+    audition_player: wce_audio_tool::player::Player,
     launch_question: Option<String>,
 }
 
@@ -469,6 +474,143 @@ impl CinematicTool {
         Ok(format!("launched {started} into the battle ({}); the launch pack is removed when the game exits", p.xml_path))
     }
 
+    /// A pick's play button: the sound or the moods' music rendered on a worker, then played (live runs only).
+    fn audition(&mut self, e: &mut Editor) {
+        self.audition_player.tick();
+        if let Some((event, moods)) = self.scene.audition.take()
+            && !e.scripted_input()
+            && let (Some(lib), Some(files)) = (self.library.clone(), self.files.clone())
+        {
+            let (tx, rx) = channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(wce_cinematic::movie_export::audition(&lib, files.as_ref(), event.as_deref(), &moods, 20.0));
+            });
+            self.audition_rx = Some(rx);
+            e.status("Cinematic: getting the sound ready...", false);
+        }
+        if let Some(rx) = &self.audition_rx
+            && let Ok(pcm) = rx.try_recv()
+        {
+            self.audition_rx = None;
+            match pcm {
+                Some(p) => {
+                    let _ = self.audition_player.play(Arc::new(p), "audition", None);
+                }
+                None => e.status("Cinematic: that plays nothing (a state, a stop...), or its audio is in no pack", true),
+            }
+        }
+    }
+
+    /// The movie export's window: the clip, the size, the frame rate, the quality, motion blur, the subtitles' language; Export picks
+    /// the pack's file and starts.
+    fn movie_options_window(&mut self, e: &mut Editor) {
+        let Some(o) = &mut self.movie_options else { return };
+        let Some(p) = scene_doc(e).map(|d| d.project().clone()) else {
+            self.movie_options = None;
+            return;
+        };
+        gui::set_next_window_size(v2(420.0, 0.0), gui::COND_APPEARING);
+        let mut open = true;
+        let mut go = false;
+        if gui::begin("Export movie###cin_movie_export", Some(&mut open), gui::WINDOW_NO_COLLAPSE | gui::WINDOW_NO_DOCKING) {
+            let clips: Vec<String> = p.clips.iter().map(|c| format!("{} ({:.1} s)", c.name, c.length)).collect();
+            let refs: Vec<&str> = clips.iter().map(String::as_str).collect();
+            let mut ci = p.clips.iter().position(|c| c.id == o.clip).unwrap_or(0) as i32;
+            gui::row("Clip");
+            gui::set_next_item_width(-1.0);
+            if gui::combo("##mclip", &mut ci, &refs)
+                && let Some(c) = p.clips.get(ci as usize)
+            {
+                o.clip = c.id;
+            }
+            gui::row("Size");
+            gui::set_next_item_width(-1.0);
+            let names: Vec<String> = RESOLUTIONS.iter().map(|r| r.0.to_owned()).chain(["Custom".to_owned()]).collect();
+            let nrefs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let mut ri = RESOLUTIONS.iter().position(|r| (r.1, r.2) == (o.width, o.height)).unwrap_or(RESOLUTIONS.len()) as i32;
+            if gui::combo("##mres", &mut ri, &nrefs)
+                && let Some(r) = RESOLUTIONS.get(ri as usize)
+            {
+                (o.width, o.height) = (r.1, r.2);
+            }
+            if ri as usize == RESOLUTIONS.len() {
+                let (mut w, mut h) = (o.width as i32, o.height as i32);
+                gui::row("Width");
+                gui::set_next_item_width(-1.0);
+                if gui::drag_int_range("##mw", &mut w, 2.0, 16, 7680, "%d px") {
+                    o.width = (w.max(16) as u32) & !1;
+                }
+                gui::row("Height");
+                gui::set_next_item_width(-1.0);
+                if gui::drag_int_range("##mh", &mut h, 2.0, 16, 4320, "%d px") {
+                    o.height = (h.max(16) as u32) & !1;
+                }
+            }
+            gui::row("Frame rate");
+            gui::set_next_item_width(-1.0);
+            let mut fi = FRAME_RATES.iter().position(|&f| f == o.fps).unwrap_or(2) as i32;
+            let frefs: Vec<String> = FRAME_RATES.iter().map(|f| format!("{f} frames a second")).collect();
+            let frefs: Vec<&str> = frefs.iter().map(String::as_str).collect();
+            if gui::combo("##mfps", &mut fi, &frefs) {
+                o.fps = FRAME_RATES[fi.clamp(0, FRAME_RATES.len() as i32 - 1) as usize];
+            }
+            gui::row("Quality");
+            gui::set_next_item_width(-1.0);
+            let qrefs: Vec<&str> = QUALITIES.iter().map(|q| q.0).collect();
+            let mut qi = QUALITIES.iter().position(|q| q.1 == o.kbps).unwrap_or(2) as i32;
+            if gui::combo("##mq", &mut qi, &qrefs) {
+                o.kbps = QUALITIES[qi.clamp(0, QUALITIES.len() as i32 - 1) as usize].1;
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The video's rate: vanilla's movies run at about 5.5 Mbit/s, the community's at 20");
+            }
+            gui::row("Motion blur");
+            gui::checkbox("##mblur", &mut o.blur);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Four moments of a 180 degree shutter each frame (slower to render)");
+            }
+            gui::row("Subtitles");
+            gui::set_next_item_width(-1.0);
+            let mut li = crate::scene_ui::LANGUAGES.iter().position(|l| *l == o.language).unwrap_or(0) as i32;
+            if gui::combo("##mlang", &mut li, crate::scene_ui::LANGUAGES) {
+                o.language = crate::scene_ui::LANGUAGES[li.max(0) as usize].to_owned();
+            }
+            let frames = p.clip(o.clip).map_or(0.0, |c| c.length * f64::from(o.fps));
+            gui::text_disabled(&format!("{frames:.0} frames of {} x {}", o.width, o.height));
+            gui::separator();
+            if gui::button("Export...") {
+                go = true;
+            }
+            gui::same_line();
+            if gui::button("Cancel") {
+                open = false;
+            }
+        }
+        gui::end();
+        if go {
+            let o = self.movie_options.take().expect("open");
+            let name = sanitize_key(&p.battle.key);
+            let filters = [("Mod pack".to_owned(), "*.pack".to_owned())];
+            if let Some(path) = e.pick_export_file("cinematic_movie_pack", &format!("{name}_movie.pack"), &filters) {
+                let mut q = p.clone();
+                if let Some(c) = q.clip_mut(o.clip) {
+                    c.fps = o.fps;
+                    c.motion_blur = o.blur;
+                }
+                let doc = e.docs.of_tool("cinematic").unwrap_or_default();
+                match MovieJob::new(path, q, o.clip, doc, (o.width, o.height), &o.language, Some(o.kbps)) {
+                    Ok(job) => {
+                        e.status(&format!("Cinematic: rendering {}...", job.name), false);
+                        self.movie_job = Some(job);
+                    }
+                    Err(err) => e.status(&format!("Cinematic: {err}"), true),
+                }
+            }
+        } else if !open {
+            self.movie_options = None;
+        }
+    }
+
     /// Asks for a launch from the UI: done, or the question about stray movie packs.
     fn launch_asked(&mut self, e: &mut Editor, ignore_movie_packs: bool) {
         match self.launch_battle(e, false, ignore_movie_packs) {
@@ -522,7 +664,7 @@ impl CinematicTool {
             e.status("Cinematic: the scene has no clip", true);
             return;
         };
-        match MovieJob::new(path, p, clip, doc, (w.max(16), h.max(16)), self.scene.lang()) {
+        match MovieJob::new(path, p, clip, doc, (w.max(16), h.max(16)), self.scene.lang(), None) {
             Ok(job) => {
                 e.status(&format!("Cinematic: rendering {}...", job.name), false);
                 self.movie_job = Some(job);
@@ -758,6 +900,11 @@ impl CinematicTool {
                     items::select(e, item, How::Set);
                     self.scene.key_focus = false;
                 }
+                CreateRequest::KeyView => {
+                    self.scene.look_through = false;
+                    self.scene.key_camera_view(e);
+                }
+                CreateRequest::Record => self.scene.toggle_recording(),
             }
         }
         if std::mem::take(&mut self.scene.request_delete) {
@@ -790,7 +937,7 @@ impl CinematicTool {
             let dist = (80.0 / units).max(1e-3);
             cam.eye = target + wce_foundation::math::Float3::new(back.x / len * dist, back.y / len * dist, back.z / len * dist);
             cam.target = target;
-            self.scene.free_camera = true;
+            self.scene.look_through = false;
             e.viewport.controller().set_camera(&cam);
         }
     }
@@ -820,8 +967,14 @@ pub fn delete_items(p: &mut Project, sel: &[SceneItem]) {
         a.player = true;
     }
     p.units.retain(|u| !gone.contains(&u.id));
-    let mut keys: Vec<(u32, usize)> =
-        sel.iter().filter_map(|i| if let SceneItem::CameraKey { track, index } = i { Some((*track, *index)) } else { None }).collect();
+    let mut keys: Vec<(u32, usize)> = sel
+        .iter()
+        .filter_map(|i| match i {
+            SceneItem::CameraKey { track, index } | SceneItem::CameraTarget { track, index } => Some((*track, *index)),
+            _ => None,
+        })
+        .collect();
+    keys.dedup();
     keys.sort_unstable_by_key(|k| std::cmp::Reverse(k.1));
     for c in &mut p.clips {
         for t in &mut c.tracks {
@@ -892,6 +1045,31 @@ pub fn duplicate_items(p: &mut Project, sel: &[SceneItem]) -> Vec<SceneItem> {
     }
     made
 }
+
+/// The movie export's choices.
+#[derive(Clone, Debug)]
+struct MovieOptions {
+    clip: u32,
+    width: u32,
+    height: u32,
+    fps: u32,
+    kbps: u32,
+    blur: bool,
+    language: String,
+}
+
+/// The sizes offered (the game's movies are 1920 x 1080).
+const RESOLUTIONS: &[(&str, u32, u32)] = &[
+    ("3840 x 2160 (4K)", 3840, 2160),
+    ("2560 x 1440", 2560, 1440),
+    ("1920 x 1080 (the game's)", 1920, 1080),
+    ("1280 x 720", 1280, 720),
+    ("960 x 540", 960, 540),
+];
+const FRAME_RATES: &[u32] = &[24, 25, 30, 50, 60];
+/// The video's rate cap, kbit/s.
+const QUALITIES: &[(&str, u32)] =
+    &[("Low (5.5 Mbit/s, as vanilla)", 5500), ("Medium (10 Mbit/s)", 10000), ("High (20 Mbit/s)", 20000), ("Best (40 Mbit/s)", 40000)];
 
 /// The Cinematic tool's keys (Settings > Shortcuts).
 const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
@@ -1079,11 +1257,19 @@ impl Tool for CinematicTool {
         if gui::is_item_hovered() {
             gui::set_tooltip("The battle XML, Lua, menu rows, subtitles and loc as one mod pack");
         }
-        if gui::menu_item("Movie pack (1080p)...", None, false, has && self.movie_job.is_none()) {
-            let name = scene_doc(e).map(|d| sanitize_key(&d.project().battle.key)).unwrap_or_default();
-            let filters = [("Mod pack".to_owned(), "*.pack".to_owned())];
-            if let Some(path) = e.pick_export_file("cinematic_movie_pack", &format!("{name}_movie.pack"), &filters) {
-                self.start_movie(e, path, 1920, 1080);
+        if gui::menu_item("Movie pack...", None, false, has && self.movie_job.is_none()) {
+            let p = scene_doc(e).map(|d| d.project().clone());
+            let clip = p.as_ref().and_then(|p| self.scene.current_clip(p).cloned());
+            if let Some(c) = clip {
+                self.movie_options = Some(MovieOptions {
+                    clip: c.id,
+                    width: 1920,
+                    height: 1080,
+                    fps: c.fps.max(1),
+                    kbps: 20000,
+                    blur: c.motion_blur,
+                    language: self.scene.lang().to_owned(),
+                });
             }
         }
         if gui::is_item_hovered() {
@@ -1208,6 +1394,7 @@ impl Tool for CinematicTool {
                 let m = match (a.first().map(String::as_str), a.get(1)) {
                     (Some("unit"), Some(k)) => Some(crate::create::Making::Unit(k.clone())),
                     (Some("vfx"), Some(k)) => Some(crate::create::Making::Vfx(k.clone())),
+                    (Some("camera"), _) => Some(crate::create::Making::CameraPath),
                     (Some("none"), _) => None,
                     _ => return CommandResult::fail("usage: create_pick unit|vfx <key> | create_pick none"),
                 };
@@ -1222,11 +1409,16 @@ impl Tool for CinematicTool {
             e.with_tool::<CinematicTool, _>(|t, _| t.scene.map_pick.open(at));
             CommandResult::success("map picker open")
         });
-        c.add("scene_free_camera", "scene_free_camera 0|1", "The viewport's camera free (1) or following the camera keys (0)", |e, a| {
-            let on = a.first().is_some_and(|x| x == "1");
-            e.with_tool::<CinematicTool, _>(|t, _| t.scene.free_camera = on);
-            CommandResult::success(if on { "free" } else { "following the keys" })
-        });
+        c.add(
+            "scene_free_camera",
+            "scene_free_camera 0|1",
+            "Paused, the viewport's camera free (1) or looking through the camera keys (0)",
+            |e, a| {
+                let on = a.first().is_some_and(|x| x == "1");
+                e.with_tool::<CinematicTool, _>(|t, _| t.scene.look_through = !on);
+                CommandResult::success(if on { "free" } else { "following the keys" })
+            },
+        );
         c.add(
             "click_ground",
             "click_ground <x> <z> [right]",
@@ -1322,6 +1514,15 @@ impl Tool for CinematicTool {
                     Some((false, _, status)) => CommandResult::fail(format!("no real ground shown ({status})")),
                     None => CommandResult::fail("the Cinematic tool is not built in"),
                 }
+            },
+        );
+        c.add(
+            "scene_record",
+            "scene_record",
+            "Starts or stops recording the camera (the clip plays; the viewport's camera keyed every half second)",
+            |e, _| {
+                e.with_tool::<CinematicTool, _>(|t, _| t.scene.toggle_recording());
+                CommandResult::success("recording toggled")
             },
         );
         c.add("create_army", "create_army <n>", "The army the units placed join (the Create panel's army)", |e, a| {
@@ -1425,6 +1626,12 @@ impl Tool for CinematicTool {
                     .map(|t| if let TrackContent::Vfx { instances } = &t.content { instances.len() } else { 0 })
                     .sum(),
                 "selected" => items::selected(e).len(),
+                "camera_keys" => p
+                    .clips
+                    .iter()
+                    .flat_map(|c| &c.tracks)
+                    .map(|t| if let TrackContent::Camera { keys } = &t.content { keys.len() } else { 0 })
+                    .sum(),
                 _ => return CommandResult::fail("units, armies, effects or selected"),
             };
             if got == want {
@@ -1734,6 +1941,8 @@ impl Tool for CinematicTool {
         self.movie_panel(e);
         let lists = self.scene.lists.clone();
         let project = scene_doc(e).map(|d| d.project().clone());
+        // Recording the camera keys the view as the clip plays.
+        self.scene.record(e);
         // The playhead moves whichever panels are shown.
         if let Some(p) = &project
             && let Some(len) = self.scene.current_clip(p).map(|c| c.length)
@@ -1778,9 +1987,11 @@ impl Tool for CinematicTool {
             }
             gui::end_popup();
         }
+        self.movie_options_window(e);
         if self.scene.launch_request.take().is_some() {
             self.launch_asked(e, false);
         }
+        self.audition(e);
         if let Some(p) = &project
             && let Some(pos) = self.scene.map_pick.window(e, self.files.as_ref(), &p.map.campaign_map, p.map.position)
         {
@@ -1836,7 +2047,7 @@ impl Tool for CinematicTool {
                 if let Some(d) = scene_doc(e) {
                     d.view.heights = d.view.placed.iter().map(|(&id, (at, _))| (id, self.ground.height(at[0], at[1]))).collect();
                 }
-                self.preview.free_camera = self.scene.free_camera;
+                self.preview.free_camera = !self.scene.follows_keys();
                 let heights = self.ground.heights();
                 self.preview.update(e, doc, &p, &frame, heights.as_ref().map(|h| h as &dyn Fn(f32, f32) -> f32));
             }

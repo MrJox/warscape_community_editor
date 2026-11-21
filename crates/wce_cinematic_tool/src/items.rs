@@ -23,6 +23,11 @@ pub enum SceneItem {
         track: u32,
         index: usize,
     },
+    /// The point a camera key looks at.
+    CameraTarget {
+        track: u32,
+        index: usize,
+    },
 }
 
 impl SceneItem {
@@ -34,6 +39,7 @@ impl SceneItem {
             SceneItem::Unit(id) => k(3, u64::from(id)),
             SceneItem::Vfx { track, index } => k(4, (u64::from(track) << 24) | (index as u64 & 0xFF_FFFF)),
             SceneItem::CameraKey { track, index } => k(5, (u64::from(track) << 24) | (index as u64 & 0xFF_FFFF)),
+            SceneItem::CameraTarget { track, index } => k(6, (u64::from(track) << 24) | (index as u64 & 0xFF_FFFF)),
         }
     }
 
@@ -45,6 +51,7 @@ impl SceneItem {
             3 => SceneItem::Unit(v as u32),
             4 => SceneItem::Vfx { track: (v >> 24) as u32, index: (v & 0xFF_FFFF) as usize },
             5 => SceneItem::CameraKey { track: (v >> 24) as u32, index: (v & 0xFF_FFFF) as usize },
+            6 => SceneItem::CameraTarget { track: (v >> 24) as u32, index: (v & 0xFF_FFFF) as usize },
             _ => return None,
         })
     }
@@ -68,6 +75,8 @@ impl SceneItem {
             SceneItem::CameraKey { track, index } => {
                 camera_key_of(p, track, index).map_or_else(|| "Camera key".into(), |k| format!("Camera key at {:.2} s", k.t))
             }
+            SceneItem::CameraTarget { track, index } => camera_key_of(p, track, index)
+                .map_or_else(|| "Camera target".into(), |k| format!("Camera target of the key at {:.2} s", k.t)),
         }
     }
 
@@ -77,7 +86,7 @@ impl SceneItem {
             SceneItem::Army(i) => i < p.armies.len(),
             SceneItem::Unit(id) => p.unit(id).is_some(),
             SceneItem::Vfx { track, index } => vfx_of(p, track, index).is_some(),
-            SceneItem::CameraKey { track, index } => camera_key_of(p, track, index).is_some(),
+            SceneItem::CameraKey { track, index } | SceneItem::CameraTarget { track, index } => camera_key_of(p, track, index).is_some(),
         }
     }
 }

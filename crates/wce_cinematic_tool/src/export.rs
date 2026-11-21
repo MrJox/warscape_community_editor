@@ -35,11 +35,23 @@ pub struct MovieJob {
 }
 
 impl MovieJob {
-    pub fn new(path: PathBuf, project: Project, clip: u32, doc: DocumentId, size: (u32, u32), language: &str) -> Result<Self, String> {
+    /// `kbps`: the encoder's rate cap (None: the default, 20 Mbit/s).
+    pub fn new(
+        path: PathBuf,
+        project: Project,
+        clip: u32,
+        doc: DocumentId,
+        size: (u32, u32),
+        language: &str,
+        kbps: Option<u32>,
+    ) -> Result<Self, String> {
         let (width, height) = size;
         let c = project.clip(clip).ok_or("no such clip")?;
         let name = format!("{}_{}", sanitize_key(&project.battle.key), sanitize_key(&c.name));
-        let settings = EncoderSettings::movie(width, height, c.fps.max(1));
+        let mut settings = EncoderSettings::movie(width, height, c.fps.max(1));
+        if let Some(k) = kbps {
+            settings.target_kbps = k;
+        }
         let total = frame_count(c);
         Ok(Self {
             path,

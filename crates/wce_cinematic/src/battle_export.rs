@@ -267,6 +267,18 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
     let length = ms(clip.length);
     // Actions by time; each a line of Lua.
     let mut actions: Vec<(u64, String)> = vec![];
+    // The battle starts black (`prepare_for_fade_in`): the clip fades in at once as vanilla's intros do (Catalaunian Plains:
+    // `cam:fade(false, 0.5)` at 0), unless its fade track starts black. First of the tick-0 actions (the sort keeps the order).
+    let starts_black = clip
+        .tracks
+        .iter()
+        .filter(|t| !t.muted)
+        .find_map(|t| match &t.content {
+            TrackContent::Fade { keys } => keys.first().filter(|k| k.t <= 0.0).map(|k| k.value > 0.5),
+            _ => None,
+        })
+        .unwrap_or(false);
+    actions.push((0, if starts_black { "cam:fade(true, 0)".to_owned() } else { "cam:fade(false, 0.5)".to_owned() }));
     let mut skip: Vec<String> = vec![];
     let mut pre: Vec<String> = vec![];
     let mut sfx_count = 0;
@@ -402,6 +414,15 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
             }
             TrackContent::Music { cues } => {
                 for m in cues {
+                    // By mood: the game's music system follows the states the mood events set (its own playback goes on).
+                    if !m.moods.is_empty() {
+                        for (k, mood) in m.moods.iter().enumerate() {
+                            let var = format!("music_{}_{}_{k}", clip.id, (m.t * 1000.0).round() as u64);
+                            pre.push(format!("{var} = new_sfx({});", lua_str(mood)));
+                            actions.push((ms(m.t), format!("cs:play_sound({var})")));
+                        }
+                        continue;
+                    }
                     actions.push((ms(m.t), "bm:set_music_auto_playback(false)".into()));
                     if m.fade_in > 0.0 {
                         actions.push((ms(m.t), format!("bm:play_music_custom_fade({}, {})", lua_str(&m.event), f(m.fade_in))));
@@ -433,11 +454,6 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
                         let when = if a.interp == Interp::Step { ms(b.t) } else { ms(a.t) };
                         actions.push((when, format!("cam:fade({}, {})", b.value > 0.5, f(dur))));
                     }
-                }
-                if let Some(k) = keys.first()
-                    && k.t <= 0.0
-                {
-                    actions.push((0, format!("cam:fade({}, 0)", k.value > 0.5)));
                 }
             }
             TrackContent::Letterbox { keys } => bars = keys.iter().any(|k| k.value > 0.5),

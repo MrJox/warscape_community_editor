@@ -104,7 +104,7 @@ fn effects(p: &Project, ui: &SceneUi, g: &Ground) -> Vec<(SceneItem, [f32; 3], S
 
 /// The camera keys of the clip shown (drawn while the viewport's camera is free): their items, places and targets.
 fn camera_keys(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], [f32; 3], f64)> {
-    if !ui.free_camera {
+    if ui.follows_keys() {
         return vec![];
     }
     let Some(clip) = ui.clip.and_then(|c| p.clip(c)) else { return vec![] };
@@ -126,7 +126,10 @@ fn pick(e: &mut Editor, p: &Project, ui: &SceneUi, view: &DocView, g: &Ground, x
     let near = effects(p, ui, g)
         .into_iter()
         .map(|(i, at, _)| (i, at))
-        .chain(camera_keys(p, ui).into_iter().map(|(i, at, _, _)| (i, at)))
+        .chain(camera_keys(p, ui).into_iter().flat_map(|(i, at, target, _)| {
+            let SceneItem::CameraKey { track, index } = i else { return vec![(i, at)] };
+            vec![(i, at), (SceneItem::CameraTarget { track, index }, target)]
+        }))
         .filter_map(|(i, at)| to_image(e, at).map(|(px, py)| (i, (px - x as f32).hypot(py - y as f32))))
         .filter(|(_, d)| *d <= 12.0)
         .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -166,6 +169,18 @@ impl SceneView {
             // While placing the tool owns the left button: the editor sends its press (not a click), which puts one there.
             ViewportEventKind::Press => {
                 let Some(m) = create.making.clone() else { return false };
+                if m == Making::CameraPath {
+                    if let Some(at) = ground_point(e, ev.x, ev.y) {
+                        let cam = e.viewport.camera();
+                        let (dx, dz) = (cam.target.x - cam.eye.x, cam.target.z - cam.eye.z);
+                        let len = dx.hypot(dz).max(1e-6);
+                        let h = ground.height(at[0], at[1]);
+                        if let Some(item) = create.path_point(e, &p, ui.clip, ui.time, [at[0], h, at[1]], [dx / len, dz / len]) {
+                            create.requests.push(CreateRequest::Placed(item));
+                        }
+                    }
+                    return true;
+                }
                 if let Some(at) = ground_point(e, ev.x, ev.y) {
                     let lists = ui.lists.clone();
                     if let Some(item) = create.place(e, &lists, &p, &m, at, ui.clip, ui.time) {
@@ -330,14 +345,31 @@ impl SceneView {
         }
         // The camera keys (the camera free): where each is, what it looks at, the path between them.
         let cams = camera_keys(&p, ui);
-        let path: Vec<gui::Vec2> = cams.iter().filter_map(|(_, at, _, _)| scr(e, *at)).collect();
-        dl.polyline(&path, gui::col32(120, 220, 255, 150), false, 1.5);
+        // The path the camera takes (the keys' curve, sampled).
+        if cams.len() > 1
+            && let Some(clip) = ui.clip.and_then(|c| p.clip(c))
+        {
+            let (t0, t1) = (cams.first().map_or(0.0, |c| c.3), cams.last().map_or(0.0, |c| c.3));
+            let n = 96;
+            let path: Vec<gui::Vec2> = (0..=n)
+                .filter_map(|i| {
+                    let t = t0 + (t1 - t0) * f64::from(i) / f64::from(n);
+                    let f = wce_cinematic::eval::evaluate(&p, clip, &wce_cinematic::eval::SpeedTable::default(), t);
+                    f.camera.and_then(|c| scr(e, c.position))
+                })
+                .collect();
+            dl.polyline(&path, gui::col32(120, 220, 255, 170), false, 2.0);
+        }
         for (item, at, target, t) in &cams {
             let Some(c) = scr(e, *at) else { continue };
             let sel = selected.contains(item);
             let col = if sel { gui::col32(255, 230, 120, 255) } else { gui::col32(120, 220, 255, 230) };
             if let Some(tg) = scr(e, *target) {
                 dl.line(c, tg, col & 0x80FF_FFFF, 1.0);
+                let SceneItem::CameraKey { track, index } = *item else { continue };
+                let tsel = selected.contains(&SceneItem::CameraTarget { track, index });
+                let tc = if tsel { gui::col32(255, 230, 120, 255) } else { gui::col32(255, 150, 120, 220) };
+                dl.circle_filled(tg, if tsel { 5.5 } else { 4.0 }, tc);
             }
             dl.rect_filled(v2(c.x - 6.0, c.y - 4.0), v2(c.x + 6.0, c.y + 4.0), col, 2.0);
             if sel || self.hovered == Some(*item) {
@@ -378,6 +410,13 @@ impl SceneView {
                             dl.line(a, b, gui::col32(255, 230, 120, 230), 2.0);
                         }
                     }
+                    Making::CameraPath => {
+                        let h = ground.height(g[0], g[1]);
+                        if let (Some(a), Some(b)) = (scr(e, [g[0], h, g[1]]), scr(e, [g[0], h + create.draft.cam_height, g[1]])) {
+                            dl.line(a, b, gui::col32(120, 220, 255, 220), 1.5);
+                            dl.rect_filled(v2(b.x - 6.0, b.y - 4.0), v2(b.x + 6.0, b.y + 4.0), gui::col32(120, 220, 255, 230), 2.0);
+                        }
+                    }
                     Making::Vfx(_) => {
                         if let Some(c) = scr(e, [g[0], ground.height(g[0], g[1]), g[1]]) {
                             dl.circle_filled(c, 8.0, gui::col32(200, 160, 255, 120));
@@ -388,6 +427,7 @@ impl SceneView {
             let what = match m {
                 Making::Unit(k) => ui.lists.unit_name(k),
                 Making::Vfx(k) => k.clone(),
+                Making::CameraPath => "a camera path".to_owned(),
             };
             let hint = format!("Placing {what}  ·  click: put one  ·  R / Shift+R: turn  ·  Esc or right click: stop");
             let tw = gui::calc_text_width(&hint);
@@ -413,13 +453,27 @@ impl SceneView {
                 ui.playing = !ui.playing;
             }
             gui::same_line_touching();
-            if chip(ui.free_camera, icons::ORBIT, "cinfree", "Free camera: fly the viewport yourself (off: it follows the camera keys)") {
-                ui.free_camera = !ui.free_camera;
+            if chip(
+                ui.look_through,
+                icons::FOCUS,
+                "cinlook",
+                "Look through the camera keys while paused (playing always does; off: fly the viewport yourself)",
+            ) {
+                ui.look_through = !ui.look_through;
             }
             gui::same_line_touching();
             if chip(false, icons::CAMERA, "cinkey", "Key this view: a camera key at the playhead") {
-                ui.free_camera = true;
+                ui.look_through = false;
                 ui.key_camera_view(e);
+            }
+            gui::same_line_touching();
+            if chip(
+                ui.recording,
+                icons::CIRCLE_DOT_DASHED,
+                "cinrecord",
+                "Record the camera: the clip plays and your camera moves are keyed every half second (click again to stop)",
+            ) {
+                ui.toggle_recording();
             }
             gui::same_line_touching();
             if chip(ui.battle_preview, icons::SWORDS, "cinbattle", "Battle preview: units under orders as the battle would play it") {
