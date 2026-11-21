@@ -407,8 +407,13 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   - A linked slot without a building draws its culture's `empty_slot` piece (fn 0x10b29540 -> 0x10af68c0: `roman_slum`, the model
     `roman_farm_01`). Every secondary slot linked holds a building (one step a building), so only a main slot or a port can be one;
     Attila's start has none (`cities_check`: 0 slots without a building).
-  - Levels: each sprawl hex is of one zone (`SPRAWL_HEX_MAP_DATA`'s zone mask has one bit), so the zone pass (fn 0x10a1bd60) reaches a
-    cell once, while its slot is not linked yet: level 1. Only the path search's cells (fn 0x10a1bad0) can draw 2 or 3.
+  - Levels (fns 0x10a56c50, 0x10a56d10, 0x10a1bd60): each step after the first levels the zones of the slots linked so far, before it
+    links its own; in a capital a cell whose slot is linked draws `1 + [r < 0.75] + [r' < 0.1]` and keeps the highest. A zone draws
+    once a later step: the main slot's and the port's every step, the last linked slot's never (all level 1). Capture A (by the
+    pieces' index counts, `roman_sprawl_edge_14_lvl2` 1176, `_lvl3` 915...): Rome, Mediolanum, Lugdunum, Ravenna and Londinium each
+    have one zone at level 1, the others at 2 and 3. Minor settlements: all level 1.
+  - A wall's cell keeps its sprawl (Rome: a `_lvl2` piece and a wall on one cell), its shape traced again from the cell's road and
+    river edges and the wall's two (fn 0x10a7c610): a straight wall's cell holds `sprawl_edge_14`, a river gate's `_1245`.
   - Paths (fn 0x10a56d10 -> 0x10a57080 -> 0x10a4cfe0, then the check fn 0x10a7b990 -> 0x10a465c0): a flood from the step's zone over a
     list of hexes (`*set + 0xdc`) with a step limit (`DAT_11d2f7c4`), traced back from the farthest node by direction bits; its cells
     and the list it was given are not identified yet. Capture A: they add none to four cells a settlement (Rome: four south of slot
