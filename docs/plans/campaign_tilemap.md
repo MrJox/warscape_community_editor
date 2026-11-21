@@ -546,3 +546,15 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   the sea's surface is shaded there over land: white in the final image, black (sea) in the albedo view). Not compared: what the
   game draws in those cells, and everything else of Phase 6, until captures V1 (a coast at a middle zoom: the Welsh coast by the
   Irish Sea, cells about (800, 860)) and V2 (a settlement close) exist.
+- **Thrones against captures V1 and V2 (2026-11-21; `D:\renderdoc\camp_thrones_V1_frame15571.rdc`: the Llyn peninsula and
+  Anglesey at a middle zoom; `_frame16053`: a walled settlement on Anglesey close; folders `campcmp\cap_V1`, `cap_V2`; the player
+  Gwynedd, `vik_fact_gwined`):** the frame lines up with the game's (the world transform, the lens and the hex stretch as Attila's).
+  Fixed: Thrones' `FACTION` record has a `CAMPAIGN_EFFECT_BUNDLES` record between the id and the key, which the readers took as no key
+  (every faction the rebels): no borders, no settlement owners. Now the borders and trade routes are the game's at V1, and V2's
+  settlement has its sprawl. Left, largest first: (1) the coasts past the near rings step from cell to cell where the game's are
+  smooth (Bardsey a square, the peninsula's tip; up close the editor's are right: the far level's cut of the cliff tiles' cells and
+  the land tiles' squares; giving the far blocks' sea cells the LF where it is under the sea changed nothing: reverted); the white
+  wedges by the cliffs are the same cells; (2) the settlement's palisade (no walls: the `_major_` rule is Attila's); (3) rain in the
+  editor, none in the game; (4) the mountains' custom meshes (Snowdon's flat pale shelves); (5) the ground's colour east of the
+  peninsula (sandy where the game's is green); (6) the army's banner and figures. 94 of 135 of V1's shaders named (the Thrones fxc
+  set: not looked into).
