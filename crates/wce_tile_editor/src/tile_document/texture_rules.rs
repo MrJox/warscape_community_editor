@@ -186,16 +186,6 @@ impl Tile {
         self.texture_rules_buildings()
     }
 
-    /// A building's radius as the rules' distances take it (its model's reach across, scaled; metres), 0 until its model loads.
-    pub(super) fn texture_rules_buildings_radius(&self, e: usize) -> f64 {
-        let sc = self.tscene();
-        self.model_of(e).filter(|m| m.ok && m.resolved).map_or(0.0, |m| {
-            let s = sc.scale(e).map_or(1.0, |s| s.x.abs().max(s.z.abs()));
-            let across = [m.bmin.x.abs(), m.bmax.x.abs(), m.bmin.z.abs(), m.bmax.z.abs()].into_iter().fold(0.0f32, f32::max);
-            f64::from(across) * s / self.unit()
-        })
-    }
-
     /// The real buildings (as the rules' distances take them): x, z, radius, world metres.
     pub(super) fn texture_rules_buildings(&self) -> Vec<[f64; 3]> {
         let sc = self.tscene();

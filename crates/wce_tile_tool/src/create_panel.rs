@@ -186,9 +186,6 @@ pub enum Make {
     /// A field area (docs/plans/auto_detail_2.md, G) of a kind (`wce_tile::fields::presets`, by name): drawn as a vegetation exclusion
     /// polygon with `wce_fields`.
     Fields { kind: String },
-
-    /// A path (docs/plans/auto_detail_2.md, H): its points clicked, the way between them found over the ground, made a procedural road.
-    Path,
 }
 
 #[derive(Clone, Debug)]
@@ -230,7 +227,6 @@ impl Entry {
             Make::Biome { name } => format!("biome|{name}"),
             Make::Rules { what } => format!("rules|{what}"),
             Make::Fields { kind } => format!("fields|{kind}"),
-            Make::Path => "path|".to_owned(),
         }
     }
 
@@ -243,7 +239,6 @@ impl Entry {
             Make::Biome { .. } => icons::SHRUB,
             Make::Rules { .. } => icons::STICKER,
             Make::Fields { .. } => icons::LEAF,
-            Make::Path => crate::entity_types::type_icon(wce_tile_editor::tile_document::ROAD_SPLINE),
         }
     }
 }
@@ -484,9 +479,6 @@ impl TileTool {
             en.folder = "Biomes".to_owned();
             out.push(en);
         }
-
-        // A path over the ground, with the roads.
-        out.push(entry(10, "Path (found over the ground)".to_owned(), Make::Path, "path track dirt way trail road route find"));
 
         // The decal rules, at the top of the decals.
         out.push(entry(
@@ -830,7 +822,6 @@ impl TileTool {
         }
 
         self.drawing = false;
-        self.path_drawing = false;
         self.draw_pts.clear();
         self.placing = None;
         self.veg_sets.current = None;
@@ -923,19 +914,6 @@ impl TileTool {
                 self.placing = Some(crate::tool::Placing::Prefab(key.clone()));
             }
 
-            Make::Path => {
-                let kind = wce_tile_editor::tile_document::ROAD_SPLINE;
-                let mut draft = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, ""));
-                // A track where the game has one; a dirt path's ground and texture only where it has none.
-                let track = document(e).is_some_and(|d| d.tile().road_types().iter().any(|(t, _)| *t == "dirt_track"));
-                draft.attrs.insert("road_type".to_owned(), if track { "dirt_track" } else { "none" }.to_owned());
-                draft.attrs.insert("road_width".to_owned(), "3".to_owned());
-                draft.attrs.insert("name".to_owned(), "Path".to_owned());
-                self.draft = Some(draft);
-                self.start_drawing();
-                self.path_drawing = true;
-            }
-
             Make::Fields { kind } => {
                 let settings = wce_tile::fields::presets().into_iter().find(|p| p.name == *kind).map(|p| p.settings).unwrap_or_default();
                 let mut draft = Draft::new(wce_tile::biomes::AREA_TYPE, "");
@@ -968,7 +946,6 @@ impl TileTool {
             Make::Biome { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             Make::Rules { .. } => format!("{}: in the Inspector; the decals follow the ground by themselves", en.label),
             Make::Fields { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
-            Make::Path => format!("{}: click its ends (and points it must pass); {}; Esc cancels", en.label, self.finish_hint(e)),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
         };
     }
@@ -1267,15 +1244,7 @@ impl TileTool {
             _ => layer.ok_or_else(|| "this tile has no scene graph".to_owned()),
         };
 
-        // A path: the way between its points found over the ground first.
-        let points = if std::mem::take(&mut self.path_drawing) {
-            d.find_path(&self.draw_pts, &wce_tile::paths::PathSettings::default())
-        } else {
-            Ok(self.draw_pts.clone())
-        };
-        let added = into
-            .and_then(|into| points.map(|p| (into, p)))
-            .and_then(|(into, points)| d.create_with(kind, into, &Create::Line(points), &draft.key, &draft.attrs));
+        let added = into.and_then(|into| d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs));
         self.create.holder = None;
         self.draw_pts.clear();
         self.poly_point = None;
@@ -2223,7 +2192,6 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
             let p = all.iter().find(|p| p.name.eq_ignore_ascii_case(&key.replace('_', " "))).or(all.first());
             Make::Fields { kind: p.map(|p| p.name.to_owned()).unwrap_or_default() }
         }
-        "path" => Make::Path,
         kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD, &BUILDING_SPLINE]).any(|(_, k, drawn)| *k == kind && *drawn)
             || SHAPES.contains(&kind) =>
         {
