@@ -203,6 +203,12 @@ pub(crate) fn leaf<'a>(group: &'a [NodeType], after: Option<&str>, n: usize) -> 
     group[start..].iter().take_while(|c| after.is_some() || as_record(c).is_none()).filter(|c| as_record(c).is_none()).nth(n - 1)
 }
 
+/// A `FACTION` record group's key: its first text (Attila's and TDD's `^+2`; Thrones' after a `CAMPAIGN_EFFECT_BUNDLES` record, which
+/// comes between the runtime id and the key: read as `^+2`, every Thrones faction had no key, as the rebels, and its map no borders).
+pub(crate) fn faction_key(group: &[NodeType]) -> Option<&str> {
+    group.iter().filter(|n| as_record(n).is_none()).find_map(str_of)
+}
+
 /// The first cell of a record of one cell a group (two `U16` leaves each).
 fn first_cell(r: &RecordNode) -> Option<(u16, u16)> {
     r.children().iter().find_map(|g| {
@@ -614,7 +620,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
     if let Some(array) = child(world_rec, "FACTION_ARRAY") {
         for f in array.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "FACTION") {
             for g in f.children() {
-                if let (Some(id), Some(key)) = (leaf(g, None, 1).and_then(u32_of), leaf(g, None, 2).and_then(str_of)) {
+                if let (Some(id), Some(key)) = (leaf(g, None, 1).and_then(u32_of), faction_key(g)) {
                     factions.insert(id, key.to_owned());
                 }
             }
