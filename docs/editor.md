@@ -448,9 +448,7 @@ names the kit prefabs it uses that this editor does not find.
 
 Throw-away build files (the launch staging folders, dry runs, the export a terrain launch makes, a combined project's variations written
 for its exports and the loaders in `build/variations`) go to `<projects>/build` (`Editor::build_dir`), which nothing reads back between
-runs. Combine and Separate keep what they replace in `<projects>/backup/combine/` and `backup/separate/`, by date and time. Until the release, an interactive start offers once per game to move the old
-output folder's edits of game files into `loose/` (`project_prompts.rs`: not the build files, `ui_xml/` exports or exports in the game's
-layout; a file the project already has stays).
+runs. Combine and Separate keep what they replace in `<projects>/backup/combine/` and `backup/separate/`, by date and time.
 
 ### Autosave
 
@@ -511,7 +509,7 @@ way. `$WCE_CACHE_DIR` moves the caches alone. The Flatpak keeps them in its own 
 (`config/wce`, `data/wce`, `cache/wce`, `.local/state/wce`): a source build's settings are not shared with it.
 
 `settings.toml` is typed (`Settings`, every field has a default, so a missing key is never an error). Top level: `frame_cap`, `game` (the game being
-edited), `[appearance]` and `[autosave]` ([Autosave](#autosave)); `[games.<id>]` holds a game's `dir`, `assembly_kit` (the folder with `raw_data`; none: the kit found in the game folder), `projects` (none: `<data>/projects/<game>`: `assembly_kit/` holds the editor's tiles in the kit's layout, `loose/` the loose files read before every pack, the UI tool's skins, layouts and pictures), `mod_packs`, `overlay_folders` (until the release, an old `project_dir` is moved into them when the settings load) `export_dirs` (each File > Export entry's last destination) and, until the release, the old `output_dir` (an old top-level one becomes Attila's), kept until its files were offered to the project once (`output_dir_offered`); `[tools.<id>]` is a tool's own table, which
+edited), `[appearance]` and `[autosave]` ([Autosave](#autosave)); `[games.<id>]` holds a game's `dir`, `assembly_kits` (the folders with `raw_data`, the first one winning; none: the kit found in the game folder), `projects` (none: `<data>/projects/<game>`: `assembly_kit/` holds the editor's tiles in the kit's layout, `loose/` the loose files read before every pack, the UI tool's skins, layouts and pictures), `mod_packs`, `overlay_folders` and `export_dirs` (each File > Export entry's last destination); `[tools.<id>]` is a tool's own table, which
 the tool reads and writes with its own serde type (`Editor::tool_settings`, `Editor::update_tool_settings`), so the shell knows nothing of it. The fields a tool declares as about the game's files (`Tool::game_settings_fields`: the Tile tool's recent and favourite tiles, weathers, Create lists, sea state and packs written; the UI tool's packs) live in `[games.<id>.tools.<id>]` instead, one set per game (a field written before they were per game is kept by each game once). A game folder that isn't that game's (no `Attila.exe` / `Rome2.exe`: the data folders look alike) is not mounted (`GameProfile::folder_problem`); the first-run dialog then offers the folder found in the Steam libraries. Saves write a temporary
 file and rename it over the old one. A file that does not read is kept as `settings.toml.bad` and the defaults are used. An environment variable wins over the
 file and is never written back:
@@ -526,9 +524,6 @@ file and is never written back:
 | the projects folder | `WCE_PROJECTS` |
 | Tile: the kits the Tiles panel lists (tests) | `WCE_TILE_KITS` (`;` separated) |
 | Tile: the projects in the kit's layout (tests) | `WCE_TILE_WORKSPACE` |
-
-Until the first release, a missing `settings.toml` is filled from the old `key=value` `wce.ini` (in the same folder, or in `~/.local/share/awe` /
-`%LOCALAPPDATA%\awe`) and its layouts are copied; the old folder is left alone (`settings/legacy.rs`, to be removed).
 
 **File > Settings...** (command `settings open [page] | close | apply`, `settings_window.rs`) edits every setting on pages (General, Game,
 Appearance, one per tool with settings, Folders) on a copy of the settings: OK and Apply put it in place, write the file and pass on what changed (the

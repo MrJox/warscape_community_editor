@@ -5,8 +5,6 @@
 //! `[tools.<id>]` table per tool, which the tool reads and writes with its own type ([`Settings::tool`]). An environment variable wins over
 //! the file and is never written back.
 
-mod legacy;
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -204,18 +202,10 @@ pub struct GameSettings {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub assembly_kits: Vec<PathBuf>,
 
-    /// TODO(pre-release): the old single Assembly Kit, read only to move it into `assembly_kits` (`Settings::load`).
-    #[serde(skip_serializing)]
-    pub assembly_kit: Option<PathBuf>,
-
     /// The game's projects: `assembly_kit/` (the editor's own files in the kit's layout, like the tiles' `tile.wce`) and `loose/` (loose files
     /// read before every pack: the UI tool's skins, layouts and pictures); none: `<data folder>/projects/<game>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projects: Option<PathBuf>,
-
-    /// TODO(pre-release): the old project folder, read only to move it into `overlay_folders` (`Settings::load`); `loose` replaces it.
-    #[serde(skip_serializing)]
-    pub project_dir: Option<PathBuf>,
 
     /// Loose folders read before every pack, after the project folder, highest priority first.
     pub overlay_folders: Vec<PathBuf>,
@@ -232,15 +222,6 @@ pub struct GameSettings {
     /// The last destination of each File > Export entry (by its key: `exported_tile`, `ui_xml`, `terrain`...), where its dialog starts.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub export_dirs: BTreeMap<String, PathBuf>,
-
-    /// TODO(pre-release): the old output folder, where Save wrote the game's loose files before they went into the projects' `loose`;
-    /// kept until its files were offered to the project once ([`Settings::old_output_dir`]).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_dir: Option<PathBuf>,
-
-    /// TODO(pre-release): the old output folder's files were offered to the project (moved or left): not asked again.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub output_dir_offered: bool,
 
     /// The renderer's graphics options for this game: the game's own (its preferences file) or the editor's, and the editor's render
     /// scale.
@@ -420,10 +401,6 @@ pub struct Settings {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub last_tool: String,
 
-    /// TODO(pre-release): the old output folder shared by every game, read only to move it to Attila's table (`Settings::load`).
-    #[serde(skip_serializing)]
-    pub output_dir: Option<PathBuf>,
-
     /// The folder of the db tables' schemas (rpfm's files: `schema_att.ron`, `schema_tob.ron`...), every game's; none, or a game's file
     /// missing from it: rpfm's own schemas folder ([`rpfm_schema_path`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -528,7 +505,6 @@ impl Default for Settings {
             game: "attila".to_owned(),
             frame_cap: DEFAULT_FRAME_CAP,
             last_tool: String::new(),
-            output_dir: None,
             db_schemas: None,
             appearance: Appearance::default(),
             camera: CameraSettings::default(),
@@ -579,70 +555,8 @@ impl Settings {
                 Self { unread: true, ..Self::default() }
             }
 
-            Err(_) => {
-                // TODO(pre-release): remove with the `legacy` module.
-                match legacy::migrate(&paths) {
-                    Some(s) => {
-                        let mut s = s;
-                        s.paths = paths.clone();
-                        match s.save() {
-                            Ok(()) => log::info(format!("Settings moved from the old wce.ini to {}", file.display())),
-                            Err(e) => log::error(format!("Cannot write {}: {e}", file.display())),
-                        }
-
-                        s
-                    }
-
-                    None => Self::default(),
-                }
-            }
+            Err(_) => Self::default(),
         };
-
-        // TODO(pre-release): the old shared output folder was Attila's (the only game then); the other games get their own default.
-        if let Some(old) = settings.output_dir.take() {
-            let attila = settings.games.entry(GameProfile::ATTILA.key.to_owned()).or_default();
-            if attila.output_dir.is_none() {
-                log::info(format!("the output folder {} is Attila's now; every game has its own", old.display()));
-                attila.output_dir = Some(old);
-            }
-        }
-
-        // TODO(pre-release): the old per-game project folder becomes the first overlay folder (its files stay read); `loose` replaces it.
-        for (game, g) in &mut settings.games {
-            if let Some(old) = g.project_dir.take()
-                && !g.overlay_folders.contains(&old)
-            {
-                log::info(format!(
-                    "{game}: the old project folder {} is read as an overlay folder now; the projects folder's loose/ replaces it",
-                    old.display()
-                ));
-                g.overlay_folders.insert(0, old);
-            }
-        }
-
-        // TODO(pre-release): the old single Assembly Kit becomes the first of the list.
-        for g in settings.games.values_mut() {
-            if let Some(old) = g.assembly_kit.take()
-                && !g.assembly_kits.contains(&old)
-            {
-                g.assembly_kits.insert(0, old);
-            }
-        }
-
-        // TODO(pre-release): the Tile tool's Attila schema file becomes the DB schemas folder (where it is, if it has rpfm's file name).
-        if let Some(old) = settings.tools.get_mut("tile").and_then(|t| t.remove("rpfm_schema")).and_then(|v| v.as_str().map(PathBuf::from))
-            && settings.db_schemas.is_none()
-        {
-            if old.file_name().is_some_and(|n| n == GameProfile::ATTILA.rpfm_schema) {
-                log::info(format!("the Tile settings' rpfm schema {} is read from the DB schemas folder now", old.display()));
-                settings.db_schemas = old.parent().map(Path::to_path_buf);
-            } else {
-                log::warn(format!(
-                    "the Tile settings' rpfm schema {} is not used any more: set the DB schemas folder (Settings > General)",
-                    old.display()
-                ));
-            }
-        }
 
         if let Ok(mut dir) = DOWNLOADED_SCHEMAS.write() {
             *dir = Some(paths.schemas_dir());
@@ -800,23 +714,6 @@ impl Settings {
     /// repository for them.
     pub fn art_dir(&self) -> PathBuf {
         self.kit_projects_dir().join("raw_data").join("art")
-    }
-
-    /// TODO(pre-release): the current game's old output folder (the file's, else the old default: `<Documents>/AttilaWeatherEditor/out`
-    /// for Attila, `<Documents>/WCE/<game>/out` for the others) until its files were offered to the project; then none.
-    pub fn old_output_dir(&self) -> Option<PathBuf> {
-        let g = self.game_settings();
-        if g.output_dir_offered {
-            return None;
-        }
-
-        g.output_dir.or_else(|| {
-            let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)?;
-            Some(match self.game.as_str() {
-                "attila" => home.join("Documents").join("AttilaWeatherEditor").join("out"),
-                key => home.join("Documents").join("WCE").join(key).join("out"),
-            })
-        })
     }
 
     /// The DB schemas folder: `$WCE_DB_SCHEMAS`, else the file's.

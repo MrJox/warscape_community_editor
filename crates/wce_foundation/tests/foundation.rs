@@ -87,19 +87,17 @@ fn assembly_kits() {
     let (a, b, battle) = (make("a"), make("b"), make("assembly_kit_battle_tilemap"));
     let campaign = make("assembly_kit_campaign_tilemap");
 
-    // The old single kit becomes the first of the list, once.
+    // The list, in its order, read and saved again.
     let paths = Paths::in_dir(&dir.path().join("config"));
     std::fs::create_dir_all(paths.config_dir()).unwrap();
     std::fs::write(
         paths.settings_file(),
-        format!("[games.attila]\nassembly_kit = {:?}\nassembly_kits = [{:?}]\n", a.display().to_string(), b.display().to_string()),
+        format!("[games.attila]\nassembly_kits = [{:?}, {:?}]\n", a.display().to_string(), b.display().to_string()),
     )
     .unwrap();
     let mut settings = Settings::load(paths.clone());
     assert_eq!(settings.assembly_kit_dirs(), [a.clone(), b.clone()]);
     settings.save().unwrap();
-    let text = std::fs::read_to_string(paths.settings_file()).unwrap();
-    assert!(text.contains("assembly_kits") && !text.contains("assembly_kit ="), "{text}");
     assert_eq!(Settings::load(paths.clone()).assembly_kit_dirs(), [a.clone(), b.clone()]);
 
     // A kit with no raw_data is skipped; the battle tile map kit brings the campaign one; no kit is listed twice.
@@ -123,12 +121,11 @@ fn settings_per_game() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::in_dir(dir.path());
 
-    // A file from before: one output folder and the tile tool's recent list shared by both games.
+    // A file from before: the tile tool's recent list shared by both games.
     std::fs::write(
         paths.settings_file(),
         r#"
 game = "rome_2"
-output_dir = "/out"
 [games.attila]
 dir = "/games/attila"
 [games.rome_2]
@@ -142,14 +139,6 @@ show_sea = true
     let mut s = Settings::load(paths.clone());
     s.set_game_fields("tile", &["kits"]);
 
-    // The old output folder is Attila's, offered to its project until that was asked once; Rome 2 had none set (its old default).
-    assert_eq!(s.games["attila"].output_dir.as_deref(), Some(std::path::Path::new("/out")));
-    assert!(s.old_output_dir().is_some_and(|d| d.ends_with("WCE/rome_2/out")));
-    s.game = "attila".to_owned();
-    assert_eq!(s.old_output_dir().as_deref(), Some(std::path::Path::new("/out")));
-    s.game_mut().output_dir_offered = true;
-    assert_eq!(s.old_output_dir(), None);
-    s.game = "rome_2".to_owned();
     assert_eq!(s.tool::<ToolSettings>("tile").kits, ["/recent"]);
 
     // Writing in Rome 2 keeps the old value for Attila, and the editor's own field stays shared.
@@ -198,44 +187,17 @@ fn db_schemas_folder() {
         assert_eq!(rpfm_schema_path_in(&GameProfile::THRONES_OF_BRITANNIA, Some(&schemas)), Some(schemas.join("schema_tob.ron")));
         assert_ne!(rpfm_schema_path_in(&GameProfile::ATTILA, Some(&schemas)), Some(schemas.join("schema_att.ron")));
     }
-
-    // TODO(pre-release): the Tile settings' old Attila schema file gives the folder.
-    let paths = Paths::in_dir(dir.path());
-    let old = schemas.join("schema_att.ron");
-    std::fs::write(paths.settings_file(), format!("[tools.tile]\nrpfm_schema = '{}'\nshow_sea = true\n", old.display())).unwrap();
-    let s = Settings::load(paths);
-    assert_eq!(s.db_schemas.as_deref(), Some(schemas.as_path()));
-    assert!(!s.tools["tile"].contains_key("rpfm_schema"));
-}
-
-// TODO(pre-release): remove with the settings' `legacy` module.
-#[test]
-fn settings_from_the_old_ini() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("wce.ini"),
-        "# comment\r\ngame_dir=/games/attila\r\nmod_packs=a.pack;b.pack\nframe_cap=30\ntile_show_sea=0\ntile_kits=/k1;/k2\nempty=\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(dir.path().join("layouts")).unwrap();
-    let s = Settings::load(Paths::in_dir(dir.path()));
-    assert_eq!(s.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
-    assert_eq!(s.mod_packs(), ["a.pack", "b.pack"]);
-    assert_eq!(s.frame_cap, 30);
-    assert_eq!(s.tool::<ToolSettings>("tile"), ToolSettings { kits: vec!["/k1".to_owned(), "/k2".to_owned()], show_sea: false });
-    assert!(dir.path().join("settings.toml").is_file());
 }
 
 #[test]
 fn settings_that_cannot_be_opened_are_not_replaced() {
-    // A settings.toml that is there but does not open (a folder here; a file another program holds is the same to the reader), with an
-    // old wce.ini next to it: neither the defaults nor the old file's settings may replace it.
+    // A settings.toml that is there but does not open (a folder here; a file another program holds is the same to the reader): the defaults
+    // may not replace it.
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::in_dir(dir.path());
     std::fs::create_dir(paths.settings_file()).unwrap();
-    std::fs::write(dir.path().join("wce.ini"), "frame_cap=30\n").unwrap();
     let s = Settings::load(paths.clone());
-    assert_eq!(s.frame_cap, 60, "the defaults, not the old wce.ini");
+    assert_eq!(s.frame_cap, 60, "the defaults");
     assert!(s.save().is_err(), "not written over");
     assert!(paths.settings_file().is_dir());
 
