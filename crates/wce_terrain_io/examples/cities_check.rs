@@ -88,6 +88,9 @@ fn main() {
             .collect();
         let span = |f: fn(&(u16, u16)) -> u16| (walls.iter().map(f).min(), walls.iter().map(f).max());
         println!("walls of {filter}: {} cells, columns {:?}, rows {:?}", walls.len(), span(|c| c.0), span(|c| c.1));
+        for p in cities.sprawl.iter().filter(|p| p.region.contains(&filter) && !p.piece.starts_with("sprawl_edge")) {
+            println!("  piece {} {:?} level {} turn {} -> {:?}", p.piece, p.cell, p.level, p.turn, p.model);
+        }
     }
     println!("on land {land}, in the sea {sea}; models in the packs {have}, missing {missing}");
 }

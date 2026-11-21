@@ -658,9 +658,11 @@ impl PropModels {
                 // Turned as the sprawl is, by its sixths (a port's from its coast; the others 0 until their rule is known).
                 let (fx, fz) = frame.from_map.apply(x, y);
                 let (s, co) = (slot.turn as f32 * std::f32::consts::FRAC_PI_3).sin_cos();
+                // A port stands on the sea's level (capture A: Salona's at y 0, its cell 35 m under the sea): on the sea bed it sank.
+                let y = if slot.kind == "port" { ground(fx, fz).max(frame.sea_y()) } else { ground(fx, fz) };
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [co * k, 0.0, s * k, fx as f32];
-                world.m[1] = [0.0, k, 0.0, ground(fx, fz)];
+                world.m[1] = [0.0, k, 0.0, y];
                 world.m[2] = [-s * k, 0.0, co * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
