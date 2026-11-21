@@ -5,8 +5,9 @@
 //! fragments), `fragment_table.txt` (a fragment's lines: `single:idle:<clip>:<weight>:...`) and `animation_table.txt` (a clip's
 //! skeleton). The figure plays its `NORMAL` state's idles, as a battle soldier plays his `STAND` (`unit_animation::Figure`).
 //!
-//! ASSUMPTIONS: the row is the art set's adult one (age 16, else the oldest) of rank 0 and season `none`, the faction leader's when
-//! the character leads his faction; the game's own choice (rank, season, religion) is not traced.
+//! The row: the faction leader's for a faction's leader, the season's (`winter` in winter, else `none`), rank 0 (every character's
+//! rank and experience are 0 at a campaign's start: `CAMPAIGN_SKILLS`), the adult's (age 16: a figure on the map leads an army, or
+//! is an agent). ASSUMPTION: the religion column is not matched.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -29,6 +30,25 @@ pub enum Afloat {
     Land,
     Sea,
     Navy,
+}
+
+/// What a character's figure is made from.
+#[derive(Clone, Debug)]
+pub struct Wanted {
+    pub art_set: String,
+    pub afloat: Afloat,
+
+    /// It leads its faction (the faction leader's row).
+    pub leader: bool,
+
+    /// The view is in winter (the `winter` row).
+    pub winter: bool,
+
+    /// Its faction (its colours).
+    pub faction: String,
+
+    /// Its variation's seed (the variant mesh's picks, the idles' order).
+    pub seed: u64,
 }
 
 /// A row of `campaign_character_arts`.
@@ -206,10 +226,11 @@ impl CampaignCatalog {
         .map(|s| s.id.as_str())
     }
 
-    /// The row of an art set drawn (ASSUMPTION: rank 0, season `none`, the adult; the faction leader's row when `leader`).
-    fn row(&self, art_set: &str, leader: bool) -> Option<&ArtRow> {
+    /// The row of an art set drawn: by its faction leader flag, then the season (`winter` or `none`), rank 0, the oldest.
+    fn row(&self, art_set: &str, leader: bool, winter: bool) -> Option<&ArtRow> {
         let rows = self.arts.get(art_set)?;
-        let score = |r: &ArtRow| (r.leader == leader, r.season == "none", r.level == 0, r.age);
+        let season = if winter { "winter" } else { "none" };
+        let score = |r: &ArtRow| (r.leader == leader, r.season == season, r.level == 0, r.age);
         rows.iter().filter(|r| !r.uniforms[0].is_empty() || !r.uniforms[1].is_empty()).max_by_key(|r| score(r))
     }
 
@@ -218,17 +239,10 @@ impl CampaignCatalog {
     /// # Errors
     ///
     /// Returns which link is missing.
-    pub fn figure(
-        &self,
-        read: &Reader,
-        art_set: &str,
-        afloat: Afloat,
-        leader: bool,
-        faction: &str,
-        seed: u64,
-    ) -> Result<CampaignFigure, String> {
-        let row = self.row(art_set, leader).ok_or_else(|| format!("no campaign_character_arts row for '{art_set}'"))?;
-        let k = afloat as usize;
+    pub fn figure(&self, read: &Reader, w: &Wanted) -> Result<CampaignFigure, String> {
+        let (art_set, faction, seed) = (w.art_set.as_str(), w.faction.as_str(), w.seed);
+        let row = self.row(art_set, w.leader, w.winter).ok_or_else(|| format!("no campaign_character_arts row for '{art_set}'"))?;
+        let k = w.afloat as usize;
         let uniform = &row.uniforms[k];
         let variant = self.uniforms.get(&uniform.to_lowercase()).ok_or_else(|| format!("no agent_uniforms row for '{uniform}'"))?;
         let parts = assemble(read, &variant_path(variant), seed).ok_or_else(|| format!("variant '{variant}' does not load"))?;

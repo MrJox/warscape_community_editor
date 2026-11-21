@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 
 use wce_editor::editor::Editor;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
-use wce_render::campaign_character::{Afloat, CampaignCatalog, CampaignFigure};
+use wce_render::campaign_character::{Afloat, CampaignCatalog, CampaignFigure, Wanted};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, SourceRef};
 use wce_terrain_editor::document::MapDocument;
 use wce_tile_editor::tile_document::context::Frame;
@@ -22,13 +22,16 @@ struct Placed {
     facing: f32,
     figure: CampaignFigure,
 
-    /// A navy: afloat, on the sea's level.
+    /// A navy, or an army at sea: afloat, on the sea's level.
     navy: bool,
 }
 
 /// What the read gives: the figures, the world's size, and what could not be drawn.
 struct Loaded {
     placed: Vec<Placed>,
+
+    /// The armies at sea (their transports'), by world point.
+    at_sea: Vec<(f64, f64)>,
     world: (f64, f64),
     notes: Vec<String>,
 }
@@ -39,7 +42,8 @@ pub struct StartFigures {
 
     /// How far from the camera's target figures are drawn (map cells).
     pub radius_cells: f64,
-    loaded: Option<(DocumentId, Arc<OnceLock<Option<Arc<Loaded>>>>)>,
+    /// The read of a document, for a season (winter or not: the art sets' `winter` rows).
+    loaded: Option<((DocumentId, bool), Arc<OnceLock<Option<Arc<Loaded>>>>)>,
     layer: LayerId,
     entities: Vec<EntityId>,
 
@@ -55,7 +59,8 @@ impl Default for StartFigures {
 }
 
 /// The read, on a worker: the campaign's startpos, its characters, the map's settlement cells, the tables and each figure.
-fn load(e: &Editor, name: String) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
+/// A land army standing on water (the LF under the sea there) is at sea: its `sea_uniform` (a transport ship), as the game's.
+fn load(e: &Editor, name: String, frame: Arc<Frame>, winter: bool) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
     let cell = Arc::new(OnceLock::new());
     let out = cell.clone();
     let game = e.game();
@@ -75,17 +80,33 @@ fn load(e: &Editor, name: String) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
             chars.settlement_cells.extend(cities.slots.iter().map(|s| (u32::from(s.cell.0), u32::from(s.cell.1))));
             let catalog = CampaignCatalog::load(files.as_ref(), &schema);
             let mut notes: Vec<String> = vec![];
+            let mut at_sea = vec![];
+            let (w, h) = (f64::from(frame.map.width), f64::from(frame.map.height));
+            let on_water = |world: (f64, f64)| {
+                let (fx, fz) = frame.from_map.apply(world.0 / cities.world.0 * w, (1.0 - world.1 / cities.world.1) * h);
+                frame.lift(fx, fz) < frame.sea_y()
+            };
             let placed = chars
                 .on_map()
                 .filter_map(|c| {
-                    let afloat = if chars.force_of(c).is_some_and(|f| f.navy) { Afloat::Navy } else { Afloat::Land };
+                    let force = chars.force_of(c);
+                    let afloat = match force {
+                        Some(f) if f.navy => Afloat::Navy,
+                        Some(_) if on_water(c.world) => Afloat::Sea,
+                        _ => Afloat::Land,
+                    };
+                    if afloat == Afloat::Sea {
+                        at_sea.push(c.world);
+                    }
                     let art = if c.art_set.is_empty() {
                         catalog.art_set_for(&c.kind, &c.faction, &c.subculture, &c.culture).unwrap_or_default().to_owned()
                     } else {
                         c.art_set.clone()
                     };
-                    match catalog.figure(&read, &art, afloat, false, &c.faction, u64::from(c.id)) {
-                        Ok(figure) => Some(Placed { world: c.world, facing: c.facing, figure, navy: afloat == Afloat::Navy }),
+                    let wanted =
+                        Wanted { art_set: art, afloat, leader: c.leader, winter, faction: c.faction.clone(), seed: u64::from(c.id) };
+                    match catalog.figure(&read, &wanted) {
+                        Ok(figure) => Some(Placed { world: c.world, facing: c.facing, figure, navy: afloat != Afloat::Land }),
                         Err(err) => {
                             notes.push(format!("{} {} ({}): {err}", c.kind, c.id, c.faction));
                             None
@@ -93,12 +114,14 @@ fn load(e: &Editor, name: String) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
                     }
                 })
                 .collect();
-            Some(Arc::new(Loaded { placed, world: cities.world, notes }))
+            Some(Arc::new(Loaded { placed, at_sea, world: cities.world, notes }))
         })();
         if let Some(l) = &loaded {
             wce_foundation::log::info(format!(
-                "terrain {name}: the start's figures: {} drawn{}",
+                "terrain {name}: the start's figures: {} drawn ({} armies at sea: {:?}){}",
                 l.placed.len(),
+                l.at_sea.len(),
+                l.at_sea.iter().take(4).collect::<Vec<_>>(),
                 if l.notes.is_empty() { String::new() } else { format!(", {} not: {}", l.notes.len(), l.notes.join("; ")) }
             ));
         } else {
@@ -124,17 +147,18 @@ impl StartFigures {
     }
 
     /// The figures near the camera, posed for the editor's clock (`ground`: the drawn ground at a frame point).
-    pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<Arc<Frame>>, ground: &dyn Fn(f64, f64) -> f32) {
+    /// `winter`: the view's season is winter.
+    pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<Arc<Frame>>, ground: &dyn Fn(f64, f64) -> f32, winter: bool) {
         let Some(frame) = frame.filter(|_| self.on && e.scene.campaign) else { return self.clear(e) };
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return self.clear(e) };
         let (kind, name) = crate::tool::map_kind(&d.name);
         if kind != wce_terrain::MapKind::Campaign {
             return self.clear(e);
         }
-        if self.loaded.as_ref().is_none_or(|(id, _)| *id != doc) {
-            let cell = load(e, name.to_owned());
+        if self.loaded.as_ref().is_none_or(|(id, _)| *id != (doc, winter)) {
+            let cell = load(e, name.to_owned(), frame.clone(), winter);
             self.clear(e);
-            self.loaded = Some((doc, cell));
+            self.loaded = Some(((doc, winter), cell));
         }
         let Some(loaded) = self.loaded.as_ref().and_then(|(_, c)| c.get().cloned().flatten()) else { return };
         self.total = loaded.placed.len();

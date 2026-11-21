@@ -2519,7 +2519,7 @@ impl Tool for TerrainTool {
         self.props.update(e, self.shown, frame.clone(), &|x, z| view.ground_at(x, z), view.tiles_loaded());
         self.props.pose_animated(e, self.shown);
         wce_foundation::wce_prof!("terrain_tool.figures");
-        self.figures.update(e, self.shown, frame, &|x, z| view.ground_at(x, z));
+        self.figures.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), self.season == "wi");
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -2611,7 +2611,7 @@ impl Tool for TerrainTool {
                     if !t.props.wait_cities(max) {
                         late.push("the settlements");
                     }
-                    t.figures.update(e, t.shown, frame.clone(), &|x, z| view.ground_at(x, z));
+                    t.figures.update(e, t.shown, frame.clone(), &|x, z| view.ground_at(x, z), t.season == "wi");
                     if !t.figures.wait(max) {
                         late.push("the start's figures");
                     }
