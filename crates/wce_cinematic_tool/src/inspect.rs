@@ -87,7 +87,7 @@ pub fn inspect(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create
         SceneItem::Army(i) => army(e, &mut r, ui, create, &mut q, i),
         SceneItem::Battle => battle(&mut r, ui, &mut q),
         SceneItem::Vfx { track, index } => vfx(e, &mut r, ui, &mut q, track, index),
-        SceneItem::CameraKey { track, index } => camera_key(e, &mut r, ui, &mut q, track, index),
+        SceneItem::CameraKey { track, index } | SceneItem::CameraTarget { track, index } => camera_key(e, &mut r, ui, &mut q, track, index),
     }
     commit(e, item, q, &r);
     true
@@ -478,6 +478,74 @@ fn camera_key(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, q: &mut Project, t
         r.picked = Some("camera key interpolation".into());
     }
     let key = k.clone();
+    // The way to the next key: its time and the speed it makes (both change the next keys' times).
+    let keys: Vec<wce_cinematic::scene::CameraKey> = q
+        .clips
+        .iter()
+        .flat_map(|c| &c.tracks)
+        .find(|t| t.id == track)
+        .and_then(|t| if let TrackContent::Camera { keys } = &t.content { Some(keys.clone()) } else { None })
+        .unwrap_or_default();
+    if let Some(next) = keys.get(index + 1) {
+        r.ins.section("To the next key");
+        let dist = (0..3).map(|i| (next.position[i] - key.position[i]).powi(2)).sum::<f32>().sqrt();
+        let mut dur = (next.t - key.t) as f32;
+        r.ins.hint("Seconds to the next key (the keys after it move with it)");
+        let c1 = r.ins.edit_float("dur", "Duration", &mut dur, 0.01, 0.05, 600.0);
+        r.note("dur", c1);
+        let mut speed = if dur > 0.0 { dist / dur } else { 0.0 };
+        r.ins.hint(&format!("Metres a second over the {dist:.0} m to the next key (sets the duration)"));
+        let c2 = r.ins.edit_float("speed", "Speed", &mut speed, 0.1, 0.1, 1000.0);
+        r.note("speed", c2);
+        let new_dur = if c2 && speed > 0.0 { dist / speed } else { dur };
+        if (c1 || c2) && (f64::from(new_dur) - (next.t - key.t)).abs() > 1e-4 {
+            let shift = f64::from(new_dur.max(0.05)) - (next.t - key.t);
+            for c in &mut q.clips {
+                for t in &mut c.tracks {
+                    if t.id == track
+                        && let TrackContent::Camera { keys } = &mut t.content
+                    {
+                        for k in keys.iter_mut().skip(index + 1) {
+                            k.t += shift;
+                        }
+                    }
+                }
+            }
+        }
+        r.ins.hint("A key halfway to the next, where the camera passes then");
+        if r.ins.button("insert", &format!("{}  Insert a key after", icons::PLUS), true) {
+            let mid = (key.t + next.t) * 0.5;
+            if let Some(clip) = q.clips.iter().find(|c| c.tracks.iter().any(|t| t.id == track)).cloned() {
+                let f = wce_cinematic::eval::evaluate(q, &clip, &wce_cinematic::eval::SpeedTable::default(), mid);
+                if let Some(cam) = f.camera {
+                    for t in q.clips.iter_mut().flat_map(|c| &mut c.tracks) {
+                        if t.id == track
+                            && let TrackContent::Camera { keys } = &mut t.content
+                        {
+                            keys.push(wce_cinematic::scene::CameraKey {
+                                t: mid,
+                                position: cam.position,
+                                target: cam.target,
+                                fov: cam.fov,
+                                interp: key.interp,
+                            });
+                        }
+                    }
+                    r.picked = Some("insert camera key".into());
+                }
+            }
+        }
+        r.ins.hint("It looks towards the next key (as far as it looks now)");
+        if r.ins.button("along", &format!("{}  Look along the path", icons::ROUTE), true) {
+            let d: Vec<f32> = (0..3).map(|i| next.position[i] - key.position[i]).collect();
+            let len = dist.max(1e-3);
+            let reach = (0..3).map(|i| (key.target[i] - key.position[i]).powi(2)).sum::<f32>().sqrt().max(20.0);
+            if let Some(k) = items::camera_key_of_mut(q, track, index) {
+                k.target = [0, 1, 2].map(|i| key.position[i] + d[i] / len * reach);
+            }
+            r.picked = Some("camera look along".into());
+        }
+    }
     r.ins.section("");
     r.ins.hint("The viewport sees what this key sees (the free camera: fly from there and key again)");
     if r.ins.button("lookthrough", &format!("{}  Look through it", icons::CAMERA), true) {
@@ -486,7 +554,7 @@ fn camera_key(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, q: &mut Project, t
             &wce_cinematic::eval::CameraState { position: key.position, target: key.target, fov: key.fov },
             units,
         );
-        ui.free_camera = true;
+        ui.look_through = false;
         ui.time = key.t;
         e.viewport.controller().set_camera(&cam);
         e.viewport.controller().lens_mut().fov_y = cam.fov_y;
@@ -528,6 +596,10 @@ fn draft(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create: &mut
             gui::text(&format!("Placing {k}"));
             gui::text_disabled("click where it plays");
         }
+        Making::CameraPath => {
+            gui::text("Laying a camera path");
+            gui::text_disabled("click its points on the ground");
+        }
     }
     gui::separator();
     let d = &mut create.draft;
@@ -560,6 +632,13 @@ fn draft(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create: &mut
                     create.requests.extend(item.map(crate::create::CreateRequest::Placed));
                 }
             }
+        }
+        Making::CameraPath => {
+            ins.hint("Metres above the ground at each point");
+            ins.edit_float("draft.camh", "Height", &mut d.cam_height, 0.5, 1.0, 500.0);
+            ins.hint("Seconds from one point to the next");
+            ins.edit_float("draft.camstep", "Seconds apart", &mut d.cam_step, 0.05, 0.2, 60.0);
+            ins.edit_slider("draft.camfov", "Field of view", &mut d.cam_fov, 5.0, 120.0);
         }
         Making::Vfx(_) => {
             ins.hint("How long each plays, seconds");

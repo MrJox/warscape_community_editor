@@ -80,7 +80,17 @@ pub fn sample() -> Project {
         ids[2],
         "Music",
         TrackContent::Music {
-            cues: vec![MusicCue { t: 0.0, event: "Play_Music_Battle_Hun".into(), stop: Some(11.0), fade_in: 1.0, fade_out: 1.0 }],
+            cues: vec![
+                MusicCue { t: 0.0, event: "Play_Music_Battle_Hun".into(), moods: vec![], stop: Some(11.0), fade_in: 1.0, fade_out: 1.0 },
+                MusicCue {
+                    t: 5.0,
+                    event: String::new(),
+                    moods: vec!["music_set_Faction_Hunnic".into(), "music_set_Intensity_Battle".into()],
+                    stop: None,
+                    fade_in: 0.0,
+                    fade_out: 0.0,
+                },
+            ],
         },
     ));
     c.tracks.push(t(
@@ -222,6 +232,22 @@ fn main() {
     // The Lua: every unit declared, the clip's function, the logic's messages.
     let scripts = battle_scripts(&project);
     let all: String = scripts.files.values().cloned().collect();
+    // The cutscene lifts the battle's starting black first thing, as vanilla's intros do (else it plays on a black screen).
+    if !all.contains("cs:action(function() cam:fade(false, 0.5) end, 0);")
+        && !all.contains("cs:action(function() cam:fade(true, 0) end, 0);")
+    {
+        failed.push("the clip does not fade in at its start".into());
+    }
+    // The sample: a fade track from black lifts it after its first instant, never black at the end of tick 0.
+    {
+        let sample = wce_cinematic::sample::sample_project("attila");
+        let lua: String = battle_scripts(&sample).files.values().cloned().collect();
+        let first_fade = lua.find("cam:fade(true, 0)");
+        let lift = lua.find("cam:fade(false, 1.50)");
+        if !matches!((first_fade, lift), (Some(a), Some(b)) if a < b) {
+            failed.push("the sample's fade: black first, then lifted".into());
+        }
+    }
     for needle in [
         "SU_",
         "Play_Clip_",

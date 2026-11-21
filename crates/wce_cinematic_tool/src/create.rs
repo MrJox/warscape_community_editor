@@ -12,13 +12,16 @@ use wce_editor::icons;
 use crate::pickers::{Cards, GameLists, Item};
 use crate::scene_ui::{add_track, edit};
 
-pub const CATEGORIES: &[(&str, &str)] = &[("Units", icons::USERS), ("Effects", icons::SPARKLES), ("Armies", icons::FLAG)];
+pub const CATEGORIES: &[(&str, &str)] =
+    &[("Units", icons::USERS), ("Effects", icons::SPARKLES), ("Armies", icons::FLAG), ("Camera", icons::CAMERA)];
 
 /// What is being placed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Making {
     Unit(String),
     Vfx(String),
+    /// A camera path: each click a key, a few seconds after the last.
+    CameraPath,
 }
 
 /// What every copy placed takes (kept between placings, as the Tile tool's drafts).
@@ -33,11 +36,26 @@ pub struct Draft {
     pub general: bool,
     pub vfx_length: f32,
     pub vfx_scale: f32,
+    /// A camera path's keys: metres above the ground, seconds apart, field of view.
+    pub cam_height: f32,
+    pub cam_step: f32,
+    pub cam_fov: f32,
 }
 
 impl Default for Draft {
     fn default() -> Self {
-        Self { army: 0, men: 0, width: 30.0, turn: 0.0, general: false, vfx_length: 5.0, vfx_scale: 1.0 }
+        Self {
+            army: 0,
+            men: 0,
+            width: 30.0,
+            turn: 0.0,
+            general: false,
+            vfx_length: 5.0,
+            vfx_scale: 1.0,
+            cam_height: 20.0,
+            cam_step: 3.0,
+            cam_fov: 35.0,
+        }
     }
 }
 
@@ -45,6 +63,9 @@ impl Default for Draft {
 #[derive(Clone, Debug)]
 pub enum CreateRequest {
     Placed(crate::items::SceneItem),
+    /// The Camera tab's: a key of the view at the playhead, recording the camera.
+    KeyView,
+    Record,
 }
 
 #[derive(Default)]
@@ -148,6 +169,7 @@ impl Create {
             let what = match m {
                 Making::Unit(k) => lists.unit_name(k),
                 Making::Vfx(k) => k.clone(),
+                Making::CameraPath => "a camera path".to_owned(),
             };
             gui::text_colored(wce_editor::theme::palette().highlight, &format!("{}  Placing {what}", icons::MOUSE_POINTER_2));
             if gui::is_item_hovered() {
@@ -188,7 +210,8 @@ impl Create {
         match self.category {
             0 => self.units_list(e, lists, p, &w, enter),
             1 => self.effects_list(lists, &w, enter),
-            _ => self.armies_list(e, lists, p, &w, enter),
+            2 => self.armies_list(e, lists, p, &w, enter),
+            _ => self.camera_list(),
         }
         gui::end();
     }
@@ -344,6 +367,73 @@ impl Create {
         }
     }
 
+    /// The camera's ways: a new path by clicks, recording, a key of the view.
+    fn camera_list(&mut self) {
+        let on = self.making == Some(Making::CameraPath);
+        if gui::selectable(&format!("{}  Camera path: click its points", icons::ROUTE), on, 0) {
+            self.making = if on { None } else { Some(Making::CameraPath) };
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Each click on the ground a camera key, a few seconds after the last, looking on to the next (Esc stops)");
+        }
+        if gui::selectable(&format!("{}  Key the camera here", icons::CAMERA), false, 0) {
+            self.requests.push(CreateRequest::KeyView);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A camera key at the playhead holding the viewport's view");
+        }
+        if gui::selectable(&format!("{}  Record the camera", icons::CIRCLE_DOT_DASHED), false, 0) {
+            self.requests.push(CreateRequest::Record);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The clip plays and your camera moves are keyed every half second (again to stop)");
+        }
+    }
+
+    /// A camera path's point clicked at `at` (metres, the ground's height there): a key `cam_height` above it, `cam_step` seconds
+    /// after the clip camera's last (at the playhead for the first), looking on to the next one placed (the last looks ahead).
+    pub fn path_point(
+        &mut self,
+        e: &mut Editor,
+        p: &Project,
+        clip: Option<u32>,
+        time: f64,
+        at: [f32; 3],
+        ahead: [f32; 2],
+    ) -> Option<crate::items::SceneItem> {
+        let clip = clip?;
+        let d = self.draft.clone();
+        let pos = [at[0], at[1] + d.cam_height, at[2]];
+        let mut made = None;
+        edit(e, "camera path point", |p| {
+            let track = p
+                .clip(clip)
+                .and_then(|c| c.tracks.iter().find(|t| matches!(t.content, TrackContent::Camera { .. })).map(|t| t.id))
+                .or_else(|| add_track(p, clip, "Camera", None, ""));
+            let Some(track) = track else { return };
+            crate::scene_ui::for_track(p, clip, track, |t| {
+                if let TrackContent::Camera { keys } = &mut t.content {
+                    let t_new = keys.last().map_or(time, |k| k.t + f64::from(d.cam_step));
+                    // The last one looks on to this one; this one ahead, as the last did.
+                    let target = [pos[0] + ahead[0] * 60.0, pos[1] - d.cam_height * 0.8, pos[2] + ahead[1] * 60.0];
+                    if let Some(last) = keys.last_mut() {
+                        last.target = [pos[0], pos[1] - d.cam_height * 0.8, pos[2]];
+                    }
+                    keys.push(wce_cinematic::scene::CameraKey {
+                        t: t_new,
+                        position: pos,
+                        target,
+                        fov: d.cam_fov,
+                        interp: wce_cinematic::scene::Interp::Smooth,
+                    });
+                    made = Some((track, keys.len() - 1));
+                }
+            });
+        });
+        let _ = p;
+        made.map(|(track, index)| crate::items::SceneItem::CameraKey { track, index })
+    }
+
     /// The Space popup at the mouse: the search, the first matches of units and effects; Enter takes the lit one.
     pub fn quick_add(&mut self, e: &mut Editor, lists: &GameLists, p: &Project, clip: Option<u32>, time: f64) {
         if let Some(at) = self.quick_wanted.take() {
@@ -438,6 +528,7 @@ impl Create {
                 });
                 Some(crate::items::SceneItem::Unit(made))
             }
+            Making::CameraPath => None,
             Making::Vfx(key) => {
                 let clip = clip?;
                 let (len, scale) = (f64::from(self.draft.vfx_length), self.draft.vfx_scale);

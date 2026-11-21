@@ -93,6 +93,7 @@ run audio_recipes     ex wce_audio audio_recipes_check "$GAME"          # music 
 run video_check       ex wce_video video_check "$GAME"                  # every movie written back byte for byte through rpfm_lib and decoded; an encoded clip read back (docs/plans/cinematic.md)
 run movie_catalog     ex wce_cinematic movie_catalog_check "$GAME"      # every movie with its videos row, sound event versions and subtitles inside its frames
 run battle_export     ex wce_cinematic battle_export_check "$GAME" "$OUT/battle_export"   # a sample historical battle: XML, Lua (ticks, orders, logic), tables and loc read back, a pack
+run music            ex wce_cinematic music_check "$GAME"   # the game's music by mood: the moods read, two of them and the battle mode render music
 run movie_export      ex wce_cinematic movie_export_check "$GAME" "$OUT/movie_export"   # a clip encoded as a movie, its sound as a new Play_Movie_ event over the game, videos and subtitle rows, loc
 run movie_edit        ex wce_cinematic movie_edit_check "$GAME" "$OUT/movie_edit"   # subtitles edited and read back, a movie sound replaced, PNGs and (with ffmpeg: WCE_FFMPEG or the PATH) a video imported
 run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)

@@ -276,6 +276,38 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 9. A sample scene (`wce_cinematic::sample`, `examples/sample_scene.rs`): ten vanilla units in two armies, a camera move, fires, a
    subtitle, the bars and a fade in; Open the sample scene in the empty panels and the File menu.
 
+## The user's second round (2026-11-21)
+
+1. The free camera stuck: not reproduced (scripted W and the wheel move it over Catalaunian Plains). Likely causes found: the
+   camera put back on its keys every frame while "Free camera" was off (gone, 7), placing holding the left button (Esc stops it),
+   the editor camera's steps shrinking near the ground (its speed and wheel follow the height above it). **partial**: the user's
+   case to confirm.
+2. Key the camera at the playhead (Timeline button, the viewport's camera chip, the Create panel's Camera tab) and **recording**:
+   the clip plays from the playhead, the viewport's camera keyed every half second (the keys it passes replaced, one undo entry),
+   stopping at the clip's end. **done**
+3. Camera paths: the path drawn as the camera takes it (the keys' curve sampled); each key's target a point of its own (picked,
+   moved by the gizmo); the key's Inspector: duration and speed to the next key (the later keys move with it), Insert a key after,
+   Look along the path; a new path by clicks (Create > Camera > Camera path: a key per click, `cam_height` above the ground,
+   `cam_step` seconds apart, each looking on to the next). **done**
+4. The Layout over the ground: a top-down orthographic render of the scene at the Layout's centre and scale under its marks,
+   again when the view moves and every 1.5 s. **done**
+5. The ground's textures: the ground between and beyond the tiles took the default climate (Continental) everywhere; it takes
+   the climate of the tile at the battle's spot now (the tiles had theirs). **done**
+6. A black screen in game: the battle starts black (`prepare_for_fade_in`) and only faded in when the cutscene ended; a fade track
+   starting black also put "black at once" after its own fade-in at tick 0. Every clip now fades in first thing, as vanilla's
+   intros (`cam:fade(false, 0.5)` at 0), unless its fade track starts black (then black first, its fades after).
+   `battle_export_check`. **done**; in game: **todo**
+7. The camera free by default; it follows the keys only while the clip plays (not while recording) or with Look through. **done**
+8. No music: Attila's battle music is interactive (`game_music_play` plays a switch tree; the `music_set_*` events only set its
+   states), so a cue on a `music_set_*` event played nothing. Music cues are now **moods** (`music.rs`: the state-setting events,
+   by group: Faction, Intensity, Battle, Key), the editor renders the branch the moods lead to (the decision trees walked with the
+   moods' states in the game mode Battle, the playlist's segments in turn, each segment's tracks mixed); the battle plays the
+   mood events (`new_sfx` + `play_sound`), its music system following. Gate `music_check`. **done**; in game: **todo**
+9. Each track an on / off eye before its name (off: left out of the preview, the movie and the battle; kept). **done**
+10. Listening: the sound picker's rows each a play button, the key's play button, the music key's Listen (20 s of its moods). **done**
+11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
+    40 Mbit/s), motion blur and the subtitles' language. **done**
+
 ## The Tile tool's other tools for historical battles (assessment, 2026-11-21)
 
 The official pipeline makes a historical battle's map in TEd (vanilla's `terrain/battles/<name>/`: a tile map of tiles) and its

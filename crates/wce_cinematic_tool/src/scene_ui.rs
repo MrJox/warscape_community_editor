@@ -43,8 +43,12 @@ pub struct SceneUi {
     /// A key being dragged on the timeline: its time when the drag started.
     dragging: Option<(KeyRef, f64)>,
     pub speeds: SpeedTable,
-    /// The viewport's camera is the user's, not the keys'.
-    pub free_camera: bool,
+    /// Paused, the viewport looks through the camera keys (playing it always does; else the camera is the user's, free).
+    pub look_through: bool,
+    /// Recording the camera: the clip plays and the viewport's camera (flown by the user) is keyed as it goes.
+    pub recording: bool,
+    /// The scene time of the last recorded key.
+    pub recorded_at: f64,
     /// The scene as a battle would play it (units under orders, movie-only tracks gone).
     pub battle_preview: bool,
     /// The language texts are edited and exported in (`en`, `de`...); English stands in where a text has none.
@@ -65,6 +69,13 @@ pub struct SceneUi {
     pub outliner_hovered: bool,
     /// The viewport's launch chip was clicked.
     pub launch_request: Option<bool>,
+    /// A sound or some music to listen to (a pick's play button): the event, or the moods.
+    pub audition: Option<(Option<String>, Vec<String>)>,
+    /// The Layout's picture of the ground: its render target, the view it is of, when, and its image's number.
+    layout_target: wce_render::render_target::RenderTarget,
+    layout_pic_key: Option<([i32; 2], i32, u32, u32)>,
+    layout_pic_at: Option<std::time::Instant>,
+    layout_pic_n: u64,
     /// The window picking the battle's place on its map.
     pub map_pick: crate::map_pick::MapPicker,
     /// A unit being dragged on the Layout: its start when the drag began.
@@ -295,7 +306,7 @@ impl SceneUi {
             gui::set_tooltip("Play it as the battle would: units under orders at their own speeds, movie-only tracks gone");
         }
         gui::same_line();
-        gui::checkbox("Free camera", &mut self.free_camera);
+        gui::checkbox("Look through", &mut self.look_through);
         if gui::is_item_hovered() {
             gui::set_tooltip("Fly the viewport yourself; Add key on a camera track keys this view");
         }
@@ -305,6 +316,23 @@ impl SceneUi {
         }
         if gui::is_item_hovered() {
             gui::set_tooltip("A key at the playhead on the selected track, holding the value there");
+        }
+        gui::same_line();
+        let mut key_view = false;
+        if gui::button(&format!("{}  Key the camera", icons::CAMERA)) {
+            key_view = true;
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A camera key at the playhead holding the viewport's view (fly there first)");
+        }
+        gui::same_line();
+        let rec_label =
+            if self.recording { format!("{}  Stop recording", icons::SQUARE) } else { format!("{}  Record", icons::CIRCLE_DOT_DASHED) };
+        if gui::button(&rec_label) {
+            self.toggle_recording();
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The clip plays from the playhead; fly the viewport and your camera is keyed every half second");
         }
 
         // Tracks and keys.
@@ -344,8 +372,35 @@ impl SceneUi {
             gui::set_cursor_screen_pos(v2(origin.x, y));
             gui::push_id_int(track.id as i32);
             let (support, why) = track_support(&track.content);
-            let label = format!("{} {}", if track.muted { icons::VOLUME_X } else { "" }, track.name);
-            if gui::selectable_sized(&label, selected, 0, v2(names_w - 30.0, row_h - 2.0)) {
+            // On or off: an off track is left out of the preview, the movie and the battle (not deleted).
+            let on = !track.muted;
+            if !on {
+                gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
+            }
+            if gui::small_button(if on { icons::EYE } else { icons::EYE_OFF }) {
+                let id = track.id;
+                pending = Some((
+                    if on { "track off".into() } else { "track on".into() },
+                    Box::new(move |p: &mut Project| for_track(p, clip.id, id, |t| t.muted = !t.muted)),
+                ));
+            }
+            if !on {
+                gui::pop_style_color(1);
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip(if on { "On: click to leave it out (kept, not deleted)" } else { "Off: click to use it again" });
+            }
+            gui::same_line();
+            let label = if on { track.name.clone() } else { format!("{}  (off)", track.name) };
+            let button_w = gui::item_rect().1.x - gui::item_rect().0.x + gui::item_spacing().x;
+            if !on {
+                gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
+            }
+            let clicked = gui::selectable_sized(&label, selected, 0, v2(names_w - 30.0 - button_w, row_h - 2.0));
+            if !on {
+                gui::pop_style_color(1);
+            }
+            if clicked {
                 self.track = Some(track.id);
                 if let TrackContent::Unit { unit, .. } = &track.content {
                     self.unit = Some(*unit);
@@ -355,7 +410,7 @@ impl SceneUi {
                 gui::set_tooltip(&format!("{}: {} ({why})", track.content.kind_name(), support.label()));
             }
             if gui::begin_popup_context_item("##trackmenu") {
-                if gui::menu_item(if track.muted { "Unmute" } else { "Mute" }, None, false, true) {
+                if gui::menu_item(if track.muted { "Turn on" } else { "Turn off" }, None, false, true) {
                     let id = track.id;
                     pending =
                         Some(("mute track".into(), Box::new(move |p: &mut Project| for_track(p, clip.id, id, |t| t.muted = !t.muted))));
@@ -443,6 +498,10 @@ impl SceneUi {
         if let Some((name, f)) = pending {
             edit(e, &name, f);
         }
+        if key_view {
+            self.look_through = false;
+            self.key_camera_view(e);
+        }
         if let Some((track, t)) = key_here {
             self.track = Some(track);
             self.time = t;
@@ -454,6 +513,71 @@ impl SceneUi {
             }
         }
         gui::end();
+    }
+
+    /// The viewport follows the camera keys: while the clip plays (not while recording), or when looking through them.
+    pub fn follows_keys(&self) -> bool {
+        (self.playing && !self.recording) || self.look_through
+    }
+
+    /// Starts or stops recording the camera.
+    pub fn toggle_recording(&mut self) {
+        self.recording = !self.recording;
+        if self.recording {
+            self.look_through = false;
+            self.playing = true;
+            self.recorded_at = f64::NEG_INFINITY;
+        }
+    }
+
+    /// While recording: the viewport's view keyed at the playhead every half second, the clip's camera keys it passes over replaced
+    /// (one undo entry for the whole recording).
+    pub fn record(&mut self, e: &mut Editor) {
+        if !self.recording {
+            return;
+        }
+        if !self.playing {
+            self.recording = false;
+            if let Some(d) = scene_doc(e) {
+                d.end_gesture();
+            }
+            e.status("Cinematic: camera recorded", false);
+            return;
+        }
+        if self.time - self.recorded_at < 0.5 && self.recorded_at.is_finite() {
+            return;
+        }
+        let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+        let Some(clip) = self.current_clip(&p).map(|c| c.id) else { return };
+        let units = e.scene.game_units.max(1e-3);
+        let vc = e.viewport.camera();
+        let key = CameraKey {
+            t: self.time,
+            position: [vc.eye.x * units, vc.eye.y * units, vc.eye.z * units],
+            target: [vc.target.x * units, vc.target.y * units, vc.target.z * units],
+            fov: vc.fov_y.to_degrees(),
+            interp: Interp::Smooth,
+        };
+        let from = if self.recorded_at.is_finite() { self.recorded_at } else { self.time - 1e-6 };
+        let t = self.time;
+        let mut q = p.clone();
+        let track = q
+            .clip(clip)
+            .and_then(|c| c.tracks.iter().find(|tr| matches!(tr.content, TrackContent::Camera { .. })).map(|tr| tr.id))
+            .or_else(|| add_track(&mut q, clip, "Camera", None, ""));
+        if let Some(track) = track {
+            for_track(&mut q, clip, track, |tr| {
+                if let TrackContent::Camera { keys } = &mut tr.content {
+                    keys.retain(|k| k.t <= from || k.t > t + 1e-6);
+                    keys.push(key.clone());
+                }
+            });
+            self.track = Some(track);
+        }
+        if let Some(d) = scene_doc(e) {
+            d.push_merged("record camera", q, 0x5EC0_4D00);
+        }
+        self.recorded_at = t;
     }
 
     pub fn add_key_public(&mut self, e: &mut Editor, p: &Project, clip: &Clip) {
@@ -518,7 +642,14 @@ impl SceneUi {
                     path.push(PathKey { t, position: pos, interp: Interp::Linear, gait: None });
                 }
                 TrackContent::Sound { events } => events.push(SoundEvent { t, event: String::new(), position: None, volume: 1.0 }),
-                TrackContent::Music { cues } => cues.push(MusicCue { t, event: String::new(), stop: None, fade_in: 0.0, fade_out: 0.0 }),
+                TrackContent::Music { cues } => cues.push(MusicCue {
+                    t,
+                    event: String::new(),
+                    moods: vec!["music_set_Intensity_Battle".into()],
+                    stop: None,
+                    fade_in: 1.0,
+                    fade_out: 1.0,
+                }),
                 TrackContent::Subtitles { lines } => {
                     lines.push(SubtitleLine { t, end: t + 3.0, text: next_text.clone() });
                     made_text = Some(next_text.clone());
@@ -653,15 +784,27 @@ impl SceneUi {
                 if let Some(c) = events.get_mut(k.index) {
                     time_row!(c.t);
                     gui::row("Sound");
-                    if let Some(k) = picker(
+                    let mut play = None;
+                    if let Some(k) = crate::pickers::picker_audible(
                         &mut self.filters,
                         "sound",
                         if c.event.is_empty() { "Pick..." } else { &c.event },
                         &self.lists.sound_events,
-                        -1.0,
+                        -30.0,
+                        &mut play,
                     ) {
                         c.event = k;
                         changed = true;
+                    }
+                    gui::same_line();
+                    if gui::small_button(&format!("{}##playsound", icons::PLAY)) && !c.event.is_empty() {
+                        play = Some(c.event.clone());
+                    }
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("Listen to it");
+                    }
+                    if let Some(p) = play {
+                        self.audition = Some((Some(p), vec![]));
                     }
                     if gui::is_item_hovered() {
                         gui::set_tooltip("A sound event of the game's banks");
@@ -672,19 +815,44 @@ impl SceneUi {
             TrackContent::Music { cues } => {
                 if let Some(c) = cues.get_mut(k.index) {
                     time_row!(c.t);
-                    gui::row("Music");
-                    if let Some(k) = picker(
-                        &mut self.filters,
-                        "music",
-                        if c.event.is_empty() { "Pick..." } else { &c.event },
-                        &self.lists.music_events,
-                        -1.0,
-                    ) {
-                        c.event = k;
-                        changed = true;
+                    // The game's music by mood: a value per group (the battle sets them; its music follows).
+                    let mut groups: Vec<String> = vec![];
+                    for m in &self.lists.moods {
+                        if !groups.contains(&m.group) {
+                            groups.push(m.group.clone());
+                        }
+                    }
+                    if groups.is_empty() {
+                        gui::text_disabled("Reading the game's music...");
+                    }
+                    for g in groups.iter().filter(|g| !g.eq_ignore_ascii_case("gamemode")) {
+                        let values: Vec<&wce_cinematic::music::Mood> = self.lists.moods.iter().filter(|m| &m.group == g).collect();
+                        let mut names: Vec<String> = vec!["(as it is)".to_owned()];
+                        names.extend(values.iter().map(|m| m.value.clone()));
+                        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                        let mut i = values.iter().position(|m| c.moods.contains(&m.event)).map_or(0, |k| k as i32 + 1);
+                        gui::row(g);
+                        gui::set_next_item_width(-1.0);
+                        if gui::combo(&format!("##mood{g}"), &mut i, &refs) {
+                            c.moods.retain(|e| !values.iter().any(|m| &m.event == e));
+                            if i > 0 {
+                                c.moods.push(values[i as usize - 1].event.clone());
+                            }
+                            changed = true;
+                        }
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip(&format!("The music's {g} from here (as it is: what the battle has)"));
+                        }
+                    }
+                    if gui::small_button(&format!("{}  Listen", icons::PLAY)) {
+                        self.audition = Some((None, c.moods.clone()));
                     }
                     if gui::is_item_hovered() {
-                        gui::set_tooltip("A music event of the game's banks");
+                        gui::set_tooltip("20 seconds of the music these moods give");
+                    }
+                    if !c.event.is_empty() {
+                        gui::row("Event");
+                        gui::text_disabled(&c.event);
                     }
                     changed |= float_row("Fade in", &mut c.fade_in, 0.05, "Seconds");
                     changed |= float_row("Fade out", &mut c.fade_out, 0.05, "Seconds");
@@ -802,6 +970,38 @@ impl SceneUi {
 
     // ---- Layout panel (the field from above) ----
 
+    /// The Layout's picture of the ground: a top-down orthographic render at the view's centre and scale.
+    fn layout_picture(&mut self, e: &mut Editor, centre: [f32; 2], mpp: f32, size: gui::Vec2) {
+        let (w, h) = ((size.x.max(16.0)) as u32, (size.y.max(16.0)) as u32);
+        let key = (centre.map(|v| (v * 10.0).round() as i32), (mpp * 1000.0).round() as i32, w, h);
+        let stale = self.layout_pic_at.is_none_or(|t| t.elapsed().as_secs_f32() > 1.5);
+        if self.layout_pic_key == Some(key) && !stale {
+            return;
+        }
+        if e.scripted_input() && self.layout_pic_key == Some(key) {
+            return;
+        }
+        let units = e.scene.game_units.max(1e-3);
+        let (cx, cz) = (centre[0] / units, centre[1] / units);
+        let cam = wce_scene::camera::Camera {
+            eye: wce_foundation::math::Float3::new(cx, 6000.0 / units, cz),
+            target: wce_foundation::math::Float3::new(cx, 0.0, cz),
+            up: wce_foundation::math::Float3::new(0.0, 0.0, 1.0),
+            fov_y: 0.6,
+            znear: 1.0 / units,
+            zfar: 13000.0 / units,
+            ortho_height: Some(size.y * mpp / units),
+        };
+        let Some(rgba) = wce_editor::viewport::render_offscreen(e, &mut self.layout_target, w, h, cam, e.clock.time() as f32, true) else {
+            return;
+        };
+        e.images.forget(&format!("cinematic/layout/{}", self.layout_pic_n));
+        self.layout_pic_n += 1;
+        e.images.submit(&format!("cinematic/layout/{}", self.layout_pic_n), w, h, rgba);
+        self.layout_pic_key = Some(key);
+        self.layout_pic_at = Some(std::time::Instant::now());
+    }
+
     pub fn layout_panel(&mut self, e: &mut Editor, create: &mut crate::create::Create) {
         gui::set_next_window_size(v2(500.0, 500.0), gui::COND_FIRST_USE_EVER);
         if !gui::begin("Layout", None, 0) {
@@ -824,6 +1024,14 @@ impl SceneUi {
         let draw = gui::window_draw_list();
         draw.push_clip_rect(origin, v2(origin.x + size.x, origin.y + size.y));
         draw.rect_filled(origin, v2(origin.x + size.x, origin.y + size.y), gui::col32(30, 36, 30, 255), 0.0);
+        // The ground under it: the scene seen from straight above (the map, the tile, the men), rendered again when the view moves
+        // and every second and a half meanwhile (the ground streams in, the units move).
+        self.layout_picture(e, centre, mpp, size);
+        if let Some(img) = e.images.get(&format!("cinematic/layout/{}", self.layout_pic_n)) {
+            draw.image(img.id, origin, v2(origin.x + size.x, origin.y + size.y), v2(0.0, 0.0), v2(1.0, 1.0), 0xFFFF_FFFF);
+            // Dimmed a little, the marks over it stand out.
+            draw.rect_filled(origin, v2(origin.x + size.x, origin.y + size.y), gui::col32(0, 0, 0, 25), 0.0);
+        }
         // A 50 m grid, the 100 m lines brighter.
         let half = [size.x * 0.5 * mpp, size.y * 0.5 * mpp];
         let mut gx = ((centre[0] - half[0]) / 50.0).floor() * 50.0;

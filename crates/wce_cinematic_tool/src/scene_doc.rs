@@ -156,6 +156,10 @@ impl SceneDocument {
                 let yaw = (k.target[0] - k.position[0]).atan2(k.target[2] - k.position[2]);
                 (k.position[0], k.position[1], k.position[2], yaw)
             }
+            SceneItem::CameraTarget { track, index } => {
+                let k = camera_key_of(p, track, index)?;
+                (k.target[0], k.target[1], k.target[2], 0.0)
+            }
             SceneItem::Battle => return None,
         };
         Some(translation(Float3::new(x / units, y / units, z / units)) * rotation_y(yaw))
@@ -222,6 +226,11 @@ impl SceneDocument {
                         let off = [off[0] * c + off[2] * s, off[1], -off[0] * s + off[2] * c];
                         k.position = at;
                         k.target = [at[0] + off[0], at[1] + off[1], at[2] + off[2]];
+                    }
+                }
+                SceneItem::CameraTarget { track, index } => {
+                    if let Some(k) = camera_key_of_mut(&mut p, track, index) {
+                        k.target = at;
                     }
                 }
                 SceneItem::Battle => {}

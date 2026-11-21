@@ -128,6 +128,20 @@ fn event_pcm(lib: &SoundLibrary, files: &dyn Files, event: &str) -> Option<Pcm> 
     lib.media_bytes(&versions[pick].1, files).and_then(|b| decode_wem(&b).ok())
 }
 
+/// One sound event, or the music of some moods (`seconds` of it), alone: what a key would play.
+pub fn audition(lib: &SoundLibrary, files: &dyn Files, event: Option<&str>, moods: &[String], seconds: f64) -> Option<Pcm> {
+    let frames = if moods.is_empty() {
+        event_pcm(lib, files, event?).map(|p| to_stereo_48k(&p))?
+    } else {
+        crate::music::render(lib, files, moods, seconds, &|b| decode_wem(b).ok().map(|p| to_stereo_48k(&p)))?
+    };
+    Some(Pcm {
+        channels: 2,
+        sample_rate: MIX_RATE,
+        samples: frames.into_iter().flat_map(|s| [s[0].clamp(-1.0, 1.0), s[1].clamp(-1.0, 1.0)]).collect(),
+    })
+}
+
 /// The clip's sound: every sound event at its time and volume, every music cue with its fades, mixed to 48 kHz stereo, as long as
 /// the clip. A random container plays its first variation (the mix is the same every time). Missing events are reported.
 pub fn mixdown(_project: &Project, clip: &Clip, lib: &SoundLibrary, files: &dyn Files, missing: &mut Vec<String>) -> Pcm {
@@ -155,8 +169,14 @@ pub fn mixdown(_project: &Project, clip: &Clip, lib: &SoundLibrary, files: &dyn 
             }
             TrackContent::Music { cues } => {
                 for c in cues {
-                    let Some(s) = get(&c.event) else {
-                        missing.push(c.event.clone());
+                    let rendered = if c.moods.is_empty() {
+                        None
+                    } else {
+                        let len = c.stop.unwrap_or(clip.length) - c.t;
+                        crate::music::render(lib, files, &c.moods, len.max(0.0), &|b| decode_wem(b).ok().map(|p| to_stereo_48k(&p)))
+                    };
+                    let Some(s) = rendered.or_else(|| if c.event.is_empty() { None } else { get(&c.event) }) else {
+                        missing.push(if c.moods.is_empty() { c.event.clone() } else { c.moods.join(" + ") });
                         continue;
                     };
                     let start = (c.t * MIX_RATE as f64).round() as usize;

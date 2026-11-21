@@ -15,6 +15,7 @@ pub mod logic;
 pub mod movie_edit;
 pub mod movie_export;
 pub mod movies;
+pub mod music;
 pub mod sample;
 pub mod scene;
 pub mod speeds;

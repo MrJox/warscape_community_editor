@@ -261,7 +261,12 @@ fn one() -> f32 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MusicCue {
     pub t: f64,
+    /// An event that plays music by itself (a mod's); empty with moods.
     pub event: String,
+    /// The game's music by mood (`music::Mood`: `music_set_*` events, a group each): the battle plays them and its music follows;
+    /// the editor renders the branch they lead to.
+    #[serde(default)]
+    pub moods: Vec<String>,
     #[serde(default)]
     pub stop: Option<f64>,
     #[serde(default)]

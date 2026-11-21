@@ -248,6 +248,17 @@ impl Ground {
                     let spot = Spot { x: (map.width / 2) as i32, y: (map.height / 2) as i32, rotation: 0x10 };
                     (Arc::new(map), spot)
                 };
+                // The ground between and beyond the tiles in the climate of the place (the tile at the spot's), as the Tile tool's
+                // map context takes its placement's; else the default.
+                let climate = map
+                    .placements
+                    .iter()
+                    .find(|p| {
+                        let r = p.rect();
+                        spot.x >= r[0] && spot.x < r[2] && spot.y >= r[1] && spot.y < r[3]
+                    })
+                    .and_then(|p| map.climate_of(p))
+                    .map(str::to_owned);
                 let t = packs.clone();
                 let provider: TileProvider = Arc::new(move |location: &str, variation: &str| t.tile(location, variation));
                 let rq = ContextRequest {
@@ -262,7 +273,13 @@ impl Ground {
                     raw_root: raw_root.clone().or(packs_raw.ok()).ok_or("no kit with a tile database")?,
                     tile_roots: roots,
                     game_kit,
-                    look: TerrainLook { season: k.season.clone(), ..TerrainLook::default() },
+                    look: {
+                        let mut look = TerrainLook { season: k.season.clone(), ..TerrainLook::default() };
+                        if let Some(c) = climate {
+                            look.climate = c;
+                        }
+                        look
+                    },
                     trees: true,
                     bake_ground,
                     plain: None,
