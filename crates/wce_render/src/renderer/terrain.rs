@@ -1056,7 +1056,7 @@ impl Renderer {
         // The blend box: the material's rectangle turned and moved with the entity (not scaled: the tile tool's z scale is in the rectangle),
         // its height range around the terrain's lifted by the LF under it. The world's z stretch (a campaign map's) comes off the turn and
         // goes back on the corners.
-        if let Some(m) = &t.material {
+        if let Some(m) = t.material.as_ref().filter(|_| !t.no_blend_box) {
             let k = self.camera.z_stretch;
             let (a, c) = (w[0][0], w[2][0] / k);
             let l = (a * a + c * c).sqrt().max(1e-12);

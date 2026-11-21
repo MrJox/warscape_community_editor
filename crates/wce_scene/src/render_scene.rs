@@ -411,6 +411,11 @@ pub struct Terrain {
     /// the terrain's, not by the terrain's own passes (its blend, its resolve).
     pub sea_floor: bool,
 
+    /// Its material's blend box is another entity's, which covers it: none of its own (a campaign cliff's floor, under its tile's box:
+    /// drawn by both, the tile's layers weighed twice against the cliff's own albedo, and the ground's colour came through on the cliff
+    /// faces; capture F, the game's one box a tile).
+    pub no_blend_box: bool,
+
     /// Change it when the heights or the texture change: the renderer rebuilds the mesh.
     pub version: u64,
 }
@@ -485,6 +490,7 @@ impl Default for Terrain {
             legacy: true,
             custom: None,
             sea_floor: false,
+            no_blend_box: false,
             version: 0,
         }
     }
