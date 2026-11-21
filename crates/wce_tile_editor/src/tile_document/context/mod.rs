@@ -538,6 +538,7 @@ struct MapIndex {
     climate: Vec<u8>,
     by_chunk: HashMap<ChunkKey, Vec<usize>>,
     reach: i32,
+    extent: HashMap<ChunkKey, [i32; 4]>,
 }
 
 impl MapIndex {
@@ -574,7 +575,7 @@ impl MapIndex {
         }
 
         let mut by_chunk: HashMap<ChunkKey, Vec<usize>> = HashMap::new();
-        let mut reach = 0;
+        let (mut reach, mut extent) = (0, HashMap::new());
         for (i, p) in map.placements.iter().enumerate() {
             // Not under the open tile; no open tile (the Terrain tool's frame: an empty rectangle at the map's centre) hides nothing.
             let r = p.rect();
@@ -586,9 +587,13 @@ impl MapIndex {
             mark(r, (key.1 * cw + key.0) as u32 + 2);
             reach = reach.max(r[2] - r[0]).max(r[3] - r[1]);
             by_chunk.entry(key).or_default().push(i);
+            if r[0] < key.0 * CHUNK || r[1] < key.1 * CHUNK || r[2] > (key.0 + 1) * CHUNK || r[3] > (key.1 + 1) * CHUNK {
+                let e = extent.entry(key).or_insert([key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK]);
+                *e = [e[0].min(r[0]), e[1].min(r[1]), e[2].max(r[2]), e[3].max(r[3])];
+            }
         }
 
-        Self { owner, climate, by_chunk, reach }
+        Self { owner, climate, by_chunk, reach, extent }
     }
 }
 
@@ -623,6 +628,8 @@ pub struct Frame {
     pub by_chunk: HashMap<ChunkKey, Vec<usize>>,
     owner: Vec<u32>,
     reach: i32,
+    /// The cells of the chunks whose placements reach past them (`chunk_extent`).
+    extent: HashMap<ChunkKey, [i32; 4]>,
 
     /// Each cell's climate (row by row, the first placement over it; NO_CLIMATE: none), the database's climates, the look and the
     /// files the plain material is given another climate's textures with.
@@ -708,7 +715,7 @@ impl Frame {
         let kit_climates =
             ClimateList::load(&rq.raw_root.join(format!("terrain/tiles/{kind}/_tile_database/_settings.xml"))).unwrap_or_default();
         let climates = effective_climates(kit_climates, kind, files.as_deref());
-        let MapIndex { owner, climate, by_chunk, reach } = index;
+        let MapIndex { owner, climate, by_chunk, reach, extent } = index;
         Self {
             map,
             unit: rq.unit,
@@ -725,6 +732,7 @@ impl Frame {
             by_chunk,
             owner,
             reach,
+            extent,
             climate,
             climates,
             look: rq.look.clone(),
@@ -743,7 +751,7 @@ impl Frame {
     /// The same frame over other placements of the same map (the Terrain tool's fill run again after an edit): its LF maps, climates
     /// and materials kept, the placements' chunks and cells worked out again (a while on the campaign map: away from the UI thread).
     pub fn with_map(&self, map: Arc<PlacedMap>) -> Self {
-        let MapIndex { owner, climate, by_chunk, reach } = MapIndex::new(&map, self.open);
+        let MapIndex { owner, climate, by_chunk, reach, extent } = MapIndex::new(&map, self.open);
         Self {
             map,
             unit: self.unit,
@@ -760,6 +768,7 @@ impl Frame {
             by_chunk,
             owner,
             reach,
+            extent,
             climate,
             climates: self.climates.clone(),
             look: self.look.clone(),
@@ -778,6 +787,12 @@ impl Frame {
     /// The most cells a placement reaches past its origin.
     pub fn reach(&self) -> i32 {
         self.reach
+    }
+
+    /// The cells a chunk draws, `[x0, y0, x1, y1)`: its own and those of its placements, which reach past it (a chunk builds its tiles
+    /// whole).
+    pub fn chunk_extent(&self, key: ChunkKey) -> [i32; 4] {
+        self.extent.get(&key).copied().unwrap_or([key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK])
     }
 
     /// The LF height under a frame point relative to the open tile (scene units).
