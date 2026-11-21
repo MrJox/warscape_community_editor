@@ -183,8 +183,9 @@ pub enum Make {
     /// Rules that lay things by themselves, shown in the Inspector (`decals`: the decal rules, docs/plans/auto_detail_2.md, E).
     Rules { what: String },
 
-    /// A field area (docs/plans/auto_detail_2.md, G): drawn as a vegetation exclusion polygon with `wce_fields`.
-    Fields,
+    /// A field area (docs/plans/auto_detail_2.md, G) of a kind (`wce_tile::fields::presets`, by name): drawn as a vegetation exclusion
+    /// polygon with `wce_fields`.
+    Fields { kind: String },
 
     /// A path (docs/plans/auto_detail_2.md, H): its points clicked, the way between them found over the ground, made a procedural road.
     Path,
@@ -231,7 +232,7 @@ impl Entry {
             Make::VegSet { name } => format!("vegset|{name}"),
             Make::Biome { name } => format!("biome|{name}"),
             Make::Rules { what } => format!("rules|{what}"),
-            Make::Fields => "fields|".to_owned(),
+            Make::Fields { kind } => format!("fields|{kind}"),
             Make::Path => "path|".to_owned(),
             Make::District => "district|".to_owned(),
         }
@@ -245,7 +246,7 @@ impl Entry {
             Make::VegSet { .. } => icons::TREES,
             Make::Biome { .. } => icons::SHRUB,
             Make::Rules { .. } => icons::STICKER,
-            Make::Fields => icons::LEAF,
+            Make::Fields { .. } => icons::LEAF,
             Make::Path => crate::entity_types::type_icon(wce_tile_editor::tile_document::ROAD_SPLINE),
             Make::District => icons::BOX,
         }
@@ -480,10 +481,14 @@ impl TileTool {
             out.push(en);
         }
 
-        // Fields, in the vegetation, to draw an area of.
-        let mut en = entry(1, "Fields and farmland".to_owned(), Make::Fields, "fields farmland farm crops orchard haystack fence");
-        en.folder = "Biomes".to_owned();
-        out.push(en);
+        // Fields of each kind, in the vegetation, to draw an area of.
+        for p in wce_tile::fields::presets() {
+            let label = format!("fields: {}", p.name);
+            let words = format!("fields farmland farm crops orchard haystack fence hedge track {}", p.name.to_lowercase());
+            let mut en = entry(1, label, Make::Fields { kind: p.name.to_owned() }, &words);
+            en.folder = "Biomes".to_owned();
+            out.push(en);
+        }
 
         // A district, at the top of the buildings.
         out.push(entry(
@@ -955,9 +960,10 @@ impl TileTool {
                 self.start_drawing();
             }
 
-            Make::Fields => {
+            Make::Fields { kind } => {
+                let settings = wce_tile::fields::presets().into_iter().find(|p| p.name == *kind).map(|p| p.settings).unwrap_or_default();
                 let mut draft = Draft::new(wce_tile::biomes::AREA_TYPE, "");
-                draft.attrs.insert(wce_tile::fields::FIELDS_ATTR.to_owned(), wce_tile::fields::FieldSettings::default().to_text());
+                draft.attrs.insert(wce_tile::fields::FIELDS_ATTR.to_owned(), settings.to_text());
                 draft.attrs.insert(wce_tile::fields::SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
                 draft.attrs.insert("name".to_owned(), "Fields".to_owned());
                 self.draft = Some(draft);
@@ -985,7 +991,7 @@ impl TileTool {
             Make::Biome { .. } if !self.drawing => format!("{}: drag the brush in the viewport (Ctrl takes away)", en.label),
             Make::Biome { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             Make::Rules { .. } => format!("{}: in the Inspector; the decals follow the ground by themselves", en.label),
-            Make::Fields => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
+            Make::Fields { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             Make::Path => format!("{}: click its ends (and points it must pass); {}; Esc cancels", en.label, self.finish_hint(e)),
             Make::District => {
                 format!("{}: click the terrain for its points; {}; it is filled then; Esc cancels", en.label, self.finish_hint(e))
@@ -2243,7 +2249,12 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
         "biome" => Make::Biome { name: key.to_owned() },
-        "fields" => Make::Fields,
+        // A kind by its name, any case, `_` for a space (a script's word); none: the first.
+        "fields" => {
+            let all = wce_tile::fields::presets();
+            let p = all.iter().find(|p| p.name.eq_ignore_ascii_case(&key.replace('_', " "))).or(all.first());
+            Make::Fields { kind: p.map(|p| p.name.to_owned()).unwrap_or_default() }
+        }
         "path" => Make::Path,
         "district" => Make::District,
         kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD, &BUILDING_SPLINE]).any(|(_, k, drawn)| *k == kind && *drawn)

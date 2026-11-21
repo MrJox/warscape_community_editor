@@ -1,6 +1,7 @@
 //! A field area's settings in the Inspector (docs/plans/auto_detail_2.md, G; `wce_tile::fields`, `tile_document::fields`): under the
-//! selected area's properties. Simple: how wide the strips are, how much is orchard, the fence, the props, the ground under it, Reroll;
-//! Advanced: every number and what each lays (picked from the game's). An edit is one undo entry (the area's `wce_fields` attribute): the
+//! selected area's properties. Simple: its kind (a preset), how big the farms are, how many lanes are tracks, how many farms are fenced, how
+//! wide the strips are, how much is orchard, the props, the ground under it, Reroll; Advanced: every number and what each lays (picked
+//! from the game's). An edit is one undo entry (the area's `wce_fields` attribute): the
 //! panel works on a copy while a field is being dragged or typed in, and gives it to the area when no field is active.
 
 use wce_editor::editor::Editor;
@@ -18,6 +19,9 @@ pub struct FieldsUi {
     pub advanced: bool,
 }
 
+const FARMS: [(&str, f32); 4] = [("One", 0.0), ("Small", 55.0), ("Medium", 130.0), ("Large", 220.0)];
+const TRACKS: [(&str, f32); 4] = [("Belts", 0.0), ("Mixed", 0.5), ("Mostly", 0.85), ("Tracks", 1.0)];
+const FENCED: [(&str, f32); 4] = [("None", 0.0), ("Some", 0.3), ("Most", 0.6), ("All", 1.0)];
 const WIDTHS: [(&str, f32); 4] = [("Narrow", 6.0), ("Medium", 12.0), ("Wide", 20.0), ("Broad", 30.0)];
 const ORCHARDS: [(&str, f32); 4] = [("None", 0.0), ("Some", 0.2), ("Half", 0.5), ("All", 1.0)];
 const PROPS: [(&str, f32); 4] = [("None", 0.0), ("Few", 2.0), ("Some", 4.0), ("Many", 10.0)];
@@ -87,24 +91,87 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Another layout: other crops on the strips, other orchards, props elsewhere");
+            gui::set_tooltip("Another layout: other farms and lanes, other crops, other orchards, props elsewhere");
         }
 
         let Some((elem, mut s)) = self.fields_ui.draft.clone() else { return };
         let advanced = self.fields_ui.advanced;
         let before = s.clone();
-        choices("width", "Strips", "How wide each strip of crops is", &mut s.strip_width, &WIDTHS);
-        choices("orchard", "Orchards", "How many of the strips are orchards: rows of trees instead of crops", &mut s.orchard, &ORCHARDS);
-        choices("props", "Haystacks", "Haystacks and carts on the crops, how many a hectare", &mut s.props_per_ha, &PROPS);
-        choices("ground", "Ground", "How worn the ground under the fields is (the texture rules' layer)", &mut s.ground_strength, &GROUNDS);
-        let mut fenced = !s.fence.is_empty();
-        let (_, clicked) = styled::toggle_row("fence", "Fence", &mut fenced, "A fence round the area, as a building spline lays it");
-        gui::text_disabled(if fenced { "round the area" } else { "none" });
-        if clicked {
-            s.fence = if fenced { FieldSettings::default().fence } else { vec![] };
+        // Its kind: a preset's settings (its own Reroll keeps the layout's seed).
+        let row = styled::row("Kind", "Ready-made farmland: picking one sets everything below");
+        gui::set_next_item_width(row.width);
+        let presets = wce_tile::fields::presets();
+        if gui::begin_combo("##fieldkind", s.preset_name().unwrap_or("Custom")) {
+            for p in &presets {
+                if gui::selectable(p.name, s.preset_name() == Some(p.name), 0) {
+                    s = p.settings.clone();
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(p.tip);
+                }
+            }
+
+            gui::end_combo();
         }
 
+        choices("farms", "Farms", "How big each farm is: lanes run between them (One: no lanes)", &mut s.farm_size, &FARMS);
+        if s.farm_size > 0.0 {
+            choices(
+                "tracks",
+                "Lanes",
+                "Which of the lanes are dirt tracks; the others are belts of trees and shrubs",
+                &mut s.tracks,
+                &TRACKS,
+            );
+        }
+
+        let mut fenced = !s.fence.is_empty() && s.fenced > 0.0;
+        let (row, clicked) = styled::toggle_row("fence", "Fences", &mut fenced, "Fences round the farms, a gate left in each");
+        if clicked {
+            s.fence = if fenced { FieldSettings::default().fence } else { s.fence.clone() };
+            s.fenced = if fenced { s.fenced.max(FieldSettings::default().fenced) } else { 0.0 };
+        }
+
+        if fenced {
+            row.next_line();
+            let names = FENCED.map(|f| f.0);
+            let current = FENCED.iter().position(|f| (f.1 - s.fenced).abs() < 1e-4);
+            if let Some(i) = styled::segmented("fencedshare", &names, current, row.width) {
+                s.fenced = FENCED[i].1;
+            }
+        } else {
+            gui::text_disabled("none");
+        }
+
+        choices("width", "Strips", "How wide each strip of crops is", &mut s.strip_width, &WIDTHS);
+        choices("orchard", "Orchards", "How many of the parcels are orchards: rows of trees instead of crops", &mut s.orchard, &ORCHARDS);
+        choices("props", "Haystacks", "Haystacks and carts on the crops, how many a hectare", &mut s.props_per_ha, &PROPS);
+        choices("ground", "Ground", "How worn the ground under the fields is (the texture rules' layer)", &mut s.ground_strength, &GROUNDS);
+
         if advanced {
+            gui::separator_text("Farms and parcels");
+            slider(
+                "farmsize",
+                "Farm size",
+                "The largest side of a farm: lanes cut the area until none is larger (0: one farm)",
+                &mut s.farm_size,
+                (0.0, 400.0),
+                "%.0f m",
+            );
+            slider("lanewidth", "Lane width", "How wide the tracks and belts between farms are", &mut s.lane_width, (2.0, 20.0), "%.1f m");
+            slider("beltspace", "Belt trees", "How far apart the trees of a belt are", &mut s.belt_spacing, (2.0, 20.0), "%.1f m");
+            slider(
+                "parcelsize",
+                "Parcel size",
+                "The largest side of a parcel: verges cut a farm until none is larger (0: one parcel a farm)",
+                &mut s.parcel_size,
+                (0.0, 300.0),
+                "%.0f m",
+            );
+            slider("patchwork", "Patchwork", "How many parcels have their strips across the others'", &mut s.patchwork, (0.0, 1.0), "%.2f");
+            slider("fencedshare", "Fenced", "How many of the farms have a fence", &mut s.fenced, (0.0, 1.0), "%.2f");
+            slider("gate", "Gate", "The gap left in a fence (0: none)", &mut s.gate, (0.0, 15.0), "%.1f m");
             gui::separator_text("Strips");
             slider("verge", "Verge", "The grass between two strips", &mut s.verge, (0.0, 10.0), "%.1f m");
             let mut auto = s.angle.is_none();
@@ -140,7 +207,17 @@ impl TileTool {
 
             let row = styled::row("Trees", "The orchards' trees");
             self.key_list(e, "orchardtrees", "VEGETATION_INSTANCE", &mut s.orchard_trees, row.width, "");
-            let row = styled::row("Fence", "The fence's pieces, laid end to end round the area");
+            let row = styled::row("Tracks", "The decals a track is laid with, one picked a track, their long side along it");
+            let mut tracks = s.track_decals.iter().map(|k| wce_tile::decal_rules::key_of(k)).collect::<Vec<_>>();
+            if self.key_list(e, "trackdecals", "ProjectedDecalInstance", &mut tracks, row.width, "") {
+                s.track_decals = tracks.iter().map(|k| wce_tile::decal_rules::name_of(k)).collect();
+            }
+
+            let row = styled::row("Belt trees", "The trees of the belts between farms");
+            self.key_list(e, "belttrees", "VEGETATION_INSTANCE", &mut s.belt_trees, row.width, "");
+            let row = styled::row("Belt shrubs", "The shrubs under and between them");
+            self.key_list(e, "beltshrubs", "VEGETATION_INSTANCE", &mut s.belt_shrubs, row.width, "");
+            let row = styled::row("Fence", "The fence's pieces, laid end to end round a farm");
             self.key_list(e, "fencekeys", "BUILDING_INSTANCE", &mut s.fence, row.width, "");
             let row = styled::row("Props", "The haystacks and carts");
             self.key_list(e, "propkeys", "BUILDING_INSTANCE", &mut s.props, row.width, "incidental");
@@ -160,7 +237,9 @@ impl TileTool {
         if let Some(d) = document(e) {
             let (decals, trees, buildings) = d.field_counts();
             gui::push_text_wrap_pos(0.0);
-            gui::text_disabled(&format!("The tile's fields: {decals} crop decals, {trees} trees, {buildings} props and fence pieces."));
+            gui::text_disabled(&format!(
+                "The tile's fields: {decals} crop and track decals, {trees} trees and shrubs, {buildings} props and fence pieces."
+            ));
             gui::pop_text_wrap_pos();
         }
     }
