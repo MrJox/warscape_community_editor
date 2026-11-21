@@ -1278,7 +1278,9 @@ impl Frame {
                 heights: Arc::new(heights),
                 custom: None,
                 material,
-                no_blend_box: true,
+                // The tile's box once: the cliff's, when it has a material; a cliff without one (`6x4_diag_right_l0_r2/ab`: no blend
+                // map) leaves it to the floor's plain ground, or nothing weighed its top and it resolved to the far ground's sea bed.
+                no_blend_box: terrain.material.is_some(),
                 ..terrain.clone()
             };
             out.push((frame, Payload::Terrain(ground)));
