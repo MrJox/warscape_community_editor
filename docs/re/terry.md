@@ -381,6 +381,30 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   culture or subculture (`barbarian_sprawl_edge_12_lvl1`, `roman_sprawl_edge_12_lvl1`...; walls `wall_12`, towers
   `AP_barbarian_connecting_tower`). The neighbour order is RPFM's (`coords.rs`: direction 0 is (0, +1), then clockwise). Not drawn:
   the pieces a settlement shows are its runtime sprawl's (above).
+- **Settlements at the start** (2026-11-21; Ghidra, notes in `%TEMP%\wce_scratch\settle_re\NOTES.md`; checked on RenderDoc captures
+  A, C, E, F, G and Ares with `settlement_cells_check`): a new campaign builds each settlement (fn 0x10a7d1e0) from its expansion map
+  (`SETTLEMENT_EXPANSION_MAP_DATA`'s `SLOT_MAP_DATA`: index, cell, footprint, zone and wall arrays, then a mask: the slots its zone
+  touches, a bit an index).
+  - Linked slots: the main slot and the port, then one step a secondary slot with a building (in the region's slot order), each step
+    a slot the linked ones' masks name, not linked yet, drawn from the shared random state (fn 0x10a7cda0, 0x10a57e60): two new
+    campaigns differ. The j-th secondary building stands at the j-th linked slot's anchor (fn 0x10a56c50, 0x10a420a0), not at its own
+    index. Capture A: the slots whose anchor the game drew are as many as the secondary buildings in 34 of 42 settlements (the rest
+    far off, undrawn); which ones matches no rule (lowest index, highest, a seeded draw: each 30 - 50 %). The editor: the game's walk
+    with the draw on a seed of the region's key (`cities::expansion_order`).
+  - Sprawl: every cell of a linked slot's zone but the footprints, level 1 (cells reached again by the game's paths between the slots
+    draw 1 to 3: P 0.225 / 0.70 / 0.075; those paths, fn 0x10a57080, not decoded, fill a few cells of other zones: Rome's slot 5).
+    Capture A, Rome: `roman_sprawl_edge_14` at level 1 on most cells, at 2 on some.
+  - Walls (only where fn 0x10a60880 holds; in the captures exactly the `_major_` cities): the outer edge of the zones of the main
+    slot, the port and the first k linked slots, k the secondary slots with a building before the first without (fn 0x10a3e9f0); a
+    wall cell between two linked zones is none. `SLOT_WALL_ARRAY` is loaded but the ring traced at run time (fn 0x10a7d360): the
+    linked slots' walks on the union's edge give it. Capture A, the five walled cities the game and the editor linked alike: 22 / 24,
+    21 / 25, 26 / 29, 25 / 27, 15 / 16 of the game's wall cells (by its models' index counts) are the editor's. Gates (fn 0x10a7c5c0):
+    where the cell has road or river edges (field 7), a road's where it has road edges (field 4), not only where a road crosses.
+    Walls, gates and towers are of level 1 (fn 0x10af4df0).
+  - The ground under a settlement: no separate decal layer (fn 0x10b21950 draws slots, sprawl, walls, sieges, blockades and
+    aqueducts); the decals are the pieces' own (each sprawl piece's one-hex `ProjectedDecalV2`, the slot models' and the empty slots'
+    5.51 x 5.72), so a missing piece is a missing decal.
+  - Not drawn yet: a linked slot without a building (its `empty_slot` model: `roman_slum`...), the paths' cells.
 - **Farmland** (2026-11-05): `campaign_maps/<map>/dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`, version text `20141114153252`
   on `main_attila_map`): `REGION_RESOURCE_INFO_BLOCK` groups (u16 0xfe00 + a `REGIONS_BLOCK` index; 182), each with
   `REGION_RESOURCE_INFO_AREAS_BLOCK` groups (a building superchain, u32 level 1..3, an upgrade group; 531: all `att_sch_agriculture`,
