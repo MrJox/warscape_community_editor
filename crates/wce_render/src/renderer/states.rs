@@ -13,6 +13,10 @@ pub(crate) struct States {
     pub s_wrap_point: Option<ID3D11SamplerState>,
     pub s_clamp_linear: Option<ID3D11SamplerState>,
     pub s_clamp_point: Option<ID3D11SamplerState>,
+
+    /// The Depth Buffer Analysis's (RenderDoc, capture F, event 18444): point, clamped in u and v, its level of detail 0 to 0 (its
+    /// "material bits", a 64 x 64 texture sampled at the level the shader asks, the screen's v, are read at the top mip only).
+    pub s_clamp_point_top: Option<ID3D11SamplerState>,
     pub s_shadow_cmp: Option<ID3D11SamplerState>,
 
     /// The texture filtering the quality samplers were made for.
@@ -247,6 +251,14 @@ impl States {
         };
 
         st.s_wrap_point = dev.create_sampler_state(&sm).ok();
+        st.s_clamp_point_top = dev
+            .create_sampler_state(&D3D11_SAMPLER_DESC {
+                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+                AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+                MaxLOD: 0.0,
+                ..sm
+            })
+            .ok();
         st
     }
 }

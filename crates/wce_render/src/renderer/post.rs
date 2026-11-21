@@ -729,7 +729,11 @@ impl Renderer {
 
     /// The game's Depth Buffer Analysis (RenderDoc, capture T1, events 8901 - 8935): `ps30_downsize_store_data` takes the scene's depth
     /// (`gbuffer_channel_4_sampler`) and material bits (`gbuffer_channel_3_sampler`: a pixel whose alpha has bit 2 is left out, as the far
-    /// plane and what lies past `g_shadow_far_extent_hard_limit`) to the min and max view depth of each 256 x 256 texel's pixels
+    /// plane and what lies past `g_shadow_far_extent_hard_limit`) to the min and max view depth of each 256 x 256 texel's pixels.
+    /// The game's "material bits" are not the G-buffer's: its slot holds what the terrain left bound there, `commontextures/no_texture.dds`
+    /// (captures F and T1, resources 15043 / 9464 by their SHA-1, the snow normals' slot when there is no snow), so its alpha leaves
+    /// out a fixed pattern of pixels (capture F: the game's analysis 6.76 .. 64.92 where its depth reaches 76; the editor with the
+    /// G-buffer's bits 7.2 .. 76). The same texture here, at the screen's uv as the game's
     /// (`g_num_samples_per_pixel` the screen over 256), then `ps30_downsize_data` takes 4 x 4 of them, down to one; the camera's
     /// `g_viewport_dimensions` and `g_render_target_dimensions` the target's. The one texel is read back two frames later.
     fn analyse_depth_gpu(&mut self) {
@@ -763,7 +767,8 @@ impl Renderer {
         }
 
         let (sw, sh) = (self.gbuffer.w as f32, self.gbuffer.h as f32);
-        let (bits, depth) = (self.gbuffer.channels[2].srv.clone(), self.gbuffer.depth_srv());
+        let bits = self.textures.get(DEPTH_ANALYSIS_BITS, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+        let (bits, depth) = (bits.or_else(|| self.res.black_srv.clone()), self.gbuffer.depth_srv());
         let mut input = None;
         for (k, t) in self.depth_range.chain.clone().iter().enumerate() {
             let n = t.w as f32;
@@ -774,7 +779,7 @@ impl Renderer {
             self.cbs.set_f("smdba_down_size_buffer", "g_shadow_far_extent_hard_limit", &[if k == 0 { self.depth_range.far } else { 1.0 }]);
             self.ctx.set_render_targets(&[], None);
             self.bind(ps);
-            ps_samplers(&self.ctx, ps, &self.states.s_clamp_point);
+            ps_samplers(&self.ctx, ps, &self.states.s_clamp_point_top);
             if k == 0 {
                 bind_srv(&self.ctx, ps, "gbuffer_channel_3_sampler", bits.as_ref());
                 bind_srv(&self.ctx, ps, "gbuffer_channel_4_sampler", depth.as_ref());
