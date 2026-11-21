@@ -52,7 +52,8 @@ modules:
       - echo vulkan-sdk-1.4.321.0 > build/_deps/spirv-headers/.wce_cloned
       - cmake -S . -B build -G Ninja
       # Not --locked: a nightly writes its version into Cargo.toml, which the workspace's own entries in Cargo.lock follow.
-      - cargo build --release --offline -p wce_app
+      # Only the editors that ship (wce_app's `release` feature): the manifest builds releases and nightlies.
+      - cargo build --release --offline -p wce_app --no-default-features --features release
       - install -Dm755 target/release/wce /app/bin/wce
       # DXVK-native and vkd3d-utils (with vkd3d-shader, which it needs): /app/lib is in the runtime's library path.
       - mkdir -p /app/lib && cp -a build/_deps/prefix/lib/libdxvk_*.so* build/_deps/prefix/lib/libvkd3d*.so* /app/lib/

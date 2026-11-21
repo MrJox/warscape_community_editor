@@ -42,21 +42,23 @@ install, found in the usual Steam folders. File dialogs use zenity or kdialog.
 
 ### Editors
 
-Each editor is a Cargo feature of `wce_app`, so a release builds only the editors that work. The default features are the release's set:
+Each editor is a Cargo feature of `wce_app`. A development build (the default features) has every editor; releases and nightlies build
+only the stable ones, the `release` feature, with `cargo build --release -p wce_app --no-default-features --features release`:
 
-| Feature | Editor |
-|---|---|
-| `weather` | Weather and lighting |
-| `prefab` | Prefabs (the Tile editor on a stage of its own; turns on `tile`) |
-| `tile` | Battle and campaign tiles |
-| `ui` | UI layouts |
-| `audio` | Sound banks: names, search, playback |
+| Feature | Editor | In releases |
+|---|---|---|
+| `weather` | Weather and lighting | yes |
+| `prefab` | Prefabs (the Tile editor on a stage of its own; turns on `tile`) | yes |
+| `tile` | Battle and campaign tiles | yes |
+| `ui` | UI layouts | yes |
+| `audio` | Sound banks: names, search, playback | yes |
+| `terrain` | Battle maps shown whole | not yet |
+| `cinematic` | Movies and keyed scenes | not yet |
+| `unit` | Variant mesh definitions | not yet |
+| `vfx` | VFX files | not yet |
+| `placeholders` | The tabs of the editors still to come (none at present), off by default | no |
 
-Off by default, still in development: `terrain` (battle maps whole), `cinematic`, `unit`, `vfx`, and `placeholders` (the tabs of the editors
-still to come).
-
-`cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts and the VS Code debug tasks build
-with `--all-features`, the VS Code release tasks with the release's set.
+`cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts build with `--all-features`.
 
 ## Releases and updates
 

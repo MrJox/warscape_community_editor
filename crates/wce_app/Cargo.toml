@@ -9,10 +9,12 @@ license.workspace = true
 name = "wce"
 path = "src/main.rs"
 
-# One feature per editor, so that a release builds only the editors that work. The default set is the release's (what the release and nightly
-# workflows and the Flatpak build); scripts, gates and the VS Code debug tasks build with --all-features.
+# One feature per editor. Development builds every editor (the default); releases and nightlies build only the stable ones, with
+# `--no-default-features --features release` (.github/workflows/release.yml and nightly.yml, the Flatpak manifest).
 [features]
-default = ["weather", "prefab", "tile", "ui", "audio"]
+default = ["weather", "prefab", "tile", "terrain", "ui", "audio", "cinematic", "unit", "vfx"]
+# The editors stable enough to ship.
+release = ["weather", "prefab", "tile", "ui", "audio"]
 weather = ["dep:wce_weather_tool"]
 tile = ["dep:wce_tile_tool"]
 # The Prefab tool (docs/plans/prefab_tool.md): a Tile tool on a stage of its own.
@@ -20,13 +22,13 @@ prefab = ["tile"]
 ui = ["dep:wce_ui_tool"]
 # The Audio tool (docs/plans/audio.md): sound banks, names, search, playback.
 audio = ["dep:wce_audio_tool"]
-# The Cinematic tool (docs/plans/cinematic.md): the movie viewer, then keyed scenes, movies and historical battles. Off by default.
+# The Cinematic tool (docs/plans/cinematic.md): the movie viewer, then keyed scenes, movies and historical battles. Not in releases yet.
 cinematic = ["dep:wce_cinematic_tool"]
-# The Terrain tool (docs/plans/terrain_editor.md): battle maps shown whole, streamed around the camera. Off by default.
+# The Terrain tool (docs/plans/terrain_editor.md): battle maps shown whole, streamed around the camera. Not in releases yet.
 terrain = ["dep:wce_terrain_tool"]
-# The Unit tool (docs/plans/unit_editor.md): variant mesh definitions worn by a unit. Off by default.
+# The Unit tool (docs/plans/unit_editor.md): variant mesh definitions worn by a unit. Not in releases yet.
 unit = ["dep:wce_unit_tool"]
-# The VFX tool (docs/plans/vfx_tool.md): vfx/*.xml edited visually. Off by default.
+# The VFX tool (docs/plans/vfx_tool.md): vfx/*.xml edited visually. Not in releases yet.
 vfx = ["dep:wce_vfx_tool"]
 
 # The tabs of the editors still to come: only their plans, no features (none at present).

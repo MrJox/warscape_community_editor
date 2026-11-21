@@ -63,7 +63,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build
-        run: cargo build --release --locked -p wce_app
+        # Only the editors that ship (wce_app's `release` feature).
+        run: cargo build --release --locked -p wce_app --no-default-features --features release
 
       # SDL3 links statically, so wce.exe needs no SDL3.dll beside it.
       - name: Package
