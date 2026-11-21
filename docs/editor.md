@@ -161,17 +161,25 @@ shows the preset, how much is kept and the seed (Reroll), Advanced every number 
 and what it laid stay with the tile for the texture rules (made again on opening, with the layer's signature unchanged).
 
 **Fields and farmland** (`wce_tile::fields`, `tile_document/fields.rs`, `fields_panel.rs` under a field area's properties in the
-Inspector: the Create panel's Vegetation > Biomes > *Fields and farmland* draws one; `start_making fields`, `fields wait`;
-[plans/auto_detail_2.md](plans/auto_detail_2.md), G): an area is a vegetation exclusion polygon (the game's own trees keep off it) with
-`wce_fields` (its settings as one attribute: `strip=12;verge=1.5;crops=...`) and `wce_fields_seed`. It is cut into strips along its
-longest side (or at an angle), `verge` apart, each piece of a strip whose middle and sides are inside the area: a crop (one of the kit's
-field decals, `global_fields_1..6` by default, laid end to end along it, as long as `crop_length` at most, as wide as the strip) or, by the
-orchards' share, an orchard (rows of trees, `olive` by default: the game has no other fruit tree). Haystacks and carts (`hay01`,
-`cart_1_hay`) go on the crops by the hectare, a fence (`lowfence_1..3`) round the area as a closed building spline lays it, and the ground
-under it is worn by a texture rule bound to the area (`mud`, fading in over 2 m; in the texture rules' layer). What it lays is the
-editor's: made again once an edit settles (on the editor's thread: a few hundred items), drawn locked, added at export in a `WCE fields`
-layer. The Inspector: Simple (strips Narrow ... Broad, orchards None ... All, haystacks, ground None ... Bare, the fence on or off, Reroll),
-Advanced (the verge, the angle, the crop pieces' length, tree rows and spacing, and what each lays, picked from the game's).
+Inspector: the Create panel's Vegetation > Biomes > *fields: <kind>* draws one of a kind; `start_making fields [kind, _ for spaces]`,
+`fields wait`; [plans/auto_detail_2.md](plans/auto_detail_2.md), G): an area is a vegetation exclusion polygon (the game's own trees keep
+off it) with `wce_fields` (its settings as one attribute: `strip=12;verge=1.5;farm=130;...`) and `wce_fields_seed`. Lanes cut it into
+**farms** (the area's box cut across its longer side, somewhere about the middle, until no farm is larger than `farm`; 0: one farm), each
+lane a dirt **track** (decals end to end, `path_1` and `global_terrain_path_01` by default, each at its own shape as wide as the lane, its
+long side along it) or, by the tracks' share, a **belt** of trees and shrubs (oak, beech, birch and rose, burdock, tansy by default; two
+staggered rows on a lane 6 m wide or more). By the fenced share a farm gets a fence (`lowfence_1..3`, laid as a building spline) round its
+part of the area, open for a gate in its longest side. Verges cut each farm into **parcels** the same way (`parcel`; 0: one), and each
+parcel into strips along the area's longest side (or at an angle; a patchwork share of the parcels runs across), `verge` apart: one crop
+for the parcel (one of the kit's field decals, `global_fields_1..6`, laid end to end along each strip, `crop_length` at most, as wide as the
+strip) or, by the orchards' share, an orchard (rows of trees, `olive`: the game has no other fruit tree). Haystacks and carts (`hay01`,
+`cart_1_hay`) go on the crops by the hectare, and the ground under the area is worn by a texture rule bound to it (`mud`, fading in over
+2 m; in the texture rules' layer). The kinds (`fields::presets`): *Patchwork farms* (the default: farms of a few parcels, most fenced,
+tracks and belts between), *Hedged fields* (a bocage: fields in belts of trees, a track now and then, no fences), *Fenced smallholdings*
+(small plots, each fenced, along tracks), *Open strip fields* (one field in narrow strips, no lanes, no fences), *Orchards*. What it lays
+is the editor's: made again once an edit settles (on the editor's thread), drawn locked, added at export in a `WCE fields` layer. The
+Inspector: Simple (its kind, farms One ... Large, lanes Belts ... Tracks, fences and how many, strips Narrow ... Broad, orchards, haystacks,
+ground, Reroll), Advanced (farm, lane, parcel and gate sizes, the belts' spacing, the patchwork, the verge, the angle, the crop pieces'
+length, tree rows and spacing, and what each lays, picked from the game's).
 
 **Paths** (`wce_tile::paths`, `TileDocument::find_path` / `connect_to_roads` in `tile_document/roads.rs`, `paths_ui.rs`: the Create
 panel's Rivers & roads > *Path (found over the ground)*, and *Connect to the roads* under a selection with buildings; `path <find <x z>

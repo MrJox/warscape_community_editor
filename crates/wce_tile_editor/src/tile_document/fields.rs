@@ -1,8 +1,8 @@
 //! Fields and farmland in a tile (docs/plans/auto_detail_2.md, G): an area is a vegetation exclusion polygon with `wce_fields` (its
 //! settings, `wce_tile::fields::FieldSettings`) and `wce_fields_seed`. What it lays is the editor's, as a biome area's contents: made again
 //! when the area, its settings or the ground change (once an edit settled, on the editor's thread: it is a few hundred items), drawn
-//! locked and added at export in a layer of its own ([`EXPORT_LAYER`]): the crops' decals, the orchards' trees, the props, the fence round
-//! it (laid as a closed building spline's). The ground under it goes into the texture rules' layer (`all_texture_rules`).
+//! locked and added at export in a layer of its own ([`EXPORT_LAYER`]): the crops' and tracks' decals, the orchards' and belts' trees and
+//! shrubs, the props, the farms' fences (each laid as a building spline's). The ground under it goes into the texture rules' layer (`all_texture_rules`).
 
 use wce_foundation::math::Double3;
 use wce_scene::render_scene::{EntityId, RenderScene};
@@ -149,16 +149,23 @@ impl Tile {
                 }
             }
 
-            // The fence: a closed building spline round the area.
-            if !a.settings.fence.is_empty() && a.points.len() > 2 {
-                let mut line = a.points.iter().map(|&(x, z)| [f64::from(x), f64::from(z)]).collect::<Vec<_>>();
-                line.push(line[0]);
+            // The farms' fences: a building spline round each, open at its gate.
+            for (k, fence) in farm.fences.iter().enumerate() {
+                if a.settings.fence.is_empty() || fence.points.len() < 2 {
+                    continue;
+                }
+
+                let mut line = fence.points.iter().map(|&(x, z)| [f64::from(x), f64::from(z)]).collect::<Vec<_>>();
+                if fence.closed {
+                    line.push(line[0]);
+                }
+
                 let settings = SplineSettings {
                     keys: a.settings.fence.clone(),
                     random: true,
-                    seed: a.seed,
+                    seed: a.seed.wrapping_add(k as u32),
                     align: true,
-                    closed: true,
+                    closed: fence.closed,
                     ..SplineSettings::default()
                 };
                 let levels = |key: &str| self.building_levels(key);
