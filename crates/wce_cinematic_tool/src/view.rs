@@ -94,11 +94,32 @@ fn effects(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], String)> {
         .collect()
 }
 
-/// The item under a pixel: an effect's marker within 12 pixels, else the unit whose formation the ground point is in.
+/// The camera keys of the clip shown (drawn while the viewport's camera is free): their items, places and targets.
+fn camera_keys(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], [f32; 3], f64)> {
+    if !ui.free_camera {
+        return vec![];
+    }
+    let Some(clip) = ui.clip.and_then(|c| p.clip(c)) else { return vec![] };
+    clip.tracks
+        .iter()
+        .flat_map(|t| match &t.content {
+            TrackContent::Camera { keys } => keys
+                .iter()
+                .enumerate()
+                .map(|(k, c)| (SceneItem::CameraKey { track: t.id, index: k }, c.position, c.target, c.t))
+                .collect::<Vec<_>>(),
+            _ => vec![],
+        })
+        .collect()
+}
+
+/// The item under a pixel: an effect's or a camera key's marker within 12 pixels, else the unit whose formation the ground point is in.
 fn pick(e: &Editor, p: &Project, ui: &SceneUi, view: &DocView, x: i32, y: i32) -> Option<SceneItem> {
     let near = effects(p, ui)
         .into_iter()
-        .filter_map(|(i, at, _)| to_image(e, at).map(|(px, py)| (i, (px - x as f32).hypot(py - y as f32))))
+        .map(|(i, at, _)| (i, at))
+        .chain(camera_keys(p, ui).into_iter().map(|(i, at, _, _)| (i, at)))
+        .filter_map(|(i, at)| to_image(e, at).map(|(px, py)| (i, (px - x as f32).hypot(py - y as f32))))
         .filter(|(_, d)| *d <= 12.0)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i);
@@ -288,6 +309,22 @@ impl SceneView {
                 dl.text(v2(c.x + 9.0, c.y - 8.0), 0xFFFF_FFFF, &name);
             }
         }
+        // The camera keys (the camera free): where each is, what it looks at, the path between them.
+        let cams = camera_keys(&p, ui);
+        let path: Vec<gui::Vec2> = cams.iter().filter_map(|(_, at, _, _)| scr(e, *at)).collect();
+        dl.polyline(&path, gui::col32(120, 220, 255, 150), false, 1.5);
+        for (item, at, target, t) in &cams {
+            let Some(c) = scr(e, *at) else { continue };
+            let sel = selected.contains(item);
+            let col = if sel { gui::col32(255, 230, 120, 255) } else { gui::col32(120, 220, 255, 230) };
+            if let Some(tg) = scr(e, *target) {
+                dl.line(c, tg, col & 0x80FF_FFFF, 1.0);
+            }
+            dl.rect_filled(v2(c.x - 6.0, c.y - 4.0), v2(c.x + 6.0, c.y + 4.0), col, 2.0);
+            if sel || self.hovered == Some(*item) {
+                dl.text(v2(c.x + 9.0, c.y - 8.0), 0xFFFF_FFFF, &format!("camera at {t:.2} s"));
+            }
+        }
         // While placing: where it goes, and how to.
         if let Some(m) = &create.making {
             if let Some(g) = create.ghost {
@@ -343,6 +380,32 @@ impl SceneView {
             dl.rect(pa, pb, gui::col32(255, 230, 120, 200), 0.0, 1.0);
         }
         dl.pop_clip_rect();
+
+        // The scene's chips at the top left: play, the free camera, a camera key of this view, the battle preview.
+        gui::set_cursor_screen_pos(v2(origin.x + 8.0, origin.y + 6.0));
+        gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+        if gui::begin_pill("##cinematicchips") {
+            use wce_editor::chips::chip;
+            use wce_editor::icons;
+            if chip(ui.playing, if ui.playing { icons::PAUSE } else { icons::PLAY }, "cinplay", "Play / pause the clip") {
+                ui.playing = !ui.playing;
+            }
+            gui::same_line_touching();
+            if chip(ui.free_camera, icons::ORBIT, "cinfree", "Free camera: fly the viewport yourself (off: it follows the camera keys)") {
+                ui.free_camera = !ui.free_camera;
+            }
+            gui::same_line_touching();
+            if chip(false, icons::CAMERA, "cinkey", "Key this view: a camera key at the playhead") {
+                ui.free_camera = true;
+                ui.key_camera_view(e);
+            }
+            gui::same_line_touching();
+            if chip(ui.battle_preview, icons::SWORDS, "cinbattle", "Battle preview: units under orders as the battle would play it") {
+                ui.battle_preview = !ui.battle_preview;
+            }
+        }
+        gui::end_child();
+        gui::pop_style_color(1);
 
         // The right click's menu.
         if std::mem::take(&mut self.menu_open) {

@@ -236,6 +236,31 @@ pub fn panel(e: &mut Editor, ui: &mut SceneUi, create: &mut Create) {
         }
     }
 
+    // The camera keys of the clip shown.
+    if let Some(clip) = ui.current_clip(&p) {
+        let keys: Vec<(u32, usize, f64)> = clip
+            .tracks
+            .iter()
+            .flat_map(|t| match &t.content {
+                TrackContent::Camera { keys } => keys.iter().enumerate().map(|(k, c)| (t.id, k, c.t)).collect::<Vec<_>>(),
+                _ => vec![],
+            })
+            .collect();
+        if gui::tree_node_ex_id(
+            "camera",
+            gui::TREE_SPAN_AVAIL_WIDTH,
+            &format!("{}  Camera in {} ({})", icons::CAMERA, clip.name, keys.len()),
+        ) {
+            for (track, index, t) in keys {
+                let item = SceneItem::CameraKey { track, index };
+                if gui::selectable(&format!("{}  at {t:.2} s##c{track}_{index}", icons::CAMERA), is_sel(item), 0) {
+                    select = Some((item, how()));
+                    ui.time = t;
+                }
+            }
+            gui::tree_pop();
+        }
+    }
     // The effects of the clip shown.
     if let Some(clip) = ui.current_clip(&p) {
         let effects: Vec<(u32, usize, String)> = clip

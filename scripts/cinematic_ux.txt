@@ -55,6 +55,19 @@ scene_delete
 frames 2
 assert_count armies 1
 assert_count units 2
+# A camera key (the new scene's camera track is 1) moved as the gizmo does: its target goes along; a turn pans it about itself.
+scene_time 0
+camera_key 0 20 -400 0 0 -300 35
+frames 2
+scene_select camera 1 0
+scene_move 10 0
+assert_camera_key 1 0 10 20 -400 10 0 -300
+scene_move 0 0 90
+assert_camera_key 1 0 10 20 -400 110 0 -400
+undo
+assert_camera_key 1 0 10 20 -400 10 0 -300
+scene_delete
+assert_count selected 0
 save
 frames 2
 quit
