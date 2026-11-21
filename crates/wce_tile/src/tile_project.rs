@@ -225,11 +225,6 @@ pub struct TileProject {
     pub texture_rules: Option<crate::texture_rules::RuleSet>,
     pub texture_rules_dirty: bool,
 
-    /// The erosion's settings (`erosion`, their own file), when the tile has it; its layer is in `layers`' height stack. `erosion_dirty`:
-    /// changed since saved (or taken away, the file to remove).
-    pub erosion: Option<crate::erosion::Settings>,
-    pub erosion_dirty: bool,
-
     /// The decal rules (`decal_rules`, their own file), when the tile has them; the decals they lay are the editor's, added at export.
     /// `decal_rules_dirty`: changed since saved (or taken away, the file to remove).
     pub decal_rules: Option<crate::decal_rules::DecalRuleSet>,
@@ -483,8 +478,6 @@ impl TileProject {
             view: None,
             texture_rules: None,
             texture_rules_dirty: false,
-            erosion: None,
-            erosion_dirty: false,
             decal_rules: None,
             decal_rules_dirty: false,
             biomes: vec![],
@@ -514,13 +507,6 @@ impl TileProject {
                     .map_err(|error| format!("{}: {error}", decals_file.display()))
                     .and_then(|b| crate::decal_rules::parse(&b).map_err(|e| format!("{}: {e}", decals_file.display())))?,
             );
-        }
-
-        let erosion_file = project.dir.join(crate::erosion::FILE);
-        if erosion_file.exists() {
-            let text = std::fs::read_to_string(&erosion_file).map_err(|error| format!("{}: {error}", erosion_file.display()))?;
-            let (on, settings) = crate::erosion::settings_in(&text);
-            project.erosion = on.then_some(settings);
         }
 
         let layers_file = project.dir.join(crate::terrain_layers::FILE);
@@ -995,26 +981,6 @@ impl TileProject {
 
         self.texture_rules_dirty = false;
 
-        // The erosion's settings, as the rules.
-        let erosion_file = out_dir.join(crate::erosion::FILE);
-        match &self.erosion {
-            Some(settings) if self.erosion_dirty || elsewhere => {
-                wce_foundation::files::write_replacing(&erosion_file, crate::erosion::settings_text(true, settings))
-                    .map_err(|_| format!("could not write {}", erosion_file.display()))?;
-                msg += "erosion saved. ";
-                wrote = true;
-            }
-
-            None if self.erosion_dirty && erosion_file.exists() => {
-                std::fs::remove_file(&erosion_file).map_err(|_| format!("could not remove {}", erosion_file.display()))?;
-                wrote = true;
-            }
-
-            _ => {}
-        }
-
-        self.erosion_dirty = false;
-
         // The decal rules, as the texture rules.
         let decals_file = out_dir.join(crate::decal_rules::FILE);
         match &self.decal_rules {
@@ -1331,7 +1297,6 @@ impl TileProject {
                 || name == WCE_FILE
                 || name == crate::terrain_layers::FILE
                 || name == crate::texture_rules::FILE
-                || name == crate::erosion::FILE
                 || name == crate::decal_rules::FILE
                 || name == crate::biomes::FILE
                 || name == "height_map_0.png"
@@ -1549,7 +1514,6 @@ impl TileProject {
                     || name == WCE_FILE
                     || name == crate::terrain_layers::FILE
                     || name == crate::texture_rules::FILE
-                    || name == crate::erosion::FILE
                     || name == crate::decal_rules::FILE
                     || name == crate::biomes::FILE
                     || name == "height_map_0.png"

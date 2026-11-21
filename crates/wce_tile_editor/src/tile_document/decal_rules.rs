@@ -1,6 +1,6 @@
 //! The decal rules in a tile (docs/plans/auto_detail_2.md, E): the tile's rules (`TileProject::decal_rules`, their own file beside
 //! tile.wce) and the decals they lay, the editor's: made again **live** off the editor's thread when what they are made from changes (the
-//! rules, the heights, the scene: its water, buildings and trees, the roads' layers, the erosion's runoff), drawn locked, and added at
+//! rules, the heights, the scene: its water, buildings and trees, the roads' layers), drawn locked, and added at
 //! export in a layer of their own ([`EXPORT_LAYER`]), as the biome areas' contents are. An edit of the rules is an undo entry
 //! ([`DecalRulesCommand`]).
 
@@ -66,7 +66,7 @@ struct Input {
     buildings: Option<Vec<[f64; 3]>>,
     roads: Option<(Vec<bool>, u32, u32, (f64, f64))>,
     trees: Option<Vec<[f64; 3]>>,
-    runoff: Option<Option<texture_rules::Runoff>>,
+    runoff: bool,
     grid: (u32, u32, (f64, f64)),
     border: f64,
     extent: (f64, f64),
@@ -97,7 +97,7 @@ impl Tile {
     }
 
     /// What the decals are made from, hashed: the rules, the heights, the scene (its water, buildings, trees), the roads' layers, the
-    /// trees' list, the erosion's runoff.
+    /// trees' list.
     fn decal_signature(&mut self) -> Option<u64> {
         let set = self.project.decal_rules.clone()?;
         let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -116,10 +116,6 @@ impl Tile {
         if decal_rules::uses_trees(&set.rules) {
             fnv(&mut h, self.trees.name.as_bytes());
             fnv(&mut h, &(Arc::as_ptr(&self.trees.trees) as usize as u64).to_le_bytes());
-        }
-
-        if decal_rules::uses_runoff(&set.rules) {
-            fnv(&mut h, self.erosion_made.as_ref().map_or(&b"heights"[..], |m| m.owner.as_bytes()));
         }
 
         if decal_rules::uses(&set.rules, Feature::Road)
@@ -194,13 +190,7 @@ impl Tile {
         let hf = p.height.as_ref().ok_or("the tile has no height map")?;
         let fields = Fields::from_height_field(hf, (mx, mz), unit);
         let grid = (hf.width(), hf.height(), (1.0 / mx, 1.0 / mz));
-        let hf_size = (hf.width(), hf.height());
-        let runoff = decal_rules::uses_runoff(&rules).then(|| {
-            self.erosion_made
-                .as_ref()
-                .filter(|m| (m.w, m.h) == hf_size)
-                .map(|m| texture_rules::Runoff { flow: m.flow.clone(), deposit: Some(m.deposit.clone()) })
-        });
+        let runoff = decal_rules::uses_runoff(&rules);
 
         // The roads' pixels of the blend map, when a rule measures to them and the tile has a blend map.
         let p = &mut self.project;
@@ -244,10 +234,8 @@ impl Tile {
                 fields = fields.with_distances(Feature::Road, Distances::from_mask(*bw, *bh, *bppm, mask));
             }
 
-            match runoff {
-                Some(Some(r)) => fields = fields.with_runoff(r),
-                Some(None) => fields = fields.with_runoff_of_heights(),
-                None => {}
+            if runoff {
+                fields = fields.with_runoff_of_heights();
             }
 
             let trees = trees.map(|t| Distances::from_mask(w, h, ppm, &texture_rules::disc_mask(&t, w, h, ppm, border)));

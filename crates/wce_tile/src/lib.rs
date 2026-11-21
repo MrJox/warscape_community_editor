@@ -11,8 +11,6 @@ pub mod building_spline;
 pub mod decal_refit;
 pub mod decal_rules;
 pub mod decal_sizes;
-pub mod districts;
-pub mod erosion;
 pub mod export_as_prop;
 pub mod falloff;
 pub mod fields;

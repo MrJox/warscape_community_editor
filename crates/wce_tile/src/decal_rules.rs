@@ -2,7 +2,7 @@
 //! ran, forest floor under trees, laid by where the ground is as the texture rules lay textures.
 //!
 //! A rule's conditions are a texture rule's ([`Rule`]: height, slope, hollows, distances to water, roads and buildings, water flow,
-//! deposit, breakup; its strength scales how many are laid), plus how far from a tree's trunk. Where they hold fully, `density` decals
+//! breakup; its strength scales how many are laid), plus how far from a tree's trunk. Where they hold fully, `density` decals
 //! per 100 m² are laid, fewer as the weight falls, none closer than `spacing` to another of the same rule; each picks one of the rule's
 //! decals by weight, a size, and a direction (random, or along the roads, the buildings' sides, the water's edge, down the slope). The
 //! same rules, ground and seed lay the same decals.
@@ -160,7 +160,7 @@ pub fn uses_trees(rules: &[DecalRule]) -> bool {
 /// Whether any rule that lays something reads where water runs.
 #[must_use]
 pub fn uses_runoff(rules: &[DecalRule]) -> bool {
-    live(rules).any(|r| r.place.flow.is_some() || r.place.deposit.is_some())
+    live(rules).any(|r| r.place.flow.is_some())
 }
 
 fn live(rules: &[DecalRule]) -> impl Iterator<Item = &DecalRule> {
@@ -477,9 +477,9 @@ pub fn default_rules() -> Vec<DecalRule> {
             Align::Slope,
         ),
         rule(
-            "Stones where water laid them",
+            "Stones where water runs out",
             &["stones1", "mud_stone01"],
-            Rule { slope: below(20.0, 6.0), deposit: above(0.15, 0.1), seed: 15, ..Rule::default() },
+            Rule { slope: below(12.0, 4.0), flow: above(0.5, 0.1), seed: 15, ..Rule::default() },
             1.0,
             (1.5, 3.0),
             1.0,

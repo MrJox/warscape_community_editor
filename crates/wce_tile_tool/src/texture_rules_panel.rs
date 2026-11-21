@@ -656,8 +656,7 @@ fn conditions(heights: (f32, f32)) -> Vec<Condition> {
         Condition {
             key: "flow",
             label: "Water flow",
-            tip: "Where rain water runs down the ground: 0 none, about 0.25 as much as anywhere, 1 a stream (the erosion's, or worked out \
-                  from the heights without it)",
+            tip: "Where rain water runs down the ground: 0 none, about 0.25 as much as anywhere, 1 a stream (worked out from the heights)",
             unit: "",
             step: 0.05,
             domain: (0.0, 1.0),
@@ -668,16 +667,6 @@ fn conditions(heights: (f32, f32)) -> Vec<Condition> {
                 ("Rivers", above(0.8, 0.1)),
             ],
             first: 2,
-        },
-        Condition {
-            key: "deposit",
-            label: "Deposit",
-            tip: "Metres of ground the erosion's water laid there (0 without erosion): silt and gravel at the foot of slopes",
-            unit: "m",
-            step: 0.02,
-            domain: (0.0, 2.0),
-            presets: vec![("A little", above(0.05, 0.05)), ("Some", above(0.2, 0.1)), ("Much", above(0.6, 0.3))],
-            first: 1,
         },
     ]
 }
@@ -690,7 +679,6 @@ fn range_of<'a>(r: &'a mut Rule, key: &str) -> &'a mut Option<Range> {
         "water" => &mut r.water,
         "road" => &mut r.road,
         "flow" => &mut r.flow,
-        "deposit" => &mut r.deposit,
         _ => &mut r.building,
     }
 }
