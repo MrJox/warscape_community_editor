@@ -10,7 +10,8 @@
 //!   degrees: 7.97 - 8.05; the fields' writer not traced). A level bottom ray (|y| under 1e-6): d 0;
 //! - the rivers: `rigidriver.hlsl` vs30 / ps30 `main_river` (the shadowed pixel shader with shadows on), the tiles' river meshes,
 //!   their vertices (x, y, z, flow sign) (u, v, end fade, across 0 .. 1); the pixel shader lights and fogs the water, its alpha the
-//!   soft edges times the end fade; `s_lf_colour` the map's sea colour, `s_normal` `battleterrain/river/river_normal.dds`;
+//!   soft edges times the end fade; `s_lf_colour` the map's sea colour (wrapped: read at v = -z / height), `s_normal`
+//!   `battleterrain/river/river_normal.dds`;
 //! - read by the directional light (`lit * a + rgb * k` where the G-buffer marks terrain, above the sea) and the campaign sea
 //!   (`sea * a + rgb`), both through `g_overlay_view_projection`.
 //!
@@ -189,8 +190,12 @@ impl Renderer {
         self.bind(&vs);
         self.bind(&ps);
         let ctx = &self.ctx;
+        // The game's samplers (capture T2): the colour map wraps, as the shader reads it at v = -z / the map's height (clamped, every
+        // river took its top row: TDD's rivers drew 3.5 x too bright); the normals wrap, both 16 x anisotropic; the environment wraps.
         ps_samplers(ctx, &ps, &self.states.s_clamp_linear);
-        bind_sampler(ctx, &ps, "s_normal", self.states.s_wrap_linear.as_ref());
+        bind_sampler(ctx, &ps, "s_normal", self.states.s_wrap_aniso.as_ref());
+        bind_sampler(ctx, &ps, "s_lf_colour", self.states.s_wrap_aniso.as_ref());
+        bind_sampler(ctx, &ps, "s_environment", self.states.s_wrap_linear.as_ref());
         bind_srv(ctx, &ps, "s_normal", normal.as_ref());
         bind_srv(ctx, &ps, "s_lf_colour", colour.as_ref());
         bind_srv(ctx, &ps, "s_environment", env.as_ref());
