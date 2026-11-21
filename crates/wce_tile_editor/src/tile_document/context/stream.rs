@@ -933,11 +933,25 @@ impl Streamer {
         let (cw, ch) = f.chunks();
         let block_cells = BLOCK * CHUNK;
 
-        // The distance from the focus to a square of cells.
-        let distance = |x: i32, y: i32, size: i32| {
-            let (x0, y0, size) = (f64::from(x), f64::from(y), f64::from(size));
-            let dx = (x0 - fx).max(fx - (x0 + size)).max(0.0);
-            let dy = (y0 - fy).max(fy - (y0 + size)).max(0.0);
+        // The distance from the focus to the cells a square of chunks draws (`side` chunks a side): theirs and those of the tiles they
+        // own, which reach past them. Measured to the square alone, Rauros' lake (22 x 31 cells, its origin 39 cells off) was drawn at
+        // the far level under the camera: its banks sank and its water showed through the ground.
+        // A tile reaches right and down from its origin cell, at most `band` chunks: only the chunks that near the square's right or
+        // bottom edge can reach past it.
+        let band = (f.reach() + CHUNK - 1) / CHUNK;
+        let distance = |key: ChunkKey, side: i32| {
+            let mut e = [key.0 * CHUNK, key.1 * CHUNK, (key.0 + side) * CHUNK, (key.1 + side) * CHUNK];
+            for cy in key.1..(key.1 + side).min(ch) {
+                for cx in key.0..(key.0 + side).min(cw) {
+                    if cx < key.0 + side - band && cy < key.1 + side - band {
+                        continue;
+                    }
+                    let c = f.chunk_extent((cx, cy));
+                    e = [e[0].min(c[0]), e[1].min(c[1]), e[2].max(c[2]), e[3].max(c[3])];
+                }
+            }
+            let dx = (f64::from(e[0]) - fx).max(fx - f64::from(e[2])).max(0.0);
+            let dy = (f64::from(e[1]) - fy).max(fy - f64::from(e[3])).max(0.0);
             (dx * dx + dy * dy).sqrt()
         };
 
@@ -965,7 +979,7 @@ impl Streamer {
             }
 
             let side = (BLOCK << n) * CHUNK;
-            let d = distance(key.0 * CHUNK, key.1 * CHUNK, side);
+            let d = distance(key, BLOCK << n);
             let slack = if self.wanted.get(&key) == Some(&Lod::Distant(n)) { SLACK } else { 0.0 };
             if d > f64::from(side).max(near_blocks) - slack {
                 if d <= reach {
@@ -989,7 +1003,7 @@ impl Streamer {
             {
                 // Past the rings a block is one piece; it stays one within the slack.
                 let key = (bx * BLOCK, by * BLOCK);
-                let d = distance(bx * block_cells, by * block_cells, block_cells);
+                let d = distance(key, BLOCK);
                 let now = self.wanted.get(&key).copied();
                 let slack = if now.is_some_and(Lod::is_block) { SLACK } else { 0.0 };
                 if d > start - slack {
@@ -1006,7 +1020,7 @@ impl Streamer {
                 zone.insert(key);
                 for cy in key.1..(key.1 + BLOCK).min(ch) {
                     for cx in key.0..(key.0 + BLOCK).min(cw) {
-                        let d = distance(cx * CHUNK, cy * CHUNK, CHUNK);
+                        let d = distance((cx, cy), 1);
                         let now = self.wanted.get(&(cx, cy)).copied().filter(|l| !l.is_block());
                         if let Some(l) = self.level(d, now) {
                             want.insert((cx, cy), (l, d));
