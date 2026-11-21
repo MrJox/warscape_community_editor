@@ -21,6 +21,9 @@ struct Placed {
     world: (f64, f64),
     facing: f32,
     figure: CampaignFigure,
+
+    /// A navy: afloat, on the sea's level.
+    navy: bool,
 }
 
 /// What the read gives: the figures, the world's size, and what could not be drawn.
@@ -82,7 +85,7 @@ fn load(e: &Editor, name: String) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
                         c.art_set.clone()
                     };
                     match catalog.figure(&read, &art, afloat, false, &c.faction, u64::from(c.id)) {
-                        Ok(figure) => Some(Placed { world: c.world, facing: c.facing, figure }),
+                        Ok(figure) => Some(Placed { world: c.world, facing: c.facing, figure, navy: afloat == Afloat::Navy }),
                         Err(err) => {
                             notes.push(format!("{} {} ({}): {err}", c.kind, c.id, c.faction));
                             None
@@ -151,7 +154,8 @@ impl StartFigures {
                 continue;
             }
             let (fx, fz) = frame.from_map.apply(x, y);
-            let place = translation(Float3::new(fx as f32, ground(fx, fz), fz as f32)) * rotation_y(p.facing);
+            let y = if p.navy { ground(fx, fz).max(frame.sea_y()) } else { ground(fx, fz) };
+            let place = translation(Float3::new(fx as f32, y, fz as f32)) * rotation_y(p.facing);
             for figure in p.figure.instances(time, true) {
                 let mut world = place;
                 let s = k * figure.scale;
