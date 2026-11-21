@@ -290,6 +290,41 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
 1, 2, 3 (the baseline), then 4 in its order (re-ranked by the baseline's errors), 5, 6; Phase 7's docs with each phase. Captures C and
 F are wanted when Phase 3's baseline is ready; G, E, T and V when their items come up.
 
+## Open (paused 2026-11-21)
+
+The work stopped here, to be picked up later; the details are in the Progress entries of 2026-11-21. Captures: `D:\renderdoc\`
+(Thrones V1 `camp_thrones_V1_frame15571.rdc`, V2 `camp_thrones_V1_frame16053.rdc`), extracts and scripts in
+`%TEMP%\wce_scratch\campcmp` (`cap_V2`, `cap_Ares`; `py\wallmatch.py` matches the editor's wall pieces (`cities_check`) to a
+capture's draws, `py\fcmatch.py` a capture's `rigid_faction_colours` to the tables, `py\rd_fcol.py` reads them at given events).
+
+Settlements and walls:
+- **Wall shapes:** on three of Aberffro's cells (V2) the game has a straight `wall_14` where the editor has a `wall_12` or `wall_13`
+  (the walk's mask there; one cell also gets two pieces from two walks), and Rome's walls (capture A) differ more: many of the
+  editor's 13s are the game's 14s and several of its pieces have no game piece near.
+- **Aberffro's north-east wall (V2):** the game shows three small flags where the editor's poles are bare, and the editor two flags
+  the game has not; which pieces stand there is not traced (follows from the shapes above, or from the turn's direction).
+- **The `_inverse` flip** rests on V2's Aberffro and one piece of Rome; check it on another walled city.
+- **Settlement path cells:** the cells the game's path search between the slots adds (fn 0x10a4cfe0) are not decoded or drawn.
+- **Flag colours on Attila:** the rule (the owner's `faction_banners` primary, secondary, tertiary, black) is V2's; Thrones'
+  tertiaries are all black, so whether the third is the tertiary or black is not known: check on an Attila capture's flags.
+
+Characters and armies:
+- **Thrones' banner offset:** the game's standard stands at (265.18, 256.38) for Anaraud at (265.20, 256.47); the editor uses
+  Attila's offset (-0.40, -0.11).
+- **Figures' colours:** the game permutes the three uniform colours on some meshes (V2's skinned draws); the editor gives every
+  mesh the same order.
+- **The starting rebels:** the army's general takes an art set by the rebels' subculture (Thrones has no rebel art sets) and no
+  units; its faction is the one whose key ends `rebels_<culture>` (ASSUMPTION, by V2's colours); the force's size by difficulty
+  is not shown. Any army without a legacy emblem now carries `nomadic_emblem_07` (ASSUMPTION from the DLLs' string).
+- **The battle unit catalog** still colours units from `factions`; the campaign's rule (`faction_uniform_colours`) is not checked
+  for battles.
+
+Environment and performance:
+- **The weather fold:** the sphere-order rule rests on V2 alone (Attila's Londinium agrees either way).
+- **`g_rain_specular_*` / `g_rain_terrain_*`:** 1 in V2's constants, 0 in the editor's (the campaign's rain constants).
+- **The forests ahead to 240 world units:** their CPU and GPU cost not measured (wants an idle window).
+- **The far ground's colour** varying between runs (parked 2026-11-07).
+
 ## Progress
 
 **2026-11-19.**
