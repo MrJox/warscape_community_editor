@@ -494,14 +494,11 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     }
 
     for en in job.scene.entities() {
-        // A decal is a box, the unit one under its matrix.
+        // A decal is a box, the unit one under its matrix: what shows of it is where it meets the ground, its middle's height (its depth
+        // only pushed the camera away).
         if matches!(en.payload, Payload::Decal(_)) {
-            for k in 0..8 {
-                let c = Float3::new(
-                    if k & 1 != 0 { 0.5 } else { -0.5 },
-                    if k & 2 != 0 { 0.5 } else { -0.5 },
-                    if k & 4 != 0 { 0.5 } else { -0.5 },
-                );
+            for k in 0..4 {
+                let c = Float3::new(if k & 1 != 0 { 0.5 } else { -0.5 }, 0.0, if k & 2 != 0 { 0.5 } else { -0.5 });
                 let p = en.world.transform_point(c);
                 lo = Float3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
                 hi = Float3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
@@ -541,6 +538,9 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     let radius = length((hi - lo) * 0.5).max(0.25);
     let cam = Camera::default();
     let view = view_from(!job.skinned.is_empty());
+    // Decals alone (flat on the ground): seen from higher, nearly from above.
+    let flat = job.scene.entities().iter().all(|en| matches!(en.payload, Payload::Decal(_) | Payload::Terrain(_)));
+    let view = if flat { [view[0] * 0.35, view[1].abs().max(0.5), view[2] * 0.35] } else { view };
     let d = normalize(Float3::new(view[0], view[1], view[2]));
     // The bounding sphere of the box is loose for long, low models: a little closer than it asks.
     let dist = radius / (cam.fov_y * 0.5).sin() * 0.85;

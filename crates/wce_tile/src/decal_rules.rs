@@ -73,7 +73,7 @@ pub struct DecalRule {
     /// Decals per 100 m² where the conditions hold fully.
     pub density: f32,
 
-    /// How wide a decal is (metres, the least and the most) and how many times longer than wide.
+    /// How wide a decal is (metres, the least and the most) and how many times longer than its own shape (1: as the kit draws it).
     pub size: (f32, f32),
     pub stretch: f32,
 
@@ -230,7 +230,10 @@ pub fn lay(
             };
             near.add(x, z);
             laid += 1;
-            out.push(Decal { rule: n, key: key_of(&key.0), x: x as f32, z: z as f32, yaw, across, length: across * r.stretch.max(0.1) });
+            // Stretched from its own shape (the kit's most common size of it; square when the kit has none).
+            let key = key_of(&key.0);
+            let shape = crate::decal_sizes::decal_size(&key).map_or(1.0, |[x, _, z]| if x > 0.0 { z / x } else { 1.0 });
+            out.push(Decal { rule: n, key, x: x as f32, z: z as f32, yaw, across, length: across * shape * r.stretch.max(0.1) });
         }
     }
 
@@ -439,7 +442,7 @@ pub fn default_rules() -> Vec<DecalRule> {
             Rule { slope: below(8.0, 4.0), hollow: above(0.3, 0.2), hollow_radius: 8.0, seed: 11, ..Rule::default() },
             0.5,
             (1.5, 3.0),
-            1.8,
+            1.0,
             5.0,
             Align::Random,
         ),
@@ -449,7 +452,7 @@ pub fn default_rules() -> Vec<DecalRule> {
             Rule { slope: below(25.0, 8.0), building: below(1.5, 2.0), seed: 12, ..Rule::default() },
             3.0,
             (2.5, 5.0),
-            1.5,
+            1.0,
             2.5,
             Align::Building,
         ),
@@ -459,7 +462,7 @@ pub fn default_rules() -> Vec<DecalRule> {
             Rule { road: below(1.0, 1.5), seed: 13, ..Rule::default() },
             1.5,
             (1.5, 3.0),
-            3.0,
+            1.0,
             4.0,
             Align::Road,
         ),
@@ -469,7 +472,7 @@ pub fn default_rules() -> Vec<DecalRule> {
             Rule { slope: Some(Range { lo: Some(8.0), hi: Some(40.0), fade: 4.0 }), flow: above(0.6, 0.1), seed: 14, ..Rule::default() },
             1.0,
             (2.0, 4.0),
-            2.5,
+            1.0,
             5.0,
             Align::Slope,
         ),
@@ -479,7 +482,7 @@ pub fn default_rules() -> Vec<DecalRule> {
             Rule { slope: below(20.0, 6.0), deposit: above(0.15, 0.1), seed: 15, ..Rule::default() },
             1.0,
             (1.5, 3.0),
-            1.2,
+            1.0,
             3.0,
             Align::Random,
         ),
@@ -615,7 +618,8 @@ mod tests {
         assert!(laid.len() > 5, "{}", laid.len());
         for d in &laid {
             assert!((d.x - 40.0).hypot(d.z - 40.0) < 7.0, "in the bowl: {d:?}");
-            assert!((1.0..=2.0).contains(&d.across) && (d.length - d.across * 2.0).abs() < 1e-4);
+            // Twice its own shape: the kit's puddle is half as long as it is wide.
+            assert!((1.0..=2.0).contains(&d.across) && (d.length - d.across * 0.5 * 2.0).abs() < 1e-4);
             assert_eq!(d.key, "rigidmodels\\decals\\battle\\global_terrain_puddle_01.rigid_model_v2");
         }
 

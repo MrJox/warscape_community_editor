@@ -1446,7 +1446,10 @@ impl TileTool {
         let text = match &en.make {
             Make::Place { kind, key }
                 if !key.is_empty()
-                    && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance") =>
+                    && matches!(
+                        kind.as_str(),
+                        "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance" | "ProjectedDecalInstance"
+                    ) =>
             {
                 document(e).and_then(|d| d.draft_text(&Draft::new(kind, key)))
             }
@@ -1480,7 +1483,10 @@ impl TileTool {
         match &en.make {
             Make::Place { kind, key } => {
                 !key.is_empty()
-                    && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance")
+                    && matches!(
+                        kind.as_str(),
+                        "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance" | "ProjectedDecalInstance"
+                    )
             }
             Make::Prefab { .. } | Make::Biome { .. } => true,
             _ => false,

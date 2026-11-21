@@ -3055,3 +3055,23 @@ fn a_district_is_filled_and_filled_again_in_place() {
     d.history_mut().undo();
     assert_eq!(d.district_buildings(area), 0);
 }
+
+#[test]
+fn a_new_decal_starts_at_its_own_size() {
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let unit = d.tile().unit();
+    let at = Create::Point(Float3::new(10.0, 0.0, 10.0));
+    let scale = |d: &TileDocument, e: usize| d.tile().tscene().get(e, "scale").unwrap();
+    let num = |v: f64| wce_tile::ted_scene::format_number(v);
+
+    // The kit's most common size of it (a puddle 5 m across, 10 m along), not the type's 12 x 3 m strip.
+    let key = r"rigidmodels\decals\battle\global_terrain_puddle_02.rigid_model_v2";
+    assert_eq!(wce_tile::decal_sizes::decal_size(key), Some([5.0, 10.0, 10.0]));
+    let puddle = d.create("ProjectedDecalInstance", layer, &at, key).unwrap();
+    assert_eq!(scale(&d, puddle), format!("vector({},{},{})", num(5.0 * unit), num(10.0 * unit), num(-10.0 * unit)));
+
+    // One the kit does not place: a square.
+    let other = d.create("ProjectedDecalInstance", layer, &at, r"rigidmodels\decals\battle\not_in_the_kit.rigid_model_v2").unwrap();
+    assert_eq!(scale(&d, other), format!("vector({},{},{})", num(8.0 * unit), num(10.0 * unit), num(-8.0 * unit)));
+}
