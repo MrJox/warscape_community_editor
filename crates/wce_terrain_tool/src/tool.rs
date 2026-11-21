@@ -378,6 +378,13 @@ pub struct TerrainTool {
     maps_for: Vec<PathBuf>,
     rings: Rings,
 
+    /// The other kind's rings (a campaign map's while a battle map shows, and the other way), whether `rings` are a campaign map's, and
+    /// whether the panel or a script changed each kind's (battle, campaign): unchanged, a campaign map takes its own defaults
+    /// (`Rings::campaign`, by its cells a world unit).
+    rings_other: Rings,
+    rings_campaign: bool,
+    rings_edited: [bool; 2],
+
     /// A campaign map's season in the view (`sp`, `su`, `au`, `wi`): the ground's textures of that season and its snow mask.
     season: String,
 
@@ -465,6 +472,9 @@ impl Default for TerrainTool {
             map: 0,
             maps_for: vec![],
             rings: Rings::default(),
+            rings_other: Rings::default(),
+            rings_campaign: false,
+            rings_edited: [false, false],
             season: "su".to_owned(),
             weather: None,
             lighting: None,
@@ -587,6 +597,10 @@ fn land_near_centre(lf: &wce_scene::render_scene::LfMap) -> Option<Float3> {
 fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
     LfField::shared(f.grid().clone())
 }
+
+/// How far from the camera's target a campaign map's settlements and props are drawn (world units): the props' 96 cells on Attila's map,
+/// which on Thrones' and TDD's (3 cells a unit) would be half the distance.
+const CAMPAIGN_PROP_REACH: f64 = 64.0;
 
 /// A reader of a campaign's startpos by its path (`campaigns/<key>/startpos.esf`): the packs' (a mod's: TDD's), else the game's `data`
 /// folder's loose file (the game's own campaigns').
@@ -1172,6 +1186,23 @@ impl TerrainTool {
         let sea_drawn = frame.sea_lf_edit.as_ref().and(frame.sea_lf.as_ref()).map(|d| (d, LfDerive::GameSea));
         self.mirror = mirror(LfRole::Land, self.pick.as_ref().map(|p| &p.lf), land_box);
         self.sea_mirror = mirror(LfRole::Sea, self.sea_lf.as_ref(), sea_drawn);
+        // The rings of the map's kind: a campaign map's by its own scale unless changed.
+        if let Some(tf) = e.docs.find_as::<MapDocument>(id).map(|d| d.terry_frame) {
+            let campaign = tf.y_from_lf;
+            if campaign != self.rings_campaign {
+                std::mem::swap(&mut self.rings, &mut self.rings_other);
+                self.rings_campaign = campaign;
+            }
+            if campaign && tf.cell > 0.0 {
+                let per_unit = 1.0 / tf.cell;
+                if !self.rings_edited[1] {
+                    let follow = self.rings.follow;
+                    self.rings = Rings { follow, ..Rings::campaign(per_unit) };
+                }
+                // The settlements' and the props' models to 64 world units (96 cells on Attila's map, as before; 192 on Thrones').
+                self.props.radius_cells = (CAMPAIGN_PROP_REACH * per_unit).ceil();
+            }
+        }
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
         self.shown = id;
         self.building = 0;
@@ -1397,11 +1428,12 @@ impl TerrainTool {
         }
 
         gui::separator();
-        let mut rings = gui::slider_int("full detail (cells)", &mut self.rings.near, 1, 64);
-        rings |= gui::slider_int("buildings (cells)", &mut self.rings.mid, 1, 128);
+        let mut rings = gui::slider_int("full detail (cells)", &mut self.rings.near, 1, 128);
+        rings |= gui::slider_int("buildings (cells)", &mut self.rings.mid, 1, 512);
         rings |= gui::slider_int("tile ground (cells)", &mut self.rings.ground, 1, 1024);
         rings |= gui::slider_int("LF ground (cells)", &mut self.rings.far, 1, 1024);
         if rings {
+            self.rings_edited[usize::from(self.rings_campaign)] = true;
             self.view.set_rings(&self.rings);
         }
 
@@ -3499,6 +3531,12 @@ impl Tool for TerrainTool {
 
                     if let Some(&ground) = rings.get(3) {
                         t.rings.ground = ground;
+                    }
+
+                    // Given rings hold for both kinds of map (a script may set them before it opens one).
+                    if !rings.is_empty() {
+                        t.rings_other = t.rings;
+                        t.rings_edited = [true, true];
                     }
 
                     t.view.set_rings(&t.rings);

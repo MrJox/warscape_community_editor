@@ -40,8 +40,21 @@ pub struct Rings {
 }
 
 impl Default for Rings {
+    /// A battle map's.
     fn default() -> Self {
         Self { near: 8, mid: 24, ground: 24, far: 64, view_distance: GAME_FAR_PLANE, follow: true }
+    }
+}
+
+impl Rings {
+    /// A campaign map's, `cells_per_unit` map cells a world unit (1.5 on Attila's map, 3 on TDD's and Thrones'): the battle's cells are
+    /// a fraction of a campaign view. The game draws its tiles' ground to 37 world units from the camera and blends it into its far
+    /// material from 9 (capture A's resolve, `g_far_blend_range` (9, 37)): the full detail to 9, the tiles' buildings and ground to 37,
+    /// the LF ground to 128 (the far ring follows the camera's view past it).
+    #[must_use]
+    pub fn campaign(cells_per_unit: f64) -> Self {
+        let cells = |units: f64| (units * cells_per_unit).ceil().max(1.0) as i32;
+        Self { near: cells(9.0), mid: cells(37.0), ground: cells(37.0), far: cells(128.0), view_distance: GAME_FAR_PLANE, follow: true }
     }
 }
 
