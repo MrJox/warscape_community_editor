@@ -317,7 +317,8 @@ setup in the battle XML; the Lua is written apart. What the Tile tool has that w
    chosen in the editor after it, `game_startup_mode battle script/<key>/<key>_battle.xml` (its own XML: the start script is
    named relative to it, so not the tiles' `script/wce/wce_launch.xml`); the checks of the Tile and Terrain tools' launches (the
    game not running, Steam running, stray movie-type packs: a question with Launch anyway); the pack removed when the game exits.
-   The viewport's launch chip, File > Export > Launch the battle in game, `scene_launch [--dry-run] [--ignore-movie-packs]`
+   Cinematic > Launch in game (the tool's menu, as Tile > Launch in game; "(running)" while the game runs), the viewport's launch
+   chip, `scene_launch [--dry-run] [--ignore-movie-packs]`
    (the gate's dry run: the pack in the build folder). In game: **todo** (the user).
 2. **The ground** (`wce_map_view::MapView`, the Map context). **done** (2026-11-21, `ground.rs`): the Tile tool's map streamer on
    the battle's map from the packs (`load_map`, the packs' tiles through `PacksTree`, the kits' first), 2 m a scene unit as the
