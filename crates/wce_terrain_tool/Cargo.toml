@@ -13,6 +13,7 @@ wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }
 wce_launch = { path = "../wce_launch" }
 wce_map_view = { path = "../wce_map_view" }
+wce_render = { path = "../wce_render" }
 wce_scene = { path = "../wce_scene" }
 wce_terrain = { path = "../wce_terrain" }
 wce_terrain_editor = { path = "../wce_terrain_editor" }

@@ -13,6 +13,7 @@ pub mod border_fit;
 pub mod borders;
 pub mod build;
 pub mod campaign;
+pub mod characters;
 pub mod cities;
 pub mod diplomacy;
 pub mod heights;

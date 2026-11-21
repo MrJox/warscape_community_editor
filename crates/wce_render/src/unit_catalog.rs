@@ -169,7 +169,7 @@ fn srgb_to_linear(byte: f32) -> f32 {
 }
 
 /// `RRGGBB`, with or without its `#`, as linear colour; black when it isn't one.
-fn hex_colour(text: &str) -> [f32; 3] {
+pub(crate) fn hex_colour(text: &str) -> [f32; 3] {
     let text = text.trim().trim_start_matches('#');
     std::array::from_fn(|i| {
         text.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).map_or(0.0, |b| srgb_to_linear(f32::from(b)))

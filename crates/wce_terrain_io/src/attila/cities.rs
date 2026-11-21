@@ -294,7 +294,7 @@ fn wall_walks(data: &RecordNode) -> Vec<Vec<(u16, u16)>> {
 
 /// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
 /// `SLOT_MAP_DATA`, the main slot and the port, and its `SECONDARY_SLOT_ARRAY`'s): the slot's index (the leading u32) -> its cell.
-fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
+pub(crate) fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
     let mut out = HashMap::new();
     let Some(data) = child(settlement, "SETTLEMENT_EXPANSION_MANAGER").and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA")) else {
         return out;

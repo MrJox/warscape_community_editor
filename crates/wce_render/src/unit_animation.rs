@@ -433,7 +433,7 @@ impl Figure {
     }
 
     /// Plays `slots` in a loop, at `lengths` where given; false when none of them is there.
-    fn play(&mut self, read: &Reader, slots: &[String], lengths: &[f32], rng: &mut Rng) -> bool {
+    pub(crate) fn play(&mut self, read: &Reader, slots: &[String], lengths: &[f32], rng: &mut Rng) -> bool {
         let segments: Vec<Segment> =
             slots.iter().enumerate().filter_map(|(k, s)| self.segment(read, s, rng, lengths.get(k).copied().unwrap_or(0.0))).collect();
         let done = !segments.is_empty();
@@ -444,7 +444,7 @@ impl Figure {
         done
     }
 
-    fn duration(&self) -> f32 {
+    pub(crate) fn duration(&self) -> f32 {
         self.segments.iter().map(|s| s.length).sum::<f32>().max(1e-3)
     }
 
@@ -490,7 +490,7 @@ impl Figure {
     }
 
     /// The figure at `t`, then the props the clip holds by then.
-    fn instances(&self, t: f32, scale: f32, faction_colours: [[f32; 3]; 4], casts_shadow: bool) -> Vec<UnitInstance> {
+    pub(crate) fn instances(&self, t: f32, scale: f32, faction_colours: [[f32; 3]; 4], casts_shadow: bool) -> Vec<UnitInstance> {
         let Some((k, inside)) = self.at(t) else { return vec![] };
         let clip = &self.segments[k].clip;
         let locals = self.locals_at(k, inside);

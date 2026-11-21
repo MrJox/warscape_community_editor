@@ -310,6 +310,16 @@ pub struct PropModels {
 
     /// Per drawn tree: the file's y and the ground's height in the list's units (the view's over k) (`terrain_props`).
     pub heights: Vec<(f32, f32)>,
+
+    /// The props near the camera that move (a model with its own clip: the fauna, `wce_render::animated_prop`): key, world, model;
+    /// posed every frame (`pose_animated`), not drawn as models.
+    animated: Vec<(u64, Float4x4, String)>,
+
+    /// Each model's clip (none: it has none, or it does not load), and whether a model has one.
+    clips: std::collections::HashMap<String, Option<Arc<wce_render::animated_prop::AnimatedProp>>>,
+    has_clip: std::collections::HashMap<String, bool>,
+    animated_drawn: std::collections::HashMap<u64, EntityId>,
+    pub animated_count: usize,
 }
 
 impl Default for PropModels {
@@ -332,6 +342,11 @@ impl Default for PropModels {
             cities: None,
             city_count: 0,
             heights: vec![],
+            animated: vec![],
+            clips: Default::default(),
+            has_clip: Default::default(),
+            animated_drawn: Default::default(),
+            animated_count: 0,
         }
     }
 }
@@ -493,6 +508,8 @@ impl PropModels {
         let k = (1.0 / tf.unit) as f32;
         // (key, world, payload, the item a click selects).
         let mut out: Vec<(u64, Float4x4, Payload, u64)> = vec![];
+        let mut animated: Vec<(u64, Float4x4, String)> = vec![];
+        let files = e.files();
         let props = self.props.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
         for prop in props.iter().filter(|p| p.seasons & self.season_bit != 0) {
             let (w, m) = (prop.at, prop.matrix);
@@ -515,6 +532,14 @@ impl PropModels {
             // the LF there; 10 % of the props over 105): stood on the ground they floated over the hills.
             world.m[1][3] = (w[1] / tf.unit) as f32;
             world.m[2][3] = fz as f32;
+            // A model with its own clip moves (the fauna): posed every frame instead.
+            let moves = *self.has_clip.entry(prop.model.clone()).or_insert_with(|| {
+                wce_render::animated_prop::clip_path(&prop.model).is_some_and(|c| files.as_ref().is_some_and(|f| f.exists(&c)))
+            });
+            if moves {
+                animated.push((prop.key, world, prop.model.clone()));
+                continue;
+            }
             let p16 = DEFAULT_INSTANCE_PARAMS;
             let mesh = MeshInstance {
                 model: prop.model.clone(),
@@ -752,7 +777,49 @@ impl PropModels {
             self.drawn.insert(k, ent);
         }
 
+        self.animated = animated;
         self.built = Some(key);
+    }
+
+    /// The props that move, posed for the editor's clock: their clips loaded as they come (once a model), each at a phase of its own.
+    pub fn pose_animated(&mut self, e: &mut Editor, doc: DocumentId) {
+        if self.layer == 0 || e.scene.layer(self.layer).is_none() {
+            self.animated_drawn.clear();
+            self.animated_count = 0;
+            return;
+        }
+        let files = e.files();
+        let read = |p: &str| files.as_ref().and_then(|f| f.read(p).ok()).map(|b| b.to_vec());
+        let keep: std::collections::HashSet<u64> = self.animated.iter().map(|a| a.0).collect();
+        let gone: Vec<std::ops::Range<EntityId>> =
+            self.animated_drawn.iter().filter(|(k, _)| !keep.contains(k)).map(|(_, &ent)| ent..ent + 1).collect();
+        self.animated_drawn.retain(|k, _| keep.contains(k));
+        e.scene.remove_ranges(&gone);
+        let time = e.clock.time() as f32;
+        let mut count = 0;
+        for (key, world, model) in &self.animated {
+            let Some(clip) = self
+                .clips
+                .entry(model.clone())
+                .or_insert_with(|| wce_render::animated_prop::AnimatedProp::load(&read, model).map(Arc::new))
+                .clone()
+            else {
+                continue;
+            };
+            let ent = *self.animated_drawn.entry(*key).or_insert_with(|| {
+                let ent =
+                    e.scene.add(self.layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), SourceRef { doc, item: u64::MAX });
+                if let Some(en) = e.scene.find_mut(ent) {
+                    en.locked = true;
+                }
+                ent
+            });
+            // Not in step: a phase from the key.
+            let phase = (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f32 / (1u64 << 24) as f32 * clip.duration();
+            e.scene.update_pose(ent, *world, clip.pose(time + phase, true));
+            count += 1;
+        }
+        self.animated_count = count;
     }
 
     pub fn clear(&mut self, e: &mut Editor) {
@@ -762,5 +829,7 @@ impl PropModels {
 
         (self.layer, self.built, self.count) = (0, None, 0);
         self.drawn.clear();
+        self.animated_drawn.clear();
+        self.animated.clear();
     }
 }
