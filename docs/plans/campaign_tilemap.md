@@ -232,9 +232,15 @@ Rome, about Corsica, a slab in F): left out of the comparisons there. No TDD cap
   against the game's 7.8 / 9.3 / 9.0; ours a little brighter further out (840, 650: 3.7 / 6.8 / 9.0 against 1.8 / 3.9 / 6.4).
 - **TDD's Mordor (capture T0, 2026-11-21):** the mountains and plains drew light tan where the game's are dark ash: their placements'
   climate is index 8, TDD's `wasteland` (texture set `mordor_a`, in its campaign `tile_database.bin`), and the map's climate names came
-  from the kits' databases alone (eight). Fixed: the names extend from the packs' database. Left: the far ring's strips (24 to 40
-  cells) use the plain material, a grass tile with only its `climate` channel retextured, so Mordor's ash shows green there; the game
-  draws the tiles themselves out to its far blend (9 to 37 world units). Minas Tirith not captured: a custom model, no sprawl.
+  from the kits' databases alone (eight). Fixed: the names extend from the packs' database. The far ring's strips (24 to 40 cells)
+  then still showed Mordor green: they use the plain material, and no climate's plain was ever retextured in the Terrain tool (the
+  plain base's texture groups came only from the tile editor's open tile; `Frame::offer_plain` now takes the offering grass tile's).
+  That tile names `grass_a` on every channel, not `climate`, so a climate whose texture set is none of its groups (`wasteland`'s
+  `mordor_a`, `northern_europe`'s `grass_b`) has its set on all four. The game draws the tiles themselves out to its far blend (9 to
+  37 world units). `terrain_far_relief` prints the cell's plain textures and the tile's textures, their means and its far colour.
+  Seen in G meanwhile, older (cmpG7 of 2026-11-20 has it): the far blocks west of the river are a light / dark patchwork by tile
+  (`grass_05` bakes 73 74 31, `grass_06` 45 47 30), where the game's forest covers it evenly. Minas Tirith not captured: a custom
+  model, no sprawl.
 - **G's sawtooth (2026-11-20):** dark teeth across mountain tiles past the tile rings (`atlantic_mountains\large_point_60_r`, and a
   smaller one on the right). The far chunks draw a tile's cells as plain ground raised by the far relief (40 to 90 m there), and
   the plain material's blend box stands 30 units over the LF: what rose out of it resolved black. A ground with heights of its

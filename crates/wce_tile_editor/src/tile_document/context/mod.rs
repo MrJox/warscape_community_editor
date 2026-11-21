@@ -629,12 +629,14 @@ pub struct Frame {
     climate: Vec<u8>,
     climates: ClimateList,
     pub look: TerrainLook,
-    groups: Option<TileTextureGroup>,
     files: Option<Arc<dyn Files>>,
 
     /// The plain material's base and the LF ground's shared pieces: a heights buffer of zeros per grid size (every rectangle of that size
     /// draws it), the plain material per rectangle size (one id: one set of maps on the GPU).
     plain_base: Mutex<Option<Arc<TerrainMaterial>>>,
+    /// The texture groups of the plain base's tile (the request's, else those of the tile that offered it, `offer_plain`): without them
+    /// no climate's plain ground got its textures (the Terrain tool has no open tile; every climate drew the grass tile's green).
+    groups: Mutex<Option<TileTextureGroup>>,
     plain_normal_id: u64,
     zeros: Mutex<HashMap<(i32, i32), Heights>>,
 
@@ -726,9 +728,9 @@ impl Frame {
             climate,
             climates,
             look: rq.look.clone(),
-            groups: rq.groups.clone(),
             files,
             plain_base: Mutex::new(rq.plain.clone()),
+            groups: Mutex::new(rq.groups.clone()),
             plain_normal_id: next_id(&NORMAL_IDS),
             zeros: Mutex::default(),
             plain_bases: Mutex::default(),
@@ -761,9 +763,9 @@ impl Frame {
             climate,
             climates: self.climates.clone(),
             look: self.look.clone(),
-            groups: self.groups.clone(),
             files: self.files.clone(),
             plain_base: Mutex::new(self.plain_base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
+            groups: Mutex::new(self.groups.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
             plain_normal_id: self.plain_normal_id,
             zeros: Mutex::default(),
             plain_bases: Mutex::default(),
@@ -847,11 +849,22 @@ impl Frame {
 
         let base = self.plain_base.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let name = self.map.climates.get(usize::from(climate)).filter(|c| self.climates.find(c).is_some());
-        let made = match (&base, name, &self.groups, &self.files) {
+        let groups = self.groups.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let made = match (&base, name, &groups, &self.files) {
             (Some(base), Some(name), Some(groups), Some(files)) if *name != self.look.climate => {
                 let look = TerrainLook { climate: name.clone(), ..self.look.clone() };
                 let id = next_id(&MATERIAL_IDS);
-                (Some(Arc::new(retexture(base, groups, &look, &self.climates, files.as_ref(), id))), id)
+                // A climate whose ground is none of the grass tile's groups (TDD's `wasteland`, `mordor_a`; a desert's sand) has it on all
+                // four channels: retextured only where the tile says `climate`, Mordor's ash plains showed the grass tile's green.
+                let set = self.climates.find(name).map(|c| c.texture_set.clone()).unwrap_or_default();
+                let own = [&groups.red, &groups.green, &groups.blue, &groups.alpha].into_iter().any(|g| g.eq_ignore_ascii_case(&set));
+                let groups = if set.is_empty() || own {
+                    groups.clone()
+                } else {
+                    let c = "climate".to_owned();
+                    TileTextureGroup { red: c.clone(), green: c.clone(), blue: c.clone(), alpha: c }
+                };
+                (Some(Arc::new(retexture(base, &groups, &look, &self.climates, files.as_ref(), id))), id)
             }
 
             _ => (base, bases.get(&climate).map_or_else(|| next_id(&MATERIAL_IDS), |b| b.1)),
@@ -870,9 +883,11 @@ impl Frame {
     }
 
     /// A base for the plain material, when there is none yet.
-    pub fn offer_plain(&self, m: &Option<Arc<TerrainMaterial>>) {
+    pub fn offer_plain(&self, m: &Option<Arc<TerrainMaterial>>, groups: impl FnOnce() -> Option<TileTextureGroup>) {
         let mut base = self.plain_base.lock().unwrap_or_else(|p| p.into_inner());
-        if base.is_none() {
+        if base.is_none() && m.is_some() {
+            // The groups first: whoever sees the base sees its groups (`plain_for` keeps what it makes).
+            *self.groups.lock().unwrap_or_else(|p| p.into_inner()) = groups();
             base.clone_from(m);
         }
     }
@@ -1108,6 +1123,24 @@ impl Frame {
         let owner = if x < 0 || y < 0 || x >= w || y >= h { u32::MAX } else { self.owner[(y * w + x) as usize] };
         let over: Vec<String> = self.over_cell(x, y).map(|i| format!("{i}{}", if self.on_sea_lf(i) { " sea" } else { "" })).collect();
         format!("owner {owner}, over [{}], sea {}", over.join(", "), self.cell_on_sea(x, y, custom))
+    }
+
+    /// A map cell's plain ground: its climate and the textures of that climate's plain material.
+    pub fn plain_note(&self, x: i32, y: i32) -> String {
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        let c = self.climate.get((y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) as usize).copied().unwrap_or(NO_CLIMATE);
+        let groups = self
+            .groups
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|g| [g.red.clone(), g.green.clone(), g.blue.clone(), g.alpha.clone()]);
+        let textures = self.plain_for(c).0.map(|m| m.diffuse.iter().step_by(4).cloned().collect::<Vec<_>>());
+        format!(
+            "plain: climate {c} ({:?}), look {}, base groups {groups:?}, textures {textures:?}",
+            self.map.climates.get(usize::from(c)),
+            self.look.climate
+        )
     }
 
     /// The placements over a map cell, every layer's (`by_chunk` holds a placement in its origin's chunk).
