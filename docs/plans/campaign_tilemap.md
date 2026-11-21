@@ -55,9 +55,11 @@ Never done: a whole frame compared at the same camera. Known gaps (V, from the c
 - **Environment leftovers:** the skybox casts as the game's (decision 4), but lays stripes over TDD's Rauros where the game shows none
   (the editor's cascades differ from the game's there); the shroud plane reads
   depth but does not write it (settled 2026-11-20: the game's writes depth, but into a copy of the scene's depth, 6106, that nothing
-  reads after it in capture A's frame: the particles test 6111, the UI 6150; no effect, the editor's equivalent); the overlay's size (1.5 x the screen) and the rivers' half-width are ASSUMPTIONS; the sea border's rebel
-  exception, the placed effects' activation granularity, the storm clouds' drift direction and the started effects' removal are not
-  traced; the fog of war and the shroud at the map's edge are not compared with the game.
+  reads after it in capture A's frame: the particles test 6111, the UI 6150; no effect, the editor's equivalent); the overlay's size settled 2026-11-21 (1.5 x the screen, at most 2048: captures at 1920 x 1080 and 1280 x 720), the rivers drawn
+  from the tiles' own river meshes (no half-width of the editor's); the sea border's rebel exception settled 2026-11-21
+  (campaign_borders.md); the fog of war (capture G) and the shroud at the map's edge (capture E) settled 2026-11-20. Not traced: the
+  placed effects' activation granularity and the started effects' removal (assumptions, campaign_environment.md); the storm clouds
+  drift with the VFX wind every capture has, (2, 0, 0) units / s, its source not traced.
 - **Map:** far ground with no tile data olive in some runs and pink in others (parked 2026-11-07). TDD's Rauros water edge, notches
   and triangles: gone at T1's and T2's cameras (2026-11-21, the lake tile's heights from its mesh, Progress).
 

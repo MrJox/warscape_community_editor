@@ -1,6 +1,7 @@
 //! A campaign map's overlay (docs/plans/campaign_environment.md, Phase 4; RenderDoc, camp_attila 2026-11-17): the rivers drawn flat
 //! (world y 0) into an RGBA16F target with a camera of their own, which the lighting and the sea then read:
-//! - the target: 2048 x 1620 at a 1920 x 1080 screen (ASSUMPTION: 1.5 x the screen, at most 2048), cleared to (0, 0, 0, 1); colour
+//! - the target: 1.5 x the screen, at most 2048 a side (captures A, E, G at 1920 x 1080: 2048 x 1620; F, T1 at 1280 x 720: 1920 x
+//!   1080), cleared to (0, 0, 0, 1); colour
 //!   SrcAlpha / InvSrcAlpha, alpha Zero / InvSrcAlpha: rgb the overlay's colour over black, a the transmittance (1: nothing drawn); no
 //!   depth;
 //! - the camera: the view's rotation, field of view and aspect (the screen's, not the target's), its eye moved back horizontally by d
