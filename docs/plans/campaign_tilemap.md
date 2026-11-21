@@ -558,3 +558,13 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   editor, none in the game; (4) the mountains' custom meshes (Snowdon's flat pale shelves); (5) the ground's colour east of the
   peninsula (sandy where the game's is green); (6) the army's banner and figures. 94 of 135 of V1's shaders named (the Thrones fxc
   set: not looked into).
+- **Thrones, V1 and V2 again (2026-11-21, later):** (1) the coasts and the ground's colour were the battle rings: a campaign map's
+  own (`Rings::campaign`: full detail 9 world units, the tiles to 37 as the game's far blend, the LF ground to 128; the props 64)
+  draw V1's coasts, Bardsey and the land east of the peninsula as the game's (memory at V1 51 -> 475 MB); (2) the camera keeps
+  the game's campaign limits (`campaign_variables`: Thrones 7 - 23 units and 0.75 - 1.15 rad, Attila 9 - 45 and 0.35 - 1.15);
+  (3) Aberffro's palisade (great halls the major settlements, the abandoned rows out, no wall on water); (4) Snowdon's plateau
+  (the mesh's long fans out, the highest, the gaps filled). Left: (5) the rain at V2: the heaviest sphere's weather is Ireland's
+  `C_rain gusty` (0.424 against Britain's `dry gusty` 0.420), the game's dry: which weather the game takes from a near tie (or
+  whether its campaign weather comes from the lighting at all) is not traced; (6) the army's banner: Thrones shows the faction's
+  flag (red and white at V2) where the editor puts Attila's legacy emblem decorator (a "D"), and a soldier beside the general:
+  Thrones' banner and its army figures not traced (V2's banner draw is the place to start).
