@@ -47,11 +47,16 @@ Each editor is a Cargo feature of `wce_app`, so a release builds only the editor
 | Feature | Editor |
 |---|---|
 | `weather` | Weather and lighting |
+| `prefab` | Prefabs (the Tile editor on a stage of its own; turns on `tile`) |
 | `tile` | Battle and campaign tiles |
 | `ui` | UI layouts |
-| `placeholders` | The tabs of the editors still to come (unit, VFX, terrain, cinematic), off by default |
+| `audio` | Sound banks: names, search, playback |
 
-`cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts build with `--all-features`.
+Off by default, still in development: `terrain` (battle maps whole), `cinematic`, `unit`, `vfx`, and `placeholders` (the tabs of the editors
+still to come).
+
+`cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts and the VS Code debug tasks build
+with `--all-features`, the VS Code release tasks with the release's set.
 
 ## Releases and updates
 
