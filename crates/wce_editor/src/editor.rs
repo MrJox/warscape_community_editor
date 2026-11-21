@@ -1896,7 +1896,6 @@ impl Editor {
 
         self.follow_saves();
         if !self.first_run {
-            self.check_old_output();
             self.check_autosaves();
         }
 

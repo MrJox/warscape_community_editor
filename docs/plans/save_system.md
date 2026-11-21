@@ -90,7 +90,7 @@ Each Export entry asks for its destination and remembers the last one per game (
    field, the `output_dir` command and the Folders page entry go. Open file and Save as start in the projects folder.
 9. **Migration, once per game.** If the old output folder (the setting's, or the default) holds files under a packs' path, offer to move
    them into `loose/`. A file that `loose/` already has stays where it is and is listed in the log. Build leftovers (`launch/`, `dry_*`)
-   are not moved. Until the release, like the other migrations in `settings/mod.rs`.
+   are not moved. Until the release, like the other migrations in `settings/mod.rs`. (Removed 2026-11-21 for the release, with them.)
 10. **Scripts and docs.** `scripts/cross_tool.txt` and `scripts/weather_smoke.txt` use the output folder; they move to the projects
     folder (`$WCE_SETTINGS_DIR` already gives scripts a throw-away one). Update `docs/editor.md`: the Weather tool section, Save All, the
     settings table, and the Save All row that still says tiles save as `tile.ted` with a `.bak` (tiles save as `tile.wce` in the project).
