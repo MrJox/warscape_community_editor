@@ -2,7 +2,8 @@
 //! colour a region owner's borders take for a chosen faction (docs/formats/campaign_borders.md, "Colours").
 //!
 //! The startpos records (RPFM's leaf names: `^+n` the n-th leaf of a record's group before any record, `NAME+n` after the record):
-//! - `CAMPAIGN_ENV/CAMPAIGN_MODEL/WORLD/FACTION_ARRAY/FACTION`: `^+1` the faction's runtime id, `^+2` its key; its
+//! - `CAMPAIGN_ENV/CAMPAIGN_MODEL/WORLD/FACTION_ARRAY/FACTION`: `^+1` the faction's runtime id, its first text its key (`^+2`; Thrones'
+//!   after a record: `cities::faction_key`); its
 //!   `OLD_DIPLOMACY_MANAGER/DIPLOMACY_RELATIONSHIPS_ARRAY/OLD_DIPLOMACY_RELATIONSHIP`s: `^+1` the other faction's runtime id, `^+4` the
 //!   stance (`war` 0, `neutral` 1, `defensive_allies` 2, `military_allies` 3, `protector` 4, `client_state` 5, `master` 6, `vassal` 7);
 //! - `WORLD/REBEL_FACTION/FACTION`: the rebels (an empty key: no `factions` record, the game's faction +0x800 null);
@@ -16,7 +17,7 @@ use std::collections::HashMap;
 
 use rpfm_lib::files::esf::{NodeType, RecordNode};
 
-use super::cities::{as_record, child, leaf, str_of, u32_of};
+use super::cities::{as_record, child, faction_key, leaf, str_of, u32_of};
 
 /// A stance of one faction to another (the startpos's strings, the game's enum order).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,7 +160,7 @@ impl Diplomacy {
         let faction = |f: &RecordNode, d: &mut Self| {
             for g in f.children() {
                 let Some(id) = leaf(g, None, 1).and_then(u32_of) else { continue };
-                let key = leaf(g, None, 2).and_then(str_of).unwrap_or_default().to_owned();
+                let key = faction_key(g).unwrap_or_default().to_owned();
                 d.factions.push(StartFaction { id, key });
                 for m in g.iter().filter_map(as_record).filter(|r| r.name() == "OLD_DIPLOMACY_MANAGER") {
                     for arr in records(m, "DIPLOMACY_RELATIONSHIPS_ARRAY") {

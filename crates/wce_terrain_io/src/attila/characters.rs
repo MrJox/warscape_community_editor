@@ -113,7 +113,7 @@ pub fn read(startpos: &[u8]) -> Result<StartCharacters, String> {
     }
     for faction in records(factions).filter(|r| r.name() == "FACTION") {
         let Some(fg) = faction.children().first() else { continue };
-        let key = fg.iter().filter(|n| as_record(n).is_none()).nth(1).and_then(str_of).unwrap_or_default().to_owned();
+        let key = super::cities::faction_key(fg).unwrap_or_default().to_owned();
         if let Some(chars) = child(faction, "CHARACTER_ARRAY") {
             out.characters.extend(records(chars).filter(|r| r.name() == "CHARACTER").filter_map(|c| character(c, &key)));
         }
