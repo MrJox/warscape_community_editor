@@ -98,8 +98,24 @@ pub struct Cities {
     /// their buildings' turns are looked for in).
     pub hexes: HashMap<(u16, u16), [i64; 10]>,
 
+    /// Each region's owner at the start (its settlement's faction key; none for an abandoned one): its walls' flags take its banner.
+    pub owners: HashMap<String, String>,
+
     /// What was not found (counts by reason).
     pub notes: Vec<String>,
+}
+
+impl Cities {
+    /// A hex cell's centre in world units (x east, y north): as the read places the slots (RPFM's `world_position`).
+    #[must_use]
+    pub fn cell_centre(&self, (c, r): (u32, u32)) -> (f64, f64) {
+        let raw_w = f64::from(self.grid.0.saturating_sub(1)) * CELL_RAW_WIDTH;
+        let raw_h = f64::from(self.grid.1) * CELL_RAW_HEIGHT + CELL_RAW_HEIGHT / 2.0;
+        let (sx, sy) = (self.world.0 / raw_w, self.world.1 / raw_h);
+        let x = f64::from(c) * CELL_RAW_WIDTH * sx;
+        let y = f64::from(r) * CELL_RAW_HEIGHT * sy + if c % 2 == 1 { CELL_RAW_HEIGHT / 2.0 * sy } else { 0.0 };
+        (x, y)
+    }
 }
 
 /// A sprawl piece: a sprawl cell's model, turned by `turn` sixths of a turn clockwise seen from above (the game's `FUN_10b29d90`: the
@@ -651,6 +667,9 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
         for g in region.children() {
             let Some(key) = leaf(g, None, 2).and_then(str_of) else { continue };
             let owner = leaf(g, Some("SETTLEMENT"), 9).and_then(u32_of).and_then(|id| factions.get(&id)).cloned().unwrap_or_default();
+            if !owner.is_empty() {
+                cities.owners.insert(key.to_owned(), owner.clone());
+            }
             let Some(manager) = g.iter().filter_map(as_record).find(|r| r.name() == "REGION_SLOT_MANAGER") else { continue };
             let cells = map_slots.get(key);
             let own_cells = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT").map(startpos_slot_cells).unwrap_or_default();
@@ -841,8 +860,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             // The walls of a major settlement (RPFM: Attila walls its major settlements): every slot's wall walk (`SLOT_WALL_ARRAY`, in
             // order), the cells on the outer edge of the zones' union only (ASSUMPTION: the game drops the walls between touching zones),
             // each cell a `wall_<shape>` of the directions to the walk's previous and next cells, `gatehouse_` where a road crosses
-            // (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads out of the zones (a straight 14 is turned half a
-            // turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them; a connecting tower between two cells of a walk.
+            // (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads into the zones (a straight 14 is turned half a
+            // turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them (the side by the captures: V2's Aberffro and capture
+            // A's Rome draw `wall_13` where "out of" gave `_inverse` at the same turn, and every straight 14 half a turn from it); a
+            // connecting tower between two cells of a walk.
             let walled = cities
                 .slots
                 .iter()
@@ -877,7 +898,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         let (shape, rot) = edge_piece(mask);
                         let zone_mask = (0..6).filter(|&d| hex_neighbour(cell, d).is_some_and(inside)).fold(0u32, |m, d| m | (1 << d));
                         let edge = 1 << ((rot + 5) % 6);
-                        let outward = zone_mask & edge != edge;
+                        let inward = zone_mask & edge == edge;
                         // A gate where the cell has road or river edges (field 7), a road's where it has road edges (field 4): fn
                         // 0x10a7c5c0; the game does not ask whether they cross the wall.
                         let (roads, both) = cell_info.get(&cell).map_or((0, 0), |i| (i.1 as u32, i.3 as u32));
@@ -889,7 +910,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                             "river_gatehouse_"
                         };
                         let base = format!("{kind}{}", shape_digits(shape));
-                        let (piece, turn) = match (outward, shape) {
+                        let (piece, turn) = match (inward, shape) {
                             (true, 9) => (base, (rot + 3) % 6),
                             (true, _) => (format!("{base}_inverse"), rot),
                             _ => (base, rot),

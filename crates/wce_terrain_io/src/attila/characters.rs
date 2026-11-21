@@ -209,3 +209,65 @@ fn force(f: &RecordNode, faction: &str) -> Option<StartForce> {
             .unwrap_or_default(),
     })
 }
+
+/// A rebel army a campaign's script raises at its start for the human player (Thrones' `vik_starting_rebellions.lua`:
+/// `faction_by_key("<player>"):is_human()` then `CreateStartingRebels("<region>", "<culture>", <column>, <row>)`, which forces a
+/// rebellion in the region with an army at that hex; capture V2, Gwined's: at (400, 339), beside the faction leader's army).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptedRebels {
+    pub player: String,
+    pub region: String,
+    pub culture: String,
+    pub cell: (u32, u32),
+}
+
+/// The starting rebel armies a campaign script raises (`ScriptedRebels`), read from its text: each `CreateStartingRebels` call with
+/// the player whose `is_human()` test comes before it.
+#[must_use]
+pub fn scripted_rebels(lua: &str) -> Vec<ScriptedRebels> {
+    let quoted = |s: &str| -> Vec<String> { s.split('"').skip(1).step_by(2).map(str::to_owned).collect() };
+    let mut player: Option<String> = None;
+    let mut out = vec![];
+    for line in lua.lines() {
+        let line = line.split("--").next().unwrap_or("");
+        if let Some(at) = line.find("faction_by_key(")
+            && line[at..].contains("is_human()")
+        {
+            player = quoted(&line[at..]).into_iter().next();
+        }
+        let Some(at) = line.find("CreateStartingRebels(") else { continue };
+        let args = &line[at + "CreateStartingRebels(".len()..];
+        let Some(args) = args.split(')').next() else { continue };
+        let strings = quoted(args);
+        let numbers: Vec<u32> = args.split(',').filter_map(|a| a.trim().parse().ok()).collect();
+        if let (Some(p), [region, culture], [c, r]) = (&player, strings.as_slice(), numbers.as_slice()) {
+            out.push(ScriptedRebels { player: p.clone(), region: region.clone(), culture: culture.clone(), cell: (*c, *r) });
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod rebels_tests {
+    use super::{ScriptedRebels, scripted_rebels};
+
+    #[test]
+    fn reads_the_players_and_their_rebels() {
+        let lua = r#"
+            if cm:model():world():faction_by_key("vik_fact_gwined"):is_human() then
+                CreateStartingRebels("vik_reg_aberffro", "welsh", 400, 339)
+                cm:trigger_mission("vik_fact_gwined", "vik_starting_rebels", true);
+            end
+        function CreateStartingRebels(region, culture, x, y)
+        "#;
+        assert_eq!(
+            scripted_rebels(lua),
+            vec![ScriptedRebels {
+                player: "vik_fact_gwined".to_owned(),
+                region: "vik_reg_aberffro".to_owned(),
+                culture: "welsh".to_owned(),
+                cell: (400, 339)
+            }]
+        );
+    }
+}

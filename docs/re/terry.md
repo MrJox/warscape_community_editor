@@ -365,8 +365,11 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   up, 1 to 3 (ASSUMPTION; Rome, `roman_west_city_major_3`: 2), turned clockwise by its sixths (RPFM's neighbour order runs clockwise
   from the next row, north). Walls (`FUN_10aecb70`, `FUN_10af7850`): a major settlement's main slot's wall walk (`SLOT_WALL_ARRAY`, in
   order), each cell `wall_<shape>` of the directions to the walk's neighbours (RPFM's `EdgePiece::from_mask`), `gatehouse_` where the
-  map's road edges cross it, `river_gatehouse_` its river edges, `_inverse` when the edge before its turn ((turn + 5) % 6) leads out of
-  the main zone (a straight `14` turned half a turn instead); the wall's cells hold no sprawl. Towers (`tower`, `end_tower`,
+  map's road edges cross it, `river_gatehouse_` its river edges, `_inverse` when the edge before its turn ((turn + 5) % 6) leads into
+  the main zone (a straight `14` turned half a turn instead; the side by the RenderDoc captures, 2026-11-21: V2's Aberffro and
+  capture A's Rome draw `wall_13` where the earlier "out of" gave `wall_13_inverse` at the same turn, the reverse too, and every
+  straight `14` half a turn from it; only `wall_13` and the gatehouses carry a flag, the `Cloth` block `flag1_lod01`, drawn in the
+  owner's `faction_banners` colours); the wall's cells hold no sprawl. Towers (`tower`, `end_tower`,
   `FUN_10af7610`) not drawn. Checked against the game's turn-1 screenshots of Rome and Neapolis (a city filling its zone, walled).
 - **Settlement sprawl** (2026-11-05, read, not drawn): the startpos's `SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/
   SETTLEMENT_EXPANSION_MAP_DATA` (its region's key) holds per slot `SLOT_MAP_DATA` (u32 index: 0 the main slot, 1 the port, then the

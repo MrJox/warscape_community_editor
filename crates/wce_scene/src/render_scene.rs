@@ -214,8 +214,18 @@ pub struct MeshInstance {
     /// On fire (the engine's render flag 0x200): drawn with its material's fire shader, charred by POSITION6.x (the burn amount).
     pub burning: bool,
 
-    /// Its material masks' colours (`rigid_faction_colours`, linear), a faction's (a campaign army's banner); none: white.
-    pub faction_colours: Option<[[f32; 3]; 4]>,
+    /// Its material masks' colours (`rigid_faction_colours`), a faction's (a campaign army's banner, a settlement's flags); none: white.
+    pub faction_colours: Option<FactionColours>,
+}
+
+/// A mesh instance's material masks' colours (`rigid_faction_colours`, linear).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FactionColours {
+    pub colours: [[f32; 3]; 4],
+
+    /// On its model's flags only (`GpuMesh::flag`), the rest white: a settlement's walls (capture V2: the walls white, their flags the
+    /// owner's).
+    pub flags_only: bool,
 }
 
 /// POSITION4..7 of an instance with nothing special: zero, except the opacity in POSITION4.w. rigidstandard's gbuffer_alpha_test multiplies

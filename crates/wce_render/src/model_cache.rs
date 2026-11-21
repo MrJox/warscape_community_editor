@@ -246,6 +246,10 @@ pub struct GpuMesh {
     /// A WeightedCloth mesh's first bone in its model's palette: its vertices index its own material's cloth bones, and a model's sails share
     /// one palette, theirs one after another in the order of the LOD's meshes.
     pub palette_base: u32,
+
+    /// A flag: a `Cloth` block of a model without sails (a campaign wall's or gatehouse's `flag1_lod01`), drawn as a rigid mesh in its
+    /// owner's banner colours (`FactionColours::flags_only`; capture V2: the game's draws of Aberffro's).
+    pub flag: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1025,7 +1029,9 @@ impl ModelInner {
             return Ok(None);
         }
 
-        let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| self.mesh_of(path, block, ropes, skinned, snow);
+        // A model with sails (`WeightedCloth`) has its `Cloth` blocks for the simulation (`cloth_sim`); without, they are flags.
+        let flags = !model.lods().iter().any(|l| l.mesh_blocks().iter().any(|b| *b.mesh().material_type() == MaterialType::WeightedCloth));
+        let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| self.mesh_of(path, block, ropes, skinned, snow, flags);
 
         let mut gm = GpuModel {
             path: path.to_owned(),
@@ -1117,6 +1123,7 @@ impl ModelInner {
         ropes: bool,
         skinned: bool,
         snow: bool,
+        flags: bool,
     ) -> Option<GpuMesh> {
         let textures = &self.textures;
         let (mesh, material) = (block.mesh(), block.material());
@@ -1135,6 +1142,7 @@ impl ModelInner {
             }
             _ if skinned => return None,
             (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
+            (MaterialType::Cloth, VertexFormat::Static) if flags => (MeshKind::Standard, VertexFormat::Static),
             (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
             (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
             (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
@@ -1310,6 +1318,7 @@ impl ModelInner {
 
             // Its bone count for now: [`palette_bases`] makes it the first bone.
             palette_base: if kind == MeshKind::WeightedCloth { material.cloth_bones().len() as u32 } else { 0 },
+            flag: *mesh.material_type() == MaterialType::Cloth,
         })
     }
 
@@ -1370,6 +1379,7 @@ impl ModelInner {
             bmax: Float3::new(hi[0], hi[1], hi[2]),
             snow: false,
             palette_base: 0,
+            flag: false,
         })
     }
 
@@ -2039,6 +2049,7 @@ fn build_patch(
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
         snow: false,
         palette_base: 0,
+        flag: false,
     };
 
     let cells = (ci1 - ci0).max(cj1 - cj0);

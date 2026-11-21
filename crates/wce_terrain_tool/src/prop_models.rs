@@ -14,11 +14,14 @@
 //! ASSUMPTIONS: the second byte is the turn in sixths (its six values equally common); the first byte (1 on 5582) and the last (15: the
 //! seasons?) are not read.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use wce_editor::editor::Editor;
 use wce_foundation::math::Float4x4;
-use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, DocumentId, EntityId, LayerId, MeshInstance, Payload, SourceRef, VfxEmitter};
+use wce_scene::render_scene::{
+    DEFAULT_INSTANCE_PARAMS, DocumentId, EntityId, FactionColours, LayerId, MeshInstance, Payload, SourceRef, VfxEmitter,
+};
 use wce_terrain::terry::EntityKind;
 use wce_terrain_editor::MapDocument;
 use wce_tile_editor::tile_document::context::Frame;
@@ -303,7 +306,7 @@ pub struct PropModels {
 
     /// The shown campaign's settlements at its start (`wce_terrain_io::attila::cities`), read on a thread (the startpos and the db
     /// tables take seconds): none until they are, or when they can't be.
-    cities: Option<(DocumentId, Arc<std::sync::OnceLock<Option<Arc<wce_terrain_io::attila::cities::Cities>>>>)>,
+    cities: Option<(DocumentId, Arc<std::sync::OnceLock<Option<Arc<Settlements>>>>)>,
     pub city_count: usize,
     pub tree_count: usize,
 
@@ -442,7 +445,9 @@ impl PropModels {
                     let map_data = files.read(&format!("campaign_maps/{name}/map_data.esf")).ok()?;
                     let reader = crate::tool::startpos_reader(&files, dir.as_deref());
                     let start = wce_terrain_io::attila::start::find(&schema, &name, &list, &read, &reader).ok()?;
-                    wce_terrain_io::attila::cities::read(&map_data, &start.startpos, &tables).ok().map(Arc::new)
+                    let cities = wce_terrain_io::attila::cities::read(&map_data, &start.startpos, &tables).ok()?;
+                    let flags = flag_colours(&schema, &list, &read);
+                    Some(Arc::new(Settlements { cities, flags }))
                 })();
                 let _ = out.set(cities);
             });
@@ -672,7 +677,7 @@ impl PropModels {
         // The settlements' buildings near the camera at their cell's centre, standing on the ground, at the models' scale
         // (`Cities::model_scale`).
         self.city_count = 0;
-        if let Some(c) = &cities {
+        if let Some(Settlements { cities: c, flags }) = cities.as_deref() {
             let (w, h) = (f64::from(frame.map.width), f64::from(frame.map.height));
             let (a, b) = (frame.from_map.apply(0.0, 0.0), frame.from_map.apply(1.0, 0.0));
             // Frame units a model unit: the frame's per world unit times the models' world units a unit (their footprint decal, 0.405).
@@ -704,7 +709,7 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]],
                     p7: [p16[12], p16[13], p16[14], p16[15]],
                     burning: false,
-                    faction_colours: None,
+                    faction_colours: c.owners.get(&slot.region).and_then(|o| flags.get(o)).copied(),
                 };
                 out.push((CITY_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
@@ -764,7 +769,7 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]],
                     p7: [p16[12], p16[13], p16[14], p16[15]],
                     burning: false,
-                    faction_colours: None,
+                    faction_colours: c.owners.get(&sp.region).and_then(|o| flags.get(o)).copied(),
                 };
                 out.push((CITY_KEY | SPRAWL_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
@@ -867,4 +872,35 @@ impl PropModels {
         self.animated_drawn.clear();
         self.animated.clear();
     }
+}
+
+/// A campaign's settlements and their owners' flag colours.
+struct Settlements {
+    cities: wce_terrain_io::attila::cities::Cities,
+
+    /// By faction: what its settlements' flags take (`GpuMesh::flag`, the walls' and gatehouses' `Cloth` blocks): its `faction_banners`
+    /// primary, secondary and tertiary, linear, and black (capture V2: Gwined's FCFCFC / A91400 / 000000 / 0, Northymbre's, ...).
+    flags: HashMap<String, FactionColours>,
+}
+
+/// The factions' flag colours (`Settlements::flags`).
+fn flag_colours(
+    schema: &rpfm_lib::schema::Schema,
+    list: &dyn Fn(&str) -> Vec<String>,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> HashMap<String, FactionColours> {
+    let linear = |hex: Option<&String>| -> [f32; 3] {
+        let hex = hex.map_or("", |h| h.trim().trim_start_matches('#'));
+        std::array::from_fn(|i| {
+            let c = hex.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).map_or(0.0, |b| f32::from(b) / 255.0);
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        })
+    };
+    let mut out = HashMap::new();
+    for r in wce_terrain_io::attila::cities::table_rows(schema, "faction_banners_tables", list, read) {
+        let Some(key) = r.get("key") else { continue };
+        let colours = [linear(r.get("primary_hex")), linear(r.get("secondary_hex")), linear(r.get("tertiary_hex")), [0.0; 3]];
+        out.entry(key.clone()).or_insert(FactionColours { colours, flags_only: true });
+    }
+    out
 }
