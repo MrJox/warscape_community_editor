@@ -5,14 +5,17 @@
 
 use rpfm_lib::files::rigidmodel::RigidModel;
 
-/// The longest edge (x, z) of a triangle taken: the ground's are a cell or less (Rauros' 16246: all but 29 up to 128); 943 more of its
-/// triangles reach across the tile from a few vertices (slivers fanning out from a corner, not ground the game shows).
-const LONGEST_EDGE: f64 = 512.0;
-
 /// The heights of the mesh's first LOD and block on a grid of `w` x `h` samples `spacing` apart (the height map's), row j at mesh z = j *
 /// spacing, or at (h - j) * spacing when `flip` (the mesh's z runs from the tile's far edge, as its markers': the height map's row j is at
 /// h - j, `lakes/22x32_rauros`' mesh covers 669 of its 682 cells as its mask has them so, 511 the other way); None where no triangle covers a
 /// sample (the mask's left-out squares). None when the model has no such block.
+///
+/// Where triangles overlap (x, z) the lowest is taken. Rauros' mesh has 943 triangles fanning from a few vertices across the tile, over
+/// the lake at the land's height and alone over the cells its ground leaves out (its west strip, the stair south of the lake): taken
+/// whole they covered the lake, left out the trench and the stair stood at the LF or the map's minimum. The lowest matches the game's
+/// ground (RenderDoc, capture T1, its depth against the editor's rays: 202.4 / 203.3 m, 201.1 / 199.5 m, the west strip 226.7 / 225.8 m;
+/// 8 m off on the steep shore). ASSUMPTION: the reason (the game's height texture made from the mesh with a less-than depth test) is not
+/// traced.
 pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool) -> Option<Vec<Option<f32>>> {
     let block = model.lods().first()?.mesh_blocks().first()?;
     let mesh = block.mesh();
@@ -25,8 +28,7 @@ pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool
     for t in idx.chunks_exact(3) {
         let (Some(a), Some(b), Some(c)) = (verts.get(t[0]), verts.get(t[1]), verts.get(t[2])) else { continue };
         let det = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
-        let edge = |p: &[f64; 3], q: &[f64; 3]| (p[0] - q[0]).hypot(p[2] - q[2]);
-        if det.abs() < 1e-12 || edge(a, b).max(edge(b, c)).max(edge(c, a)) > LONGEST_EDGE {
+        if det.abs() < 1e-12 {
             continue;
         }
 
@@ -59,7 +61,9 @@ pub fn mesh_heights(model: &RigidModel, w: u32, h: u32, spacing: f64, flip: bool
                     continue;
                 }
 
-                out[row * w + i] = Some((l1 * a[1] + l2 * b[1] + l3 * c[1]) as f32);
+                let y = (l1 * a[1] + l2 * b[1] + l3 * c[1]) as f32;
+                let o = &mut out[row * w + i];
+                *o = Some(o.map_or(y, |v: f32| v.min(y)));
             }
         }
     }
