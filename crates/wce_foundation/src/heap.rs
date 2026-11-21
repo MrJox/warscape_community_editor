@@ -72,3 +72,62 @@ pub fn reset_peak() {
 pub fn note() -> String {
     format!("heap {} MB (peak {} MB)", live() >> 20, peak() >> 20)
 }
+
+/// The machine's physical memory (bytes), none when the system does not say.
+pub fn physical() -> Option<u64> {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct MemoryStatusEx {
+            length: u32,
+            memory_load: u32,
+            total_phys: u64,
+            avail_phys: u64,
+            total_page_file: u64,
+            avail_page_file: u64,
+            total_virtual: u64,
+            avail_virtual: u64,
+            avail_extended_virtual: u64,
+        }
+
+        unsafe extern "system" {
+            fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+        }
+
+        let mut s = MemoryStatusEx {
+            length: size_of::<MemoryStatusEx>() as u32,
+            memory_load: 0,
+            total_phys: 0,
+            avail_phys: 0,
+            total_page_file: 0,
+            avail_page_file: 0,
+            total_virtual: 0,
+            avail_virtual: 0,
+            avail_extended_virtual: 0,
+        };
+        // SAFETY: a MEMORYSTATUSEX with its length set, as the call requires.
+        let ok = unsafe { GlobalMemoryStatusEx(&raw mut s) } != 0;
+        ok.then_some(s.total_phys)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let kb: u64 = info.lines().find_map(|l| l.strip_prefix("MemTotal:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
+        Some(kb * 1024)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+mod physical_tests {
+    #[test]
+    fn physical_memory_is_known_and_plausible() {
+        let bytes = super::physical().expect("the system says");
+        assert!(bytes > 1 << 30, "{bytes} bytes");
+    }
+}

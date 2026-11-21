@@ -128,8 +128,66 @@ pub enum ChunkChange {
 /// Threads that build chunks (opening a tile holds its whole scene and height map: a few at a time).
 const WORKERS: usize = 4;
 
-/// The memory the tiles in memory may take (bytes, about).
+/// The memory the tiles in memory may take (bytes, about): half the machine's, at most 12 GB (`template_budget`); this without a
+/// size to go by. At a fixed 1.5 GB a campaign map's 1 213 tiles were read 5 965 times (the far bake and the workers took turns
+/// putting out each other's).
 const TEMPLATE_BUDGET: usize = 1536 << 20;
+
+/// The most of [`TEMPLATE_BUDGET`]'s kind the machine's memory gives.
+const TEMPLATE_BUDGET_MAX: usize = 12 << 30;
+
+/// The far bake's own tiles' memory (`TileSet`, one a bake), once the workers' is three quarters full (`Shared::bake_tile`): it reads
+/// every tile of the map, and kept with the workers' then it put theirs out.
+const BAKE_BUDGET: usize = 1 << 30;
+
+/// [`TEMPLATE_BUDGET`] for this machine.
+fn template_budget() -> usize {
+    wce_foundation::heap::physical().map_or(TEMPLATE_BUDGET, |b| usize::try_from(b / 2).unwrap_or(usize::MAX).min(TEMPLATE_BUDGET_MAX))
+}
+
+/// Tiles in memory (by tile and climate) within a budget: the least recently used go past it. One thread reads a tile, the others
+/// wait for it.
+struct TileSet {
+    /// The tiles, and the bytes the ready ones take.
+    tiles: Mutex<(HashMap<TileKey, Slot>, usize)>,
+    loaded: Condvar,
+    budget: usize,
+
+    /// The tiles the far bake brought in that nobody else has asked for: they go when it ends (`release_bake_only`). Kept, a cold
+    /// campaign map's whole set stayed in memory (12 GB of heap on main_attila).
+    bake_only: Mutex<std::collections::HashSet<TileKey>>,
+}
+
+impl TileSet {
+    fn new(budget: usize) -> Self {
+        Self { tiles: Mutex::default(), loaded: Condvar::new(), budget, bake_only: Mutex::default() }
+    }
+
+    /// The tiles only the far bake used go (it has ended).
+    fn release_bake_only(&self) {
+        let keys = std::mem::take(&mut *lock(&self.bake_only));
+        let mut tiles = lock(&self.tiles);
+        for k in keys {
+            if let Some(Slot::Ready(t, _)) = tiles.0.get(&k) {
+                tiles.1 -= t.bytes;
+                tiles.0.remove(&k);
+            }
+        }
+    }
+
+    /// A tile it holds, none when not (or not yet) there.
+    fn ready(&self, key: &TileKey) -> Option<Arc<Template>> {
+        match lock(&self.tiles).0.get(key) {
+            Some(Slot::Ready(t, _)) => Some(t.clone()),
+            _ => None,
+        }
+    }
+
+    /// The bytes its tiles take.
+    fn bytes(&self) -> usize {
+        lock(&self.tiles).1
+    }
+}
 
 /// Cells past a ring's edge before a chunk's level changes.
 const SLACK: f64 = 2.0;
@@ -145,7 +203,6 @@ struct Stats {
     opened: usize,
     from_cache: usize,
     open_s: f64,
-    bytes: usize,
     failed: Vec<String>,
 }
 
@@ -167,7 +224,7 @@ struct Shared {
     files: Option<Arc<dyn Files>>,
     queue: Mutex<Vec<Job>>,
     work: Condvar,
-    tiles: Mutex<HashMap<TileKey, Slot>>,
+    tiles: TileSet,
 
     /// Whether a tile (location, variation) is a custom-mesh one (`is_custom`).
     custom_tiles: Mutex<HashMap<(String, String), bool>>,
@@ -177,7 +234,6 @@ struct Shared {
 
     /// The mean colours of the ground textures, for the baked ground (`Template::bake_far`): the same few hundred for every tile.
     means: Mutex<HashMap<String, Option<[f32; 3]>>>,
-    loaded: Condvar,
     stats: Mutex<Stats>,
     clock: std::sync::atomic::AtomicU64,
     stop: AtomicBool,
@@ -280,12 +336,11 @@ impl Shared {
         Some(h)
     }
 
-    /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
     /// Calls `each` with the placements in order, their tiles opened ahead of it side by side ([`BlockSource::open_ahead`]): threads of
     /// its own take the next placement, at most [`OPEN_AHEAD`] past the one `each` is at (the tiles' memory), the opening in the pool
     /// as the workers' (not pool threads waiting on each other's tiles: see `worker`). In batches each waited for its slowest tile, the
     /// pool mostly idle.
-    fn open_ahead(&self, frame: &Frame, ids: &[usize], each: &mut dyn FnMut(usize) -> bool) {
+    fn open_ahead(&self, frame: &Frame, set: &TileSet, ids: &[usize], each: &mut dyn FnMut(usize) -> bool) {
         let (next, at, done) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicBool::new(false));
         let threads = self.pool.current_num_threads().min(ids.len());
         std::thread::scope(|sc| {
@@ -305,7 +360,7 @@ impl Shared {
                             return;
                         }
                         if !self.is_custom(frame, i) {
-                            self.template(frame, i);
+                            self.bake_tile(frame, set, i);
                         }
                     }
                 });
@@ -321,28 +376,60 @@ impl Shared {
         });
     }
 
-    fn template(&self, frame: &Frame, i: usize) -> Option<Arc<Template>> {
-        // Its climate's look: the map gives each placement its own.
+    /// A placement's tile and climate.
+    fn tile_key(frame: &Frame, i: usize) -> TileKey {
         let p = &frame.map.placements[i];
-        let climate = frame.climate_name(i);
-        let look = TerrainLook { climate: climate.clone(), ..self.rq.look.clone() };
-        let key = (p.location.clone(), p.variation.clone(), climate);
+        (p.location.clone(), p.variation.clone(), frame.climate_name(i))
+    }
+
+    /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
+    fn template(&self, frame: &Frame, i: usize) -> Option<Arc<Template>> {
+        let t = self.tile_in(&self.tiles, frame, i);
+        // Theirs now too: it stays after the bake.
+        let mut bake_only = lock(&self.tiles.bake_only);
+        if !bake_only.is_empty() {
+            bake_only.remove(&Self::tile_key(frame, i));
+        }
+        t
+    }
+
+    /// The far bake's: a tile the workers' set has; else into it while it has room (each tile read once, kept for them), and once it is
+    /// three quarters full into the bake's own (`BAKE_BUDGET`), which does not put theirs out. (Its own alone, at 1 GB, read the map's
+    /// tiles from the cache 6 150 times.)
+    fn bake_tile(&self, frame: &Frame, set: &TileSet, i: usize) -> Option<Arc<Template>> {
+        let key = Self::tile_key(frame, i);
+        if let Some(t) = self.tiles.ready(&key).or_else(|| set.ready(&key)) {
+            return Some(t);
+        }
+        if self.tiles.bytes() < self.tiles.budget / 4 * 3 {
+            lock(&self.tiles.bake_only).insert(key);
+            self.tile_in(&self.tiles, frame, i)
+        } else {
+            self.tile_in(set, frame, i)
+        }
+    }
+
+    /// A placement's tile in `set`: from it, else read from the cache or opened into it.
+    fn tile_in(&self, set: &TileSet, frame: &Frame, i: usize) -> Option<Arc<Template>> {
+        let key = Self::tile_key(frame, i);
+        // Its climate's look: the map gives each placement its own.
+        let look = TerrainLook { climate: key.2.clone(), ..self.rq.look.clone() };
         let now = self.clock.fetch_add(1, Ordering::Relaxed);
-        let mut tiles = lock(&self.tiles);
+        let mut tiles = lock(&set.tiles);
         loop {
-            match tiles.get_mut(&key) {
+            match tiles.0.get_mut(&key) {
                 Some(Slot::Ready(t, used)) => {
                     *used = now;
                     return Some(t.clone());
                 }
 
                 Some(Slot::Failed) => return None,
-                Some(Slot::Loading) => tiles = self.loaded.wait(tiles).unwrap_or_else(|p| p.into_inner()),
+                Some(Slot::Loading) => tiles = set.loaded.wait(tiles).unwrap_or_else(|p| p.into_inner()),
                 None => break,
             }
         }
 
-        tiles.insert(key.clone(), Slot::Loading);
+        tiles.0.insert(key.clone(), Slot::Loading);
         drop(tiles);
         // The first source that has the tile (`wce_tile::sources`): the roots in order, then the provider (the packs' tiles, decompiled on
         // demand: it returns a folder it has at once, and makes a missing or stale one); without a provider `raw_root` last.
@@ -394,7 +481,6 @@ impl Shared {
                     stats.opened += 1
                 }
                 stats.open_s += t.load_s;
-                stats.bytes += t.bytes;
                 if t.material.is_none() {
                     wce_foundation::log::info(format!(
                         "map context: {}\\{}: no ground material ({})",
@@ -425,10 +511,16 @@ impl Shared {
             }
         };
 
+        drop(stats);
+
         // Over the budget: the least recently used go.
-        let mut tiles = lock(&self.tiles);
-        if stats.bytes > TEMPLATE_BUDGET {
+        let mut tiles = lock(&set.tiles);
+        if let Slot::Ready(t, _) = &slot {
+            tiles.1 += t.bytes;
+        }
+        if tiles.1 > set.budget {
             let mut ready: Vec<(u64, TileKey, usize)> = tiles
+                .0
                 .iter()
                 .filter_map(|(k, s)| match s {
                     Slot::Ready(t, used) => Some((*used, k.clone(), t.bytes)),
@@ -438,23 +530,22 @@ impl Shared {
 
             ready.sort();
             for (_, k, bytes) in ready {
-                if stats.bytes <= TEMPLATE_BUDGET * 3 / 4 {
+                if tiles.1 <= set.budget / 4 * 3 {
                     break;
                 }
 
-                tiles.remove(&k);
-                stats.bytes -= bytes;
+                tiles.0.remove(&k);
+                tiles.1 -= bytes;
             }
         }
 
-        drop(stats);
         let out = match &slot {
             Slot::Ready(t, _) => Some(t.clone()),
             _ => None,
         };
 
-        tiles.insert(key, slot);
-        self.loaded.notify_all();
+        tiles.0.insert(key, slot);
+        set.loaded.notify_all();
         out
     }
 
@@ -549,6 +640,7 @@ impl Streamer {
     /// The frame of the request (slow on the campaign map: run it away from the UI thread) and the workers.
     pub fn new(rq: ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let started = std::time::Instant::now();
+        wce_foundation::log::info(format!("map context: tiles in memory up to {} MB", template_budget() >> 20));
         let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
         // All the cores but two (the UI and the renderer's): opening a tile is parallel inside, and the far bake's tiles open side by
         // side (`open_ahead`). Capped at 8, a 16-thread machine sat at 40 % through a cold campaign map's load (150 s; 87 s now).
@@ -578,11 +670,10 @@ impl Streamer {
             files,
             queue: Mutex::default(),
             work: Condvar::new(),
-            tiles: Mutex::default(),
+            tiles: TileSet::new(template_budget()),
             custom_tiles: Mutex::default(),
             zone: Mutex::default(),
             means: Mutex::default(),
-            loaded: Condvar::new(),
             stats: Mutex::default(),
             clock: Default::default(),
             stop: AtomicBool::new(false),
@@ -603,13 +694,15 @@ impl Streamer {
                 loop {
                     let t0 = std::time::Instant::now();
                     let (frame, _) = s.frame();
+                    // Its own tiles, gone with it (`Shared::bake_tile`).
+                    let bake_set = TileSet::new(BAKE_BUDGET);
                     let source = BlockSource {
-                        template: &|i| s.template(&frame, i),
+                        template: &|i| s.bake_tile(&frame, &bake_set, i),
                         is_custom: &|i| s.is_custom(&frame, i),
                         mean: &|path| s.mean_colour(path),
                         in_block: &|_| false,
                         relief: &|_, _| None,
-                        open_ahead: &|ids, each| s.open_ahead(&frame, ids, each),
+                        open_ahead: &|ids, each| s.open_ahead(&frame, &bake_set, ids, each),
                     };
                     let base = lock(&s.far).clone();
                     let mut how = String::new();
@@ -638,6 +731,8 @@ impl Streamer {
                             }
                         }
                     };
+                    // What only the bake used goes (`TileSet::bake_only`).
+                    s.tiles.release_bake_only();
                     let Some(far) = made else { return };
                     wce_foundation::log::info(format!(
                         "map context: the campaign's far material made{how}, {FAR_MAP_SIZE} a side, in {:.1?}",
@@ -714,10 +809,10 @@ impl Streamer {
 
     /// The drawn ground at a frame point (`Frame::ground_at`), from the tiles in memory: none is opened for it.
     pub fn ground_at(&self, frame: &Frame, x: f64, z: f64) -> f32 {
-        let tiles = lock(&self.shared.tiles);
+        let tiles = lock(&self.shared.tiles.tiles);
         frame.ground_at(x, z, &|i| {
             let p = &frame.map.placements[i];
-            match tiles.get(&(p.location.clone(), p.variation.clone(), frame.climate_name(i))) {
+            match tiles.0.get(&(p.location.clone(), p.variation.clone(), frame.climate_name(i))) {
                 Some(Slot::Ready(t, _)) => Some(t.clone()),
                 _ => None,
             }
@@ -1019,7 +1114,7 @@ impl Streamer {
             open_s: s.open_s,
             from_cache: s.from_cache,
             failed: s.failed.len(),
-            mb: s.bytes >> 20,
+            mb: self.shared.tiles.bytes() >> 20,
             lf_note: f.lf_note(),
             map_s: self.frame_s,
             first_s: self.first_s,
