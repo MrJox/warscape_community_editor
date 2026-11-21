@@ -115,6 +115,12 @@ impl GameLists {
                 .collect();
             units.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.key.cmp(&b.key)));
             g.units = units;
+            // Who fields what: the custom battles' permissions (faction, main unit), then the variants below.
+            for r in table_rows(schema, files, "units_custom_battle_permissions_tables") {
+                if let (Some(f), Some(u)) = (r.get("faction"), r.get("unit")) {
+                    g.units_of_faction.entry(f.clone()).or_default().insert(u.clone());
+                }
+            }
             for r in table_rows(schema, files, "unit_variants_tables") {
                 let (Some(land), f) = (r.get("unit"), r.get("faction").cloned().unwrap_or_default()) else { continue };
                 for &u in mains_of_land.get(land.as_str()).into_iter().flatten() {

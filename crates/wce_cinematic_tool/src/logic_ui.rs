@@ -36,11 +36,13 @@ pub struct LogicUi {
     show_lua: bool,
     /// The canvas's top left on screen (grid space starts there, less the panning).
     origin: gui::Vec2,
+    /// The Add a node button was clicked: the canvas opens its menu (popups belong to the window that opens them).
+    add_asked: bool,
 }
 
 impl Default for LogicUi {
     fn default() -> Self {
-        Self { ctx: std::ptr::null_mut(), placed: HashSet::new(), laid_out: None, show_lua: false, origin: v2(0.0, 0.0) }
+        Self { ctx: std::ptr::null_mut(), placed: HashSet::new(), laid_out: None, show_lua: false, origin: v2(0.0, 0.0), add_asked: false }
     }
 }
 
@@ -78,6 +80,15 @@ impl LogicUi {
             gui::end();
             return;
         };
+        if gui::button(&format!("{}  Add a node", wce_editor::icons::PLUS)) {
+            self.add_asked = true;
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "An event (when something happens) or an action (what the battle does then); right-click the canvas: one there",
+            );
+        }
+        gui::same_line();
         gui::checkbox("Lua", &mut self.show_lua);
         if gui::is_item_hovered() {
             gui::set_tooltip("The Lua the graph compiles to (the start script's logic)");
@@ -265,12 +276,20 @@ impl LogicUi {
                 gui::open_popup("##addnode");
             }
         }
+        if std::mem::take(&mut self.add_asked) {
+            gui::open_popup("##addnode");
+        }
         if gui::begin_popup("##addnode") {
             let mouse = gui::mouse_pos();
             // SAFETY: the editor context is current; panning is in editor space.
             let pan = unsafe { nd::imnodes_EditorContextGetPanning() };
             let origin = self.origin;
-            let at = [mouse.x - origin.x - pan.x, mouse.y - origin.y - pan.y];
+            // At the right click, or (from the button above the canvas) near the canvas's corner.
+            let at = if mouse.y >= origin.y {
+                [mouse.x - origin.x - pan.x, mouse.y - origin.y - pan.y]
+            } else {
+                [60.0 - pan.x + 30.0 * (p.logic.nodes.len() % 8) as f32, 60.0 - pan.y + 30.0 * (p.logic.nodes.len() % 8) as f32]
+            };
             for (group, events) in [("Events", true), ("Actions", false)] {
                 gui::separator_text(group);
                 for t in NODE_TYPES.iter().filter(|t| t.event == events) {

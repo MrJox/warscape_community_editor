@@ -244,16 +244,37 @@ impl SceneUi {
         gui::same_line();
         gui::set_next_item_width(120.0);
         if gui::begin_combo("##addtrack", "Add track") {
-            for kind in ["Camera", "Unit", "Sound", "Music", "Subtitles", "Fade", "Letterbox", "Depth of field", "Weather", "VFX"] {
+            let mut add: Option<(&str, Option<u32>)> = None;
+            for kind in ["Camera", "Sound", "Music", "Subtitles", "Fade", "Letterbox", "Depth of field", "Weather", "VFX"] {
                 if gui::selectable(kind, false, 0) {
-                    let unit = self.unit;
-                    let env = p.battle.environment.clone();
-                    let mut made = None;
-                    edit(e, "add track", |p| made = add_track(p, clip.id, kind, unit, &env));
-                    if made.is_none() && kind == "Unit" {
-                        e.status("Cinematic: select a unit first (Scene > Units)", true);
-                    }
-                    self.track = made;
+                    add = Some((kind, None));
+                }
+            }
+            // A unit's track: the units without one in this clip, by name.
+            let tracked: Vec<u32> = clip
+                .tracks
+                .iter()
+                .filter_map(|t| if let TrackContent::Unit { unit, .. } = &t.content { Some(*unit) } else { None })
+                .collect();
+            let free: Vec<&SceneUnit> = p.units.iter().filter(|u| !tracked.contains(&u.id)).collect();
+            if !free.is_empty() {
+                gui::separator_text("A unit's moves");
+            }
+            for u in free {
+                if gui::selectable(&format!("{}  {}##addunit{}", icons::USERS, u.name, u.id), false, 0) {
+                    add = Some(("Unit", Some(u.id)));
+                }
+            }
+            if p.units.is_empty() {
+                gui::text_disabled("Units: place some first (Create)");
+            }
+            if let Some((kind, unit)) = add {
+                let env = p.battle.environment.clone();
+                let mut made = None;
+                edit(e, "add track", |p| made = add_track(p, clip.id, kind, unit, &env));
+                self.track = made;
+                if unit.is_some() {
+                    self.unit = unit;
                 }
             }
             gui::end_combo();

@@ -290,6 +290,9 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 6. A first-run walkthrough: not built as text (UI explanations are one-line tooltips); every empty state offers its next step as a
    button instead (New scene / Open, Place units... under an army without units, Pick on the map..., the chips, the Timeline's
    double-click). **done** that way.
+7. Smaller ones (2026-11-21). **done**: the Timeline's Add track lists the units without a track in the clip by name (it needed a
+   unit selected first); Logic has an Add a node button over its canvas (the right click alone was hidden); which faction fields a
+   unit comes from `units_custom_battle_permissions` as well as `unit_variants` (the Huns listed none).
 
 ## Open questions and risks
 
