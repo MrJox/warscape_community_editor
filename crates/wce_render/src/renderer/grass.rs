@@ -102,6 +102,16 @@ impl Renderer {
 
             g.sets.push(GrassSet { model: grass.model.clone(), instances: grass.instances.clone(), cells });
         }
+
+        // In an order of their own, not the scene's: a streamed map's chunks reach the scene in the order its workers finish them, and
+        // the grass is blended (drawn in another order, another picture).
+        let first = |s: &GrassSet| s.instances.first().map_or([0.0; 2], |m| [m[3], m[11]]);
+        g.sets.sort_by(|a, b| {
+            a.model.cmp(&b.model).then_with(|| {
+                let (pa, pb) = (first(a), first(b));
+                pa[0].total_cmp(&pb[0]).then(pa[1].total_cmp(&pb[1])).then(a.instances.len().cmp(&b.instances.len()))
+            })
+        });
     }
 
     /// A vegetation mesh's diffuse: its season's variant (the game's texture resolver FUN_1186c880, with seasons:

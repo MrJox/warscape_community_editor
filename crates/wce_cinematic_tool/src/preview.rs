@@ -44,6 +44,8 @@ pub struct Preview {
     lit: Option<(String, String, u32, [u32; 3])>,
     /// The viewport's camera is the user's (else it follows the camera keys).
     pub free_camera: bool,
+    /// The keyed camera held within the battle camera's limits over the ground (`battle_cameras`, land), as the game does.
+    pub game_limits: bool,
     pub status: String,
 }
 
@@ -321,7 +323,13 @@ impl Preview {
         if !self.free_camera
             && let Some(c) = &frame.camera
         {
-            let cam = camera_of(c, units);
+            let mut c = c.clone();
+            if self.game_limits
+                && let Some(h) = ground
+            {
+                c.position[1] = limited_height(c.position, h);
+            }
+            let cam = camera_of(&c, units);
             e.viewport.controller().set_camera(&cam);
             e.viewport.controller().lens_mut().fov_y = cam.fov_y;
         }
@@ -331,6 +339,15 @@ impl Preview {
     pub fn busy(&self) -> bool {
         self.catalog_rx.is_some() || self.loading.is_some()
     }
+}
+
+/// The battle camera's height range over the ground, metres (`battle_cameras`, land: `min_height` 2, `max_height_large` 90).
+pub const GAME_CAMERA_HEIGHT: (f32, f32) = (2.0, 90.0);
+
+/// A camera's height (metres) within the battle camera's range over the ground under it.
+pub fn limited_height(p: [f32; 3], ground: &dyn Fn(f32, f32) -> f32) -> f32 {
+    let g = ground(p[0], p[2]);
+    p[1].clamp(g + GAME_CAMERA_HEIGHT.0, g + GAME_CAMERA_HEIGHT.1)
 }
 
 /// How fast a soldier's first clip covers the ground (metres a second at its size): a walk or run cycle's own speed. None for a clip

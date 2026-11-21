@@ -281,6 +281,7 @@ impl Ground {
                         look
                     },
                     trees: true,
+                    grass: true,
                     bake_ground,
                     plain: None,
                     groups: None,

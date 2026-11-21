@@ -1029,6 +1029,7 @@ impl TerrainTool {
             game_kit: wce_tile::vegetation::params_kit(&wce_tile::sources::kit_raw_roots(e.settings_ref())),
             look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() },
             trees: true,
+            grass: false,
             plain: None,
             groups: None,
             cache: Some(cache::cache_dir()),

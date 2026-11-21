@@ -115,6 +115,7 @@ fn main() {
         game_kit: None,
         look: TerrainLook::default(),
         trees: true,
+        grass: false,
         bake_ground: false,
         plain: None,
         groups: None,

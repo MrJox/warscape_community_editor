@@ -2048,6 +2048,7 @@ impl Tool for CinematicTool {
                     d.view.heights = d.view.placed.iter().map(|(&id, (at, _))| (id, self.ground.height(at[0], at[1]))).collect();
                 }
                 self.preview.free_camera = !self.scene.follows_keys();
+                self.preview.game_limits = !self.scene.no_game_limits;
                 let heights = self.ground.heights();
                 self.preview.update(e, doc, &p, &frame, heights.as_ref().map(|h| h as &dyn Fn(f32, f32) -> f32));
             }

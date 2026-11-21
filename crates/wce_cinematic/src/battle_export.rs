@@ -323,12 +323,23 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
                 stops.retain(|s| *s <= length);
                 stops.sort_unstable();
                 stops.dedup();
-                for w in stops.windows(2) {
-                    let (from, to) = (w[0], w[1]);
+                for (n, w) in stops.windows(2).enumerate() {
+                    let (from, mut to) = (w[0], w[1]);
                     let (i, _, _) = around(&times, from as f64 / 1000.0).expect("keys");
+                    // A moving step aims a step further on (and takes as long again): the camera chases a point just ahead on the
+                    // path and its speed never drops to a stop at a step's end (short straight moves met with a jolt every step).
+                    // Not across a cut (a Step key next).
+                    if keys[i].interp != Interp::Step
+                        && let Some(&further) = stops.get(n + 2)
+                    {
+                        let (j, _, _) = around(&times, to as f64 / 1000.0).expect("keys");
+                        if keys[j].interp != Interp::Step {
+                            to = further;
+                        }
+                    }
                     let (p, tg, fov) = at(to as f64 / 1000.0);
                     let dur = if keys[i].interp == Interp::Step { 0.0 } else { (to - from) as f32 / 1000.0 };
-                    let when = if keys[i].interp == Interp::Step { to } else { from };
+                    let when = if keys[i].interp == Interp::Step { w[1] } else { from };
                     actions.push((when, format!("cam:move_to({}, {}, {}, {MOVE_FLAG}, {})", v3(p), v3(tg), f(dur), f(fov))));
                 }
                 let (p, tg, _) = at(clip.length);

@@ -116,6 +116,9 @@ pub struct ContextRequest {
     pub game_kit: Option<PathBuf>,
     pub look: TerrainLook,
     pub trees: bool,
+    /// The tiles' grass as well (generated as the game does, drawn in the near ring): the battle as the game shows it (the Cinematic
+    /// tool's ground). Off in the editing views, where it is the open tile's alone.
+    pub grass: bool,
 
     /// The ground ring's material is baked (`Template::bake_far`): the renderer has a blend pass for it (not Rome 2's).
     pub bake_ground: bool,
@@ -1449,6 +1452,29 @@ impl Frame {
         for (w, payload) in &t.entities[..n] {
             // The ground ring keeps the rivers (they are part of the land) and leaves what stands on it.
             if lod == Lod::Ground && !matches!(payload, Payload::Water(_)) {
+                continue;
+            }
+
+            // The grass patches are drawn as they are (no world matrix): each moved into the frame here and lifted.
+            if let Payload::Grass(g) = payload {
+                let m = frame * *w;
+                let instances: Vec<[f32; 12]> = g
+                    .instances
+                    .iter()
+                    .map(|r| {
+                        let p = Float4x4 {
+                            m: [[r[0], r[1], r[2], r[3]], [r[4], r[5], r[6], r[7]], [r[8], r[9], r[10], r[11]], [0.0, 0.0, 0.0, 1.0]],
+                        };
+                        let mut q = m * p;
+                        q.m[1][3] += self.lift(f64::from(q.m[0][3]), f64::from(q.m[2][3]));
+                        let [a, b, c, _] = q.m;
+                        [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], c[0], c[1], c[2], c[3]]
+                    })
+                    .collect();
+                out.push((
+                    Float4x4::IDENTITY,
+                    Payload::Grass(wce_scene::render_scene::Grass { model: g.model.clone(), instances: Arc::new(instances) }),
+                ));
                 continue;
             }
 

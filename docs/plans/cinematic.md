@@ -311,6 +311,17 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 12. The viewport shows what the movie lays over its pictures: the fade, the cinematic bars (an eighth of the height each), the
     subtitle at the bottom (the language edited). Play at the clip's end starts it over (the Timeline's button and the viewport's
     chip alike). **done**
+13. Accuracy against the game (user, 2026-11-21). **done**, in game: **todo**:
+    - The grass: the map context's tiles had their trees but not their grass (the Tile tool draws only the open tile's). The context
+      request has `grass` (the Cinematic tool's ground only): each tile's grass generated as the Tile tool's (waited for on the
+      worker reading it), its patches moved into the map's frame and lifted (`Frame::place_entities`), cached with the template
+      (`cache` kind 6; the key unchanged without grass). The renderer draws the grass sets in an order of their own (model, place),
+      not the scene's: the chunks arrive as the workers finish them and the grass is blended (movies differed between runs).
+    - The camera's remaining judder: each 0.2 s step ended exactly at its point, so the speed broke at every step; a moving step now
+      aims at the point two steps on and takes as long, the camera chasing a point just ahead on the path (not across a cut).
+    - The battle camera's limits: `battle_cameras` (land: 2 to 90 m over the ground, the game's battle camera). The preview holds the
+      keyed camera within them (the Timeline's Game limits, on by default; off: as a movie shows it), the camera's path is red where
+      it leaves them.
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 
