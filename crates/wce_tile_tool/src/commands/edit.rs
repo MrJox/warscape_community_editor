@@ -123,7 +123,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "snap",
-        "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [heights on|off] [angle <deg>]",
+        "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [roads on|off] [heights on|off] [angle <deg>]",
         "the snapping of the grab and the placing (the viewport's snap chip); no argument: log it",
         |e, a| {
             with_tile(e, |t, _| {
@@ -134,6 +134,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                         "grid" => t.snap_grid = on,
                         "vertices" => t.snap_vertices = on,
                         "edges" => t.snap_edges = on,
+                        "roads" => t.snap_road_links = on,
                         "heights" => t.snap_heights = on,
                         "angle" => t.angle_tolerance = number(&a[i + 1]).unwrap_or(t.angle_tolerance).clamp(0.0, 90.0),
                         "size" => t.grid_m = number(&a[i + 1]).unwrap_or(t.grid_m),
@@ -145,8 +146,15 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 }
 
                 ok(format!(
-                    "grid {} size {} tolerance {} vertices {} edges {} heights {} angle {}",
-                    t.snap_grid, t.grid_m, t.snap_tolerance, t.snap_vertices, t.snap_edges, t.snap_heights, t.angle_tolerance,
+                    "grid {} size {} tolerance {} vertices {} edges {} roads {} heights {} angle {}",
+                    t.snap_grid,
+                    t.grid_m,
+                    t.snap_tolerance,
+                    t.snap_vertices,
+                    t.snap_edges,
+                    t.snap_road_links,
+                    t.snap_heights,
+                    t.angle_tolerance,
                 ))
             })
         },
@@ -572,7 +580,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     c.add(
         "draw_point",
         "draw_point <x m> <z m>",
-        "add a point to the line being drawn, on the ground at x z, as a click there does",
+        "add a point to the line being drawn, on the ground at x z, as a click there does (a procedural road's snaps to a road link)",
         |e, a| {
             let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else {
                 return fail("usage: draw_point <x m> <z m>");
@@ -583,7 +591,10 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 }
 
                 let Some(d) = document(e) else { return fail("no tile open") };
-                t.draw_pts.push(Float3::new(x, d.tile().terrain_height(x, z), z));
+                // A procedural road's point snaps to a road link as a click's does.
+                let p = Float3::new(x, d.tile().terrain_height(x, z), z);
+                let p = if t.road_link_snapping(None, d) { t.road_link_near(d, p).unwrap_or(p) } else { p };
+                t.draw_pts.push(p);
                 ok(format!("{} points", t.draw_pts.len()))
             })
         },

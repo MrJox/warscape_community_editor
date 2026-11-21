@@ -972,6 +972,33 @@ impl Tile {
         out
     }
 
+    /// Where a road leaves the tile: the middle of each edge the entry's rules say a road set's tile (`roads`, `roads_stone`,
+    /// `roads_mountain`...) must be past (a "must be" rule on a cell just outside the tile), world metres, on the ground. A road drawn to
+    /// one meets the neighbour's road there. Each once, in the rules' order.
+    pub fn road_link_points(&self) -> Vec<Float3> {
+        let Some(entry) = &self.project.entry else { return vec![] };
+        let info = &self.project.info;
+        let (w, h) = (info.cells_x.max(1) as i32, info.cells_y.max(1) as i32);
+        let (ex, ez) = (w as f32 * 128.0, h as f32 * 128.0);
+        let mut out: Vec<Float3> = vec![];
+        for l in entry.links() {
+            let road = l.link_set == "roads" || l.link_set.starts_with("roads_");
+            let just_past = ((l.x == -1 || l.x == w) && (0..h).contains(&l.y)) || ((l.y == -1 || l.y == h) && (0..w).contains(&l.x));
+            if !road || l.test == "TLT_NOT_EQUALS" || !just_past {
+                continue;
+            }
+
+            // The cell's middle brought onto the tile: the middle of the edge it shares with it.
+            let (x0, z0, x1, z1) = self.cell_rect(l.x, l.y);
+            let (x, z) = (((x0 + x1) * 0.5).clamp(0.0, ex), ((z0 + z1) * 0.5).clamp(0.0, ez));
+            if !out.iter().any(|p| (p.x - x).abs() < 0.5 && (p.z - z).abs() < 0.5) {
+                out.push(Float3::new(x, self.terrain_height(x, z), z));
+            }
+        }
+
+        out
+    }
+
     pub fn links_drawn(&self) -> bool {
         self.links_entity != 0
     }
