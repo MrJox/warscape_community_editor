@@ -14,8 +14,12 @@ use crate::support::{Support, track_support};
 
 /// Cutscene actions run on the battle's tick (`time_increment_ms` in `lib_header.lua`).
 pub const TICK_MS: u64 = 100;
-/// A smooth camera move is baked into steps this long.
-pub const CAMERA_STEP_MS: u64 = 500;
+/// A smooth camera move is baked into steps this long (two ticks: the steps' straight pieces stay close to the editor's curve).
+pub const CAMERA_STEP_MS: u64 = 200;
+/// `cam:move_to`'s flag (the scripts' "blend"): `true` in every move of vanilla's cutscenes (Catalaunian Plains, Adrianople), their
+/// instant cuts and long moves alike; `false` only in the hand-over to the battle camera at their end. With `false` on each of
+/// our short steps the camera stopped and started at every step in game (and lagged the curve).
+const MOVE_FLAG: &str = "true";
 
 /// What the export wrote, and what it left out or changed.
 #[derive(Clone, Debug, Default)]
@@ -303,7 +307,7 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
                 };
                 // Snap to the first key at 0, then move from sample to sample.
                 let (p, tg, fov) = at(0.0);
-                actions.push((0, format!("cam:move_to({}, {}, 0, false, {})", v3(p), v3(tg), f(fov))));
+                actions.push((0, format!("cam:move_to({}, {}, 0, {MOVE_FLAG}, {})", v3(p), v3(tg), f(fov))));
                 let mut stops: Vec<u64> = vec![];
                 for (k, key) in keys.iter().enumerate() {
                     stops.push(ms(key.t));
@@ -325,7 +329,7 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
                     let (p, tg, fov) = at(to as f64 / 1000.0);
                     let dur = if keys[i].interp == Interp::Step { 0.0 } else { (to - from) as f32 / 1000.0 };
                     let when = if keys[i].interp == Interp::Step { to } else { from };
-                    actions.push((when, format!("cam:move_to({}, {}, {}, false, {})", v3(p), v3(tg), f(dur), f(fov))));
+                    actions.push((when, format!("cam:move_to({}, {}, {}, {MOVE_FLAG}, {})", v3(p), v3(tg), f(dur), f(fov))));
                 }
                 let (p, tg, _) = at(clip.length);
                 skip_camera = Some((p, tg));

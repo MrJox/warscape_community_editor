@@ -253,6 +253,7 @@ fn main() {
         "Play_Clip_",
         "cs:action(",
         "cam:move_to(",
+        ", true, ",
         "goto_location_angle_width(",
         "kill_number_of_men(40)",
         "start_taunting()",

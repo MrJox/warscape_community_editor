@@ -441,6 +441,28 @@ impl SceneView {
             dl.rect_filled(pa, pb, gui::col32(255, 230, 120, 30), 0.0);
             dl.rect(pa, pb, gui::col32(255, 230, 120, 200), 0.0, 1.0);
         }
+        // What the movie lays over its pictures, as the playhead has it: the fade, the cinematic bars, the subtitle.
+        if let Some(f) = ui.frame(&p) {
+            let (lo, hi) = (origin, v2(origin.x + size.x, origin.y + size.y));
+            let fade = f.fade.clamp(0.0, 1.0);
+            if fade > 0.0 {
+                dl.rect_filled(lo, hi, gui::col32(0, 0, 0, (fade * 255.0) as u8), 0.0);
+            }
+            // As the movie draws them: an eighth of the picture's height each at full strength.
+            let bar = f.letterbox.clamp(0.0, 1.0) * size.y / 8.0;
+            if bar > 0.5 {
+                dl.rect_filled(lo, v2(hi.x, lo.y + bar), 0xFF00_0000, 0.0);
+                dl.rect_filled(v2(lo.x, hi.y - bar), hi, 0xFF00_0000, 0.0);
+            }
+            if let Some(text) = f.subtitle.as_ref().and_then(|id| p.text(id, ui.lang())).filter(|t| !t.is_empty()) {
+                let px = (size.y / 28.0).clamp(14.0, 40.0);
+                let scale = px / gui::text_line_height().max(1.0);
+                let tw = gui::calc_text_width(text) * scale;
+                let at = v2(origin.x + (size.x - tw) * 0.5, hi.y - bar.max(size.y * 0.04) - px * 1.6);
+                dl.text_sized(px, v2(at.x + 1.5, at.y + 1.5), 0xC000_0000, text);
+                dl.text_sized(px, at, 0xFFFF_FFFF, text);
+            }
+        }
         dl.pop_clip_rect();
 
         // The scene's chips at the top left: play, the free camera, a camera key of this view, the battle preview.
@@ -449,8 +471,14 @@ impl SceneView {
         if gui::begin_pill("##cinematicchips") {
             use wce_editor::chips::chip;
             use wce_editor::icons;
-            if chip(ui.playing, if ui.playing { icons::PAUSE } else { icons::PLAY }, "cinplay", "Play / pause the clip") {
-                ui.playing = !ui.playing;
+            if chip(
+                ui.playing,
+                if ui.playing { icons::PAUSE } else { icons::PLAY },
+                "cinplay",
+                "Play / pause the clip (from its start at the end)",
+            ) {
+                let length = ui.clip.and_then(|c| p.clip(c)).map_or(0.0, |c| c.length);
+                ui.toggle_play(length);
             }
             gui::same_line_touching();
             if chip(
