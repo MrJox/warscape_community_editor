@@ -112,6 +112,16 @@ struct Batch {
 
     /// Its instances are faded (opacity below 1): drawn by the blended forward pass, not the G-buffer's.
     faded: bool,
+
+    /// Its instances' material masks' colours (`MeshInstance::faction_colours`); none: white.
+    colours: Option<[[f32; 3]; 4]>,
+}
+
+/// A model's batches' key: the model, burning, faded, and its colours' bits (none: white).
+type ModelKey = (usize, bool, bool, Option<[u32; 12]>);
+
+fn colour_bits(c: &[[f32; 3]; 4]) -> [u32; 12] {
+    std::array::from_fn(|i| c[i / 3][i % 3].to_bits())
 }
 
 /// One view's request.
@@ -267,9 +277,9 @@ pub struct DrawSet {
 
     // Models and batches.
     models: Vec<ModelEntry>,
-    /// (Model address, burning, faded) -> model index; the batches keep the models alive, so an address stays unique. The burning and the
-    /// faded instances of a model have batches of their own.
-    model_of: HashMap<(usize, bool, bool), u32>,
+    /// (Model address, burning, faded, colours) -> model index; the batches keep the models alive, so an address stays unique. The burning and the
+    /// faded instances of a model, and each set of colours, have batches of their own.
+    model_of: HashMap<ModelKey, u32>,
     batch: Vec<Batch>,
 }
 
@@ -353,13 +363,19 @@ impl DrawSet {
         self.batch[batch as usize].burning
     }
 
+    /// A batch's instances' material masks' colours (none: white).
+    pub fn batch_colours(&self, batch: u32) -> Option<&[[f32; 3]; 4]> {
+        self.batch[batch as usize].colours.as_ref()
+    }
+
     /// Whether a batch's instances are faded (opacity below 1, [`faded`]).
     pub fn batch_faded(&self, batch: u32) -> bool {
         self.batch[batch as usize].faded
     }
 
-    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool, faded: bool) -> u32 {
-        if let Some(&index) = self.model_of.get(&(Arc::as_ptr(m) as usize, burning, faded)) {
+    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool, faded: bool, colours: Option<&[[f32; 3]; 4]>) -> u32 {
+        let key = (Arc::as_ptr(m) as usize, burning, faded, colours.map(colour_bits));
+        if let Some(&index) = self.model_of.get(&key) {
             return index;
         }
 
@@ -379,7 +395,7 @@ impl DrawSet {
             me.lod_first.push(me.lod_batch.len() as u32);
             for mesh in 0..meshes.len() {
                 me.lod_batch.push(self.batch.len() as u32);
-                self.batch.push(Batch { model: m.clone(), lod, mesh, burning, faded });
+                self.batch.push(Batch { model: m.clone(), lod, mesh, burning, faded, colours: colours.copied() });
             }
 
             me.lod_distance.push(if distance > 0.0 { distance } else { f32::INFINITY });
@@ -394,7 +410,7 @@ impl DrawSet {
 
         let index = self.models.len() as u32;
         self.models.push(me);
-        self.model_of.insert((Arc::as_ptr(m) as usize, burning, faded), index);
+        self.model_of.insert(key, index);
         index
     }
 
@@ -408,10 +424,10 @@ impl DrawSet {
         lod: bool,
         entity: EntityId,
     ) -> u32 {
-        self.add_burning(model, world, params, casts_shadow, lod, false, entity)
+        self.add_burning(model, world, params, casts_shadow, lod, false, None, entity)
     }
 
-    /// `add`, burning or not (the fire shaders).
+    /// `add`, burning or not (the fire shaders), with its material masks' colours (none: white).
     #[allow(clippy::too_many_arguments)]
     pub fn add_burning(
         &mut self,
@@ -421,11 +437,12 @@ impl DrawSet {
         casts_shadow: bool,
         lod: bool,
         burning: bool,
+        colours: Option<&[[f32; 3]; 4]>,
         entity: EntityId,
     ) -> u32 {
         // A rope reads its POSITION4.w as its burn (`MODEL_ROPES_SUFFIX`), not as an opacity: never faded.
         let ropes = model.meshes.iter().all(|m| m.kind == MeshKind::Rope);
-        let mi = self.model_index(model, burning, !ropes && params.is_some_and(faded));
+        let mi = self.model_index(model, burning, !ropes && params.is_some_and(faded), colours);
         let me = &self.models[mi as usize];
         let c = world.transform_point(me.centre);
         let sphere = [c.x, c.y, c.z, me.radius * max_scale2(world).sqrt()];

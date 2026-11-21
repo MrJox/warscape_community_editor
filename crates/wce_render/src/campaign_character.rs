@@ -170,8 +170,24 @@ impl CampaignCatalog {
         for r in rows(files, schema, "agent_uniforms", &["uniform_name", "filename"]) {
             c.uniforms.entry(r[0].to_lowercase()).or_insert_with(|| r[1].to_lowercase());
         }
+        // The colours the game gives a faction's campaign models (`rigid_faction_colours`, Attila's capture A and Thrones' V2): its
+        // `faction_uniform_colours` (primary, secondary, tertiary) and its `faction_banners` primary; `factions`' own colours where a
+        // faction has no row (Thrones' `factions` give Gwined a black secondary and uniform, the game's are red and green).
+        let uniforms: HashMap<String, [String; 3]> = rows(
+            files,
+            schema,
+            "faction_uniform_colours",
+            &["faction_name", "primary_colour_hex", "secondary_colour_hex", "tertiary_colour_hex"],
+        )
+        .into_iter()
+        .map(|r| (r[0].clone(), [r[1].clone(), r[2].clone(), r[3].clone()]))
+        .collect();
+        let banners: HashMap<String, String> =
+            rows(files, schema, "faction_banners", &["key", "primary_hex"]).into_iter().map(|r| (r[0].clone(), r[1].clone())).collect();
         for r in rows(files, schema, "factions", &["key", "primary_colour_hex", "secondary_colour_hex", "uniform_colour_hex", "skin"]) {
-            c.colours.entry(r[0].clone()).or_insert([hex_colour(&r[1]), hex_colour(&r[2]), hex_colour(&r[3]), [0.0; 3]]);
+            let [a, b, u] = uniforms.get(&r[0]).cloned().unwrap_or_else(|| [r[1].clone(), r[2].clone(), r[3].clone()]);
+            let banner = banners.get(&r[0]).unwrap_or(&r[1]);
+            c.colours.entry(r[0].clone()).or_insert([hex_colour(&a), hex_colour(&b), hex_colour(&u), hex_colour(banner)]);
             c.skins.entry(r[0].clone()).or_insert_with(|| r[4].to_lowercase());
         }
         for r in rows(files, schema, "military_force_legacy_emblems", &["key", "banner_decorator"]) {

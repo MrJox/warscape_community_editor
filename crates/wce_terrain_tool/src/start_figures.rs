@@ -190,7 +190,7 @@ impl StartFigures {
         let (cx, cy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
         let time = e.clock.time() as f32;
         let mut placed: Vec<(Float4x4, wce_scene::render_scene::SkinnedInstance)> = vec![];
-        let mut banners: Vec<((usize, usize), Float4x4, &str)> = vec![];
+        let mut banners: Vec<((usize, usize), Float4x4, &str, [[f32; 3]; 4])> = vec![];
         let mut count = 0;
         let to_frame = |wx: f64, wy: f64| frame.from_map.apply(wx / loaded.world.0 * w, (1.0 - wy / loaded.world.1) * h);
         for (i, p) in loaded.placed.iter().enumerate() {
@@ -208,7 +208,8 @@ impl StartFigures {
                     world.m[row][row] = s;
                 }
                 for (j, model) in p.banner.iter().enumerate() {
-                    banners.push(((i, j), world, model.as_str()));
+                    // The army's faction's colours (V2: Gwined's standard takes its uniform colours and its banner's primary).
+                    banners.push(((i, j), world, model.as_str(), p.figure.colours));
                 }
             }
             let place = translation(Float3::new(fx as f32, y, fz as f32)) * rotation_y(p.facing);
@@ -261,7 +262,7 @@ impl StartFigures {
             self.banners.iter().filter(|(k, _)| !keep.contains(k)).map(|(_, &id)| id..id + 1).collect();
         self.banners.retain(|k, _| keep.contains(k));
         e.scene.remove_ranges(&gone);
-        for (key, world, model) in banners {
+        for (key, world, model, colours) in banners {
             match self.banners.get(&key) {
                 Some(&id) => {
                     if e.scene.find(id).is_some_and(|en| en.world != world) {
@@ -279,6 +280,7 @@ impl StartFigures {
                         p6: [p16[8], p16[9], p16[10], p16[11]],
                         p7: [p16[12], p16[13], p16[14], p16[15]],
                         burning: false,
+                        faction_colours: Some(colours),
                     };
                     let id = e.scene.add(self.layer, world, Payload::MeshInstance(mesh), SourceRef { doc, item: u64::MAX });
                     if let Some(en) = e.scene.find_mut(id) {

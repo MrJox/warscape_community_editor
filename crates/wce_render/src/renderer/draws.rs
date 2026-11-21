@@ -162,12 +162,22 @@ impl Renderer {
         mut each: impl FnMut(&mut Self, &GpuMesh, bool, bool) -> bool,
     ) -> (u64, u64) {
         let (mut instances, mut triangles) = (0u64, 0u64);
+        // `rigid_faction_colours`: white, a batch's own where it has them (an army's banner); white again after.
+        const WHITE: [[f32; 3]; 4] = [[1.0; 3]; 4];
+        let mut colours = WHITE;
+        self.set_faction_colours(&colours);
         for k in 0..2 {
             let (set, vis) = (sets[k], viss[k]);
             for &b in &vis.active {
                 let m = set.batch_mesh(b);
                 if !each(self, m, set.batch_burning(b), set.batch_faded(b)) {
                     continue;
+                }
+
+                let wanted = set.batch_colours(b).copied().unwrap_or(WHITE);
+                if wanted != colours {
+                    colours = wanted;
+                    self.set_faction_colours(&colours);
                 }
 
                 self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[0]);
@@ -181,7 +191,17 @@ impl Renderer {
             }
         }
 
+        if colours != WHITE {
+            self.set_faction_colours(&WHITE);
+        }
+
         (instances, triangles)
+    }
+
+    /// `rigid_faction_colours` set and uploaded (the bound buffer takes them).
+    fn set_faction_colours(&mut self, colours: &[[f32; 3]; 4]) {
+        self.cbs.set_f("rigid_faction_colours", "faction_colours", &super::skinned::faction_constants(colours));
+        self.upload();
     }
 }
 
@@ -540,7 +560,16 @@ impl Renderer {
                 params[7] = if snowy { params[7].max(1.0) } else { 0.0 };
             }
 
-            let item = self.draw_lists.draws.add_burning(&m, &e.world, Some(&params), mi.casts_shadow, mi.lod, mi.burning, e.id);
+            let item = self.draw_lists.draws.add_burning(
+                &m,
+                &e.world,
+                Some(&params),
+                mi.casts_shadow,
+                mi.lod,
+                mi.burning,
+                mi.faction_colours.as_ref(),
+                e.id,
+            );
             if scene.layer(e.layer).is_some_and(|l| l.name == wce_scene::render_scene::CONTEXT_LAYER) {
                 self.draw_lists.draws.mark_context(item);
             }

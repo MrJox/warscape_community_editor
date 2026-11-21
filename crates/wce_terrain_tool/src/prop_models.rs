@@ -572,6 +572,7 @@ impl PropModels {
                 p6: [p16[8], p16[9], p16[10], p16[11]],
                 p7: [p16[12], p16[13], p16[14], p16[15]],
                 burning: false,
+                faction_colours: None,
             };
             out.push((prop.key, world, Payload::MeshInstance(mesh), prop.item));
         }
@@ -660,6 +661,7 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]],
                     p7: [p16[12], p16[13], p16[14], p16[15]],
                     burning: false,
+                    faction_colours: None,
                 };
                 out.push((TREE_KEY | u64::from(i), world, Payload::MeshInstance(mesh), u64::MAX));
                 self.tree_count += 1;
@@ -702,6 +704,7 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]],
                     p7: [p16[12], p16[13], p16[14], p16[15]],
                     burning: false,
+                    faction_colours: None,
                 };
                 out.push((CITY_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
@@ -730,6 +733,7 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]],
                     p7: [p16[12], p16[13], p16[14], p16[15]],
                     burning: false,
+                    faction_colours: None,
                 };
                 out.push((CITY_KEY | AQUEDUCT_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
@@ -760,6 +764,7 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]],
                     p7: [p16[12], p16[13], p16[14], p16[15]],
                     burning: false,
+                    faction_colours: None,
                 };
                 out.push((CITY_KEY | SPRAWL_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;

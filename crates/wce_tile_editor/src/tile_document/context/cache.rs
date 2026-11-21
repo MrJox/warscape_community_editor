@@ -236,7 +236,7 @@ fn write_material(w: &mut W, m: &TerrainMaterial) {
 
 fn write_payload(w: &mut W, p: &Payload) -> bool {
     match p {
-        Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4, p5, p6, p7, burning: _ }) => {
+        Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4, p5, p6, p7, burning: _, faction_colours: None }) => {
             w.u8(1);
             w.str(model);
             w.bool(*casts_shadow);
@@ -474,6 +474,7 @@ fn read_payload(r: &mut R) -> Result<Payload, String> {
                 p6: r.f32_array()?,
                 p7: r.f32_array()?,
                 burning: false,
+                faction_colours: None,
             })
         }
 
