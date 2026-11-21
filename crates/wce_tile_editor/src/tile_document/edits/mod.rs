@@ -1373,6 +1373,10 @@ const ANGLE_POINTS: &str = "an angle finder has 3 points: an arm's end, the corn
 /// A new deployment zone's category: Default (TEd's template has Ambush, which a new zone is rarely meant to be).
 const NEW_ZONE_CATEGORY: &str = "DAC_DEFAULT";
 
+/// The side and depth (metres) of a new decal the kit has no size for.
+const DECAL_SIDE: f32 = 8.0;
+const DECAL_DEPTH: f32 = 10.0;
+
 /// A type placed by a click (`TileDocument::create`), at `at` (local to where it goes), with its parts.
 pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_tile::new_instances::NewInstance, String> {
     use wce_tile::new_instances::{NewInstance, circle_points, element_text, vector};
@@ -1383,6 +1387,14 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
     };
 
     Ok(match kind {
+        // A decal at its own most common size in the kit (the type's default is a 12 x 3 m border strip, which stretched any other), else
+        // a square of DECAL_SIDE.
+        "ProjectedDecalInstance" if !key.is_empty() => {
+            let [x, y, z] = wce_tile::decal_sizes::decal_size(key).unwrap_or([DECAL_SIDE, DECAL_DEPTH, DECAL_SIDE]);
+            let v = |m: f32| f64::from(m) * unit;
+            NewInstance::new(kind).position(at).attr("key", key).attr("scale", vector(Double3::new(v(x), v(y), -v(z))))
+        }
+
         "ProjectedDecalInstance" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" => {
             let n = NewInstance::new(kind).position(at);
             if key.is_empty() { n } else { n.attr("key", key) }
