@@ -57,8 +57,8 @@ Never done: a whole frame compared at the same camera. Known gaps (V, from the c
   reads after it in capture A's frame: the particles test 6111, the UI 6150; no effect, the editor's equivalent); the overlay's size (1.5 x the screen) and the rivers' half-width are ASSUMPTIONS; the sea border's rebel
   exception, the placed effects' activation granularity, the storm clouds' drift direction and the started effects' removal are not
   traced; the fog of war and the shroud at the map's edge are not compared with the game.
-- **Map:** far ground with no tile data olive in some runs and pink in others (parked 2026-11-07); TDD's Rauros: a straight east water
-  edge, two black notches, dark triangles of water plane beside the marsh pools.
+- **Map:** far ground with no tile data olive in some runs and pink in others (parked 2026-11-07). TDD's Rauros water edge, notches
+  and triangles: gone at T1's and T2's cameras (2026-11-21, the lake tile's heights from its mesh, Progress).
 
 ## Phases
 
@@ -503,3 +503,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   marshes: the editor cast every rigid mesh opaque; the game casts an alpha-tested material's (`swamp_plant`, a flat quad of lily
   pads, `swamp_flower`, `swamp_reed`) with `rigidcommon`'s `ps30_shadow_alpha_test` and its diffuse (discard under 0.5 alpha), as
   the editor now does.
+- **Rauros' lake from its mesh (2026-11-21, capture T1):** the trench fix put the samples the mesh "left out" at the LF, and a stair of
+  cells stood at the LF south of the lake (the game's ground there 200 m, the lake's shallow bed). The mesh leaves nothing out: 943
+  long triangles fanning from a few vertices were skipped as slivers; over the lake they lie at the land's height, alone they cover
+  the west strip and the stair. `terrain_heights::mesh_heights` now takes every triangle and the lowest where they overlap: the
+  game's ground within 1 - 2 m at the stair and the west strip (8 m on the steep shore). Winding does not separate them (both
+  windings cover the tile: the mesh has an underside). ASSUMPTION: why the lowest (the game's height texture made with a less-than
+  depth test) is not traced. Neighbour trees `_7`.

@@ -88,10 +88,11 @@ impl PacksTree {
         // unit (`decompile::Frame`), as the tile project now reads them; the older trees had them at a tenth (the battle unit's 2). `_5`: the
         // heights of a tile whose height map lacks blocks from its mesh (`decompile::mesh_filled`; TDD's Rauros lake had no shores). `_6`:
         // the samples of its missing blocks the mesh leaves out at the LF, not the map's minimum (a trench along Rauros' west shore).
+        // `_7`: the mesh's overlapping triangles give the lowest, its long ones included (Rauros' west strip and the stair south of it).
         let sources = kits.iter().fold(packs, |h, k| {
             k.to_string_lossy().to_lowercase().bytes().fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
         });
-        Self { vfs, kits, root: cache.join(format!("{key}_{sources:016x}_6")), built: std::sync::OnceLock::new() }
+        Self { vfs, kits, root: cache.join(format!("{key}_{sources:016x}_7")), built: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Result<&(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String> {
