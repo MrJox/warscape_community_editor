@@ -39,6 +39,10 @@ pub struct StartCharacter {
 
     /// Its force's id, when it leads one.
     pub force: Option<u32>,
+
+    /// Whether it leads its faction: it holds the `faction_leader` post ([8] the post, [28] 4 and [29] true: RPFM's
+    /// `world::government`; 60 of Attila's main campaign's 578).
+    pub leader: bool,
 }
 
 /// A force of the start (an army, a navy, a garrison).
@@ -164,6 +168,7 @@ fn character(c: &RecordNode, faction: &str) -> Option<StartCharacter> {
         cell,
         facing,
         force,
+        leader: matches!(g.get(28).and_then(u32_of), Some(4)) && matches!(g.get(29), Some(NodeType::Bool(b)) if *b.value()),
     })
 }
 
