@@ -93,6 +93,11 @@ pub struct CampaignCatalog {
 
     /// By faction: primary, secondary and uniform colours, linear.
     pub colours: HashMap<String, [[f32; 3]; 4]>,
+
+    /// `military_force_legacy_emblems`: an emblem's banner decorator (a model of the 3D UI's); `factions`: a faction's skin (the 3D
+    /// UI's folder of its models).
+    decorators: HashMap<String, String>,
+    skins: HashMap<String, String>,
 }
 
 /// The rows of a db table (every file of it, in `files`' order), the columns as text in `columns`' order; an empty column where the
@@ -165,8 +170,12 @@ impl CampaignCatalog {
         for r in rows(files, schema, "agent_uniforms", &["uniform_name", "filename"]) {
             c.uniforms.entry(r[0].to_lowercase()).or_insert_with(|| r[1].to_lowercase());
         }
-        for r in rows(files, schema, "factions", &["key", "primary_colour_hex", "secondary_colour_hex", "uniform_colour_hex"]) {
+        for r in rows(files, schema, "factions", &["key", "primary_colour_hex", "secondary_colour_hex", "uniform_colour_hex", "skin"]) {
             c.colours.entry(r[0].clone()).or_insert([hex_colour(&r[1]), hex_colour(&r[2]), hex_colour(&r[3]), [0.0; 3]]);
+            c.skins.entry(r[0].clone()).or_insert_with(|| r[4].to_lowercase());
+        }
+        for r in rows(files, schema, "military_force_legacy_emblems", &["key", "banner_decorator"]) {
+            c.decorators.entry(r[0].clone()).or_insert_with(|| r[1].to_lowercase());
         }
 
         // `key:<set>`, then `state:<state>` and its `fragment:<fragment>` lines.
@@ -208,6 +217,18 @@ impl CampaignCatalog {
     /// Whether it read anything (a game without campaign characters' tables reads nothing).
     pub fn is_empty(&self) -> bool {
         self.arts.is_empty()
+    }
+
+    /// An army's banner, as the game's campaign draws it (captures A and T0): the campaign's flagpole and its emblem's decorator
+    /// (Attila's `rome_emblem_01`..., TDD's `mordor_flag_01`, a flag with its own pole), each the faction's skin's model, else the
+    /// default skin's (`ui/3dui/models/<skin>/<name>.rigid_model_v2`); none without an emblem. `exists`: whether the packs have a file.
+    pub fn banner(&self, faction: &str, emblem: &str, exists: &dyn Fn(&str) -> bool) -> Vec<String> {
+        let Some(decorator) = self.decorators.get(emblem).filter(|d| !d.is_empty()) else { return vec![] };
+        let skin = self.skins.get(faction).map_or("default", String::as_str);
+        ["army_banner_flagpole_campaign", decorator.as_str()]
+            .iter()
+            .filter_map(|name| [skin, "default"].iter().map(|s| format!("ui/3dui/models/{s}/{name}.rigid_model_v2")).find(|p| exists(p)))
+            .collect()
     }
 
     /// An agent's art set when its startpos names none: the art sets of its agent type, by its faction, else its subculture, else

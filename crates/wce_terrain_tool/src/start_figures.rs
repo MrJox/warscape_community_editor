@@ -11,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 use wce_editor::editor::Editor;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 use wce_render::campaign_character::{Afloat, CampaignCatalog, CampaignFigure, Wanted};
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, SourceRef};
+use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, DocumentId, EntityId, LayerId, MeshInstance, Payload, SourceRef};
 use wce_terrain_editor::document::MapDocument;
 use wce_tile_editor::tile_document::context::Frame;
 
@@ -24,7 +24,17 @@ struct Placed {
 
     /// A navy, or an army at sea: afloat, on the sea's level.
     navy: bool,
+
+    /// An army's banner's models (`CampaignCatalog::banner`), none for the others.
+    banner: Vec<String>,
 }
+
+/// An army's banner, as the game places it (captures A and T0: four armies facing pi, Roman, Frankish, Gothmog's): its pieces at
+/// one point, this far west and south of the army's (world units, not turned with it) and this far over its feet, at this scale
+/// (the DLL's `ARMY_FLAG_SCALE`), unturned; each piece's instance there plus its pivot, as the renderer adds it.
+const BANNER_OFFSET: (f64, f64) = (-0.40, -0.11);
+const BANNER_RISE: f32 = 0.80;
+const BANNER_SCALE: f32 = 0.65;
 
 /// What the read gives: the figures, the world's size, and what could not be drawn.
 struct Loaded {
@@ -47,6 +57,9 @@ pub struct StartFigures {
     layer: LayerId,
     entities: Vec<EntityId>,
 
+    /// The banners' pieces drawn, by figure and piece.
+    banners: std::collections::HashMap<(usize, usize), EntityId>,
+
     /// Figures drawn, and the start's figures in all.
     pub count: usize,
     pub total: usize,
@@ -54,7 +67,7 @@ pub struct StartFigures {
 
 impl Default for StartFigures {
     fn default() -> Self {
-        Self { on: true, radius_cells: 160.0, loaded: None, layer: 0, entities: vec![], count: 0, total: 0 }
+        Self { on: true, radius_cells: 160.0, loaded: None, layer: 0, entities: vec![], banners: Default::default(), count: 0, total: 0 }
     }
 }
 
@@ -86,6 +99,7 @@ fn load(e: &Editor, name: String, frame: Arc<Frame>, winter: bool) -> Arc<OnceLo
                 let (fx, fz) = frame.from_map.apply(world.0 / cities.world.0 * w, (1.0 - world.1 / cities.world.1) * h);
                 frame.lift(fx, fz) < frame.sea_y()
             };
+            let exists = |p: &str| files.exists(p);
             let placed = chars
                 .on_map()
                 .filter_map(|c| {
@@ -105,8 +119,13 @@ fn load(e: &Editor, name: String, frame: Arc<Frame>, winter: bool) -> Arc<OnceLo
                     };
                     let wanted =
                         Wanted { art_set: art, afloat, leader: c.leader, winter, faction: c.faction.clone(), seed: u64::from(c.id) };
+                    // A land army carries its banner; agents and fleets none.
+                    let banner = match force {
+                        Some(f) if afloat == Afloat::Land => catalog.banner(&c.faction, &f.emblem, &exists),
+                        _ => vec![],
+                    };
                     match catalog.figure(&read, &wanted) {
-                        Ok(figure) => Some(Placed { world: c.world, facing: c.facing, figure, navy: afloat != Afloat::Land }),
+                        Ok(figure) => Some(Placed { world: c.world, facing: c.facing, figure, navy: afloat != Afloat::Land, banner }),
                         Err(err) => {
                             notes.push(format!("{} {} ({}): {err}", c.kind, c.id, c.faction));
                             None
@@ -171,14 +190,27 @@ impl StartFigures {
         let (cx, cy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
         let time = e.clock.time() as f32;
         let mut placed: Vec<(Float4x4, wce_scene::render_scene::SkinnedInstance)> = vec![];
+        let mut banners: Vec<((usize, usize), Float4x4, &str)> = vec![];
         let mut count = 0;
-        for p in &loaded.placed {
+        let to_frame = |wx: f64, wy: f64| frame.from_map.apply(wx / loaded.world.0 * w, (1.0 - wy / loaded.world.1) * h);
+        for (i, p) in loaded.placed.iter().enumerate() {
             let (x, y) = (p.world.0 / loaded.world.0 * w, (1.0 - p.world.1 / loaded.world.1) * h);
             if (x - cx).hypot(y - cy) > self.radius_cells {
                 continue;
             }
             let (fx, fz) = frame.from_map.apply(x, y);
             let y = if p.navy { ground(fx, fz).max(frame.sea_y()) } else { ground(fx, fz) };
+            if !p.banner.is_empty() {
+                let (bx, bz) = to_frame(p.world.0 + BANNER_OFFSET.0, p.world.1 + BANNER_OFFSET.1);
+                let s = k * BANNER_SCALE;
+                let mut world = translation(Float3::new(bx as f32, y + BANNER_RISE * k, bz as f32));
+                for row in 0..3 {
+                    world.m[row][row] = s;
+                }
+                for (j, model) in p.banner.iter().enumerate() {
+                    banners.push(((i, j), world, model.as_str()));
+                }
+            }
             let place = translation(Float3::new(fx as f32, y, fz as f32)) * rotation_y(p.facing);
             for figure in p.figure.instances(time, true) {
                 let mut world = place;
@@ -197,6 +229,7 @@ impl StartFigures {
         if self.layer == 0 || e.scene.layer(self.layer).is_none() {
             self.layer = e.scene.add_layer(doc, "start figures");
             self.entities.clear();
+            self.banners.clear();
         }
         if self.entities.len() != placed.len() || self.entities.iter().any(|&id| e.scene.find(id).is_none()) {
             let gone: Vec<std::ops::Range<EntityId>> = self.entities.drain(..).map(|id| id..id + 1).collect();
@@ -221,6 +254,40 @@ impl StartFigures {
         for (&entity, (world, instance)) in self.entities.iter().zip(placed) {
             e.scene.update_pose(entity, world, instance);
         }
+
+        // The banners: added as they come near, moved with the ground under them (it rises as tiles load), gone as they leave.
+        let keep: std::collections::HashSet<(usize, usize)> = banners.iter().map(|b| b.0).collect();
+        let gone: Vec<std::ops::Range<EntityId>> =
+            self.banners.iter().filter(|(k, _)| !keep.contains(k)).map(|(_, &id)| id..id + 1).collect();
+        self.banners.retain(|k, _| keep.contains(k));
+        e.scene.remove_ranges(&gone);
+        for (key, world, model) in banners {
+            match self.banners.get(&key) {
+                Some(&id) => {
+                    if e.scene.find(id).is_some_and(|en| en.world != world) {
+                        e.scene.update_world_quiet(id, world);
+                    }
+                }
+                None => {
+                    let p16 = DEFAULT_INSTANCE_PARAMS;
+                    let mesh = MeshInstance {
+                        model: model.to_owned(),
+                        casts_shadow: true,
+                        lod: true,
+                        p4: [p16[0], p16[1], p16[2], p16[3]],
+                        p5: [p16[4], p16[5], p16[6], p16[7]],
+                        p6: [p16[8], p16[9], p16[10], p16[11]],
+                        p7: [p16[12], p16[13], p16[14], p16[15]],
+                        burning: false,
+                    };
+                    let id = e.scene.add(self.layer, world, Payload::MeshInstance(mesh), SourceRef { doc, item: u64::MAX });
+                    if let Some(en) = e.scene.find_mut(id) {
+                        en.locked = true;
+                    }
+                    self.banners.insert(key, id);
+                }
+            }
+        }
     }
 
     pub fn clear(&mut self, e: &mut Editor) {
@@ -229,5 +296,6 @@ impl StartFigures {
         }
         (self.layer, self.count) = (0, 0);
         self.entities.clear();
+        self.banners.clear();
     }
 }
