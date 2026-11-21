@@ -729,6 +729,7 @@ impl Renderer {
         let n = (cam.znear * u).max(1.0);
         let far_q = n + row[0] + row[1] + row[2] + row[3];
         let (mut start, mut scale) = (n, 1.0f32);
+        self.depth_range.far = far_q;
         if self.depth_range.valid {
             let (lo, hi) = (self.depth_range.min * u, (self.depth_range.max * u).min(far_q) * 1.05);
             if lo < hi {

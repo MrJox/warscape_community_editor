@@ -510,3 +510,10 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   game's ground within 1 - 2 m at the stair and the west strip (8 m on the steep shore). Winding does not separate them (both
   windings cover the tile: the mesh has an underside). ASSUMPTION: why the lowest (the game's height texture made with a less-than
   depth test) is not traced. Neighbour trees `_7`.
+- **The cascades at Rauros (2026-11-21, capture T1):** the editor's splits were 1 / 6 / 16 / 36 / 76 against the game's 3.13 / 8.24 /
+  18.5 / 38.9 / 79.7: no depth analysis. With MSAA its CPU readback copied the D24S8 depth into a staging texture that D3D11 does not
+  map (E_INVALIDARG), every frame: the cascades started at the camera's near in every MSAA run (capture A's "1.05 stretch" too). It
+  now runs the game's own reduction (`shadow_map_depth_buffer_analysis`: `ps30_downsize_store_data` to 256 x 256 R32G32, then
+  `ps30_downsize_data` 4 x 4 down to one texel, read back two frames later; constants from the capture). T1 after: 3.64 / 8.71 / 18.9 /
+  39.2 / 79.7, the fade range 0.2919 (game 0.2915), the matrices within 1 - 6 %; the near end 0.5 units off (the nearest visible
+  pixel). Without MSAA the CPU readback of channel 4 stays.

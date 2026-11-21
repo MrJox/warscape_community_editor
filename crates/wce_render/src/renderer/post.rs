@@ -107,11 +107,31 @@ pub(crate) struct DepthRange {
 
     /// The staging holds the resolved D24S8 depth (MSAA) rather than channel 4's R32F z / w.
     pub d24: bool,
+
+    /// With MSAA, the game's reduction (`shadow_map_depth_buffer_analysis`): its R32G32 targets (min, max view depth, game units) of
+    /// 256, 64, 16, 4 and 1 texels a side, and the 1 x 1 result's two staging copies.
+    pub chain: Vec<super::targets::SizedTarget>,
+    pub chain_staging: [Option<ID3D11Texture2D>; 2],
+
+    /// The shadow range's far end (game units: the camera's near and the quality row), the reduction's hard limit; set by the shadow pass.
+    pub far: f32,
 }
 
 impl Default for DepthRange {
     fn default() -> Self {
-        Self { staging: Default::default(), w: 0, h: 0, frame: 0, valid: false, min: 1.0, max: 781.0, d24: false }
+        Self {
+            staging: Default::default(),
+            w: 0,
+            h: 0,
+            frame: 0,
+            valid: false,
+            min: 1.0,
+            max: 781.0,
+            d24: false,
+            chain: vec![],
+            chain_staging: Default::default(),
+            far: 781.0,
+        }
     }
 }
 
@@ -633,8 +653,15 @@ impl Renderer {
     /// The Depth Buffer Analysis Shadow Map View equivalent: the min / max view depth of the visible geometry from the G-buffer depth channel
     /// (z / w), read back two frames later. Sky pixels (z / w = 0 after the clear) are skipped.
     pub(crate) fn analyse_depth(&mut self, cam: &Camera) {
-        // With MSAA the scene's depth is the resolved D24S8 one (no R32F channel 4 is drawn).
+        // With MSAA the scene's depth is the resolved D24S8 one (no R32F channel 4 is drawn): a D24S8 staging copy does not map (Map's
+        // E_INVALIDARG: every campaign frame drew its cascades without the analysis, from the camera's near, capture T1's splits 1 / 6 /
+        // 16 / 36 / 76 against the game's 3.1 / 8.2 / 18 / 39 / 80). The game's own reduction instead.
         let d24 = self.gbuffer.ms.is_some();
+        if d24 {
+            self.analyse_depth_gpu();
+            return;
+        }
+
         if self.depth_range.staging[0].is_none()
             || self.depth_range.w != self.gbuffer.w
             || self.depth_range.h != self.gbuffer.h
@@ -697,6 +724,90 @@ impl Renderer {
         if self.depth_range.valid {
             self.depth_range.min = lo;
             self.depth_range.max = hi;
+        }
+    }
+
+    /// The game's Depth Buffer Analysis (RenderDoc, capture T1, events 8901 - 8935): `ps30_downsize_store_data` takes the scene's depth
+    /// (`gbuffer_channel_4_sampler`) and material bits (`gbuffer_channel_3_sampler`: a pixel whose alpha has bit 2 is left out, as the far
+    /// plane and what lies past `g_shadow_far_extent_hard_limit`) to the min and max view depth of each 256 x 256 texel's pixels
+    /// (`g_num_samples_per_pixel` the screen over 256), then `ps30_downsize_data` takes 4 x 4 of them, down to one; the camera's
+    /// `g_viewport_dimensions` and `g_render_target_dimensions` the target's. The one texel is read back two frames later.
+    fn analyse_depth_gpu(&mut self) {
+        let (Some(store), Some(down)) = (self.shader(DEPTH_ANALYSIS_STORE_PS), self.shader(DEPTH_ANALYSIS_DOWN_PS)) else { return };
+        const SIDES: [u32; 5] = [256, 64, 16, 4, 1];
+        if self.depth_range.chain.len() != SIDES.len() {
+            self.depth_range.chain = SIDES
+                .iter()
+                .map(|&n| super::targets::SizedTarget {
+                    t: super::targets::make_target(&self.dev, n, n, DXGI_FORMAT_R32G32_FLOAT),
+                    w: n,
+                    h: n,
+                })
+                .collect();
+            let sd = D3D11_TEXTURE2D_DESC {
+                Width: 1,
+                Height: 1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R32G32_FLOAT,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+                MiscFlags: 0,
+            };
+            for t in &mut self.depth_range.chain_staging {
+                *t = self.dev.create_texture_2d(&sd, None).ok();
+            }
+            self.depth_range.frame = 0;
+        }
+
+        let (sw, sh) = (self.gbuffer.w as f32, self.gbuffer.h as f32);
+        let (bits, depth) = (self.gbuffer.channels[2].srv.clone(), self.gbuffer.depth_srv());
+        let mut input = None;
+        for (k, t) in self.depth_range.chain.clone().iter().enumerate() {
+            let n = t.w as f32;
+            self.cbs.set_f("camera_VS_PS", "g_viewport_dimensions", &[n, n, 1.0 / n, 1.0 / n]);
+            self.cbs.set_f("camera_VS_PS", "g_render_target_dimensions", &[n, n, 1.0 / n, 1.0 / n]);
+            let (ps, per) = if k == 0 { (&store, [sw / n, sh / n]) } else { (&down, [4.0, 4.0]) };
+            self.cbs.set_f("smdba_down_size_buffer", "g_num_samples_per_pixel", &per);
+            self.cbs.set_f("smdba_down_size_buffer", "g_shadow_far_extent_hard_limit", &[if k == 0 { self.depth_range.far } else { 1.0 }]);
+            self.ctx.set_render_targets(&[], None);
+            self.bind(ps);
+            ps_samplers(&self.ctx, ps, &self.states.s_clamp_point);
+            if k == 0 {
+                bind_srv(&self.ctx, ps, "gbuffer_channel_3_sampler", bits.as_ref());
+                bind_srv(&self.ctx, ps, "gbuffer_channel_4_sampler", depth.as_ref());
+            } else {
+                bind_srv(&self.ctx, ps, "g_data_sampler", input.as_ref());
+            }
+            self.fullscreen_to(&t.t.rtv, t.w, t.h, ps);
+            input = t.t.srv.clone();
+        }
+        self.cbs.set_f("camera_VS_PS", "g_viewport_dimensions", &[sw, sh, 1.0 / sw, 1.0 / sh]);
+        self.cbs.set_f("camera_VS_PS", "g_render_target_dimensions", &[sw, sh, 1.0 / sw, 1.0 / sh]);
+        self.upload();
+
+        let last = self.depth_range.chain.last().and_then(|t| t.t.tex.clone());
+        if let (Some(staging), Some(src)) = (&self.depth_range.chain_staging[(self.depth_range.frame & 1) as usize], &last) {
+            self.ctx.copy_resource(staging, src);
+        }
+        let first = self.depth_range.frame == 0;
+        self.depth_range.frame += 1;
+        if first {
+            return;
+        }
+
+        let Some(src) = self.depth_range.chain_staging[(self.depth_range.frame & 1) as usize].clone() else { return };
+        let Some([lo, hi]) = map_read(&self.ctx, &src, 0, self.settings.deterministic).and_then(|ms| ms.read::<[f32; 2]>()) else {
+            return;
+        };
+        // Game units; the range is kept in scene units.
+        let u = self.camera.units.max(1e-9);
+        self.depth_range.valid = hi > lo && hi > 0.0 && lo < 3.0e38;
+        if self.depth_range.valid {
+            self.depth_range.min = lo / u;
+            self.depth_range.max = hi / u;
         }
     }
 
