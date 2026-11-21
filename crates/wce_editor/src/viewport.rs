@@ -247,6 +247,13 @@ impl Viewport {
     /// The vertical field of view and the near plane of every camera mode's lens: on a campaign map the game's campaign camera's
     /// ([`Lens::CAMPAIGN_FOV_Y`], near 1 world unit: `game_units` world units a scene unit, and its far plane at least
     /// [`Lens::CAMPAIGN_FAR`] world units, which the far ring streams to), else the battle camera's ([`Lens::default`]).
+    /// A campaign map's camera limits for every mode's lens (`Lens::campaign_limits`); none on a battle map.
+    pub fn set_campaign_limits(&mut self, limits: Option<[f32; 4]>) {
+        for lens in [&mut self.total_war.lens, &mut self.top_down.lens, &mut self.walk.lens, &mut self.fly.lens, &mut self.orbit.lens] {
+            lens.campaign_limits = limits;
+        }
+    }
+
     pub fn set_campaign_lens(&mut self, campaign: bool, game_units: f32) {
         let battle = Lens::default();
         let unit = 1.0 / game_units.max(1e-9);

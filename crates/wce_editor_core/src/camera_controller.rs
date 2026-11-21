@@ -157,6 +157,11 @@ pub struct Lens {
     pub fov_y: f32,
     pub znear: f32,
     pub zfar: f32,
+
+    /// A campaign map's camera limits (the game's `campaign_variables`: `camera_minimum_distance`, `camera_maximum_distance` in world
+    /// units, `camera_minimum_tilt_angle`, `camera_maximum_tilt_angle` in radians below the horizon; Attila 9 / 45 / 0.35 / 1.15,
+    /// Thrones 7 / 23 / 0.75 / 1.15): with the game's limits on, the Total War camera keeps to them instead of the battle's heights.
+    pub campaign_limits: Option<[f32; 4]>,
 }
 
 impl Lens {
@@ -172,7 +177,7 @@ impl Lens {
 impl Default for Lens {
     /// The game's battle camera.
     fn default() -> Self {
-        Self { fov_y: 1.13446, znear: 1.0, zfar: 13000.0 }
+        Self { fov_y: 1.13446, znear: 1.0, zfar: 13000.0, campaign_limits: None }
     }
 }
 
@@ -392,7 +397,18 @@ impl CameraController for TotalWarCamera {
             && let Some(g) = world.ground(self.eye.x, self.eye.z)
         {
             let units = world.game_units();
-            self.eye.y = self.eye.y.clamp(g + GAME_MIN_HEIGHT / units, g + GAME_MAX_HEIGHT / units);
+            match self.lens.campaign_limits {
+                // The campaign's: the tilt below the horizon in its range, the eye's distance along the view to the ground at its
+                // height (the ground taken level) in its range.
+                Some([near, far, low, high]) => {
+                    let tilt = (-self.pitch).clamp(low, high);
+                    self.pitch = -tilt;
+                    let s = tilt.sin();
+                    self.eye.y = self.eye.y.clamp(g + near * s / units, g + far * s / units);
+                }
+
+                None => self.eye.y = self.eye.y.clamp(g + GAME_MIN_HEIGHT / units, g + GAME_MAX_HEIGHT / units),
+            }
         }
 
         self.eye = constrain(self.eye, opts, world);
