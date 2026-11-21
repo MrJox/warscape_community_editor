@@ -98,11 +98,6 @@ pub struct ContextRequest {
     pub cells: (i32, i32),
     pub unit: f64,
 
-    /// The frame's z (north) over the map's cells' (1: square cells). A campaign map is drawn in the game's world, the hex grid's: 2 / sqrt 3
-    /// longer north to south (docs/re/renderer.md, "The campaign frame"): its ground (tiles, the LF, the sea) is stretched by it, the
-    /// models only moved.
-    pub z_stretch: f64,
-
     /// The rings around the focus, in cells: everything, the mid level, the tiles' ground, the LF ground.
     pub near: i32,
     pub mid: i32,
@@ -602,7 +597,10 @@ pub struct Frame {
     pub map: Arc<PlacedMap>,
     pub unit: f64,
 
-    /// [`ContextRequest::z_stretch`]: part of `from_map` / `to_map`.
+    /// The frame's z (north) over the map's cells' (1: square cells), part of `from_map` / `to_map`: a campaign map (its tiles
+    /// `terrain/tiles/campaign/...`) is drawn in the game's world, the hex grid's, 2 / sqrt 3 longer north to south (`CAMPAIGN_Z_SCALE`;
+    /// docs/re/renderer.md, "The campaign frame"): its ground (tiles, the LF, the sea) stretched by it, the models only moved. 1 on a
+    /// battle map.
     pub z_stretch: f64,
 
     /// The open tile's cells, its frame -> map cells and back.
@@ -677,14 +675,14 @@ impl Frame {
             any_variation: false,
         };
         let open = me.rect();
-        let k = if rq.z_stretch > 0.0 { rq.z_stretch } else { 1.0 };
+        // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures, its LF is the game's
+        // (`lf_map`), and its ground is in the game's world (`Frame::z_stretch`).
+        let campaign =
+            map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/"));
+        let k = if campaign { wce_scene::campaign_lighting::CAMPAIGN_Z_SCALE } else { 1.0 };
         let from_map = Affine2 { m: [[1.0, 0.0, 0.0], [0.0, k, 0.0]] }.then_after(&me.to_map().inverse());
         let to_map = from_map.inverse();
         let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
-        // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures, and its LF is the game's
-        // (`lf_map`).
-        let campaign =
-            map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/"));
         let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit, k, campaign).map(Arc::new);
         let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit, k, false).map(Arc::new);
         // A campaign map draws its fields as the game reads them: the land's box averages at two samples a cell, the sea pass's read.
