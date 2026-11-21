@@ -2595,6 +2595,8 @@ impl Tool for TerrainTool {
         self.props.update(e, self.shown, frame.clone(), &|x, z| view.ground_at(x, z), view.tiles_loaded());
         self.props.pose_animated(e, self.shown);
         wce_foundation::wce_prof!("terrain_tool.figures");
+        // The player: the faction the lines are for (the panel's pick, else the map's default).
+        self.figures.player = self.lines.shown.as_ref().filter(|(d, f)| *d == self.shown && !f.is_empty()).map(|(_, f)| f.clone());
         self.figures.update(e, self.shown, frame, &|x, z| view.ground_at(x, z), self.season == "wi");
     }
 
@@ -2687,6 +2689,7 @@ impl Tool for TerrainTool {
                     if !t.props.wait_cities(max) {
                         late.push("the settlements");
                     }
+                    t.figures.player = t.lines.shown.as_ref().filter(|(d, f)| *d == t.shown && !f.is_empty()).map(|(_, f)| f.clone());
                     t.figures.update(e, t.shown, frame.clone(), &|x, z| view.ground_at(x, z), t.season == "wi");
                     if !t.figures.wait(max) {
                         late.push("the start's figures");

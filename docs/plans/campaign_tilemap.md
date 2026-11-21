@@ -582,3 +582,18 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   own (batched by them, `rigid_faction_colours` per batch, white otherwise). Left: the soldier beside the general (a skinned figure
   with `nomadic_emblem_07` on its shield, at (266.9, 261.4), no startpos character there), and the settlements' flags (V2's 198-index
   draws with `faction_banners`' colours on the poles the editor leaves bare).
+- **Thrones, V2's flags and the soldier (2026-11-21, night):** (1) the settlements' flags are their wall pieces' `Cloth` blocks
+  (`flag1_lod01`: `barbarian_gatehouse_13*` two, `barbarian_wall_13` one; Attila's `roman_*` the same), which the model cache
+  dropped (a sail's `Cloth` blocks are its simulation's): a model without `WeightedCloth` now draws them as rigid meshes
+  (`GpuMesh::flag`), in the owner's `faction_banners` primary, secondary, tertiary and black (V2: Gwined FCFCFC / A91400,
+  Northymbre BB646D / F4BA32; the walls themselves white: `FactionColours::flags_only`; `Cities::owners`). (2) The walls'
+  `_inverse` side was the wrong way round: where the editor had `wall_13_inverse` the game draws `wall_13` at the same turn
+  and the reverse, and every straight `wall_14` was half a turn off (V2's Aberffro; capture A's Rome agrees on the one 13 it
+  shows): the test is now "the edge before the turn leads into the zones". Left: three of Aberffro's cells where the game has a
+  straight `wall_14` and the editor a 12 or 13 (the walk's shape there), Rome's walls differ more (the editor's 13s where the
+  game has 14s), and V2's north-east wall shows three small flags where the editor's poles are bare. (3) The soldier beside
+  Anaraud is Thrones' starting rebels: `vik_starting_rebellions.lua` raises for the human player a rebel army at a hex
+  (Gwined: `vik_reg_aberffro`, welsh, (400, 339) = (267.20, 261.50), the figure's point); it wears `vik_fact_rebels_welsh`'s
+  colours and the default decorator `nomadic_emblem_07` (a name in both games' `empire.retail.dll` by the army banner models,
+  for an army without a legacy emblem). The editor reads the campaign's scripts' `CreateStartingRebels` calls
+  (`characters::scripted_rebels`) and draws the army for the faction picked (its lines' faction).

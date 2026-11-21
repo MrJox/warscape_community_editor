@@ -719,6 +719,7 @@ mod tests {
                 bmax,
                 snow: false,
                 palette_base: 0,
+                flag: false,
             }
         };
 

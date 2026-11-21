@@ -22,6 +22,10 @@ use crate::unit_animation::{AnimationSet, Figure, Rig, UnitInstance};
 use crate::unit_assembly::{Reader, Rng, assemble};
 use crate::unit_catalog::{hex_colour, variant_path};
 
+/// The banner decorator of an army without a legacy emblem: the name `empire.retail.dll` holds beside the army banner models (Attila's
+/// and Thrones'); capture V2: the starting rebels' army beside Gwined's leader carries it.
+const DEFAULT_DECORATOR: &str = "nomadic_emblem_07";
+
 const TABLES: &str = "animations/campaign_animation_tables";
 
 /// Where a character stands: on land, an army at sea, a navy.
@@ -98,6 +102,9 @@ pub struct CampaignCatalog {
     /// UI's folder of its models).
     decorators: HashMap<String, String>,
     skins: HashMap<String, String>,
+
+    /// `factions`: a faction's subculture (a scripted army's art set: Thrones' rebels have no art sets of their own).
+    subcultures: HashMap<String, String>,
 }
 
 /// The rows of a db table (every file of it, in `files`' order), the columns as text in `columns`' order; an empty column where the
@@ -184,7 +191,13 @@ impl CampaignCatalog {
         .collect();
         let banners: HashMap<String, String> =
             rows(files, schema, "faction_banners", &["key", "primary_hex"]).into_iter().map(|r| (r[0].clone(), r[1].clone())).collect();
-        for r in rows(files, schema, "factions", &["key", "primary_colour_hex", "secondary_colour_hex", "uniform_colour_hex", "skin"]) {
+        for r in rows(
+            files,
+            schema,
+            "factions",
+            &["key", "primary_colour_hex", "secondary_colour_hex", "uniform_colour_hex", "skin", "subculture"],
+        ) {
+            c.subcultures.entry(r[0].clone()).or_insert_with(|| r[5].clone());
             let [a, b, u] = uniforms.get(&r[0]).cloned().unwrap_or_else(|| [r[1].clone(), r[2].clone(), r[3].clone()]);
             let banner = banners.get(&r[0]).unwrap_or(&r[1]);
             c.colours.entry(r[0].clone()).or_insert([hex_colour(&a), hex_colour(&b), hex_colour(&u), hex_colour(banner)]);
@@ -237,14 +250,25 @@ impl CampaignCatalog {
 
     /// An army's banner, as the game's campaign draws it (captures A and T0): the campaign's flagpole and its emblem's decorator
     /// (Attila's `rome_emblem_01`..., TDD's `mordor_flag_01`, a flag with its own pole), each the faction's skin's model, else the
-    /// default skin's (`ui/3dui/models/<skin>/<name>.rigid_model_v2`); none without an emblem. `exists`: whether the packs have a file.
+    /// default skin's (`ui/3dui/models/<skin>/<name>.rigid_model_v2`); an army without a legacy emblem (a scripted rebel army) the
+    /// [`DEFAULT_DECORATOR`]. `exists`: whether the packs have a file.
     pub fn banner(&self, faction: &str, emblem: &str, exists: &dyn Fn(&str) -> bool) -> Vec<String> {
-        let Some(decorator) = self.decorators.get(emblem).filter(|d| !d.is_empty()) else { return vec![] };
+        let decorator = self.decorators.get(emblem).filter(|d| !d.is_empty()).map_or(DEFAULT_DECORATOR, String::as_str);
         let skin = self.skins.get(faction).map_or("default", String::as_str);
-        ["army_banner_flagpole_campaign", decorator.as_str()]
+        ["army_banner_flagpole_campaign", decorator]
             .iter()
             .filter_map(|name| [skin, "default"].iter().map(|s| format!("ui/3dui/models/{s}/{name}.rigid_model_v2")).find(|p| exists(p)))
             .collect()
+    }
+
+    /// The factions' keys (`factions`).
+    pub fn faction_keys(&self) -> impl Iterator<Item = &str> {
+        self.subcultures.keys().map(String::as_str)
+    }
+
+    /// A faction's subculture (`factions`), empty when unknown.
+    pub fn subculture(&self, faction: &str) -> &str {
+        self.subcultures.get(faction).map_or("", String::as_str)
     }
 
     /// An agent's art set when its startpos names none: the art sets of its agent type, by its faction, else its subculture, else

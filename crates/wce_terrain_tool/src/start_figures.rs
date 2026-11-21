@@ -52,8 +52,13 @@ pub struct StartFigures {
 
     /// How far from the camera's target figures are drawn (map cells).
     pub radius_cells: f64,
-    /// The read of a document, for a season (winter or not: the art sets' `winter` rows).
-    loaded: Option<((DocumentId, bool), Arc<OnceLock<Option<Arc<Loaded>>>>)>,
+
+    /// The player's faction (the Terrain panel's pick, its lines' faction): the armies the campaign's script raises for it at the
+    /// start are drawn too (Thrones' starting rebels).
+    pub player: Option<String>,
+
+    /// The read of a document, for a season (winter or not: the art sets' `winter` rows) and a player.
+    loaded: Option<((DocumentId, bool, Option<String>), Arc<OnceLock<Option<Arc<Loaded>>>>)>,
     layer: LayerId,
     entities: Vec<EntityId>,
 
@@ -67,13 +72,23 @@ pub struct StartFigures {
 
 impl Default for StartFigures {
     fn default() -> Self {
-        Self { on: true, radius_cells: 160.0, loaded: None, layer: 0, entities: vec![], banners: Default::default(), count: 0, total: 0 }
+        Self {
+            on: true,
+            radius_cells: 160.0,
+            player: None,
+            loaded: None,
+            layer: 0,
+            entities: vec![],
+            banners: Default::default(),
+            count: 0,
+            total: 0,
+        }
     }
 }
 
 /// The read, on a worker: the campaign's startpos, its characters, the map's settlement cells, the tables and each figure.
 /// A land army standing on water (the LF under the sea there) is at sea: its `sea_uniform` (a transport ship), as the game's.
-fn load(e: &Editor, name: String, frame: Arc<Frame>, winter: bool) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
+fn load(e: &Editor, name: String, frame: Arc<Frame>, winter: bool, player: Option<String>) -> Arc<OnceLock<Option<Arc<Loaded>>>> {
     let cell = Arc::new(OnceLock::new());
     let out = cell.clone();
     let game = e.game();
@@ -92,6 +107,48 @@ fn load(e: &Editor, name: String, frame: Arc<Frame>, winter: bool) -> Arc<OnceLo
             let cities = wce_terrain_io::attila::cities::read(&map_data, &start.startpos, &Default::default()).ok()?;
             chars.settlement_cells.extend(cities.slots.iter().map(|s| (u32::from(s.cell.0), u32::from(s.cell.1))));
             let catalog = CampaignCatalog::load(files.as_ref(), &schema);
+            // The rebel armies the campaign's scripts raise at the start for the player (Thrones' `vik_starting_rebellions.lua`), as
+            // armies of the culture's rebels (`<...>rebels_<culture>`, ASSUMPTION: capture V2's figure wears `vik_fact_rebels_welsh`'s
+            // colours) at the script's hex, facing as the start's armies, with no legacy emblem (the default decorator).
+            if let Some(player) = &player {
+                let rebels: Vec<_> = files
+                    .list(&format!("campaigns/{}/", start.campaign), ".lua")
+                    .iter()
+                    .filter_map(|p| files.read(p).ok())
+                    .flat_map(|b| wce_terrain_io::attila::characters::scripted_rebels(&String::from_utf8_lossy(&b)))
+                    .filter(|r| &r.player == player)
+                    .collect();
+                for (k, r) in rebels.into_iter().enumerate() {
+                    let suffix = format!("rebels_{}", r.culture);
+                    let Some(faction) = catalog.faction_keys().find(|f| f.ends_with(&suffix)).map(str::to_owned) else { continue };
+                    let id = u32::MAX - k as u32;
+                    chars.forces.insert(
+                        id,
+                        wce_terrain_io::attila::characters::StartForce {
+                            id,
+                            faction: faction.clone(),
+                            commander: id,
+                            navy: false,
+                            residence: None,
+                            units: vec![],
+                            emblem: String::new(),
+                        },
+                    );
+                    chars.characters.push(wce_terrain_io::attila::characters::StartCharacter {
+                        id,
+                        subculture: catalog.subculture(&faction).to_owned(),
+                        faction,
+                        kind: "general".to_owned(),
+                        art_set: String::new(),
+                        culture: String::new(),
+                        world: cities.cell_centre(r.cell),
+                        cell: r.cell,
+                        facing: std::f32::consts::PI,
+                        force: Some(id),
+                        leader: false,
+                    });
+                }
+            }
             let mut notes: Vec<String> = vec![];
             let mut at_sea = vec![];
             let (w, h) = (f64::from(frame.map.width), f64::from(frame.map.height));
@@ -174,10 +231,11 @@ impl StartFigures {
         if kind != wce_terrain::MapKind::Campaign {
             return self.clear(e);
         }
-        if self.loaded.as_ref().is_none_or(|(id, _)| *id != (doc, winter)) {
-            let cell = load(e, name.to_owned(), frame.clone(), winter);
+        let key = (doc, winter, self.player.clone());
+        if self.loaded.as_ref().is_none_or(|(id, _)| *id != key) {
+            let cell = load(e, name.to_owned(), frame.clone(), winter, self.player.clone());
             self.clear(e);
-            self.loaded = Some(((doc, winter), cell));
+            self.loaded = Some((key, cell));
         }
         let Some(loaded) = self.loaded.as_ref().and_then(|(_, c)| c.get().cloned().flatten()) else { return };
         self.total = loaded.placed.len();
@@ -280,7 +338,7 @@ impl StartFigures {
                         p6: [p16[8], p16[9], p16[10], p16[11]],
                         p7: [p16[12], p16[13], p16[14], p16[15]],
                         burning: false,
-                        faction_colours: Some(colours),
+                        faction_colours: Some(wce_scene::render_scene::FactionColours { colours, flags_only: false }),
                     };
                     let id = e.scene.add(self.layer, world, Payload::MeshInstance(mesh), SourceRef { doc, item: u64::MAX });
                     if let Some(en) = e.scene.find_mut(id) {

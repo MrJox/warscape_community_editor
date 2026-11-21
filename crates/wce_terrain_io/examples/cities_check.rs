@@ -94,7 +94,10 @@ fn main() {
             .iter()
             .filter(|p| p.region.contains(&filter) && (std::env::var("WCE_ALL").is_ok() || !p.piece.starts_with("sprawl_edge")))
         {
-            println!("  piece {} {:?} level {} turn {} -> {:?}", p.piece, p.cell, p.level, p.turn, p.model);
+            println!(
+                "  piece {} {:?} world ({:.2}, {:.2}) level {} turn {} -> {:?}",
+                p.piece, p.cell, p.world.0, p.world.1, p.level, p.turn, p.model
+            );
         }
     }
     // `WCE_BOX=c0,r0,c1,r1`: the sprawl hexes in the box (in a footprint, in a zone, water, road shape and turn, coast shape and turn,

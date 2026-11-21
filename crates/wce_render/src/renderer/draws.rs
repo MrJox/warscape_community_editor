@@ -174,7 +174,7 @@ impl Renderer {
                     continue;
                 }
 
-                let wanted = set.batch_colours(b).copied().unwrap_or(WHITE);
+                let wanted = set.batch_colours(b).filter(|c| !c.flags_only || m.flag).map_or(WHITE, |c| c.colours);
                 if wanted != colours {
                     colours = wanted;
                     self.set_faction_colours(&colours);

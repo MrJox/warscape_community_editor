@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use wce_foundation::math::{Float3, Float4x4, length};
 use wce_foundation::wce_prof;
-use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, EntityId};
+use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, EntityId, FactionColours};
 
 use crate::model_cache::{GpuMesh, GpuModel, MeshKind, RigidInstance};
 
@@ -114,14 +114,14 @@ struct Batch {
     faded: bool,
 
     /// Its instances' material masks' colours (`MeshInstance::faction_colours`); none: white.
-    colours: Option<[[f32; 3]; 4]>,
+    colours: Option<FactionColours>,
 }
 
-/// A model's batches' key: the model, burning, faded, and its colours' bits (none: white).
-type ModelKey = (usize, bool, bool, Option<[u32; 12]>);
+/// A model's batches' key: the model, burning, faded, and its colours' bits and whether on flags only (none: white).
+type ModelKey = (usize, bool, bool, Option<([u32; 12], bool)>);
 
-fn colour_bits(c: &[[f32; 3]; 4]) -> [u32; 12] {
-    std::array::from_fn(|i| c[i / 3][i % 3].to_bits())
+fn colour_bits(c: &FactionColours) -> ([u32; 12], bool) {
+    (std::array::from_fn(|i| c.colours[i / 3][i % 3].to_bits()), c.flags_only)
 }
 
 /// One view's request.
@@ -364,7 +364,7 @@ impl DrawSet {
     }
 
     /// A batch's instances' material masks' colours (none: white).
-    pub fn batch_colours(&self, batch: u32) -> Option<&[[f32; 3]; 4]> {
+    pub fn batch_colours(&self, batch: u32) -> Option<&FactionColours> {
         self.batch[batch as usize].colours.as_ref()
     }
 
@@ -373,7 +373,7 @@ impl DrawSet {
         self.batch[batch as usize].faded
     }
 
-    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool, faded: bool, colours: Option<&[[f32; 3]; 4]>) -> u32 {
+    fn model_index(&mut self, m: &Arc<GpuModel>, burning: bool, faded: bool, colours: Option<&FactionColours>) -> u32 {
         let key = (Arc::as_ptr(m) as usize, burning, faded, colours.map(colour_bits));
         if let Some(&index) = self.model_of.get(&key) {
             return index;
@@ -437,7 +437,7 @@ impl DrawSet {
         casts_shadow: bool,
         lod: bool,
         burning: bool,
-        colours: Option<&[[f32; 3]; 4]>,
+        colours: Option<&FactionColours>,
         entity: EntityId,
     ) -> u32 {
         // A rope reads its POSITION4.w as its burn (`MODEL_ROPES_SUFFIX`), not as an opacity: never faded.

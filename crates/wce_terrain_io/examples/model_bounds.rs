@@ -79,6 +79,19 @@ fn main() {
                 );
             }
 
+            // `WCE_BLOCKS`: each block's name, material type, vertex format and index count.
+            if std::env::var("WCE_BLOCKS").is_ok() {
+                for b in lod.mesh_blocks() {
+                    println!(
+                        "    block '{}' {:?} {:?} {} indices",
+                        b.material().name(),
+                        b.mesh().material_type(),
+                        b.material().vertex_format(),
+                        b.mesh().indices().len()
+                    );
+                }
+            }
+
             let kinds: std::collections::BTreeSet<String> =
                 lod.mesh_blocks().iter().map(|b| format!("{:?}", b.mesh().material_type())).collect();
             println!(
