@@ -2686,6 +2686,7 @@ impl Tool for TerrainTool {
                         let sea = frame.sea_lf.as_ref().map(|s| m(s.height_at(fx as f32, fz as f32)));
                         let cliff = |i: usize| frame.map.placements[i].location.to_ascii_lowercase().contains("cliff");
                         out.push(frame.cell_note(v[0].floor() as i32, v[1].floor() as i32, &cliff));
+                        out.push(frame.plain_note(v[0].floor() as i32, v[1].floor() as i32));
                         out.push(format!(
                             "land LF {:.1} m, sea LF {sea:.1?} m, ground {:.1} m",
                             m(frame.lift(fx, fz)),
@@ -2727,6 +2728,7 @@ impl Tool for TerrainTool {
                                     p.climate,
                                     frame.map.climate_of(p)
                                 ));
+                                out.push(format!("  its tile: {}", s.tile_note(&frame, i, (lx, lz))));
                             }
                         }
                     }

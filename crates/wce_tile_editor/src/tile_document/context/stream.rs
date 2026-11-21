@@ -522,7 +522,9 @@ impl Shared {
                 let campaign = set.contains("\\tiles\\campaign\\");
                 let tile_set = set.split('\\').filter(|s| !s.is_empty()).nth(3).unwrap_or_default().to_owned();
                 if !campaign || tile_set.starts_with("grass_") {
-                    frame.offer_plain(&t.material);
+                    frame.offer_plain(&t.material, || {
+                        wce_tile::tile_project::find_tile_info(&dir).entry.as_ref().map(wce_formats::tile_entry::TileEntry::texture_group)
+                    });
                 }
                 // Its sea's ground past the rings from a sea tile (`Frame::offer_sea`).
                 if campaign && tile_set == "sea" {
@@ -843,6 +845,25 @@ impl Streamer {
                 _ => None,
             }
         })
+    }
+
+    /// A placement's tile as it is in memory (none opened for it): its material's textures with their mean colours, and its baked far
+    /// colour at a point of its own frame. For checking a far ring's colour against the near ground's.
+    pub fn tile_note(&self, frame: &Frame, i: usize, local: (f64, f64)) -> String {
+        let key = Shared::tile_key(frame, i);
+        let t = match lock(&self.shared.tiles.tiles).0.get(&key) {
+            Some(Slot::Ready(t, _)) => t.clone(),
+            _ => return "not in memory".to_owned(),
+        };
+        let Some(m) = &t.material else { return "no material".to_owned() };
+        let slots: Vec<String> = m
+            .diffuse
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.is_empty())
+            .map(|(k, p)| format!("{k} {p} {:?}", self.shared.mean_colour(p).map(|c| c.map(|v| (v * 1000.0).round() / 1000.0))))
+            .collect();
+        format!("textures [{}]; far colour {:?}", slots.join(", "), t.far_colour(local.0, local.1))
     }
 
     /// A frame over new placements of the map (`Frame::with_map`, made away from the UI thread): the chunks in `changed` (whose
