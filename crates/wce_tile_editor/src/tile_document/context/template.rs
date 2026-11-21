@@ -748,6 +748,9 @@ pub fn load_template_with(
     let layer = scratch.add_layer(t.id, "context");
     t.publish_items(&mut scratch, layer, false);
     t.update_view(&mut scratch, Float3::new(0.0, 0.0, 0.0));
+    if trees {
+        t.trees_now(&mut scratch, layer);
+    }
     if grass {
         t.display.show_grass = true;
         t.grass_now(&mut scratch, layer);

@@ -854,8 +854,13 @@ impl Streamer {
 
     /// The drawn ground at a frame point (`Frame::ground_at`), from the tiles in memory: none is opened for it.
     pub fn ground_at(&self, frame: &Frame, x: f64, z: f64) -> f32 {
+        self.ground_known(frame, x, z).0
+    }
+
+    /// [`Streamer::ground_at`], and whether the tiles over the point are read (`Frame::ground_known`).
+    pub fn ground_known(&self, frame: &Frame, x: f64, z: f64) -> (f32, bool) {
         let tiles = lock(&self.shared.tiles.tiles);
-        frame.ground_at(x, z, &|i| {
+        frame.ground_known(x, z, &|i| {
             let p = &frame.map.placements[i];
             match tiles.0.get(&(p.location.clone(), p.variation.clone(), frame.climate_name(i))) {
                 Some(Slot::Ready(t, _)) => Some(t.clone()),

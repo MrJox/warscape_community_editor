@@ -281,6 +281,10 @@ pub struct DrawSet {
     /// faded instances of a model, and each set of colours, have batches of their own.
     model_of: HashMap<ModelKey, u32>,
     batch: Vec<Batch>,
+
+    /// The culled instances of a batch in an order of their own (where they stand), not the items' (fixed-step renders: a streamed map's
+    /// chunks reach the scene in another order every run, and the trees' instances were drawn in it: movies differed between runs).
+    pub stable: bool,
 }
 
 /// Whether instance parameters (POSITION4..7) fade the instance: POSITION4.w is round(opacity * 1000) plus a fraction, as the engine
@@ -599,8 +603,35 @@ impl DrawSet {
             .collect::<Vec<_>>();
 
         Self::group(&chunk_pairs, nb, out, false);
+        self.order_stably(out);
         if let Some((near, _)) = near.as_mut() {
             Self::group(&chunk_pairs, nb, near, true);
+            self.order_stably(near);
+        }
+    }
+
+    /// Each batch's instances by where they stand (then their world matrix and parameters), when the set is `stable`.
+    fn order_stably(&self, vis: &mut Visible) {
+        if !self.stable {
+            return;
+        }
+
+        wce_prof!("drawset.order_stably");
+        let key = |item: u32| {
+            let i = item as usize;
+            let s = &self.sphere[i * 4..i * 4 + 4];
+            let at = self.params_index[i] as usize * 16;
+            let params = if self.flags[i] & PARAMS != 0 { &self.params[at..at + 16] } else { &[][..] };
+            (
+                s.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                self.world[i].as_flattened().iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                params.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            )
+        };
+        let ranges: Vec<(usize, usize)> =
+            vis.active.iter().map(|&b| (vis.start[b as usize] as usize, vis.count[b as usize] as usize)).collect();
+        for (first, n) in ranges {
+            vis.order[first..first + n].par_sort_by_cached_key(|&item| key(item));
         }
     }
 
@@ -615,6 +646,7 @@ impl DrawSet {
         }
 
         Self::group(&[pairs], self.batches(), out, false);
+        self.order_stably(out);
     }
 
     /// The (batch, item) pairs an item adds to a view: none when it is dead, not for the view, outside it or too small; else one per mesh of

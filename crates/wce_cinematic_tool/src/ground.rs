@@ -116,12 +116,22 @@ impl Ground {
         self.view.streamer.is_some()
     }
 
+    /// The streamer's report (chunks, tiles, memory).
+    pub fn report(&self) -> String {
+        self.view.status.clone()
+    }
+
     /// The ground's height at a scene point (metres), 0 without the map.
     pub fn height(&self, x: f32, z: f32) -> f32 {
         if !self.shown() {
             return 0.0;
         }
         (self.view.ground_at(f64::from(x) / UNIT, f64::from(z) / UNIT) as f64 * UNIT) as f32
+    }
+
+    /// The ground's height at a scene point (metres) when its tiles are read: None while they stream in, or without the map.
+    pub fn height_known(&self, x: f32, z: f32) -> Option<f32> {
+        self.view.ground_known(f64::from(x) / UNIT, f64::from(z) / UNIT).map(|h| (f64::from(h) * UNIT) as f32)
     }
 
     /// The heights as a function of a point (metres), while the ground is shown.

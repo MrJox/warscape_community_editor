@@ -150,6 +150,13 @@ impl MapView {
         self.streamer.as_ref().map_or(0.0, |s| s.ground_at(&s.frame(), x, z))
     }
 
+    /// The ground's height at a point when the tiles there are read (None while one is still on its way, or without a map).
+    pub fn ground_known(&self, x: f64, z: f64) -> Option<f32> {
+        let s = self.streamer.as_ref()?;
+        let (h, known) = s.ground_known(&s.frame(), x, z);
+        known.then_some(h)
+    }
+
     /// How many tiles the map's view has in memory so far (`Streamer::tiles_loaded`).
     pub fn tiles_loaded(&self) -> usize {
         self.streamer.as_ref().map_or(0, |s| s.tiles_loaded())
