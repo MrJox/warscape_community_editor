@@ -1,7 +1,7 @@
 //! A db table of the game's packs as TSV (every file of `db/<table>/`, through rpfm's schema): the header, then the rows (at most `limit`
 //! a file).
 //!
-//!   [WCE_GAME_KEY=<key>] cargo run --release -p wce_tile_io --example db_dump -- <game dir> <table, e.g. campaign_map_roads_tables> [limit]
+//!   [WCE_GAME_KEY=<key>] [WCE_MODS=<a.pack,b.pack>] cargo run --release -p wce_tile_io --example db_dump -- <game dir> <table, e.g. campaign_map_roads_tables> [limit]
 
 use std::io::Cursor;
 
@@ -14,7 +14,10 @@ fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let game = GameProfile::from_env().clone();
     let mut cfg = Config::new(&a[0], game.clone());
-    cfg.mod_packs = Some(vec![]);
+    // `WCE_MODS`: mod packs (comma separated) mounted too; `enabled`: the game's enabled mods.
+    let mods = std::env::var("WCE_MODS").unwrap_or_default();
+    cfg.use_mods = !mods.is_empty();
+    cfg.mod_packs = (mods != "enabled").then(|| mods.split(',').filter(|m| !m.is_empty()).map(str::to_owned).collect());
     let vfs = Vfs::mount(&cfg).expect("vfs");
     let table = a[1].trim_end_matches('/');
     let limit: usize = a.get(2).and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);

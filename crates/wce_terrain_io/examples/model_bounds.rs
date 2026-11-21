@@ -13,7 +13,10 @@ use wce_vfs::{Config, GameProfile, Vfs};
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let mut cfg = Config::new(&a[0], GameProfile::from_env().clone());
-    cfg.mod_packs = Some(vec![]);
+    // `WCE_MODS`: mod packs (comma separated) mounted too; `enabled`: the game's enabled mods.
+    let mods = std::env::var("WCE_MODS").unwrap_or_default();
+    cfg.use_mods = !mods.is_empty();
+    cfg.mod_packs = (mods != "enabled").then(|| mods.split(',').filter(|m| !m.is_empty()).map(str::to_owned).collect());
     let vfs = Vfs::mount(&cfg).expect("vfs");
     for arg in &a[1..] {
         let paths: Vec<String> = if arg.ends_with('/') {
@@ -84,6 +87,15 @@ fn main() {
                 hi[2] - lo[2],
                 lod.mesh_blocks().len()
             );
+            let pivots: Vec<String> = lod
+                .mesh_blocks()
+                .iter()
+                .map(|b| {
+                    let v = b.material().v_pivot();
+                    format!("({:.3}, {:.3}, {:.3})", v.x, v.y, v.z)
+                })
+                .collect();
+            println!("    pivots {}", pivots.join(" "));
         }
     }
 }

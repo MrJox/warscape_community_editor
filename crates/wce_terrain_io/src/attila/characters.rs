@@ -7,7 +7,8 @@
 //!   type, art set id), [3] the agent type (`general`, `colonel`: a garrison's commander, `spy`, `champion`, `dignitary`), [4] its
 //!   force's id (0: none). A character off the map stands at (0, 0);
 //! - `ARMY_ARRAY/MILITARY_FORCE`: [0] its id, [1] its commander's id, [6] `UNIT_CONTAINER/UNITS_ARRAY/UNIT` (each `UNIT_RECORD_KEY`'s
-//!   first leaf its unit), [7] the garrison residence it stands in (0: none), [19] a navy. A force has no place of its own: its
+//!   first leaf its unit), [3] `MILITARY_FORCE_LEGACY` ([5] its emblem), [7] the garrison residence it stands in (0: none), [19] a
+//!   navy. A force has no place of its own: its
 //!   commander's.
 
 use std::collections::HashMap;
@@ -58,6 +59,9 @@ pub struct StartForce {
 
     /// Its units' keys (`main_units`).
     pub units: Vec<String>,
+
+    /// Its legacy's emblem (`military_force_legacy_emblems`: its banner's decorator), empty for a garrison.
+    pub emblem: String,
 }
 
 /// A campaign's characters and forces at its start.
@@ -196,5 +200,12 @@ fn force(f: &RecordNode, faction: &str) -> Option<StartForce> {
         navy: matches!(g.get(19), Some(NodeType::Bool(b)) if *b.value()),
         residence: g.get(7).and_then(u32_of).filter(|&r| r != 0),
         units,
+        // [3] `MILITARY_FORCE_LEGACY`: [5] the emblem.
+        emblem: g
+            .get(3)
+            .and_then(as_record)
+            .filter(|r| r.name() == "MILITARY_FORCE_LEGACY")
+            .and_then(|r| r.children().first()?.get(5).and_then(str_of).map(str::to_owned))
+            .unwrap_or_default(),
     })
 }

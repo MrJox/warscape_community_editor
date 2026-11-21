@@ -66,6 +66,21 @@ settlement buildings.
   ImGuizmo gizmo through `item_transform` / `transform_items`.
 - Saving: nothing writes kit db XML or a startpos yet.
 
+## Drawn (2026-11-21, read only)
+
+- The start's characters (`wce_terrain_io::attila::characters`): those the map shows lead a force or stand alone (not on a
+  settlement's cell, nor an army's: a horde's family); garrison commanders never. Attila 105, TDD 46.
+- Their figures (`wce_render::campaign_character`): the art set's row by faction leader (`CHARACTER` [28] 4, [29] true), season
+  (`winter` rows in winter), rank 0 (all at a start), adult; land, at sea (an army standing on water: its `sea_uniform`) or navy
+  (`navy_uniform`, afloat on the sea's level). A model unit is a world unit (capture T2).
+- An army's banner (captures A and T0): the campaign flagpole and its legacy emblem's `banner_decorator`
+  (`MILITARY_FORCE_LEGACY` [5] -> `military_force_legacy_emblems`), the faction's skin's models else the default's; all at one point
+  0.40 west, 0.11 south of the army's and 0.80 over its feet, scale 0.65 (`ARMY_FLAG_SCALE`), unturned, each instance there plus
+  its pivot. Agents and fleets carry none (T2's spy; a fleet's sail is its flag).
+- The fauna: a model with its own `.anim` beside it, posed skinned (`wce_render::animated_prop`).
+- Left: a navy's banner, if the game gives one (not in the captures); the banner's wind (the flag's `TextureComboVertexWind`
+  draws static); the figures' idles only (no walking: the start stands still).
+
 ## Phases
 
 1. **The start as a model** (`wce_terrain_io::attila::startpos`, new): `Start { factions, characters (id, type, faction, cell,
