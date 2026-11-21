@@ -255,6 +255,7 @@ impl Ground {
                     spot,
                     cells: (0, 0),
                     unit: UNIT,
+                    z_stretch: 1.0,
                     near: rings.near,
                     mid: rings.mid,
                     ground: rings.ground,

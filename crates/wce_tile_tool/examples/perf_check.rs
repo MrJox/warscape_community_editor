@@ -110,6 +110,7 @@ fn mesh() -> GpuMesh {
         bmax: Float3::default(),
         snow: false,
         palette_base: 0,
+        flag: false,
         unlit: false,
     }
 }
