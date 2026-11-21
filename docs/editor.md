@@ -174,7 +174,7 @@ panel's Rivers & roads > *Path (found over the ground)*, and *Connect to the roa
 clicked, found by A* on a grid of the heights (2 m cells at least): a step costs its length, more the steeper it climbs (twice at 8°,
 barred past 22°), the real buildings (and a metre round them) bar it but round its ends (4 m; a building's own size when it starts from
 one), water is crossed where it is narrowest (6 times a step for a ford, 25 for a metre deep or more: the road makes the ford or the bridge),
-and the procedural roads' painting is cheap to walk along. The cells found are simplified (3 m) to a few points and made a procedural road
+and the procedural roads' painting is cheap to walk along. The cells found are pulled taut (a grid's way goes only straight or at 45°: each run of it becomes one straight step where that passes and costs no more, so a slant is a slant, not a staircase), then simplified (3 m) to a few points and made a procedural road
 (`road_type` `dirt_track` where the game has its pieces, else `none`: ground and texture only; 3 m wide) you then edit as any. *Connect
 to the roads* makes one from each selected building to the nearest point of a procedural road's middle line.
 

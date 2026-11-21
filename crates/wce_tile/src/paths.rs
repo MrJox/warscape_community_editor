@@ -1,7 +1,8 @@
 //! Paths between things (docs/plans/auto_detail_2.md, H): the way a path would go over the ground between two points, found by A* over
 //! a grid of the heights. A step costs its length, more the steeper it climbs (a soft limit), none past the hard limit; water and
-//! buildings bar the way, existing roads are cheap to walk along. The cells found are simplified to a few points, for a procedural road
-//! (`roads`) to be made on.
+//! buildings bar the way, existing roads are cheap to walk along. The cells found are pulled taut (a grid's way goes straight or at 45°
+//! only, a staircase on a slant: each run of it is made one straight step where that is as cheap), then simplified to a few points, for a
+//! procedural road (`roads`) to be made on.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -180,11 +181,73 @@ pub fn find(g: &PathGrid, from: (f32, f32), to: (f32, f32), s: &PathSettings) ->
     }
 
     cells.reverse();
+    let cells = taut(g, &cells, &best, &cost);
     let mut line = cells.iter().map(|&i| g.at(i)).collect::<Vec<_>>();
     // The ends where they were asked, not at their cells' centres.
     line[0] = from;
     *line.last_mut().expect("two ends") = to;
     Some(simplify(&line, s.tolerance.max(0.0)))
+}
+
+/// What a straight step costs over the slack the found way's cost allows it: a little more (its cells' rounding), never a detour's worth.
+const TAUT_SLACK: f32 = 1.05;
+
+/// How many straight steps further on are tried after one that would not do (barred, too steep, dearer than the way found): a step that
+/// cuts a corner may fail where a longer one passes again.
+const TAUT_TRIES: usize = 8;
+
+/// The found way's cells pulled taut: from each kept cell, the furthest one on the way reached by a straight step that passes (each cell
+/// it crosses let through by `cost`) and costs no more than the way found between them (`best`, its cost from the start), with a little
+/// slack. What goes round a wall, over a ford or along a road stays so; a staircase on a slant becomes its slant.
+fn taut(g: &PathGrid, cells: &[usize], best: &[f32], cost: &dyn Fn(usize, usize, f32) -> Option<f32>) -> Vec<usize> {
+    // A straight step's cost: its length, each stretch of it at the cost a metre of the cell it is in (sampled a quarter of a cell apart;
+    // entering a cell is costed as the search would step into it).
+    let straight = |a: usize, b: usize| -> Option<f32> {
+        let ((ax, az), (bx, bz)) = (g.at(a), g.at(b));
+        let n = (((bx - ax).hypot(bz - az) / g.cell) * 4.0).ceil().max(1.0) as usize;
+        let piece = (bx - ax).hypot(bz - az) / n as f32;
+        let (mut total, mut last, mut per_metre) = (0.0, a, 1.0);
+        for k in 1..=n {
+            let t = k as f32 / n as f32;
+            let i = g.index(ax + (bx - ax) * t, az + (bz - az) * t)?;
+            if i != last {
+                let (di, dj) = ((i % g.w).abs_diff(last % g.w), (i / g.w).abs_diff(last / g.w));
+                if di > 1 || dj > 1 {
+                    return None;
+                }
+
+                let step = if di + dj == 2 { std::f32::consts::SQRT_2 } else { 1.0 } * g.cell;
+                per_metre = cost(last, i, step)? / step;
+                last = i;
+            }
+
+            total += piece * per_metre;
+        }
+
+        Some(total)
+    };
+
+    let mut out = vec![cells[0]];
+    let mut k = 0;
+    while k + 1 < cells.len() {
+        let (mut next, mut misses) = (k + 1, 0);
+        for j in k + 2..cells.len() {
+            let found = best[cells[j]] - best[cells[k]];
+            match straight(cells[k], cells[j]) {
+                Some(c) if c <= found * TAUT_SLACK + g.cell * 0.1 => (next, misses) = (j, 0),
+                _ => misses += 1,
+            }
+
+            if misses > TAUT_TRIES {
+                break;
+            }
+        }
+
+        out.push(cells[next]);
+        k = next;
+    }
+
+    out
 }
 
 /// Douglas and Peucker's: the fewest points that stay within `tolerance` of the line.
@@ -254,6 +317,25 @@ mod tests {
         let g = grid(|_, _| 0.0, |_, _| false);
         let p = find(&g, (10.0, 30.0), (90.0, 30.0), &PathSettings::default()).unwrap();
         assert_eq!(p, vec![(10.0, 30.0), (90.0, 30.0)]);
+    }
+
+    #[test]
+    fn on_a_slant_the_way_is_one_straight_line_not_a_staircase() {
+        // 80 m across and 30 m along: on the grid a run straight and a run at 45°, pulled taut into one line.
+        let g = grid(|_, _| 0.0, |_, _| false);
+        let p = find(&g, (10.0, 15.0), (90.0, 45.0), &PathSettings::default()).unwrap();
+        assert_eq!(p, vec![(10.0, 15.0), (90.0, 45.0)]);
+
+        // On a gentle even slope too.
+        let g = grid(|x, z| x * 0.05 + z * 0.03, |_, _| false);
+        let p = find(&g, (5.0, 5.0), (95.0, 37.0), &PathSettings::default()).unwrap();
+        assert_eq!(p.len(), 2, "{p:?}");
+
+        // Round a wall: few points, no step of the staircase left (each kept bend turns the way by more than a few degrees).
+        let g = grid(|_, _| 0.0, |x, z| (x - 50.0).abs() < 1.0 && z < 45.0);
+        let p = find(&g, (10.0, 5.0), (90.0, 20.0), &PathSettings::default()).unwrap();
+        assert!(p.len() <= 5, "{p:?}");
+        assert!(length(&p) < 80.0_f32.hypot(15.0) + 2.0 * 40.0, "{}", length(&p));
     }
 
     #[test]
