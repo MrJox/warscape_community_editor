@@ -303,6 +303,8 @@ pub(crate) const SHADOW_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow"
 /// The game's Depth Buffer Analysis (`analyse_depth_gpu`).
 pub(crate) const DEPTH_ANALYSIS_STORE_PS: &str = "dx11_sm_3_0_shadow_map_depth_buffer_analysis.hlsl_ps_ps30_downsize_store_data";
 pub(crate) const DEPTH_ANALYSIS_DOWN_PS: &str = "dx11_sm_3_0_shadow_map_depth_buffer_analysis.hlsl_ps_ps30_downsize_data";
+/// What the game's analysis reads as its material bits (`analyse_depth_gpu`).
+pub(crate) const DEPTH_ANALYSIS_BITS: &str = "commontextures/no_texture.dds";
 
 pub(crate) const SHADOW_ALPHA_PS: &str = "dx11_sm_3_0_rigidcommon.hlsl_ps_ps30_shadow_alpha_test";
 

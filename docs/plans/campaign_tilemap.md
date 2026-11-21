@@ -41,8 +41,9 @@ constants and fixed VFX wind, the placed effects' rules, the fog-of-war texture 
 battle `rigidterrain` passes, as the game's (V, docs/re/terrain.md).
 
 Never done: a whole frame compared at the same camera. Known gaps (V, from the code unless marked):
-- **Frame:** the editor draws z 15 % short (decision 1). The campaign view keeps the battle lens (vertical fov 65°, near 1 scene unit;
-  `camera_controller.rs`): the game's is 80°, near 1 world unit. The view streams short of the horizon.
+- **Frame:** settled. The z stretch (Phase 2, 2026-11-19), the lens (`Viewport::set_campaign_lens`: 1.4 rad, near 1 world unit, far
+  500; capture T1's `camera_VS_PS.projection` and `camera_near_far` equal, 2026-11-21), the horizon (Progress, 2026-11-19); capture
+  F's frame lines up with the game's (the mountains, the coast, the horizon line).
 - **Forests:** settled (`MeshKind::CampaignVegetation`, drawn and cast with `rigidcampaignvegetation.hlsl`; Progress, "Forests").
 - **Coast strip:** settled 2026-11-21: `campaignterrain.hlsl`'s `ps30_main_coast` is drawn in none of the captures (A, Ares, C, E, E2,
   F, F1, G, T1: their `shader_names.csv`), coasts in view in A, F and G. The game does not draw it on Attila; nor does the editor.
@@ -517,3 +518,13 @@ F are wanted when Phase 3's baseline is ready; G, E, T and V when their items co
   `ps30_downsize_data` 4 x 4 down to one texel, read back two frames later; constants from the capture). T1 after: 3.64 / 8.71 / 18.9 /
   39.2 / 79.7, the fade range 0.2919 (game 0.2915), the matrices within 1 - 6 %; the near end 0.5 units off (the nearest visible
   pixel). Without MSAA the CPU readback of channel 4 stays.
+- **The analysis's mask (2026-11-21, capture F):** at F the game's far split was 68.15 and the editor's 79.8. The game's own 1 x 1
+  result that frame (6.76 .. 64.92) showed its splits come from the analysis; the editor's reached the hard limit. The analysis's
+  `gbuffer_channel_3_sampler` in the game is not the G-buffer: it holds `commontextures/no_texture.dds` (the snow normals' slot left
+  bound; resources 15043 in F and 9464 in T1, one SHA-1), its alpha's bit 2 leaving out all but a few edge columns of the screen
+  (the 256 x 256 stage: columns 0 - 3 and 252 - 255 only, in the game and the editor alike), and its sampler reads the top mip only
+  (MinLOD = MaxLOD = 0; the shader asks for the screen's v as the level). The editor binds the same texture through the same sampler
+  (`States::s_clamp_point_top`). F after: every split within 0.2 % (7.171 / 11.23 / 19.35 / 35.58 / 68.06 against 7.179 / 11.24 /
+  19.37 / 35.63 / 68.15), the cascades' matrices within 0.002; the game's own frame has a seagull at the right edge at 6.76, the
+  frame before it not. T1: the far end within 0.01, the near end 3.64 against 3.13 (the nearest edge pixel: the start's figures at
+  the left edge).
