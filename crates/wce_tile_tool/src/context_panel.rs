@@ -294,7 +294,6 @@ impl ContextUi {
             spot: self.spot()?,
             cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32),
             unit: p.unit_scale,
-            z_stretch: 1.0,
             near: self.near,
             mid: self.mid,
             ground: self.ground,

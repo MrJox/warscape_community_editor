@@ -1008,9 +1008,8 @@ impl TerrainTool {
             spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 },
             cells: (0, 0),
             // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`); its ground in the game's
-            // world, the hex grid's (longer north to south).
+            // world, the hex grid's (longer north to south), is the context's own (`Frame::z_stretch`).
             unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
-            z_stretch: if map_kind(&d.name).0 == MapKind::Campaign { wce_scene::campaign_lighting::CAMPAIGN_Z_SCALE } else { 1.0 },
             near: self.rings.near,
             mid: self.rings.mid,
             ground: self.rings.ground,
