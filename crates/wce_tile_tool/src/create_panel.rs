@@ -845,15 +845,11 @@ impl TileTool {
                 draft.attrs.insert(wce_tile::biomes::SEED_ATTR.to_owned(), ((self.random.unit() * 1.0e6) as u32).to_string());
                 draft.attrs.insert("name".to_owned(), b.name.clone());
 
-                // Its settings, Draw an area and the brush in the Inspector; an area is drawn at once unless the brush is on.
+                // Its settings in the Inspector; an area drawn at once, its points clicked or painted (the area brush).
                 self.open_biomes();
                 self.biomes.draft = Some(b);
-                if self.biomes.brush {
-                    self.making = None;
-                } else {
-                    self.draft = Some(draft);
-                    self.start_drawing();
-                }
+                self.draft = Some(draft);
+                self.start_drawing();
             }
 
             Make::Draw { kind } => {
@@ -890,8 +886,10 @@ impl TileTool {
         // Its values, before the first click.
         e.pending_focus = Some("Inspector".to_owned());
         self.status = match &en.make {
+            Make::Draw { .. } | Make::Biome { .. } if self.painting_draft() => {
+                format!("{}: drag the brush in the viewport (Ctrl takes away); Esc stops", en.label)
+            }
             Make::Draw { .. } => format!("{}: click the terrain for its points; {}; Esc cancels", en.label, self.finish_hint(e)),
-            Make::Biome { .. } if !self.drawing => format!("{}: drag the brush in the viewport (Ctrl takes away)", en.label),
             Make::Biome { .. } => format!("{}: click the terrain for the area's points; {}; Esc cancels", en.label, self.finish_hint(e)),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
         };
@@ -1168,9 +1166,34 @@ impl TileTool {
         placed
     }
 
+    /// Where the shape being drawn goes: a holder's shape (a deployment zone's region, a siege AI node's or edge's shape, a capture
+    /// location's boundary) into the holder it was started from (its Inspector's buttons), while it is still one, the selected one else;
+    /// anything else into the layer new items go to.
+    ///
+    /// # Errors
+    ///
+    /// A holder's shape with no holder, or a tile without a scene graph.
+    pub(crate) fn drawing_into(&self, d: &wce_tile_editor::tile_document::TileDocument, sel: Option<usize>) -> Result<usize, String> {
+        let kind = self.draft.as_ref().map_or("", |dr| dr.kind.as_str());
+        let needs_holder = !wce_tile::parents::holders(kind).is_empty();
+        let holder = self.create.holder.filter(|&h| d.holder_for(kind, h) == Some(h)).or_else(|| sel.and_then(|s| d.holder_for(kind, s)));
+        match (needs_holder, holder) {
+            (true, Some(h)) => Ok(h),
+            (true, None) => Err(format!("select {} to draw it in", wce_tile::parents::holders_label(kind))),
+            _ => self.new_items_layer(d).ok_or_else(|| "this tile has no scene graph".to_owned()),
+        }
+    }
+
     /// Finishes a drawn type with the drawn points.
     pub fn finish_drawing(&mut self, e: &mut Editor) {
         if !self.drawing {
+            return;
+        }
+
+        // Painted: the strokes made the areas already.
+        if self.painting_draft() {
+            self.stop_making();
+            self.status = "done painting".to_owned();
             return;
         }
 
@@ -1179,18 +1202,7 @@ impl TileTool {
         let Some(d) = document(e) else { return };
         self.drawing = false;
         let kind = draft.kind.as_str();
-        let layer = self.new_items_layer(d);
-
-        // A holder's shape (a deployment zone's region, a siege AI node's or edge's shape, a capture location's boundary) goes into the
-        // holder it was started from (its Inspector's buttons), while it is still one; the selected one else.
-        let needs_holder = !wce_tile::parents::holders(kind).is_empty();
-        let holder = self.create.holder.filter(|&h| d.holder_for(kind, h) == Some(h)).or_else(|| sel.and_then(|s| d.holder_for(kind, s)));
-        let into = match (needs_holder, holder) {
-            (true, Some(h)) => Ok(h),
-            (true, None) => Err(format!("select {} to draw it in", wce_tile::parents::holders_label(kind))),
-            _ => layer.ok_or_else(|| "this tile has no scene graph".to_owned()),
-        };
-
+        let into = self.drawing_into(d, sel);
         let added = into.and_then(|into| d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs));
         self.create.holder = None;
         self.draw_pts.clear();
@@ -1207,6 +1219,9 @@ impl TileTool {
         if self.placing.is_none() && !self.drawing {
             return false;
         }
+
+        // A closed shape: its points clicked or painted.
+        self.area_paint_rows();
 
         if let Some(crate::tool::Placing::Prefab(key)) = self.placing.clone() {
             let lib = self.prefab_library(e);
