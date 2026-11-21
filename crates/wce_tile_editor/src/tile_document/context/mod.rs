@@ -805,6 +805,12 @@ impl Frame {
     /// template `template` has ready: a masked tile's ground slopes down where another lies), the LF alone where none is ready. A campaign
     /// map's props and trees stand on it: on the LF alone they floated over the tiles that sink below it (TDD's Emyn Muil, 2026-11-16).
     pub fn ground_at(&self, x: f64, z: f64, template: &dyn Fn(usize) -> Option<Arc<Template>>) -> f32 {
+        self.ground_known(x, z, template).0
+    }
+
+    /// [`Frame::ground_at`], and whether every placement over the point was there (false: a tile not read yet, its ground missing).
+    pub fn ground_known(&self, x: f64, z: f64, template: &dyn Fn(usize) -> Option<Arc<Template>>) -> (f32, bool) {
+        let mut known = true;
         let (mx, my) = self.to_map.apply(x, z);
         let (cx, cy) = (mx.floor() as i32, my.floor() as i32);
         let back = (self.reach + CHUNK - 1) / CHUNK;
@@ -819,16 +825,20 @@ impl Frame {
                         continue;
                     }
 
-                    if let Some(t) = template(i).filter(|t| t.custom.is_none()) {
-                        let (lx, lz) = p.to_map().inverse().apply(mx, my);
-                        let h = t.own.height(lx, lz);
-                        own = Some(own.map_or(h, |o| o.max(h)));
+                    match template(i) {
+                        Some(t) if t.custom.is_none() => {
+                            let (lx, lz) = p.to_map().inverse().apply(mx, my);
+                            let h = t.own.height(lx, lz);
+                            own = Some(own.map_or(h, |o| o.max(h)));
+                        }
+                        Some(_) => {}
+                        None => known = false,
                     }
                 }
             }
         }
 
-        self.lift(x, z) + own.unwrap_or(0.0)
+        (self.lift(x, z) + own.unwrap_or(0.0), known)
     }
 
     /// Where the map's north (smaller rows) is in the frame (x, z): +z unless the open tile is placed turned.

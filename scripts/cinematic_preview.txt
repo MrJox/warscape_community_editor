@@ -4,6 +4,8 @@ tool cinematic
 layout reset
 frames 2
 scene_new WCE Preview Test
+# On a plains tile (its ground about 0 m): the camera keys below are over it (the default map's ground is about 470 m up).
+scene_ground tile terrain/tiles/battle/plains/8x8/8x8_aa
 frames 3
 unit_add att_rom_cohors 0 0 -300
 unit_add att_rom_cohors 0 40 -300

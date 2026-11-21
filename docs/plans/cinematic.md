@@ -322,6 +322,37 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
     - The battle camera's limits: `battle_cameras` (land: 2 to 90 m over the ground, the game's battle camera). The preview holds the
       keyed camera within them (the Timeline's Game limits, on by default; off: as a movie shows it), the camera's path is red where
       it leaves them.
+14. Accuracy against the game, second round (user, 2026-11-21). **done**, in game: **todo**:
+    - The trees: the map context's tiles were taken before their trees were generated (generated on a thread of their own since
+      92227867, the template did not wait), and cached without them: only the tiles' static trees were drawn (3.5k on the sample's
+      map, none near the armies). The template waits for them (`trees_now`, as the grass); cache version 15. The sample's map: 419k
+      trees and bushes, 7.8k within 500 m of the armies (`ground_status`). The Tile tool's map context had lost them as well.
+    - The camera's jolt at every key: the steps started again at each key, leaving a short one before it (and the chase ahead
+      changing pace there). Through a run of smooth keys the steps keep one beat (every 0.2 s of the clip), the samples passing
+      through the keys; a key is a stop of its own only where a cut or a straight move begins or ends. The field of view follows the
+      same curve as the position (it stopped at every key). Gate `battle_export_check` (the sample's beat).
+    - How the battle camera moves between two `move_to`s (its easing, what the flag does) is still not known: `move_to` (and
+      `look_at`) only queue a command object; its handler is behind the command dispatcher. In game: **todo** (the user).
+    - The Layout picture: the last one stays (reprojected) while the camera moves, a new one rendered after 0.25 s still and swapped
+      in when it is uploaded (it was dropped and rendered again every move: flicker).
+    - The subtitle in the viewport: the game's `subtitle` font category (`fontcategories.fc`: la_gioconda 22, white, no shadow)
+      drawn from its `.cuf`, scaled with the picture's height (1080 lines).
+    - The camera path is red outside the battle camera's limits only where the ground's tiles are read (none while they stream in).
+    - Movies the same every run with the trees: the clouds' shade drifts with every frame drawn and the wind simulation runs on, and a
+      movie's first frame came after however many frames its loading took (`wait_loaded` waits a frame at a time); a restart of the
+      temporal state (`Renderer::restart_temporal`: movies, captures, thumbnails) starts both again. A tile's trees generated afresh
+      come in another order each run: fixed-step renders draw each batch's instances in an order of their own (`DrawSet::stable`, by
+      where they stand), and wait for the models of a streamed chunk's entities as a full build does (`update_draws`). The gate's
+      preview scene is on the plains tile (`scripts/cinematic_preview.txt`): on the default map its camera was under the ground, over
+      the sea; there run 2's movie still came out a shade darker than run 1's from frame 48 (not found why; a camera under the map).
+15. The enemy in game (user, 2026-11-21: line of sight hid it). Each clip shows the other side's armies through the fog of war while it
+    plays, as vanilla's intros do (`ga:set_visible_to_all(true)` at 0, `false` in the clip's end callback and its skip). **done**, in
+    game: **todo**.
+16. Edited movies (user, 2026-11-21: vanilla's movies are shots cut together, as a trailer). **open**, not started. Today a clip cuts
+    within one scene (a Step camera key is a cut) and exports alone. An *Edit*: a list of shots, each a clip's range (of any scene
+    project, so another map, weather or time) or an imported video / PNG sequence, joined by cuts, cross-fades or fades through black,
+    with title cards, one music and subtitle track over the whole, rendered shot by shot (each scene's ground read in turn) into one
+    `.ca_vp8`.
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::curves::{around, point, scalar};
+use crate::curves::{around, point};
 use crate::logic;
 use crate::scene::{Clip, Gait, Interp, Project, TrackContent, sanitize_key};
 use crate::support::{Support, track_support};
@@ -283,6 +283,15 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
         })
         .unwrap_or(false);
     actions.push((0, if starts_black { "cam:fade(true, 0)".to_owned() } else { "cam:fade(false, 0.5)".to_owned() }));
+    // The other side's armies seen through the fog of war while the clip plays, as vanilla's intros show theirs
+    // (`ga_huns_01:set_visible_to_all(true)` at 0, false again at the end and on a skip): else line of sight hid them in game.
+    let player_alliance = project.armies.get(player).map(|a| a.alliance);
+    let others: Vec<String> =
+        project.armies.iter().enumerate().filter(|(_, a)| Some(a.alliance) != player_alliance).map(|(i, _)| army_var(i)).collect();
+    for ga in &others {
+        actions.push((0, format!("{ga}:set_visible_to_all(true)")));
+    }
+    let hide_again: String = others.iter().map(|ga| format!("{ga}:set_visible_to_all(false); ")).collect();
     let mut skip: Vec<String> = vec![];
     let mut pre: Vec<String> = vec![];
     let mut sfx_count = 0;
@@ -300,20 +309,29 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
                 let times: Vec<f64> = keys.iter().map(|k| k.t).collect();
                 let positions: Vec<[f32; 3]> = keys.iter().map(|k| k.position).collect();
                 let targets: Vec<[f32; 3]> = keys.iter().map(|k| k.target).collect();
+                let fovs: Vec<[f32; 1]> = keys.iter().map(|k| [k.fov]).collect();
                 let at = |t: f64| {
                     let (i, j, u) = around(&times, t).expect("keys");
                     let m = keys[i].interp;
-                    (point(&positions, &times, i, j, u, m), point(&targets, &times, i, j, u, m), scalar(keys[i].fov, keys[j].fov, u, m))
+                    (point(&positions, &times, i, j, u, m), point(&targets, &times, i, j, u, m), point(&fovs, &times, i, j, u, m)[0])
                 };
                 // Snap to the first key at 0, then move from sample to sample.
                 let (p, tg, fov) = at(0.0);
                 actions.push((0, format!("cam:move_to({}, {}, 0, {MOVE_FLAG}, {})", v3(p), v3(tg), f(fov))));
+                // Through a run of smooth keys the steps keep one even beat (every CAMERA_STEP_MS of the clip), the samples passing
+                // through the keys: steps started again at every key left a short one before it, the chase ahead changed pace there,
+                // and the camera jolted at each key in game. A key is a stop of its own where the run begins or ends (a cut, a
+                // straight move, the first and last keys).
                 let mut stops: Vec<u64> = vec![];
                 for (k, key) in keys.iter().enumerate() {
-                    stops.push(ms(key.t));
-                    if k + 1 < keys.len() && key.interp == Interp::Smooth {
+                    let smooth_in = k > 0 && keys[k - 1].interp == Interp::Smooth;
+                    let smooth_out = k + 1 < keys.len() && key.interp == Interp::Smooth;
+                    if !(smooth_in && smooth_out) {
+                        stops.push(ms(key.t));
+                    }
+                    if smooth_out {
                         let (a, b) = (ms(key.t), ms(keys[k + 1].t));
-                        let mut s = a + CAMERA_STEP_MS;
+                        let mut s = a.div_ceil(CAMERA_STEP_MS) * CAMERA_STEP_MS;
                         while s < b {
                             stops.push(s);
                             s += CAMERA_STEP_MS;
@@ -501,7 +519,7 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
     }
     let _ = writeln!(
         s,
-        "\tcs = cutscene:new({}, {}:get_unitcontroller(), {length}, function() sm:trigger_message({}) end);",
+        "\tcs = cutscene:new({}, {}:get_unitcontroller(), {length}, function() {hide_again}sm:trigger_message({}) end);",
         lua_str(&format!("wce_clip_{}", clip.id)),
         army_var(player),
         lua_str(&clip_ended_message(clip))
@@ -522,6 +540,9 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
     s += "\tcs:start();\nend;\n";
     if clip.skippable {
         let _ = writeln!(s, "\nfunction Skip_{name}()");
+        if !hide_again.is_empty() {
+            let _ = writeln!(s, "\t{}", hide_again.trim_end());
+        }
         for line in &skip {
             let _ = writeln!(s, "\t{line}");
         }

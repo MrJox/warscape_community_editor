@@ -247,6 +247,16 @@ fn main() {
         if !matches!((first_fade, lift), (Some(a), Some(b)) if a < b) {
             failed.push("the sample's fade: black first, then lifted".into());
         }
+        // Its smooth camera: one even beat of steps through its keys (a short step before a key jolted the camera there).
+        let times: Vec<u64> = lua
+            .lines()
+            .filter(|l| l.contains("cam:move_to("))
+            .filter_map(|l| l.rsplit(',').next().and_then(|s| s.trim().trim_end_matches(");").trim().parse().ok()))
+            .collect();
+        let step = wce_cinematic::battle_export::CAMERA_STEP_MS;
+        if times.len() < 10 || times.windows(2).skip(1).any(|w| w[1] - w[0] != step) {
+            failed.push(format!("the sample's camera steps are not an even {step} ms beat: {times:?}"));
+        }
     }
     for needle in [
         "SU_",
@@ -262,6 +272,9 @@ fn main() {
         "cam:change_depth_of_field(",
         "cam:fade(",
         "set_show_cinematic_bars(true)",
+        // The enemy seen through the fog of war during the clip, hidden by it again after (vanilla's intros).
+        ":set_visible_to_all(true) end, 0);",
+        ":set_visible_to_all(false); sm:trigger_message(",
         "ga_2:attack_on_message(\"cutscene_ended\")",
         "ga_1:message_on_proximity_to_enemy(\"wce_n3\", 150)",
         "gb:advice_on_message(\"wce_n3\", \"Att.HB.CP.001\", 2000)",

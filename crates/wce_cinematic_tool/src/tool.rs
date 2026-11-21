@@ -1525,6 +1525,33 @@ impl Tool for CinematicTool {
                 CommandResult::success("recording toggled")
             },
         );
+        c.add("ground_status", "ground_status", "What the battle's ground has on the scene: the streamer's report and its entities by kind (trees, grass, models)", |e, _| {
+            let status = e.with_tool::<CinematicTool, _>(|t, _| t.ground.report()).unwrap_or_default();
+            let (mut trees, mut near, mut grass, mut models, mut terrain) = (0usize, 0usize, 0usize, 0usize, 0usize);
+            let units = e.scene.game_units;
+            for en in e.scene.entities() {
+                match &en.payload {
+                    wce_scene::render_scene::Payload::Grass(g) => grass += g.instances.len(),
+                    wce_scene::render_scene::Payload::MeshInstance(m) => {
+                        let l = m.model.to_lowercase();
+                        if l.contains("vegetation") || l.contains("/tree") || l.contains("\\tree") {
+                            trees += 1;
+                            let (x, z) = (en.world.m[0][3] * units, en.world.m[2][3] * units);
+                            if x * x + z * z < 500.0 * 500.0 {
+                                near += 1;
+                            }
+                        } else {
+                            models += 1;
+                        }
+                    }
+                    wce_scene::render_scene::Payload::Terrain(_) => terrain += 1,
+                    _ => {}
+                }
+            }
+            CommandResult::success(format!(
+                "{status}; scene: {terrain} terrains, {trees} vegetation models ({near} within 500 m of the centre), {models} other models, {grass} grass patches"
+            ))
+        });
         c.add("create_army", "create_army <n>", "The army the units placed join (the Create panel's army)", |e, a| {
             let Some(n) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return CommandResult::fail("usage: create_army <n>") };
             e.with_tool::<CinematicTool, _>(|t, _| t.create.draft.army = n);

@@ -119,10 +119,13 @@ pub fn evaluate(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f64) -> 
                     let positions: Vec<[f32; 3]> = keys.iter().map(|k| k.position).collect();
                     let targets: Vec<[f32; 3]> = keys.iter().map(|k| k.target).collect();
                     let interp = keys[i].interp;
+                    // The field of view on the same curve as the place (smoothstep between each pair of keys stopped the zoom at
+                    // every key: a jolt there in game).
+                    let fovs: Vec<[f32; 1]> = keys.iter().map(|k| [k.fov]).collect();
                     f.camera = Some(CameraState {
                         position: point(&positions, &times, i, j, u, interp),
                         target: point(&targets, &times, i, j, u, interp),
-                        fov: scalar(keys[i].fov, keys[j].fov, u, interp),
+                        fov: point(&fovs, &times, i, j, u, interp)[0],
                     });
                 }
             }

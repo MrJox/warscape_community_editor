@@ -17,6 +17,8 @@ use crate::scene_ui::{SceneUi, scene_doc};
 
 #[derive(Default)]
 pub struct SceneView {
+    /// The game's fonts (the subtitle's).
+    fonts: wce_ui_model::fonts::FontLibrary,
     /// The ground under the mouse (metres), for the quick-add popup.
     pub hover_ground: Option<[f32; 2]>,
     /// The item under the mouse (its name shows).
@@ -153,6 +155,54 @@ fn pick(e: &mut Editor, p: &Project, ui: &SceneUi, view: &DocView, g: &Ground, x
 }
 
 impl SceneView {
+    /// A subtitle as the game draws a cutscene's: its `subtitle` font category (`ui/fontcategories.fc`: la_gioconda 22, white, no
+    /// shadow) through the UI tool's fonts (`.cuf`), at the game's size for a 1080-line screen scaled to the viewport, centred at the
+    /// bottom (in the bottom bar when the bars show). The editor's font when the game's can't be read.
+    fn subtitle(&mut self, e: &mut Editor, dl: &gui::DrawList, text: &str, origin: gui::Vec2, size: gui::Vec2, bar: f32) {
+        let k = size.y / 1080.0;
+        let resolved = e.vfs().cloned().and_then(|v| self.fonts.resolve(&v, "", 0, "subtitle")).filter(|r| r.cuf.glyph_count() < 5000);
+        let Some(r) = resolved else {
+            let px = (22.0 * k).max(8.0);
+            let tw = gui::calc_text_width(text) * px / gui::text_line_height().max(1.0);
+            let y = if bar >= px * 1.2 { origin.y + size.y - bar * 0.5 - px * 0.5 } else { origin.y + size.y - px * 2.5 };
+            dl.text_sized(px, v2(origin.x + (size.x - tw) * 0.5, y), 0xFFFF_FFFF, text);
+            return;
+        };
+        let akey = format!("font:{}", r.key);
+        if !e.images.knows(&akey) {
+            let at = r.cuf.atlas();
+            e.images.submit(&akey, at.w, at.h, at.rgba);
+        }
+        let Some(tex) = e.images.get(&akey) else { return };
+        let c = r.color.unwrap_or([255; 4]);
+        let col = gui::col32(c[0], c[1], c[2], c[3]);
+        let lines = r.cuf.wrap(text, (1080.0 * size.x / size.y.max(1.0) * 0.8) as i32);
+        let lh = r.cuf.line_height() as f32;
+        let block = lh * lines.len() as f32 * k;
+        let top = if bar >= block * 1.1 { origin.y + size.y - bar * 0.5 - block * 0.5 } else { origin.y + size.y - block - size.y * 0.06 };
+        let origins = r.cuf.atlas_origins();
+        let (tw, th) = (tex.w as f32, tex.h as f32);
+        for (i, line) in lines.iter().enumerate() {
+            let x0 = origin.x + (size.x - r.cuf.line_width(line) as f32 * k) * 0.5;
+            let mut placed = vec![];
+            r.cuf.place_line(line, 0, 0, &mut placed);
+            for g in placed {
+                let m = r.cuf.metric(g.glyph);
+                let (ox, oy) = origins[g.glyph];
+                let tl = v2(x0 + g.x as f32 * k, top + (i as f32 * lh + g.y as f32) * k);
+                let br = v2(tl.x + f32::from(m.width) * k, tl.y + f32::from(m.height) * k);
+                dl.image(
+                    tex.id,
+                    tl,
+                    br,
+                    v2(ox as f32 / tw, oy as f32 / th),
+                    v2((ox + u32::from(m.width)) as f32 / tw, (oy + u32::from(m.height)) as f32 / th),
+                    col,
+                );
+            }
+        }
+    }
+
     /// The viewport's mouse: true when the scene took it.
     pub fn input(&mut self, e: &mut Editor, ui: &mut SceneUi, create: &mut Create, ground: &Ground, ev: &ViewportEvent) -> bool {
         let Some((p, view)) = scene_doc(e).map(|d| (d.project().clone(), d.view.clone())) else { return false };
@@ -358,8 +408,9 @@ impl SceneView {
                     let t = t0 + (t1 - t0) * f64::from(i) / f64::from(n);
                     let f = wce_cinematic::eval::evaluate(&p, clip, &wce_cinematic::eval::SpeedTable::default(), t);
                     f.camera.and_then(|c| {
-                        let over = c.position[1] - ground.height(c.position[0], c.position[2]);
-                        scr(e, c.position).map(|q| (q, ground.shown() && (over < lo - 0.01 || over > hi + 0.01)))
+                        // Not where the ground is still on its way (its height there is not known yet).
+                        let over = ground.height_known(c.position[0], c.position[2]).map(|g| c.position[1] - g);
+                        scr(e, c.position).map(|q| (q, over.is_some_and(|o| o < lo - 0.01 || o > hi + 0.01)))
                     })
                 })
                 .collect();
@@ -455,7 +506,8 @@ impl SceneView {
             dl.rect(pa, pb, gui::col32(255, 230, 120, 200), 0.0, 1.0);
         }
         // What the movie lays over its pictures, as the playhead has it: the fade, the cinematic bars, the subtitle.
-        if let Some(f) = ui.frame(&p) {
+        // Only through the camera (playing, or looking through it): flying free, the scene is not faded nor barred.
+        if let Some(f) = ui.frame(&p).filter(|_| ui.follows_keys()) {
             let (lo, hi) = (origin, v2(origin.x + size.x, origin.y + size.y));
             let fade = f.fade.clamp(0.0, 1.0);
             if fade > 0.0 {
@@ -468,15 +520,7 @@ impl SceneView {
                 dl.rect_filled(v2(lo.x, hi.y - bar), hi, 0xFF00_0000, 0.0);
             }
             if let Some(text) = f.subtitle.as_ref().and_then(|id| p.text(id, ui.lang())).filter(|t| !t.is_empty()) {
-                // As the Movie viewer draws a movie's: bottom centre, a 24th of the picture's height; with the bars, in the middle of
-                // the bottom bar (where a letterboxed cutscene's lines sit).
-                let px = (size.y / 24.0).clamp(12.0, 48.0);
-                let scale = px / gui::text_line_height().max(1.0);
-                let tw = gui::calc_text_width(text) * scale;
-                let y = if bar >= px * 1.2 { hi.y - bar * 0.5 - px * 0.5 } else { hi.y - px * 2.2 };
-                let at = v2(origin.x + (size.x - tw) * 0.5, y);
-                dl.text_sized(px, v2(at.x + 2.0, at.y + 2.0), gui::col32(0, 0, 0, 220), text);
-                dl.text_sized(px, at, gui::col32(240, 236, 220, 255), text);
+                self.subtitle(e, &dl, text, origin, size, bar);
             }
         }
         dl.pop_clip_rect();

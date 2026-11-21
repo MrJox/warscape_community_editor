@@ -517,6 +517,20 @@ impl Tile {
         }
     }
 
+    /// The list trees generated (waiting for them, a minute at most) and put on the scene: a context's template, read on a worker, is
+    /// taken at once, and the generation runs on a thread of its own.
+    pub(crate) fn trees_now(&mut self, scene: &mut RenderScene, layer: LayerId) {
+        let t0 = std::time::Instant::now();
+        loop {
+            self.update_list_trees(scene, layer, false);
+            if self.trees.job.is_none() || t0.elapsed().as_secs() > 60 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        self.update_list_trees(scene, layer, false);
+    }
+
     /// The entities of the list trees follow the display (after a publish, which dropped them, or a change of list or of the vegetation's
     /// visibility).
     pub(crate) fn update_list_trees(&mut self, scene: &mut RenderScene, layer: LayerId, published: bool) {

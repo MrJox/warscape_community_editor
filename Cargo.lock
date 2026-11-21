@@ -2465,6 +2465,7 @@ dependencies = [
  "wce_scene",
  "wce_tile",
  "wce_tile_editor",
+ "wce_ui_model",
  "wce_vfs",
  "wce_video",
  "wce_walls",

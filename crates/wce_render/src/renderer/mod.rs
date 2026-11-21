@@ -1414,6 +1414,10 @@ impl Renderer {
         self.tonemap.luma_black = ToneMap::BLACK;
         self.tonemap.luma_white = ToneMap::WHITE;
         self.env.valid = false;
+        // What moves with every frame drawn: from the start too (a movie's first frame came after however many frames its loading took,
+        // and its clouds' shade had drifted that far: movies differed between runs).
+        self.cloud_shade = [0.0; 2];
+        self.wind.reset(WindSim::DEFAULT_SEED);
     }
 
     pub fn textures(&self) -> &Arc<TextureCache> {

@@ -78,6 +78,12 @@ pub struct SceneUi {
     layout_pic_key: Option<([i32; 2], i32, u32, u32)>,
     layout_pic_at: Option<std::time::Instant>,
     layout_pic_n: u64,
+    /// The picture shown and the one on its way to the GPU: its number and the view it is of (centre, metres a pixel, size).
+    layout_shown: Option<(u64, ([f32; 2], f32, [f32; 2]))>,
+    layout_pending: Option<(u64, ([f32; 2], f32, [f32; 2]))>,
+    /// The view as it is and since when (a picture is rendered once it holds still).
+    layout_view_key: Option<([i32; 2], i32, u32, u32)>,
+    layout_view_since: Option<std::time::Instant>,
     /// The window picking the battle's place on its map.
     pub map_pick: crate::map_pick::MapPicker,
     /// A unit being dragged on the Layout: its start when the drag began.
@@ -985,15 +991,31 @@ impl SceneUi {
 
     // ---- Layout panel (the field from above) ----
 
-    /// The Layout's picture of the ground: a top-down orthographic render at the view's centre and scale.
+    /// The Layout's picture of the ground: a top-down orthographic render at the view's centre and scale. While the view moves the
+    /// last picture is drawn where its ground now is (`layout_shown`); a new one is rendered once the view has held still a moment (and
+    /// every second and a half: the ground streams in, the units move), and takes the old one's place only once it is on the GPU.
     fn layout_picture(&mut self, e: &mut Editor, centre: [f32; 2], mpp: f32, size: gui::Vec2) {
         let (w, h) = ((size.x.max(16.0)) as u32, (size.y.max(16.0)) as u32);
         let key = (centre.map(|v| (v * 10.0).round() as i32), (mpp * 1000.0).round() as i32, w, h);
-        let stale = self.layout_pic_at.is_none_or(|t| t.elapsed().as_secs_f32() > 1.5);
-        if self.layout_pic_key == Some(key) && !stale {
+        // The newer picture is up: the older one goes.
+        if let Some((n, view)) = self.layout_pending
+            && e.images.get(&format!("cinematic/layout/{n}")).is_some()
+        {
+            if let Some((old, _)) = self.layout_shown.replace((n, view)) {
+                e.images.forget(&format!("cinematic/layout/{old}"));
+            }
+            self.layout_pending = None;
+        }
+        if self.layout_pending.is_some() {
             return;
         }
-        if e.scripted_input() && self.layout_pic_key == Some(key) {
+        if self.layout_view_key != Some(key) {
+            self.layout_view_key = Some(key);
+            self.layout_view_since = Some(std::time::Instant::now());
+        }
+        let still = e.scripted_input() || self.layout_view_since.is_some_and(|t| t.elapsed().as_secs_f32() > 0.25);
+        let stale = self.layout_pic_at.is_none_or(|t| t.elapsed().as_secs_f32() > 1.5);
+        if !still || (self.layout_pic_key == Some(key) && !stale) || (e.scripted_input() && self.layout_pic_key == Some(key)) {
             return;
         }
         let units = e.scene.game_units.max(1e-3);
@@ -1010,9 +1032,9 @@ impl SceneUi {
         let Some(rgba) = wce_editor::viewport::render_offscreen(e, &mut self.layout_target, w, h, cam, e.clock.time() as f32, true) else {
             return;
         };
-        e.images.forget(&format!("cinematic/layout/{}", self.layout_pic_n));
         self.layout_pic_n += 1;
         e.images.submit(&format!("cinematic/layout/{}", self.layout_pic_n), w, h, rgba);
+        self.layout_pending = Some((self.layout_pic_n, (centre, mpp, [size.x, size.y])));
         self.layout_pic_key = Some(key);
         self.layout_pic_at = Some(std::time::Instant::now());
     }
@@ -1042,8 +1064,13 @@ impl SceneUi {
         // The ground under it: the scene seen from straight above (the map, the tile, the men), rendered again when the view moves
         // and every second and a half meanwhile (the ground streams in, the units move).
         self.layout_picture(e, centre, mpp, size);
-        if let Some(img) = e.images.get(&format!("cinematic/layout/{}", self.layout_pic_n)) {
-            draw.image(img.id, origin, v2(origin.x + size.x, origin.y + size.y), v2(0.0, 0.0), v2(1.0, 1.0), 0xFFFF_FFFF);
+        if let Some((n, (pc, pmpp, psize))) = self.layout_shown
+            && let Some(img) = e.images.get(&format!("cinematic/layout/{n}"))
+        {
+            // Where the picture's ground is in the view as it is now.
+            let (hw, hh) = (psize[0] * 0.5 * pmpp, psize[1] * 0.5 * pmpp);
+            let (a, b) = (to_s([pc[0] - hw, pc[1] + hh]), to_s([pc[0] + hw, pc[1] - hh]));
+            draw.image(img.id, a, b, v2(0.0, 0.0), v2(1.0, 1.0), 0xFFFF_FFFF);
             // Dimmed a little, the marks over it stand out.
             draw.rect_filled(origin, v2(origin.x + size.x, origin.y + size.y), gui::col32(0, 0, 0, 25), 0.0);
         }
