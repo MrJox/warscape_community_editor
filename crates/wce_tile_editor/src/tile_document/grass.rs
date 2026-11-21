@@ -235,6 +235,24 @@ impl Tile {
         (lo[0] <= hi[0]).then(|| (hi[0] - lo[0]).max(hi[1] - lo[1]))
     }
 
+    /// The grass generated (waiting for it, a minute at most) and put on the scene: a context's template, read on a worker.
+    pub(crate) fn grass_now(&mut self, scene: &mut RenderScene, layer: LayerId) -> usize {
+        let t0 = std::time::Instant::now();
+        loop {
+            self.poll_grass_job();
+            let _ = self.grass_list();
+            if self.grass.list.is_some() || t0.elapsed().as_secs() > 60 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let first = scene.next_id();
+        let added = self.add_grass(scene, layer);
+        self.grass.entities = first..first + added as EntityId;
+        self.grass.shown = Some(true);
+        added
+    }
+
     /// The grass entities follow the display (after a publish, which dropped them, or when grass is shown or hidden).
     pub(crate) fn update_grass(&mut self, scene: &mut RenderScene, layer: LayerId, published: bool) {
         // The season of the trees' and grass' textures follows the ground's.

@@ -303,6 +303,7 @@ impl ContextUi {
             game_kit: p.game_kit.clone(),
             look: d.tile().terrain_look().clone(),
             trees: self.trees,
+            grass: false,
             bake_ground: self.bake_ground,
             plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),

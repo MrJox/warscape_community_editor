@@ -45,6 +45,8 @@ pub struct SceneUi {
     pub speeds: SpeedTable,
     /// Paused, the viewport looks through the camera keys (playing it always does; else the camera is the user's, free).
     pub look_through: bool,
+    /// The keyed camera free of the battle camera's limits (off: held within them, as the game does).
+    pub no_game_limits: bool,
     /// Recording the camera: the clip plays and the viewport's camera (flown by the user) is keyed as it goes.
     pub recording: bool,
     /// The scene time of the last recorded key.
@@ -304,6 +306,14 @@ impl SceneUi {
         }
         gui::same_line();
         gui::checkbox("Look through", &mut self.look_through);
+        gui::same_line();
+        let mut limits = !self.no_game_limits;
+        if gui::checkbox("Game limits", &mut limits) {
+            self.no_game_limits = !limits;
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The camera held 2 to 90 m over the ground, as the battle camera is (off: as keyed, as a movie shows it)");
+        }
         if gui::is_item_hovered() {
             gui::set_tooltip("Fly the viewport yourself; Add key on a camera track keys this view");
         }

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wce_foundation::math::Float4x4;
-use wce_scene::render_scene::{Decal, MeshInstance, Payload, PointLight, TerrainImage, TerrainMaterial, VfxEmitter, Water, WaterVertex};
+use wce_scene::render_scene::{
+    Decal, Grass, MeshInstance, Payload, PointLight, TerrainImage, TerrainMaterial, VfxEmitter, Water, WaterVertex,
+};
 
 use super::super::{MATERIAL_IDS, NORMAL_IDS, next_id};
 use super::template::{Grid, Template};
@@ -68,6 +70,12 @@ pub fn prune(dir: &Path) -> (usize, u64) {
 
 fn fnv(h: u64, bytes: &[u8]) -> u64 {
     bytes.iter().fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
+}
+
+/// [`key`], for a template with its grass when `grass` (the key without grass is the same as before).
+pub fn key_with(dir: &Path, look: &TerrainLook, trees: bool, grass: bool, game_kit: Option<&Path>) -> u64 {
+    let k = key(dir, look, trees, game_kit);
+    if grass { fnv(k, b" grass") } else { k }
 }
 
 /// The cache key of a tile folder for a look, its trees generated with `game_kit`'s parameters when there is one.
@@ -303,6 +311,17 @@ fn write_payload(w: &mut W, p: &Payload) -> bool {
             w.u64(*version);
         }
 
+        Payload::Grass(Grass { model, instances }) => {
+            w.u8(6);
+            w.str(model);
+            w.u32(instances.len() as u32);
+            for i in instances.iter() {
+                for f in i {
+                    w.f32(*f);
+                }
+            }
+        }
+
         _ => return false,
     }
 
@@ -333,7 +352,12 @@ pub fn encode(t: &Template) -> Vec<u8> {
         .filter(|&i| {
             matches!(
                 t.entities[i].1,
-                Payload::MeshInstance(_) | Payload::Decal(_) | Payload::PointLight(_) | Payload::VfxEmitter(_) | Payload::Water(_)
+                Payload::MeshInstance(_)
+                    | Payload::Decal(_)
+                    | Payload::PointLight(_)
+                    | Payload::VfxEmitter(_)
+                    | Payload::Water(_)
+                    | Payload::Grass(_)
             )
         })
         .collect();
@@ -506,6 +530,16 @@ fn read_payload(r: &mut R) -> Result<Payload, String> {
             let n = r.u32()? as usize;
             let indices = (0..n).map(|_| r.u32()).collect::<Result<Vec<_>, _>>()?;
             Payload::Water(Water { verts, indices, river: r.bool()?, foam: r.f32()?, version: r.u64()? })
+        }
+
+        6 => {
+            let model = r.str()?;
+            let n = r.u32()? as usize;
+            let mut instances = Vec::with_capacity(n);
+            for _ in 0..n {
+                instances.push(r.f32_array::<12>()?);
+            }
+            Payload::Grass(Grass { model, instances: Arc::new(instances) })
         }
 
         k => return Err(format!("map context cache: unknown entity kind {k}")),

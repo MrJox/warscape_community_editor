@@ -351,14 +351,27 @@ impl SceneView {
         {
             let (t0, t1) = (cams.first().map_or(0.0, |c| c.3), cams.last().map_or(0.0, |c| c.3));
             let n = 96;
-            let path: Vec<gui::Vec2> = (0..=n)
+            // Red where the battle camera can't go (outside 2 to 90 m over the ground: the game holds it at the limit).
+            let (lo, hi) = crate::preview::GAME_CAMERA_HEIGHT;
+            let pts: Vec<(gui::Vec2, bool)> = (0..=n)
                 .filter_map(|i| {
                     let t = t0 + (t1 - t0) * f64::from(i) / f64::from(n);
                     let f = wce_cinematic::eval::evaluate(&p, clip, &wce_cinematic::eval::SpeedTable::default(), t);
-                    f.camera.and_then(|c| scr(e, c.position))
+                    f.camera.and_then(|c| {
+                        let over = c.position[1] - ground.height(c.position[0], c.position[2]);
+                        scr(e, c.position).map(|q| (q, ground.shown() && (over < lo - 0.01 || over > hi + 0.01)))
+                    })
                 })
                 .collect();
-            dl.polyline(&path, gui::col32(120, 220, 255, 170), false, 2.0);
+            for w in pts.windows(2) {
+                let col = if w[0].1 || w[1].1 { gui::col32(255, 90, 80, 230) } else { gui::col32(120, 220, 255, 170) };
+                dl.line(w[0].0, w[1].0, col, 2.0);
+            }
+            if pts.iter().any(|q| q.1)
+                && let Some(q) = pts.iter().find(|q| q.1)
+            {
+                dl.text(v2(q.0.x + 8.0, q.0.y + 6.0), gui::col32(255, 120, 110, 255), "outside the battle camera's 2 to 90 m");
+            }
         }
         for (item, at, target, t) in &cams {
             let Some(c) = scr(e, *at) else { continue };

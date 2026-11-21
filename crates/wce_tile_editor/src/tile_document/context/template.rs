@@ -488,10 +488,22 @@ pub fn load_any_template(
     game_kit: Option<&Path>,
     files: Option<Arc<dyn Files>>,
 ) -> Result<Template, String> {
+    load_any_template_with(dir, look, trees, false, game_kit, files)
+}
+
+/// [`load_any_template`], with the tile's grass when `grass`.
+pub fn load_any_template_with(
+    dir: &Path,
+    look: &TerrainLook,
+    trees: bool,
+    grass: bool,
+    game_kit: Option<&Path>,
+    files: Option<Arc<dyn Files>>,
+) -> Result<Template, String> {
     if wce_tile::sources::custom_mesh(dir).is_some() {
         load_custom_template(dir, look, files)
     } else {
-        load_template(dir, look, trees, game_kit, files)
+        load_template_with(dir, look, trees, grass, game_kit, files)
     }
 }
 
@@ -706,6 +718,18 @@ pub fn load_template(
     game_kit: Option<&Path>,
     files: Option<Arc<dyn Files>>,
 ) -> Result<Template, String> {
+    load_template_with(dir, look, trees, false, game_kit, files)
+}
+
+/// [`load_template`], with the tile's grass when `grass` (generated here, as the Tile tool draws its open tile's).
+pub fn load_template_with(
+    dir: &Path,
+    look: &TerrainLook,
+    trees: bool,
+    grass: bool,
+    game_kit: Option<&Path>,
+    files: Option<Arc<dyn Files>>,
+) -> Result<Template, String> {
     let t0 = std::time::Instant::now();
     let mut project = TileProject::open(dir)?;
     project.game_kit = game_kit.map(Path::to_path_buf);
@@ -724,6 +748,10 @@ pub fn load_template(
     let layer = scratch.add_layer(t.id, "context");
     t.publish_items(&mut scratch, layer, false);
     t.update_view(&mut scratch, Float3::new(0.0, 0.0, 0.0));
+    if grass {
+        t.display.show_grass = true;
+        t.grass_now(&mut scratch, layer);
+    }
 
     // The heights over the tile and a little of its border, every NEIGHBOUR_STEP.
     let (ex, ez) = (t.extent_x(), t.extent_z());
@@ -775,7 +803,8 @@ pub fn load_template(
     let mut entities: Vec<(Float4x4, Payload)> = scratch
         .entities()
         .iter()
-        .filter(|e| e.id != t.terrain_entity && !matches!(e.kind(), Kind::Overlay | Kind::Grass | Kind::Terrain | Kind::CameraRig))
+        .filter(|e| e.id != t.terrain_entity && !matches!(e.kind(), Kind::Overlay | Kind::Terrain | Kind::CameraRig))
+        .filter(|e| grass || !matches!(e.kind(), Kind::Grass))
         // The tiles' sea planes give way to the context's one sea level.
         .filter(|e| !matches!(&e.payload, Payload::Water(w) if !w.river))
         .map(|e| (e.world, e.payload.clone()))

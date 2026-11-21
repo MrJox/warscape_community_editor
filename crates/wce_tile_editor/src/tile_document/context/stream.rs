@@ -17,7 +17,7 @@ use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::Payload;
 use wce_vfs::files::Files;
 
-use super::template::{Template, load_any_template};
+use super::template::{Template, load_any_template_with};
 use super::{BLOCK, BlockSource, CHUNK, ContextRequest, FarMap, Frame, TileKey, cache, tile_dir};
 use crate::terrain_bake::TerrainLook;
 
@@ -474,10 +474,10 @@ impl Shared {
         let own_root = wce_tile::tile_project::kit_raw_root(&dir).unwrap_or_else(|| self.rq.raw_root.clone());
         let own_params = own_root.parent().and_then(wce_tile::vegetation::kit_params_dir).is_some();
         let game_kit = self.rq.game_kit.as_deref().filter(|_| !own_params);
-        let ck = self.rq.cache.as_ref().map(|c| (c, cache::key(&dir, &look, self.rq.trees, game_kit)));
+        let ck = self.rq.cache.as_ref().map(|c| (c, cache::key_with(&dir, &look, self.rq.trees, self.rq.grass, game_kit)));
         let load = || match ck.as_ref().and_then(|(c, k)| cache::read(c, *k)) {
             Some(t) => (Ok(t), true),
-            None => (load_any_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
+            None => (load_any_template_with(&dir, &look, self.rq.trees, self.rq.grass, game_kit, self.files.clone()), false),
         };
         let (result, cached) = SOLO.with(|solo| match solo.get() {
             Some(pool) => pool.install(load),
