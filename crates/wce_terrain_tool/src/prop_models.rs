@@ -106,6 +106,17 @@ type Built = (DocumentId, u64, (i64, i64));
 /// How many tiles coming into memory build the models again (`PropModels::update`).
 const LOADED_STEP: usize = 16;
 
+/// How far ahead of the camera's target the forests are drawn (world units): the game draws its campaign trees over the whole view,
+/// as far as its land goes in it (RenderDoc, the G-buffer's `rigidcampaignvegetation` instances: 236 units from the eye in capture
+/// A, 236 in C, 186 in F; about 21 000 trees in each; no count or distance cap found), where the props' radius (96 cells, 64 units on
+/// `main_attila_map`) left the distant land without its forests (capture F's far ground plain and darker). Behind the camera, the props'
+/// radius.
+const TREE_REACH: f32 = 240.0;
+
+/// The view's horizontal direction is taken in this many sectors (the trees ahead are those in front of its sector's middle: a
+/// half-plane, which holds the screen's 58 degrees either side of the view and the sector's half more).
+const TREE_SECTORS: f32 = 8.0;
+
 /// A prop: its key (a `.terry` entity's id, else MARKER_KEY | its record), `.terry` position, model and transform (`campaign::matrix`'s
 /// layout), and the item a click selects (u64::MAX: none).
 struct Prop {
@@ -387,6 +398,13 @@ impl PropModels {
         // Again as tiles come (in steps: each brings the ground its props stand on).
         let revision = revision * 1_000_003 + (loaded / LOADED_STEP) as u64;
         let revision = revision * 16 + u64::from(self.season_bit & 15);
+        // The forests ahead follow the view's direction by sector (map cells: x right, y down).
+        let (ex, ey) = frame.cell_of(f64::from(cam.eye.x), f64::from(cam.eye.z));
+        let (gx, gy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
+        let step = std::f64::consts::TAU / f64::from(TREE_SECTORS);
+        let sector = (((gy - ey).atan2(gx - ex) / step).round() as i64).rem_euclid(TREE_SECTORS as i64);
+        let ahead = ((sector as f64 * step).cos() as f32, (sector as f64 * step).sin() as f32);
+        let revision = revision * 8 + sector as u64;
         // The season's snow mask (the scene's), which decides the effects' snow zone.
         let mask = e.scene.campaign_snow.as_ref().map(|s| s.mask.clone());
         if self.snow.as_ref().map(|s| &s.0) != mask.as_ref() {
@@ -612,8 +630,12 @@ impl PropModels {
             let unit = trees.cells_per_unit * k;
             let size = 0.4 / e.scene.game_units.max(1e-9);
             let (cx, cy) = (cx as f32, cy as f32);
-            for i in trees.near(cx, cy, rc) {
+            let reach = (TREE_REACH * trees.cells_per_unit).max(rc);
+            for i in trees.near(cx, cy, reach) {
                 let (m, x, y, turn, file_y) = trees.trees[i as usize];
+                if (x - cx).hypot(y - cy) > rc && (x - cx) * ahead.0 + (y - cy) * ahead.1 < 0.0 {
+                    continue;
+                }
                 let (fx, fz) = frame.from_map.apply(f64::from(x), f64::from(y));
                 let (s, c) = (f32::from(turn) * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
