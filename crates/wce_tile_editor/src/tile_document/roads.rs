@@ -850,10 +850,6 @@ impl Tile {
 
         // The biome areas' contents keep off the roads, and an export writes them.
         self.refresh_biomes(true);
-
-        // The farmland, and the decals that lie on all of it and keep off the biomes' trees.
-        self.refresh_fields(true);
-        self.refresh_decals(true);
     }
 
     /// How many destruction levels a building has: its piece files' `_destructNN` (1: one, intact).

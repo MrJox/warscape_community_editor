@@ -147,45 +147,7 @@ picked from the tile's groups' and variations' swatches. Keys a biome grows or a
 shown as their thumbnails (a key the game's files lack framed red), a click takes one out, the + cell opens a searchable grid of the
 kind's keys (buildings by category too) where a click adds or takes out one.
 
-**Fields and farmland** (`wce_tile::fields`, `tile_document/fields.rs`, `fields_panel.rs` under a field area's properties in the
-Inspector: the Create panel's Vegetation > Biomes > *fields: <kind>* draws one of a kind; `start_making fields [kind, _ for spaces]`,
-`fields wait`; [plans/auto_detail_2.md](plans/auto_detail_2.md), G): an area is a vegetation exclusion polygon (the game's own trees keep
-off it) with `wce_fields` (its settings as one attribute: `strip=12;verge=1.5;farm=130;...`) and `wce_fields_seed`. Lanes cut it into
-**farms** (the area's box cut across its longer side, somewhere about the middle, until no farm is larger than `farm`; 0: one farm), each
-lane a dirt **track** (decals end to end, `path_1` and `global_terrain_path_01` by default, each at its own shape as wide as the lane, its
-long side along it) or, by the tracks' share, a **belt** of trees and shrubs (oak, beech, birch and rose, burdock, tansy by default; two
-staggered rows on a lane 6 m wide or more). By the fenced share a farm gets a fence (`lowfence_1..3`, laid as a building spline) round its
-part of the area, open for a gate in its longest side. Verges cut each farm into **parcels** the same way (`parcel`; 0: one), and each
-parcel into strips along the area's longest side (or at an angle; a patchwork share of the parcels runs across), `verge` apart: one crop
-for the parcel (one of the kit's field decals, `global_fields_1..6`, laid end to end along each strip, `crop_length` at most, as wide as the
-strip) or, by the orchards' share, an orchard (rows of trees, `olive`: the game has no other fruit tree). Haystacks and carts (`hay01`,
-`cart_1_hay`) go on the crops by the hectare, and the ground under the area is worn by a texture rule bound to it (`mud`, fading in over
-2 m; in the texture rules' layer). The kinds (`fields::presets`): *Patchwork farms* (the default: farms of a few parcels, most fenced,
-tracks and belts between), *Hedged fields* (a bocage: fields in belts of trees, a track now and then, no fences), *Fenced smallholdings*
-(small plots, each fenced, along tracks), *Open strip fields* (one field in narrow strips, no lanes, no fences), *Orchards*. What it lays
-is the editor's: made again once an edit settles (on the editor's thread), drawn locked, added at export in a `WCE fields` layer. The
-Inspector: Simple (its kind, farms One ... Large, lanes Belts ... Tracks, fences and how many, strips Narrow ... Broad, orchards, haystacks,
-ground, Reroll), Advanced (farm, lane, parcel and gate sizes, the belts' spacing, the patchwork, the verge, the angle, the crop pieces'
-length, tree rows and spacing, and what each lays, picked from the game's).
-
-**Decal rules** (`wce_tile::decal_rules`, `tile_document/decal_rules.rs`, `decal_rules_panel.rs` in the Inspector: the Create panel's
-Decals > *Decal rules* (a tile without any gets the built-in Default); `decal_rules <off | load <preset> | file <path> | window [simple |
-advanced] | wait>`; [plans/auto_detail_2.md](plans/auto_detail_2.md), E): decals laid by the ground. A rule's decals (picked from the
-game's, `ProjectedDecalInstance` keys; a name under `rigidmodels\decals\battle` or a whole key; weighted) go where a texture rule's
-conditions hold (height, slope, hollows, distance to water, roads and buildings, water flow, deposit, breakup) and as far from the trees'
-trunks as it says (the tile's trees, the biome areas', the forest list shown), `density` per 100 m² where they hold fully (fewer as they
-fade, scaled by the strength), no two of the rule closer than its spacing, each as wide as its size range says and `stretch` times as long
-as its own shape (the kit's most common size of it, `wce_tile::decal_sizes`; square for one the kit does not place),
-turned any way, down the slope, or along the nearest road, building side (*Walls*) or water's edge. At most 10 000 a rule and 30 000 in all.
-They are the editor's, not tile.ted's: laid again off the editor's thread when the rules, the heights or the scene change, drawn locked
-(refitted to the ground), and added at export in a layer of their own (`WCE decals`, on the landscape: `MSM_LANDSCAPE`, 5 m deep). The tile
-keeps its rules in `decal_rules.wce`; presets are files in the projects' `raw_data/art/decal_rule_sets`. The built-in Default, of the kit's
-decals: puddles in hollows, dirt at building bases, ruts along roads, runnels where water runs, stones where water runs out onto flatter ground,
-forest floor under trees (the game has no leaf litter decal: `forest_0_su`, `roots_01`). The panel lists the rules with how many decals
-each laid, warns of decals the game lacks; Simple shows plain choices (how many: Few ... Thick), Advanced every number (each decal's
-weight, the stretch, the spacing, the strength). Decals have pictures in the key picker and the Create panel's grid, as the models do
-(seen nearly from above on the grey ground).
-
+Decals have pictures in the key picker and the Create panel's grid, as the models do (seen nearly from above on the grey ground).
 A **new decal** (placed from the Create panel, or any the editor makes from a key) starts at its own size: the kit's most common `scale` of
 it (`wce_tile::decal_sizes`, generated by `scripts/re/decal_sizes.py` over the kit's tiles: a puddle 5 x 10 m, a field 22 x 11 m), not the
 type's 12 x 3 m border strip that stretched every other decal; one the kit does not place is an 8 m square.

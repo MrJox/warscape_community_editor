@@ -30,17 +30,6 @@ pub(crate) struct BiomeItem {
     position: [f64; 3],
 }
 
-impl BiomeItem {
-    /// An item of an area (its element), its text and its position (scene units): a field's tree, prop or fence piece too.
-    pub(super) fn new(area: usize, text: Vec<u8>, position: [f64; 3]) -> Self {
-        Self { area, text, position }
-    }
-
-    pub(super) fn text(&self) -> &[u8] {
-        &self.text
-    }
-}
-
 /// The areas' contents being made off the editor's thread, and the signature of what they are made from.
 pub(crate) struct BiomeJob {
     job: super::jobs::Job<Vec<BiomeItem>>,
@@ -315,11 +304,6 @@ impl Tile {
         }
 
         Ok(scene.save())
-    }
-
-    /// Where the areas' trees and plants stand (x and z, scene units).
-    pub(super) fn biome_tree_positions(&self) -> Vec<[f64; 2]> {
-        self.biome_items.iter().filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE")).map(|i| [i.position[0], i.position[2]]).collect()
     }
 
     /// How many trees, plants and rocks the areas hold now.

@@ -126,11 +126,6 @@ impl Tile {
             masks.push(texture_rules::AreaMask { points: a.points.iter().map(|&(x, z)| (x + border, z + border)).collect(), edge: b.edge });
             rules.extend(b.rules.into_iter().map(|r| texture_rules::Rule { area: Some(i), seed: r.seed ^ (a.seed as u32), ..r }));
         }
-
-        // The field areas' ground.
-        let (field_rules, field_masks) = self.field_texture_rules(masks.len());
-        rules.extend(field_rules);
-        masks.extend(field_masks);
         (rules, masks)
     }
 
