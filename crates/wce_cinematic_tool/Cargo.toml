@@ -17,6 +17,7 @@ wce_map_view = { path = "../wce_map_view" }
 wce_formats = { path = "../wce_formats" }
 wce_render = { path = "../wce_render" }
 # The pack writer (wce_walls::pack).
+wce_launch = { path = "../wce_launch" }
 wce_walls = { path = "../wce_walls" }
 wce_scene = { path = "../wce_scene" }
 wce_tile = { path = "../wce_tile" }

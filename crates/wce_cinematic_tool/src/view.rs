@@ -408,6 +408,15 @@ impl SceneView {
             if chip(ui.battle_preview, icons::SWORDS, "cinbattle", "Battle preview: units under orders as the battle would play it") {
                 ui.battle_preview = !ui.battle_preview;
             }
+            gui::same_line_touching();
+            if chip(
+                false,
+                icons::LOG_OUT,
+                "cinlaunch",
+                "Launch in game: start the game straight into this battle (the mods chosen in the editor)",
+            ) {
+                ui.launch_request = Some(true);
+            }
         }
         gui::end_child();
         gui::pop_style_color(1);

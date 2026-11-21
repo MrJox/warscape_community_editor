@@ -85,6 +85,9 @@ pub struct CinematicTool {
     view: SceneView,
     /// The unit last mirrored between the editor's selection and the panels' selected unit.
     synced_unit: Option<u32>,
+    /// The game started on the scene's battle (its launch pack removed when it exits), and a launch waiting for "launch anyway".
+    launched: Option<wce_launch::launch::Running>,
+    launch_question: Option<String>,
 }
 
 impl CinematicTool {
@@ -430,6 +433,45 @@ impl CinematicTool {
     /// The scene as a historical battle pack at `path`.
     fn export_battle(&mut self, e: &mut Editor, path: &std::path::Path) -> Result<String, String> {
         let p = scene_doc(e).map(|d| d.project().clone()).ok_or("no scene open")?;
+        let (out, warnings) = self.battle_pack_files(e, true)?;
+        wce_walls::pack::write_pack(path, &p.game, out, vec![])?;
+        for w in &warnings {
+            e.status(&format!("Cinematic: {w}"), true);
+        }
+        Ok(format!("Cinematic: wrote {} ({} warnings)", path.display(), warnings.len()))
+    }
+
+    /// Launch in game: the battle's files as the launch pack, the game started on the battle (a dry run writes the pack into the
+    /// build folder and stops).
+    fn launch_battle(&mut self, e: &mut Editor, dry_run: bool, ignore_movie_packs: bool) -> Result<String, String> {
+        if self.launched.is_some() {
+            return Err("the game launched earlier is still running: close it first".to_owned());
+        }
+        let (out, warnings) = self.battle_pack_files(e, false)?;
+        let p = crate::launch::prepare(e, out, dry_run, ignore_movie_packs)?;
+        for w in &warnings {
+            e.status(&format!("Cinematic: {w}"), true);
+        }
+        if dry_run {
+            return Ok(format!("dry run: the launch pack {}; command line: {}", p.pack.display(), p.command));
+        }
+        let (running, started) = crate::launch::start(e, &p)?;
+        self.launched = Some(running);
+        Ok(format!("launched {started} into the battle ({}); the launch pack is removed when the game exits", p.xml_path))
+    }
+
+    /// Asks for a launch from the UI: done, or the question about stray movie packs.
+    fn launch_asked(&mut self, e: &mut Editor, ignore_movie_packs: bool) {
+        match self.launch_battle(e, false, ignore_movie_packs) {
+            Ok(m) => e.status(&format!("Cinematic: {m}"), false),
+            Err(err) if err.contains("movie-type packs") => self.launch_question = Some(err),
+            Err(err) => e.status(&format!("Cinematic: launch in game: {err}"), true),
+        }
+    }
+
+    /// The historical battle's files (scripts, tables, loc; with `picture`, the menu's picture from the viewport) and the warnings.
+    fn battle_pack_files(&mut self, e: &mut Editor, picture: bool) -> Result<(Vec<(String, Vec<u8>)>, Vec<String>), String> {
+        let p = scene_doc(e).map(|d| d.project().clone()).ok_or("no scene open")?;
         let files = self.files.clone().ok_or("the game's files are not loaded")?;
         let schema = files
             .game()
@@ -437,6 +479,9 @@ impl CinematicTool {
             .and_then(|s| rpfm_lib::schema::Schema::load(&s, None).ok())
             .ok_or("no RPFM schema for the game")?;
         let (mut out, warnings) = wce_cinematic::battle_tables::battle_files(&p, files.as_ref(), &schema, self.scene.lang())?;
+        if !picture {
+            return Ok((out, warnings));
+        }
         // The Historical Battles menu's picture (vanilla's: 512 x 256 RGBA): the viewport's view as it is now.
         let shot = format!("{}/screenshot_small.png", wce_cinematic::battle_export::script_folder(&p));
         let camera = e.viewport.camera();
@@ -455,11 +500,7 @@ impl CinematicTool {
             }
             None => e.status("Cinematic: no renderer: the battle has no menu picture", true),
         }
-        wce_walls::pack::write_pack(path, &p.game, out, vec![])?;
-        for w in &warnings {
-            e.status(&format!("Cinematic: {w}"), true);
-        }
-        Ok(format!("Cinematic: wrote {} ({} warnings)", path.display(), warnings.len()))
+        Ok((out, warnings))
     }
 
     /// Starts rendering the timeline's clip as a movie pack.
@@ -994,6 +1035,12 @@ impl Tool for CinematicTool {
         if gui::is_item_hovered() {
             gui::set_tooltip("The battle XML, Lua, menu rows, subtitles and loc as one mod pack");
         }
+        if gui::menu_item("Launch the battle in game", None, false, has && self.launched.is_none()) {
+            self.launch_asked(e, false);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Starts the game straight into this battle with the mods chosen in the editor (removed when the game exits)");
+        }
         if gui::menu_item("Movie pack (1080p)...", None, false, has && self.movie_job.is_none()) {
             let name = scene_doc(e).map(|d| sanitize_key(&d.project().battle.key)).unwrap_or_default();
             let filters = [("Mod pack".to_owned(), "*.pack".to_owned())];
@@ -1084,6 +1131,20 @@ impl Tool for CinematicTool {
             }
             queue(e, Pending::SceneNew(a.join(" ")))
         });
+        c.add(
+            "scene_launch",
+            "scene_launch [--dry-run] [--ignore-movie-packs]",
+            "Launches the scene's battle in the game (a dry run: the pack and the command line only)",
+            |e, a| {
+                let dry = a.iter().any(|x| x == "--dry-run");
+                let ignore = a.iter().any(|x| x == "--ignore-movie-packs");
+                match e.with_tool::<CinematicTool, _>(|t, e| t.launch_battle(e, dry, ignore)) {
+                    Some(Ok(m)) => CommandResult::success(m),
+                    Some(Err(err)) => CommandResult::fail(err),
+                    None => CommandResult::fail("the Cinematic tool is not built in"),
+                }
+            },
+        );
         c.add("scene_sample", "scene_sample", "Opens the sample scene (made in <projects>/cinematics the first time)", |e, _| {
             queue(e, Pending::Sample)
         });
@@ -1595,6 +1656,32 @@ impl Tool for CinematicTool {
         }
         self.scene_keys(e);
         self.scene_requests(e);
+        if let Some(r) = &mut self.launched
+            && let Some(m) = r.poll()
+        {
+            e.status(&format!("Cinematic: launch in game: {m}"), false);
+            self.launched = None;
+        }
+        if self.launch_question.is_some() {
+            gui::open_popup("Launch in game##cinematic");
+        }
+        if gui::begin_popup_modal("Launch in game##cinematic", None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            gui::text_wrapped(self.launch_question.as_deref().unwrap_or(""));
+            if gui::button("Launch anyway") {
+                self.launch_question = None;
+                gui::close_current_popup();
+                self.launch_asked(e, true);
+            }
+            gui::same_line();
+            if gui::button("Cancel") {
+                self.launch_question = None;
+                gui::close_current_popup();
+            }
+            gui::end_popup();
+        }
+        if self.scene.launch_request.take().is_some() {
+            self.launch_asked(e, false);
+        }
         if let Some(p) = &project
             && let Some(pos) = self.scene.map_pick.window(e, self.files.as_ref(), &p.map.campaign_map, p.map.position)
         {
