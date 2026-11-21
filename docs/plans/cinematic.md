@@ -71,7 +71,10 @@ tools below (3 to 8).
   `disable_shake`, `enable_anchor_to_army`, `disable_anchor_to_army`.
   - `move_to` (RVA 0x1abaa0): 3 to 7 arguments: position, target (vectors), duration (s), a flag (the scripts' "blend"), the field
     of view in **degrees** (multiplied by pi / 180; default -1, read as "keep"), then two more numbers, default -1, not known. The
-    vanilla scripts pass 5 (fov 33 to 45); the library's skip and restore pass `false, 0, 0, 0`.
+    vanilla scripts pass 5 (fov 33 to 45); the library's skip and restore pass `false, 0, 0, 0`. The flag is `true` in every move of
+    vanilla's cutscenes (cuts of duration 0 and long moves alike), `false` only in the hand-over to the battle camera at their end.
+    The export used `false` on its short steps and the user saw the camera judder and leave the editor's path in game
+    (2026-11-21): the steps are `true` now, 0.2 s long (CAMERA_STEP_MS). In game: **todo** (the user).
   - `change_depth_of_field` (RVA 0x1abe60): a duration alone, or duration, focus distance, focal length, blur size. So depth of
     field can be keyed in battle cutscenes too, not only in movies.
   - `fade(out, seconds)`.
@@ -223,7 +226,7 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    units with `script_name="wce_u<id>"`, the campaign map position `terrain/battles/<map>/` + `tile_map_position`, the weather);
    `<key>_start.lua` (Battle_Script_Header, battle_manager, `generated_battle` with the first clip as the intro), `_declarations.lua`
    (generated armies `ga_<n>`, script units `SU_<id>`), `_cutscenes.lua` (each clip a `cutscene`: actions on the 100 ms tick grid,
-   the camera baked into `move_to` steps of 0.5 s with the field of view, teleports and `goto_location_angle_width` orders,
+   the camera baked into `move_to` steps of 0.2 s (flag `true`, as vanilla's moves) with the field of view, teleports and `goto_location_angle_width` orders,
    `start_taunting`, `kill_number_of_men`, `new_sfx` sounds, music with the dynamic music paused, `scripted_subtitles` keys, `cam:fade`,
    `change_depth_of_field`, the cinematic bars, a skip that teleports units to their ends; never `wait_for_vo`); movie-only tracks
    reported. File > Export > Historical battle pack. Gate `battle_export_check` (XML parses, tables and loc decode back, the expected
@@ -305,6 +308,9 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
    mood events (`new_sfx` + `play_sound`), its music system following. Gate `music_check`. **done**; in game: **todo**
 9. Each track an on / off eye before its name (off: left out of the preview, the movie and the battle; kept). **done**
 10. Listening: the sound picker's rows each a play button, the key's play button, the music key's Listen (20 s of its moods). **done**
+12. The viewport shows what the movie lays over its pictures: the fade, the cinematic bars (an eighth of the height each), the
+    subtitle at the bottom (the language edited). Play at the clip's end starts it over (the Timeline's button and the viewport's
+    chip alike). **done**
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

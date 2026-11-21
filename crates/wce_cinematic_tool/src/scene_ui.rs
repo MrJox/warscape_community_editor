@@ -254,10 +254,7 @@ impl SceneUi {
             gui::set_tooltip("Motion blur in this clip's movie (4 sub-frames a frame, 180 degree shutter; not a game effect)");
         }
         if gui::button(if self.playing { icons::PAUSE } else { icons::PLAY }) {
-            if !self.playing && self.time >= clip.length {
-                self.time = 0.0;
-            }
-            self.playing = !self.playing;
+            self.toggle_play(clip.length);
         }
         gui::same_line();
         let fps = clip.fps.max(1) as f64;
@@ -518,6 +515,14 @@ impl SceneUi {
     /// The viewport follows the camera keys: while the clip plays (not while recording), or when looking through them.
     pub fn follows_keys(&self) -> bool {
         (self.playing && !self.recording) || self.look_through
+    }
+
+    /// Play / pause; at the clip's end, play starts it over.
+    pub fn toggle_play(&mut self, length: f64) {
+        if !self.playing && self.time >= length - 1e-6 {
+            self.time = 0.0;
+        }
+        self.playing = !self.playing;
     }
 
     /// Starts or stops recording the camera.
