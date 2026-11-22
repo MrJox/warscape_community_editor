@@ -78,17 +78,14 @@ open and save the kit's tiles.
 
 ## Building from source
 
-You need [Rust](https://rustup.rs) (stable). The build fetches [rpfm_lib](https://github.com/Frodo45127/rpfm) from git.
-
-**Windows**: Cargo 1.91 or newer, and Visual Studio 2022's C++ build tools with CMake (SDL3 is built from source):
+**Windows**: you need [Rust](https://rustup.rs) 1.91 or newer, and Visual Studio 2022's C++ build tools with CMake.
 
 ```powershell
 cargo build --release -p wce_app --no-default-features --features release
 ```
 
-**Linux**: the editor's Direct3D 11 renderer runs on DXVK-native (over Vulkan). A one-time CMake step builds it and vkd3d-utils into
-`build/` (see [THIRD_PARTY.md](THIRD_PARTY.md)). You need a Vulkan driver, CMake 3.24+, Ninja, a C/C++ compiler, git, meson, glslang,
-autoconf, automake, libtool, bison, flex, perl, `widl` (from Wine), and the SDL3 and Vulkan headers. On Arch Linux:
+**Linux**: you need [Rust](https://rustup.rs), a Vulkan driver, CMake 3.24+, Ninja, a C/C++ compiler, git, meson, glslang, autoconf,
+automake, libtool, bison, flex, perl, Wine, and the SDL3 and Vulkan headers. On Arch Linux:
 
 ```sh
 sudo pacman -S cmake ninja meson glslang autoconf automake libtool bison flex perl wine sdl3 vulkan-headers vulkan-icd-loader
@@ -96,8 +93,7 @@ cmake -S . -B build -G Ninja
 cargo build --release -p wce_app --no-default-features --features release
 ```
 
-The editor is `target/release/wce` (`wce.exe` on Windows). On Linux, file dialogs use zenity or kdialog. `scripts/flatpak.sh` builds
-the Flatpak.
+The editor is `target/release/wce` (`wce.exe` on Windows). On Linux, file dialogs need zenity or kdialog.
 
 Contributors: how the editor works is in [docs/editor.md](docs/editor.md), the roadmap in [PLAN.md](PLAN.md), the checks in
 [docs/baseline.md](docs/baseline.md), and the project's rules in [AGENTS.md](AGENTS.md).
