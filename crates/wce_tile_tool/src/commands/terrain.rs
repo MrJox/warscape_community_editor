@@ -268,6 +268,13 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("shores", "shores", "make the rivers' and lakes' shores now and log their reeds and stones", |e, _| {
+        let Some(d) = document(e) else { return fail("no tile open") };
+        d.finish_shores();
+        let (reeds, stones) = d.tile().shore_counts();
+        ok(format!("{reeds} reed(s), {stones} stone(s)"))
+    });
+
     c.add(
         "river_check",
         "river_check",

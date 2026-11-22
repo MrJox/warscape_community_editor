@@ -39,6 +39,7 @@ pub mod road_layout;
 pub mod road_pieces;
 pub mod roads;
 pub mod share;
+pub mod shores;
 pub mod sources;
 pub mod splines;
 pub mod ted_scene;

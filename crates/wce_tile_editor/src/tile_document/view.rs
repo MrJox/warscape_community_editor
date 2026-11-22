@@ -2047,6 +2047,7 @@ impl Tile {
         self.refresh_roads();
         self.refresh_texture_rules();
         self.refresh_biomes(false);
+        self.refresh_shores(false);
 
         // What the layers wrote is no edit of the history's, which is what the terrain follows otherwise.
         // The polygons lie on it too (a kit wall's own layer raised the ground over its line, which was left under it).
@@ -2086,6 +2087,7 @@ impl Tile {
         self.update_list_trees(scene, layer, false);
         self.update_grass(scene, layer, false);
         self.show_biome_items(scene);
+        self.show_shore_items(scene);
 
         // A type that has markers now but had none when the tile was published (buildings whose models turned out not to load) needs its
         // overlay entity.

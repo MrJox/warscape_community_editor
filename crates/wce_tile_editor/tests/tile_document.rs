@@ -3387,7 +3387,8 @@ fn a_lake_is_painted_with_the_area_brush() {
     let (w0, water, at) = (width(&d), d.lake_water(lake), d.tile().world_position(lake));
     assert!((w0 - 50.0).abs() < 4.0, "the stroke's width: {w0}");
 
-    let grown = d.area_stroke(Some(lake), None, &[(150.0, 100.0), (170.0, 100.0)], 15.0, false).unwrap();
+    // Overlapping it (a stroke that only touches its edge may leave a sliver between them).
+    let grown = d.area_stroke(Some(lake), None, &[(130.0, 100.0), (150.0, 100.0), (170.0, 100.0)], 15.0, false).unwrap();
     assert_eq!(grown, vec![lake]);
     assert!(width(&d) > w0 + 40.0, "grown: {}", width(&d));
     assert!(
@@ -3463,4 +3464,27 @@ fn a_river_is_picked_by_a_click_on_its_water() {
     // 45 m wide: 15 m off its middle line is on its water, 30 m off is past it.
     assert_eq!(t.pick_polygon(Float3::new(130.0, 0.0, 143.0), 1.0), Some(r));
     assert_eq!(t.pick_polygon(Float3::new(130.0, 0.0, 158.0), 1.0), None);
+}
+
+/// A river the editor draws has a shore: reeds and stones by its water, thicker when asked, none when turned off.
+#[test]
+fn a_drawn_river_has_reeds_and_stones_along_its_shore() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(60.0, y(&d, 60.0, 128.0), 128.0), Float3::new(200.0, y(&d, 200.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    assert_eq!(d.tile().tscene().get(r, "wce_shores").as_deref(), Some("1"), "on for a drawn river");
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    let (reeds, stones) = d.tile().shore_counts();
+    assert!(reeds > 0 && stones > 0, "{reeds} reeds, {stones} stones");
+
+    d.set_attribute(r, "wce_shore_reeds", "thick");
+    d.finish_shores();
+    assert!(d.tile().shore_counts().0 > reeds, "thicker: {:?}", d.tile().shore_counts());
+
+    d.set_attribute(r, "wce_shores", "0");
+    d.finish_shores();
+    assert_eq!(d.tile().shore_counts(), (0, 0), "off");
 }
