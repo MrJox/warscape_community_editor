@@ -11,6 +11,7 @@ of a tile's variations ([plans/tile_variations.md](../plans/tile_variations.md))
 finds it: an attribute `wce_...`, an element `Wce...`. The root `<project>` is marked `wce_version="1"`. Numbers keep full precision;
 TEd's precision is applied by the conversion only. A placed prefab is an instance group with `wce_prefab="<key>"`, saved without its
 contents (the editor fills them in from the prefab on open).
+A project extracted from an exported tile (docs/formats/tile_workflow.md) has `wce_extracted_tile="true"` on its root.
 
 ### A combined project (several variations in one file)
 
@@ -78,7 +79,10 @@ blocks                      the base
 per layer:
     u64  id
     text name               (u32 length, UTF-8)
-    text owner              empty: the user's; "road:<id>[@<variation>]#<signature>", "wall:<key>[@<variation>]#<signature>": made by a feature, made again when what it is made from changes
+    text owner              empty: the user's; else made by a feature, made again when what it is made from changes:
+                            "road:<id>[@<variation>]#<signature>", "wall:<key>[@<variation>]#<signature>",
+                            "river:<id>[@<variation>]#<signature>" (a river's bed), "prefab:<n>#<signature>" (a prefab
+                            reference's ground), "texture_rules" (the texture rules' blend layer)
     text depends            (version 3+) the scene layer it exports with (its wce_layer_id); empty: always
     text variations         (version 4+) the combined project's variations it belongs to, comma separated; empty: all
     u8   replace            (version 4+) 1: where it holds a block, it is what shows (a "Variation patch" layer)
@@ -91,9 +95,13 @@ Blocks: `u32` count, then per block present its `u32` index (row-major over the 
 type's samples: height `f32` metres (the base the ground, a layer what it adds times its opacity, a replacing layer what shows); blend 16 x
 `u16` (TEd's channels); ground type 4 x `u8` (RGBA). A block a layer lacks is nothing there.
 
+A stack keeps its layers in three bands by owner (`terrain_layers::order_of`): the texture rules' under the user's, the user's, then the
+features' (roads, walls, rivers, prefabs) on top. Layers of a tool no longer in the editor (`erosion#`, shelved 2026-11-21) are dropped
+when a tile is opened.
+
 In a combined project a layer belongs to its own variations, narrowed by its `depends` layer's (a layer exporting with a scene layer some
 variations lack is not in theirs). The merge keeps the reference variation's base; the others' become **patches that build on each other**,
 replacing layers right above it ("Variation patch: small, medium"): each variation in turn, against what the patches so far give it, a
 block it differs in goes into a layer of it and of every later variation whose base has that block the same (heights compared as each
-stores them). A procedural road's and a kit wall's layers are made per variation, over that variation's ground (their owners carry
+stores them). A procedural road's, a kit wall's and a river bed's layers are made per variation, over that variation's ground (their owners carry
 `@<variation>`); a prefab reference's ground layer has the reference's variations.

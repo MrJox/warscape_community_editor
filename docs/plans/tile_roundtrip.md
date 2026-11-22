@@ -4,10 +4,11 @@ A tile is read into one in-memory model (`wce_tile_model`) and written out of it
 writer per game format. Phase 1: Attila's TEd project (raw tile) both ways, byte for byte. Phase 2: Attila's exported binary tile (what
 BOB writes and the packs ship) into the same model and back, then binary -> raw (decompile) and raw -> binary (compile).
 
-## Status (2026-10-26)
+## Status (2026-11-22)
 
 Phase 1 done (2026-10-22). Phase 2 done: step 1 inventory and codecs, step 2 `attila.tile_binary`, step 3 the decompiler, step 4 the
-compiler with stages A, B and C, carried outputs and the editor workflow (2026-10-24). The open items are below.
+compiler with stages A, B and C, carried outputs and the editor workflow (2026-10-24). Pack output done (2026-10-26). The open items
+are below.
 
 ## Decisions
 
@@ -45,8 +46,9 @@ compiler with stages A, B and C, carried outputs and the editor workflow (2026-1
 
 ## Open
 
-1. **Pack output for "Save as exported tile"**: PARTIAL. Only tiles with procedural walls get a pack
-   (`wce_walls::export::save_exported_walls`); the others go through `attila::workflow::save_exported_scene`, a folder only.
+1. Done (2026-10-26): **pack output**. File > Export > To mod pack (`TileTool::save_to_pack`, command `save_to_pack`) compiles any tile
+   into a pack (walls through `wce_walls::export::save_walls_to_pack`); As exported tile stays a folder
+   (`attila::workflow::save_exported_scene`).
 2. **Stage A: 16 values beyond the text's precision** on the corpus run, all of the known kinds (escalation BMD and prop transforms,
    definition, deployment). Decide per value whether it is the text's limit or a port difference.
 3. **`vegetation_exclusion.xml`** (4 encampments) is carried: TEd's box comes from the editor's loaded models and is not reproduced.

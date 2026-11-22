@@ -1,12 +1,12 @@
 //! Launch in game (docs/plans/launch_in_game.md; the command line: docs/re/game_command_line.md): the open tile, exported, in a battle the
 //! game starts straight into, with the tile's exported files, the tile database and the battle's XML. Two ways to hand them over:
 //!
-//! - **loose** (the default): a working directory (`add_working_directory`), with only the mod packs the tile's assets need ([`needs`]).
+//! - **loose**: a working directory (`add_working_directory`), with only the mod packs the tile's assets need ([`needs`]).
 //!   A mod pack's file wins over a loose one, so when a needed pack has a path the tile ships (TDD's tile database), that launch uses the
 //!   pack instead;
-//! - **pack**: a mod pack `data\wce_launch.pack` (the game takes mod packs from `data\` only) named first (first listed wins), then the
-//!   mod packs chosen in the editor. It is removed when the game exits, or at the next launch or start of the editor; it carries a marker,
-//!   so a pack of that name the editor did not write is never removed.
+//! - **pack** (the default of the Tile tool's launch settings): a mod pack `data\wce_launch.pack` (the game takes mod packs from `data\`
+//!   only) named first (first listed wins), then the mod packs chosen in the editor. It is removed when the game exits, or at the next
+//!   launch or start of the editor; it carries a marker, so a pack of that name the editor did not write is never removed.
 //!
 //! The launcher's `used_mods.txt` is never touched.
 

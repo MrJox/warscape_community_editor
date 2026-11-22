@@ -3,9 +3,10 @@
 Copies of the modified documents written every few minutes into an autosave folder, never over the project's files, and offered back on
 the next launch after a crash.
 
-State: planned 2026-11-14 with the user and built the same day (branch `autosave-plan`); how it works now:
-[editor.md, Autosave](../editor.md#autosave). Replaces the Autosave item of [editor_todo.md](editor_todo.md). Left: prefab stages (below),
-and a try of the timer and the dialog in an interactive session (the scripted checks cover the copies and the restores, not those two).
+State (2026-11-22): planned 2026-11-14 with the user and built the same day, in master; cinematic scenes added 2026-11-21 (their
+`project.json`). How it works now: [editor.md, Autosave](../editor.md#autosave). Replaces the Autosave item of
+[editor_todo.md](editor_todo.md). Left: prefab stages (below), and a try of the timer and the dialog in an interactive session (the
+scripted checks cover the copies and the restores, not those two).
 
 ## Decisions
 
@@ -13,7 +14,8 @@ and a try of the timer and the dialog in an interactive session (the scripted ch
   the user). Not mounted by the VFS and not read by any loader: only the recovery reads it.
 - **Never over the project:** an autosave writes a copy; it never marks the document saved, never touches its history's saved point and
   never changes where Save writes.
-- **Which documents:** tiles, battle maps, UI layouts, weather files and the weather database. Not prefab stages (open point below).
+- **Which documents:** tiles, battle maps, UI layouts, weather files and the weather database; cinematic scenes since 2026-11-21. Not
+  prefab stages (open point below).
 - **Retention:** the last N copies per document, rotated (N a setting, default 3). Recovery lets the user pick which one.
 - **Recovery:** offered at the next interactive launch (and after a game switch, for that game's folder). A clean quit deletes the
   session's copies; a document saved, or closed with Discard, loses its copies at once (its file has everything then, or the user threw
@@ -56,6 +58,7 @@ the heights' stored range) is put back after the copy, so the next real Save is 
 | `MapDocument` | the files the edits made again (`attila::write` / `built::write`'s bytes), and `refs.txt` naming the files that were not edited (an LF is large; copying it every few minutes would stall the editor) |
 | `TileDocument` | the tile in the kit's layout: `raw_data/terrain/tiles/.../<variation>/` written as a Save into another folder writes it, its entry (`_tile_database/TILES/<name>.xml`, as it is in memory) and `_settings.xml`. No sidecar format: the copy opens as a kit tile with its entry |
 | The weather database (the picker's working copy, not a document: `Tool::autosave_work`) | `warscape_asset_variation_db.xml` |
+| Cinematic scene (`wce_cinematic_tool`, 2026-11-21) | its `project.json` |
 
 ## Recovery
 

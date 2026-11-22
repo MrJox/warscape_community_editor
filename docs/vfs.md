@@ -1,52 +1,35 @@
-# VFS: pack access through RPFM
+# VFS: the game's files
 
-`libs/vfs` gives the editors one view of the game's packs. It has no pack reader of its own; every read goes through RPFM.
+`wce_vfs` gives the editor and its tools one view of a game's files. It has no pack reader of its own: packs are read in-process with
+rpfm_lib, lazily (a pack's file data stays on disk until a file is read). There is no server, no index cache and no extract cache.
 
-## Layers
+## Pieces
 
 | Piece | Where | Role |
 |---|---|---|
-| `GameProfile` | `libs/game` | Which packs exist and in what order: `used_mods.txt` mods (first listed wins), the DLC `extra_vanilla` packs, then `data/manifest.txt`. Attila is the only profile; engine constants and shader names join it in Phase 3. |
-| `IVfs` / `Vfs` | `libs/vfs/vfs.h` | `mount`, `packs`, `list`, `owner(s)`, `fetch`, `fetch_from`, `prefetch`, `read`. Pack priority, the pack index cache (`<cache>/index`, keyed by size and mtime) and the extract cache (`<cache>/x/<pack id>/<path>`) live here, so they are the same for every backend. Loose overlay folders (`Config::overlay_folders`) rank above all packs and are read in place. |
-| `PackBackend` | `libs/vfs/pack_backend.h` | `list(pack)` and `extract(pack, paths, root)`. One implementation (tests and `vfs_probe --compare` pass their own to `Vfs`): |
-| `rpfm_server` backend | `rpfm_server_backend.cpp`, `rpfm_client.cpp` | JSON-RPC 2.0 over WebSocket (`ws://127.0.0.1:45127/ws`) on WinHTTP (libcurl on Linux); calls `session.set_game`, `pack.open`, `files.list`, `files.extract`, `pack.close`, `session.disconnect`. |
+| `GameProfile` | `wce_foundation::game` (re-exported by `wce_vfs`) | the game's packs and their order (`pack_order`, `pack_order_with`): the mods first (first listed wins), then the vanilla packs: the patch packs, then the rest, each group in the order of `data/manifest.txt` (after the DLC packs it does not list) or of the profile's list. The engine's exact order between mods and between vanilla packs of one kind is not verified. |
+| `Config`, `Vfs` | `wce_vfs` (`lib.rs`) | `Vfs::mount(&Config)`: the game folder, its profile, the mod packs (by file name in the data folder; `None`: the launcher's `used_mods.txt` when `use_mods`), and loose overlay folders mounted above every pack, highest priority first. `packs`, `files`, `list`, `owner`, `owners`, `read`, `read_from`, `missing_mods`, `refresh_loose` (a loose file written: that path indexed again, no remount). Paths compare lower-case with forward slashes (`normalize`); each pack keeps its own spelling for reading. An empty file in a pack removes the path from the packs below it (the patch packs remove files that way), unless a pack above has it again. |
+| `Files` | `wce_vfs::files` | what the tools read through, from any thread: `read`, `exists`, `list`, `game`, `mount_id` (another mount has another id, for caches of what was found). `Vfs` implements it; `FolderFiles` reads an extracted copy of the packs (tools and comparisons). |
+| generated files | `wce_vfs::generated` | files made in memory and read before the packs and folders by every `Files` here (the procedural walls' preview pieces), process-wide. |
+| `mod_pack` | `wce_vfs::mod_pack` | writing files into a mod pack of a game (`write_file`, `write_files`, `write_new`). |
+| `steam_detect` | `wce_vfs::steam_detect` | first-run helpers: the game found through Steam's libraries; the file and folder dialogs (zenity or kdialog on Linux, PowerShell on Windows). |
 
-The backend is created on first use, so a warm index cache mounts without touching the server.
+## What the editor mounts
 
-## rpfm_server 5.2 (2026-10-13)
+`Editor::vfs_config`: the game folder of the settings, the mod packs chosen in the editor (the game's `mod_packs`; the launcher's list is
+not used), and as overlay folders the project's `loose/` first (what Save writes, [editor.md](editor.md), "Saving and exporting"), then the
+game's `overlay_folders`. No machine paths in code: the settings and their environment overrides are in [editor.md](editor.md),
+"Settings and first run".
 
-The rpfm_cli fallback and the MCP client were removed: RPFM no longer ships `rpfm_cli`, and RPFM 5.2 renamed the MCP tools and gave all MCP clients **one shared
-session** (the attila-toolkit bridge would have seen and changed the editor's game and open packs). The editor now uses the WebSocket API, the one the RPFM UI uses
-(protocol: `rpfm/docs/server/ws-protocol.md`, methods: `rpfm/docs/server/methods/`):
+## Examples
 
-- **Version.** `GET /version` first: a server older than 5.2 is refused with a message that says so (5.1 answers on `/ws` too, with another protocol).
-- **Sessions.** Each WebSocket connection gets a session of its own (game, open packs), isolated from the RPFM UI, other tools and the MCP clients; the server
-  announces its id in a `session.connected` notification. A dropped connection reattaches with `/ws?session_id=<id>` (the server keeps a session 5 minutes) and the
-  request is sent again; if the server lost the session (restart), the backend starts a new one, sets the game and re-opens the packs. Checked by killing the server
-  between two calls: the backend restarted it and carried on.
-- **Lifetime.** The client ends its session with `session.disconnect`. The server exits when its last WebSocket session is gone, so a server the editor started
-  stops with the editor; one the RPFM UI started stays with the UI.
-- **Jobs.** `session.set_game` runs as a job (`{"job": n}`, then `job.wait` until `finished`); it is called with `rebuild_dependencies: false` (the default
-  loads all the game's dependencies). Other methods answer directly.
-- **Packs.** `pack.open` takes one path and returns a UUID key (the backend keeps path -> key); `lazy_loading: true` keeps file data on disk. `files.list` pages
-  (500 by default): the backend asks for everything at once and checks `total`. `files.extract` (`source: {"pack": key}`, `paths`, `destination`) writes
-  `<destination>/<path>` and fails with "There were N errors while extracting." when some paths are not in the pack; the others are written.
-- **Errors** are `{"code", "message", "data": {"kind"}}`; `RpfmError::kind` keeps the kind.
-- `file.read` can return a file's bytes as base64 (the old MCP tool returned a JSON array of numbers): the extract cache is kept anyway, for the warm start and
-  the gates.
+- `vfs_probe` (`WCE_GAME=<game folder> [WCE_GAME_KEY=<key>] cargo run -p wce_vfs --example vfs_probe [--find <substring>]...
+  [--extract <prefix> <folder>]... [path...]`): mounts the packs and prints what the editor would see.
+- `vfs_ls <game dir> <prefix> [--vanilla] [--extract <path> <out file>]`: the pack files under a prefix with their sizes, or one written out.
+- `vfs_exists <list file>`: which paths of a list the packs lack.
 
-The port is still fixed (45127, no option). The 2026-10-09 spike (RPFM 4.5, MCP) is in the git history of this file.
+## History
 
-## Settings
-
-No machine paths in code. What gets mounted (the game folder, the mod packs, the loose folders) comes from the editor's settings, see
-"Settings and first run" in `docs/editor.md`.
-
-## Gates
-
-- `vfs_probe --compare [--reference <cache dir>]`: cold mount of all packs through rpfm_server in an empty cache, checked against a reference cache written earlier
-  (default: the configured `cache_dir`, read as it is): same pack order, same file lists and winners, same bytes for the first 2 files per pack and file type (shader,
-  model, texture, xml, environment, lua) that the reference has extracted, plus up to 20 paths that several packs provide. Exit 1 on a difference or when the reference
-  has nothing to compare. `--per-type` sets the sample size, `--time` adds timings. It replaced the rpfm_server vs rpfm_cli comparison.
-- `foundation_check`: JSON and settings.
-- `scripts/vfs_timing.sh`: cold and warm start of the weather tool.
+2026-10-09: a C++ VFS over RPFM 4.5 (MCP, with an rpfm_cli fallback); 2026-10-13: over rpfm_server 5.2's WebSocket API with its own index
+and extract caches, checked by `vfs_compare` (`docs/baseline.md`). The Rust port reads the packs with rpfm_lib in-process, which retired the
+server, the caches and that gate. The detail is in the git history of this file.

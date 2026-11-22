@@ -213,7 +213,7 @@ const THRONES_OPTIONS: &[GfxOption] = &[
 
 /// Rome 2's: six levels (to Extreme), no screen space reflections, and its effects of its own (lightning, the foliage hiding). Shadows,
 /// water, sky, effects, filtering, MLAA, god rays, tessellation and alpha blending as its engine applies them (docs/re/graphics_options.md,
-/// "Rome 2"); its building and unit detail scale the LOD distances (not ported).
+/// "Rome 2"); its building detail scales the LOD distances (`LodQuality::rome2_building`), its unit detail is not ported.
 const ROME_2_OPTIONS: &[GfxOption] = &[
     opt("gfx_aa", "Anti-aliasing", GfxKind::Levels(AA_ROME_2), "0", true),
     opt("gfx_texture_filtering", "Texture filtering", GfxKind::Levels(FILTERING), "3", true),

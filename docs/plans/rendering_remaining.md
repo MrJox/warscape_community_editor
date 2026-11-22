@@ -1,10 +1,11 @@
 # Rendering: what's left
 
-Status (2026-10-26). The tile view draws the game's look with the game's shaders: terrain, buildings (every mesh material tiles use),
+Status (2026-11-22). The tile view draws the game's look with the game's shaders: terrain, buildings (every mesh material tiles use),
 vegetation, grass, decals, water (rivers, sea, lakes, the models' water planes), point lights, placed VFX with their lights, and the
 weather. Done by 2026-10-20: seasons and snow, terrain shadow casting (depth-only shadow map and bias for every caster), the maps'
 sampler states, the shaders' world in game units (`RenderScene::game_units`, docs/re/renderer.md), the battle sea (ocean.hlsl, surfaces,
-whitecaps, wind) and the game's LiSPSM shadow fit. Map-level terrain (feather into the base terrain, far maps, outfield, the resolve's
+whitecaps, wind) and the game's LiSPSM shadow fit; since then faded buildings (2026-10-30), the graphics settings (2026-10-31 .. 11-01) and
+MSAA (2026-11-01, docs/plans/msaa.md). Map-level terrain (feather into the base terrain, far maps, outfield, the resolve's
 2nd / 3rd layers, virtual textures, large map context performance) is in docs/plans/map_context_todo.md; the weather's engine leftovers
 in docs/plans/weather_current_state.md.
 
@@ -45,7 +46,7 @@ the battle river shader has no fade at the ends and no foam, `g_refraction_depth
   - Texture quality (not applied: the mesh textures' category is a run-time value, docs/re/graphics_options.md): a game frame at each
     level shows which textures drop mips, to settle the category.
 - Building collapses: the dust emission mesh and box, the effect group size, the debris, the bursts' timing, `.meta` effects on bones,
-  the playback speed (docs/re/buildings.md, "Collapses between levels"). Not done: `SOUND_BUILDING` (the editor has no audio).
+  the playback speed (docs/re/buildings.md, "Collapses between levels"). Not done: `SOUND_BUILDING` (the tile view plays no sound).
 - TDD's dead tree bark is near black: `tdd_pack6_weather_1.0.0.pack` ships dark 512 x 2048 `dead_tree_{dry,wet}_diffuse` (and `_ab`)
   where vanilla's are light grey; the editor draws what the pack holds. Check the stumps in game with the same packs (e.g.
   gen_dun_medium_final_2) and brighten the mod's texture if dark there too.
@@ -63,16 +64,16 @@ the range by the camera's movement since the measurement; 3. an optional stable-
   by time); the engine binds `commontextures/vfx_fire_diffuse` there for every rigid material, the renderer binds black outside the
   burning passes. Find the weather type, then bind it everywhere.
 
-- Blended forward pass for rigid meshes (from docs/plans/tile_ted_parity.md 5d): a building below opacity 1 is filed apart by the engine
-  (render flag 0x2000) and drawn through the blended forward shaders (`rigidstandard ps30_alpha_blend_40`, `rigid_forward_lighting`),
-  which multiply the alpha by floor(POSITION4.w) * 0.001. The renderer has none of them: faded buildings with opaque materials show no
-  fade, and alpha-blended materials (alpha_mode 2) draw opaque. Needs the forward lighting cbuffers (sun, shadows, env cube).
+- Blended forward pass for rigid meshes (from docs/plans/tile_ted_parity.md 5d): done 2026-10-30 for faded instances (opacity below 1,
+  the engine's render flag 0x2000): `pass_faded` draws them after the lighting with each material's `ps30_alpha_blend_40`
+  (`FADED_PASSES`). Alpha-blended materials (alpha_mode 2) at opacity 1 were listed as drawing opaque; not rechecked since.
 
-- GPU timer: `perf` shows "no GPU timing yet" (`crates/wce_render/src/gpu_timer.rs:196`); find why.
+- GPU timer: `perf` shows "no GPU timing yet" (`GpuTimer::report` in `crates/wce_render/src/gpu_timer.rs`); find why.
 - Engine items (docs/re/renderer.md, "Remaining engine items"): the env cube's top-face cloud colour (needs the EnvMapGen draw traced or
-  a dump); the SSAO jitter texture's generator; the cloud columns' spawn interval (assumed, `wce_scene` clouds.rs:255).
+  a dump); the SSAO jitter texture's generator. The cloud columns' spawn interval was decoded 2026-10-28 (`wce_scene` clouds.rs,
+  `CloudField`); no dump with a moving cloud field checks it yet.
 - VFX rigid lights' flicker phase: 0 for every VFX light (all fires flicker in sync); lead in docs/re/particles.md. The map's
-  POINT_LIGHT_INSTANCE phase is done (`light_phase`, tile_document/view.rs).
+  POINT_LIGHT_INSTANCE phase is done (`light_phase`, `wce_tile_editor` tile_document/view.rs).
 - VFX season mask (+0x60): PARTIAL, the editor filters by `seasons`; the game's check is not traced.
 - Grass black pixels: some grass pixels come out (0, 0, 0) after lighting (~23k in a 1600 x 900 forest view), likely a zero normal
   normalised to NaN. Not traced.

@@ -1,5 +1,6 @@
-//! A campaign's characters and forces at its start, from its startpos (Attila's and TDD's layout; docs/plans/startpos_editing.md):
-//! who stands where on the campaign map, as what (a general and his army or navy, an agent), with which art set and units.
+//! A campaign's characters and forces at its start, from its startpos (Attila's, TDD's and Thrones' layout;
+//! docs/plans/startpos_editing.md): who stands where on the campaign map, as what (a general and his army or navy, an agent), with which
+//! art set and units.
 //!
 //! Records (`CAMPAIGN_STARTPOS/CAMPAIGN_ENV/CAMPAIGN_MODEL/WORLD/FACTION_ARRAY/FACTION`, its key `^+2`; leaf indices count records):
 //! - `CHARACTER_ARRAY/CHARACTER`: [0] `LOCOMOTABLE` ([0] the world point (x east, y north), [1] / [2] the hex column / row, [3] the

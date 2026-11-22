@@ -1,7 +1,7 @@
 # UX pass: to do later
 
 Left from the UX pass of 2026-11-13 (branch `feature/ux_part2`); the weather tool's ideas are in [weather.md](weather.md), the tools sharing
-one scene in [editor_todo.md](editor_todo.md).
+one scene in [editor_todo.md](editor_todo.md). Status (2026-11-22): the top menus done (2026-11-14); every item below still open.
 
 ## Top menus
 
@@ -17,8 +17,9 @@ Done 2026-11-14 (docs/editor.md, "Menus"). Left:
 
 ## Save as
 
-- Campaign maps: File > Save as is on (a copy elsewhere now leaves the map unsaved); a map is a projects-folder layout too, so it may
-  want Save as off as tiles have it.
+- Campaign maps: File > Save as is on: it writes a copy without retargeting the map or clearing its unsaved history
+  ([terrain_save_export.md](terrain_save_export.md), 2026-11-15); a map is a projects-folder layout too, so it may want Save as off as
+  tiles have it.
 
 ## Draggable flag
 

@@ -1,5 +1,8 @@
 # Ship sails and ropes: cloth and rope simulation (spike, 2026-11-11)
 
+The editor's port: `wce_render`'s `cloth_sim.rs` (the solver, the wind, the bone palette), `renderer/ropes.rs` (the ropes) and
+`ship_model.rs` (the oars).
+
 Attila's sails are a verlet particle cloth (a `Cloth` sim mesh) that skins a `WeightedCloth` display mesh, with verlet `Rope`s hanging from
 the cloth or from the model and `CollisionShape` spheres keeping the cloth off the masts. Method: the sail models' numbers first
 (`rmv2_mats` and a scratch v6 dump of one sail model per ship class, 11 models, 2026-11-11), then Attila's `empire.retail.dll` in Ghidra
@@ -198,7 +201,8 @@ There is no battle wind direction on this path. What exists elsewhere, none of i
   (`WindGaugeDisplay.cpp`, 0), the weather's `wind_dir_degrees` / `g_wind_direction` (shaders, vegetation): not traced; not on the sail path.
 - The `*_SAIL_WIND_GUST` and `SHIP_GUST_HEIGHT_OFFSET` tweakers drive sound events (`FUN_104e7340`, `FUN_104341a0`), not the cloth.
 
-**For the editor**: the game's battle world +Z, i.e. W from the ship's model → world rotation exactly as above; no wind setting.
+**For the editor** (done, `cloth_sim::ship_wind`): the game's battle world +Z, i.e. W from the ship's model → world rotation exactly as
+above; no wind setting.
 
 ## Sail states (furling)
 **Attila's sails have no states: they are always fully set.** The ship's speed, its sail order, anchoring and deployment do not change the
@@ -281,11 +285,12 @@ shader samples only the diffuse (alpha test at 84/255), the normal (x = R, y = A
 `camera_VS_PS` (`time_in_sec` scrolls the fire). No rope tint or colour constant. It writes albedo `sqrt(diffuse)` (fire blended in by
 POSITION4.w), RT2 = (1, 1, 1, 0).
 
-**For the editor** (its two vertices per node with u 0 at −r, v = distance / (2r)): put **+r on u = 0 and −r on u = 1**, take **v from each
-node's `uk_1`** instead of the distance, and use the averaged tangent above. With v = distance / 2r the texture repeats every 2r ≈ 0.06 m
-instead of every 1/k ≈ 0.2..0.3 m: 3..5× too many twists, so the strands look 3× finer (a thinner-looking rope), the twist drops into the
-smaller mips and, the DXT1 diffuse's cut-out texels being black, the albedo darkens. **ASSUMPTION** that this, not the width, is the
-"3× thinner, darker" difference: the game's width is the same ±r.
+**For the editor** (its two vertices per node then had u 0 at −r, v = distance / (2r)): put **+r on u = 0 and −r on u = 1**, take **v from
+each node's `uk_1`** instead of the distance, and use the averaged tangent above. With v = distance / 2r the texture repeats every
+2r ≈ 0.06 m instead of every 1/k ≈ 0.2..0.3 m: 3..5× too many twists, so the strands look 3× finer (a thinner-looking rope), the twist
+drops into the smaller mips and, the DXT1 diffuse's cut-out texels being black, the albedo darkens. **ASSUMPTION** that this, not the
+width, is the "3× thinner, darker" difference: the game's width is the same ±r. Done (`cloth_sim.rs` keeps the material's and the nodes'
+`uk_1`); the editor draws the strips through the world technique (`renderer/ropes.rs`).
 
 ## Oars (2026-11-11)
 Not cloth: rigid models posed by a one-bone clip, driven by a per-ship state machine. Source: `EmpireBattle\...\view\Naval\ShipEntity\
@@ -356,7 +361,8 @@ stopped at (mid-stroke the blades go 29..47° down and sweep ±20..50°), each o
 not on the first frame (+0x31). `FUN_10534bc0` runs per-oar foam (`FUN_10568f90`, the `oar_sea_foam_*` tweakers) from the ship's speed
 (+0x34, ship +0x1e0 while moving): not traced further.
 
-**For the editor**: per socket of kind 6..11, model = the level's `models_oars.rigid_model`, clip = its `left_row` / `right_row`;
+**For the editor** (done, `ship_model.rs`): per socket of kind 6..11, model = the level's `models_oars.rigid_model`, clip = its `left_row`
+/ `right_row`;
 transform = ship model → world × translate(socket) × the clip's bone at t_i; t_i = (offset o_i, uniform 0..0.25 s, per oar) + T, T = 0
 for an idle ship (frozen), T += dt rowing (wrap by 2.0 s). The bind pose is never shown (and would put the right blades inboard).
 

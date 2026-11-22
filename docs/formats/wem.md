@@ -56,7 +56,7 @@ Wwise 2014.1.3 converting test WAVs for every Vorbis quality 0 to 10, 1, 2, 4, 5
   codebook plus 144 (92 for the 512/512 blocksize setups). The sizes are kept in a table (`wce_audio::setup_allocs`, 35 setups: the
   grid's and vanilla's); a formula from the codebooks came close (about 4 bytes per used entry) but not exact.
 
-## Encoding (docs/plans/audio.md, step 1.4)
+## Encoding (docs/plans/audio.md, step 1)
 
 aoTuV (libvorbis 1.3.x with aoTuV's encoder) produces Wwise's own setups: at quality 0.4 the setup of Wwise's Voice preset byte
 for byte, at 0.0 vanilla's most common mono setup. Re-encoding 7 vanilla files (mono to 5.1): the same setup as Wwise's, size 0.1 to

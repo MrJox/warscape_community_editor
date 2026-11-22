@@ -1,16 +1,15 @@
 # One project for all of a tile's variations
 
-Today a tile project holds one variation. A settlement has three (`minor`, `small`, `medium`), each a whole project of its own: the
+Before this plan a tile project held one variation. A settlement has three (`minor`, `small`, `medium`), each a whole project of its own: the
 same city three times over, every fix made three times, three times the space. This plan puts all of a tile's variations in **one
 project**. Every layer, group and instance says which variations it belongs to (all by default), and so does every terrain layer.
 An export makes the variation it is asked for: everything that belongs to it, and nothing else. The idea comes from Warhammer III's
 catchment layers.
 
-State: planned and settled 2026-11-15 (the user's answers in "Decisions"). Work on branch `feature/tile_variations`. Done: steps 1
-to 9 (see "Steps" and "Results" below): done 2026-11-15. Not written: the Gates' scripted run (`scripts/tile_variations.txt`);
-its parts were checked one by one (each step's "Checked"). **Revised 2026-11-15** after the user tried it: no viewed variation, the
-user works on the tile itself ("Revision 1: one tile" below, decisions 7 to 10); steps R1 to R4 done 2026-11-15, to be tested by the
-user.
+State (2026-11-22): planned and settled 2026-11-15 (the user's answers in "Decisions"), built the same day on
+`feature/tile_variations` (steps 1 to 9), then **revised** after the user tried it ("Revision 1: one tile": no viewed variation, the
+user works on the tile itself; R1 to R4 done 2026-11-15); in master. How it works now: docs/editor.md, "Tile variations"; the format:
+[formats/tile_wce.md](../formats/tile_wce.md). The open items are under "Open" at the end of the as-built summary.
 
 ## What the games and kits do
 
@@ -103,13 +102,13 @@ that exports only with a scene layer (`depends`).
   when it has one.
 - A combined project always has a `.wcl` file. It holds the shared base and every layer. The kit maps (`height_map_0.png`,
   `blend_map.tif`, `ground_type_map.png`) are made only by an export.
-- **The viewed variation.** The fields (`HeightField`, `BlendField`, `GroundTypeField`) hold the composite of the variation being
-  viewed. A stack composes and absorbs with a filter: a layer that does not belong to the viewed variation counts as hidden. Painting
-  still goes into the working layer, or the base without one, through the existing `absorb` / `onto` path. Switching the variation
-  composes the fields again (`export_into` with the filter). The renderer and everything else that reads the fields stays unchanged.
+- **What shows.** The fields (`HeightField`, `BlendField`, `GroundTypeField`) hold the composite of the variations shown (Revision 1;
+  first planned as one viewed variation). A stack composes and absorbs with a filter: a layer that belongs to no shown variation counts
+  as hidden (`TerrainLayers::set_view`). Painting goes into the working layer, or the base without one. The renderer and everything
+  else that reads the fields stays unchanged.
 - **Heights per variation.** The stacks are in metres. An export quantizes each variation with its own row's `min_height` and
-  `scale`. It keeps the row's values while that variation's composite is unchanged since the merge or import. Fingerprints are kept
-  per variation. Otherwise it computes new values from the composite's range, as the single-variation export does today.
+  `scale` while its composite fits that range (`HeightField::holds_range`), else with the composite's range, as the single-variation
+  export does; no fingerprints.
 - Painted maps that are not layered (`nogo.png`, `lf_influence_map.png`, TEd's painted `protection_map.dds`) are kept **per
   variation**, in `variations/<v>/`. Making them layer kinds could come later. A file that is identical in every variation is
   kept once, in the tile's folder. They stay per variation (the user, 2026-11-15).
@@ -134,28 +133,23 @@ migration's backup keeps the originals. The check below does not compare them.
 
 ## Working in the editor
 
-- **The Variation chip** in the viewport, next to the view modes (`tile_variation <v>`): the viewed variation. The scene shows
-  what belongs to it; the terrain is its composite. The Tile panel's variation chooser switches the view instead of opening another
-  project. *Show other variations* (in the first version, the user 2026-11-15) draws what belongs only to other variations as tinted
-  ghosts: their instances, and the terrain's outline where theirs differs is left for later. Ghosts cannot be picked. Off by default,
-  `tile_variation_ghosts on|off`.
-- **The Scene panel's export column** (the export type of the nearest layer, dimmed when inherited) also shows the variations
-  (`small, medium`, dimmed when inherited). The Inspector has a checkbox per variation for a layer, a group or a variation folder
-  (`tile_variations <list|all>`). An instance has none: it shows its folder's, read-only.
+As built after Revision 1 (below); the full description is docs/editor.md, "Tile variations".
+
+- **The view**: every variation shown at once, each element once; the Scene panel's "Show:" checkboxes (Tile > Variations > Show;
+  `tile_variations_shown <list|all>`) filter it. An element whose variations differ in a value is drawn as its display variation (the
+  first shown one it belongs to) has it. The first version's Variation chip and ghosts are gone.
 - **An edit changes every variation the element is in** (the user, 2026-11-15). There is no "this variation only" mode: something
   that must differ belongs in a folder for its variations.
-- **New elements** go into the active layer and get its variations, as in Warhammer III. If the active layer does not belong to the
-  viewed variation, the new element would not show. The chip warns, as it does for a hidden working layer.
-- **Making one variation differ.** *Move to a variation folder* (the selection's context menu; `tile_to_variation_folder <list>`)
-  moves the selection into a variation folder at its place, made if needed. *Split for this variation* is the usual case in one undo
-  entry: the selection is copied into a folder for the viewed variation, the originals go into a folder for the others, and the
-  selection moves to the copy.
-- **Tidy** (Tile > Variations > Tidy; also run by Combine): variation folders whose contents are identical across their sets join, a
-  folder that holds every variation of its parent is taken away. No export changes. It is an explicit command so that Save stays a
-  minimal edit.
-- **Terrain**: *New layer for this variation* in the Terrain layers section makes a layer that belongs to the viewed variation. The
-  panel shows each layer's variations and warns when the working layer does not belong to the viewed one (the paint would not show).
-- Problems lists elements tagged with a variation their parent excludes, and variations that no longer exist (after one is removed).
+- **Tags**: the Scene panel's Variations column and the Inspector's checkboxes for a layer, a group or a variation folder
+  (`tile_variations <list|all>`); an instance shows its folder's, read-only. New elements go into the working layer and get its
+  variations.
+- **Making variations differ**: *Move to a variation folder* (*Only in <v>*, *In all but <v>*; `tile_to_variation_folder <list>`) and
+  *Split for a variation* (a submenu; `tile_split_variation <v>`), one undo entry each. **Tidy** (Tile > Variations > Tidy,
+  `tile_variation_tidy`; also run by Combine): variation folders whose contents are identical across their sets join, a folder that holds
+  every variation of its parent is taken away; no export changes. An explicit command, so that Save stays a minimal edit.
+- **Terrain**: a variations button on every terrain layer and *New layer for...*; a warning when the working layer is in no shown
+  variation.
+- **Problems** lists elements tagged with a variation their parent excludes or the project does not have, and folders of no variation.
 
 ## Exports and loaders
 
@@ -163,13 +157,14 @@ migration's backup keeps the originals. The check below does not compare them.
   folder: `to_variation`, then `to_ted`, the maps from the stacks, the river files from its rivers, its own files. The entry is
   written with every row. TEd and BOB get a normal kit tile.
 - **As exported tile / To mod pack**: compiles each chosen variation and puts every variation's row in the tile database.
-- **Launch in game**: the viewed variation. The Map context's placement already names a variation, so a combined project serves the
-  same.
-- **Everything else** (the map context, stage B's linking tiles' heights, the Terrain tool's export, vegetation) finds tiles through
+- **Launch in game**: a submenu of the variations (`tile_launch_game --variation <v>`). The Map context's placement already names a
+  variation, so a combined project serves the same.
+- **Everything else** (the map context, the Terrain tool's export, vegetation) finds tiles through
   `sources::find_tile(roots, location, variation)`. For a variation served by a combined project, it returns a **materialized**
-  folder: `<projects>/build/variations/<location>/<variation>/`, a single-variation project made by `to_variation` and the maps'
-  export. A stamp file holds the project's save fingerprint. A stale folder is made again when it is asked for. It is throw-away
-  (`build/`), so loaders don't change, and the space is used only while needed.
+  folder under `<projects>/build/variations/raw_data` (in the kit's layout), a single-variation project made by `to_variation` and the
+  maps' export. A stamp file (`wce_variation.stamp`: the scene's, the layers', the entry's and the files' names, sizes and times) says
+  what it was written from. A stale folder is made again when it is asked for. It is throw-away (`build/`), so loaders don't change,
+  and the space is used only while needed. Stage B's linking tiles are read from their own folders' BOB files: not combined tiles.
 
 ## Migration: Combine variations
 
@@ -212,8 +207,8 @@ is the one with the most shared elements by default. It gives the terrain base.
 **The terrain merge**:
 
 - Each variation's stacks are read (its `.wcl`, or a base made from its maps, in metres, with its row's scale).
-- The merged base is the reference's base. Variations whose base is the same pixel for pixel form one group. For each group other
-  than the reference's, a layer **"Variation base: small, medium"** goes right above the base, tagged with that group. It is a
+- The merged base is the reference's base. As first built, each group of variations with the same base got a layer **"Variation base:
+  small, medium"** right above it; since R2 the patches build on each other ("Variation patch: <variations>", below). Either is a
   **replacing** layer (`Layer::replace`): it holds that group's base whole in each 64 x 64 block where it differs from the reference's,
   and where it holds a block that block is what shows. A difference to add did not do (found by the check, 2026-11-15): heights in f32
   metres lose the steps of a flat tile (`dense_forest_plains/1x1/aa`: a range of 0.09 m, a step of 1.4 micrometres) against another of
@@ -246,146 +241,42 @@ variation has.
   would sit beside variations, not replace them.
 - The tags are names of the entry's variations. Nothing in the model is specific to Attila.
 
-## Steps
+## As built
 
-1. **`to_variation` and the tags** (`wce_tile::variations`): reading the effective sets, filtering, the root's list. Unit tests on
-   small scenes. tile.wce version 2. Version 1 files read as one variation.
-2. **The scene merge** and `tile_combine_check -- <kit tile folder>`: merges the kit's variations and checks each one comes back
-   byte-identical. Run on every multi-variation tile of the Attila kit (228 entries). Also reports the space saved.
-3. **Terrain tags** (done 2026-11-15): `Layer::variations` and `Layer::replace`, `.wcl` version 4, the view filter
-   (`Stack::set_view_hidden`, `TerrainLayers::set_view` with the scene layers' sets from `variations::layer_key_variations`), the
-   "Variation base" layers, the terrain
-   merge. The check above extended to the maps.
-4. **The document**: `TileDocument` over a combined project, the viewed variation, the chip, switching. Undo covers tag edits and
-   copies. `variations::View` says how a variation sees the scene (what is not there, the folders and groups it goes through, its
-   own values); the element index places and shows by it. `TileProject::view_variation` composes the viewed variation's terrain
-   from the layers (a combined project has no maps: blank fields in TEd's layout, `HeightField::flat`, `TiffFile::ted_header`), and
-   Save writes only `tile.wce` and `terrain_layers.wcl` for it.
-   Done (2026-11-15):
-   - Opening: a variation whose folder has no tile while its tile folder's `tile.wce` lists it (`variations::combined_for`) opens
-     the combined project viewing it: by the entry, by the folder, from the Tile panel's variations and the browser. Another
-     variation of the open project is viewed, not opened.
-   - The Variation chip (top right of the viewport, left of the Areas chip; only for a combined project) and
-     `tile_variation [<v>]`. Switching composes the terrain again, rebuilds the element index and the scene's entities, and
-     makes the trees and the grass again. It is not an edit: nothing to undo.
-   - The element index shows, picks and places by `View`; the Scene panel lists the viewed variation's tree
-     (`Tile::tree_children`: a variation folder's contents in its place, other variations' elements left out).
-   - What reads the whole scene rather than the index takes `TileProject::variation_scene()` (`to_variation` of the scene, made
-     per call): the tree and grass generators' exclusion polygons, seeds and static trees.
-   - Checked on `orc_city_a` combined from the kit: `small` viewed in the combined project renders the same as the kit's `small`
-     opened by itself (top-down: identical pixels; low: the same but for a fire's animation).
-   - The scene itself views the variation (`TedScene::set_variation`): `get`, `position`, `euler`, `flags` read its own values
-     (`variations::own_value`), `world_transform` skips the groups it goes through, `find_all` lists only its elements
-     (`in_variation`), so the readers of the whole scene (rivers, roads, walls, siege, the minimap, the Inspector) see what it has.
-     An edit of a value that variations have of their own changes every variation: a `position` moves each by the same amount (each
-     keeps its height on its own terrain), anything else becomes the same in each. `remove` and the moves take an element's
-     `WceVariationValues` lines with it.
-   Undo of tag edits and copies comes with step 5's tools.
-5. **The editor's tools**: the Scene panel column, the Inspector checkboxes, variation folders, *Move to a variation folder*, *Split
-   for this variation*, Tidy, the ghosts, the Terrain layers section, Problems.
-   Done (2026-11-15):
-   - `variations::edit`: `set_variations`, `wrap_in_folder` / `unwrap_folder`, `split_for` (the copies as the variation has them:
-     `to_variation` of their lines), `tidy`; `variations::problems`. Each is one undo entry in the editor (`TileDocument::
-     set_variations`, `to_variation_folder`, `split_for_variation`, `tidy_variations`), and a command: `tile_variations`,
-     `tile_to_variation_folder`, `tile_split_variation`, `tile_variation_tidy`.
-   - The Scene panel: a variations column (the element's, its own bright, inherited dimmed; a click on a layer's, group's or folder's
-     ticks them), variation folders as rows of their own ("Only in small"), the context menu's *Move to a variation folder* and
-     *Split for <viewed>*. The Inspector: a checkbox per variation for a layer, a group or a folder; an instance's, read-only.
-   - Tile > Variations: Tidy, *Show the other variations*. The chip: the same checkbox, and a warning when the working layer is not
-     in the viewed variation.
-   - Ghosts (`tile_variation_ghosts`): each instance only other variations have, outlined (its model's bounds, its models loaded
-     for it) where the first of them places it (`world_transform_as`), in one overlay that is not picked.
-   - The Terrain layers section: a layer's variations after its name, dimmed when not in view; checkboxes for the working layer;
-     *New layer for <viewed>*; a warning when the working layer is not in view. A change of a layer's variations, or of a scene
-     layer's that terrain layers export with, composes the viewed terrain again (`TileProject::refresh_view`), undo too.
-   - Problems: tags that name a variation the project does not have or the parent excludes, and a folder of no variation.
-   - Checked: the kit's 154 tiles need no Tidy and have no Problems after the merge; on `orc_city_a` in the editor, a building split
-     for `small` and moved changes `small` only; split then Tidy gives every variation back as it was; undo of a split leaves nothing
-     to save.
-   Left: the ghosts are outlines, not tinted models; the variations column is text, not icons.
-6. **Exports**: For Assembly Kit, As exported tile, To mod pack, Launch in game. The per-variation height scale.
-   Done (2026-11-15):
-   - `TileProject::materialize` (`variations::materialize`): a variation written as a project of its own under a `raw_data` of the
-     kit's layout: `to_variation` of the scene, its maps composed from the layers that belong to it (`TerrainLayers::for_variation`,
-     also written as its `.wcl` so that a layer exporting with a "Don't Export" scene layer is still left out), its rivers' files, the
-     files the variations share (the tile folder's) and its own (`variations/<v>/`) over them, the entry. The height map keeps its
-     row's range while the composite fits it (`HeightField::holds_range`), else gets the composite's, and the entry written there has
-     it: no fingerprints. The editor's root is `<projects>/build/variations/raw_data` (`TileDocument::variations_build_root`); step 7
-     takes it over.
-   - Every export of a combined project goes through it: For Assembly Kit writes each variation in its folder of the kit
-     (`TileDocument::save_variations_for_kit`) and the entry with every row; As exported tile and To mod pack compile each variation
-     (`ExportInputs::parts`); Launch in game the viewed one. File > Export ticks the variations (all at first); the commands take
-     `--variations a,b` (`save_for_kit`, `save_exported`, `save_to_pack`).
-   - Checked on `orc_city_a` combined from the kit (`examples/tile_materialize_check.rs`, and the editor): every variation's tile.ted
-     is the kit's as the editor reads and writes it back (TEd's `parallax_scale="-0"` aside, as for any kit tile), its height, blend and
-     ground type maps and the entry the kit's byte for byte; `small` compiled from the combined project is the kit's `small`
-     compiled, all 57 files byte for byte, once its `protection_map.dds` is in `variations/small/` (where Combine will put it).
-   - The procedural roads: in a combined project each variation a road is in has its own layers of it, made over its own ground and
-     belonging to it alone (owner `road:<id>@<variation>#<signature>`, layer "Road <id> (<variation>)"); the variation viewed makes
-     its own, the others' stay. An export views each variation it writes in turn (`Tile::export_view`: the project's view only, not
-     the index or the entities), so that its roads' layers and pieces, and its building splines' items, are made on its ground; the
-     variation viewed is viewed again after. The water a road crosses is the viewed variation's rivers (`river_ribbons`).
-     Checked: a road drawn across `orc_city_a` where `minor`'s ground differs: after For Assembly Kit, three layers of each type,
-     `minor`'s pieces on its ground (0.4 m lower), `small` and `medium` the same where theirs is.
-   - The kit walls, the same way: each variation a wall is in has its own height layer of it (`wall:<key>@<variation>#<signature>`,
-     "Kit wall <name> (<variation>)"), and an export lays each variation's walls on its ground and lowers that layout
-     (`Tile::kit_walls_laid_for_export`, `VariationExport::kit_walls`). Whether a variation's export makes buildings (walls, road
-     bridges) is its own (`VariationExport::generated`); `has_walls` of a combined project reads the scene as viewed, not the index.
-     The procedural walls' export already read each variation's own project (its heights, its scene).
-     Checked: a kit wall drawn across `orc_city_a` where `minor`'s ground differs, As exported tile of `minor` and `small`: two
-     height layers, each variation's maps with its own pads (616 pixels differing by more than 5 cm), its layout its own (a step one
-     piece later in `minor`), each packed with its walls.
-   Combined projects are the editor's only: Import from Assembly Kit does not make one (the user, 2026-11-15).
-7. **Loaders**: materialization in `sources::find_tile`, `build/variations/`, the stamp.
-   Done (2026-11-15):
-   - `sources::find_tile`: a variation folder without a tile whose tile folder's combined project lists it is that project's
-     variation written as a project of its own (`variations::materialize::served`) under the root's build folder
-     (`materialize::build_root`: `<projects>/build/variations/raw_data` for `<projects>/assembly_kit/raw_data`, the exports' too).
-     A stamp (`wce_variation.stamp`: the scene's, the layers', the entry's, the shared and own files' names, sizes and times) says what
-     it was written from; it is written again when that changed. An export's write has no stamp (it is made from the editor's scene,
-     roads and walls laid), so a loader writes it again. One write at a time (`materialize::writing`): the map context asks from
-     several threads, an export from the editor's.
-   - `sources::find_tile_folder` (no write: whether a tile is a custom-mesh one) and `sources::serves` (whether a root has it: the
-     Terrain tool's check of the tiles a map places).
-   - The map context's tiles come through `find_tile`. The linking tiles stage B blends with are read from their own folders' BOB
-     files (`final_heights.dds`), which a combined project has none of: a linking tile is not one to combine.
-   - Checked (`examples/tile_find_check.rs`): `orc_city_a`'s `medium` written in 1.7 s, taken as it is the next time, written again
-     after its layers' file changed; it opens as a project of one variation with its row's numbers and its `protection_map.dds`.
-     Not checked in the editor's map context: no kit map places a combined tile.
-8. **Combine and Separate**: the dialog, the backup, the commands.
-   Done (2026-11-15):
-   - `variations::combine::combine`: each ticked variation read from its folder (a project's tile.wce, else tile.ted through `to_wce`;
-     its `.wcl`, else stacks over its maps, with its row's range; its other files), the scenes merged and checked (`merge::check`),
-     the terrain combined on the reference's base. A file every variation has the same goes in the tile's folder, the others (and each
-     one's river files, for their factors) in `variations/<v>/`; BOB's intermediates are left out. The combined project is written to
-     `<projects>/build/combine/` with its entry, each variation written back from it (`materialize`) and compared with its source:
-     its scene through `to_ted`, its height map's samples and range, its blend and ground type maps and its files byte for byte.
-     Only then are the projects that went in moved to `<projects>/backup/combine/<when>/<location>/<v>/` and the combined project put
-     in their tile's folder (the entry copied into the projects when they have none).
-   - `combine::separate`: the variation written as a project of its own in its folder (`materialize`), the combined project without
-     it (`without_variation`: what only it has goes, its name leaves every list, a group of it only gives its place to its contents;
-     then Tidy; its layers only it has go, and those exporting with a scene layer that went), checked that every other variation's
-     scene and terrain stay as they were before anything is written; the old files to `<projects>/backup/separate/<when>/`. The last
-     one separated leaves no combined project.
-   - Tile > Variations > Combine... (a tile of several variations, not combined): the dialog lists the entry's variations with where
-     each comes from (project, kit, packs: decompiled when read) and the share of its instances the reference has too, read on a thread;
-     none ticked; a reference to choose (the one sharing the most at first). Combining runs on a thread, the tile closed (it must be
-     saved), and opens it again combined. Tile > Variations > Separate > <variation>: saves, separates, opens again (the variation's
-     own project when it was the one viewed). Commands `tile_combine [--ref <v>] <v>...`, `tile_separate <v>`; `examples/tile_combine.rs`.
-   - Checked: `orc_city_a` from the kit combined (6.5 s, 31.8 MB of scenes in 14.2 MB), every variation the kit's
-     (`tile_materialize_check`); `small` separated is that variation byte for byte, `minor` and `medium` stay the kit's; the other two
-     separated (the last leaves the tile's folder with the three projects only), combined again from those projects (moved to the
-     backup), still the kit's. In the editor: `tile_combine` on the kit's tile opens the combined project viewing `small`;
-     `tile_separate medium` opens it again with `minor, small`. `western_city_b` (18 s, 166 MB in 88 MB) and `plains/1x1`'s random
-     alternatives pass the check.
-   Left: adding a variation to a combined project (Separate one and Combine again does not: Combine needs a tile not combined); the
-   dialog itself was not seen (the script captures show the viewport only).
-9. **Docs**: docs/editor.md (Where tiles are saved, Terrain layers, the new section), docs/formats (tile.wce version 2, `.wcl`
-   version 4), this plan's state.
-   Done (2026-11-15): docs/editor.md's **Tile variations** (Combine, the chip, editing, what is made per variation, exports,
-   Separate), notes in Where tiles are saved and Terrain layers, the Tile menu, the export table, the build and backup folders;
-   [formats/tile_wce.md](../formats/tile_wce.md) (new): tile.wce, a combined project's marks and folder, terrain_layers.wcl version 4.
-   "tile.wce version 2" is the root's `wce_variations`: `wce_version` stays 1.
+Steps 1 to 9 (2026-11-15), each checked on `orc_city_a` combined from the kit and by the examples below; the detail is in the git history.
+
+- `wce_tile::variations`: `to_variation`, the tags and `View` (step 1); `merge` and `merge::check` (step 2); `edit` (`set_variations`,
+  `wrap_in_folder` / `unwrap_folder`, `split_for`, `tidy`) and `problems` (step 5); `materialize` (`served`, `build_root`, `writing`:
+  one write at a time) (steps 6, 7); `combine::combine` / `combine_with` and `combine::separate` (`without_variation`) (step 8).
+- Terrain (step 3): `Layer::variations` and `Layer::replace`, `.wcl` version 4, `TerrainLayers::set_view`, `for_variation`,
+  `combine_in`, `Stack::combine_by`. "tile.wce version 2" is the root's `wce_variations`: `wce_version` stays 1.
+- The editor (steps 4, 5): `TedScene::set_shown` (`get`, `position`, `euler`, `flags` read the display variation's own values,
+  `world_transform` skips the groups it goes through, `find_all` lists only shown elements), `TileProject::show_variations`,
+  `refresh_view`, `materialize`; the element index and the Scene panel's tree (`Tile::tree_children`) go by the view; readers of the whole
+  scene take `TileProject::variation_scene()`.
+- Exports (step 6): every export of a combined project goes through `materialize`: For Assembly Kit (`save_variations_for_kit`), As
+  exported tile and To mod pack (`ExportInputs::parts`), Launch in game (`TileDocument::with_variation_alone`); `--variations a,b` on
+  `save_for_kit`, `save_exported`, `save_to_pack`. The procedural roads (owner `road:<id>@<variation>#<signature>`) and kit walls
+  (`wall:<key>@<variation>#<signature>`, `Tile::kit_walls_laid_for_export`) have layers per variation; an export views each variation
+  alone in turn (`Tile::export_view`). Combined projects are the editor's only: Import from Assembly Kit (now File > Revert > To the
+  Assembly Kit's version) does not make one (the user, 2026-11-15).
+- Loaders (step 7): `sources::find_tile`, `find_tile_folder`, `serves`. The linking tiles stage B blends with are read from their own
+  folders' BOB files, which a combined project has none of: a linking tile is not one to combine.
+- Combine and Separate (step 8): the dialog (`combine_ui.rs`, `tile_combine_dialog [tick <list>]`), the commands `tile_combine [--ref
+  <v>] [--align] <v>...` and `tile_separate <v>`; the projects that went in are moved to `<projects>/backup/combine/<when>/...`, the
+  separated one's old files to `<projects>/backup/separate/<when>/`. **Align heights** (the user, 2026-11-15): a level that is mostly a
+  copy of an earlier one takes that one's range and its samples within a centimetre; its export changes and the report says how much.
+- After the plan: a variation keeps its carried terrain and vegetation (67d5d98b: the other variations' rows tried as the game's tile
+  database has them), the combined tiles marked in the Tiles panel, the radar exported per variation.
+- Examples: `tile_combine_check` (the gate below), `tile_materialize_check`, `tile_find_check`, `tile_combine`, `tile_variation_of`.
+
+### Open
+
+- The Gates' scripted run (combine `western_city_b`, split, paint, export, compare) is not written; `scripts/tile_variations.txt` is
+  an older script (a project's other variations opening from the kit until saved).
+- Adding a variation to a combined project: Combine needs a tile not combined, so Separate one and Combine again does not do it.
+- Not seen in a shot: the context menu's submenus and Launch in game's (a script does not open menus). Not checked in the map context:
+  no kit map places a combined tile.
 
 ## Results
 
@@ -414,9 +305,9 @@ tile.ted for. About 6 s for a big settlement (three 50 MB files).
 
 - `tile_combine_check` on the Attila kit's multi-variation tiles: every variation byte-identical after the merge, for scene and maps.
   The count of tiles where the merge shares nothing (random alternatives) is reported, not a failure.
-- A scripted run (`scripts/tile_variations.txt`): combine `western_city_b`, view `small`, split a building for it, move it, paint a
-  height layer for it, export For Assembly Kit into a scratch kit. Then `minor` and `medium` are byte-identical to the kit's, and
-  `small` differs only where the edits went.
+- A scripted run (not written yet; `scripts/tile_variations.txt` is another script): combine `western_city_b`, split a building for
+  `small`, move it, paint a height layer for it, export For Assembly Kit into a scratch kit. Then `minor` and `medium` are
+  byte-identical to the kit's, and `small` differs only where the edits went.
 - Round trip of version 1 projects: open, save, unchanged bytes.
 
 ## Revision 1: one tile (the user, 2026-11-15)
@@ -435,7 +326,7 @@ mark and folder, the per-variation roads and walls of the exports.
   variation (in the root's order) that it belongs to. Combine lists the reference variation first, so with everything shown that is
   the reference. Edits keep their rule (decision 1, and 9): a move moves each variation's copy by the same amount.
 - **The terrain: one terrain with patches** (decision 8). The base is the reference's; every difference is a terrain layer tagged
-  with its variations (Combine's "Variation base" layers among them), shown or hidden like any layer. The viewport composes the base
+  with its variations (Combine's "Variation patch" layers among them), shown or hidden like any layer. The viewport composes the base
   with every visible layer belonging to a shown variation (everything shown: the patches of every variation together; one shown:
   exactly its terrain). Painting goes into the working layer, whose variations say which variations get it; the panel warns when the
   working layer belongs to no shown variation (the paint would not show).
@@ -451,69 +342,12 @@ mark and folder, the per-variation roads and walls of the exports.
 - **Launch in game** asks which variation (the first shown at first). The Tile panel's variation chooser shows the combined
   project's variations and their rows (height range, colour...), and no longer switches anything.
 
-Steps:
-
-- **R1. The view.** `TedScene`'s lens becomes the shown set: an element is there when it belongs to a shown variation, its values
-  are its display variation's (`variations::own_value`, `world_transform_as` per element). The element index, picking, the Scene
-  panel's tree and the readers of the whole scene go by it. The chip and the ghosts go; the header's toggles and
-  `tile_variations_shown` come.
-  Done (2026-11-15): `variations::display_variation`, `View::of_shown` (each element's display variation, its values, the groups
-  it goes through), `TedScene::set_shown` (`get`, `in_variation`, `goes_through`, `set_attr` by the element's display variation),
-  `world_transform` by it, `TileProject::show_variations` (a combined project opens with every variation shown; the first shown is
-  the tile's: its row's range, its roads and walls), `TerrainLayers::set_view` of the shown set (a layer shows when it belongs to a
-  shown variation that has its scene layer). The chip and the ghosts are gone; the Scene panel has "Show:" checkboxes over its header
-  (the last one shown can't be unticked), Tile > Variations > Show the same; `tile_variations_shown [<list> | all]`. An export views
-  each variation alone in turn and the shown ones again after. Checked: whole-window shots of the port (everything; `minor` alone:
-  the escalation layers of `small, medium` gone, `minor`'s buildings and terrain); For Assembly Kit of `orc_city_a` from the editor
-  still the kit's (but TEd's `-0`).
-- **R2. The terrain.** `TerrainLayers::set_view` with the shown set; the Terrain layers section's checkboxes on every layer, *New
-  layer for...*, the warning by the shown set. Combine lists the reference first.
-  **Patches build on patches** (the user, 2026-11-15): a level is often the one below it changed (`medium` is `minor`'s terrain
-  with `small`'s changes and its own). Combine's terrain merge goes through the variations in the root's order, each against what
-  the layers so far give it: a block where it differs goes into a layer of every variation whose map has that block the same (so
-  `small`'s changes are one layer of `small, medium`, `medium`'s own one of `medium` over it), instead of one "Variation base" per
-  variation. The user does the same by hand: a terrain layer of `small, medium` under one of `medium`.
-  Done (2026-11-15): `Stack::combine_by` makes the patches ("Variation patch: <variations>", replacing, per 64 x 64 block), heights
-  compared as each variation stores them (`TerrainLayers::combine_in` with the rows' ranges: the same 16-bit values in its range);
-  Combine lists the reference first. The Terrain layers section: a variations button on every layer (its checkboxes in a popup),
-  *New layer for...* (the variations ticked), a layer in no shown variation dimmed, the warning when the working layer is in none;
-  the minimap follows the variations shown (`Tile::view_version`). `gui_close_header` for captures of a panel's lower sections.
-  Checked: kit tiles chain (`orc_city_a`: a height patch of `small, medium` and one of each's own; `western_city_b` alike for heights
-  and blend); every variation still comes back byte for byte (the port: all files of the three original projects). The port's
-  `medium` does not chain its heights: over 60 % of the map its 16-bit values are `small`'s but stored with another range (min
-  -20.66 against -20, scale 134.49 against 134.27), so it stands 0.6 m lower there; Combine keeps it as it is (one patch of
-  `medium` over most of the map). Shots: the Terrain layers section with everything shown and with `minor` alone.
-  **Align heights** (the user, 2026-11-15: `medium` was mostly a copy of `small`): Combine's option (the dialog's checkbox,
-  `tile_combine --align`, `combine::combine_with`). A level aligns to the earlier one whose stored samples it shares the most of
-  (their ranges differing): per 64 x 64 block it is read the way that agrees with that one for most of the block (its samples in that
-  one's range: copied, then saved with another range; or its own heights: saved again, rounded otherwise), a sample either way within
-  a centimetre of that one's height takes it exactly, and the level takes that one's range (or what holds its heights). Its instances'
-  own heights that only followed the shift (the terrain's move under them, within 5 cm) go. The check: the other levels byte for byte;
-  the aligned one's heights as aligned (a step of rounding allowed where it shares a patch, said). Its export changes: the report says
-  how many samples took the other's heights and how many own heights went. The port: `medium` aligned to `small` (its range -20 /
-  134.27 now), 1,380,620 of its 1,638,400 height samples `small`'s, 14,690 of its 14,758 own heights gone; the patches `small`, `small,
-  medium` and `medium` (its own changes: 16 % of its samples, within 0.3 m, its larger town's ground); `minor` and `small` byte for
-  byte.
-- **R3. The tools.** *Split for a variation* as a submenu; the roads, walls, vegetation and siege of the display variation; Launch
-  in game's choice; the Tile panel's chooser.
-  Done (2026-11-15): *Split for a variation* is a submenu of the variations (`tile_split_variation <v>`), *Move to a variation folder*
-  has *In all but <v>* for each. What the editor makes over the terrain is the tile's variation's (the first shown;
-  `Tile::of_tile_variation`): the roads made are its roads, the kit walls' ground layers its walls' (the others' show, laid, without
-  one). The prefab references' ground: every reference's, whatever is shown, its layer tagged with its variations (a normalized one
-  levelled on the ground as shown: approximate where the variations' ground differs under it). Generate SiegeAI needs one variation
-  shown alone: its layout in a layer of it alone, an earlier generated one of it replaced, the layouts in shared layers left (said in
-  the log). Tile > Launch in game is a submenu of the variations (`tile_launch_game --variation <v>`): its export and its deployment
-  zones (`TileDocument::with_variation_alone`). The Tile panel's variations of the open combined project no longer switch anything.
-  Checked in the editor (the port, aligned): a building split for `medium`; SiegeAI refused with all shown, made for `medium` alone; a
-  launch dry run of `small` exports `small`.
-- **R4. Docs and checks.** docs/editor.md's Tile variations section rewritten; whole-window shots (`shot <file.png>`) of the
-  Scene panel, the Inspector, the Terrain layers section and the Combine dialog, looked at before it is called done.
-  Done (2026-11-15): docs/editor.md's Tile variations section rewritten (one tile, the Show filter, patches on patches, Align heights,
-  the tools, what is made per variation, Launch in game's choice), the Terrain layers and Tile menu notes. Shots looked at: the Scene
-  panel with its Show checkboxes, Variations column and header (everything shown; `minor` alone), the Inspector's variation
-  checkboxes of a layer (the raw `wce_variations` no longer listed under Other attributes), the Terrain layers section (variations
-  buttons, New layer for..., dimmed layers with `minor` alone), the Combine dialog (`tile_combine_dialog [tick <list>]`: sources,
-  shares, reference, Align heights). Not seen: the context menu's submenus and Launch in game's (a script does not open menus).
+Steps R1 to R4 were done 2026-11-15 (`variations::display_variation`, `View::of_shown`, `TedScene::set_shown`, the Scene panel's Show
+checkboxes; `Stack::combine_by` and the patches; the tools by the display variation, `Tile::of_tile_variation`; docs/editor.md rewritten
+and whole-window shots looked at). **Patches build on patches** (the user, 2026-11-15): Combine's terrain merge goes through the
+variations in the root's order, each against what the layers so far give it, so `small`'s changes are one layer of `small, medium` and
+`medium`'s own one of `medium` over it. Found on the port: its `medium` does not chain its heights (over 60 % of the map its 16-bit
+values are `small`'s stored with another range, 0.6 m lower), hence Align heights. Generate SiegeAI needs one variation shown alone.
 
 ## Decisions (the user, 2026-11-15)
 

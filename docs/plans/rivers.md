@@ -1,75 +1,65 @@
-# Tile editor: rivers and water (plan, 2026-11-22)
+# Tile editor: rivers and water (2026-11-22)
 
-Better tools for the water of a battle tile, on `feature/river_tools`. The user's request: **rivers snap into the tile's river links**, so the
-terrain at the join is shaped for the connection and the river runs on into the neighbour's without a break; plus more river tools of my
-proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing here is built yet.
+Better tools for the water of a battle tile, built on `feature/river_tools` (2026-11-22). The user's request: **rivers snap into the tile's
+river links**, so the terrain at the join is shaped for the connection and the river runs on into the neighbour's without a break; plus
+more river tools of my proposing; the user's answers of 2026-11-22 are in Decisions and Order.
 
-## Status
+## Status (2026-11-22)
 
-- 2026-11-22: RE R1 to R4 done. Step 1 (link snap, the joins' layer, the Problems' fixes, the neighbour check in a map context) and
-  step 2 (the carved bed and its texture) built; battle rivers are drawn at their file's width (they were twice the game's).
-  Step 7 (water checks: spills, buried, steps) built; the plan's "old factors" check dropped: the editor draws the game's heights
-  already, and the snap writes through the river's factors. The joins hold the connection 16 m in and fade by 64 m (held 64 m, they
-  ran straight on where the river bent away).
-  Step 3 (long profile in the Inspector, Make downhill, Reverse river, ramps, flow arrows) built; the flow check against `is_entry`
-  waits for the in-game look R3 asks for.
-  Step 4 (tributaries snapped onto a river's middle line at its water, Split here, Join rivers) built.
-  Units fixed: the connections' heights are the game's (TEd's scene heights, the files' y), twice the editor's metres; the snapped
-  rivers and joins had been twice as deep (their files' water at the bed). The file of a snapped river now has the kit's -6.2 / 45.
-  Step 6 (fords: the kit's wading depth over a stretch, eased banks, on rivers with or without a bed; kit bridges snapped across rivers)
-  built. A ford needs no link change (the kit's `river_ford/*` link as deep `river`). The bridge's platform check stays the Problems' button.
-  L1 and step 5 (lakes: a water plane over a drawn outline at its shore's level, an optional basin, the spill check) built; the live
-  flood preview while drawing is not (the spill check and the plane's water height in the Inspector stand in). Whether units treat a
-  plane as water in game is for the in-game look.
-  **Stopped before Rome 2** (as the user asked): steps 9 (Rome 2) and 10 (shores) are left.
-- 2026-11-22, after the user's review: a river's first point drags (the gizmo's centre sat on it), ends snap along a link cell, a
-  terrain patch toggle (`wce_river_patch`, off for the kit's rivers), the texture a band along the water, ground types (deep / shallow
-  water), lakes brushed, smoothed, painted and with a height patch, drawing ends on a link, a click on the water picks the river.
-- Step 9 (Rome 2) done 2026-11-22, once its packs were installed again: its 252 river tiles decompiled, 77 of them measured
-  (`river_link_profile`: 177 ends): the same link sets and tile set names (`river`, `river_shallow`, `river_ford`, `river_crossing`,
-  ...), the same standard connections (water -6.19 deep / 0.42 shallow in the game's units, width 45, the same cross-section), the
-  same flipped z; the tools needed no change. Checked in the editor on its tiles: a river drawn onto a link finishes there at -3.1 m,
-  its bed, fords, shores, decals, hints and go region; saved into a mod pack and decompiled back (hints, go region, decals, stones
-  whole). Its shores table (`tables/rome_2/shores.toml`) has its own keys: Attila's `attila_rock_small_*`, `global_ground_pathborder`
-  and decals are not in its packs, its `boulder_small_*` lack their textures (drawn white), so: `smallrock_*` and `rocks_small_01`
-  stones, `gaul_rock_02` and `smallrock_01` bank stones (its `rock_0*_small` are 12 m), no mounds (the bank lists may be empty now),
-  `mud_rock_0` / `atlantic_mud_3` shore decals and `mud_01/02`, `global_dirt_5/3` bed decals (normal maps in alpha and green; seen
-  on and off by pixel diff). Open: Rome 2's kit has no vegetation parameters, so its exports carry the packed tree lists and a
-  tile's `VEGETATION_INSTANCE`s (the reeds and lilies, as any placed vegetation) do not reach the game (user 2026-11-22: a separate
-  development, later). Snap river ends now leaves a kit river's ends that already meet their links (centring them bent a Rome 2
-  kit river off its bed: 0.8 m over 39 m).
-- **To do, Thrones of Britannia** (user 2026-11-22: tested later, once installed; not on this machine): its shores table
+All steps built, in the Order below, Rome 2 included; the in-game looks are left (Open).
+
+- **RE R1 to R4** settled but R3 (below). Battle rivers are drawn at their file's width (they were twice the game's); the connections'
+  and beds' heights are the game's units (TEd's scene heights), twice the editor's metres; a snapped river's file has the kit's
+  -6.2 / 45.
+- **Built:** step 1 (live link snap, the joins' layer, the Problems' fixes, the neighbour check in a map context; the joins hold the
+  connection 16 m in and fade by 64 m), step 2 (the carved bed and its texture, painted by height), step 7 (spills, buried, steps; the
+  "old factors" check dropped: the editor draws the game's heights already, and the snap writes through the river's factors), step 3
+  (long profile, Make downhill, Reverse river, ramps, flow arrows), step 4 (tributaries, Split here, Join rivers), step 6 (fords: Draw
+  ford in the viewport, the kit's wading depth, ends curved across the river, edges marked with stones and splashing, a go region over
+  each; kit bridges snapped across rivers; a ford needs no link change, the kit's `river_ford/*` link as deep `river`), step 5 and L1
+  (lakes: a water plane over a drawn outline at its shore's level, an optional basin, the spill check, brushed, smoothed, painted), the
+  AI hints (below), step 9 (Rome 2) and step 10 (shores: reeds, lilies, stones, rocks, mounds, shore and bed decals along the rivers'
+  and lakes' water, `wce_tile::shores`, from `tables/<game>/shores.toml` and `shores_*.toml` over it; derived and exported as the biome
+  areas' contents are).
+- **After the user's review** (2026-11-22): a river's first point drags (not the gizmo's centre), ends snap along a link cell, a terrain
+  patch toggle (`wce_river_patch`, off for the kit's rivers: kit rivers are untouched unless it is on), the texture a band along the
+  water, ground types (deep / shallow water), drawing ends on a link, a click on the water picks the river. *Snap river ends* leaves a
+  kit river's ends that already meet their links (centring them bent a Rome 2 kit river off its bed: 0.8 m over 39 m).
+- **Rome 2** (step 9): its 252 river tiles decompiled, 77 measured (`river_link_profile`: 177 ends): the same link sets and tile set
+  names, the same standard connections (water -6.19 deep / 0.42 shallow in the game's units, width 45, the same cross-section), the same
+  flipped z; the tools needed no change. Checked in the editor and through a mod pack decompiled back. Its shores table
+  (`tables/rome_2/shores.toml`) has its own keys: Attila's `attila_rock_small_*`, `global_ground_pathborder` and decals are not in its
+  packs, its `boulder_small_*` lack their textures (drawn white), so: `smallrock_*` and `rocks_small_01` stones, `gaul_rock_02` and
+  `smallrock_01` bank stones (its `rock_0*_small` are 12 m), no mounds, `mud_rock_0` / `atlantic_mud_3` shore decals and `mud_01/02`,
+  `global_dirt_5/3` bed decals (normal maps in alpha and green).
+
+## Open
+
+- [ ] **In game (user)**: the water running on across both seams of a tile between two kit river tiles; whether units treat a lake's
+  plane as water; R3's flow (then the flow check against `is_entry`); whether the AI crosses at a ford rather than into deep water.
+- [ ] Lakes: the live flood preview while drawing is not built (the spill check and the plane's water height in the Inspector stand in).
+- [ ] Rome 2: its kit has no vegetation parameters, so its exports carry the packed tree lists and a tile's `VEGETATION_INSTANCE`s (the
+  reeds and lilies, as any placed vegetation) do not reach the game (user 2026-11-22: a separate development, later).
+- [ ] **Thrones of Britannia** (user 2026-11-22: tested later, once installed; not on this machine): its shores table
   (`tables/thrones_of_britannia/shores.toml`) is still Attila's keys, marked UNCHECKED. Check it as Rome 2's was: each key in its
   packs (`vfs_ls` listing; vegetation keys in its tree/vegetation tables); the models' textures in its packs (a missing one draws
-  white, as Rome 2's `boulder_small_*`) and sizes (`wce_terrain_io` example `model_bounds`, against Attila's: stones 1..3, bank
-  stones 1.4..7); the decals' normal maps in alpha and green (R ~255, G ~127, A ~127 averages of `_normal`/`_parallax`); then in the
-  editor on one of its plain tiles: a river with a ford, decals on and off by pixel diff, a save to a mod pack decompiled back.
-  Also measure its river tiles (`tile_decompile_check --filter river`, `river_link_profile`) for its links and heights.
-- Step 10 (shores) built: reeds and stones along the rivers' and lakes' water (`wce_tile::shores`), derived and exported as the biome
-  areas' contents are, on for the editor's rivers and lakes.
+  white) and sizes (`wce_terrain_io` example `model_bounds`, against Attila's: stones 1..3, bank stones 1.4..7); the decals' normal maps
+  in alpha and green (R ~255, G ~127, A ~127 averages of `_normal`/`_parallax`); then in the editor on one of its plain tiles: a river
+  with a ford, decals on and off by pixel diff, a save to a mod pack decompiled back. Also measure its river tiles
+  (`tile_decompile_check --filter river`, `river_link_profile`) for its links and heights.
 
-## What there is today
+## Before this plan
 
-- **Rivers** are TEd's `SplineRiverInstance`: Bezier points with `width`, `foam_amount`, `alpha_fade`, `flow_speed`, `terrain_offset`,
-  landscape (`terrain_offset` over the ground) or freeform; drawn from the Create panel (`edits/new_items.rs`), edited as any spline, drawn
-  with the game's `rigidriver` shaders, written to `river_spline<n>.xml` on save (`wce_tile::river_files`; heights in the game's frame for
-  the rivers the editor makes, `wce_river_height="game"`, docs/re/water.md).
-- **River links** (Phase 4c of tile_ted_parity.md, `tile_document/river_links.rs`): `river_ends` finds the ends within half a cell of an edge,
-  `river_link_problems` reports target cells without an end, ends at cells that are no target and ends more than 8 m off their cell's
-  centre, and `snap_river_ends` moves the ends there (x / z only: **the height, width, direction and terrain stay**). It is a button in the
-  Problems and a script command, not a snap while drawing.
-- **Road links** snap live (`snap_road_links`, `road_link_points`, `tool.rs`): a road point drawn or dragged within reach goes onto the link,
-  rings show while a road is drawn. The river snap should feel the same.
-- **The terrain under a river** is the user's to sculpt: nothing carves a bed. Procedural roads own height and blend layers
-  (`wce_tile::terrain_layers`, docs/plans/procedural_roads.md "Layers"), which is the model to follow.
-- **The map context** draws the neighbours' rivers (mid ring) and their final heights, so the open tile can be compared with what it meets.
-- **Lakes** are `water_plane` model instances scaled over them; placed by hand as any building.
-- **Shores** (reeds and stones on the banks) went with the ground coverage, shelved 2026-11-21: they come back as this plan's last step.
+Rivers were TEd's `SplineRiverInstance` (Bezier points with `width`, `foam_amount`, `alpha_fade`, `flow_speed`, `terrain_offset`,
+landscape or freeform), drawn with the game's `rigidriver` shaders and written to `river_spline<n>.xml` on save (`wce_tile::river_files`,
+docs/re/water.md). River links were checked and *Snap river ends* moved ends in x / z only (`tile_document/river_links.rs`, Phase 4c of
+tile_ted_parity.md); nothing carved a bed; lakes were `water_plane` instances placed by hand; the shores had gone with the ground
+coverage (shelved 2026-11-21). Procedural roads' owned layers ([procedural_roads.md](procedural_roads.md), "Layers") were the model to
+follow.
 
-## What we do not know yet (RE first, black box on the kit)
+## The RE (black box on the kit)
 
-Making the join right needs the shape the game and BOB expect at a river link, which is not traced (docs/re/battle_maps.md: "the links'
-`blend_size`, `no_offline_blend`, `<blend_quad/>` and the tile sets' `linking_tile` are the inputs (not traced yet)"). Measured on the kit's
+Making the join right needed the shape the game and BOB expect at a river link. Measured on the kit's
 river tiles (`river/*`, `river_ford/*`, `river_mouth/*`, the river settlements such as `dunedain_city_osgiliath`) and their exports:
 
 - **R1. The river's end at a link**: for the kit's 187 river ends at an edge: the water height in the file's frame (`-6.28` in `river/*` and
@@ -180,8 +170,7 @@ preset (Creek, River, Great river: widths, depths and speeds from the kit's rive
   float or flood sideways. With the bank height there.
 - **Buried**: the ground over the water along the centre: the river disappears there.
 - **Steps**: a drop between two points steeper than the ribbon can show without a visible kink.
-- **Old factors**: a kit river whose file factor (1.25) puts it under its bank in game (docs/re/water.md); fix: *Use real heights*
-  (sets `wce_river_height` and keeps where it shows).
+- ~~**Old factors**~~: dropped (Status).
 
 ## AI hints at rivers (investigated 2026-11-22)
 
@@ -233,8 +222,6 @@ whether units treat it as water in game (a test lake on a scratch tile, Launch i
 
 ## Risks
 
-- R2 may show that the export blends a linking tile we cannot reproduce exactly; then the join is matched to `final_heights` as measured,
-  and the in-game check decides.
 - A river layer on a big tile (many rivers, 1 m pixels) must remake off the editor's thread, as the roads' do, or dragging a point lags.
 - Old kit rivers have files that do not follow their `tile.ted` (docs: `river_files`): snapping one writes its file, which moves the
   river in game to where the editor shows it. Expected, but worth a line in the Problem's text.

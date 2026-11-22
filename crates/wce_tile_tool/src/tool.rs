@@ -1908,7 +1908,7 @@ impl TileTool {
 
     /// The projects an export compiles ([`ExportPart`]): the open project, or a combined project's variations (`only`, empty: all) each
     /// written as a project of its own (docs/plans/tile_variations.md); each with the radar drawn from it (`crate::minimap_panel::
-    /// put_export_radar`).
+    /// ExportRadar::put`).
     ///
     /// # Errors
     ///

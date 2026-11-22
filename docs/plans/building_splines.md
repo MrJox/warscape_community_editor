@@ -8,8 +8,8 @@ A Create panel entry, *Building spline (fences, palisades)*, in the Buildings ca
 - **A live spline**, as the procedural roads and walls are: a `WceBuildingSpline` (not TEd's: kept in tile.wce only). Its buildings are
   derived data, laid again whenever the line, its settings, the ground or the buildings' models change; never saved. A click on one of
   them picks the spline. An export (Save for Assembly Kit, the game's) writes them as plain `BUILDING_INSTANCE`s in the top layer
-  *WCE building splines* (not for a spline in a layer that is not exported); Import from Assembly Kit drops that layer and puts the splines
-  back, as it does for the walls.
+  *WCE building splines* (not for a spline in a layer that is not exported); File > Revert > *To the Assembly Kit's version* drops that
+  layer and puts the splines back, as it does for the walls.
 - **Each building as long as its model, plus a gap**: its footprint (x and z) from its logic file's box (`<key>_tech.cs2.parsed`), else
   the scene's model bounds, else its piece files' vertices (LOD 0). It is laid along the longer of the two axes: a fence modelled along
   its z (`egyptian_highfence`) is turned a quarter (user, 2026-11-13: laid along x, it went across the line, packed by its thickness). The gap (metres) may be below 0 to overlap. A building more than half past the
@@ -29,6 +29,9 @@ A Create panel entry, *Building spline (fences, palisades)*, in the Buildings ca
   each end of an open line too.
 
 ## Where it is
+
+Built 2026-11-13 (joiners the same day). The procedural roads' fences take the same joiners since 2026-11-16 (`road_fences.toml`,
+[procedural_roads.md](procedural_roads.md)).
 
 - `wce_tile::building_spline`: the settings, `lay` (the layout, unit-tested), the instances' text.
 - `wce_tile_editor::tile_document::building_splines`: settings from the attributes, the curve (handles as the roads'), extents, laying per

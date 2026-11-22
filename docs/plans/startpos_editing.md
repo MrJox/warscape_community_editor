@@ -1,16 +1,16 @@
 # Startpos editing: armies, agents and settlements on the campaign map
 
 Goal: the campaign map in the Terrain tool shows a campaign's start position as the game draws it (armies, agents, navies and
-the settlements) and edits it by clicking on them: move, owner, an army's units, a settlement's buildings. Attila and TDD first;
-Thrones and Rome 2 later (their startpos layouts differ).
+the settlements) and edits it by clicking on them: move, owner, an army's units, a settlement's buildings. Attila and TDD first
+(Thrones' start is drawn too); Rome 2 later (its startpos layout differs).
 
 **Scope now (user, 2026-11-21, later): read and draw only, no edits.** The start's armies, agents, navies, settlements and
 animated props are read and drawn as the game shows them; editing (phases 3 to 6 and the open questions below) is decided later.
 The start is read from the campaign's compiled startpos, as the settlements already are (what the game loads).
 
-User decisions (2026-11-21, before the scope above): edits go to the Assembly Kit's `start_pos_*` tables in the project, with the compiled `startpos.esf`
-as the fallback for maps without tables (TDD); the game's own models from the start; first edits: move, owner, army units,
-settlement buildings.
+User decisions (2026-11-21, before the scope above): edits go to the Assembly Kit's `start_pos_*` tables in the project, with the
+compiled `startpos.esf` as the fallback for maps without tables (TDD); the game's own models from the start; first edits: move,
+owner, army units, settlement buildings.
 
 ## What is known (research of 2026-11-21)
 
@@ -68,20 +68,26 @@ settlement buildings.
 
 ## Drawn (2026-11-21, read only)
 
-- The start's characters (`wce_terrain_io::attila::characters`): those the map shows lead a force or stand alone (not on a
-  settlement's cell, nor an army's: a horde's family); garrison commanders never. Attila 105, TDD 46.
-- Their figures (`wce_render::campaign_character`): the art set's row by faction leader (`CHARACTER` [28] 4, [29] true), season
-  (`winter` rows in winter), rank 0 (all at a start), adult; land, at sea (an army standing on water: its `sea_uniform`) or navy
-  (`navy_uniform`, afloat on the sea's level). A model unit is a world unit (capture T2).
-- An army's banner (captures A and T0): the campaign flagpole and its legacy emblem's `banner_decorator`
-  (`MILITARY_FORCE_LEGACY` [5] -> `military_force_legacy_emblems`), the faction's skin's models else the default's; all at one point
-  0.40 west, 0.11 south of the army's and 0.80 over its feet, scale 0.65 (`ARMY_FLAG_SCALE`), unturned, each instance there plus
-  its pivot. Agents and fleets carry none (T2's spy; a fleet's sail is its flag).
-- The fauna: a model with its own `.anim` beside it, posed skinned (`wce_render::animated_prop`).
-- Left: a navy's banner, if the game gives one (not in the captures); the banner's wind (the flag's `TextureComboVertexWind`
-  draws static); the figures' idles only (no walking: the start stands still).
+As built, the start is read from the compiled startpos only (`wce_terrain_io::attila::characters::read`; Attila's, TDD's and
+Thrones' layouts), not from the kit tables; phase 1's shared model below is not built. Drawn by the Terrain tool
+(`wce_terrain_tool::start_figures`, locked, not pickable):
 
-## Phases
+- The start's characters: those the map shows lead a force or stand alone (not on a settlement's cell, nor an army's: a horde's
+  family); garrison commanders never. Attila 105, TDD 46. Thrones' starting rebels too: the armies its scripts raise for the player
+  (`vik_starting_rebellions.lua`, `characters::scripted_rebels`; ASSUMPTION: the faction whose key ends `rebels_<culture>`).
+- Their figures (`wce_render::campaign_character`, idles from `animations/campaign_animation_tables`): the art set's row by faction
+  leader (`CHARACTER` [28] 4, [29] true), season (`winter` rows in winter), rank 0 (all at a start), adult; land, at sea (an army
+  standing on water: its `sea_uniform`) or navy (`navy_uniform`, afloat on the sea's level). A model unit is a world unit (capture T2).
+- An army's banner (captures A and T0): the campaign flagpole and its legacy emblem's `banner_decorator` (`MILITARY_FORCE_LEGACY` [5]
+  -> `military_force_legacy_emblems`; none: `nomadic_emblem_07`, the DLLs' fallback), the faction's skin's models else the default's;
+  all at one point 0.40 west, 0.11 south of the army's and 0.80 over its feet, scale 0.65 (`ARMY_FLAG_SCALE`), unturned. Agents and
+  fleets carry none (T2's spy; a fleet's sail is its flag). Thrones: the faction's uniform and banner colours on the standard.
+- The fauna: a model with its own `.anim` beside it, posed skinned (`wce_render::animated_prop`).
+- Left: a navy's banner, if the game gives one (not in the captures); the banner's wind (the flag's `TextureComboVertexWind` draws
+  static); the figures' idles only (no walking: the start stands still). The open items of the campaign captures (Thrones' banner
+  offset, the figures' colour permutation, the rebels' art sets) are in docs/plans/campaign_tilemap.md, "Open".
+
+## Phases (3 to 6 deferred: scope above)
 
 1. **The start as a model** (`wce_terrain_io::attila::startpos`, new): `Start { factions, characters (id, type, faction, cell,
    art set, force), forces (id, commander, navy, units), settlements (region, owner, slots and buildings) }`, read from the kit
@@ -113,6 +119,32 @@ settlement buildings.
    the startpos on export (RPFM's generator: about 0.90 of the fields equal for Attila, so the rest of TDD's startpos would come out
    as the generator builds it, not as TDD shipped it). Recommendation: (a) for moves, units and buildings, owner changes later;
    (b) when the generator's gaps close.
-2. **rpfm_extensions as a dependency** (for the extractor / generator and `MapScale`): it lives in the user's `../rpfm` branch
-   `startpos-thrones-rome2`, not on rpfm's `develop`. Use it (path or git branch dependency), or reimplement what phase 1 needs here?
+2. **rpfm_extensions as a dependency** (for the extractor / generator and `MapScale`): `rpfm_extensions::startpos` is on rpfm's
+   `develop` now (the `startpos-thrones-rome2` work merged there); the editor depends on `rpfm_lib` alone. Add it, or reimplement what
+   phase 1 needs here?
 3. **Export's startpos**: generate it from the tables with RPFM, or leave it to the user's RPFM?
+
+## RPFM's startpos generator (state of 2026-11-05)
+
+The generator (`rpfm_extensions::startpos` in the user's rpfm, now on `develop`) builds a campaign's `startpos.esf` from the Assembly
+Kit's tables; the export of phase 6 and the fallback of question 1 depend on it. Its work log, evidence and DLL addresses were in
+`I:\wce_scratch\rpfm_startpos\NOTES.md` (the Windows scratch, with the test data and the user's load tests). rpfm's own rules apply to
+work there (`AGENTS.md` of rpfm: `Startpos:` commit prefix, tests in `*_test.rs`, no `cargo fmt`).
+
+**User policy:** a game goes into `SUPPORTED_GAMES` (Attila alone today) only when every known gap is fixed; don't add Thrones or
+Rome 2 before that, and don't offer to.
+
+Fields equal to the game's startpos on 2026-11-05: Thrones `vik_attila` 0.8492, Attila `main_attila` 0.9029, `pro_attila` 0.9105; TDD's
+124 victory objectives all equal. CAI_HISTORY is left out on purpose (only CA's internal builds write it). Not gaps: CEB+2 (a draw at
+load), the art set hash and region line of sight (recomputed at load).
+
+Thrones' gaps then (later rpfm commits may have closed some: check rpfm's log): the garrison unit order (the builder not found; if it
+orders by object pointer hash it can't be reproduced); the trade route path tie-break (111 Thrones and 2 Attila paths;
+`FUN_107f7420`); route resource amounts (406 routes, written as zeros); Welsh garrisons (`wel_swordsmen` from the
+`wel_armoured_swordsmen` group); smaller fields (NOTES.md rounds 7 to 9); names and the main RNG (seeded 0xCACA at a startpos build:
+the name picking and every main-RNG draw in order; the largest item, last); the gravitas base and the AI analyses (CAI beliefs /
+desires), both waiting for the user's in-game load tests.
+
+Rome 2 (on hold until Thrones' gaps close, user's decision): the generator stops at CHARACTER_DETAILS; characters, diplomacy, region
+slots and buildings, religion, fortifications and the CAI are laid out otherwise (706 differing paths), a record-by-record port; five
+objective types of main_3c / main_invasion have ids but no known record layout.

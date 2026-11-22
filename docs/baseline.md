@@ -14,6 +14,26 @@ Run time on the dev machine: fast gates about 60 s (`xml_roundtrip` 47-86 s of i
 screenshots 10 s. Inputs: the game folder, the VFS cache `%LOCALAPPDATA%\awe\x`, the engine constant-buffer dump for `env_vs_dump`
 (`WCE_CBS`), and the corpus manifest `manifest/corpus.tsv` (37,041 files of the two assembly kits, git-ignored).
 
+## The gate set now (2026-11-22)
+
+`scripts/gates.sh` is the list of gates; the sections below are the log of how the baseline was set and changed, phase by phase (the
+early ones on the C++ tree, whose `libs/`, `cli/` and `tools/` paths are gone; the C++ tree was removed on 2026-10-19,
+[rust_port_app_and_gates.md](rust_port_app_and_gates.md)). Since then:
+
+- `foundation_check`, `editor_check`, `unit_tests` and `height_check` are crate tests (`wce_editor_core/tests/editor_check.rs` and the
+  others), run by the `tests` gate (`cargo test --workspace`); their files in `docs/baseline/` are the C++ outputs.
+- `vfs_compare` is gone with rpfm_server: the packs are read in-process ([vfs.md](vfs.md)); `docs/baseline/vfs_compare.txt` is history.
+- The legacy window shots (`shot_*`, `docs/baseline/shot_*.diag.txt`) are no longer produced (Phase 8 below).
+- `env_vs_dump_all` runs only with `WCE_CBS`; `placement_check`, `tile_open_check` and the `*_all` gates are in `--corpus`; `app_check`,
+  `weather_tool_check`, `tile_tool_check`, `tile_entry_script`, `cinematic_tool_check`, `cross_tool_check` and `render_check` in `--render`.
+- Gates added after the last section below have no reference output here; their results are in their plans: the audio gates
+  (`audio_formats` ... `audio_recipes`, [plans/audio.md](plans/audio.md)), `video_check`, `movie_catalog`, `battle_export`, `movie_export`,
+  `movie_edit` and `cinematic_tool_check` ([plans/cinematic.md](plans/cinematic.md)), `unit_formats`, `unit_render`, `unit_db`
+  ([plans/unit_editor.md](plans/unit_editor.md), [plans/units.md](plans/units.md)), `models_naval`, `tech_check`, the map gates
+  (`map_roundtrip`, `map_built_roundtrip`, and with `WCE_BOB_KIT` `heights_build_*`, `tilemap_*`, `built_*`, `build_*`;
+  [plans/terrain_editor.md](plans/terrain_editor.md)), `bca_*` (with `WCE_BCA_*`) and the Rome 2 gates (with `WCE_ROME2`;
+  [plans/rome2.md](plans/rome2.md)).
+
 ## Gate results
 
 | Gate | Exit | Result (the lines a later run must reproduce) |
@@ -95,7 +115,7 @@ Cold mount of all 27 pack indexes alone (`vfs_probe --compare --time`): rpfm_ser
 
 ## Phase 3: fixed-step clock and the weather screenshots re-baselined
 
-`Clock` (`libs/foundation/clock.h`) is the renderer's only time source. `--shot` implies a fixed step of 1/60 s per rendered frame (`--fixed-step <s>` sets it
+`Clock` (`libs/foundation/clock.h`, now `wce_foundation::clock`) is the renderer's only time source. `--shot` implies a fixed step of 1/60 s per rendered frame (`--fixed-step <s>` sets it
 otherwise), the shot is taken on the 20th rendered frame, and GPU readbacks (ambient cube, depth range, sun occlusion) wait for their data instead of using it
 whenever it happens to be ready. Two runs of the dry, rain and snow shots are now bit-identical (PNG, diagnostics text and the distortion map).
 
@@ -133,7 +153,7 @@ re-baselined explicitly in its commit. The tile shot still comes from Tile Studi
 | `scripts/shots.sh` | the three legacy window shots **byte-identical** to `build/gates_base_p3/`; four `wce.exe --open ... --capture` references in `build/gates_base_p5/` (dry, rain, snow at 1280x720, dry at 800x600), identical on every run |
 
 **The reference GPU.** This machine has two GPUs (NVIDIA RTX 4070 Ti SUPER, AMD Radeon(TM) Graphics) and the baseline pixels (Phase 3 on) were rendered on the **AMD** one, the adapter Windows used by default at that time. Windows later
-switched the default adapter between runs, which made every shot differ (a rebuilt Phase 4 commit differed the same way: not a code change) and made runs differ from each other by GPU float noise. Since then `libs/render/gpu_adapter` picks the adapter
+switched the default adapter between runs, which made every shot differ (a rebuilt Phase 4 commit differed the same way: not a code change) and made runs differ from each other by GPU float noise. Since then `libs/render/gpu_adapter` (now `wce_render::gpu_adapter`) picks the adapter
 (`WCE_GPU=<part of the name>`, else the high-performance GPU; the renderer logs `GPU: <name>`), and `gates.sh`, `shots.sh`, `app_check.sh` and `weather_check.sh` default `WCE_GPU` to `AMD Radeon`. Pixels are only comparable on one adapter.
 
 **Capture references re-baselined (second time).** An offscreen capture now restarts the renderer's temporal state (auto exposure snaps on its first frame, readback ring, wind clock) so it is a function of the scene only; before, it inherited
@@ -210,7 +230,7 @@ New helper commands are test infrastructure: `gizmo_drag`, `cam_info`, `show_pan
 
 ## Terrain layer scale fix and re-baseline (2026-10-10)
 
-`pass_terrain_material` stored `g_blend_pixel_scale_array` one element too high (`[layer + 1]`; the shader reads `cb3[mapping + 1]`, which is element `[mapping]` because row 0 of `ps_texture_array_cb` is `g_light_params_texture_width`). Layer 0 (the tile's first texture group, 82 % of the osgiliath test map) therefore had a scale of 0: uv = world / 0 = one flat texel, a plain colour with no texture. Layers 1 - 3 only looked right because the four scales of the tile were equal. Fixed in `libs/render/terrain_pass.cpp`.
+`pass_terrain_material` stored `g_blend_pixel_scale_array` one element too high (`[layer + 1]`; the shader reads `cb3[mapping + 1]`, which is element `[mapping]` because row 0 of `ps_texture_array_cb` is `g_light_params_texture_width`). Layer 0 (the tile's first texture group, 82 % of the osgiliath test map) therefore had a scale of 0: uv = world / 0 = one flat texel, a plain colour with no texture. Layers 1 - 3 only looked right because the four scales of the tile were equal. Fixed in `libs/render/terrain_pass.cpp` (C++).
 
 Gate added: `scripts/tile_terrain.txt` takes a close capture (`detail.png`) and `scripts/tile_check.sh` fails when more than 1 % of its lit 8 x 8 pixel blocks are flat (std < 2.5 levels): the broken build gave 6 % (lothlorien 1x1/aa, AMD), the fixed one 0 %.
 The two tile captures of `scripts/shots.sh` changed on purpose (the ground has its textures) and were re-baselined in `build/gates_base_perf/` (the previous ones are in `build/gates_base_perf_before_scale_fix/`); the four weather captures are identical.

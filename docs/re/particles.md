@@ -1,6 +1,6 @@
 # VFX particles (precipitation and effects)
 
-Status: reverse-engineering in progress (2026-10-07). Sources: `particle_vfx_*.hlsl` disassembly (sm_4_0),
+Status: traced from 2026-10-07 on (the sections are dated). Sources: `particle_vfx_*.hlsl` disassembly (sm_4_0),
 the rain and snow battle dumps (`Attila (2).DMP`, `Attila (3).DMP`), `scripts/re/dump_cbs.py --array=512`.
 
 ## From weather file to emitters
@@ -73,7 +73,7 @@ behaviour_mask.x bits: 0x1 vs_rotation, 0x2 vs_colour, 0x4 vs_cell_texture, 0x8 
 Lens effects (library_vfx_camera_effects): snowflakes_loop is a main-pass screen-space emitter (row 393 in the snow dump,
 EmitterRotation x = 90 puts its spawn disk in the screen plane); the water drops are distortion-pass (view 12, normal map only).
 
-`tools/vfx_check "<definition>" rows.txt` builds the emitters of a weather definition and compares every row with the
+`wce_assets`' `vfx_check` example (`"<definition>" rows.txt`) builds the emitters of a weather definition and compares every row with the
 dump (`dump_cbs.py <dmp> cb_vfx_emitter_constants --array=512`). Result (2026-10-07): `rain heavy_daytime` -> row 55,
 `rain heavy` -> row 54, `snow stormy` -> row 45 (= 265): every component matches except behaviour_mask.y, the runtime
 texture-array slot. Note: dump arrays must be read row by row (`Dump.read` fails across memory-region boundaries;
@@ -97,10 +97,11 @@ vector-field turbulence; mode 3 wraps the position into the box around the emitt
 - `g_tex_vector_field` (3D) is `vfx/textures/turbulence.dds` (string next to the variable name in the DLL).
 - Dump: cb_vfx_shared has instances 256/512/1024 and 256/1024/1024 (emitter / particle / sorted widths).
 
-## Editor implementation (src/vfx)
+## Editor implementation (`wce_assets`, `wce_render`)
 
-`vfx_def` (XML), `vfx_constants` (rows above + curve texture), `weather_vfx` (definition -> active emitters),
-`particles` (GPU passes with the game shaders, 512^2 slots). Verified: every emitter constant. Assumptions (not yet
+`wce_assets`' `vfx_def` (XML), `vfx_constants` (rows above + curve texture), `weather_vfx` (definition -> active emitters), and
+`wce_render`'s `particles` (GPU passes with the game shaders; 512^2 or 256^2 slots by the effects level, docs/re/graphics_options.md).
+Verified: every emitter constant. Assumptions (not yet
 traced in the DLL, marked in the code):
 - CPU emission: rate from EmissionRateCurve (min/max lerp), SpawnAreaBox = centred box size, SpawnSpread = elevation,
   SpawnArc = azimuth, StartTime < 0 pre-warms with the spawn shader's 0.2 s sub-steps. Alive counts agree with the
@@ -114,12 +115,13 @@ traced in the DLL, marked in the code):
   (`vfx_rome2/sim.rs`: size = v + (k v - v) * random, single scale = start only). Visible case: `snow_BTL_detail` (and the ash weathers, which
   reuse `library_vfx_weather_snow`) has Start 0.05, Mid / End 1.0 with UseSingleScale: 0.05 for the whole life, not growing to 1.0.
 - Emitter instance tint = middle of the reference's tint range; camera-following emitters sit at the camera.
-- Wind: verified, see "Wind" below (src/render/wind.cpp).
-- Not supported yet: non-continuous_mesh emitters (lightning), soft-edge property name,
-  shadow-receiving PS variants.
+- Wind: verified, see "Wind" below (`wce_render` `wind.rs`).
+- Rigid emitters: their point lights (the fires', the storms' lightning) and debris ("Placed effects" below). The soft-edge property
+  name is verified (`soft_factor`, "Spawn code" below).
 
 Properties repeat per graphics quality (`quality="0"` base, `"1"`/`"2"` lower-quality overrides such as
-`Enable=false` at quality 2 or fewer particles at quality 1); the editor uses the base level. Verified extra rows:
+`Enable=false` at quality 2 or fewer particles at quality 1); the editor reads the variant of the effects level (`vfx_def::set_quality`,
+docs/re/graphics_options.md). Verified extra rows:
 deceleration ranges are copied even with Deceleration=false; vs_animated_texture = bit 0x8, atlas/cell rows as
 vs_cell_texture (no_cells_xy), params (cell_blend, loop, row_restricted, randomize_row), params1 (no_loops, row_restriction).
 `vfx_check` result: rain heavy_daytime, rain heavy, rain stormy, snow stormy, snow gusty, dry desert storm all match.
@@ -127,7 +129,7 @@ Particle diffuse maps are 1024^2 DXT5 with 11 mips (glow_cells_a, flame_cells_v1
 
 ## Wind (2026-10-08, solved)
 
-Traced in the DLL and checked against all three dumps (src/render/wind.cpp):
+Traced in the DLL and checked against all three dumps (`wce_render` `wind.rs`):
 - Weather definition (loader fn 0x1738a60, defaults fn 0x1704210): +0x1c type, +0x20 severity, +0x24 vfx1, +0x30 vfx2,
   +0x3c wind_size_min (0), +0x40 max (1), +0x44 wind_gust_size_variation (0.5), +0x48 wind_gust_duration (2),
   +0x4c wind_gust_duration_variation (0.5), +0x50 wind_gust_interval (3), +0x54 wind_gust_probability (1),
@@ -151,9 +153,10 @@ Traced in the DLL and checked against all three dumps (src/render/wind.cpp):
   angle += (2 rand - 1) * dt * 5 (var +0x2a776a8), mod 2 pi; vector = (cos, 0, sin) * approx_sqrt(|v|^2), where
   approx_sqrt halves the float bits around 1.0 (gives 5.954 for 5.624 and 7.416 for 7.393, as in the dumps).
 
-## Non-custom ambient cube (open)
+## Non-custom ambient cube
 
-Dry dump values appear only in cbuffer copies (no stored source object), so they are built per frame; see renderer.md.
+Dry dump values appear only in cbuffer copies (no stored source object), so they are built per frame. Solved since: docs/re/renderer.md,
+"Non-custom ambient cube: solved".
 
 ## Distortion pass (heat haze, lens water drops)
 
@@ -181,9 +184,10 @@ hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified 
 - fn 0x1188e240 either accumulates or spawns per call; not modelled (the rain dump's live count matches accumulating
   every frame, accumulator 9.025 at rate 3000 is unexplained).
 
-## Spawn code (decoded 2026-10-08, not yet reproduced)
+## Spawn code (decoded 2026-10-08)
 
-Emitter update fn 0x1895130 (tools/decomp/emit_update.c): per spawned particle (LCG 0x343fd / 0x269ec3 on instance +0xc0):
+Reproduced for the placed effects ("Placed effects" below); the weather's emitters keep the approximations of "Editor implementation".
+Emitter update fn 0x1895130: per spawned particle (LCG 0x343fd / 0x269ec3 on instance +0xc0):
 - Position fn 0x1183fa30: with a mesh spawn source it picks a random point on a triangle (barycentric folding), otherwise
   fn 0x1183f4a0 builds an offset from three parts that are ADDED: a ring (angle lerp(desc +0x198, +0x19c) * pi/180,
   radius lerp(min, max) of the curve at desc +0x1b8 times the emitter scale), a box (curve vector at desc +0x1e8, each axis

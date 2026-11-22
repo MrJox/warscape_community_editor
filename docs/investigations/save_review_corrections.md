@@ -1,6 +1,6 @@
 # Save/Export: prompted and emergency Save contracts
 
-The final Save/Export contribution includes corrections for the four maintainer findings reported on 18 November 2026. The supported workflows and remaining native-normal limitations are in [Terrain Save/Export](../plans/terrain_save_export.md).
+The Terrain tool's Save/Export contribution (PR #74, merged) includes corrections for the four maintainer findings reported on 2026-11-18. The supported workflows and remaining native-normal limitations are in [Terrain Save/Export](../plans/terrain_save_export.md).
 
 ## Emergency saving without an editor frame
 
@@ -26,13 +26,13 @@ Nine added tests exercise emergency best-effort saving, multiple Save All confli
 
 ```text
 cargo test --locked -p wce_editor_core --test editor_check save_routing
-cargo test --locked -p wce_terrain_editor --lib save_as_overwrite_keeps_outside_source_changes
+cargo test --locked -p wce_terrain_editor --lib save_as_overwrite_keeps_outside_source_changes   # freshness_tests.rs
 cargo test --locked -p wce_editor --lib save_prompt_tests
 ```
 
 The shell modal tests run on Windows using a software D3D11 WARP device only to construct the shell. They create real Dear ImGui frames, feed in-memory mouse events to the real Overwrite/X buttons, and use isolated settings and synthetic documents. They create no native window, need no game assets and do not simulate a real driver crash. Core save routing and the real Terrain copy regression run on every platform.
 
-## Follow-up review, 19 November 2026
+## Follow-up review, 2026-11-19
 
 The [maintainer's re-review](https://github.com/MrJox/warscape_community_editor/pull/74#issuecomment-6992126283) confirmed the original four corrections and identified additional integration problems. The follow-up preserves unplanned destination files while continuing to reject ambiguous or conflicting resource paths. It checks destination ownership before closing the current document, rejects implicit same-tool reuse, and restores normal same-map reload through the Save/Discard flow. Async adoption keeps its observed Save destination across a prompt.
 

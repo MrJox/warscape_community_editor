@@ -35,10 +35,17 @@ nearest layer above it with an export type says (`LayerExportType_Normal`: the t
 | `AISeparatorInstance` | 108 | yes (Create: draw) | properties, points | outline | AI separators |
 | `SplineRiverInstance` | 254 | yes (Create: draw) | properties, points, handles, point values | the river (game shaders) and its curve | through `river_spline<n>.xml`, written on save for each river that changed |
 | `SEGMENTED_SPLINE_INSTANCE` (roads) | 4 | yes (Create: draw) | properties, points, handles, point values | its curve | no (a TEd painting guide) |
-| `LayerInstance` | 2,841 | yes (New layer, Ctrl+G) | name, export type | (a layer) | decides the export, see above |
-| `UserInstanceGroup` | 2,444,458 | no | properties | (a group) | its contents |
+| `LayerInstance` | 2,841 | yes (Scene panel: New layer) | name, export type | (a layer) | decides the export, see above |
+| `UserInstanceGroup` | 2,444,458 | yes (Ctrl+G groups the selection; a placed prefab is one, a reference with `wce_prefab`) | properties | (a group) | its contents (a prefab reference with the prefab's) |
 | `INSTANCE_GROUP` | 575 | no | properties | (a group) | its contents |
 | `LAYER_INSTANCE_GROUP` | 1 | no | none | (a group) | its contents |
+
+The editor's own elements, kept in `tile.wce` only ([formats/tile_wce.md](formats/tile_wce.md); made in the Create panel, described in
+[editor.md](editor.md), Tile tool): `WceRoadSpline` (procedural roads), `WceWallSpline` (procedural walls), `WceBuildingSpline`
+(buildings along a line), `WceRefHuman`, `WceRefUnit`, `WceRefShip` (references to measure the scale against), `WceMeasureLine` and
+`WceAngleFinder` (TEd's tape measure and angle finder, whose own elements never reach a file). The references and the measuring tools are
+dropped from what TEd and the game read; the roads, walls and building lines are written as the pieces they generate (`TileDocument::save_for_kit`,
+the game export likewise).
 
 Not instances (no position of their own): `SCENE_GRAPH` (the root layer; `exportable` on 430 of them), `point` / `points` (a polygon's or a
 spline's points), `children`, `camera`, and the modules (`Vegetation`, `Grass`, `Particle_Effects_VFX`).

@@ -1,8 +1,8 @@
 //! The Terrain tool's checks of a kit map (docs/plans/terrain_editor.md, Phase 4, "Validation"): what BOB's fill would not take or the
 //! game would not find. Each finding says where (a cell, for the camera to go to) when it is a place.
 //!
-//! Not checked yet: painted settlement sizes against `tile_upgrades.xml` (docs/plans/tile.md item 3; its rules to be settled), BCAs whose
-//! infield holds restricted tiles (Phase 6).
+//! Not checked yet: painted settlement sizes against `tile_upgrades.xml` (docs/plans/terrain_editor.md, map pipeline item 3; its rules to
+//! be settled), BCAs whose infield holds restricted tiles (Phase 6).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

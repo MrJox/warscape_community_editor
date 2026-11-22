@@ -111,13 +111,13 @@ Stances: `FACTION/OLD_DIPLOMACY_MANAGER/DIPLOMACY_RELATIONSHIPS_ARRAY/OLD_DIPLOM
 id, `^+4` the stance: `war` 0, `neutral` 1, `defensive_allies` 2, `military_allies` 3, `protector` 4, `client_state` 5, `master` 6,
 `vassal` 7; no record is neutral. Values / 255 for the shader.
 
-A sea chain (fn 0x10b99a80, on its sea's factions): at war with P (fn 0x10715ff0: F ≠ P and F or P is the rebels, or P's stance to F
-is war) counted; the list exactly [P] own; none at war: allied when a faction other than P is allied (fn 0x10715bb0: neither the
-rebels, stance 2 to 7), else neutral (an empty list neutral); exactly one at war, the rebels (+0x800 null, fn 0x10716690) in the list,
-and every region the rebels hold abandoned (their +0x54 list, each region's +0x628, fn 0x10951060: the startpos's `REGION`
-`REGION_REBEL_MANAGER+1`; none held counts as all): neutral; else war. `main_attila`'s rebels hold its 11 ruins in the east at the
-start (Tanais, Samandar, Sarai...), all abandoned: Mare Sarmaticum and Pontus Cimmerius, where the rebels are the only faction at war
-with the Western Roman Empire, are neutral.
+A sea chain (fn 0x10b99a80, on its sea's factions; the rebel exception traced 2026-11-21): at war with P (fn 0x10715ff0: F ≠ P and F or P is
+the rebels, or P's stance to F is war) counted; the list exactly [P] own; none at war: allied when a faction other than P is allied (fn
+0x10715bb0: neither the rebels, stance 2 to 7), else neutral (an empty list neutral); exactly one at war, the rebels (+0x800 null, fn
+0x10716690) in the list, and every region the rebels hold abandoned (their +0x54 list, each region's +0x628, fn 0x10951060: the startpos's
+`REGION` `REGION_REBEL_MANAGER+1`; none held counts as all): neutral; else war. `main_attila`'s rebels hold its 11 ruins in the east at the
+start (Tanais, Samandar, Sarai...), all abandoned: Mare Sarmaticum and Pontus Cimmerius, where the rebels are the only faction at war with
+the Western Roman Empire, are neutral.
 
 The faction list: `CAMPAIGN_PREOPEN_MAP_INFO/FACTION_INFOS`, per faction its key, two flags (the second: playable), its list order and
 its regions at the start. No default is in the data read; the editor picks the playable faction with the most regions (the Western
@@ -137,13 +137,13 @@ A point (fns 0x108445f0, 0x1083a780, 0x1083a740; single precision): x = X · a �
 (1.5 (columns - 1)) (678.5 / 1522.5) and b = height / (2 rows + 1) (the grid's +0x64, +0x68); a handle (dx · a · 0.25, dz · b · 0.25),
 P1 = 0.01 · handle 1 + P0, P2 = 0.01 · handle 2 + P3. Bit-exact on the captures.
 
-The drawn routes: the startpos's `CAMPAIGN_MODEL/CAMPAIGN_TRADE_MANAGER/INTERNATIONAL_TRADE_ROUTES`, per group the owner's runtime id
-and its `INTERNATIONAL_TRADE_ROUTE`s (`^+1` the partner, `^+2` the path of region runtime ids, `^+3` a sea leg, then its two path
-indices). The chosen faction's routes, each leg looked up both ways round in table 1 when it is the sea leg, else table 0; each
-segment once, in the file's direction. Only segments whose flag byte 0 is 0 are drawn (fn 0x10aba960 makes no draw object for 1),
-whichever table named them (segment 567, the Bosporus crossing, is a sea-leg segment with byte 0 set). A segment is one draw: its curves' lengths as above, uv in world units scaled so the
-segment's total is a whole number (uv offset = length before · ⌈L⌉ / L, scale = length · ⌈L⌉ / L); 16 vertices a curve by arc
-length as the borders', the last curve 17. Half-width 0.05, colour (240, 200, 20).
+The drawn routes: the startpos's `CAMPAIGN_MODEL/CAMPAIGN_TRADE_MANAGER/INTERNATIONAL_TRADE_ROUTES`, per group the owner's runtime id and
+its `INTERNATIONAL_TRADE_ROUTE`s (`^+1` the partner, `^+2` the path of region runtime ids, `^+3` a sea leg, then its two path indices). The
+chosen faction's routes, each leg looked up both ways round in table 1 when it is the sea leg, else table 0; each segment once, in the
+file's direction. Only segments whose flag byte 0 is 0 are drawn (fn 0x10aba960 makes no draw object for 1), whichever table named them
+(segment 567, the Bosporus crossing, is a sea-leg segment with byte 0 set). A segment is one draw: its curves' lengths as above, uv in world
+units scaled so the segment's total is a whole number (uv offset = length before · ⌈L⌉ / L, scale = length · ⌈L⌉ / L); 16 vertices a curve
+by arc length as the borders', the last curve 17. Half-width 0.05, colour (240, 200, 20).
 
 ## Check (`borders_check`)
 
@@ -157,5 +157,4 @@ The later captures, all curves: B 555 + 12 sea, rain 67 + 7, w1 58 + 7.
 
 ## Known gaps
 
-- The sea colour's rebel exception: traced (see Colours, 2026-11-21).
 - The default faction: no data names it (see Colours).

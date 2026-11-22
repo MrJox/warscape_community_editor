@@ -1,7 +1,7 @@
-# Tile editor: automatic detail, second round (plan, 2026-11-20)
+# Tile editor: automatic detail, second round (2026-11-20)
 
-The ideas left from the first round's list (docs/plans/auto_detail.md), built in the order the user picked, on `feature/auto_detail_2`
-(branched from `feature/auto_detail`, which is unmerged):
+The ideas left from the first round's list ([auto_detail.md](auto_detail.md)), built in the order the user picked on `feature/auto_detail_2`
+(2026-11-20), all six:
 
 - **D. Erosion and fine detail**: hydraulic and thermal erosion plus fine noise over the heights, buildings and roads left flat; where
   water ran and where it dropped its load become texture rule conditions.
@@ -11,165 +11,50 @@ The ideas left from the first round's list (docs/plans/auto_detail.md), built in
 - **H. Paths between things**: dirt paths found over the slope between gates, buildings and roads, made as procedural roads.
 - **I. District filler**: draw a district and it fills with buildings or prefabs facing the roads, keeping off steep ground.
 
-Status (2026-11-20): D done (steps 1 to 4); E done (steps 1 to 3); F done; G done; H done; I done. The whole plan is built; its look on kit tiles and in game is the user's.
+## Status (2026-11-22): all six shelved
 
-**Shelved (2026-11-21, the user's call after a look): D (erosion) and I (districts)** are taken out of this branch; they stay as built on
-`feature/shelved_erosion_districts`. Not to be brought back without the user. **H (paths)** too, the same day (less control than drawing a procedural
-road): kept with its zigzag fix on `feature/shelved_paths`. **E (decal rules) and G (fields)** too, the same day: kept on `feature/shelved_fields_decal_rules`. F (shores) went
-with the ground coverage (shelved the same day, `feature/shelved_ground_coverage`). What stays of this plan: new decals at their own
-size (`decal_sizes`), decal pictures, the road link snapping and the area brush for every closed polygon. What stays of D: the texture rules' and decal rules'
-*Water flow* condition, worked out from the heights (`texture_rules::flow_of`); *Deposit* went with the erosion. A tile saved with an
-erosion layer drops it when opened (`terrain_layers::RETIRED_OWNERS`).
+**Shelved 2026-11-21, the user's call after a look**; each stays as built on its branch and is not to be brought back without the user:
 
-Common to all: a seed saved in the tile (the same result each time), a limit on what is laid, the editor's own look (styled.rs) and
-the Inspector as their place (see "Where the tools live" in auto_detail.md). The user looks at each in the app when it's done.
+| Tool | Branch | Why |
+|---|---|---|
+| D erosion, I districts | `feature/shelved_erosion_districts` | the user's look |
+| H paths | `feature/shelved_paths` (with its zigzag fix) | less control than drawing a procedural road |
+| E decal rules, G fields | `feature/shelved_fields_decal_rules` | the user's look |
+| F shores (a ground coverage kind) | `feature/shelved_ground_coverage` | went with the ground coverage ([ground_coverage.md](ground_coverage.md)) |
 
-## Decisions (mine, 2026-11-20; the user can overturn them)
+What stays on master from this round: new decals at their own size (`wce_tile::decal_sizes`) and decal pictures in the key picker; the
+procedural roads' snapping to the tile's road links ([procedural_roads.md](procedural_roads.md)); the area brush for every closed
+polygon type (`area_brush.rs`, also the biomes'); and of D, the texture rules' *Water flow* condition worked out from the heights
+(`texture_rules::flow_of`; *Deposit* went with the erosion). A tile saved with an erosion layer drops it when opened
+(`terrain_layers::RETIRED_OWNERS`). Reeds and stones by rivers and lakes came back another way: the rivers plan's shores
+([rivers.md](rivers.md), step 10, `wce_tile::shores`).
+
+## Decisions (mine, 2026-11-20; the user could overturn them)
 
 | Question | Answer |
 |---|---|
-| Erosion: live or by a button | **Live**, like the texture rules: a derived height layer remade off the editor's thread when the heights under it or its settings change. Settings in `erosion.wce` beside the tile |
-| Erosion's place in the stack | Over the user's height layers, under the procedural ones (roads, walls, prefab ground), so it reads what the user sculpted and roads still lay flat over it |
+| Erosion: live or by a button | **Live**, like the texture rules: a derived height layer remade off the editor's thread. Settings in `erosion.wce` beside the tile |
+| Erosion's place in the stack | Over the user's height layers, under the procedural ones (roads, walls, prefab ground) |
 | Decals, fields: derived or saved | **Derived** (live, laid again from their rules or areas, added at export), like the biomes' trees |
-| Paths, districts: derived or saved | **Made once** with an undo entry: a path is a procedural road you then edit; a district's buildings are plain buildings in a group you then move; filling again replaces that group |
-| Waterside | A fifth ground coverage kind, **Shores** (the walkable banks), in the ground coverage window, as the other kinds are |
+| Paths, districts: derived or saved | **Made once** with an undo entry: a path is a procedural road you then edit; a district's buildings are plain buildings in a group |
+| Waterside | A fifth ground coverage kind, **Shores** |
 
-## D. Erosion and fine detail
+## What was built, and found (for a return)
 
-### Design
-
-- `wce_tile::erosion`: `Settings { droplets per km², rain steps, inertia, capacity, erode, deposit, evaporate, thermal talus angle,
-  thermal passes, detail amplitude, detail scale, seed, strength }` and `erode(heights, w, h, mpp, mask, &Settings) -> Result {
-  delta, flow, deposit }`:
-  - hydraulic: droplets (Beyer's particle model) over a bilinear height grid with brush-weighted erosion, so channels come out
-    smooth;
-  - thermal: material moved down where the slope passes the talus angle;
-  - detail: fractal noise scaled by slope (more on steep ground);
-  - `mask` (0..1) scales everything: 0 on buildings' footprints and roads (and a fade), so their ground stays as it is;
-  - `flow` = how much water ran over each sample (droplets' visits, normalised); `deposit` = what was laid there (positive part of
-    the hydraulic delta), both kept for the texture rules.
-- Editor: an owned height layer `erosion#<sig>`, ordered between the user's layers and the procedural ones (a new order slot); a job
-  like the texture rules' reads the composite under it, writes the delta. Remade when the composite under it, the masks or the settings
-  change; never per stroke (waits for the stroke's end, as the rules do). Exports wait for it.
-- Texture rules: two new conditions, **Water flow** (0..1) and **Deposit** (metres); they read the erosion result kept with the layer
-  (no erosion = flow worked out from the heights alone by D8 accumulation, deposit 0).
-- UI: Terrain layers, Height tab: an "Erosion" row (or "+ Erosion") over the user's layers opening its settings in the Inspector:
-  presets (Light, Weathered, Rugged), Simple/Advanced, Reroll; viewport outline of the flow when asked.
-
-### Steps (done 2026-11-20)
-
-Done as planned, but: a drop's load goes by the **slope** it runs down, not by the metres it falls a step, and its speed is capped (the
-first run dug −11 888 m into a 4 m-a-sample mountain); the stack is made before the first signature (else the first remake ran twice).
-The view of where water runs in the viewport is left out (the texture rules' outline of a Water flow rule shows it).
-
-1. `wce_tile::erosion` with tests (a cone gets channels; a flat mask stays untouched; same seed = same result; thermal flattens a
-   spike past the talus).
-2. The owned layer, the job, `erosion.wce`, the script command `erosion <off|on|preset <name>|wait>`.
-3. Texture rule conditions Water flow and Deposit, Default gets "Gravel where water ran" when the tile has the textures.
-4. Inspector UI and docs.
-
-## E. Decals by rules
-
-### Design
-
-- `wce_tile::decal_rules`: a **decal rule** = name, decal keys (weighted), the texture rule's conditions (height, slope, hollow, water,
-  road, building, flow, deposit) plus **Under trees** (distance to tree trunks), density per 100 m², size range, spacing, alignment
-  (Random, Along roads, Facing buildings), breakup. `lay(rules, fields, keep_off, seed, extent) -> Vec<Decal{key,x,z,yaw,sx,sz}>`.
-- Editor: live like the biomes' items (a job on a signature, drawn locked, layer "WCE decals" at export), each decal refitted to the
-  ground (`decal_refit`). Rules in `decal_rules.wce`; presets in the projects folder.
-- The built-in **Default**: puddles in hollows (global_terrain_puddle_*), dirt at building bases (erosion/path decals), ruts along roads,
-  leaf litter under trees; only the keys the game has.
-- UI: the Create panel's decals get a "Decal rules" entry opening them in the Inspector, the rule list and fields as the texture rules'.
-
-### Steps (done 2026-11-20)
-
-Done as planned, but: the distance to trees is the decal rules' alone (in the texture rules it would loop: the generated forest follows the
-blend map they paint); the "Decal rules" entry is a new kind of Create entry (`Make::Rules`) that only opens the Inspector; decals have no
-pictures in the key picker (the thumbnails have no ground for a decal to project onto). On the Nordic city: 2757 decals (743 at building
-bases, 1928 under trees, 68 puddles).
-
-1. `decal_rules` (conditions shared with texture rules), tests.
-2. Editor job, export layer, file, script command `decal_rules <off|load|window|wait>`.
-3. Inspector UI (the key picker for decals), Default, docs.
-
-## F. Waterside detail
-
-### Design
-
-A ground coverage kind **Shores**: the walkable ground within reach of water and the shallow water itself, in bands: in the water's
-edge (reeds), the bank (rocks, bushes), the riverbed under the surface (stones), and on coasts the tide line (driftwood). Keys picked
-with the key picker, presets per climate. It goes where Riverbanks and Coast don't (they take the cliffs).
-
-### Steps (done 2026-11-20, one commit)
-
-Done as planned; with no set chosen the shores lay built-in reeds and stones (the other kinds need a set); the window hides "On the
-face" for them and offers thicker reeds. On the river tile (2x2_lt_rb): 7 stretches of bank, 179 stones, 1192 reeds.
-
-1. The kind in `ground_coverage` (bands from the water surface and depth), tests.
-2. The window's tab, presets, docs.
-
-## G. Fields and farmland
-
-### Design
-
-- An area like a biome's (an exclusion polygon, so the game's trees keep off) carrying `wce_fields` settings: strip width and angle
-  (or along the longest edge), each strip's crop (a texture group and variation, from the tile's own), a share of orchard strips
-  (tree rows), fence keys (a building spline round the area or per strip), haystacks/props per hectare, a seed.
-- Live: the strips' textures as an owned blend layer (with the texture rules'), trees, fences and props as derived items added at
-  export.
-- Create panel: "Fields" under Vegetation (draw an area), the Inspector as for biomes.
-
-### Steps (done 2026-11-20)
-
-Done as planned, but: the crops are the kit's own field decals (`global_fields_1..6`, 50 × 25 m in its farm tiles; its `field_1..4` are
-5 m squares) laid end to end along a strip rather than textures (the tile has 4 texture groups, none a crop); the ground under the whole
-area is one texture rule bound to it; the farmland is made on the editor's thread (no job: it is a few hundred items); the settings are the
-area's own attribute (no presets yet); the Inspector shows them under the area's properties. Found on the way: adding anything to an empty
-kit tile (`<SCENE_GRAPH .../>`, terrain_plains/1x1/ab) failed; fixed. On that tile an area of about a hectare: 18 to 22 crop decals, about
-35 olive trees, 66 fence pieces, 4 haystacks.
-
-1. `wce_tile::fields`: strips from a polygon, the crops, the rows, the fence lines, scatter; tests.
-2. Editor: areas, job, blend layer, items, export.
-3. Create entry, Inspector UI, docs.
-
-## H. Paths between things
-
-### Design
-
-- `wce_tile::paths`: A* over the height grid, cost by slope (a soft limit and a hard one), water and buildings' footprints barred,
-  existing roads cheap; the cell path simplified to a few control points.
-- Tool: pick two ends (a gate, a building, a point or a road) and get a `WceRoadSpline` with `road_type` "dirt_track" (or "none" where
-  the game has no tracks) and its width; "Connect to the roads" for the selected buildings does each one to the nearest road.
-- One undo entry; the path is then an ordinary procedural road.
-
-### Steps (done 2026-11-20)
-
-Done as planned, but: water is not barred, it costs (a ford 6 times a step, a metre deep 25 times: the roads make fords and bridges), so
-a path crosses a river where it is narrowest (the river tile's is deep all along: barring it, no path crossed it); the simplify tolerance
-is 3 m (1.5 m left a zigzag of 40 points along the 8-way cells). On the river tile: a 386 m path of 16 points across the river; a house
-added and connected: a dirt track of the game's pieces.
-
-1. `paths` with tests (around a hill, round a building, not across water, onto a road).
-2. The tool (Create panel "Path" under roads, two clicks), Connect to the roads, script command, docs.
-
-## I. District filler
-
-### Design
-
-- Draw a district (a polygon); settings: building patterns (key patterns as the clutter rules, or prefabs), spacing, setback from the
-  road, the most slope, a seed.
-- Fill: lots along the roads' edges inside the district, each building turned to face its road, its real footprint (logic or model
-  bounds) kept off roads, other buildings and steep ground; the rest filled inward by size. Made into a group `District <n>` with one
-  undo entry; filling again replaces it.
-
-### Steps (done 2026-11-20)
-
-Done as planned, but prefabs are left out (buildings only, picked as keys); a district is drawn and filled at once, and its group is
-found again by its name. Found on the way: the kits' tables name buildings the game has no model for (the first default took barbarian
-houses that showed as boxes; the default takes only keys with model pieces), the building splines' fallback size (5 × 0.5 m, a fence's)
-made hundreds of slivers (a district guesses 8 × 8 m and says so), and a size not known when first asked was cached for good (looked for in
-the scene again now). On the empty plains tile: a path across, a district round it: 51 Nordic houses, two rows facing the path, the inside
-filled.
-
-1. `wce_tile::districts`: lots from a polygon and road lines, packing by footprints, tests.
-2. Editor: the fill as an edit, the Create entry, the Inspector, script command, docs.
+- **D** (`wce_tile::erosion`): droplets (Beyer's particle model) with brush-weighted erosion, thermal talus, slope-scaled fractal detail,
+  a mask keeping buildings and roads; an owned height layer `erosion#<sig>`; Water flow and Deposit conditions. A drop's load goes by the
+  slope it runs down and its speed is capped (the first run dug -11 888 m into a 4 m-a-sample mountain).
+- **E** (`wce_tile::decal_rules`): the texture rules' conditions plus the distance to trees (the decal rules' alone: in the texture rules
+  it would loop, the generated forest following the blend map they paint), density, size, spacing, alignment; live, exported in a
+  `WCE decals` layer. On the Nordic city: 2757 decals (743 at building bases, 1928 under trees, 68 puddles). Decal thumbnails have no
+  ground to project onto (pictures came later and stayed).
+- **F**: bands from the water's surface and depth (reeds at the edge, stones in the bed); built-in reeds and stones when no set is chosen.
+- **G** (`wce_tile::fields`): the crops are the kit's field decals (`global_fields_1..6`, 50 x 25 m in its farm tiles; its `field_1..4`
+  are 5 m squares) laid along strips, the ground one texture rule bound to the area, fences a closed building spline's; later farms cut by
+  lanes, each fenced, and kinds of farmland. Found: adding anything to an empty kit tile's root failed (fixed on master).
+- **H** (`wce_tile::paths`): A* over the heights by slope; water costs rather than bars (a path crosses where a river is narrowest; the
+  roads make the ford or bridge); simplified at 3 m, then pulled taut (a grid's way zigzags on a slant).
+- **I** (`wce_tile::districts`): lots along the roads facing them, footprints kept off roads, buildings and steep ground. Found: the kits'
+  tables name buildings the game has no model for (the default takes only keys with model pieces); the building splines' fallback size
+  (5 x 0.5 m, a fence's) made slivers (a district guesses 8 x 8 m); a size not known when first asked was cached for good (a district
+  looks again).

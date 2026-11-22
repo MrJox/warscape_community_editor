@@ -1,38 +1,21 @@
 # The Unit tool
 
 A tool for editing a unit's looks: its **variant mesh definitions** (VMDs), shown on the unit's own skeleton, animated, in the renderer.
-Later, the DB rows that decide which VMD a unit wears. It replaces the `unit` placeholder in `wce_app::tools`. It builds on the unit
+Then the DB rows that decide which VMD a unit wears. It replaced the `unit` placeholder in `wce_app::tools`. It builds on the unit
 rendering in [units.md](units.md); that plan's decision "Unit tool viewer: dev-only" is replaced by the decisions below.
 
-State: planned 2026-11-14, decisions taken with the user (the list at the end). Steps 1 to 4, 6 and 7 built 2026-11-14/15 on
-`feature/unit_editor`, step 5 but for the outline; what is left is under "Left". How it works for a user: [editor.md, Unit tool](../editor.md#unit-tool-wce_unit_tool).
+State (2026-11-22): planned 2026-11-14, decisions taken with the user (the list at the end); steps 1 to 7 built 2026-11-14 .. 15, in
+master (feature `unit`, in the default features; kept out of the `release` set 2026-11-21, "not ready for production"). What is left
+is under "Left". How it works for a user: [editor.md, Unit tool](../editor.md#unit-tool-wce_unit_tool).
 
-## What the code has to build on
+## What it builds on
 
-- **VMD format** (`wce_formats::variant_mesh`): `VariantMeshFile { doc: XmlDoc, root, repaired }`. It is a tree (`VariantMesh`, `Slot`,
-  `Alternative::{Mesh, Reference}`) over a lossless `XmlDoc`. Each node keeps its `element` index. Attribute edits (`XmlDoc::set`) change only
-  their span; structural edits (`with_child`, `removed_element`, `duplicated_element`, `moved_element`, the in-place journal) re-parse, so
-  element indices shift. The tree is a snapshot: today the only way to rebuild it is `parse(doc.save())`, because `mesh()` and `slot()` are
-  private. Attributes outside the tree (`use_different_attach_point_parts`, `mask3`) and unknown children stay in the doc, untouched.
-  TDD's 11 malformed files parse through `repair()` (`repaired = true`), and their `doc` holds the repaired text.
-- **Assembly** (`wce_render::unit_assembly::assemble(read, definition, seed)`): a seed decides everything (slot probability, the alternative,
-  the tint, the decal of a `.texture_array`), through private code. There is no way to ask for a given alternative. Attachment points come
-  from the parent model's RMV2. `.texture_array` is read only inside the assembler.
-- **Units** (`unit_catalog::UnitCatalog`, `unit_animation::UnitModel`): `UnitModel::load(read, catalog, unit, faction, seed)` resolves
-  `unit_variants` to the VMD (`variant_path`: the `variant` column used as the file name), the land unit's animation table, the mount, the
-  scale and the faction colours. `play(slot)` sets a looping schedule, and `instances(t)` is pure in `t`. `man.parts` is public, so the parts
-  can be replaced without touching the animation. The catalog keeps string projections only and reads mods (first file wins).
-- **In a tile** (`wce_tile_tool::ref_units`): a working example of all of this. The catalog and models load on threads; the entities start
-  as placeholders and are posed each frame with `scene.update_pose`; the Inspector has a filterable combo (private `RefUnits::combo`), a seed
-  with Next, colour overrides and a Plays combo.
-- **Tools and documents** (`wce_editor::Tool`, `wce_editor_core::Document`): the Weather tool's `XmlFileDocument` is the model to copy.
-  It holds a `CommandStack<XmlDoc>`, takes undo with mergeable commands broken on `gesture_ended`, and saves to `<projects>/loose/<vfs path>`,
-  which is mounted above the packs. The Weather tool also shows how to have a scene without a tile (`SampleMapDocument`, a `stand_in`) and
-  how to aim the orbit camera.
-- **Packs and DB** (`wce_walls::pack::write_pack_as` writes files and rpfm `DB` tables; `wce_walls::db` has row copy and cell edits;
-  `wce_vfs::mod_pack` merges files into a pack). Launch in game writes a battle XML with `<unit_type>` per side (`wce_launch::battle_xml`).
-- **What is missing:** skinned meshes are not in the id pass (no click picking, no outline); there is no shared VFS file picker, searchable
-  combo or DB row picker.
+- `wce_formats::variant_mesh` (`VariantMeshFile`: a tree over a lossless `XmlDoc`; attributes outside the tree and unknown children stay
+  in the doc; TDD's 11 malformed files parse through `repair()`).
+- `wce_render::unit_assembly` (`assemble`, and `assemble_with` from step 2), `unit_catalog::UnitCatalog`, `unit_animation::UnitModel`.
+- The tile's references (`wce_tile_tool::ref_units`) as the working example; the Weather tool's `XmlFileDocument` as the document model
+  (`CommandStack<XmlDoc>`, saved to `<projects>/loose/<vfs path>`, mounted above the packs).
+- `wce_walls::pack::write_pack_as` and `wce_walls::db` for packs and DB rows; `wce_launch::battle_xml` for a later Launch in game.
 
 ## Design
 
@@ -59,7 +42,7 @@ State: planned 2026-11-14, decisions taken with the user (the list at the end). 
   being edited always shows (a toggle turns that off).
 - **Grid:** N soldiers side by side (seeds `seed..seed+N`), to judge the variety as a unit shows it.
 - Needs the assembler to take choices: `assemble_with(read, &VariantMeshFile, seed, &Pins) -> AssembledUnit`. The `Pins` are keyed by the
-  tree's path (slot names and indices, so they survive the re-parses that shift element indices). The same RNG draws are consumed whether
+  tree's path (`NodePath`, so they survive the re-parses that shift element indices). The same RNG draws are consumed whether
   a choice is pinned or not, so pinning one slot doesn't reshuffle the others. `assemble` stays as the call with no pins.
 - The document's own tree goes to the assembler, not the file in the VFS, so unsaved edits show. References load from the VFS (an open
   referenced VMD is not live; see Later).
@@ -67,8 +50,8 @@ State: planned 2026-11-14, decisions taken with the user (the list at the end). 
 ### Panels
 
 - **Units:** search over `unit_variants` (unit, faction, variant), open a unit's VMD. Mods included (as the catalog reads them).
-- **Files:** the VMDs in the VFS, by folder, with their owner (pack, mod, project). A shared `VfsPicker` widget (`wce_editor`), which the
-  model and texture fields reuse.
+- **Files** (built as Unit files): the VMDs in the VFS, by folder, with their owner (pack, mod, project). The model and texture fields
+  pick through `wce_editor::pickers` (`pick_button`, `search_combo`).
 - **Structure:** the tree. Meshes show their model's file name, slots their name, attach point and probability, references their target
   (expandable, read-only, with Open). Context menu and buttons: add slot, add mesh, add reference, duplicate, delete, move up / down. Drag to
   reorder later if wanted.
@@ -87,12 +70,11 @@ State: planned 2026-11-14, decisions taken with the user (the list at the end). 
 
 ### The stage
 
-- No tile: a flat ground stand-in (a disc of a game ground texture, or the Weather tool's sample map), lit by the weather preview
-  (`lights_scene` false, as the Tile tool), the orbit camera focused on the figure. Attila's default environment until the user picks one.
+- No tile: a plain ground with the climate's and season's grass texture, lit by the stage's own weather chips (`weather.rs`, as the
+  Tile tool's), the orbit camera focused on the figure.
 - The figure at the origin, a mount under its rider. In the grid, soldiers in a row at the unit's spacing.
-- **Selection in the viewport:** skinned meshes are not in the id pass. First version: the selected node's parts outlined by drawing them a
-  second time (or with "isolate"). Clicking a part to select its node needs skinned meshes in the id pass (a step of its own, also wanted by
-  `ref_human`'s selection outline).
+- **Selection in the viewport:** skinned meshes are not in the id pass. Built (2026-11-15): clicks are found on the CPU (a part of a
+  referenced file selects the reference) and the selected node's parts are outlined.
 
 ### DB: the tables that decide looks (phase 2)
 
@@ -124,32 +106,22 @@ State: planned 2026-11-14, decisions taken with the user (the list at the end). 
 Rome 2 has the same VMD, anim and table formats (units.md): the tool works there with the same code. Later games (`wsmodel`, `.anim` v6+,
 binary fragments) need their own readers behind the game profile; until then the tool is listed in their `unsupported_tools`.
 
-## Plan
+## Plan (as built)
 
-Each step ends with something visible and a test or a gate.
+1. **Tree from a doc** (2026-11-14, `wce_formats`): `VariantMeshFile::from_doc`, `NodePath`, the structural helpers in tree terms; the
+   `.texture_array` parser moved into `wce_formats`. `unit_formats_check` rebuilds every VMD's tree from its doc.
+2. **Assembly with pins** (2026-11-14, `wce_render`): `assemble_with`; no pins equals `assemble`, pinning one slot leaves the others.
+3. **The tool skeleton** (2026-11-14, `wce_unit_tool`, feature `unit`): `VmdDocument`, the stage, the Unit files and Structure panels.
+4. **Inspector and Preview** (2026-11-15): every field with undo; Preview as, seed, pins, grid, slot to play, colours, isolate.
+5. **Problems and the Units panel**, opening by unit (2026-11-14); clicking parts and their outline (2026-11-15).
+6. **DB check** (2026-11-14, example `unit_tables_check`; findings above).
+7. **DB editing** (2026-11-15; gate `unit_db_check`): the rows in the project, the "Unit's looks" section, a copy of the VMD for this
+   unit, Export > To mod pack.
 
-1. **Tree from a doc** (done 2026-11-14) (`wce_formats`): `VariantMeshFile::from_doc(XmlDoc)` (the tree without a save and re-parse), `TreePath` for a node
-   (survives structural edits), the structural helpers in tree terms: add slot / mesh / reference / tint / meta, remove, duplicate, move.
-   `.texture_array` parser moved into `wce_formats`. Unit tests: every operation changes only its span (minimal edit), and save after no
-   edit is the input. Gate: `unit_formats_check` gains a pass that rebuilds every VMD's tree from its doc and compares it with the parsed one.
-2. **Assembly with pins** (done 2026-11-14) (`wce_render`): `assemble_with(read, &VariantMeshFile, seed, &Pins)`, each part keeping the tree path it came
-   from (for isolate, the outline and Problems). Tests: no pins equals `assemble` for every seed tried; pinning one slot leaves the other
-   slots' picks unchanged.
-3. **The tool skeleton** (done 2026-11-14) (`wce_unit_tool`, feature `unit`, in the default features; the placeholder goes): `VmdDocument` (open, undo, save to
-   loose, revert), the stage, the Files and Structure panels, the figure on the default unit, playing `STAND`. Shot: a legionary on the
-   stage, script-driven (`--script`, non-activating).
-4. **Inspector and Preview** (done 2026-11-15; the file fields take a `pick_button` list rather than a `VfsPicker`): every field above with undo; Preview as, seed, pins, grid, slot to play, colours, isolate. A shared
-   `SearchCombo` and `VfsPicker` in `wce_editor` (`ref_units` switches to them). Shots: the same soldier with a slot pinned to each
-   alternative; an edited tint.
-5. **Problems and the Units panel**, opening by unit (done 2026-11-14); the selection outline for skinned parts (not done: Isolate shows a
-   node's parts alone meanwhile).
-6. **DB check** (done 2026-11-14, above): `variants`, `unit_variants_colours` and `scale` against what the catalog does, over Attila, Rome 2 and TDD (an example
-   that lists the differences). Fix the catalog if it is wrong (the tile's references benefit too).
-7. **DB editing** (done 2026-11-15; gate `unit_db_check`: every game row of the three tables read back as it was, the files written again
-   to the same bytes): the rows above in the project, the "Unit's looks" section, copy-VMD-for-this-unit, Export > To mod pack. Gate: the DB
-   files written decode with rpfm and encode back to their bytes; an untouched row round trips.
-8. **Later, when asked:** clicking skinned parts (id pass), referenced VMDs edited live in the same preview, Launch in game with the unit,
-   stats tables, Share project, animation browsing beyond the slot combo (a clip list, the fragment's lines).
+Built on top (2026-11-15): pictures for the file fields, the slots' alternatives, Unit files and Units (the editor's thumbnail
+renderer); slot names with the ones the engine looks up (example `slot_kinds`, docs/re/variant_mesh_slots.md), warned in Problems; a
+ship's definition drawn as the ship with its oars, weapons, sails and ropes (`ship.rs`, script command `unit_ships`); the stage's
+weather chips.
 
 ## What the build found
 
@@ -167,13 +139,10 @@ Each step ends with something visible and a test or a gate.
 
 ## Left
 
-- Done 2026-11-15 (user's request): clicking a part selects its node, the selection is outlined; pictures for the file fields, the
-  slots' alternatives, Unit files and Units. Clicks are found on the CPU, not by the id pass; a part of a referenced file selects the
-  reference.
 - In game: a pack from Export > To mod pack, to see that `!wce_unit_tool` rows win and the unit wears the edited file.
 - New `unit_variants` rows for a faction that has none; undo for the DB edits; officers', standard bearers' and musicians' colours.
 - Referenced definitions edited live in the same preview (only the open file is live); Launch in game with the unit; Rome 2 (packs not on
-  this machine).
+  this machine); stats tables, Share project, animation browsing beyond the slot combo (all "when asked").
 
 ## Decisions (user, 2026-11-14)
 
@@ -181,9 +150,8 @@ Each step ends with something visible and a test or a gate.
 - **Preview:** seed as the game, plus per-slot pins and a grid of seeds.
 - **DB:** visual links first (`unit_variants`, `variants`, `mounts`, colours), as phase 2. Stats later, if ever.
 - **Release:** a release tool behind its own Cargo feature `unit`, in the default features once usable, replacing the placeholder.
+  Kept out of the `release` set 2026-11-21 (not ready for production).
 
 ## Open questions
 
-- Whether `variants.variant_filename` and `unit_variants_colours` matter (step 6 answers it from the data).
-- The stage's ground: a plain textured disc or the Weather tool's sample map.
 - Whether pins should optionally be saved in the project (a per-VMD sidecar) to keep a "showcase" soldier across sessions.

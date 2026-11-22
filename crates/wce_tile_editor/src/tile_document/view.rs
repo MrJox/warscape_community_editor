@@ -1827,7 +1827,7 @@ impl Tile {
     /// POSITION4.w of a building's or mesh's pieces: its `opacity` as the engine packs it (TEd hands the opacity to the renderer, which
     /// writes round(opacity * 1000) there, the opacity clamped to 0..1; 1000 is opaque). The alpha-tested G-buffer shaders multiply the
     /// diffuse alpha by floor(w) * 0.001 before the test. TEd files a building below 1 apart (render flag 0x2000), for the blended forward
-    /// shaders (`ps30_alpha_blend_40` multiplies the alpha the same way); the renderer has no such pass yet, so opaque materials show no fade.
+    /// shaders (`ps30_alpha_blend_40` multiplies the alpha the same way), drawn by the renderer's `pass_faded`.
     fn opacity_w(&self, elem: usize) -> f32 {
         opacity_w(self.tscene().get(elem, "opacity").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0))
     }

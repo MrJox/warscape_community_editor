@@ -1,5 +1,7 @@
 # Exact land LF region PNG interchange
 
+Contributed by Jordanakoos, merged 2026-11-21 (#75). The Terrain tool's plan: [terrain_editor.md](terrain_editor.md).
+
 The Terrain panel's **Land LF region PNG** section and the following commands transfer a bounded rectangular region of the document's land LF:
 
 ```text

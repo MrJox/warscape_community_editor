@@ -126,7 +126,7 @@ graphics system's live settings struct, at `DAT_12a21d18 + 0x7164c` (the screen'
 
 - Per model (fn 0x11841280, model type, battle): the level that applies to a model by a type code at its node's +0x50: building detail
   by default; 0x40 grass's; 0x49 .. 0x4b, 0x6c unit detail's; 0x5b, 0x5c, 0x6e, 0x6f trees'; 0x69 terrain's (battle). The type codes
-  are not RMV2 material ids (the trees' meshes are 74 / 75, the units' 65, the grass 69, the buildings' 68): which enum is not known.
+  are the RMV2 material ids ("Resolved" below).
 - Battle LODs (fn 0x1180c370): at a low level a model's first LODs are switched off (enabled byte +0x44 and distance +0x38 zeroed):
   types 0x47 / 0x48: level 0 keeps from LOD 2, level 1 from LOD 1; 0x49 .. 0x4b, 0x5b, 0x5c, 0x6c, 0x6e, 0x6f: level 0 from LOD 1; 0x6b:
   level 0 from LOD 1, else LOD 1 off; 0x41 (with +0x124 off): the last LOD only; the others: all LODs.
@@ -135,8 +135,8 @@ graphics system's live settings struct, at `DAT_12a21d18 + 0x7164c` (the screen'
 - Texture quality also sets the tree impostors' step (fn 0x11924370: 0.1 / 0.1 / 0.05 / 0.025, size 1024).
 
 Not found yet: the grass density per level (the kit's `max_grass.xml` holds one density; the engine's `grass_low / med / hi_max_threshold`
-tweakables, 0.4 / 0.65 / 1.0, are not read by any code found), what the effects' 2 / 1 / 0 drive, the texture quality's mip drop,
-and the type codes' enum.
+tweakables, 0.4 / 0.65 / 1.0, are not read by any code found), what the effects' 2 / 1 / 0 drive (since found: "The other options" below,
+particle effects) and the texture quality's mip drop.
 
 **Resolved:** the type codes are the RMV2 files' material ids. The v6+ loader (fn 0x1185d050) reads each mesh's type as the first u16 of
 its header (the file's material id) and passes it to the mesh's creation (fn 0x1185b0c0); the campaign path reads LOD 0's first mesh's
@@ -232,7 +232,7 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   draws `mlaa_blend_ps` into the frame. The edge mask and the four line length targets are R8_UINT at the view's size on DX11 (fns
   0x11765d60, 0x11765e60: TTF_R8_UINT, else TTF_R16F / TTF_G16R16F). The sm_4_0 shaders (mlaa_pass*_sm4). Same in ToB (its pass 1
   0.1, pass 2 3 iterations). Applied (`Renderer::pass_mlaa`; the editor blends into a target of its own, copied back). Rome 2 has
-  the same shaders; its engine is not checked: not applied.
+  the same shaders and passes ("Rome 2" above): applied too.
 - Anti-aliasing 2..4, MSAA 2x / 4x / 8x (Attila, ToB): the game's frame mapped from `rome.rdc` (2x) and the editor's port in
   docs/plans/msaa.md: the G-buffer, light buffer and depth-stencil multisampled, the terrain's depth expanded into them and the depth
   resolved for the one-sample readers by `resolve_depth_buffer.hlsl`, the lights, decals, environment specular, blurs, fog and
@@ -273,23 +273,22 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   - The terrain (fn 0x11927c10): techniques 0x11 / 0x12 instead of 0x2f / 0x31, but only when the `terrain_tess` tweaker is not 1. It
     is 1 by default, which turns the option off for the terrain.
   - No vanilla Attila, ToB or Rome 2 model has a type 6 texture (the packs' texture records: types 0, 1, 3, 5, 7, 8, 10 to 15, 17
-    only), so it matters for mods. Applied (Attila, ToB): rpfm_lib decodes type 6 (`TextureType::Displacement`, on rpfm's
-    feature/rmv2_displacement_texture branch; the workspace takes rpfm from a checkout next to it), the mesh keeps it
+    only), so it matters for mods. Applied (Attila, ToB): rpfm_lib decodes type 6 (`TextureType::Displacement`), the mesh keeps it
     (`GpuMesh::displacement`), and the G-buffer pass draws such opaque, unburnt rigid meshes in a second round with the displacement
     vertex shader, the hull and domain shaders (3 control point patches; `t_tesselation_displacement_map` sampled linear, wrap)
     and the material's pixel shader. The terrain side stays off, as the game's default.
 
 ## What the editor applies
 
-- Shadows: the cascade split row (Attila, ToB; Rome 2's renderer draws its four-cascade row whatever the level).
+- Shadows: the cascade split row (Attila, ToB; Rome 2's below).
 - Building detail, unit detail (Attila, ToB): the battle pass's LODs switched off (`draw_set::LodQuality`): a switched off LOD is passed
   over by the LOD selection (its distance 0, not enabled), in every view (camera, shadows, picking). Trees: the level only reaches the
   materials above (none of Attila's trees use them; its vegetation's density and LOD per level are not found): not applied.
 - Water: the water planes' and the sea's pixel shaders, `ps30_battle_<level>_water_quality` / `ps30_main_<level>_water_quality`
   (the engine registers the techniques `water_low` .. `water_ultra`, fn 0x116ec510); only ultra has the variant with shadows, the
-  lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
-- Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Not Rome 2's (not
-  checked in its engine): anisotropic 8x.
+  lower levels draw the plain one. Rome 2's mapping: below.
+- Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Rome 2's the same
+  (fn 0x1142b590).
 - Sky, screen space reflections (0 off, 1 half resolution), particle effects, MLAA, alpha blending (Attila, ToB): above.
 - ToB's film grain, cloud shadows and god rays: above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
@@ -302,7 +301,7 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   editor's models are the engine's type 0x49, and a LOD's +0xa8 is its own index).
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): texture quality, trees, grass, terrain,
-Rome 2's MSAA (drawn without anti-aliasing), unit detail (no units), lightning and foliage hiding.
+Rome 2's MSAA (drawn without anti-aliasing), Rome 2's unit detail (its units' LOD distances), lightning and foliage hiding.
 
 ## Editor only: the render scale
 

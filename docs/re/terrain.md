@@ -1,6 +1,6 @@
 # Battle terrain: how the game draws it (spike, 2026-10-09)
 
-Method as for `renderer.md`: the game's compiled shaders (reflection through `cli/fxc_dump`, cbuffer names in `docs/re/shaders/cbuffers.txt`) plus a
+Method as for `renderer.md`: the game's compiled shaders (reflection through the `wce_render` example `fxc_dump`, cbuffer names in `docs/re/shaders/cbuffers.txt`) plus a
 readable source of what they do. The packs ship a GLSL translation of every shader next to the `.fxc` files (`fxc/glsl_sm_4_0_<file>.hlsl_<stage>_<entry>.glsl`,
 SM4 instruction listings with the original register names), so the terrain shaders can be read without a disassembler. Constants are cross-checked
 against the live cbuffer dump (`cbs.txt` from `dump_cbs.py`, a battle on a real map). Nothing here is shipped in the repo; the files are read from the
@@ -8,7 +8,7 @@ user's installation.
 
 Status: **architecture and inputs verified from the shaders; draw order, patch mesh layout and the data feeding the textures are open** (list at the end).
 `Terrain` entities of the RenderScene with a `TerrainMaterial` are drawn by the game's passes (the last section); without one (the weather editor's flat ground) they are drawn with the interim material
-(one tiled diffuse through the rigid G-buffer shader). **Fixed 2026-10-10**: that interim path (and every mesh without a normal map) used `ModelCache::flat_normal_` = `0xff80ff80`, which the rigid shader decodes
+(one tiled diffuse through the rigid G-buffer shader). **Fixed 2026-10-10**: that interim path (and every mesh without a normal map) used the texture cache's flat normal (`TextureCache::flat_normal`, `model_cache.rs`) = `0xff80ff80`, which the rigid shader decodes
 (`.wy`, x = A, y = G) as the tangent-space normal (1, 1, 0): the G-buffer normal lay in the surface plane, not up. The constant is now `0x7fff7f7f` (x = y = 0.5, z rebuilt = up). The weather editor's ground and
 every normal-less mesh are lit differently since (max 29 levels on the dry capture); the capture references of `build/gates_base_perf` were re-baselined (`docs/baseline.md`).
 
@@ -168,12 +168,16 @@ ground could use the same path with a cache baked from its tiled diffuse and a f
 
 ## What the interim terrain pass does and does not
 
-`ModelCache::terrain` builds the height grid into 64 x 64 cell patches in the rigid vertex format (half-float positions local to the patch, per-patch offset in the
+Since 2026-10-10 this draws only a `Terrain` without a `TerrainMaterial` (the weather tool's flat ground, legacy terrains); the rest go
+through the game's passes ("The tool's terrain pass" below). `ModelCache::terrain` builds the height grid into 64 x 64 cell patches in the rigid vertex format (half-float positions local to the patch, per-patch offset in the
 instance matrix, normals from the heights) and draws them through `rigidstandard` with one tiled diffuse texture and flat normals/specular. Missing against the
 game: LF + HF height composition and the sea-bias, per-tile material layers with their alpha/blend/index maps, normal blending and detail by distance, the far blend, the
 sea. It is enough for editing: the surface shape, picking and lighting are right.
 
 ## Open items before a pixel-close pass
+
+Written before the tool's pass (next section), which settled for the editor the depth channel (`s_depth_map` holds the surface's clip
+z / w), the per-tile maps and samplers, and `ps_mapping_array`'s filling; the items stand for the game's own engine.
 
 - Draw order and states of passes 1 and 2 in the engine (blend state of the material pass into G-buffer channels 1-3, stencil), from a dump or from the call
   order in `empire.retail.dll` (the terrain node's render function).
@@ -188,10 +192,10 @@ sea. It is enough for editing: the surface shape, picking and lighting are right
 - `s_light_params` content and the season/climate handling (`g_remapped_season`, `g_climate_change_index`, `g_layer_exempt_groups`).
 - The campaign-map terrain (`terrain.hlsl`) is a separate set and not needed for the battle tools.
 
-## The tool's terrain pass (2026-10-10: the game's own shaders, `libs/render/terrain_pass.cpp`)
+## The tool's terrain pass (2026-10-10: the game's own shaders, `wce_render::renderer::terrain`)
 
 Rule of the project: everything drawn to show the game's look runs the game's compiled shaders. The first Phase 3 version baked the colour on the CPU; it is replaced
-by the game's passes, fed the tile's own maps. **Read the DXBC disassembly of the `dx11_*.fxc` (`cli/fxc_dump <dir> <out> <asm dir>`), not the pack's GLSL listings**: the
+by the game's passes, fed the tile's own maps. **Read the DXBC disassembly of the `dx11_*.fxc` (the `wce_render` example `fxc_dump <fxc dir> <out dir> <asm dir>`), not the pack's GLSL listings**: the
 GLSL is the GL path and differs in orientation (the screen-to-NDC y flip is missing in it) and in the texture names (`t_diffuse_array`, not `s_diffuse_array`).
 
 ### Frame order
@@ -199,7 +203,7 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
 1. **Surface**: `vs30_geom_new` (`POSITION0` = (x, height, z) of a patch's 65 x 65 grid, one vertex buffer per 64 x 64 cell patch of a heights buffer, shared by the terrains that
    hold it; `POSITION1..3` = the rows of the terrain's 3x4 world matrix moved to the patch, which may turn it about y; since 2026-10-21 the height comes from the vertex,
    `dot(P0, P2) * g_height_map_hf_scale`, as the game's tile meshes carry theirs) with `ps30_geom` (clip z/w into
-   `terrain_zw_`, also the hardware depth, stencil 2 where the surface is nearest) and again with `ps_depth` (view-space z into `terrain_viewz_`, depth test EQUAL).
+   `zw`, also the hardware depth, stencil 2 where the surface is nearest) and again with `ps_depth` (view-space z into `viewz`, depth test EQUAL).
    *Addressing of the height texture* (the shader's own, read from the DXBC): `uv = world xz / g_world_dimensions + g_lf_uv_offset` (one scalar offset for both axes), the second axis flipped
    (`row = size - k`), texel = `uv * g_height_map_dimension`, four `ld` loads and a manual bilinear, no clamp below sample 1 and `1 - 1/size` above. It holds the map context's LF
    (R16 unorm, a square window around the camera, rows stored top = highest z; `g_height_map_lf_scale` = the LF's height, `g_height_map_vertical_offset` = 20 m plus the median LF under the
@@ -214,7 +218,7 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
    normal, the climate's `medium_detail_map_colour/_normal.dds`), the far maps and the snow / shroud branches, and writes **the five G-buffer targets** (channel 1 normal + gloss, 2 sqrt albedo +
    reflectivity, 3 specular + material id 1, 4 clip z/w computed from the view-z map, 5 instance id 0); stencil EQUAL 2 -> DECR, so the lights see geometry (stencil 1).
    *The directional light treats material id 1 pixels as overlay receivers*: the result is `overlay.rgb + lit * overlay.a` (`s_overlay`, `g_overlay_view_projection`), so `s_overlay` must be
-   alpha 1 (colour 0): the renderer binds `overlay_none_srv_`. A black texture there (alpha 0) made the whole ground black.
+   alpha 1 (colour 0): the renderer binds `overlay_none_srv`. A black texture there (alpha 0) made the whole ground black.
 
 ### The inputs
 - **Blend / index maps** (`s_blend_map`, `s_index_map`, RGBA8 over the bordered tile, 1 texel per metre): BOB's reduction of `blend_map.tif`'s 16 weights, checked against BOB's `blend.dds` /
@@ -228,8 +232,8 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   (1024 x 1024 DXT5, 11 mips, whole files, no streaming); a slice that does not exist or does not match the first one's size / format is a neutral one. The layer mapping `g_array_mapping[i] = i`,
   `g_array_section_sizes = (1, 1, 0, 0)` (so season / climate indices do not move the slot), `g_blend_pixel_scale_array[layer] = (blend_pixel_scale, outfield scale, mid_distance_strength)` (the shader's `cb3[mapping + 1]` is that element: row 0 of the cbuffer is `g_light_params_texture_width`; the first version stored it one element too high, so layer 0 had scale 0 and drew one flat texel - fixed 2026-10-10) from
   `_settings.xml`, `s_light_params` = (`lerp_smoothness`, `lerp_reflectivity`) per slot (16 x 1, `g_light_params_texture_width` 16).
-- **Alpha map**: 1 everywhere (the editor shows one tile). The kit's `final_alpha.dds` (R32F, 1 sample per metre over the tile without its border, 0 at the edge ramping to 1 in about 25 m) is the
-  feather for neighbours and is not used yet.
+- **Alpha map** (`TerrainMaterial::alpha`): 1 for a tile alone. The kit's `final_alpha.dds` (R32F, 1 sample per metre over the tile without its border, 0 at the edge ramping to 1 in about 25 m) is the
+  export's feather; in a map context the neighbours take the game's per-size alpha texture (docs/re/battle_maps.md, "Tile seams").
 - **Constants** the live game shows (a battle dump, `cbs.txt`): `g_mid_distance_details` (20, 550, 3, 0.9), `g_near_distance_details` (200, 4, 0.6, 0), `g_mid_distance_normal_strength` 2,
   `g_mid_distance_slope` (0.96, 3), `g_normal_scales` (1, 1, 1), `g_blend_gain` 1; in the live game `g_array_section_sizes` = (8, 5, 13), `g_light_params_texture_width` 32, `g_layer_exempt_groups` 1e6 (none),
   `g_refraction_depth` 0.75. `g_far_tile_distance` and `g_far_blend_range` are set very large here: the map-wide normal map, the far diffuse / normal maps and the mask map (`s_mask_map` = black) are a
@@ -247,7 +251,7 @@ After the objects' G-buffer pass (`pass_gbuffer`, which skips the legacy ground 
   and map-wide normal layers, season mixing (settled: none seen, "Seasons and snow"; see "Seasons and snow" for the snow normals), the second and third
   layer indices of the resolve (`g_layer1/2_texture_index`, the mask is black so they stay off; fn 0x118839d0 sets them from ints at the
   drawable's +0x270 + 0x80 / + 0x84 and binds the mask from its +0x34 object, vfunc +0xac, beside the far maps: the map-level path, not followed further), neighbour tiles (their alpha feather and the overlap between tiles), one detail texture pair per climate.
-- **The CPU bake** (`tools/tile/terrain_bake`) remains only for TEd's debug views of the tile's maps (blend groups, ground types, protection): editor visualisations, not the game's look.
+- **The CPU bake** (`wce_tile_editor::terrain_bake`) remains only for TEd's debug views of the tile's maps (blend groups, ground types, protection): editor visualisations, not the game's look.
 
 ### What was measured about the inputs (Phase 3, black box)
 - **`blend_map.tif` has 16 weights per pixel** (16 bit each, `blend_map.tif` of the TEd layout: 242-byte header, then `width * height * 16` little-endian samples), the same grid as the height map (`(cells + 2) * ppc` square, one cell of border: 384 x 384 for a 1 x 1 tile). The 16 weights of a pixel sum to 65535 (65519 .. 65535 over a whole tile). Channel `4 g + v` is the weight of **texture group g** (0..3 = the entry's `TEXTURE_GROUP` red, green, blue, alpha) **variation v** (0..3, the `0_`..`3_` textures of the group): in `tdd_custom_lothlorien/1x1/aa` (grass / mud / forest / rock) channel 0 carries 57 % of all weight, channel 4 25 %, channel 8 16 %, channel 12 3 %, and each group uses one or two variations. BOB reduces this to the RGBA `blend.dds` (the four group weights) and `index.dds` (which variation), the two maps `ps30_blend` reads (`s_blend_map` / `s_index_map` above).
@@ -352,8 +356,8 @@ the group in `default` and in every climate), `terrain/textures/campaign/default
   only winter has snow (418 610 cells). They say where a battle can be snowy in a season (its weather), not a texture layer. The
   climates' `<v>_wi_*` textures are winter ground, not white (rome_med grass 0: summer (119, 117, 67), winter (117, 102, 77)).
 - **Map-level, not in the tile's scope:** `definition.xml` gives the battle map's base terrain (2560 x 2560 for western_city_b/small); the
-  ground beyond the tile, the tile's `final_alpha` feather into it, the far maps and the outfield come from the map (the later tilemaps
-  scope). The tile's `outfield_mesh.rigid_model_v2` is a 49 x 49 low-resolution copy of the tile's own 1024 m.
+  ground beyond the tile, the tile's `final_alpha` feather into it, the far maps and the outfield come from the map (the editor's map
+  context: docs/re/battle_maps.md). The tile's `outfield_mesh.rigid_model_v2` is a 49 x 49 low-resolution copy of the tile's own 1024 m.
 
 ## Shadow casting (2026-10-18)
 

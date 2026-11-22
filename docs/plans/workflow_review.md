@@ -3,6 +3,9 @@
 A review, workflow by workflow, of what the Assembly Kit's tools (TEd, BOB) do and whether wce replicates it, supersedes it or needs changes.
 Held as a conversation with the user, one workflow at a time; this file keeps what was found and decided.
 
+State (2026-11-22): workflows 1 to 3 reviewed and built (2026-10-26 .. 27); no other workflow has been reviewed since. TEd's remaining
+tools went through docs/plans/tile_ted_parity.md instead.
+
 ## 1. Tile creation
 
 **Before:** wce had no way to make a tile. A tile came in only by opening one: a kit tile (its first save makes a project), an exported tile
@@ -54,25 +57,16 @@ entry or location. The entry was read-only (Phase 6b of tile_ted_parity.md: New 
 - **The terrain height keeps TEd's meaning** (user, 2026-10-26): the value goes into the height map's units, which wce shows halved (the
   scene's 2 units a metre): a new tile at 10 shows 5 m in wce, as every kit tile shows half its entry's numbers.
 
-### Done (branch `workflow-review`)
+### Done (2026-10-26)
 
-- `wce_tile::new_tile`: the values, the checks (name, limits, an existing tile in the projects, the kit's raw_data or working_data), TEd's
-  colour, the entry's text (TEd's: single quotes, tabs, CRLF), `tile.wce` (version 17, the seeds from the clock, the root with an empty
-  `<children>` so that things go in, a camera over the tile), the maps (the blend map streamed row by row). The kit's `_settings.xml` is
-  copied next to the projects' entries when they have none (the vegetation generator reads it).
-- The height field keeps the heights in metres (32-bit offsets from the range's minimum it was read with, far below a 16-bit step), so
-  brushes are no longer stopped by the entry's range; a save that writes the height map fits the range (`HeightField::fit_range`, TEd's
-  rule; a range within half a step of the old one is kept, so an unedited map is written with its own numbers) and writes the entry's
-  `min_height` / `scale` (`%f`) into the entry next to the saved tile when its text changed (`TileProject::save_height_range`). The first
-  save of a kit's tile points the document's entry at the project's copy (it pointed at the kit's). The vegetation generator reads the
-  heights with the range the next save will give them.
-- `add_building` on a tile without buildings makes one with TEd's defaults (`instance_templates`) instead of failing.
-- Tile > New tile... (`wce_tile_tool::new_tile_dialog`) and the command `new_tile <name> [x] [y] [height] [density]`; the tile opens.
-
-- Old bugs fixed on the way (user, 2026-10-26): opening a tile that is open shows it instead of a second document (`Document::opened_from`,
-  `scripts/tile_reopen.txt`); a kit or extracted tile's other variations open once the tile is a project (they open from the kit or the
-  packs until their first save brings them in; the project's entry is kept, each save writing only its own variation's numbers;
-  `scripts/tile_variations.txt`, `tile_variations_extracted.txt`).
+- `wce_tile::new_tile` (the values and checks, TEd's colour, the entry's text in TEd's style, `tile.wce` with seeds from the clock, the
+  maps, the blend map streamed row by row; the kit's `_settings.xml` copied next to the projects' entries when they have none);
+  **File > New tile...** (`new_tile_dialog.rs`) and `new_tile <name> [x] [y] [height] [density]`; `scripts/tile_new.txt`.
+- The height field keeps metres, so brushes are not stopped by the entry's range; a save fits the range (`HeightField::fit_range`, TEd's
+  rule; a range within half a step of the old one is kept) and writes the entry's `min_height` / `scale` (`TileProject::save_height_range`).
+- `add_building` on a tile without buildings uses TEd's defaults (`instance_templates`).
+- Fixed on the way: opening an open tile shows it (`Document::opened_from`); a project's other variations open from the kit or the packs
+  until their first save brings them in (`scripts/tile_variations.txt`, `tile_variations_extracted.txt`).
 
 ## 2. Extracted tiles without the `_extracted` workaround (user, 2026-10-26)
 
@@ -81,23 +75,25 @@ so that it never took a kit tile's place in the old workspace; Save for Assembly
 off. The renaming caused bugs of its own (names and locations that differ from the game's, entries renamed back and forth).
 
 **Decisions:** no renaming; the extracted tile is a project at its own folder (the kit's tile of that name and it share the project:
-they are the same tile, the kit's source and the game's compiled copy; Import from Assembly Kit still takes the kit's copy); its
+they are the same tile, the kit's source and the game's compiled copy; To the Assembly Kit's version still takes the kit's copy); its
 `tile.wce` root is marked `wce_extracted_tile="true"` (a `wce_` attribute: the conversion for TEd and the game drop it), which the
 Tiles panel shows; extracting over a project asks **Open the project / Overwrite / Cancel**; the old `_extracted` projects are moved once,
-by a command (Tile > Migrate old extracted projects), not on open.
+by a command (`migrate_extracted`; its Tile menu entry went in the menus' review of 2026-11-14), not on open.
 
-**Done:** `project_files::{EXTRACTED_ATTR, mark_extracted_text, is_extracted_text, is_extracted_dir, migrate_extracted}` (the old marks
+**Done (2026-10-26):** `project_files::{EXTRACTED_ATTR, mark_extracted_text, is_extracted_text, is_extracted_dir,
+migrate_extracted}` (the old marks
 kept private for the migration only); `workflow::open_exported` writes at the tile's own folder and entry (no `extracted` argument);
 `save_exported`, Save for Assembly Kit and the walls' keys use the folder as it is; the tool's `open_exported` replaces a project only
 when `fresh` (closing its document, refused with unsaved changes), keeps the other variations' entry numbers, marks the new `tile.wce`;
-`extract_or_ask` and the prompt for the Tiles panel's packs and Tile > Open exported tile...; an extracted project's missing variation is
-extracted (a variation of it is marked) instead of taken from the kit; Import from Assembly Kit reads the mark.
+`extract_or_ask` and the prompt for the Tiles panel's packs and File > Open exported tile...; an extracted project's missing variation is
+extracted (a variation of it is marked) instead of taken from the kit; File > Revert > To the Assembly Kit's version (formerly Import
+from Assembly Kit) reads the mark.
 
-## 3. Ground texture painting (next; started 2026-10-26)
+## 3. Ground texture painting (done 2026-10-26)
 
-**What wce does today:** displays the ground with the game's terrain shaders (`blend_map.tif`: 16 weights per pixel, channel 4 g + v =
+**Before:** wce displayed the ground with the game's terrain shaders (`blend_map.tif`: 16 weights per pixel, channel 4 g + v =
 texture group g, variation v, summing to 65535; the entry's four `TEXTURE_GROUP`s; the climate and season the user picks) and TEd's
-debug views (colour, blend groups, ground types, protection). It edits none of it: `blend_map.tif` and `ground_type_map.png` pass
+debug views (colour, blend groups, ground types, protection). It edited none of it: `blend_map.tif` and `ground_type_map.png` pass
 through on save, Save for Assembly Kit and the export (compiled to BOB's `blend.dds`, `index.dds`, `ground_types.dds`); New tile writes
 them (all the first group, no ground types) and the extraction rebuilds them from the game's maps (a group that mixed more than two
 variations loses the rest). The texture groups are read-only (the entry is), the material is built once from the file on disk (no live
@@ -119,76 +115,25 @@ redraw), the procedural trees read the saved blend map, and only the height map 
 - **Order:** 1) blend brush + live preview + stroke undo, 2) ground type brush, 3) falloff curve editor, 4) image brush, 5) spline paint
   stroke, 6) Blendmap Filters; the texture group picker alongside.
 
-**Done (step 1, the blend brush):** `wce_tile::blend_field::BlendField` (the map in memory: the file's bytes before and after the samples
-kept, so an unpainted map is written byte for byte and a painted one differs only in the painted pixels; `paint_pixel` moves the brush's
-weight of the other 15 channels to the painted one, at least one step, largest remainders get the rounding; undo records of the 64 x 64
-blocks a stroke touched; `reduce_pixel` = BOB's blend / index reduction, shared with the material). `TileProject::blend` is read on first
-use (the ground's material, a paint stroke) and written on save when painted (`blend_dirty`; Save for Assembly Kit and Save as write the
-one in memory); the vegetation generator reads it too. `BrushKind::Paint(channel)` goes through the height brushes' stroke and undo
-(`BrushStepCommand`, one entry per stroke, "Paint ground"). The live preview: the stroke patches the material's blend / index maps over
-the changed rectangle (`patch_blend_maps`) and gives them a new `blend_id`, on which the renderer uploads them again. The UI: the Paint
-button in the toolbar (Ctrl erases: paints the first group's first variation), its Inspector (radius, strength, falloff, texture group,
-variation); commands `tile_mode paint`, `paint_ground`, `assert_blend`, `brush`'s fifth number; `scripts/tile_paint.txt` (paint, undo,
-redo, erase, save, reopen).
+**Done (2026-10-26), in the order above** (each with its tooltips and a script):
 
-**Done (the texture group picker):** the Tile panel's entry section has a combo per group (R, G, B, A) listing the game's groups (every
-climate's `TEXTURE` names, `TileDocument::texture_group_names`); `TileEntry::set_texture_group` (an attribute edit, the rest of the entry
-as it was); `TextureGroupCommand` (undoable; the ground's material made again); a save writes the groups into the entry next to the tile
-when they differ there (`TileProject::save_texture_groups`). Command `texture_group <0-3> <name>`; in `scripts/tile_paint.txt`.
+1. The blend brush: `wce_tile::blend_field::BlendField` (an unpainted map written byte for byte, a painted one differing only in the
+   painted pixels; `paint_pixel` keeps the sum at 65535; `reduce_pixel` = BOB's blend / index reduction), the live preview
+   (`patch_blend_maps`, a new `blend_id`), one undo entry per stroke (`BrushStepCommand`). The texture group picker
+   (`TileEntry::set_texture_group`, `TextureGroupCommand`, `TileProject::save_texture_groups`). `scripts/tile_paint.txt`.
+2. The ground type brush: `wce_tile::pixel_layer::PixelLayer` (shared by both painted maps), `wce_tile::ground_types` (the 13 types),
+   `GroundTypeField` (alpha 255 as on every painted kit pixel; the kit's encoder).
+3. The falloff curve editor: `wce_tile::falloff` (monotone cubic, presets, `FalloffLut`), `falloff_editor.rs`, `[tools.tile] brush_curve`;
+   `scripts/tile_falloff.txt`.
+4. The image brush: `wce_tile::brush_image::BrushImage`, `[tools.tile] brush_image`; `scripts/tile_image_brush.txt`.
+5. The spline paint stroke: `TileDocument::stroke_along` (any brush along the selected spline, polygon or line; a spline's point
+   `width`s give its width, TEd's Spline splat); `scripts/tile_stroke_along.txt`.
+6. The Blendmap Filters: a hard 0 / 1 mask on every paint operation (height range, slope range, "Use No-Go Range" = 30 to 90 degrees;
+   docs/re/terrain.md, "TEd's blend painting and its Blendmap Filters"); `wce_tile::blend_field::PaintFilter`;
+   `scripts/tile_paint_filter.txt`.
 
-**Done (step 2, the ground type brush):** `wce_tile::pixel_layer::PixelLayer` (the block undo and changed rectangle, shared by both
-painted maps; `BlendField` is built on it); `wce_tile::ground_types` (the 13 types' names and colours, `wce_tile_io`'s decompile uses
-it); `GroundTypeField` (`ground_type_map.png` in memory: hard values under the brush, alpha 255 as on every painted pixel of the kit's
-711 battle tiles; an unpainted map is written as read, a painted one through the kit's encoder; the file's name in any case, BOB's tiles
-have `.PNG`). `TileProject::ground` / `load_ground` / `ground_dirty`, written by save, Save as and Save for Assembly Kit.
-`BrushKind::Ground(type)` ("Paint ground types", one undo entry per stroke). The tool's Ground types mode (the palette button; its
-Inspector: radius and the type, "none" or Ctrl erase) switches the view to TEd's ground types view while it is active, the look before
-coming back after. The debug views read the maps in memory: the ground types view is baked again at every step of a stroke, the blend
-groups view when a paint stroke ends. Commands `tile_mode ground`, `paint_ground_type`, `assert_ground_type`; in `scripts/tile_paint.txt`.
-
-**Done (step 3, the falloff curve editor):** `wce_tile::falloff` (a curve through points, distance from the centre -> weight, monotone
-cubic so that it never overshoots between them; five presets; sampled into a 65-entry `FalloffLut` that `Brush::weight` reads instead of
-the falloff slider, so brushes stay `Copy`). The height and paint brushes use it (the ground types brush stays hard). The Brush Falloff
-window (`falloff_editor.rs`; TEd's Brush Falloff Editor, wce's own curve): drag a point, double-click adds one, right-click takes one
-away, the presets; opened from the brush's Inspector (a "falloff curve" switch and "Edit the curve..."); kept in `[tools.tile]
-brush_curve` (written when a drag ends). Commands `brush_curve off | on | <preset> | <distance,weight>...`, `falloff_window 0|1`;
-`scripts/tile_falloff.txt` (the hard and linear curves' heights at 0.8 of the radius).
-
-**Done (step 4, the image brush):** `wce_tile::brush_image::BrushImage` (a PNG, grey / grey + alpha / RGB / RGBA, 8 or 16 bit, or a DDS
-the decoder reads; the weight is the luminance times the alpha; bilinear over the square the brush's radius spans, turned by an angle).
-`Brush::image` replaces the falloff and the curve (so `Brush` and `BrushSettings` are `Clone` now, the image shared by an `Arc`); the
-height and paint brushes use it. The Inspector: "image brush", the file, Load image..., the turn or a random turn at every step; kept in
-`[tools.tile] brush_image`. Command `brush_image off | <file> [degrees | random]`; `scripts/tile_image_brush.txt` (%IMAGE%: a picture
-white on its left half: the stroke rises on one side only, the other after half a turn).
-
-**Done (step 5, the spline paint stroke):** `TileDocument::stroke_along` (TEd's Spline Paint Stroke, on the tile's own lines: the active
-brush, any of them, stroked along the selected spline's curve, polygon or line, round to the first point when the polygon is closed, e.g.
-not an AI hint line; a dab every quarter radius at the most a frame gives; one undo entry). The brush's Inspector: "Stroke along the
-selected line" (select the line first, then pick the brush). Commands `stroke_along`, `brush_paint <group> <variation>`, `brush_ground
-<type>`; `scripts/tile_stroke_along.txt` (a closed no-go square painted and given a road round its edge, undone; a wall spline).
-
-**Done (step 6, the Blendmap Filters):** a short static RE (docs/re/terrain.md, "TEd's blend painting and its Blendmap Filters"): the
-filters are not whole-map passes but a hard 0 / 1 mask on every operation of TEd's Blend Map (and Influence Map) painting: a height range
-and a slope range, each switched on or off, "Use No-Go Range" = the slopes from the game's maximum passable one (30 degrees) to 90. The
-code reads as working; whether TEd's UI breaks it could not be checked without running TEd. wce: `wce_tile::blend_field::PaintFilter`
-(`BlendField::paint` takes a mask), `BrushSettings::filter`; the mask reads the heights in memory at each blend pixel's centre (the
-slope from central differences, in the editor's metres). The paint brush's Inspector has a "Blendmap filters" section (height filter,
-slope filter, Use the no-go range). Command `paint_filter off | height <min> <max> | slope <min> <max> | nogo`;
-`scripts/tile_paint_filter.txt` (a steep bump: the no-go range paints its flanks only, a height range its top only).
-
-**Section 3 is done.** Found on the way, not done (for the user to weigh): TEd's Blend Map module has more operations than the plain
-brush: **Normal (Grouped)**, a blur, **Auto-Flange** (a group painted with a graded rim of its variations), **Rock-painting** (a
-channel set by the slope wherever the brush goes) and **Spline splat** (a channel laid along a chosen spline at its width, in one action;
-wce's "Stroke along the selected line" is near it); traced 2026-10-26, docs/re/terrain.md; the **Influence Map** module (`lf_influence_map.png`, with Subtract) and the nogo map are still Phase 5a items of
-tile_ted_parity.md.
-
-**Done (TEd's paint operations, user 2026-10-26: Auto-Flange and Rock-painting ported, Spline splat's width given to the stroke along a
-line; what each does in its tooltip, since nobody knew):** `wce_tile::blend_field::PaintMode` (`Normal`, `AutoFlange { threshold }`,
-`Rock`; `BlendField::paint_mode`). Auto-Flange is TEd's: the stroke's weight builds up per pixel as TEd's painter's
-(`acc + (1 - acc) * dab`), and the pixel is set from how the stroke found it (`PixelLayer::original`), `flange_pixel`. Rock-painting
-takes TEd's slope curve (`rock_weight`) but, as agreed, follows the brush's strength and falloff and never lowers the texture (TEd's
-ignores the brush and can take rock away). The stroke along a line paints a spline whose points have a `width` as wide as it is there
-(the radius half the width, blended along each segment). The paint brush's Inspector: "mode" (normal / auto-flange / rock painting, a
-tooltip per mode), Auto-Flange's threshold (with its tooltip), the stroke button's tooltip; `Inspector::edit_choice_tips` and
-`Inspector::tooltip` (no-ops but in the ImGui inspector). Command `brush_paint <group> <variation> [normal | flange [threshold] | rock]`;
-`scripts/tile_paint_modes.txt`.
+Then TEd's other Blend Map operations (traced 2026-10-26, docs/re/terrain.md; the user asked for them with what each does in its
+tooltip, since nobody knew): **Auto-Flange** (TEd's, `flange_pixel`) and **Rock-painting** (TEd's slope curve, `rock_weight`, but
+following the brush's strength and falloff and never lowering the texture, as agreed) as `PaintMode`s; `scripts/tile_paint_modes.txt`.
+**Normal (Grouped)** and the blur followed on 2026-10-27 (tile_ted_parity.md, Phase 5a). The Influence Map module and the nogo map were
+closed as not needed (user, 2026-10-27; tile_ted_parity.md, Phase 5a).

@@ -122,7 +122,7 @@ plains (aa .. ad) elsewhere.
   (1022, 93.6, -1022) game units, the battle's limit, at the hillfort tile's south-east corner (2 game units a metre: cell (393, 216)).
   The game shows open water over the loch east of it (land LF 1.8 m, `sea/1x1` tiles at x 395, `sea_coast` tiles either side whose land
   stands 1 .. 5 m over that LF), where the editor drew a sand bank. **Settled by a RenderDoc capture** of the same view
-  (`D:enderdoc	hrones_loch_frame5377.rdc`, read with `scripts/re/rd_terrain_dump.py`): the battle's `t_low_res_height_map` is a
+  (`D:\renderdoc\thrones_loch_frame5377.rdc`, read with `scripts/re/rd_terrain_dump.py`): the battle's `t_low_res_height_map` is a
   256 x 256 window of the campaign LF over 16384 game units (32 m a texel, the map's own), cells 256 game units; the game's ground
   over the loch is the sea and coast tiles' own (`LF * 3000 - 20 + hf`, within 0.1 of it per tile; the sea tiles at -40), the east bank
   5 .. 8 under the water. The editor's sand bank was `atlantic_mountains/large_short_30_l` (24 x 20 cells from (395, 210)), drawn
@@ -138,7 +138,7 @@ plains (aa .. ad) elsewhere.
 - Maps: every battle map of the mounted packs (2026-10-31: the folders of `terrain/battles` with a `tile_map.tiles`; the game's own
   campaign, `main_attila_map`, listed as `campaign (game files)`, the others as `<folder> (game files)`: Attila's `cha_attila_map`, TDD's
   `rom_third_age_map`; `map_context <folder>` in scripts), read with the packs' tile database (the packs tree in the kit's format,
-  `context_panel::PacksTree`, its folder keyed by the mounted packs: a mod's map names the mod's tiles), each `tile_map.*`,
+  `wce_map_view::maps::PacksTree`, its folder keyed by the mounted packs: a mod's map names the mod's tiles), each `tile_map.*`,
   `lf_height_map.dds`, `locations.blm`; Launch in game puts the battle on the chosen one; and the kit's battle maps (filled by the port, `lf_heights.tif`). `wce_tile::battle_map::context`: the placements, where a tile is
   placed, each placement's frame transform (unit tests against `rotate_in_tile_space`).
 - **Streamed** (2026-10-21; `wce_tile_editor::tile_document::context`): the map is cut into chunks of 8 x 8 cells, each drawn at a level by
@@ -326,7 +326,8 @@ border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are ne
   (on the LF) whatever the tile has there. Edges the entry links to the sea keep the sea's -20; a `sea_coast` link gets a ramp. The left
   and right edges of this tile come out identical value for value (both have the same links: `sea_coast` at row 3, sea below): the edge
   is a profile of the links, not of the tile, so any two tiles that meet agree. The links' `blend_size` (48, 64, 128 px),
-  `no_offline_blend` ("offline": done at export) and `<blend_quad/>`, and the tile sets' `linking_tile`, are the inputs (not traced yet).
+  `no_offline_blend` ("offline": done at export) and `<blend_quad/>`, and the tile sets' `linking_tile`, are the inputs (the link
+  blend's base point and linking tile: docs/re/tile_links.md; the river links' cross-section: same file, "Rivers at their links").
 - **Weights**: `final_alpha` is 0 at a land edge and 1 from about 64 m in (the same kind of curve); 1 along the edges linked to the sea.
 - **Blend weights**: the packed `blend.dds` (DXT5, 1280 x 1280 with the border) matches the raw `blend_map.tif` reduction everywhere
   (1 to 2 levels, the compression): the export does not touch the texture weights at the edges; tiles' textures meet through

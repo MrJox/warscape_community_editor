@@ -1,6 +1,6 @@
 //! The map from a base piece's frame to a generated piece's. The base runs along x, its outer side is -z, y is up (docs/plans/
-//! procedural_walls.md, "The generator"). A warp moves points and turns directions; long polygons are cut along x first so they bend with
-//! the mesh.
+//! procedural_walls.md, "Design (as built)"). A warp moves points and turns directions; long polygons are cut along x first so they bend
+//! with the mesh.
 
 /// A map of a piece's frame.
 pub trait Warp {

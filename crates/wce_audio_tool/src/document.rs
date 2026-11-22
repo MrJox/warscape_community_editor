@@ -1,4 +1,4 @@
-//! The Audio tool's edit session as an editor document (docs/plans/audio.md, step 10.10): the edited banks and loose files
+//! The Audio tool's edit session as an editor document (docs/plans/audio.md, step 10): the edited banks and loose files
 //! (`EditSet`) in the editor's command stack, so Edit > Undo / Redo, the History panel, File > Save, the modified mark, autosave's
 //! prompt on quitting and Revert work as for the other tools' documents. An edit is a snapshot command (the session before and
 //! after, shared, not copied). Save writes the edited banks and files under the project's loose folder (read before the packs)

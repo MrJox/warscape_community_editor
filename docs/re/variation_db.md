@@ -1,8 +1,8 @@
 # Battle weather selection (warscape_asset_variation_db)
 
 Which `.environment` file a battle uses is data, in `warscape_asset_variation_db/warscape_asset_variation_db.bin`
-(TDD overrides it in `tdd_pack6_weather`). Implemented in `src/formats/variation_db.*`, shown in the editor's
-View > Weather picker, checked by `tools/variation_check.cpp`.
+(TDD overrides it in `tdd_pack6_weather`). Implemented in rpfm_lib (`files::asset_variation_db::AssetVariationDb`), shown in the
+Weather tool's View > Weather picker (`wce_weather_tool::picker`, `variation_editor`), checked by the `wce_weather` example `variation_check`.
 
 ## File format (FASTBIN0, little endian)
 `"FASTBIN0"`, u16 version 1, u32 meta count; per meta: u16 serialise 1, str name, u32 value count, str values;
@@ -18,8 +18,8 @@ The packs ship the database twice, `warscape_asset_variation_db.bin` (what the g
 `data.pack` and in `tdd_pack6_weather`. The XML is UTF-8, CRLF, tab-indented, single-quoted, `serialise_version='1'` on the root,
 every `meta_data_entry`, `value` and `variation`; categories are `<meta_data_entry name=..><values value='a' value='b'/>`, variations
 are `<variation filename='..' flags='n'/>` inside `<entries><entry key='environment'><value><variations>`.
-`VariationDb::to_bytes()` / `parse()` (FASTBIN0) and `to_xml()` / `parse_xml()` convert in both directions (`src/formats/variation_io.cpp`,
-CLI `tools/variation_convert.cpp`). Verified on both pairs in the game files:
+`AssetVariationDb`'s `encode()` / `decode()` (FASTBIN0) and `to_xml()` / `from_xml()` convert in both directions (rpfm_lib's
+`asset_variation_db/xml.rs`; CLI: the `wce_weather` example `variation_convert`). Verified on both pairs in the game files:
 - bin -> parse -> bin is byte-identical; xml -> parse -> bin gives exactly the shipped .bin;
 - vanilla bin -> xml is byte-identical to the shipped .xml; the TDD .xml differs from the canonical output only by one blank line
   before `</variations>` (a hand edit; the parser ignores blank lines, the writer does not produce it);

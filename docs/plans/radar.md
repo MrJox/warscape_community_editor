@@ -51,7 +51,9 @@ of tuning with the user.
   done); `Rim` is CA's cyan top edge with ink ticks. The example takes `RADAR_CLIFFS=rim|rock`.
 - Ink extras (user: "vanilla base, ink extras"): a soft hill shade, hachures on slopes over `hachure_slope`, ripples off the shore.
 - Editor: the Minimap panel's base chip has **radar** (redrawn at most every second after an edit, once the buttons are up; the tool
-  works out the water depth and the no-go areas while it shows). `minimap radar`, `radar_save [force] [path.jpg|path.png]` (default: the tile
+  works out the water depth and the no-go areas while it shows). Since 2026-11-16 the drawing (`Tile::radar_request`, then a Job in
+  `minimap_panel.rs`) and stage B run off the editor's thread; `radar_save` works out the water depth and the no-go areas itself when the
+  tile has none yet. `minimap radar`, `radar_save [force] [path.jpg|path.png]` (default: the tile
   folder's `loading_screen_radar.jpg`, which the export carries). The JPEG is baseline RGB at quality 92 (`image`'s encoder, already
   built for rpfm_lib) with a `wce radar generator` comment after the JFIF header: a radar without it (CA's, in a decompiled tile) is
   hand-made and only `force` replaces it. A `.png` path writes a PNG.
@@ -65,6 +67,11 @@ of tuning with the user.
   the packs as the editor has them; about 2.5 s a variation on middle_men_port_a). A radar without the `wce radar generator` mark (a
   hand-made one, CA's in a decompiled tile) is exported as it is.
 
+## Status (2026-11-22)
+
+Built on master: the renderer, the Minimap's radar base, `radar_save` (JPEG with its mark), the export (2026-11-15). Left: the
+user's tuning rounds.
+
 ## Open
 
 - Asked (2026-11-15): the user sees the saved radar with the wrong rotation / mirroring and wants it over the playable area only. Our
@@ -72,6 +79,4 @@ of tuning with the user.
   it with is to be found out.
 - Tuning with the user: colours, the paper, forest density, road widths, which decals are roads, hachure density, red roofs (now 30 %
   at random; CA's red may mean something: important buildings?).
-- `radar_save` works out the water depth and the no-go areas itself when the tile has none yet.
-- The radar is drawn on the UI thread (0.25 s on dunedain_city_c); move to a thread if it gets in the way.
 - Style settings in the UI (now `RadarStyle::default()`).
