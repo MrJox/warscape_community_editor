@@ -15,6 +15,7 @@ pub mod markers;
 pub mod models_naval;
 pub mod old_lists;
 pub mod png_file;
+pub mod rigid_model;
 pub mod text_encoding;
 pub mod tile_climate;
 pub mod tile_entry;

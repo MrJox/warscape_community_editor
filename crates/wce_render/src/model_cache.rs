@@ -1018,8 +1018,7 @@ impl ModelInner {
             pose_first_frame(&mut model, stem, &self.read);
         }
 
-        // Version 5 (some grass) is read into the same vertices, written back as 6.
-        if !matches!(*model.version(), 5 | 6) {
+        if !wce_formats::rigid_model::drawn_version(*model.version()) {
             return Err(format!("rmv2: version {} (expected 5 or 6)", model.version()));
         }
 
