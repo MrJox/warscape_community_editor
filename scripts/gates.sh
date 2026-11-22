@@ -9,7 +9,7 @@
 # Inputs are fixed so runs are comparable. Override with environment variables:
 #   WCE_GAME   game folder (contains data/ and the kit: assembly_kit_battle_tilemap + assembly_kit_campaign_tilemap, or one assembly_kit)
 #   WCE_CACHE  a folder of files extracted from the packs for the XML and model gates (default <out dir>/extract, filled from the game's
-#              vanilla packs at each run: weather/ and vfx/, and the version 6 models of two rigidmodels/ folders; about 75 MB)
+#              vanilla packs at each run: weather/, vfx/ and a sample of rigidmodels/ with every model version; about 75 MB)
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when not set)
 #   WCE_ROME2  Rome 2's folder: its gates run too (skipped when not set)
@@ -71,8 +71,10 @@ else
     for p in weather/ vfx/; do
         ex wce_vfs vfs_ls "$GAME" "$p" --vanilla --extract-all "$CACHE" > /dev/null || echo "extract $p FAILED"
     done
-    # rmv2_check takes version 6 only (170 of the vanilla 3,788 models are another version): two folders of version 6 models.
-    for p in rigidmodels/campaign/prop/ rigidmodels/campaign/vegetation/; do
+    # Models of every version Attila has (1, 3, 5, 6; rmv2_all in --corpus reads them all): version 6 props and trees, the battle decals
+    # (5 and 6), the effects' pieces (5 and 6), the skybox's test box (1), two Greek agora buildings (3).
+    for p in rigidmodels/campaign/prop/ rigidmodels/campaign/vegetation/ rigidmodels/decals/battle/ rigidmodels/vfx/ rigidmodels/skybox/ \
+        rigidmodels/buildings/greek_agora_main_hall_big/ rigidmodels/buildings/greek_agora_small_building01/; do
         ex wce_vfs vfs_ls "$GAME" "$p" --vanilla --ext rigid_model_v2 --extract-all "$CACHE" > /dev/null || echo "extract $p FAILED"
     done
 fi
@@ -145,6 +147,11 @@ if [ -n "${WCE_BCA_ORACLE:-}" ] && [ -n "${WCE_BCA_KIT:-}" ] && [ -n "${WCE_BCA_
     run "bca_$WCE_BCA_MAP" env BCA_TILEMAP="$WCE_BCA_ORACLE/tile_map" bash -c "$(declare -f ex); ROOT='$ROOT'; ex wce_terrain bca_check '$WCE_BCA_KIT/raw_data/terrain' '$WCE_BCA_MAP' '$WCE_BCA_KIT/editor_working_data/Terry/bca_generation_spec.xml' '$WCE_BCA_ORACLE/${WCE_BCA_MAP}_generated.terry'"
 fi
 if [ "$CORPUS" = 1 ]; then
+    # every model of the vanilla packs (3,788, about 760 MB extracted) read and written back
+    rm -rf "$OUT/extract_models"
+    ex wce_vfs vfs_ls "$GAME" rigidmodels/ --vanilla --ext rigid_model_v2 --extract-all "$OUT/extract_models" > /dev/null
+    run rmv2_all      ex wce_formats rmv2_check "$OUT/extract_models"
+    rm -rf "$OUT/extract_models"
     run roundtrip    ex wce_formats roundtrip "$MANIFEST" "$GAME"
     run map_roundtrip_all ex wce_terrain_io map_roundtrip_check "$MAPRAW"   # every battle and campaign map folder of the kit (about 25 s)
     run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
