@@ -383,6 +383,11 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let mut rows = DumpInspector { edit: Some((row.clone(), rest[1..].join(" "))), ..Default::default() };
             let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
             d.inspect(src, &mut rows);
+            // A river's bed and shores are drawn below its profile (`inspect_river_tail`), not in the document's own rows.
+            if !rows.applied {
+                d.inspect_river_tail(el, &mut rows);
+            }
+
             if rows.applied { ok(format!("{row} set")) } else { fail(format!("no row '{row}' to edit")) }
         },
     );
