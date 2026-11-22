@@ -26,7 +26,10 @@ tool, no shared tree of documents). Tools can still share documents (see Cross-t
 
 Registered by `wce_app::tools::all_tools`, one Cargo feature of `wce_app` per tool, in the switcher's order: Weather, VFX, Prefab, Tile,
 Terrain, UI, Audio, Unit, Cinematic (each below). The default build has them all; the `release` feature (the CI release, nightly and
-Flatpak builds) has Weather, Prefab, Tile, UI and Audio. **Ctrl+1..9** switch tools (Settings > Shortcuts).
+Flatpak builds) has Weather, Prefab, Tile, UI and Audio: `cargo build --release -p wce_app --no-default-features --features release`, the
+build the README gives. `--no-default-features --features tile` builds one tool alone (`prefab` turns on `tile`); the scripts build with
+`--all-features`, which adds `placeholders` (the tabs of tools still to come; none at present). **Ctrl+1..9** switch tools (Settings >
+Shortcuts).
 
 To add a tool: implement `Tool` (an id and title, the file extensions it opens in `opens`, `open` returning a `Document`, panels in
 `draw_panels`, menus in `draw_menus`, commands in `register_commands`), put it behind a feature of `wce_app` and push it in

@@ -1,109 +1,112 @@
 # Warscape Community Editor
 
-One editor for Total War content on the Warscape engine (Attila first, Rome II and Thrones of Britannia too): weather and lighting,
-prefabs, battle and campaign tiles, battle and campaign maps, UI layouts, sound banks, units, VFX and cinematics. It shares one viewport
-and one renderer built on the game's own shaders. Plan and status: [PLAN.md](PLAN.md); what each tool does: [docs/editor.md](docs/editor.md).
+**An all-in-one modding editor for Total War games on the Warscape engine.**
 
-**State:** `wce` is one Rust application (a Cargo workspace, `crates/`) with every tool in a shared shell; the stable ones ship in releases
-("Editors" below). The gates are Cargo examples and tests, run by `scripts/`. The plans are in [docs/plans/](docs/plans/), the
-reverse-engineering notes and file formats in [docs/re/](docs/re/) and [docs/formats/](docs/formats/).
+[![Tests](https://github.com/MrJox/warscape_community_editor/actions/workflows/test.yml/badge.svg)](https://github.com/MrJox/warscape_community_editor/actions/workflows/test.yml)
 
-## Build
+Warscape Community Editor (WCE) brings the work of the Assembly Kit's separate tools into one modern application: you build the tiles
+battles are fought on, tune the weather and lighting, rework the interface and edit the game's sounds in the same window, with the same
+3D viewport.
 
-rpfm_lib comes from [RPFM](https://github.com/Frodo45127/rpfm)'s develop branch (a git dependency); to work against a local checkout,
-put it next to this repo as `../rpfm` and use the path line in `Cargo.toml`.
+The viewport renders with **the game's own shaders**, so what you see in the editor is what you get in the game. Edits are
+**lossless**: a file you open and save changes only where you edited it, and the game's own files are never touched; your work goes
+to a projects folder, to loose files or to a mod pack.
 
-### Windows
+## Supported games
 
-The `wce` binary builds SDL3 from source. Cargo's `build-dir` (set in `.cargo/config.toml`) keeps the intermediates under
-`%USERPROFILE%\.cargo\build`, so a long repo path does not break SDL's MSBuild compiler check (it needs Cargo 1.91 or newer):
+| Game | Support |
+|---|---|
+| Total War: ATTILA | Main target: every editor, with or without the Assembly Kit |
+| Total War Saga: Thrones of Britannia | Same engine and Assembly Kit as Attila |
+| Total War: Rome II | From the game's packs (its Assembly Kit has no battle tiles to open) |
+
+The editor runs on **Windows** and **Linux** (where it finds the Steam / Proton install of the game).
+
+## Editors
+
+### Tile editor
+
+Build and edit battle and campaign tiles, the pieces the game's battle maps are made of:
+
+- Place and arrange buildings, props, vegetation, effects, lights and logic with a gizmo, snapping and multi-selection.
+- Paint the terrain: heights, ground textures and blends, with brushes, stamps and imported images.
+- Draw roads, rivers and walls along splines, and fences along a line; generate the siege AI layout of a settlement in one click.
+- See the tile in context, surrounded by its neighbours on the campaign's battle map, under any of the game's weathers.
+- Keep a tile's variations (a settlement's sizes, random alternatives) in one project.
+- Open tiles from the Assembly Kit, or extract them straight from the game's packs.
+- Export to the Assembly Kit, to the game's tile format or to a mod pack, with the battle minimap drawn for you.
+- **Launch in game**: one click exports the tile and starts the game straight into a battle on it.
+
+### Prefab editor
+
+Groups of buildings and props you reuse across tiles. A prefab is edited on a stage of its own and placed in tiles as a reference: change
+the prefab, and every tile that uses it follows.
+
+### Weather and lighting editor
+
+Edit the game's `.environment` and `.lighting` files (sun, sky, clouds, fog, rain and snow, colour grading, exposure) with a live
+preview on a sample map or on the tile you are working on, and pick which weather a battle uses.
+
+### UI editor
+
+Open the game's interface layouts, edit them on a canvas or as XML, make skins of your own, and export them back to the game's format
+or into a mod pack.
+
+### Audio editor
+
+Browse the game's Wwise sound banks with names instead of numbers: search across every bank, see what an event plays, and listen to it.
+Replace sounds from WAV or Ogg files, add variations, edit music playlists and unit voice lines, and save the changed banks into your
+project.
+
+### For every editor
+
+- Undo and redo for every edit, and autosave with recovery after a crash.
+- Your game's mod packs mounted alongside the game's own.
+- Built-in updates (Help > Update Manager), including the database schemas the editor needs to read the game's tables.
+- Shared art resources: a team can keep its models, prefabs and vegetation sets in a git repository the editor publishes to and updates
+  from.
+
+## Installing
+
+Download the latest version from the [releases page](https://github.com/MrJox/warscape_community_editor/releases):
+
+- **Windows**: unzip `wce-<version>-windows-x64.zip` anywhere and run `wce.exe`.
+- **Linux**: `flatpak install --user wce-<version>-linux-x86_64.flatpak`, then start it from the menu or with
+  `flatpak run io.github.mrjox.WarscapeCommunityEditor`.
+
+On first run the editor asks for the game's folder (and finds it on its own when it can). The Assembly Kit is optional: with it, you can
+open and save the kit's tiles.
+
+## Building from source
+
+You need [Rust](https://rustup.rs) (stable). The build fetches [rpfm_lib](https://github.com/Frodo45127/rpfm) from git.
+
+**Windows**: Cargo 1.91 or newer, and Visual Studio 2022's C++ build tools with CMake (SDL3 is built from source):
 
 ```powershell
-cargo build --release -p wce_app
+cargo build --release -p wce_app --no-default-features --features release
 ```
 
-The binary lands at `target\release\wce.exe`.
+**Linux**: the editor's Direct3D 11 renderer runs on DXVK-native (over Vulkan). A one-time CMake step builds it and vkd3d-utils into
+`build/` (see [THIRD_PARTY.md](THIRD_PARTY.md)). You need a Vulkan driver, CMake 3.24+, Ninja, a C/C++ compiler, git, meson, glslang,
+autoconf, automake, libtool, bison, flex, perl, `widl` (from Wine), and the SDL3 and Vulkan headers. On Arch Linux:
 
-### Linux
-
-The renderer stays D3D11: it runs on DXVK-native (D3D11 over Vulkan) with vkd3d-utils for the shader compiler and reflection, in an SDL3
-window. A CMake configure step fetches and builds both into `build/_deps` (a few minutes, once; see [THIRD_PARTY.md](THIRD_PARTY.md));
-`crates/wce_d3d11` links them from there (or from `$WCE_DEPS_PREFIX`).
-
-Needs a Vulkan driver and: Rust, CMake 3.24+, Ninja, a C/C++ compiler, git, meson, glslang, autoconf/automake/libtool, bison, flex, perl,
-`widl` (part of Wine), and the SDL3 and Vulkan headers. On Arch: `pacman -S cmake ninja meson glslang autoconf automake libtool bison flex
-perl wine sdl3 vulkan-headers vulkan-icd-loader`.
-
-```
+```sh
+sudo pacman -S cmake ninja meson glslang autoconf automake libtool bison flex perl wine sdl3 vulkan-headers vulkan-icd-loader
 cmake -S . -B build -G Ninja
-cargo build --release -p wce_app
+cargo build --release -p wce_app --no-default-features --features release
 ```
 
-The binary lands in `target/release/wce`. Settings live in `~/.config/wce/settings.toml`, caches in `~/.cache/wce` (see "Settings and first run" in `docs/editor.md`). The game is the Windows (Proton)
-install, found in the usual Steam folders. File dialogs use zenity or kdialog.
+The editor is `target/release/wce` (`wce.exe` on Windows). On Linux, file dialogs use zenity or kdialog. `scripts/flatpak.sh` builds
+the Flatpak.
 
-### Editors
+Contributors: how the editor works is in [docs/editor.md](docs/editor.md), the roadmap in [PLAN.md](PLAN.md), the checks in
+[docs/baseline.md](docs/baseline.md), and the project's rules in [AGENTS.md](AGENTS.md).
 
-Each editor is a Cargo feature of `wce_app`. A development build (the default features) has every editor; releases and nightlies build
-only the stable ones, the `release` feature, with `cargo build --release -p wce_app --no-default-features --features release`:
+## Credits
 
-| Feature | Editor | In releases |
-|---|---|---|
-| `weather` | Weather and lighting | yes |
-| `prefab` | Prefabs (the Tile editor on a stage of its own; turns on `tile`) | yes |
-| `tile` | Battle and campaign tiles | yes |
-| `ui` | UI layouts | yes |
-| `audio` | Sound banks: names, search, playback | yes |
-| `terrain` | Battle maps shown whole | not yet |
-| `cinematic` | Movies and keyed scenes | not yet |
-| `unit` | Variant mesh definitions | not yet |
-| `vfx` | VFX files | not yet |
-| `placeholders` | The tabs of the editors still to come (none at present), off by default | no |
+Built on [RPFM](https://github.com/Frodo45127/rpfm) for the game's files, [Dear ImGui](https://github.com/ocornut/imgui) for the
+interface and [DXVK](https://github.com/doitsujin/dxvk) on Linux; the full list is in [THIRD_PARTY.md](THIRD_PARTY.md).
 
-`cargo build -p wce_app --no-default-features --features tile` builds the Tile editor alone; the scripts build with `--all-features`.
-
-## Releases and updates
-
-Pushing a tag `vX.Y.Z` that matches the workspace version (`[workspace.package] version` in `Cargo.toml`) runs
-`.github/workflows/release.yml`: it builds `wce.exe` for Windows and the Linux Flatpak, and publishes a GitHub release with
-`wce-X.Y.Z-windows-x64.zip` and `wce-X.Y.Z-linux-x86_64.flatpak`. A tag with a pre-release part (`v0.2.0-beta.1`) is published as a
-pre-release. Nightly builds run daily at 02:00 UTC (whenever new commits land on master) and on demand via `.github/workflows/nightly.yml`,
-publishing pre-releases tagged `v<version>-nightly.YYYYMMDD` with the same two files.
-
-On Linux, `flatpak install --user wce-X.Y.Z-linux-x86_64.flatpak` installs the release (it adds Flathub for the runtime when it is missing),
-and `flatpak run io.github.mrjox.WarscapeCommunityEditor` (or the menu entry) starts it. `scripts/flatpak.sh` builds the bundle locally; see
-[packaging/flatpak/README.md](packaging/flatpak/README.md).
-
-Help > Update Manager manages the editor's updates and rpfm's schemas. It looks for a newer release when an interactive session starts
-(release builds; Settings > General > Updates turns it off or includes pre-releases). On Windows it downloads the zip with a progress bar,
-puts its files over the running build (the replaced files are renamed `*.wce-old` and deleted on the next start) and offers to restart.
-In the Flatpak it downloads the release's `.flatpak` and installs it with the host's `flatpak` over the running one, then restarts into it.
-Elsewhere (a source build) it links to the release page.
-
-rpfm's schemas (`schema_att.ron`...) are needed to read the games' db tables (the buildings' data, the climate phases, the procedural
-walls). The Update Manager compares the schemas in use with the newest commit of `Frodo45127/rpfm-schemas` and downloads every supported
-game's schema into the editor's own schemas folder (`<data folder>/schemas`, with the commit in `.wce-schemas-version`). A schema is read
-from `$WCE_RPFM_SCHEMA`, then Settings > General > DB schemas, then that folder, then rpfm's own. Without the current game's schema the
-window opens at start, even with the start check turned off.
-
-The art resources (Settings > Game > Art resources) are a git repository per game whose working tree is the projects'
-`assembly_kit/raw_data/art`: a team shares its models, CS2 files, prefabs and vegetation sets there. The installed `git` does the work (its
-credential manager or SSH keys sign in; Git LFS works when installed). The Update Manager sets the folder up (the files already there stay:
-those the repository has differently are backed up to `<projects>/art_backup/<date>` first, the others become local changes), says when the
-team pushed commits (looked for at start with the other updates, never pulled on its own) and brings them in. File > Publish art
-resources..., the status bar's `art:` badge or the Update Manager's Publish button commit the files picked and push them, after bringing the
-team's commits in. A file changed both locally and by the team is never merged: it asks Keep mine (the local file stays over theirs, to
-publish) or Take theirs, per file, before anything is done.
-
-## Gates
-
-`scripts/gates.sh [out dir] [--corpus] [--render]` runs every gate with fixed inputs and writes one
-output file per gate. `scripts/imgcmp.py <run a> <run b>` compares the reference screenshots of two runs. The recorded
-baseline and the comparison rules are in [docs/baseline.md](docs/baseline.md). Every migration step must reproduce it.
-
-The scripts run in bash: Git Bash (MSYS2) on Windows, the system's bash on Linux and macOS. `scripts/lib.sh` holds what differs between
-them (path forms, `.exe`, the settings folder); the game folder is `$WCE_GAME`, else the current game's folder in the editor's
-settings.toml.
-
-Requirements: the game, the battle/campaign tilemap assembly kits for the tile gates, and
-`manifest/corpus.tsv` (built by `scripts/corpus_inventory.py`; not in git).
+Warscape Community Editor is a fan project, not affiliated with or endorsed by Creative Assembly or SEGA. Total War and the games' names
+are their trademarks. The editor ships no game content: it reads it from your own installation.

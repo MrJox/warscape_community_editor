@@ -19,7 +19,7 @@ jobs:
     name: Linux (DXVK-native)
     runs-on: ubuntu-latest
 
-    # The Linux build links DXVK-native and vkd3d-utils, built by the CMake step (README, Linux). They need the SDL3 development files,
+    # The Linux build links DXVK-native and vkd3d-utils, built by the CMake step (README, "Building from source"). They need the SDL3 development files,
     # which Ubuntu does not package; Arch has every dependency the README lists.
     container: archlinux:latest
 
@@ -57,7 +57,7 @@ jobs:
     # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
 
     env:
-      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
+      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (.cargo/config.toml, build-dir).
       CARGO_TARGET_DIR: C:\t
 
     steps:
