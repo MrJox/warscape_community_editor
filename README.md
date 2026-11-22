@@ -2,8 +2,6 @@
 
 **An all-in-one modding editor for Total War games on the Warscape engine.**
 
-[![Tests](https://github.com/MrJox/warscape_community_editor/actions/workflows/test.yml/badge.svg)](https://github.com/MrJox/warscape_community_editor/actions/workflows/test.yml)
-
 Warscape Community Editor (WCE) brings the work of the Assembly Kit's separate tools into one modern application: you build the tiles
 battles are fought on, tune the weather and lighting, rework the interface and edit the game's sounds in the same window, with the same
 3D viewport.
@@ -61,7 +59,7 @@ files, add variations, and edit the music playlists and the units' voice lines.
 - Undo and redo for every edit, and autosave with recovery after a crash.
 - Works with the mods you have installed.
 - Updates itself (Help > Update Manager).
-- Teams can share their models, prefabs and vegetation through a shared online repository.
+- Teams can share their models, prefabs and vegetation through a git repository (needs git installed).
 
 ## Installing
 
@@ -72,7 +70,7 @@ Download the latest version from the [releases page](https://github.com/MrJox/wa
   `flatpak run io.github.mrjox.WarscapeCommunityEditor`.
 
 On first run the editor asks for the game's folder (and finds it on its own when it can). The Assembly Kit is optional: with it, you can
-open and save the kit's tiles.
+open and save the kit's tiles. On Linux, the editor works with the Windows version of the games, installed through Steam's Proton.
 
 ## Building from source
 
@@ -82,7 +80,7 @@ open and save the kit's tiles.
 cargo build --release -p wce_app --no-default-features --features release
 ```
 
-**Linux**: you need [Rust](https://rustup.rs), a Vulkan driver, CMake 3.24+, Ninja, a C/C++ compiler, git, meson, glslang, autoconf,
+**Linux**: you need [Rust](https://rustup.rs) 1.91 or newer, a Vulkan driver, CMake 3.24+, Ninja, a C/C++ compiler, git, meson, glslang, autoconf,
 automake, libtool, bison, flex, perl, Wine, and the SDL3 and Vulkan headers. On Arch Linux:
 
 ```sh
