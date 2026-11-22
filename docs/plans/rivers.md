@@ -11,6 +11,8 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   Step 7 (water checks: spills, buried, steps) built; the plan's "old factors" check dropped: the editor draws the game's heights
   already, and the snap writes through the river's factors. The joins hold the connection 16 m in and fade by 64 m (held 64 m, they
   ran straight on where the river bent away).
+  Step 3 (long profile in the Inspector, Make downhill, Reverse river, ramps, flow arrows) built; the flow check against `is_entry`
+  waits for the in-game look R3 asks for.
 
 ## What there is today
 

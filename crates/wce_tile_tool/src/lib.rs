@@ -39,6 +39,7 @@ pub mod prefab_tool;
 mod ref_units;
 mod reference_image;
 mod resize_tile;
+mod river_ui;
 mod save_tile_as;
 pub mod scene_panel;
 mod selection_tools;

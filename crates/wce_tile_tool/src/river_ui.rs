@@ -1,0 +1,174 @@
+//! The selected river in the Inspector, below its properties (docs/plans/rivers.md, step 3): its long profile (the water and the ground
+//! under its middle along it; its points dragged up and down there, those joined to a link fixed), *Make downhill*, *Reverse river*, and a
+//! ramp of its points' values between two of them.
+
+use wce_editor::editor::Editor;
+use wce_editor::gui::{self, col32, v2};
+use wce_scene::render_scene::DocumentId;
+use wce_tile_editor::tile_document::TileDocument;
+use wce_tile_editor::tile_document::river_profile::RAMPS;
+
+use crate::tool::{TileTool, primary};
+
+/// The profile's height (pixels) and a point's pick radius.
+const GRAPH_HEIGHT: f32 = 170.0;
+const PICK_PX: f32 = 7.0;
+
+/// The profile's state: the point being dragged (the river, its index, the drag's gesture), and the ramp's settings.
+pub(crate) struct RiverUi {
+    drag: Option<(usize, usize, u64)>,
+    ramp: i32,
+    from: i32,
+    to: i32,
+    values: [f32; 2],
+}
+
+impl Default for RiverUi {
+    fn default() -> Self {
+        Self { drag: None, ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
+    }
+}
+
+impl TileTool {
+    pub(crate) fn inspect_river(&mut self, e: &mut Editor, id: DocumentId) {
+        let Some(river) = primary(e) else { return };
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        if d.tile().tscene().type_of(river) != "SplineRiverInstance" {
+            self.river_ui.drag = None;
+            return;
+        }
+
+        let Some(p) = d.river_profile(river) else { return };
+        if !gui::collapsing_header("River profile", gui::TREE_DEFAULT_OPEN) {
+            return;
+        }
+
+        // The ranges: along, and the heights of the water and the ground with a margin.
+        let lo = p.samples.iter().flat_map(|s| [s.water, s.ground]).fold(f64::INFINITY, f64::min) - 1.0;
+        let hi = p.samples.iter().flat_map(|s| [s.water, s.ground]).fold(f64::NEG_INFINITY, f64::max) + 1.0;
+        let width = gui::content_region_avail().x.max(120.0);
+        let at = gui::cursor_screen_pos();
+        gui::invisible_button("##river_profile", v2(width, GRAPH_HEIGHT), 0);
+        let hovered = gui::is_item_hovered();
+        let active = gui::is_item_active();
+        let to_px = |along: f64, y: f64| {
+            v2(
+                at.x + (along / p.length.max(1e-6)) as f32 * width,
+                at.y + GRAPH_HEIGHT - ((y - lo) / (hi - lo).max(1e-6)) as f32 * GRAPH_HEIGHT,
+            )
+        };
+        let dl = gui::window_draw_list();
+        dl.rect_filled(at, v2(at.x + width, at.y + GRAPH_HEIGHT), col32(24, 26, 30, 255), 3.0);
+        let ground = p.samples.iter().map(|s| to_px(s.along, s.ground)).collect::<Vec<_>>();
+        let water = p.samples.iter().map(|s| to_px(s.along, s.water)).collect::<Vec<_>>();
+        dl.polyline(&ground, col32(150, 120, 80, 255), false, 2.0);
+        dl.polyline(&water, col32(80, 160, 255, 255), false, 2.0);
+
+        // The points: fixed ones (joined to a link) grey squares, the others circles; the one under the mouse or dragged lit.
+        let mouse = gui::mouse_pos();
+        let near = p
+            .points
+            .iter()
+            .filter(|q| !q.locked)
+            .map(|q| (q, to_px(q.along, q.water)))
+            .filter(|(_, c)| (c.x - mouse.x).hypot(c.y - mouse.y) <= PICK_PX)
+            .min_by(|a, b| (a.1.x - mouse.x).abs().total_cmp(&(b.1.x - mouse.x).abs()))
+            .map(|(q, _)| q.index);
+        for q in &p.points {
+            let c = to_px(q.along, q.water);
+            let lit = self.river_ui.drag.is_some_and(|(r, i, _)| r == river && i == q.index) || (hovered && near == Some(q.index));
+            if q.locked {
+                dl.rect_filled(v2(c.x - 4.0, c.y - 4.0), v2(c.x + 4.0, c.y + 4.0), col32(170, 170, 170, 255), 0.0);
+            } else {
+                dl.circle_filled(c, if lit { 6.0 } else { 4.5 }, if lit { col32(255, 220, 60, 255) } else { col32(230, 240, 255, 255) });
+            }
+        }
+
+        dl.text(v2(at.x + 4.0, at.y + 2.0), col32(200, 200, 200, 255), &format!("{hi:.1} m"));
+        dl.text(v2(at.x + 4.0, at.y + GRAPH_HEIGHT - 16.0), col32(200, 200, 200, 255), &format!("{lo:.1} m   {:.0} m long", p.length));
+
+        // A press on a point starts its drag; held, the point follows the mouse up and down; let go, the drag's entry closes.
+        if hovered && gui::is_mouse_clicked(0) {
+            self.river_ui.drag = near.map(|i| (river, i, d.next_gesture()));
+        }
+
+        if let Some((r, i, g)) = self.river_ui.drag {
+            if active && r == river {
+                let y = lo + f64::from((at.y + GRAPH_HEIGHT - mouse.y) / GRAPH_HEIGHT) * (hi - lo);
+                if let Err(why) = d.set_river_heights(river, &[(i, y)], "Move river point height", g) {
+                    self.status = why;
+                }
+            } else {
+                self.river_ui.drag = None;
+            }
+        }
+
+        if hovered && self.river_ui.drag.is_none() {
+            gui::set_tooltip(
+                "The river's water (blue) and the ground under its middle (brown) along it, from its first point. Drag a point up or \
+                 down to set its water; the grey ones are joined to a river link and keep the link's height.",
+            );
+        }
+
+        if gui::button("Make downhill") {
+            self.status = match d.make_river_downhill(river) {
+                Ok(0) => "the river runs downhill already".to_owned(),
+                Ok(n) => format!("{n} point(s) lowered or raised to run downhill"),
+                Err(why) => why,
+            };
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "From its higher end to its lower one, no point higher than the one before it; the points joined to a link keep their \
+                 height (a river between two links at one height runs level).",
+            );
+        }
+
+        gui::same_line();
+        if gui::button("Reverse river") {
+            self.status = match d.flip_spline(river) {
+                Ok(()) => "the river runs the other way".to_owned(),
+                Err(why) => why,
+            };
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Its points the other way round: its first point is its last. The arrows on it show the way it runs.");
+        }
+
+        // The ramp: a value from one point to another, by the distance along.
+        let n = p.points.len() as i32;
+        if self.river_ui.to < 0 || self.river_ui.to >= n {
+            self.river_ui.to = n - 1;
+        }
+
+        self.river_ui.from = self.river_ui.from.clamp(0, n - 1);
+        gui::separator_text("Ramp");
+        let labels = RAMPS.iter().map(|r| r.1).collect::<Vec<_>>();
+        gui::set_next_item_width(140.0);
+        gui::combo("value##river_ramp", &mut self.river_ui.ramp, &labels);
+        gui::set_next_item_width(140.0);
+        gui::slider_int("from point##river_ramp", &mut self.river_ui.from, 0, n - 1);
+        gui::set_next_item_width(140.0);
+        gui::slider_int("to point##river_ramp", &mut self.river_ui.to, 0, n - 1);
+        gui::set_next_item_width(140.0);
+        gui::drag_float2("from .. to##river_ramp", &mut self.river_ui.values, 0.1, "%.2f");
+        if gui::button("Ramp") {
+            let (attr, _) = RAMPS[self.river_ui.ramp.clamp(0, RAMPS.len() as i32 - 1) as usize];
+            let [a, b] = self.river_ui.values;
+            self.status =
+                match d.ramp_river(river, attr, self.river_ui.from as usize, self.river_ui.to as usize, f64::from(a), f64::from(b)) {
+                    Ok(()) => format!("{attr} ramped"),
+                    Err(why) => why,
+                };
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Sets the value on the points from one to the other, from the first number to the second by their distance along the \
+                 river (a river widening towards its mouth). The width is the game's (the river file's), half the point's for today's TEd.",
+            );
+        }
+    }
+}

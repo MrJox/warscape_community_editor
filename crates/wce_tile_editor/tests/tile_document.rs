@@ -3172,3 +3172,40 @@ fn a_rivers_water_is_checked_against_the_ground() {
     d.tile_mut().finish_road_jobs();
     assert!(d.river_water_problems().iter().any(|p| p.message.contains("floats")), "{:?}", d.river_water_problems());
 }
+
+#[test]
+fn a_rivers_profile_is_edited_made_downhill_and_ramped() {
+    let (_dir, mut d) = open_with_river_links();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    // From the west link to the shallow one at the bottom, with two points between.
+    let line =
+        vec![Float3::new(-6.0, 0.0, 192.0), Float3::new(80.0, 0.0, 150.0), Float3::new(150.0, 0.0, 80.0), Float3::new(192.0, 0.0, -6.0)];
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    d.snap_river_to_links(r).unwrap();
+    let p = d.river_profile(r).unwrap();
+    assert_eq!(p.points.len(), 4);
+    assert!(p.points[0].locked && p.points[3].locked && !p.points[1].locked);
+    assert!(p.length > 250.0 && p.points.windows(2).all(|w| w[0].along < w[1].along), "{p:?}");
+    assert!((p.points[0].water + 6.2).abs() < 1e-3 && (p.points[3].water - 0.42).abs() < 1e-3);
+
+    // A point lifted: one entry for a gesture's steps.
+    let before = d.history().position();
+    d.set_river_heights(r, &[(1, 3.0)], "Move river point height", 77).unwrap();
+    d.set_river_heights(r, &[(1, 5.0)], "Move river point height", 77).unwrap();
+    assert_eq!(d.history().position(), before + 1);
+    assert!((d.river_profile(r).unwrap().points[1].water - 5.0).abs() < 1e-3);
+
+    // Downhill from the higher end (the shallow link at 0.42) to the lower (the deep one at -6.2): the points between at most 0.42 and at
+    // least -6.2, in order.
+    assert!(d.make_river_downhill(r).unwrap() >= 1);
+    let w = d.river_profile(r).unwrap().points.iter().map(|q| q.water).collect::<Vec<_>>();
+    assert!(w.windows(2).all(|p| p[1] >= p[0] - 1e-6), "rising towards the higher end: {w:?}");
+    assert!((w[0] + 6.2).abs() < 1e-3 && (w[3] - 0.42).abs() < 1e-3, "the links keep theirs: {w:?}");
+
+    // Widths ramped from 45 to 20 (the file's), the points' twice that.
+    d.ramp_river(r, "width", 0, 3, 45.0, 20.0).unwrap();
+    let sc = d.tile().tscene();
+    let widths = sc.polygon_points(r).iter().map(|&p| sc.get(p, "width").unwrap().parse::<f64>().unwrap()).collect::<Vec<_>>();
+    assert_eq!((widths[0], widths[3]), (90.0, 40.0));
+    assert!(widths[1] < 90.0 && widths[1] > widths[2] && widths[2] > 40.0, "{widths:?}");
+}
