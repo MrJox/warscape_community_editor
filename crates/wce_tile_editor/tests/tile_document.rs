@@ -3363,3 +3363,104 @@ fn a_lake_is_a_water_plane_over_its_outline_with_a_basin() {
     let spill = p.iter().find(|p| p.elem == Some(lake)).unwrap_or_else(|| panic!("{p:?}"));
     assert!(matches!(spill.fix, Some(wce_tile_editor::tile_document::river_links::RiverFix::LakeLevel { .. })));
 }
+
+/// A lake painted with the area brush: a water plane over the stroke's outline; a second stroke grows it (the plane follows), its water
+/// where it was; a stroke taking away cuts it.
+#[test]
+fn a_lake_is_painted_with_the_area_brush() {
+    use std::collections::BTreeMap;
+    use wce_tile_editor::tile_document::LAKE;
+    use wce_tile_editor::tile_document::area_brush::NewArea;
+    use wce_tile_editor::tile_document::lakes::OUTLINE_ATTR;
+
+    let (_dir, mut d) = open_with_river_links();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let attrs = BTreeMap::new();
+    let new = NewArea { kind: LAKE, into: graph, key: "", attrs: &attrs };
+    let lake = d.area_stroke(None, Some(new), &[(100.0, 100.0), (120.0, 100.0)], 15.0, false).unwrap()[0];
+    let t = d.tile();
+    assert!(t.is_lake(lake) && t.paintable(lake), "a water plane with an outline");
+    let width = |d: &TileDocument| {
+        let o = d.tile().area_outline(lake);
+        o.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max) - o.iter().map(|p| p.0).fold(f32::INFINITY, f32::min)
+    };
+    let (w0, water, at) = (width(&d), d.lake_water(lake), d.tile().world_position(lake));
+    assert!((w0 - 50.0).abs() < 4.0, "the stroke's width: {w0}");
+
+    let grown = d.area_stroke(Some(lake), None, &[(150.0, 100.0), (170.0, 100.0)], 15.0, false).unwrap();
+    assert_eq!(grown, vec![lake]);
+    assert!(width(&d) > w0 + 40.0, "grown: {}", width(&d));
+    assert!(
+        (d.lake_water(lake) - water).abs() < 1e-4,
+        "its water stays: {} against {water}, at {:?} against {at:?}",
+        d.lake_water(lake),
+        d.tile().world_position(lake)
+    );
+    assert!(d.tile().world_position(lake).x != at.x, "its plane follows its outline");
+    assert!(d.tile().tscene().get(lake, OUTLINE_ATTR).is_some());
+
+    // Cut through its middle: two lakes, each with its own id.
+    let pieces = d
+        .area_stroke(
+            Some(lake),
+            None,
+            &[(135.0, 70.0), (135.0, 80.0), (135.0, 90.0), (135.0, 100.0), (135.0, 110.0), (135.0, 120.0), (135.0, 130.0)],
+            12.0,
+            true,
+        )
+        .unwrap();
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+    let id = |e: usize| d.tile().tscene().get(e, "wce_river_id");
+    assert_ne!(id(pieces[0]), id(pieces[1]));
+}
+
+/// A river's terrain patch: on for a river the editor draws, off for one without the mark (the kit's, a river used for its water alone),
+/// whose ground stays as it is even with a bed and joined to a link; the Inspector's toggle turns it on and off.
+#[test]
+fn a_rivers_terrain_patch_is_on_for_the_editors_rivers_only() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(60.0, y(&d, 60.0, 128.0), 128.0), Float3::new(200.0, y(&d, 200.0, 128.0), 128.0));
+    let ground = y(&d, 130.0, 128.0);
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    assert_eq!(d.tile().tscene().get(r, "wce_river_patch").as_deref(), Some("1"), "on for a drawn river");
+    d.tile_mut().finish_road_jobs();
+    let bed = y(&d, 130.0, 128.0);
+    assert!(bed < ground - 2.0, "cut: {bed} against {ground}");
+
+    // Off: its water alone, the ground as it was.
+    d.set_attribute(r, "wce_river_patch", "0");
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 130.0, 128.0) - ground).abs() < 1e-3, "off: the ground back");
+
+    // A river without the mark (as the kit's): off, whatever its bed says.
+    d.set_attribute(r, "wce_river_patch", "");
+    d.set_attribute(r, "wce_bed", "");
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 130.0, 128.0) - ground).abs() < 1e-3, "unmarked: left as it is");
+
+    // Turned on again: cut again.
+    d.set_attribute(r, "wce_river_patch", "1");
+    d.set_attribute(r, "wce_bed", "1");
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 130.0, 128.0) - bed).abs() < 1e-3);
+}
+
+/// A river is picked by a click on its water, as a polygon by a click inside it.
+#[test]
+fn a_river_is_picked_by_a_click_on_its_water() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(60.0, y(&d, 60.0, 128.0), 128.0), Float3::new(200.0, y(&d, 200.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.tile_mut().finish_road_jobs();
+    let mut scene = wce_scene::render_scene::RenderScene::default();
+    let scene_layer = scene.add_layer(1, "tile");
+    wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
+    let t = d.tile();
+    // 45 m wide: 15 m off its middle line is on its water, 30 m off is past it.
+    assert_eq!(t.pick_polygon(Float3::new(130.0, 0.0, 143.0), 1.0), Some(r));
+    assert_eq!(t.pick_polygon(Float3::new(130.0, 0.0, 158.0), 1.0), None);
+}

@@ -597,6 +597,7 @@ impl Tile {
         let unit = self.unit() as f32;
         let extent = self.project.extent_z() as f32;
         let mut added = 0;
+        let water = self.water_mask();
         for (k, t) in trees.iter().enumerate() {
             let z = extent - t.z;
             if is_static(t.x, z) {
@@ -604,7 +605,7 @@ impl Tile {
             }
 
             // Not on a road: a tile's packed list was made before it, and the blend map alone need not rule its trees out (as grass).
-            if self.road_at(f64::from(t.x), f64::from(z)) {
+            if self.road_at(f64::from(t.x), f64::from(z)) || water.under(t.x, z) {
                 continue;
             }
 

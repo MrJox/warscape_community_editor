@@ -721,8 +721,9 @@ impl Tile {
             let vertical = self.river_height_factor(e);
             river_index += 1;
             // Its file while the river is as it was loaded or saved (an edit is drawn from TEd's points until the save writes its file).
-            let unedited = self.project.river_texts.get(river_index - 1).is_some_and(|t| *t == sc.element_text(e));
-            let text = (campaign && unedited).then(|| std::fs::read(&file).ok()).flatten();
+            // (Asked of a campaign tile alone: writing the element out again is no small thing, and this runs often.)
+            let unedited = || self.project.river_texts.get(river_index - 1).is_some_and(|t| *t == sc.element_text(e));
+            let text = (campaign && unedited()).then(|| std::fs::read(&file).ok()).flatten();
             let from_file =
                 text.as_deref().and_then(|t| file_river_points(t, wce_tile::river_files::Factors::of(sc, e, Some(t)).height, u));
             // A battle river's ribbon is its file's width (the game's: BOB's river block has the file's widths), the point's times the

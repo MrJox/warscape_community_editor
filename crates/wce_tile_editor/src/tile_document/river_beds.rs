@@ -8,13 +8,27 @@
 
 use wce_foundation::math::Float3;
 use wce_tile::river_bed::{Basin, BedCell, BedSettings, Channel, Ford, Join, RiverBed};
-use wce_tile::terrain_layers::{Blend, Height, Kind, Stack, TerrainLayers, order_of};
+use wce_tile::terrain_layers::{Blend, Ground as TerrainGround, Height, Kind, Stack, TerrainLayers, order_of};
 
 use super::Tile;
 use super::river_links::{LINK_ATTR, RIVER_ID_ATTR};
 
 /// A river cuts its bed along its line (`1`; the rivers the editor draws), or leaves the ground to the user (missing or `0`: the kit's).
 pub const BED_ATTR: &str = "wce_bed";
+
+/// A river shapes the terrain at all (`1`): its bed, its joins to the tile's links, its fords, its bed's texture and the ground type under
+/// its water. `0`: none of them, the river is its flowing water alone (a river used for its water only). Missing: on for the rivers the
+/// editor drew (`BED_ATTR` of `1`), off for the others (the kit's, TEd's: their ground is left as it was made).
+pub const PATCH_ATTR: &str = "wce_river_patch";
+
+/// Whether a river shapes the terrain ([`PATCH_ATTR`]).
+pub fn river_patch_on(patch: Option<&str>, bed: Option<&str>) -> bool {
+    match patch.map(str::trim) {
+        Some("1") => true,
+        Some("0") => false,
+        _ => bed.map(str::trim) == Some("1"),
+    }
+}
 
 /// The bed's depth under the water (metres; missing: `BedSettings::default_depth` of its width) and its banks' slope (degrees).
 pub const BED_DEPTH_ATTR: &str = "wce_bed_depth";
@@ -23,9 +37,6 @@ pub const BANK_SLOPE_ATTR: &str = "wce_bank_slope";
 /// The texture a river's bed is painted with: a blend channel (the texture group times 4 plus its variation), `none` for none; missing:
 /// the tile's group named like mud, dirt, rock or sand, its first variation (`Tile::default_bed_texture`).
 pub const BED_TEXTURE_ATTR: &str = "wce_bed_texture";
-
-/// How far the ground is cut for the bed's texture to cover it whole (metres): less, it fades.
-const TEXTURE_FULL_CUT: f64 = 1.5;
 
 /// A river's fords (`along:length;...`, the editor's metres: where along the river each one's middle is, how long it is held) and their
 /// water's depth (the editor's metres; missing: the kit's, `river_bed::FORD_DEPTH`).
@@ -74,8 +85,10 @@ fn parse_owner(owner: &str) -> Option<Owner> {
 }
 
 /// A river's attributes the Inspector shows as rows of their own (or not at all).
-pub(crate) const RIVER_ROW_ATTRS: [&str; 9] = [
+pub(crate) const RIVER_ROW_ATTRS: [&str; 11] = [
     RIVER_ID_ATTR,
+    PATCH_ATTR,
+    super::lakes::GROUND_ATTR,
     BED_ATTR,
     BED_DEPTH_ATTR,
     BANK_SLOPE_ATTR,
@@ -95,10 +108,15 @@ impl super::TileDocument {
         let sc = self.tile().tscene();
         let mut fords = river_fords(sc.get(river, FORDS_ATTR).as_deref().unwrap_or_default());
         let has_id = sc.get(river, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
+        let (sc_patch, sc_bed) = (sc.get(river, PATCH_ATTR), sc.get(river, BED_ATTR));
         fords.push((along, length));
         let text = fords.iter().map(|(a, l)| format!("{}:{}", format_number(*a), format_number(*l))).collect::<Vec<_>>().join(";");
         let before = self.history().position();
         self.set_attribute(river, FORDS_ATTR, &text);
+        if !river_patch_on(sc_patch.as_deref(), sc_bed.as_deref()) {
+            self.set_attribute(river, PATCH_ATTR, "1");
+        }
+
         if !has_id {
             let id = self.tile().next_river_id();
             self.set_attribute(river, RIVER_ID_ATTR, &id.to_string());
@@ -132,9 +150,39 @@ impl super::TileDocument {
             let _ = self.set_lake_water(e, w, g);
         }
 
-        let basin = self.tile().tscene().get(e, super::lakes::BASIN_ATTR).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+        let sc = self.tile().tscene();
+        let basin = sc.get(e, super::lakes::BASIN_ATTR).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+        let on = super::lakes::shapes_ground(sc.get(e, super::lakes::GROUND_ATTR).as_deref(), f64::from(basin));
+        let mut patch = on;
+        ins.hint(
+            "The lake shapes the ground under it, as a river cuts its bed: its basin dug inside its outline, and the ground just outside \
+             it that is under the water raised to the shore, so that the water stays inside. Off: the ground as it is.",
+        );
+        if ins.edit_bool(super::lakes::GROUND_ATTR, "apply height patch", &mut patch) && patch != on {
+            use wce_editor_core::document::Document;
+            let before = self.history().position();
+            self.set_attribute(e, super::lakes::GROUND_ATTR, if patch { "1" } else { "0" });
+            if patch && basin <= 0.0 {
+                self.set_attribute(e, super::lakes::BASIN_ATTR, &wce_tile::ted_scene::format_number(super::lakes::DEFAULT_BASIN_M));
+            }
+
+            if self.tile().tscene().get(e, RIVER_ID_ATTR).is_none_or(|v| v.is_empty()) {
+                let id = self.tile().next_river_id();
+                self.set_attribute(e, RIVER_ID_ATTR, &id.to_string());
+            }
+
+            let n = self.history().position() - before;
+            if n > 1 {
+                self.join_last(n, "Lake height patch");
+            }
+        }
+
+        if !patch {
+            return;
+        }
+
         let mut b = basin;
-        ins.hint("How deep its basin is dug under the water inside its outline (metres), its sides at 30°; 0: the ground as it is.");
+        ins.hint("How deep its basin is dug under the water inside its outline (metres), its sides at 30°; 0: its shore alone.");
         if ins.edit_float(super::lakes::BASIN_ATTR, "basin depth (m)", &mut b, 0.05, 0.0, 100.0) && (b - basin).abs() > 1e-5 {
             self.set_attribute(e, super::lakes::BASIN_ATTR, &wce_tile::ted_scene::format_number(f64::from(b)));
         }
@@ -145,6 +193,7 @@ impl super::TileDocument {
         let has_id = self.tile().tscene().get(river, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
         use wce_editor_core::document::Document;
         let before = self.history().position();
+        self.set_attribute(river, PATCH_ATTR, "1");
         self.set_attribute(river, BED_ATTR, "1");
         if !has_id {
             let id = self.tile().next_river_id();
@@ -169,6 +218,7 @@ impl super::TileDocument {
             return;
         }
 
+        let patch = river_patch_on(sc.get(e, PATCH_ATTR).as_deref(), sc.get(e, BED_ATTR).as_deref());
         let on = sc.get(e, BED_ATTR).as_deref() == Some("1");
         let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f32>().ok());
         let width = {
@@ -183,6 +233,31 @@ impl super::TileDocument {
             num(BANK_SLOPE_ATTR).unwrap_or(BedSettings::DEFAULT_BANK_SLOPE as f32),
         );
         ins.section("River bed");
+        let mut apply = patch;
+        ins.hint(
+            "The river shapes the terrain: its bed, its joins to the tile's river links, its fords, its bed's texture and the ground type \
+             under its water (deep or shallow water). Off: the river is its flowing water alone and the terrain is left as it is. On for \
+             the rivers the editor draws; the kit's and older ones are left off until turned on.",
+        );
+        if ins.edit_bool(PATCH_ATTR, "apply terrain patch", &mut apply) && apply != patch {
+            use wce_editor_core::document::Document;
+            let before = self.history().position();
+            self.set_attribute(e, PATCH_ATTR, if apply { "1" } else { "0" });
+            if apply && self.tile().tscene().get(e, RIVER_ID_ATTR).is_none_or(|v| v.is_empty()) {
+                let id = self.tile().next_river_id();
+                self.set_attribute(e, RIVER_ID_ATTR, &id.to_string());
+            }
+
+            let n = self.history().position() - before;
+            if n > 1 {
+                self.join_last(n, "River terrain patch");
+            }
+        }
+
+        if !apply {
+            return;
+        }
+
         let mut carve = on;
         ins.hint(
             "The river cuts its bed along its line: the kit's river bed, scaled to its width and depth, its banks climbing to the ground; \
@@ -251,10 +326,13 @@ struct River {
 }
 
 /// The rivers' layer being made off the editor's thread, what it is made from, and the stack as it was taken.
+/// The rivers' stacks: height, and blend and ground type when the tile has those maps.
+type RiverStacks = (Stack<Height>, Option<Stack<Blend>>, Option<Stack<TerrainGround>>);
+
 pub(crate) struct RiverTerrainJob {
-    job: super::jobs::Job<(Stack<Height>, Option<Stack<Blend>>)>,
+    job: super::jobs::Job<RiverStacks>,
     all: u64,
-    before: (Stack<Height>, Option<Stack<Blend>>),
+    before: RiverStacks,
 }
 
 /// What making the rivers' layers needs: the rivers, the layers' new ids (height, blend), copies of the stacks, the height and blend maps'
@@ -262,12 +340,13 @@ pub(crate) struct RiverTerrainJob {
 struct RiverInput {
     rivers: Vec<River>,
     variation: Option<String>,
-    new_ids: Vec<[u64; 2]>,
+    new_ids: Vec<[u64; 3]>,
     height: Stack<Height>,
 
-    /// None when the tile has no blend map: the beds are not painted.
+    /// None when the tile has no blend map: the beds are not painted; no ground type map: no ground type under the water.
     blend: Option<Stack<Blend>>,
-    dims: [(u32, u32); 2],
+    ground: Option<Stack<TerrainGround>>,
+    dims: [(u32, u32); 3],
     frame: (f64, f64, f64, f64, f64, f64),
 }
 
@@ -319,6 +398,11 @@ impl Tile {
         for e in sc.find_all("SplineRiverInstance") {
             let Some(id) = sc.get(e, RIVER_ID_ATTR).and_then(|v| v.parse::<u32>().ok()) else { continue };
             if !self.shown(e) || !self.of_tile_variation(e) {
+                continue;
+            }
+
+            // Its water alone: no layer (one it had goes).
+            if !river_patch_on(sc.get(e, PATCH_ATTR).as_deref(), sc.get(e, BED_ATTR).as_deref()) {
                 continue;
             }
 
@@ -388,17 +472,26 @@ impl Tile {
             else {
                 continue;
             };
-            let depth = sc.get(e, super::lakes::BASIN_ATTR).and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(0.0);
-            if depth <= 0.0 || !self.shown(e) || !self.of_tile_variation(e) {
+            let depth = sc.get(e, super::lakes::BASIN_ATTR).and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(0.0).max(0.0);
+            let on = super::lakes::shapes_ground(sc.get(e, super::lakes::GROUND_ATTR).as_deref(), depth);
+            if !on || !self.shown(e) || !self.of_tile_variation(e) {
                 continue;
             }
 
-            // In the game's height units; the sides at the rivers' default bank slope.
+            // In the game's height units; the sides at the rivers' default bank slope, the shore just over the water over its plane.
+            let outline = super::lakes::lake_outline(&outline);
+            let m = super::lakes::PLANE_MARGIN_M;
+            let plane = outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |r, p| {
+                [r[0].min(p[0] - m), r[1].min(p[1] - m), r[2].max(p[0] + m), r[3].max(p[1] + m)]
+            });
             let basin = Basin {
-                outline: super::lakes::lake_outline(&outline),
+                outline,
+                plane,
                 water: f64::from(self.world_position(e).y) * unit,
                 depth: depth * unit,
                 rise: BedSettings::DEFAULT_BANK_SLOPE.to_radians().tan() * unit,
+                shore: super::lakes::LAKE_SHORE_M,
+                rim: f64::from(super::lakes::LAKE_FREEBOARD_M) * unit,
             };
             let bed = RiverBed { channel: None, joins: vec![], basin: Some(basin) };
             let texture = match sc.get(e, BED_TEXTURE_ATTR).as_deref().map(str::trim) {
@@ -448,16 +541,33 @@ impl Tile {
 
     /// [`Self::refresh_rivers`]; `wait`: what is being made is waited for, and what is to be made is made now (an export).
     fn refresh_rivers_with(&mut self, wait: bool) {
-        if self.stroke_open {
+        if self.stroke_open || (self.drag_open && !wait) {
             return;
         }
 
         self.take_river_terrain(wait);
+
+        // Nothing edited since the last look that settled: nothing to do (a frame no longer makes every river's bed to find that out).
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (self.history_version, self.structure_version, self.road_variation(), self.display.show_water).hash(&mut h);
+            h.finish()
+        };
+        if !wait && key == self.rivers_key && !self.rivers_stale && self.river_terrain_job.is_none() {
+            return;
+        }
+
+        self.follow_water();
         let stacks = self.project.layers.as_ref().and_then(|l| l.height.as_ref());
         let owned = stacks.is_some_and(|s| s.layers.iter().any(|l| is_river_owner(&l.owner)));
         let rivers = self.river_beds();
         if rivers.is_empty() && !owned {
             self.rivers_stale = false;
+            if self.water_drawn == self.water_last {
+                self.rivers_key = key;
+            }
+
             return;
         }
 
@@ -474,6 +584,11 @@ impl Tile {
                 .any(|o| (mine(&o) && rivers.iter().all(|r| r.id != o.id)) || (cur.is_some() && o.variation.is_none()))
         });
         if !stale && !gone {
+            // Settled, and the water too: until the next edit, nothing to look at.
+            if self.water_drawn == self.water_last {
+                self.rivers_key = key;
+            }
+
             return;
         }
 
@@ -504,17 +619,21 @@ impl Tile {
         let p = &mut self.project;
         // Without a blend map the beds are cut, not painted.
         let painted = p.load_blend().is_ok();
+        let typed = p.load_ground().is_ok();
         let unit = p.unit_scale;
         let (border, mx, mz, ex, ez) = (p.border_m(), p.mpp_x(), p.mpp_z(), p.extent_x(), p.extent_z());
         let Some(hf) = p.height.as_ref() else { return Err("the tile has no height map".to_owned()) };
         let bf = p.blend.as_ref().filter(|_| painted);
-        let dims = [(hf.width(), hf.height()), bf.map_or((0, 0), |b| (b.width(), b.height()))];
+        let gf = p.ground.as_ref().filter(|_| typed);
+        let dims =
+            [(hf.width(), hf.height()), bf.map_or((0, 0), |b| (b.width(), b.height())), gf.map_or((0, 0), |g| (g.width(), g.height()))];
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
-        let new_ids = rivers.iter().map(|_| [layers.new_id(), layers.new_id()]).collect::<Vec<_>>();
+        let new_ids = rivers.iter().map(|_| [layers.new_id(), layers.new_id(), layers.new_id()]).collect::<Vec<_>>();
         let height = layers.height.get_or_insert_with(|| Stack::new(hf)).clone();
         let blend = bf.map(|bf| layers.blend.get_or_insert_with(|| Stack::new(bf)).clone());
-        let before = (height.clone(), blend.clone());
-        let input = RiverInput { rivers, variation, new_ids, height, blend, dims, frame: (unit, border, mx, mz, ex, ez) };
+        let ground = gf.map(|gf| layers.ground.get_or_insert_with(|| Stack::new(gf)).clone());
+        let before = (height.clone(), blend.clone(), ground.clone());
+        let input = RiverInput { rivers, variation, new_ids, height, blend, ground, dims, frame: (unit, border, mx, mz, ex, ez) };
         let job = super::jobs::Job::spawn("river terrain", move || river_terrain(input));
         self.river_terrain_job = Some(RiverTerrainJob { job, all, before });
         Ok(())
@@ -531,7 +650,7 @@ impl Tile {
         };
 
         let j = self.river_terrain_job.take().expect("a job");
-        let Some((height, blend)) = made else {
+        let Some((height, blend, ground)) = made else {
             wce_foundation::log::warn("rivers: their terrain could not be made");
             return;
         };
@@ -544,7 +663,12 @@ impl Tile {
             (None, _) => true,
             (Some(_), None) => false,
         };
-        if !h0.unchanged_since(&j.before.0) || !blend_same {
+        let ground_same = match (&j.before.2, layers.ground.as_ref()) {
+            (Some(g), Some(g0)) => g0.unchanged_since(g),
+            (None, _) => true,
+            (Some(_), None) => false,
+        };
+        if !h0.unchanged_since(&j.before.0) || !blend_same || !ground_same {
             self.rivers_stale = true;
             return;
         }
@@ -560,11 +684,17 @@ impl Tile {
 
         let rect = rivers_rect(h0, &height);
         let brect = blend.as_ref().zip(layers.blend.as_ref()).and_then(|(b, b0)| rivers_rect(b0, b));
+        let grect = ground.as_ref().zip(layers.ground.as_ref()).and_then(|(g, g0)| rivers_rect(g0, g));
         p.height_dirty |= rect.is_some();
         p.blend_dirty |= brect.is_some();
+        p.ground_dirty |= grect.is_some();
         layers.height = Some(height);
         if blend.is_some() {
             layers.blend = blend;
+        }
+
+        if ground.is_some() {
+            layers.ground = ground;
         }
 
         layers.dirty = true;
@@ -581,11 +711,50 @@ impl Tile {
             s.remember();
         }
 
+        if let (Some(s), Some(gf), Some(r)) = (layers.ground.as_mut(), p.ground.as_mut(), grect) {
+            s.apply(gf, r);
+            s.remember();
+        }
+
         self.rivers_stale = false;
         self.roads_stale = true;
         self.layers_shown = true;
         self.reload_grass();
         self.reload_tree_list();
+    }
+
+    /// Grass and trees left out again under the water once it changed and stays as it is a frame (`water_mask.rs`): drawn again, not
+    /// made again.
+    fn follow_water(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for (_, samples) in self.river_ribbons() {
+            for s in &samples {
+                for v in [s.x, s.z, s.y, s.width] {
+                    v.to_bits().hash(&mut h);
+                }
+            }
+        }
+
+        let sc = self.tscene();
+        for e in sc.find_all("SIMPLE_MESH_INSTANCE") {
+            if let Some(o) = sc.get(e, super::lakes::OUTLINE_ATTR) {
+                (o, self.world_position(e).y.to_bits(), self.shown(e)).hash(&mut h);
+            }
+        }
+
+        let sig = h.finish();
+        let settled = sig == self.water_last;
+        self.water_last = sig;
+        if settled && sig != self.water_drawn {
+            // The first look of a tile: what it opened with is drawn already.
+            if self.water_drawn != 0 {
+                self.grass.shown = None;
+                self.trees.shown = None;
+            }
+
+            self.water_drawn = sig;
+        }
     }
 
     /// The rivers' layers as an export reads them: made, waiting for what is being made off the editor's thread.
@@ -611,12 +780,21 @@ fn river_layer<K: Kind>(s: &mut Stack<K>, river: u32, variation: &Option<String>
     id
 }
 
-/// Makes again the layers each river owns (its height, and its bed's texture) in copies of the stacks, over what lies below them, and
-/// takes out those of rivers that went. The rivers' layers go first among the owned ones (under the roads'). Off the editor's thread.
-fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
+/// Makes again the layers each river owns (its height, its bed's texture and the ground type under its water) in copies of the stacks,
+/// over what lies below them, and takes out those of rivers that went. The rivers' layers go first among the owned ones (under the
+/// roads'). Off the editor's thread.
+fn river_terrain(i: RiverInput) -> RiverStacks {
     wce_foundation::wce_prof!("tile.make_rivers");
-    let RiverInput { rivers, variation, new_ids, mut height, mut blend, dims: [(hw, hh), (bw, bh)], frame: (unit, border, mx, mz, ex, ez) } =
-        i;
+    let RiverInput {
+        rivers,
+        variation,
+        new_ids,
+        mut height,
+        mut blend,
+        mut ground,
+        dims: [(hw, hh), (bw, bh), (gw_, gh_)],
+        frame: (_unit, border, mx, mz, ex, ez),
+    } = i;
     let alive = |o: &str| {
         parse_owner(o).is_none_or(|o| match (&o.variation, &variation) {
             (Some(a), Some(b)) if a != b => true,
@@ -629,7 +807,14 @@ fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
         b.layers.retain(|l| alive(&l.owner));
     }
 
-    let (bpx, bpz) = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
+    if let Some(g) = ground.as_mut() {
+        g.layers.retain(|l| alive(&l.owner));
+    }
+
+    // Pixels a metre of the blend and ground type maps (they cover the tile and its border).
+    let per_m = |w: u32, h: u32| (f64::from(w) / (ex + 2.0 * border), f64::from(h) / (ez + 2.0 * border));
+    let (bpx, bpz) = per_m(bw, bh);
+    let (gpx, gpz) = per_m(gw_, gh_);
 
     for (river, ids) in rivers.iter().zip(&new_ids) {
         let owner = owner_of(river.id, variation.as_deref(), river.signature);
@@ -660,50 +845,61 @@ fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
             }
         }
 
-        // The texture where the ground was cut (fading in over its first metres), from the cut at the nearest height pixel.
-        let painted = river.texture.filter(|_| blend.is_some()).map(|ch| {
-            // The writes by pixel, for the lookups.
-            let mut grid = vec![0.0f64; gw * gh];
-            for &(x, y, v) in &writes {
-                grid[(y - y0) as usize * gw + (x - x0) as usize] = -f64::from(v) / unit;
-            }
-
-            let at = |x: f64, z: f64| {
-                let (u, v) = (((x + border) / mx).round(), ((z + border) / mz).round());
-                if u < f64::from(x0) || v < f64::from(y0) || u >= f64::from(x1) || v >= f64::from(y1) {
-                    return 0.0;
-                }
-
-                grid[(v as u32 - y0) as usize * gw + (u as u32 - x0) as usize]
-            };
-            let bx = |v: f64, n: u32| (((v + border) * if n == bw { bpx } else { bpz }).floor().max(0.0) as u32).min(n);
-            let (bx0, by0, bx1, by1) = (bx(b[0], bw), bx(b[1], bh), (bx(b[2], bw) + 1).min(bw), (bx(b[3], bh) + 1).min(bh));
-            let mut out = vec![];
-            for y in by0..by1 {
-                for x in bx0..bx1 {
-                    let (wx, wz) = ((f64::from(x) + 0.5) / bpx - border, (f64::from(y) + 0.5) / bpz - border);
-                    let c = at(wx, wz);
-                    if c > 0.05 {
-                        let t = (c / TEXTURE_FULL_CUT).min(1.0);
-                        let w = t * t * (3.0 - 2.0 * t);
-                        let mut p = [0u16; 16];
-                        p[ch] = (w * 65535.0).round() as u16;
-                        out.push((x, y, p));
-                    }
-                }
-            }
-
-            out
-        });
-
         for (x, y, v) in writes {
             height.put(id, x, y, &[v]);
         }
 
-        if let Some(blend) = blend.as_mut() {
+        // The bed's grid place nearest a place (its line's distance, the ford there), for the texture and the ground type.
+        let cell_at = |wx: f64, wz: f64| {
+            let (u, v) = (((wx + border) / mx).round(), ((wz + border) / mz).round());
+            if u < f64::from(x0) || v < f64::from(y0) || u >= f64::from(x1) || v >= f64::from(y1) {
+                return BedCell::default();
+            }
+
+            bed.as_ref().map_or(BedCell::default(), |c| c[(v as u32 - y0) as usize * gw + (u as u32 - x0) as usize])
+        };
+        let rect = |ppx: f64, ppz: f64, w: u32, h: u32| {
+            let f = |v: f64, p: f64, n: u32| (((v + border) * p).floor().max(0.0) as u32).min(n);
+            (f(b[0], ppx, w), f(b[1], ppz, h), (f(b[2], ppx, w) + 1).min(w), (f(b[3], ppz, h) + 1).min(h))
+        };
+
+        // The texture: the river's width and a bank past it, fading out (`RiverBed::paint`), not all the ground its banks cut.
+        if let (Some(blend), Some(ch)) = (blend.as_mut(), river.texture) {
             let bid = river_layer(blend, river.id, &variation, &owner, &name, ids[1]);
-            for (x, y, p) in painted.into_iter().flatten() {
-                blend.put(bid, x, y, &p);
+            let (bx0, by0, bx1, by1) = rect(bpx, bpz, bw, bh);
+            for y in by0..by1 {
+                for x in bx0..bx1 {
+                    let (wx, wz) = ((f64::from(x) + 0.5) / bpx - border, (f64::from(y) + 0.5) / bpz - border);
+                    let w = river.bed.paint(wx, wz, cell_at(wx, wz));
+                    if w > 0.0 {
+                        let mut p = [0u16; 16];
+                        p[ch] = (w * 65535.0).round() as u16;
+                        blend.put(bid, x, y, &p);
+                    }
+                }
+            }
+        } else if let Some(blend) = blend.as_mut() {
+            river_layer(blend, river.id, &variation, &owner, &name, ids[1]);
+        }
+
+        // The ground type under the water: deep or shallow water, as the kit's river tiles have it.
+        if let Some(ground) = ground.as_mut() {
+            use wce_tile::ground_types::GROUND_TYPES;
+            use wce_tile::river_bed::WaterGround;
+            let gid = river_layer(ground, river.id, &variation, &owner, &name, ids[2]);
+            let colour = |k: WaterGround| {
+                let name = if k == WaterGround::Deep { "deep water" } else { "shallow water" };
+                GROUND_TYPES.iter().find(|t| t.0 == name).map_or([0, 0, 255], |t| t.1)
+            };
+            let (gx0, gy0, gx1, gy1) = rect(gpx, gpz, gw_, gh_);
+            for y in gy0..gy1 {
+                for x in gx0..gx1 {
+                    let (wx, wz) = ((f64::from(x) + 0.5) / gpx - border, (f64::from(y) + 0.5) / gpz - border);
+                    if let Some(k) = river.bed.water_ground(wx, wz, cell_at(wx, wz)) {
+                        let [r, g, b] = colour(k);
+                        ground.put(gid, x, y, &[r, g, b, 255]);
+                    }
+                }
             }
         }
     }
@@ -714,7 +910,11 @@ fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
         b.layers.sort_by_key(|l| (order_of(&l.owner), u8::from(!is_river_owner(&l.owner))));
     }
 
-    (height, blend)
+    if let Some(g) = ground.as_mut() {
+        g.layers.sort_by_key(|l| (order_of(&l.owner), u8::from(!is_river_owner(&l.owner))));
+    }
+
+    (height, blend, ground)
 }
 
 #[cfg(test)]

@@ -63,6 +63,7 @@ pub mod texture_rules;
 mod vegetation;
 mod view;
 mod walls;
+mod water_mask;
 
 use std::any::Any;
 use std::cell::{OnceCell, RefCell};
@@ -633,6 +634,17 @@ pub struct Tile {
     pub(crate) rivers_stale: bool,
     pub(crate) rivers_seen: u64,
 
+    /// What the rivers were last looked at for (the edits, the structure, the variation): the same, a frame has nothing to do for them.
+    pub(crate) rivers_key: u64,
+
+    /// The water as drawn (its rivers' ribbons, its lakes' planes) when grass and trees were last left out under it, and as it was the
+    /// frame before (they follow once it stays as it is).
+    pub(crate) water_drawn: u64,
+    pub(crate) water_last: u64,
+
+    /// A drag is under way (a point, a grab, a profile's point): the rivers' layers and what follows the water wait for its end.
+    pub(crate) drag_open: bool,
+
     /// The signature of the roads when last looked at: a line that moved since waits.
     pub(crate) roads_seen: u64,
 
@@ -829,6 +841,10 @@ pub struct TileDocument {
 
     /// A tile that stands in for something else (the Prefab tool's stage): what it is called and what saving it does.
     stage: Option<Stage>,
+
+    /// The last river profile asked for and what it was made from (`river_profile.rs`): asked for every frame (the Inspector's graph,
+    /// the arrows on the water), made again only after an edit or a change of the ground.
+    pub(crate) profile_cache: std::cell::RefCell<Option<(u64, river_profile::RiverProfile)>>,
 }
 
 /// What saving a stage does: it writes what the stage holds (a prefab), not the tile under it. Returns what it saved.
@@ -1026,6 +1042,10 @@ impl TileDocument {
             river_terrain_job: None,
             rivers_stale: false,
             rivers_seen: 0,
+            rivers_key: 0,
+            water_drawn: 0,
+            water_last: 0,
+            drag_open: false,
             roads_seen: 0,
             texture_rules_job: None,
             texture_rules_basis: None,
@@ -1131,7 +1151,7 @@ impl TileDocument {
             total - t_index - t_models
         );
         log::info(tile.load_info.clone());
-        Self { core, history: CommandStack::new(tile), stage: None, move_batch: None }
+        Self { core, history: CommandStack::new(tile), stage: None, move_batch: None, profile_cache: std::cell::RefCell::new(None) }
     }
 
     pub fn tile(&self) -> &Tile {
@@ -1245,6 +1265,11 @@ impl TileDocument {
         t.refresh_roads();
         t.refresh_texture_rules();
         t.refresh_biomes(false);
+    }
+
+    /// Whether a drag is under way in the viewport or a panel: the rivers' terrain and what follows the water wait for its end.
+    pub fn set_drag_open(&mut self, open: bool) {
+        self.tile_mut().drag_open = open;
     }
 
     /// Per frame: the tile's view (`Tile::update_view`), knowing of the edits.

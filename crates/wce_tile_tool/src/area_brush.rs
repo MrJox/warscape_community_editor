@@ -98,7 +98,7 @@ impl TileTool {
         let sel = primary(e);
         let Some(d) = document(e) else { return };
         let target = match reshaped {
-            Some(a) => Some((a, d.tile().polygon_world_points(a).into_iter().map(|p| (p.x, p.z)).collect::<Vec<_>>())),
+            Some(a) => Some((a, d.tile().area_outline(a))),
             None => {
                 let Some(draft) = &self.draft else { return };
                 let needs_holder = !wce_tile::parents::holders(&draft.kind).is_empty();

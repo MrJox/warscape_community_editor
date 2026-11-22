@@ -5,9 +5,27 @@ use wce_foundation::wce_prof;
 
 use super::{PickGrid, Tile};
 
+/// Whether a place (x, z) is on a river's water (within half its width of its middle line), and the ribbon's area if so.
+fn on_ribbon(samples: &[super::view::RiverSample], x: f64, z: f64) -> Option<f32> {
+    let mut on = false;
+    let mut area = 0.0;
+    for w in samples.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        let (dx, dz) = (b.x - a.x, b.z - a.z);
+        let l2 = dx * dx + dz * dz;
+        area += l2.sqrt() * (a.width + b.width) * 0.5;
+        let t = if l2 > 1e-12 { (((x - a.x) * dx + (z - a.z) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let half = (a.width + (b.width - a.width) * t) * 0.5;
+        on |= (x - a.x - dx * t).hypot(z - a.z - dz * t) <= half;
+    }
+
+    on.then_some(area as f32)
+}
+
 impl Tile {
     /// The polygon or line a click on the ground at `at` (x, z) picks, the last resort of a click (after the models and the markers): the
-    /// one whose drawn outline (`polygon_outline`) is nearest within `reach` metres, else the smallest closed one it is inside. Shown and
+    /// one whose drawn outline (`polygon_outline`) is nearest within `reach` metres, else the smallest closed one it is inside (a river's
+    /// water counts as its inside). Shown and
     /// selectable ones only, as the polygons are drawn (the display's Polygons on, their type not hidden). So a holder's shapes (a siege
     /// AI node's Bounding Box and Boundary, a deployment zone's regions) are picked by a click on them.
     pub fn pick_polygon(&self, at: Float3, reach: f32) -> Option<usize> {
@@ -19,9 +37,21 @@ impl Tile {
         let (x, z) = (at.x, at.z);
         let mut near: Option<(f32, usize)> = None;
         let mut inside: Option<(f32, usize)> = None;
+        // The rivers' water, as drawn: a click on it is inside the river (its area: its ribbon's), made once if there are rivers.
+        let mut ribbons = None;
         for &e in self.instances.iter().filter(|&&e| self.is_polygon(e) && self.shown(e) && self.selectable(e)) {
             if self.display.hidden_types.contains(self.tscene().type_of(e)) {
                 continue;
+            }
+
+            if self.tscene().type_of(e) == "SplineRiverInstance" && self.display.show_water {
+                let ribbons = ribbons.get_or_insert_with(|| self.river_ribbons_by_elem());
+                if let Some((_, samples)) = ribbons.get(&e)
+                    && let Some(area) = on_ribbon(samples, f64::from(x), f64::from(z))
+                    && inside.is_none_or(|(a, _)| area < a)
+                {
+                    inside = Some((area, e));
+                }
             }
 
             let (pts, closed) = self.polygon_outline(e);
