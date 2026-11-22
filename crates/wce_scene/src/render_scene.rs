@@ -1700,11 +1700,11 @@ impl RenderScene {
         }
     }
 
+    /// Removes an entity, logged as that removal ([`Self::remove_range`]): what follows the scene's structure drops it instead of reading
+    /// everything again (a campaign map's layout guide is replaced at each step of the camera, and a change of anything read the camera's
+    /// obstacle boxes again, 100 ms with the forests ahead).
     pub fn remove(&mut self, id: EntityId) {
-        let Some(&at) = self.index.get(id as usize).filter(|&&at| at != NONE) else { return };
-        self.entities.remove(at as usize);
-        self.reindex();
-        self.touch();
+        self.remove_range(id..id + 1);
     }
 
     /// Removes the entities with ids in `ids` (one pass, for many entities added in a row); logged as that removal, not as a change of

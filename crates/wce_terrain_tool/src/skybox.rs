@@ -48,8 +48,11 @@ impl CampaignSkybox {
         };
         let layer = e.scene.add_layer(doc, "campaign sky");
         let entity = e.scene.add(layer, Float4x4::IDENTITY, Payload::MeshInstance(mesh), SourceRef { doc, item: u64::MAX });
+        // Not a thing of the world: the camera neither bumps into it nor stands on it. It follows the eye, and a moved obstacle read
+        // every model's box again at each step of the camera (100 ms a frame with a campaign map's forests ahead).
         if let Some(en) = e.scene.find_mut(entity) {
             en.locked = true;
+            en.transient = true;
         }
 
         let me = Self { layer, entity, scale: CAMPAIGN_SKY_SCALE / e.scene.game_units.max(1e-9) };
