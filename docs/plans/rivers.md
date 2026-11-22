@@ -166,6 +166,23 @@ preset (Creek, River, Great river: widths, depths and speeds from the kit's rive
 - **Old factors**: a kit river whose file factor (1.25) puts it under its bank in game (docs/re/water.md); fix: *Use real heights*
   (sets `wce_river_height` and keeps where it shows).
 
+## AI hints at rivers (investigated 2026-11-22)
+
+What the kit's river tiles carry (`AI_HINT_POLYGON_INSTANCE`, counted over Attila's kit):
+
+| Tiles | Hints |
+|---|---|
+| `river` (22), `river_shallow` (21) | two `AIH_RIVER_EDGE` a river: open lines along each bank at the water's edge (19 to 26 m from the middle of a 45 m river, about its half width), a point every 20 to 40 m; `river_shallow` adds `AIH_AMBUSH_FOREST` areas (the map's) |
+| `river_ford` (12) | the two river edges, running on through the ford (some of their points inside the crossing), one closed `AIH_BRIDGE_CROSSING` over the ford (no `AIH_FORDING_POINT`: none in the kit), four `AIH_COVER_LINE`s (the map's) |
+| `river_crossing` (29) | the same: river edges, one `AIH_BRIDGE_CROSSING` over the bridge, cover lines |
+
+The game's use of them is not traced (docs/re/platforms_and_bridges.md: no code reference to the strings), but every vanilla river has
+its edges and every crossing its hint, so a river the editor makes gets them too: at export, for a river with its terrain patch on (the
+kit's have their own), in a layer `WCE rivers`, a river edge along each bank (a point every 20 m at the water's edge) and over each ford a
+crossing from bank to bank and 30 m past them, 10 m past its ends along the river (vanilla's: 100 to 115 m across, 65 to 80 along). A
+procedural road's bridge or ford has its crossing already (`road_layout::crossing_hint`). Cover lines, ambush and deployment hints are
+the map's to place. In game: whether the AI crosses at a ford rather than into the deep water (the road plan's check 3).
+
 ## Decisions
 
 | Question | Answer |

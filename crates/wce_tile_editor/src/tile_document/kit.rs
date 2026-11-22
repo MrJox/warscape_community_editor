@@ -339,6 +339,7 @@ impl TileDocument {
         let text = self.tile().with_road_items(text)?;
         let text = self.tile().with_biome_items(text)?;
         let text = self.tile().with_shore_items(text)?;
+        let text = self.tile().with_river_hints(text)?;
         self.tile().with_building_spline_items(text)
     }
 

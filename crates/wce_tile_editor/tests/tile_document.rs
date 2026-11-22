@@ -3560,3 +3560,26 @@ fn a_ford_is_shaped_and_dragged_on_the_river() {
     d.place_ford(r, 1, 60.0, 40.0, g);
     assert_eq!(d.tile().tscene().get(r, "wce_fords").as_deref(), Some("137.5:45;50:20"));
 }
+
+/// A river the editor draws has vanilla's AI hints in an export: a river edge along each bank, a crossing over each ford; a river without
+/// its terrain patch (the kit's) none (it has its own).
+#[test]
+fn a_drawn_river_exports_its_ai_hints() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.add_river_ford(r, 110.0, 30.0);
+    // With a shore of a few thousand reeds and stones: an export inserts them in one splice (one each took 80 s).
+    let t0 = std::time::Instant::now();
+    let text = String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
+    assert!(t0.elapsed().as_secs_f32() < 20.0, "the export took {:?}", t0.elapsed());
+    assert_eq!(text.matches("hint_type=\"AIH_RIVER_EDGE\"").count(), 2, "one each bank");
+    assert_eq!(text.matches("hint_type=\"AIH_BRIDGE_CROSSING\"").count(), 1, "one over the ford");
+    assert!(text.contains("WCE rivers"));
+
+    d.set_attribute(r, "wce_river_patch", "0");
+    let text = String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
+    assert!(!text.contains("AIH_RIVER_EDGE") && !text.contains("AIH_BRIDGE_CROSSING"), "a river for its water alone: none");
+}
