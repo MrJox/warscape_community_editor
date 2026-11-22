@@ -1215,7 +1215,10 @@ impl Frame {
         let (mut world, ground) = self.ground(self.open, false, NO_CLIMATE);
         let Payload::Terrain(t) = ground else { return None };
         world.m[1][3] = self.sea_y() - (depth / self.unit) as f32;
-        Some((world, Payload::Terrain(Terrain { lf: None, ..t })))
+        // No blend box of its own: the blend pass tests a box's xz rectangle only, not its heights (docs/re/terrain.md, "Pass structure"),
+        // so the floor's plain colour, at any depth, went into every pixel of the tile over it and dulled its ground (TDD's
+        // middle_men_port_a, 2026-11-22). The open tile's own box covers the same cells and colours the floor where it shows.
+        Some((world, Payload::Terrain(Terrain { lf: None, no_blend_box: true, ..t })))
     }
 
     /// A placement drawn from its tile at a level: its terrain (the tile's heights buffer and material, turned and moved), then its entities
