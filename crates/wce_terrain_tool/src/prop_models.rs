@@ -291,7 +291,7 @@ pub struct PropModels {
     layer: LayerId,
 
     /// The drawn models by key (a prop's `.terry` id; TREE_KEY | a tree's index): a camera move adds and removes only the difference.
-    drawn: std::collections::HashMap<u64, EntityId>,
+    drawn: wce_foundation::id_hash::IdMap<u64, EntityId>,
     built: Option<Built>,
     pub count: usize,
 
@@ -325,7 +325,8 @@ pub struct PropModels {
     /// The drawn effect nearest the camera's target: its effect and position in the view (`terrain_props`).
     pub effect_near: Option<(String, [f32; 3])>,
 
-    /// Per drawn tree: the file's y and the ground's height in the list's units (the view's over k) (`terrain_props`).
+    /// Per drawn tree within the props' radius: the file's y and the ground's height in the list's units (the view's over k)
+    /// (`terrain_props`).
     pub heights: Vec<(f32, f32)>,
 
     /// The props near the camera that move (a model with its own clip: the fauna, `wce_render::animated_prop`): key, world, model;
@@ -345,7 +346,7 @@ impl Default for PropModels {
             on: true,
             radius_cells: 96.0,
             layer: 0,
-            drawn: std::collections::HashMap::new(),
+            drawn: Default::default(),
             built: None,
             count: 0,
             props: None,
@@ -531,10 +532,13 @@ impl PropModels {
             self.effects = Some((doc, terry_rev, list));
         }
 
+        wce_foundation::wce_prof!("props.build");
         let r = self.radius_cells * tf.cell;
         let k = (1.0 / tf.unit) as f32;
-        // (key, world, payload, the item a click selects).
-        let mut out: Vec<(u64, Float4x4, Payload, u64)> = vec![];
+        // (key, world, payload, the item a click selects); no payload: already in the scene as it is (a tree kept from the last build).
+        let mut out: Vec<(u64, Float4x4, Option<Payload>, u64)> = vec![];
+        // A `.terry` edit (or another document) draws every model again (below); otherwise those drawn stay.
+        let again = self.built.is_none_or(|b| b.0 != key.0 || b.1 != key.1);
         let mut animated: Vec<(u64, Float4x4, String)> = vec![];
         let files = e.files();
         let props = self.props.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
@@ -579,7 +583,7 @@ impl PropModels {
                 burning: false,
                 faction_colours: None,
             };
-            out.push((prop.key, world, Payload::MeshInstance(mesh), prop.item));
+            out.push((prop.key, world, Some(Payload::MeshInstance(mesh)), prop.item));
         }
 
         // The placed effects of the season near the camera, in the props' frame; their scale in the shaders' units (the renderer's
@@ -622,12 +626,13 @@ impl PropModels {
                 self.effect_near = Some((fx.effect.clone(), [world.m[0][3], world.m[1][3], world.m[2][3]]));
             }
 
-            out.push((fx.key, world, Payload::VfxEmitter(vfx), u64::MAX));
+            out.push((fx.key, world, Some(Payload::VfxEmitter(vfx)), u64::MAX));
             self.effect_count += 1;
             *self.effect_names.entry(fx.effect.clone()).or_default() += 1;
         }
 
         // The forests near the camera: by cells (the trees' own frame), within the same radius.
+        let trees_scope = wce_foundation::profile::Scope::new(TREES_SLOT.get_or_init(|| wce_foundation::profile::slot("props.trees")));
         self.tree_count = 0;
         self.heights.clear();
         if let Some((_, Some(trees))) = &self.trees {
@@ -649,6 +654,19 @@ impl PropModels {
                     continue;
                 }
                 let (fx, fz) = frame.from_map.apply(f64::from(x), f64::from(y));
+                self.tree_count += 1;
+                // The diagnostic's sample: those near the target (the LF read under all of them was a third of a rebuild).
+                if (x - cx).hypot(y - cy) <= rc {
+                    self.heights.push((file_y, frame.lift(fx, fz) / unit));
+                }
+                // Drawn already (its place is the list's, fixed): kept without a payload made again (70 000 trees ahead, a pan's rebuild
+                // took 35 ms making them).
+                let key = TREE_KEY | u64::from(i);
+                if !again && self.drawn.contains_key(&key) {
+                    out.push((key, Float4x4::IDENTITY, None, u64::MAX));
+                    continue;
+                }
+
                 let (s, c) = (f32::from(turn) * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [c * size, 0.0, s * size, fx as f32];
@@ -668,11 +686,11 @@ impl PropModels {
                     burning: false,
                     faction_colours: None,
                 };
-                out.push((TREE_KEY | u64::from(i), world, Payload::MeshInstance(mesh), u64::MAX));
-                self.tree_count += 1;
-                self.heights.push((file_y, frame.lift(fx, fz) / unit));
+                out.push((key, world, Some(Payload::MeshInstance(mesh)), u64::MAX));
             }
         }
+
+        drop(trees_scope);
 
         // The settlements' buildings near the camera at their cell's centre, standing on the ground, at the models' scale
         // (`Cities::model_scale`).
@@ -711,7 +729,7 @@ impl PropModels {
                     burning: false,
                     faction_colours: c.owners.get(&slot.region).and_then(|o| flags.get(o)).copied(),
                 };
-                out.push((CITY_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
+                out.push((CITY_KEY | i as u64, world, Some(Payload::MeshInstance(mesh)), u64::MAX));
                 self.city_count += 1;
             }
 
@@ -740,7 +758,7 @@ impl PropModels {
                     burning: false,
                     faction_colours: None,
                 };
-                out.push((CITY_KEY | AQUEDUCT_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
+                out.push((CITY_KEY | AQUEDUCT_KEY | i as u64, world, Some(Payload::MeshInstance(mesh)), u64::MAX));
                 self.city_count += 1;
             }
 
@@ -771,7 +789,7 @@ impl PropModels {
                     burning: false,
                     faction_colours: c.owners.get(&sp.region).and_then(|o| flags.get(o)).copied(),
                 };
-                out.push((CITY_KEY | SPRAWL_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
+                out.push((CITY_KEY | SPRAWL_KEY | i as u64, world, Some(Payload::MeshInstance(mesh)), u64::MAX));
                 self.city_count += 1;
             }
         }
@@ -785,11 +803,11 @@ impl PropModels {
         // A `.terry` edit (or another document): every model again; a camera move: only the difference.
         // Removed in one pass (the scene's `remove` moves its whole list each time: 55 ms a rebuild).
         let mut gone: Vec<std::ops::Range<EntityId>> = vec![];
-        if self.built.is_none_or(|b| b.0 != key.0 || b.1 != key.1) {
+        if again {
             gone.extend(self.drawn.drain().map(|(_, ent)| ent..ent + 1));
         }
 
-        let keep: std::collections::HashSet<u64> = out.iter().map(|o| o.0).collect();
+        let keep: wce_foundation::id_hash::IdSet<u64> = out.iter().map(|o| o.0).collect();
         self.drawn.retain(|k, ent| {
             let stay = keep.contains(k);
             if !stay {
@@ -802,9 +820,7 @@ impl PropModels {
 
         self.count = out.len() - self.tree_count - self.city_count - self.effect_count;
         for (k, world, payload, item) in out {
-            if self.drawn.contains_key(&k) {
-                continue;
-            }
+            let Some(payload) = payload.filter(|_| !self.drawn.contains_key(&k)) else { continue };
 
             let ent = e.scene.add(self.layer, world, payload, SourceRef { doc, item });
             // The trees can't be picked (nothing of the document's to select).
@@ -904,3 +920,6 @@ fn flag_colours(
     }
     out
 }
+
+/// The trees' profile slot (a scope ended before the function's end).
+static TREES_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
