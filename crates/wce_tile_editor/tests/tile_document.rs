@@ -3577,6 +3577,7 @@ fn a_drawn_river_exports_its_ai_hints() {
     assert!(t0.elapsed().as_secs_f32() < 20.0, "the export took {:?}", t0.elapsed());
     assert_eq!(text.matches("hint_type=\"AIH_RIVER_EDGE\"").count(), 2, "one each bank");
     assert_eq!(text.matches("hint_type=\"AIH_BRIDGE_CROSSING\"").count(), 1, "one over the ford");
+    assert_eq!(text.matches("<GO_REGION_POLYGON_INSTANCE").count(), 1, "a go region over the ford, bank to bank");
     assert!(text.contains("WCE rivers"));
 
     d.set_attribute(r, "wce_river_patch", "0");

@@ -22,11 +22,13 @@ pub const STONES_ATTR: &str = "wce_shore_stones";
 /// A river's fords splash at their edges (`1`, missing) or not (`0`).
 pub const SPLASHES_ATTR: &str = "wce_ford_splashes";
 
-/// How many decals lie along a river's banks: an amount's name; missing: `some`.
+/// How many decals lie along a river's shore (muddy rocks over the waterline) and on its bed (mud under the water): an amount's name;
+/// missing: `some`.
 pub const DECALS_ATTR: &str = "wce_shore_decals";
+pub const BED_DECALS_ATTR: &str = "wce_bed_decals";
 
 /// The attributes the Inspector shows as rows of their own.
-pub(crate) const SHORE_ROW_ATTRS: [&str; 5] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR, SPLASHES_ATTR, DECALS_ATTR];
+pub(crate) const SHORE_ROW_ATTRS: [&str; 6] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR, SPLASHES_ATTR, DECALS_ATTR, BED_DECALS_ATTR];
 
 const DEFAULT_DECALS: &str = "some";
 
@@ -59,7 +61,7 @@ impl Tile {
         let settings = |e: usize| {
             let read = |a: &str, d: &str| amount(sc.get(e, a).as_deref().unwrap_or(d)).unwrap_or_else(|| amount(d).unwrap_or(0.0));
             ShoreSettings::of(read(REEDS_ATTR, DEFAULT_REEDS), read(STONES_ATTR, DEFAULT_STONES))
-                .with_decals(read(DECALS_ATTR, DEFAULT_DECALS))
+                .with_decals(read(DECALS_ATTR, DEFAULT_DECALS), read(BED_DECALS_ATTR, DEFAULT_DECALS))
         };
         let seed = |e: usize| sc.get(e, RIVER_ID_ATTR).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(e as u64);
         let mut out = vec![];
@@ -374,9 +376,15 @@ impl TileDocument {
             ),
             (
                 DECALS_ATTR,
-                "bank decals",
+                "shore decals",
                 DEFAULT_DECALS,
-                "How many mud, dirt and bank decals lie along a river's banks, over the seam of water and land (not by its fords).",
+                "How many muddy rock decals lie over a river's waterline, where its water meets the land (not by its fords).",
+            ),
+            (
+                BED_DECALS_ATTR,
+                "bed decals",
+                DEFAULT_DECALS,
+                "How many mud decals lie on a river's bed by its edges, under the water (not by its fords).",
             ),
         ] {
             let sc = self.tile().tscene();

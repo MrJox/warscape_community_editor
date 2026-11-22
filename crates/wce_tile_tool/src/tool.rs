@@ -2410,7 +2410,9 @@ impl TileTool {
         // The rivers' AI hints an export writes (their banks' river edges, their fords' crossings), with the polygons: orange, on the water.
         if t.display().show_polygons {
             let orange = overlay_colour(1.0, 0.6, 0.15, 1.0);
-            for (_, closed, pts) in t.river_hint_shapes() {
+            let green = overlay_colour(0.2, 0.85, 0.3, 1.0);
+            for (kind, closed, pts) in t.river_hint_shapes() {
+                let orange = if kind == "GO_REGION" { green } else { orange };
                 let lift = |p: Float3| Float3::new(p.x, p.y + 0.4, p.z);
                 for w in pts.windows(2) {
                     o.line(lift(w[0]), lift(w[1]), orange);
