@@ -89,11 +89,23 @@ impl super::Tile {
 
     /// The AI hints of the rivers that shape the terrain (their terrain patch on; the kit's have their own), as vanilla's river tiles have
     /// them: an `AIH_RIVER_EDGE` line along each bank at the water's edge, and an `AIH_BRIDGE_CROSSING` polygon over each ford (from bank
-    /// to bank and past them, along it and past its ends). Their texts, in the file's units.
-    pub(super) fn river_hints(&self) -> Vec<Vec<u8>> {
-        use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
+    /// to bank and past them, along it and past its ends). Each one's type, whether it is closed and its points (world metres, on the
+    /// water); the last ones made kept until the next edit (the viewport draws them every frame).
+    pub fn river_hint_shapes(&self) -> Vec<(&'static str, bool, Vec<Float3>)> {
+        let key = (self.history_version, self.structure_version);
+        if let Some((k, shapes)) = self.river_hint_cache.borrow().as_ref()
+            && *k == key
+        {
+            return shapes.clone();
+        }
+
+        let shapes = self.make_river_hint_shapes();
+        *self.river_hint_cache.borrow_mut() = Some((key, shapes.clone()));
+        shapes
+    }
+
+    fn make_river_hint_shapes(&self) -> Vec<(&'static str, bool, Vec<Float3>)> {
         let sc = self.tscene();
-        let unit = self.unit();
         let mut out = vec![];
         for e in sc.find_all("SplineRiverInstance") {
             let on = super::river_beds::river_patch_on(
@@ -106,7 +118,6 @@ impl super::Tile {
 
             let Some(line) = self.river_line(e) else { continue };
             let length = line.pts.last().map_or(0.0, |p| p.4);
-            let file = |p: Float3| [f64::from(p.x) * unit, f64::from(p.z) * unit];
 
             // Its banks: an open line each.
             for side in [-1.0, 1.0] {
@@ -114,23 +125,11 @@ impl super::Tile {
                 let pts = (0..=n)
                     .filter_map(|k| {
                         let along = length * k as f64 / n as f64;
-                        line.at(along, side * line.half(along)).map(file)
+                        line.at(along, side * line.half(along))
                     })
                     .collect::<Vec<_>>();
-                if pts.len() < 2 {
-                    continue;
-                }
-
-                let c = pts.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / pts.len() as f64, a[1] + p[1] / pts.len() as f64]);
-                let mut h = NewInstance::new("AI_HINT_POLYGON_INSTANCE")
-                    .position(wce_foundation::math::Double3::new(c[0], 0.0, c[1]))
-                    .attr("name", "River edge")
-                    .attr("hint_type", "AIH_RIVER_EDGE")
-                    .attr("polygon_closed", "0")
-                    .attr("surface_mode", "MSM_LANDSCAPE");
-                h.points = pts.iter().map(|p| NewPoint::at(wce_foundation::math::Double3::new(p[0] - c[0], 0.0, p[1] - c[1]))).collect();
-                if let Ok(text) = element_text(&h) {
-                    out.push(text);
+                if pts.len() >= 2 {
+                    out.push(("AIH_RIVER_EDGE", false, pts));
                 }
             }
 
@@ -144,15 +143,48 @@ impl super::Tile {
                     (0..=n)
                         .filter_map(|k| {
                             let along = from + (to - from) * k as f64 / n as f64;
-                            line.at(along, sign * (line.half(along) + CROSSING_ACROSS)).map(file)
+                            line.at(along, sign * (line.half(along) + CROSSING_ACROSS))
                         })
                         .collect::<Vec<_>>()
                 };
                 let mut outline = side(1.0);
                 outline.extend(side(-1.0).into_iter().rev());
-                if let Ok(text) = wce_tile::road_layout::crossing_hint(&outline) {
+                if outline.len() >= 3 {
+                    out.push(("AIH_BRIDGE_CROSSING", true, outline));
+                }
+            }
+        }
+
+        out
+    }
+
+    /// [`Self::river_hint_shapes`] as an export writes them (the file's units).
+    pub(super) fn river_hints(&self) -> Vec<Vec<u8>> {
+        use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
+        let unit = self.unit();
+        let file = |p: &Float3| [f64::from(p.x) * unit, f64::from(p.z) * unit];
+        let mut out = vec![];
+        // Made now (the cache follows the frames' versions: an export right after an edit would read the old ones).
+        for (kind, closed, pts) in self.make_river_hint_shapes() {
+            let pts = pts.iter().map(file).collect::<Vec<_>>();
+            if closed {
+                if let Ok(text) = wce_tile::road_layout::crossing_hint(&pts) {
                     out.push(text);
                 }
+
+                continue;
+            }
+
+            let c = pts.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / pts.len() as f64, a[1] + p[1] / pts.len() as f64]);
+            let mut h = NewInstance::new("AI_HINT_POLYGON_INSTANCE")
+                .position(wce_foundation::math::Double3::new(c[0], 0.0, c[1]))
+                .attr("name", "River edge")
+                .attr("hint_type", kind)
+                .attr("polygon_closed", "0")
+                .attr("surface_mode", "MSM_LANDSCAPE");
+            h.points = pts.iter().map(|p| NewPoint::at(wce_foundation::math::Double3::new(p[0] - c[0], 0.0, p[1] - c[1]))).collect();
+            if let Ok(text) = element_text(&h) {
+                out.push(text);
             }
         }
 

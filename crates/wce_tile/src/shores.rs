@@ -197,8 +197,10 @@ const SPLASH_STEP: f32 = 8.0;
 
 /// How far in from the water's edge, and how far past a ford's ends along the river at least (half its length when more), its banks are
 /// kept clear of stones (metres): units step in and out of it there, its shallow ramp too.
-const FORD_BANK_CLEAR: f32 = 3.0;
 const FORD_BANK_MARGIN: f32 = 6.0;
+
+/// How far across the river (of its half width) a ford's end lines reach: short of its sides, where units step on and off it.
+const FORD_LINE_REACH: f32 = 0.75;
 const FORD_EDGE: f32 = 1.0;
 
 /// A river's middle line at a distance along it: the place and the direction there.
@@ -298,17 +300,18 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
             let g = height(x, z);
             let depth = level - g;
 
-            // The banks along a ford, where units step in and out of it: no stones (the ford's lines stop short of them too).
-            let ford_bank = edge > -FORD_BANK_CLEAR
-                && fords.iter().any(|f| {
-                    let (s0, s1) = ends(f);
-                    // Past its ends too, where its ramp is still shallow enough to wade: half its length (6 m at least).
-                    let margin = FORD_BANK_MARGIN.max(f.length as f32 * 0.5);
-                    along >= s0 - margin && along <= s1 + margin
-                });
+            // A ford, bank to bank, and its banks past its ends: no stones but its ends' lines (units walk in and out of it from the
+            // banks, and its floor is all shallow enough for the waterline's stones).
+            let ford_bank = fords.iter().any(|f| {
+                let (s0, s1) = ends(f);
+                // Past its ends too, where its ramp is still shallow enough to wade: half its length (6 m at least).
+                let margin = FORD_BANK_MARGIN.max(f.length as f32 * 0.5);
+                along >= s0 - margin && along <= s1 + margin
+            });
 
-            // A ford's ends lined with small stones (gaps here and there), so that it shows where it is: whatever the shore's stones.
-            if ford_edge && !ford_bank {
+            // A ford's ends lined with small stones (gaps here and there), so that it shows where it is, whatever the shore's stones; not
+            // near its sides, where units step on and off it.
+            if ford_edge && u.abs() <= FORD_LINE_REACH {
                 let gaps = noise(seed ^ 0x0f0e_d0c1, x, z, 3.0);
                 if gaps > 0.3 && a < 2.0 * area && !blocked(x, z) {
                     let key = FORD_STONES[(d * 61.0) as usize % FORD_STONES.len()];
@@ -389,8 +392,15 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                         (p[0] - dir[1] * r, p[1] + dir[0] * r)
                     };
 
-                    if s.decals > 0.0 && !near_ford && a < s.decals * 0.6 {
-                        let (x, z) = at(1.0 + 2.5 * b);
+                    // Over the waterline itself (the seam of water and land, as the ground has it: the bank's profile meets the water
+                    // short of the ribbon's edge), a little into the water and a little onto the bank.
+                    if s.decals > 0.0 && !near_ford && a < s.decals * 1.2 {
+                        let (_, level, ..) = water.edge(p[0], p[1]);
+                        let waterline = (0..=24).map(|i| -10.0 + 0.5 * i as f32).find(|&o| {
+                            let (x, z) = at(o);
+                            height(x, z) >= level
+                        });
+                        let (x, z) = at(waterline.unwrap_or(0.0) - 1.0 + 2.5 * b);
                         if !blocked(x, z) {
                             let key = BANK_DECALS[(c * BANK_DECALS.len() as f32) as usize % BANK_DECALS.len()];
                             let size = 5.0 + 4.0 * d;
@@ -496,11 +506,14 @@ mod tests {
             (f64::from(s.x) - s0).abs() <= 1.01 || (f64::from(s.x) - s1).abs() <= 1.01
         };
         assert!(shore.stones.iter().all(on_end), "on its curved ends only");
-        assert!(shore.stones.iter().all(|s| (s.z - 50.0).abs() < 10.0 - FORD_BANK_CLEAR), "none at its banks, where units step out");
+        assert!(
+            shore.stones.iter().all(|s| (s.z - 50.0).abs() <= 10.0 * FORD_LINE_REACH + 0.5),
+            "none by its sides, where units step on and off"
+        );
         let stony = place(&w, &ShoreSettings::of(0.0, 0.85), &g, &|_, _| false, 5);
         assert!(
-            stony.stones.iter().all(|s| (s.z - 50.0).abs() < 7.0 || f64::from(s.x) < 80.5 || f64::from(s.x) > 119.5),
-            "the shore's stones keep off its banks"
+            stony.stones.iter().all(|s| FORD_STONES.contains(&s.key.as_str()) || f64::from(s.x) < 80.5 || f64::from(s.x) > 119.5),
+            "the shore's stones keep off the ford, bank to bank"
         );
         let (mid, side) = (ford.ends(0.0), ford.ends(1.0));
         assert!((mid.0 - side.0).abs() > 0.2 && (mid.1 - side.1).abs() > 0.2, "slightly curved, not straight across: {mid:?} {side:?}");
@@ -526,7 +539,8 @@ mod tests {
         let g = |_: f32, z: f32| ((z - 50.0).abs() - 11.0) * 0.5;
         let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85), &g, &|_, _| false, 9);
         assert!(shore.decals.len() > 100, "{} decals", shore.decals.len());
-        assert!(shore.decals.iter().all(|d| ((d.z - 50.0).abs() - 10.0) > 0.9 && ((d.z - 50.0).abs() - 10.0) < 3.6), "past the edge");
+        // The ground meets the water 11 m from the middle (past the ribbon's 10): the decals there.
+        assert!(shore.decals.iter().all(|d| ((d.z - 50.0).abs() - 11.0).abs() < 1.6), "over the waterline");
         assert!(shore.decals.iter().all(|d| d.scale >= 5.0 && d.scale <= 9.0 && BANK_DECALS.contains(&d.key.as_str())));
         assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());
         let at_ford = |x: f32| x > 270.0 && x < 330.0;

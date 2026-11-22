@@ -2407,6 +2407,21 @@ impl TileTool {
             }
         }
 
+        // The rivers' AI hints an export writes (their banks' river edges, their fords' crossings), with the polygons: orange, on the water.
+        if t.display().show_polygons {
+            let orange = overlay_colour(1.0, 0.6, 0.15, 1.0);
+            for (_, closed, pts) in t.river_hint_shapes() {
+                let lift = |p: Float3| Float3::new(p.x, p.y + 0.4, p.z);
+                for w in pts.windows(2) {
+                    o.line(lift(w[0]), lift(w[1]), orange);
+                }
+
+                if closed && let (Some(&a), Some(&b)) = (pts.first(), pts.last()) {
+                    o.line(lift(b), lift(a), orange);
+                }
+            }
+        }
+
         // A river's links the same way while a river is drawn or selected (snap rivers to river links), where its end goes.
         let line_kind =
             if self.drawing { self.draft.as_ref().map(|dr| dr.kind.clone()) } else { primary(e).map(|s| t.tscene().type_of(s).to_owned()) };
