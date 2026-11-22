@@ -55,8 +55,8 @@ fn piece_info(files: &dyn Files, path: &str, errors: &mut Vec<String>) -> Option
         RigidModel::decode(&mut Cursor::new(&bytes), &Some(DecodeableExtraData::default())).map_err(|error| error.to_string())
     });
     let model = match model {
-        Ok(model) if *model.version() != 6 => {
-            errors.push(format!("{path}: rmv2: version {} (expected 6)", model.version()));
+        Ok(model) if !wce_formats::rigid_model::drawn_version(*model.version()) => {
+            errors.push(format!("{path}: rmv2: version {} (expected 5 or 6)", model.version()));
             return None;
         }
 
