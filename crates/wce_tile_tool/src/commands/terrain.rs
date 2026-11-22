@@ -376,6 +376,27 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             .join("; "))
     });
 
+    c.add("river_split", "river_split <point>", "split the selected river at a point (not an end) into two (one undo entry)", |e, a| {
+        let sel = primary(e);
+        let Some(i) = a.first().and_then(|v| v.parse::<usize>().ok()) else { return fail("usage: river_split <point>") };
+        let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+        match d.split_river(r, i) {
+            Ok(_) => ok(""),
+            Err(why) => fail(why),
+        }
+    });
+
+    c.add("river_join", "river_join", "join the two selected rivers whose ends meet into one (one undo entry)", |e, _| {
+        let rivers = selected(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let rivers = rivers.into_iter().filter(|&r| d.tile().tscene().type_of(r) == "SplineRiverInstance").collect::<Vec<_>>();
+        let [a, b] = rivers[..] else { return fail("select two rivers") };
+        match d.join_rivers(a, b) {
+            Ok(()) => ok(""),
+            Err(why) => fail(why),
+        }
+    });
+
     c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
         match d.snap_river_ends() {

@@ -2711,7 +2711,12 @@ impl TileTool {
             .link_targets(sel, d)
             .into_iter()
             .map(|(q, from)| (from.iter().map(|f| (f.x - p.x).hypot(f.z - p.z)).fold(f32::INFINITY, f32::min), q));
-        near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
+        let link = near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q);
+
+        // A river's point onto another river's middle line (a tributary), when no link is near.
+        let river = self.link_kind(sel, d) == Some(RIVER);
+        let skip = if self.drawing { None } else { sel };
+        link.or_else(|| river.then(|| d.river_join_point(p, skip)).flatten())
     }
 
     /// A river link problem's fix (`RiverFix`): a link added, a river started from a link, an end moved to the neighbour's.

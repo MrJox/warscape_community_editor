@@ -1211,10 +1211,13 @@ impl TileTool {
             && self.snap_river_links
         {
             let before = d.history().position();
-            match d.snap_river_to_links(el) {
-                Ok(_) if d.history().position() > before => d.join_last(2, "Draw river"),
-                Ok(_) => {}
-                Err(err) => wce_foundation::log::warn(format!("river links: {err}")),
+            if let Err(err) = d.snap_river_to_links(el).and_then(|_| d.settle_river_on_rivers(el)) {
+                wce_foundation::log::warn(format!("river links: {err}"));
+            }
+
+            let n = d.history().position() - before;
+            if n > 0 {
+                d.join_last(n + 1, "Draw river");
             }
         }
         self.create.holder = None;

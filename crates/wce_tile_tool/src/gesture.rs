@@ -174,10 +174,13 @@ impl TileTool {
                 let river = sel.filter(|&s| d.tile().tscene().type_of(s) == "SplineRiverInstance");
                 if let (true, Some(river), true) = (self.snap_river_links, river, end != End::Cancel) {
                     let before = d.history().position();
-                    match d.snap_river_to_links(river) {
-                        Ok(_) if d.history().position() > before => d.join_last(2, "Move river point"),
-                        Ok(_) => {}
-                        Err(err) => wce_foundation::log::warn(format!("river links: {err}")),
+                    if let Err(err) = d.snap_river_to_links(river).and_then(|_| d.settle_river_on_rivers(river)) {
+                        wce_foundation::log::warn(format!("river links: {err}"));
+                    }
+
+                    let n = d.history().position() - before;
+                    if n > 0 {
+                        d.join_last(n + 1, "Move river point");
                     }
                 }
             }
