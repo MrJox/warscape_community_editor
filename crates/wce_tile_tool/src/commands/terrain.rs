@@ -274,7 +274,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         "the rivers against the tile's river link targets: what does not join (logged, one line each)",
         |e, _| {
             let Some(d) = document(e) else { return no_tile() };
-            let p = d.river_link_problems();
+            let mut p = d.river_link_problems();
+            p.extend(d.river_water_problems());
             ok(if p.is_empty() {
                 "the rivers meet their link targets".to_owned()
             } else {
@@ -305,6 +306,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             with_tile(e, |t, e| {
                 let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
                 let mut p = d.river_link_problems();
+                p.extend(d.river_water_problems());
                 if let Some(ends) = t.neighbour_river_ends(d) {
                     p.extend(d.river_seam_problems(&ends));
                 }
