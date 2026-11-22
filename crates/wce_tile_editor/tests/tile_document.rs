@@ -3106,3 +3106,37 @@ fn a_drawn_river_cuts_its_bed_under_its_water_and_the_kits_do_not() {
     d.tile_mut().finish_road_jobs();
     assert!((y(&d, 130.0, 128.0) - bed).abs() < 1e-3, "undo cuts it again");
 }
+
+#[test]
+fn a_rivers_bed_is_painted_with_its_texture_where_it_was_cut() {
+    let (_dir, mut d) = open_with_blend();
+    d.tile_mut().load_blend().unwrap();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(ex * 0.3, 0.0, ez * 0.5), Float3::new(ex * 0.8, 0.0, ez * 0.5));
+    let line = vec![Float3::new(a.x, y(&d, a.x, a.z), a.z), Float3::new(b.x, y(&d, b.x, b.z), b.z)];
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    d.set_attribute(r, "wce_bed_texture", "6");
+    d.tile_mut().finish_road_jobs();
+
+    // The blend map's pixel under the river's middle, and one far from it.
+    let bf = d.project().blend.as_ref().unwrap();
+    let (bw, bh) = (bf.width(), bf.height());
+    let border = d.project().border_m() as f32;
+    let px = |x: f32, z: f32| {
+        let (u, v) = ((x + border) / (ex + 2.0 * border) * bw as f32, (z + border) / (ez + 2.0 * border) * bh as f32);
+        bf.pixel(u as u32, v as u32).to_vec()
+    };
+    let mid = px((a.x + b.x) * 0.5, a.z);
+    assert!(mid[6] > 60000, "the bed's texture under the river: {mid:?}");
+    let far = px((a.x + b.x) * 0.5, ez * 0.05);
+    assert_eq!(far[6], 0, "far from it: {far:?}");
+
+    // None: the bed keeps the ground's textures.
+    d.set_attribute(r, "wce_bed_texture", "none");
+    d.tile_mut().finish_road_jobs();
+    let bf = d.project().blend.as_ref().unwrap();
+    let (u, v) = (((a.x + b.x) * 0.5 + border) / (ex + 2.0 * border) * bw as f32, (a.z + border) / (ez + 2.0 * border) * bh as f32);
+    assert_eq!(bf.pixel(u as u32, v as u32)[6], 0);
+}
