@@ -1473,9 +1473,11 @@ impl Tool for CinematicTool {
                 _ => CommandResult::fail("usage: unit_add <key> <army> <x> <z>"),
             }
         });
-        c.add("unit_select", "unit_select <id>", "Selects a unit of the scene", |e, a| match a.first().and_then(|x| x.parse().ok()) {
-            Some(id) => queue(e, Pending::UnitSelect(id)),
-            None => CommandResult::fail("usage: unit_select <id>"),
+        c.add("scene_unit_select", "scene_unit_select <id>", "Selects a unit of the scene", |e, a| {
+            match a.first().and_then(|x| x.parse().ok()) {
+                Some(id) => queue(e, Pending::UnitSelect(id)),
+                None => CommandResult::fail("usage: scene_unit_select <id>"),
+            }
         });
         c.add("track_add", "track_add <kind>", "Adds a track to the clip (a Unit track: the selected unit's)", |e, a| {
             if a.is_empty() {
