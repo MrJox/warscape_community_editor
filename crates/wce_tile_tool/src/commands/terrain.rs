@@ -428,6 +428,27 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "water_planes",
+        "water_planes",
+        "log the tile's water planes: their model's bounds, place, scale and the world rectangle they cover",
+        |e, _| {
+            let Some(d) = document(e) else { return no_tile() };
+            let t = d.tile();
+            let sc = t.tscene();
+            let lines = sc
+                .find_all("SIMPLE_MESH_INSTANCE")
+                .into_iter()
+                .filter(|&p| sc.get(p, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
+                .map(|p| {
+                    let m = t.model_of(p).map_or("no model yet".to_owned(), |m| format!("model {:?} .. {:?} ok {}", m.bmin, m.bmax, m.ok));
+                    format!("{p}: {m}; position {:?} scale {:?}", t.world_position(p), sc.get(p, "scale"))
+                })
+                .collect::<Vec<_>>();
+            ok(lines.join("\n"))
+        },
+    );
+
     c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
         match d.snap_river_ends() {

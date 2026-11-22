@@ -48,6 +48,7 @@ pub mod prefab_ground;
 mod preview;
 mod radar;
 pub use radar::RadarRequest;
+pub mod lakes;
 mod river_beds;
 mod river_checks;
 mod river_joins;
@@ -88,6 +89,9 @@ use crate::terrain_bake::{BakedColour, TerrainLook};
 
 pub use self::bridges::{BridgeEdge, BridgeProblem, BridgeReport, WallPair};
 pub use self::building_splines::BUILDING_SPLINE;
+
+/// Not a type of the scene: what the Create panel draws a lake with (an outline that becomes a water plane, `lakes.rs`).
+pub const LAKE: &str = "WceLake";
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::{BoundaryKind, BoundaryShape, prefab_reference_text, text_kind};
 pub use self::flip::{FlipPlane, TileFlipAxis};

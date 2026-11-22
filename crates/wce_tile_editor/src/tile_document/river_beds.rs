@@ -7,7 +7,7 @@
 //! Kit rivers have no id until a snap gives them one: their ground is the user's, as TEd left it.
 
 use wce_foundation::math::Float3;
-use wce_tile::river_bed::{BedCell, BedSettings, Channel, Ford, Join, RiverBed};
+use wce_tile::river_bed::{Basin, BedCell, BedSettings, Channel, Ford, Join, RiverBed};
 use wce_tile::terrain_layers::{Blend, Height, Kind, Stack, TerrainLayers, order_of};
 
 use super::Tile;
@@ -74,8 +74,17 @@ fn parse_owner(owner: &str) -> Option<Owner> {
 }
 
 /// A river's attributes the Inspector shows as rows of their own (or not at all).
-pub(crate) const RIVER_ROW_ATTRS: [&str; 7] =
-    [RIVER_ID_ATTR, BED_ATTR, BED_DEPTH_ATTR, BANK_SLOPE_ATTR, BED_TEXTURE_ATTR, FORDS_ATTR, FORD_DEPTH_ATTR];
+pub(crate) const RIVER_ROW_ATTRS: [&str; 9] = [
+    RIVER_ID_ATTR,
+    BED_ATTR,
+    BED_DEPTH_ATTR,
+    BANK_SLOPE_ATTR,
+    BED_TEXTURE_ATTR,
+    FORDS_ATTR,
+    FORD_DEPTH_ATTR,
+    super::lakes::OUTLINE_ATTR,
+    super::lakes::BASIN_ATTR,
+];
 
 impl super::TileDocument {
     /// Adds a ford to a river: its middle `along` metres along it, held over `length`. One undo entry. A river that cuts no bed gets the
@@ -112,6 +121,25 @@ impl super::TileDocument {
         }
     }
 
+    /// A lake in the Inspector: its water's height and its basin's depth.
+    fn lake_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
+        ins.section("Lake");
+        let water = self.lake_water(e);
+        let mut w = water;
+        ins.hint("The lake's water (metres, as the editor shows heights): its plane moved up or down. Over the lowest ground of its outline, it floods past it (the Problems say so).");
+        if ins.edit_float("wce_lake_water", "water (m)", &mut w, 0.05, -1.0e4, 1.0e4) && (w - water).abs() > 1e-5 {
+            let g = self.next_gesture();
+            let _ = self.set_lake_water(e, w, g);
+        }
+
+        let basin = self.tile().tscene().get(e, super::lakes::BASIN_ATTR).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+        let mut b = basin;
+        ins.hint("How deep its basin is dug under the water inside its outline (metres), its sides at 30°; 0: the ground as it is.");
+        if ins.edit_float(super::lakes::BASIN_ATTR, "basin depth (m)", &mut b, 0.05, 0.0, 100.0) && (b - basin).abs() > 1e-5 {
+            self.set_attribute(e, super::lakes::BASIN_ATTR, &wce_tile::ted_scene::format_number(f64::from(b)));
+        }
+    }
+
     /// Has a river cut its bed (`BED_ATTR`), giving it an id if it has none: one undo entry.
     pub fn cut_river_bed(&mut self, river: usize) {
         let has_id = self.tile().tscene().get(river, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
@@ -132,6 +160,11 @@ impl super::TileDocument {
     /// A river's bed in the Inspector: whether it cuts one, how deep under the water and how steep its banks.
     pub(crate) fn river_bed_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
         let sc = self.tile().tscene();
+        if sc.get(e, super::lakes::OUTLINE_ATTR).is_some() {
+            self.lake_rows(e, ins);
+            return;
+        }
+
         if sc.type_of(e) != "SplineRiverInstance" {
             return;
         }
@@ -255,6 +288,12 @@ fn signature_of(bed: &RiverBed, texture: Option<usize>) -> u64 {
         }
     }
 
+    if let Some(b) = &bed.basin {
+        for v in b.outline.iter().flatten().chain([&b.water, &b.depth, &b.rise]) {
+            v.to_bits().hash(&mut h);
+        }
+    }
+
     for j in &bed.joins {
         for v in [j.at[0], j.at[1], j.inward[0], j.inward[1], j.connection.water, j.connection.width] {
             v.to_bits().hash(&mut h);
@@ -328,11 +367,40 @@ impl Tile {
                     cuts,
                 }
             });
-            let bed = RiverBed { channel, joins };
+            let bed = RiverBed { channel, joins, basin: None };
             if bed.bounds().is_none() {
                 continue;
             }
 
+            let texture = match sc.get(e, BED_TEXTURE_ATTR).as_deref().map(str::trim) {
+                Some("none") => None,
+                Some(v) => v.parse::<usize>().ok().map(|c| c.min(15)).or_else(|| self.default_bed_texture()),
+                None => self.default_bed_texture(),
+            };
+            let signature = signature_of(&bed, texture);
+            out.push(River { id, bed, texture, signature });
+        }
+
+        // The lakes' basins (`lakes.rs`): their planes with an id, an outline and a depth.
+        for e in sc.find_all("SIMPLE_MESH_INSTANCE") {
+            let (Some(id), Some(outline)) =
+                (sc.get(e, RIVER_ID_ATTR).and_then(|v| v.parse::<u32>().ok()), sc.get(e, super::lakes::OUTLINE_ATTR))
+            else {
+                continue;
+            };
+            let depth = sc.get(e, super::lakes::BASIN_ATTR).and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(0.0);
+            if depth <= 0.0 || !self.shown(e) || !self.of_tile_variation(e) {
+                continue;
+            }
+
+            // In the game's height units; the sides at the rivers' default bank slope.
+            let basin = Basin {
+                outline: super::lakes::lake_outline(&outline),
+                water: f64::from(self.world_position(e).y) * unit,
+                depth: depth * unit,
+                rise: BedSettings::DEFAULT_BANK_SLOPE.to_radians().tan() * unit,
+            };
+            let bed = RiverBed { channel: None, joins: vec![], basin: Some(basin) };
             let texture = match sc.get(e, BED_TEXTURE_ATTR).as_deref().map(str::trim) {
                 Some("none") => None,
                 Some(v) => v.parse::<usize>().ok().map(|c| c.min(15)).or_else(|| self.default_bed_texture()),

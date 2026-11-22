@@ -3317,3 +3317,49 @@ fn a_ford_raises_a_rivers_bed_to_a_wading_depth() {
     assert!((away - d2.tile().terrain_height(45.0, 128.0)).abs() < 1e-3, "away from the ford: {away}");
     assert!((y(&d, 130.0, 128.0) - (mid - 0.25)).abs() < 0.3, "the ford still: {}", y(&d, 130.0, 128.0));
 }
+
+#[test]
+fn a_lake_is_a_water_plane_over_its_outline_with_a_basin() {
+    use wce_tile_editor::tile_document::lakes::{WATER_PLANE_X, WATER_PLANE_Z};
+
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let outline = [(60.0, 60.0), (160.0, 60.0), (160.0, 140.0), (60.0, 140.0)].map(|(x, z)| Float3::new(x, y(&d, x, z), z));
+    let level = d.lake_level(&outline).unwrap();
+    let low = outline.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+    assert!(level < low && level > low - 1.0, "under the outline's lowest ground: {level} against {low}");
+
+    let lake = d.create_lake(graph, &outline, None).unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!(sc.get(lake, "surface_mode").as_deref(), Some("MSM_FREEFORM"));
+    assert!((d.lake_water(lake) - level).abs() < 1e-3);
+    // The plane's model, scaled and placed, covers the outline and 8 m round it (scene units are twice the metres).
+    let scale = wce_tile::ted_scene::parse_vec3(&sc.get(lake, "scale").unwrap(), "vector").unwrap();
+    let at = d.tile().world_position(lake);
+    let (x0, x1) = (at.x as f64 + WATER_PLANE_X[0] * scale.x / 2.0, at.x as f64 + WATER_PLANE_X[1] * scale.x / 2.0);
+    let (z0, z1) = (at.z as f64 + WATER_PLANE_Z[0] * scale.z / 2.0, at.z as f64 + WATER_PLANE_Z[1] * scale.z / 2.0);
+    assert!(
+        (x0 - 52.0).abs() < 1e-3 && (x1 - 168.0).abs() < 1e-3 && (z0 - 52.0).abs() < 1e-3 && (z1 - 148.0).abs() < 1e-3,
+        "{x0} {x1} {z0} {z1}"
+    );
+
+    // The water moves; a basin is dug inside the outline only, its middle at the depth.
+    let g = d.next_gesture();
+    d.set_lake_water(lake, level - 0.5, g).unwrap();
+    assert!((d.lake_water(lake) - (level - 0.5)).abs() < 1e-3);
+    let (mid, out) = (y(&d, 110.0, 100.0), y(&d, 200.0, 100.0));
+    d.set_attribute(lake, "wce_lake_basin", "3");
+    d.tile_mut().finish_road_jobs();
+    let dug = y(&d, 110.0, 100.0);
+    assert!((dug - (level - 0.5 - 3.0)).abs() < 0.2 || dug < mid, "dug: {dug} (was {mid})");
+    assert!((dug - (level - 3.5)).abs() < 0.2, "at the depth under the water: {dug}");
+    assert_eq!(y(&d, 200.0, 100.0), out, "outside it");
+
+    // Raised over its shore, it spills past its outline (on the test tile's slope) and the fix lowers it back.
+    let g = d.next_gesture();
+    d.set_lake_water(lake, low + 5.0, g).unwrap();
+    let p = d.river_water_problems();
+    let spill = p.iter().find(|p| p.elem == Some(lake)).unwrap_or_else(|| panic!("{p:?}"));
+    assert!(matches!(spill.fix, Some(wce_tile_editor::tile_document::river_links::RiverFix::LakeLevel { .. })));
+}
