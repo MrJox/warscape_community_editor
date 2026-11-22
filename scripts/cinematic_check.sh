@@ -7,25 +7,25 @@
 # Run it with no other wce.exe open: an editor in use at the same time made the movie and the preview shot differ (2026-11-20).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="${1:-$ROOT/build/cinematic_check}"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
 mkdir -p "$OUT"
 bad=0
 for run in 1 2; do
     dir="$OUT/settings$run"
     rm -rf "$dir"; mkdir -p "$dir"
     [ -f "$SETTINGS_SRC/settings.toml" ] && cp "$SETTINGS_SRC/settings.toml" "$dir/"
-    sed -e "s|%SHOT1%|$(cygpath -m "$OUT/intro$run.png")|" -e "s|%SHOT2%|$(cygpath -m "$OUT/event$run.png")|" \
+    sed -e "s|%SHOT1%|$(mixpath "$OUT/intro$run.png")|" -e "s|%SHOT2%|$(mixpath "$OUT/event$run.png")|" \
         "$ROOT/scripts/cinematic_smoke.txt" > "$OUT/smoke$run.txt"
-    WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/smoke$run.txt")" > "$OUT/run$run.log" 2>&1
+    WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/smoke$run.txt")" > "$OUT/run$run.log" 2>&1
     rc=$?
     echo "run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/run$run.log" | tail -5; }
     # The scene editor, with its own projects folder.
     proj="$OUT/projects$run"; rm -rf "$proj"; mkdir -p "$proj"
-    sed -e "s|%SHOT3%|$(cygpath -m "$OUT/scene$run.png")|" -e "s|%PACK%|$(cygpath -m "$OUT/scene$run.pack")|"         "$ROOT/scripts/cinematic_scene.txt" > "$OUT/scene$run.txt"
-    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/scene$run.txt")" > "$OUT/scene_run$run.log" 2>&1
+    sed -e "s|%SHOT3%|$(mixpath "$OUT/scene$run.png")|" -e "s|%PACK%|$(mixpath "$OUT/scene$run.pack")|"         "$ROOT/scripts/cinematic_scene.txt" > "$OUT/scene$run.txt"
+    WCE_PROJECTS="$(winpath "$proj")" WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/scene$run.txt")" > "$OUT/scene_run$run.log" 2>&1
     rc=$?
     echo "scene run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/scene_run$run.log" | tail -5; }
@@ -33,22 +33,22 @@ for run in 1 2; do
     [ -s "$OUT/scene$run.pack" ] || { echo "scene run $run: no battle pack"; bad=1; }
     # The 3D preview and a movie export, in a projects folder of their own.
     proj="$OUT/projects_preview$run"; rm -rf "$proj"; mkdir -p "$proj"
-    sed -e "s|%SHOT4%|$(cygpath -m "$OUT/preview$run.png")|" -e "s|%MOVIE%|$(cygpath -m "$OUT/movie$run.pack")|"         "$ROOT/scripts/cinematic_preview.txt" > "$OUT/preview$run.txt"
-    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/preview$run.txt")" > "$OUT/preview_run$run.log" 2>&1
+    sed -e "s|%SHOT4%|$(mixpath "$OUT/preview$run.png")|" -e "s|%MOVIE%|$(mixpath "$OUT/movie$run.pack")|"         "$ROOT/scripts/cinematic_preview.txt" > "$OUT/preview$run.txt"
+    WCE_PROJECTS="$(winpath "$proj")" WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/preview$run.txt")" > "$OUT/preview_run$run.log" 2>&1
     rc=$?
     echo "preview run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/preview_run$run.log" | tail -5; }
     [ -s "$OUT/movie$run.pack" ] || { echo "preview run $run: no movie pack"; bad=1; }
     # The battle logic graph.
     proj="$OUT/projects_logic$run"; rm -rf "$proj"; mkdir -p "$proj"
-    sed -e "s|%SHOT5%|$(cygpath -m "$OUT/logic$run.png")|" "$ROOT/scripts/cinematic_logic.txt" > "$OUT/logic$run.txt"
-    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/logic$run.txt")" > "$OUT/logic_run$run.log" 2>&1
+    sed -e "s|%SHOT5%|$(mixpath "$OUT/logic$run.png")|" "$ROOT/scripts/cinematic_logic.txt" > "$OUT/logic$run.txt"
+    WCE_PROJECTS="$(winpath "$proj")" WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/logic$run.txt")" > "$OUT/logic_run$run.log" 2>&1
     rc=$?
     echo "logic run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/logic_run$run.log" | tail -5; }
     # Movie editing: a tone and a PNG sequence made here first.
     media="$OUT/media"; mkdir -p "$media/pngs" "$OUT/r$run"
-    python -c "
+    "$PY" -c "
 import sys, wave, math, struct
 from PIL import Image
 d = sys.argv[1]
@@ -58,8 +58,8 @@ w.close()
 for f in range(10):
     Image.new('RGB', (64, 48), (f * 20, 80, 160)).save(d + '/pngs/frame_%04d.png' % f)
 " "$media"
-    sed -e "s|%SUBS%|$(cygpath -m "$OUT/subs$run.pack")|" -e "s|%WAV%|$(cygpath -m "$media/tone.wav")|" -e "s|%SOUND%|$(cygpath -m "$OUT/sound$run.pack")|"         -e "s|%PNGS%|$(cygpath -m "$media/pngs")|" -e "s|%IMPORT%|$(cygpath -m "$OUT/r$run/wce_imported.pack")|"         "$ROOT/scripts/cinematic_movie_edit.txt" > "$OUT/edit$run.txt"
-    WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/edit$run.txt")" > "$OUT/edit_run$run.log" 2>&1
+    sed -e "s|%SUBS%|$(mixpath "$OUT/subs$run.pack")|" -e "s|%WAV%|$(mixpath "$media/tone.wav")|" -e "s|%SOUND%|$(mixpath "$OUT/sound$run.pack")|"         -e "s|%PNGS%|$(mixpath "$media/pngs")|" -e "s|%IMPORT%|$(mixpath "$OUT/r$run/wce_imported.pack")|"         "$ROOT/scripts/cinematic_movie_edit.txt" > "$OUT/edit$run.txt"
+    WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/edit$run.txt")" > "$OUT/edit_run$run.log" 2>&1
     rc=$?
     echo "movie edit run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/edit_run$run.log" | tail -5; }
@@ -67,7 +67,7 @@ for f in range(10):
     asd="$OUT/autosave$run"; rm -rf "$asd"; mkdir -p "$asd/settings" "$asd/projects"
     [ -f "$SETTINGS_SRC/settings.toml" ] && cp "$SETTINGS_SRC/settings.toml" "$asd/settings/"
     for half in a b; do
-        WCE_PROJECTS="$(cygpath -w "$asd/projects")" WCE_SETTINGS_DIR="$(cygpath -w "$asd/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$ROOT/scripts/cinematic_autosave_$half.txt")" > "$OUT/autosave_${half}$run.log" 2>&1
+        WCE_PROJECTS="$(winpath "$asd/projects")" WCE_SETTINGS_DIR="$(winpath "$asd/settings")" "$BIN/wce$EXE" --script "$(winpath "$ROOT/scripts/cinematic_autosave_$half.txt")" > "$OUT/autosave_${half}$run.log" 2>&1
         rc=$?
         echo "autosave run $run ($half): exit $rc"
         [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/autosave_${half}$run.log" | tail -5; }
@@ -75,7 +75,7 @@ for f in range(10):
     for f in subs$run sound$run r$run/wce_imported; do [ -s "$OUT/$f.pack" ] || { echo "movie edit run $run: no $f pack"; bad=1; }; done
     # Filling a scene from the panels: the Create panel's placing, the selection moved, turned, duplicated and deleted.
     proj="$OUT/projects_ux$run"; rm -rf "$proj"; mkdir -p "$proj"
-    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$ROOT/scripts/cinematic_ux.txt")" > "$OUT/ux_run$run.log" 2>&1
+    WCE_PROJECTS="$(winpath "$proj")" WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$ROOT/scripts/cinematic_ux.txt")" > "$OUT/ux_run$run.log" 2>&1
     rc=$?
     echo "ux run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/ux_run$run.log" | tail -5; }
@@ -97,7 +97,7 @@ for shot in intro event scene logic; do
 done
 # The live 3D viewport: within 2 levels, as app_check.sh allows its live shots (exposure noise); the movie above is exact.
 if cmp -s "$OUT/preview1.png" "$OUT/preview2.png" && [ -s "$OUT/preview1.png" ]; then echo "preview shot identical between runs"
-elif [ -s "$OUT/preview1.png" ] && [ -s "$OUT/preview2.png" ] && python -c "
+elif [ -s "$OUT/preview1.png" ] && [ -s "$OUT/preview2.png" ] && "$PY" -c "
 import sys
 import numpy as np
 from PIL import Image

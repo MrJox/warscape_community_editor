@@ -10,15 +10,13 @@
 #  - wce-ui: render size, XML round trip, pack save read back, properties set by name, the MCP stdio server;
 #  - wce.exe (scripts/ui_smoke.txt): the tool's edits, undo, previews, skins of your own, pictures and layouts that change on disk, export,
 #    and the pack the export wrote read back.
-#   scripts/ui_check.sh [out dir]      Environment: WCE_GAME, CARGO_TARGET_DIR (a SHORT path on Windows: MSBuild's 260 character limit breaks the SDL3 build
-#                                      in a deep folder), WCE_SETTINGS_DIR (a folder with settings.toml; default %LOCALAPPDATA%/wce/config)
+#   scripts/ui_check.sh [out dir]      Environment: WCE_GAME, CARGO_TARGET_DIR (a SHORT path on Windows, default C:/wt: MSBuild's 260 character limit breaks the SDL3 build
+#                                      in a deep folder), WCE_SETTINGS_DIR (a folder with settings.toml; default the editor's, scripts/lib.sh)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="${1:-$ROOT/build/ui_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
-GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
-TARGET="${CARGO_TARGET_DIR:-C:/wt}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
-export WCE_GPU="${WCE_GPU:-AMD Radeon}"
+if [ "$WCE_WINDOWS" = 1 ]; then TARGET="${CARGO_TARGET_DIR:-C:/wt}"; else TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"; fi
 bad=0
 fail() { echo "FAILED: $*"; bad=1; }
 cd "$ROOT"
@@ -52,7 +50,7 @@ cargo run --release -q -p wce_ui_model --example sources_check -- --game "$GAME"
 grep -E "SKIPPED|FAILED|all good" "$OUT/sources.log"
 
 # a small PNG of one colour
-png() { python -I - "$1" "$2" "$3" "$4" <<'EOP'
+png() { "$PY" -I - "$1" "$2" "$3" "$4" <<'EOP'
 import struct, sys, zlib
 path, r, g, b = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 w = h = 16
@@ -63,9 +61,9 @@ def chunk(t, d):
 open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 EOP
 }
-png_size() { python -I -c "import struct,sys; d=open(sys.argv[1],'rb').read(24); print('%dx%d' % struct.unpack('>II', d[16:24]))" "$1"; }
+png_size() { "$PY" -I -c "import struct,sys; d=open(sys.argv[1],'rb').read(24); print('%dx%d' % struct.unpack('>II', d[16:24]))" "$1"; }
 # a value of the JSON that follows the last line "> <tool>" of a script's output: json_after <log> <tool> <python expression on j>
-json_after() { python -I - "$1" "$2" "$3" <<'EOP'
+json_after() { "$PY" -I - "$1" "$2" "$3" <<'EOP'
 import json, sys
 t = open(sys.argv[1], encoding="utf8").read()
 i = t.rindex("\n> " + sys.argv[2])
@@ -77,8 +75,8 @@ EOP
 echo "== wce-ui"
 cargo build --release -q -p wce_ui_cli || fail "build wce-ui"
 cargo build --release -q -p wce_ui_model --example pack_dump || fail "build pack_dump"
-W="$TARGET/release/wce-ui.exe"
-PD="$TARGET/release/examples/pack_dump.exe"
+W="$TARGET/release/wce-ui$EXE"
+PD="$TARGET/release/examples/pack_dump$EXE"
 L="ui/campaign ui/settlement_captured"
 mkdir -p "$OUT/cli"; C="$OUT/cli"
 
@@ -99,7 +97,7 @@ cmp -s "$C/layout.xml" "$C/layout2.xml" || fail "XML -> binary -> XML is not the
 "$W" --game "$GAME" set_entry "$L" --entry 1 --x 77 --save --pack "$C/check.pack" > /dev/null || fail "pack save"
 "$PD" list "$C/check.pack" | cut -f1 | grep -qx "$L" || fail "the pack does not hold $L"
 "$PD" get "$C/check.pack" "$L" "$C/from_pack.bin" || fail "read the layout back from the pack"
-[ "$("$W" --game "$GAME" entry "$C/from_pack.bin" --entry 1 | python -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "77" ] || fail "the layout in the pack does not have the saved offset"
+[ "$("$W" --game "$GAME" entry "$C/from_pack.bin" --entry 1 | "$PY" -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "77" ] || fail "the layout in the pack does not have the saved offset"
 
 # properties by name: set, then read back under the same name
 cat > "$C/props_state.txt" <<'EOS'
@@ -127,17 +125,17 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"js
     | "$W" --game "$GAME" mcp > "$C/mcp.log"
 grep -q '"name":"ui_set_property"' "$C/mcp.log" && grep -q 'settlement_captured' "$C/mcp.log" || fail "mcp"
 
-echo "== wce.exe"
+echo "== wce"
 D="$OUT/app"; rm -rf "$D"; mkdir -p "$D/settings" "$D/fixtures" "$D/projects/loose/ui/skins/gate_skin"; cp "$SETTINGS_SRC/settings.toml" "$D/settings/" 2>/dev/null
 # the settings of the machine decide which mod packs are chosen: none here, so that nothing but the game's release packs is read
-sed -i '/^mod_packs = /d' "$D/settings/settings.toml" 2>/dev/null
+[ -f "$D/settings/settings.toml" ] && { sed '/^mod_packs = /d' "$D/settings/settings.toml" > "$D/settings/settings.tmp" && mv "$D/settings/settings.tmp" "$D/settings/settings.toml"; }
 png "$D/fixtures/red.png" 255 0 0
 png "$D/fixtures/blue.png" 0 0 255
 png "$D/projects/loose/ui/skins/gate_skin/gate.png" 0 255 0
 "$W" --game "$GAME" set_entry "ui/campaign ui/messageicon" --entry 1 --x 222 --save --out "$D/fixtures/x222.bin" > /dev/null || fail "make the layout fixture"
-sed -e "s|%OUT%|$(cygpath -m "$D")|g" "$ROOT/scripts/ui_smoke.txt" > "$D/script.txt"
+sed -e "s|%OUT%|$(mixpath "$D")|g" "$ROOT/scripts/ui_smoke.txt" > "$D/script.txt"
 CARGO_TARGET_DIR="$TARGET" cargo build --release -q -p wce_app --all-features || fail "build wce_app"
-WCE_SETTINGS_DIR="$(cygpath -w "$D/settings")" timeout 300 "$TARGET/release/wce.exe" --script "$(cygpath -w "$D/script.txt")" > "$D/run.log" 2>&1
+WCE_SETTINGS_DIR="$(winpath "$D/settings")" wce_timeout 300 "$TARGET/release/wce$EXE" --script "$(winpath "$D/script.txt")" > "$D/run.log" 2>&1
 rc=$?; echo "wce.exe script: exit $rc"; [ $rc = 0 ] || { fail "script"; grep -E "error|FAILED" "$D/run.log" | head -5; }
 cmp -s "$D/before.xml" "$D/undone.xml" || fail "undo did not give back the same XML"
 cmp -s "$D/before.xml" "$D/dragged.xml" && fail "the drag did not change the layout"
@@ -145,7 +143,7 @@ cmp -s "$D/reset_before.xml" "$D/reset_after.xml" || fail "reset all changes did
 
 # the pack the editor saved: the layout with the offset that was set
 "$PD" get "$D/ui_smoke.pack" "$L" "$D/smoke_layout.bin" || fail "read the layout back from ui_smoke.pack"
-[ "$("$W" --game "$GAME" entry "$D/smoke_layout.bin" --entry 1 | python -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "300" ] || fail "ui_smoke.pack does not have the offset that was set"
+[ "$("$W" --game "$GAME" entry "$D/smoke_layout.bin" --entry 1 | "$PY" -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "300" ] || fail "ui_smoke.pack does not have the offset that was set"
 
 # the exported pack: exactly what is in the project folder, byte for byte, and the changed layout as it was in the editor
 [ -d "$D/projects/loose/ui/skins/fresh_skin" ] || fail "the new skin has no folder"
@@ -156,6 +154,6 @@ sort "$D/exported.txt" | cmp -s - "$D/expected.txt" || { fail "the exported pack
 "$PD" get "$D/project.pack" "ui/skins/gate_skin/gate.png" "$D/out_gate.png" && cmp -s "$D/out_gate.png" "$D/projects/loose/ui/skins/gate_skin/gate.png" || fail "a picture in the pack is not the one in the folder"
 "$PD" get "$D/project.pack" "ui/skins/default/wce_gate_picture.png" "$D/out_pic.png" && cmp -s "$D/out_pic.png" "$D/fixtures/blue.png" || fail "the changed picture in the pack is not the latest one"
 "$PD" get "$D/project.pack" "ui/campaign ui/messageicon" "$D/out_layout.bin" || fail "read the exported layout"
-[ "$("$W" --game "$GAME" entry "$D/out_layout.bin" --entry 1 | python -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "5" ] || fail "the exported layout is not the one that was in the editor"
+[ "$("$W" --game "$GAME" entry "$D/out_layout.bin" --entry 1 | "$PY" -I -c "import json,sys; print(json.load(sys.stdin)['offset'][0])")" = "5" ] || fail "the exported layout is not the one that was in the editor"
 
 [ $bad = 0 ] && echo "ui_check: all good" || { echo "ui_check: FAILED"; exit 1; }

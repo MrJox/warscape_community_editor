@@ -4,10 +4,9 @@
 #   scripts/tile_open_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="${1:-$ROOT/build/tile_open_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-export WCE_GPU="${WCE_GPU:-AMD Radeon}"
-GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 ROOTS=("$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles" "$GAME/assembly_kit_campaign_tilemap/raw_data/terrain/tiles")
 bad=0; n=0; instances=0
 # one tile per tile set: <kit>/.../tiles/<battle|campaign>/<set>/<...>/tile.ted, the first in sorted order
@@ -19,7 +18,7 @@ while IFS= read -r ted; do
     seen[$set_key]=1
     n=$((n + 1))
     log="$OUT/open_$n.log"
-    timeout 300 "$BIN/wce.exe" --tile "$dir" --frames 3 --capture 320x180 "$(cygpath -w "$OUT/open.png")" > "$log" 2>&1
+    wce_timeout 300 "$BIN/wce$EXE" --tile "$dir" --frames 3 --capture 320x180 "$(winpath "$OUT/open.png")" > "$log" 2>&1
     rc=$?
     errors=$(grep -c "\[error\]" "$log")
     if [ $rc != 0 ] || [ "$errors" != 0 ]; then echo "FAILED ($rc, $errors errors): ${dir#$GAME/}"; grep "\[error\]" "$log" | head -3; bad=1; fi

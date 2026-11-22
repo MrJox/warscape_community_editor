@@ -16,20 +16,19 @@
 #   WCE_BOB_KIT  a scratch Assembly Kit BOB_Terrain ran in: the Heights & Normals and Tilemap gates compare with its outputs (skipped when not set)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="${1:-$ROOT/build/gates}"; shift || true
 CORPUS=0; RENDER=0
 for a in "$@"; do case "$a" in --corpus) CORPUS=1;; --render) RENDER=1;; esac; done
 
-GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
-CACHE="${WCE_CACHE:-$LOCALAPPDATA/awe/x}"
-CBS="${WCE_CBS:-$TEMP/claude/cbs.txt}"
+CACHE="${WCE_CACHE:-${LOCALAPPDATA:-${XDG_CACHE_HOME:-$HOME/.cache}}/awe/x}"
+CBS="${WCE_CBS:-${TEMP:-${TMPDIR:-/tmp}}/claude/cbs.txt}"
 WB="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 MANIFEST="$ROOT/manifest/corpus.tsv"
 BKIT="$GAME/assembly_kit_battle_tilemap"
 TILE="$BKIT/raw_data/terrain/tiles/battle/atlantic_mountains/custom_monte_rosa/aa"
 
 # The kit(s) for the crate tests that read kit tiles (wce_tile_io's kit_samples).
-case "${OSTYPE:-}" in msys*|cygwin*|win*) SEP=';';; *) SEP=':';; esac
 if [ -d "$GAME/assembly_kit/raw_data/terrain/tiles" ]; then
     export WCE_ATTILA_KIT="${WCE_ATTILA_KIT:-$GAME/assembly_kit}"
 else
@@ -38,8 +37,6 @@ fi
 
 export WCE_ATTILA_GAME="${WCE_ATTILA_GAME:-$GAME}"   # wce_tile_io's pack_samples read the game's packs
 
-# The reference pixels come from one GPU (docs/baseline.md): this machine has two and Windows may default to either.
-export WCE_GPU="${WCE_GPU:-AMD Radeon}"
 mkdir -p "$OUT"
 FAILED=()
 run() { # run <name> <command...>: output (stdout+stderr) to <name>.txt, exit code appended
