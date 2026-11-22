@@ -77,7 +77,11 @@ impl Tile {
                 line: samples.iter().map(|s| [s.x as f32, s.z as f32]).collect(),
                 water: samples.iter().map(|s| s.y as f32).collect(),
                 half: samples.iter().map(|s| (s.width * 0.5) as f32).collect(),
-                fords: fords.iter().map(|&(at, len)| [(at - len * 0.5) as f32, (at + len * 0.5) as f32]).collect(),
+                // The fords as the river's bed has them (`river_beds.rs`): their curved ends the same.
+                fords: fords
+                    .iter()
+                    .map(|&(at, length)| wce_tile::river_bed::Ford { at, length, depth: wce_tile::river_bed::FORD_DEPTH })
+                    .collect(),
             };
             let settings = if shore { settings(e) } else { ShoreSettings::of(0.0, 0.0) };
             let splashes = sc.get(e, SPLASHES_ATTR).as_deref().map(str::trim) != Some("0");

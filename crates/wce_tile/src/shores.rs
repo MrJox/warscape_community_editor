@@ -16,13 +16,10 @@
 pub const REEDS: [&str; 5] =
     ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"];
 pub const LILIES: [&str; 2] = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"];
-pub const STONES: [&str; 11] = [
-    "attila_rock_small_01",
+pub const STONES: [&str; 8] = [
     "attila_rock_small_02",
     "attila_rock_small_03",
-    "attila_rock_small_04",
     "attila_rock_small_05",
-    "attila_rock_small_06",
     "attila_rock_small_07",
     "smallrock_01",
     "smallrock_02",
@@ -30,6 +27,9 @@ pub const STONES: [&str; 11] = [
     "rocks_small_01",
 ];
 pub const BANK_STONES: [&str; 3] = ["boulder_small_b", "boulder_small_c", "boulder_small_d"];
+
+/// The smallest of them (half a metre to a metre across), for a ford's ends.
+pub const FORD_STONES: [&str; 5] = ["smallrock_02", "smallrock_03", "rocks_small_01", "attila_rock_small_02", "attila_rock_small_07"];
 
 /// How deep lilies float at most (metres), and how far from the water's edge stones lie either side (metres).
 pub const LILY_DEPTH: f32 = 1.5;
@@ -74,19 +74,19 @@ impl ShoreSettings {
 pub enum Water {
     /// A river: its middle line's samples (x, z), the water's height there and its half width; its fords' held stretches (where each
     /// starts and ends along it, metres).
-    River { line: Vec<[f32; 2]>, water: Vec<f32>, half: Vec<f32>, fords: Vec<[f32; 2]> },
+    River { line: Vec<[f32; 2]>, water: Vec<f32>, half: Vec<f32>, fords: Vec<crate::river_bed::Ford> },
 
     /// A lake: its outline (x, z) and its water's height.
     Lake { outline: Vec<[f32; 2]>, water: f32 },
 }
 
 impl Water {
-    /// The water's edge from a place: how far outside it (negative: inside), the water's height at the nearest place, and how far along
-    /// a river that place is (NaN for a lake).
-    fn edge(&self, x: f32, z: f32) -> (f32, f32, f32) {
+    /// The water's edge from a place: how far outside it (negative: inside), the water's height at the nearest place, how far along a
+    /// river that place is and where across it (-1 at one edge of the water, 1 at the other; NaN for a lake).
+    fn edge(&self, x: f32, z: f32) -> (f32, f32, f32, f32) {
         match self {
             Water::River { line, water, half, .. } => {
-                let mut best = (f32::INFINITY, 0.0, f32::NAN);
+                let mut best = (f32::INFINITY, 0.0, f32::NAN, f32::NAN);
                 let mut along = 0.0;
                 for i in 0..line.len().saturating_sub(1) {
                     let (a, b) = (line[i], line[i + 1]);
@@ -94,9 +94,11 @@ impl Water {
                     let l2 = dx * dx + dz * dz;
                     let t = if l2 > 1e-9 { (((x - a[0]) * dx + (z - a[1]) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
                     let h = half[i] + (half[i + 1] - half[i]) * t;
-                    let d = (x - a[0] - dx * t).hypot(z - a[1] - dz * t) - h;
+                    let r = (x - a[0] - dx * t).hypot(z - a[1] - dz * t);
+                    let d = r - h;
                     if d < best.0 {
-                        best = (d, water[i] + (water[i + 1] - water[i]) * t, along + l2.sqrt() * t);
+                        let side = if dx * (z - a[1]) - dz * (x - a[0]) < 0.0 { -1.0 } else { 1.0 };
+                        best = (d, water[i] + (water[i + 1] - water[i]) * t, along + l2.sqrt() * t, side * r / h.max(1e-6));
                     }
 
                     along += l2.sqrt();
@@ -120,7 +122,7 @@ impl Water {
                     near = near.min((x - a[0] - dx * t).hypot(z - a[1] - dz * t));
                 }
 
-                (if inside { -near } else { near }, *water, f32::NAN)
+                (if inside { -near } else { near }, *water, f32::NAN, f32::NAN)
             }
         }
     }
@@ -234,12 +236,24 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
         for i in i0..i1 {
             let [a, b, c, d] = cell_numbers(seed, i, j);
             let (x, z) = ((i as f32 + b) * CELL, (j as f32 + c) * CELL);
-            let (edge, level, along) = water.edge(x, z);
-            // A ford: across its river, the stretch held shallow, and its two edges (where it drops to the deep water).
-            let fords: &[[f32; 2]] = if let Water::River { fords, .. } = water { fords } else { &[] };
+            let (edge, level, along, u) = water.edge(x, z);
+            // A ford: across its river, the stretch held shallow, and its two curved ends (where it slopes down to the deep water).
+            let fords: &[crate::river_bed::Ford] = if let Water::River { fords, .. } = water { fords } else { &[] };
             let in_water = edge <= 0.5;
-            let on_ford = in_water && fords.iter().any(|f| along >= f[0] - FORD_EDGE && along <= f[1] + FORD_EDGE);
-            let ford_edge = in_water && fords.iter().any(|f| (along - f[0]).abs() <= FORD_EDGE || (along - f[1]).abs() <= FORD_EDGE);
+            let ends = |f: &crate::river_bed::Ford| {
+                let (a, b) = f.ends(f64::from(u));
+                (a as f32, b as f32)
+            };
+            let on_ford = in_water
+                && fords.iter().any(|f| {
+                    let (s0, s1) = ends(f);
+                    along >= s0 - FORD_EDGE && along <= s1 + FORD_EDGE
+                });
+            let ford_edge = in_water
+                && fords.iter().any(|f| {
+                    let (s0, s1) = ends(f);
+                    (along - s0).abs() <= FORD_EDGE || (along - s1).abs() <= FORD_EDGE
+                });
 
             // Inside a river or a lake further than a lily floats from its edge (but on a ford), or out past the bank: nothing.
             if edge > reach || (edge < -12.0 && !on_ford) {
@@ -249,13 +263,12 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
             let g = height(x, z);
             let depth = level - g;
 
-            // A ford's edges lined with stones (gaps here and there), so that it shows where it is: whatever the shore's stones.
+            // A ford's ends lined with small stones (gaps here and there), so that it shows where it is: whatever the shore's stones.
             if ford_edge {
                 let gaps = noise(seed ^ 0x0f0e_d0c1, x, z, 3.0);
-                if gaps > 0.25 && a < 3.0 * area && !blocked(x, z) {
-                    let (list, k): (&[&str], usize) =
-                        if d < 0.15 { (&BANK_STONES, (d * 97.0) as usize) } else { (&STONES, (d * 61.0) as usize) };
-                    out.stones.push(Placed { key: list[k % list.len()].to_owned(), x, y: g - 0.05, z, scale: 1.0, yaw: 360.0 * c });
+                if gaps > 0.3 && a < 2.0 * area && !blocked(x, z) {
+                    let key = FORD_STONES[(d * 61.0) as usize % FORD_STONES.len()];
+                    out.stones.push(Placed { key: key.to_owned(), x, y: g - 0.05, z, scale: 1.0, yaw: 360.0 * c });
                 }
 
                 continue;
@@ -311,16 +324,22 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
         }
     }
 
-    // The splashes: across each ford's two edges, every few metres, on the water.
+    // The splashes: across each ford's two curved ends, every few metres, on the water.
     if let Water::River { line, half, fords, .. } = water {
         for f in fords {
-            for edge in [f[0], f[1]] {
-                let Some((p, dir, h)) = at_along(line, half, edge) else { continue };
-                let (_, level, _) = water.edge(p[0], p[1]);
+            for end in [0, 1] {
+                // The middle's place there, for the river's width.
+                let mid = if end == 0 { f.ends(0.0).0 } else { f.ends(0.0).1 } as f32;
+                let Some((_, _, h)) = at_along(line, half, mid) else { continue };
                 let n = ((2.0 * (h - 2.0)) / SPLASH_STEP).floor().max(0.0) as i32;
                 for k in 0..=n {
                     let off = -(n as f32) * SPLASH_STEP * 0.5 + k as f32 * SPLASH_STEP;
+                    let ends = f.ends(f64::from(off / h.max(1e-6)));
+                    let along = if end == 0 { ends.0 } else { ends.1 } as f32;
+                    let Some((p, dir, _)) = at_along(line, half, along) else { continue };
+                    // Across to the side `off` is on (the left of the river's direction positive, as `Water::edge` has it).
                     let (x, z) = (p[0] - dir[1] * off, p[1] + dir[0] * off);
+                    let (_, level, ..) = water.edge(x, z);
                     if !blocked(x, z) {
                         let yaw = dir[1].atan2(dir[0]).to_degrees();
                         out.splashes.push(Placed { key: SPLASH.to_owned(), x, y: level, z, scale: 1.0, yaw });
@@ -364,17 +383,23 @@ mod tests {
 
     #[test]
     fn a_fords_edges_are_lined_with_stones_and_splashes() {
-        let w = Water::River {
-            line: vec![[0.0, 50.0], [200.0, 50.0]],
-            water: vec![0.0, 0.0],
-            half: vec![10.0, 10.0],
-            fords: vec![[90.0, 110.0]],
+        let ford = crate::river_bed::Ford { at: 100.0, length: 20.0, depth: 0.5 };
+        let w = Water::River { line: vec![[0.0, 50.0], [200.0, 50.0]], water: vec![0.0, 0.0], half: vec![10.0, 10.0], fords: vec![ford] };
+        // Deep but at the ford (its held stretch, curved), a quarter metre there.
+        let g = move |x: f32, z: f32| {
+            let (s0, s1) = ford.ends(f64::from((z - 50.0) / 10.0));
+            if f64::from(x) >= s0 && f64::from(x) <= s1 { -0.25 } else { -3.0 }
         };
-        // Deep but at the ford, a quarter metre there.
-        let g = |x: f32, _: f32| if (88.0..=112.0).contains(&x) { -0.25 } else { -3.0 };
         let shore = place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 5);
         assert!(shore.stones.len() > 20, "the edges lined whatever the shore's stones: {}", shore.stones.len());
-        assert!(shore.stones.iter().all(|s| (s.x - 90.0).abs() <= 1.01 || (s.x - 110.0).abs() <= 1.01), "on its edges only");
+        assert!(shore.stones.iter().all(|s| FORD_STONES.contains(&s.key.as_str())), "small ones");
+        let on_end = |s: &Placed| {
+            let (s0, s1) = ford.ends(f64::from((s.z - 50.0) / 10.0));
+            (f64::from(s.x) - s0).abs() <= 1.01 || (f64::from(s.x) - s1).abs() <= 1.01
+        };
+        assert!(shore.stones.iter().all(on_end), "on its curved ends only");
+        let (mid, side) = (ford.ends(0.0), ford.ends(1.0));
+        assert!((mid.0 - side.0).abs() > 0.5 && (mid.1 - side.1).abs() > 0.5, "not straight across: {mid:?} {side:?}");
         assert!(shore.stones.iter().any(|s| (s.z - 50.0).abs() < 3.0), "across the river, its middle too");
         assert_eq!(
             shore.splashes.len(),
