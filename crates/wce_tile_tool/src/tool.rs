@@ -6287,6 +6287,7 @@ impl Tool for TileTool {
             self.inspect_angle(e, id);
             self.inspect_building_spline(e, id);
             self.inspect_river(e, id);
+            self.inspect_river_tail(e, id);
         }
     }
 

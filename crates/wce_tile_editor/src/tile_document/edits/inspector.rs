@@ -48,7 +48,6 @@ impl TileDocument {
 
         self.variation_rows(e, ins);
         self.road_role_row(e, ins);
-        self.river_bed_rows(e, ins);
         let t = self.tile();
         let sc = t.tscene();
         if let Some(k) = sc.get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
@@ -76,37 +75,7 @@ impl TileDocument {
 
         // The rows of TEd's Property Editor, in its order.
         ins.section("Properties");
-        // The reference's key is the prefab row above.
-        let mut shown = vec![
-            "name",
-            wce_tile::project_files::PREFAB_ATTR,
-            wce_tile::road_pieces::PART_ROLE_ATTR,
-            wce_tile::road_pieces::PIECE_WEIGHT_ATTR,
-        ];
-
-        // A reference's ground has its own rows, above.
-        shown.extend([
-            super::super::prefab_ground::TERRAIN_ATTR,
-            super::super::prefab_ground::TERRAIN_OPACITY_ATTR,
-            super::super::prefab_ground::TERRAIN_FEATHER_ATTR,
-        ]);
-
-        // A stage's group: the Prefab tool's rows (its ground's settings), below.
-        shown.extend([wce_tile::prefab_stage::STAGE_ATTR, wce_tile::prefab_stage::NORMALIZE_ATTR, wce_tile::prefab_stage::FEATHER_ATTR]);
-
-        // A river's bed has its own rows, above; its id is the editor's.
-        shown.extend(super::super::river_beds::RIVER_ROW_ATTRS);
-        shown.extend(super::super::shores::SHORE_ROW_ATTRS);
-
-        // A reference's own are the tool's rows, below.
-        if matches!(tag.as_str(), super::super::REF_HUMAN | super::super::REF_UNIT | super::super::REF_SHIP) {
-            shown.extend(wce_tile::new_instances::REF_TOOL_ATTRS);
-        }
-
-        if wce_tile::new_instances::MEASURE_KINDS.contains(&tag.as_str()) {
-            shown.extend(wce_tile::new_instances::MEASURE_HIDDEN_ATTRS);
-        }
-
+        let mut shown = self.shown_attrs(e);
         for prop in schema {
             shown.push(prop.attr);
             if let Some(twin) = prop.twin {
@@ -150,7 +119,76 @@ impl TileDocument {
             }
         }
 
-        // What the file has and the grid does not show.
+        // A river: the tool's River profile next, then its bed, its shores and the rest (`inspect_river_tail`). A lake: its rows here.
+        if tag == "SplineRiverInstance" {
+            return;
+        }
+
+        if self.tile().tscene().get(e, super::super::lakes::OUTLINE_ATTR).is_some() {
+            self.river_bed_rows(e, ins);
+        }
+
+        self.other_attribute_rows(e, &shown, ins);
+    }
+
+    /// A river's sections after its River profile (the tool's, below Properties): its bed, its shores, and the other attributes at the
+    /// bottom.
+    pub fn inspect_river_tail(&mut self, e: usize, ins: &mut dyn Inspector) {
+        if self.tile().tscene().type_of(e) != "SplineRiverInstance" {
+            return;
+        }
+
+        self.river_bed_rows(e, ins);
+        let mut shown = self.shown_attrs(e);
+        if let Some(schema) = wce_tile::properties::schema("SplineRiverInstance") {
+            for prop in schema {
+                shown.push(prop.attr);
+                shown.extend(prop.twin);
+            }
+        }
+
+        self.other_attribute_rows(e, &shown, ins);
+    }
+
+    /// The attributes the rows above show (or keep out of sight), but the schema's own.
+    fn shown_attrs(&self, e: usize) -> Vec<&'static str> {
+        let tag = self.tile().tscene().type_of(e).to_owned();
+        // The reference's key is the prefab row above.
+        let mut shown = vec![
+            "name",
+            wce_tile::project_files::PREFAB_ATTR,
+            wce_tile::road_pieces::PART_ROLE_ATTR,
+            wce_tile::road_pieces::PIECE_WEIGHT_ATTR,
+        ];
+
+        // A reference's ground has its own rows, above.
+        shown.extend([
+            super::super::prefab_ground::TERRAIN_ATTR,
+            super::super::prefab_ground::TERRAIN_OPACITY_ATTR,
+            super::super::prefab_ground::TERRAIN_FEATHER_ATTR,
+        ]);
+
+        // A stage's group: the Prefab tool's rows (its ground's settings), below.
+        shown.extend([wce_tile::prefab_stage::STAGE_ATTR, wce_tile::prefab_stage::NORMALIZE_ATTR, wce_tile::prefab_stage::FEATHER_ATTR]);
+
+        // A river's bed and shores have their own rows; its id is the editor's.
+        shown.extend(super::super::river_beds::RIVER_ROW_ATTRS);
+        shown.extend(super::super::shores::SHORE_ROW_ATTRS);
+
+        // A reference's own are the tool's rows, below.
+        if matches!(tag.as_str(), super::super::REF_HUMAN | super::super::REF_UNIT | super::super::REF_SHIP) {
+            shown.extend(wce_tile::new_instances::REF_TOOL_ATTRS);
+        }
+
+        if wce_tile::new_instances::MEASURE_KINDS.contains(&tag.as_str()) {
+            shown.extend(wce_tile::new_instances::MEASURE_HIDDEN_ATTRS);
+        }
+
+        shown
+    }
+
+    /// What the file has and the grid does not show, at the bottom; a polygon's point count.
+    fn other_attribute_rows(&self, e: usize, shown: &[&str], ins: &mut dyn Inspector) {
         let sc = self.tile().tscene();
         // A combined project's variations are the checkboxes above (`variation_rows`), not text here.
         let rest = sc.doc().elements()[e]
@@ -172,7 +210,6 @@ impl TileDocument {
 
         // Polygons: the point count (their points are edited in the viewport).
         if self.tile().is_polygon(e) {
-            let sc = self.tile().tscene();
             ins.text("points", "points", &sc.polygon_points(e).len().to_string());
         }
     }
