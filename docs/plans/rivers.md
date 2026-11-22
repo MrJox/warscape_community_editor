@@ -4,6 +4,11 @@ Better tools for the water of a battle tile, on `feature/river_tools`. The user'
 terrain at the join is shaped for the connection and the river runs on into the neighbour's without a break; plus more river tools of my
 proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing here is built yet.
 
+## Status
+
+- 2026-11-22: RE R1 to R4 done. Step 1 (link snap, the joins' layer, the Problems' fixes, the neighbour check in a map context) and
+  step 2 (the carved bed and its texture) built; battle rivers are drawn at their file's width (they were twice the game's).
+
 ## What there is today
 
 - **Rivers** are TEd's `SplineRiverInstance`: Bezier points with `width`, `foam_amount`, `alpha_fade`, `flow_speed`, `terrain_offset`,
