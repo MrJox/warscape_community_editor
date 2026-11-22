@@ -25,6 +25,10 @@ a target with a pole and a ring at the cell's centre. A rule's base point is no 
 
 ## Rivers at their links (2026-11-22, docs/plans/rivers.md R1 to R4)
 
+**Units**: every height here is the game's (`TileProject::height_at`, `final_heights.dds`, the river files' y, TEd's scene heights):
+twice the editor's metres in a battle tile (`Tile::terrain_height` is `height_at` over the unit, 2), as x and z are. So the deep
+connection's bed -11.9 and water -6.2 show as -5.95 and -3.1 in the editor; the widths and distances across are the editor's metres.
+
 Measured with `crates/wce_tile/examples/river_link_profile.rs` over the Attila kit's battle tiles (107 tiles with river files, 206 river
 ends within half a cell of an edge; `--grid` prints a tile's heights, used on the linking tiles):
 

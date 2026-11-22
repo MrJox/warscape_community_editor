@@ -14,6 +14,8 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   Step 3 (long profile in the Inspector, Make downhill, Reverse river, ramps, flow arrows) built; the flow check against `is_entry`
   waits for the in-game look R3 asks for.
   Step 4 (tributaries snapped onto a river's middle line at its water, Split here, Join rivers) built.
+  Units fixed: the connections' heights are the game's (TEd's scene heights, the files' y), twice the editor's metres; the snapped
+  rivers and joins had been twice as deep (their files' water at the bed). The file of a snapped river now has the kit's -6.2 / 45.
 
 ## What there is today
 

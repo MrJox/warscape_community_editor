@@ -2987,8 +2987,9 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     assert_eq!(d.snap_river_to_links(r).unwrap(), 2);
     let world = d.tile().polygon_world_points(r);
     let (first, last) = (world[0], world[2]);
-    assert!((first.x + 6.0).abs() < 1e-3 && (first.z - 192.0).abs() < 1e-3 && (first.y + 6.2).abs() < 1e-3, "{first:?}");
-    assert!((last.x - 192.0).abs() < 1e-3 && (last.z + 6.0).abs() < 1e-3 && (last.y - 0.42).abs() < 1e-3, "{last:?}");
+    // The connections' water is the game's (-6.2, 0.42 in its units): the editor's metres are half.
+    assert!((first.x + 6.0).abs() < 1e-3 && (first.z - 192.0).abs() < 1e-3 && (first.y + 3.1).abs() < 1e-3, "{first:?}");
+    assert!((last.x - 192.0).abs() < 1e-3 && (last.z + 6.0).abs() < 1e-3 && (last.y - 0.21).abs() < 1e-3, "{last:?}");
     let sc = d.tile().tscene();
     let points = sc.polygon_points(r);
     let attr = |p: usize, n: &str| sc.get(p, n).unwrap_or_default();
@@ -2996,6 +2997,14 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     // The file's width 45 (the kit's), the point's 90 (today's TEd writes half of it).
     assert_eq!((attr(points[0], "width"), attr(points[2], "width")), ("90".to_owned(), "90".to_owned()));
     assert_eq!(sc.get(r, "wce_river_id").as_deref(), Some("1"));
+
+    // What the game reads: the river's file has the kit's connection (water -6.2 and width 45 at the deep link, 0.42 at the shallow one).
+    let factors = wce_tile::river_files::Factors::of(sc, r, None);
+    let file = String::from_utf8(wce_tile::river_files::river_file(sc, r, factors, false)).unwrap();
+    let pts = wce_tile_editor::tile_document::river_links::file_points(&file);
+    let (f0, f1) = (pts[0], pts[pts.len() - 1]);
+    assert!((f0[1] + 6.2).abs() < 1e-3 && (f0[3] - 45.0).abs() < 1e-3, "{f0:?}");
+    assert!((f1[1] - 0.42).abs() < 1e-3 && (f0[0] + 6.0).abs() < 1e-3, "{f1:?}");
 
     // The first end's handle goes square into the tile.
     let s = wce_tile::splines::read(sc, r);
@@ -3007,9 +3016,9 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     assert_eq!(d.snap_river_to_links(r).unwrap(), 0);
     assert_eq!(d.history().position(), entries);
     d.tile_mut().finish_road_jobs();
-    assert!((y(&d, 4.0, 192.0) + 11.9).abs() < 0.15, "deep bed: {}", y(&d, 4.0, 192.0));
-    assert!((y(&d, 8.0, 192.0 + 40.0) + 1.2).abs() < 0.3, "deep bank: {}", y(&d, 8.0, 192.0 + 40.0));
-    assert!((y(&d, 192.0, 4.0) + 1.0).abs() < 0.15, "shallow bed: {}", y(&d, 192.0, 4.0));
+    assert!((y(&d, 4.0, 192.0) + 5.95).abs() < 0.1, "deep bed: {}", y(&d, 4.0, 192.0));
+    assert!((y(&d, 8.0, 192.0 + 40.0) + 0.6).abs() < 0.15, "deep bank: {}", y(&d, 8.0, 192.0 + 40.0));
+    assert!((y(&d, 192.0, 4.0) + 0.5).abs() < 0.1, "shallow bed: {}", y(&d, 192.0, 4.0));
     assert_eq!((y(&d, 160.0, 160.0), y(&d, 10.0, 40.0)), away, "away from the links");
 
     // Undone, the river is as drawn and its layer goes.
@@ -3017,7 +3026,7 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     d.tile_mut().finish_road_jobs();
     let sc = d.tile().tscene();
     assert_eq!(sc.get(sc.polygon_points(r)[0], "wce_link"), None);
-    assert!((y(&d, 4.0, 192.0) + 11.9).abs() > 1.0, "the ground back: {}", y(&d, 4.0, 192.0));
+    assert!((y(&d, 4.0, 192.0) + 5.95).abs() > 1.0, "the ground back: {}", y(&d, 4.0, 192.0));
     d.history_mut().redo();
 
     // An end dragged off its link loses the mark (and its join).
@@ -3026,8 +3035,8 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     let sc = d.tile().tscene();
     assert_eq!(sc.get(sc.polygon_points(r)[0], "wce_link").as_deref(), Some(""));
     d.tile_mut().finish_road_jobs();
-    assert!((y(&d, 4.0, 192.0) + 11.9).abs() > 1.0, "the west join gone: {}", y(&d, 4.0, 192.0));
-    assert!((y(&d, 192.0, 4.0) + 1.0).abs() < 0.15, "the shallow join stays: {}", y(&d, 192.0, 4.0));
+    assert!((y(&d, 4.0, 192.0) + 5.95).abs() > 1.0, "the west join gone: {}", y(&d, 4.0, 192.0));
+    assert!((y(&d, 192.0, 4.0) + 0.5).abs() < 0.1, "the shallow join stays: {}", y(&d, 192.0, 4.0));
 }
 
 #[test]
@@ -3090,7 +3099,8 @@ fn a_drawn_river_cuts_its_bed_under_its_water_and_the_kits_do_not() {
     d.tile_mut().finish_road_jobs();
     let bed = y(&d, 130.0, 128.0);
     let width = 45.0f64; // the template's 90, its file's 45
-    let depth = wce_tile::river_bed::BedSettings::default_depth(width) as f32;
+    // The default depth is the game's units: the editor's metres are half.
+    let depth = wce_tile::river_bed::BedSettings::default_depth(width) as f32 / 2.0;
     let water_mid = (a.y + b.y) * 0.5 - 2.0;
     assert!(
         bed < ground - 2.0 && (bed - (water_mid - depth)).abs() < 0.6,
@@ -3186,7 +3196,7 @@ fn a_rivers_profile_is_edited_made_downhill_and_ramped() {
     assert_eq!(p.points.len(), 4);
     assert!(p.points[0].locked && p.points[3].locked && !p.points[1].locked);
     assert!(p.length > 250.0 && p.points.windows(2).all(|w| w[0].along < w[1].along), "{p:?}");
-    assert!((p.points[0].water + 6.2).abs() < 1e-3 && (p.points[3].water - 0.42).abs() < 1e-3);
+    assert!((p.points[0].water + 3.1).abs() < 1e-3 && (p.points[3].water - 0.21).abs() < 1e-3);
 
     // A point lifted: one entry for a gesture's steps.
     let before = d.history().position();
@@ -3195,12 +3205,11 @@ fn a_rivers_profile_is_edited_made_downhill_and_ramped() {
     assert_eq!(d.history().position(), before + 1);
     assert!((d.river_profile(r).unwrap().points[1].water - 5.0).abs() < 1e-3);
 
-    // Downhill from the higher end (the shallow link at 0.42) to the lower (the deep one at -6.2): the points between at most 0.42 and at
-    // least -6.2, in order.
+    // Downhill from the higher end (the shallow link) to the lower (the deep one): the points between them, in order.
     assert!(d.make_river_downhill(r).unwrap() >= 1);
     let w = d.river_profile(r).unwrap().points.iter().map(|q| q.water).collect::<Vec<_>>();
     assert!(w.windows(2).all(|p| p[1] >= p[0] - 1e-6), "rising towards the higher end: {w:?}");
-    assert!((w[0] + 6.2).abs() < 1e-3 && (w[3] - 0.42).abs() < 1e-3, "the links keep theirs: {w:?}");
+    assert!((w[0] + 3.1).abs() < 1e-3 && (w[3] - 0.21).abs() < 1e-3, "the links keep theirs: {w:?}");
 
     // Widths ramped from 45 to 20 (the file's), the points' twice that.
     d.ramp_river(r, "width", 0, 3, 45.0, 20.0).unwrap();
