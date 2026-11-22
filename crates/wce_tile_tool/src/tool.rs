@@ -549,6 +549,9 @@ pub struct TileTool {
     /// The reference unit.
     pub(crate) ref_units: crate::ref_units::RefUnits,
     pub(crate) bspline_ui: crate::building_spline_ui::BuildingSplineUi,
+
+    /// The selected river's profile and ramp (`river_ui.rs`).
+    pub(crate) river_ui: crate::river_ui::RiverUi,
     pub(crate) draft: Option<wce_tile_editor::tile_document::Draft>,
     pub(crate) making: Option<String>,
     pub(crate) create: crate::create_panel::CreateUi,
@@ -990,6 +993,7 @@ impl Default for TileTool {
             value_gesture: 0,
             ref_units: Default::default(),
             bspline_ui: Default::default(),
+            river_ui: Default::default(),
             drawing: false,
             flip: None,
             flip_asked: false,
@@ -2331,6 +2335,32 @@ impl TileTool {
         }
 
         // Where a road leaves the tile, while a procedural road is drawn or selected (snap to road links): a ring, filled when snapped to.
+        // The selected river's way: arrows on its water every 40 m, pointing from its first point to its last.
+        if let Some(river) = primary(e).filter(|&s| t.tscene().type_of(s) == RIVER)
+            && let Some(p) = d.river_profile(river)
+        {
+            let blue = overlay_colour(0.4, 0.8, 1.0, 1.0);
+            let size = (Self::handle_size(e) * 3.0).max(3.0);
+            let mut next = 20.0;
+            for w in p.samples.windows(2) {
+                while next <= w[1].along && w[1].along > w[0].along {
+                    let f = (next - w[0].along) / (w[1].along - w[0].along);
+                    let (x, z) = (w[0].x + (w[1].x - w[0].x) * f, w[0].z + (w[1].z - w[0].z) * f);
+                    let y = (w[0].water + (w[1].water - w[0].water) * f) as f32 + 0.3;
+                    let (dx, dz) = (w[1].x - w[0].x, w[1].z - w[0].z);
+                    let len = dx.hypot(dz).max(1e-6);
+                    let (fx, fz) = ((dx / len) as f32, (dz / len) as f32);
+                    let tip = Float3::new(x as f32 + fx * size, y, z as f32 + fz * size);
+                    let back = |side: f32| {
+                        Float3::new(x as f32 - fx * size * 0.6 - fz * size * side, y, z as f32 - fz * size * 0.6 + fx * size * side)
+                    };
+                    o.line(back(0.7), tip, blue);
+                    o.line(back(-0.7), tip, blue);
+                    next += 40.0;
+                }
+            }
+        }
+
         // A river's links the same way while a river is drawn or selected (snap rivers to river links), where its end goes.
         let line_kind =
             if self.drawing { self.draft.as_ref().map(|dr| dr.kind.clone()) } else { primary(e).map(|s| t.tscene().type_of(s).to_owned()) };
@@ -6024,6 +6054,7 @@ impl Tool for TileTool {
             self.inspect_measure(e, id);
             self.inspect_angle(e, id);
             self.inspect_building_spline(e, id);
+            self.inspect_river(e, id);
         }
     }
 

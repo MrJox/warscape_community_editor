@@ -318,6 +318,64 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "river_height",
+        "river_height <point> <y m>",
+        "set the selected river's point's water height (the file's metres; one undo entry)",
+        |e, a| {
+            let sel = primary(e);
+            let (Some(i), Some(y)) = (a.first().and_then(|v| v.parse::<usize>().ok()), a.get(1).and_then(|v| number(v))) else {
+                return fail("usage: river_height <point> <y m>");
+            };
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            let g = d.next_gesture();
+            match d.set_river_heights(r, &[(i, f64::from(y))], "Move river point height", g) {
+                Ok(()) => ok(""),
+                Err(why) => fail(why),
+            }
+        },
+    );
+
+    c.add("river_downhill", "river_downhill", "make the selected river's water run downhill (one undo entry)", |e, _| {
+        let sel = primary(e);
+        let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+        match d.make_river_downhill(r) {
+            Ok(n) => ok(format!("{n} point(s) moved")),
+            Err(why) => fail(why),
+        }
+    });
+
+    c.add(
+        "river_ramp",
+        "river_ramp <width|flow_speed|foam_amount|terrain_offset> <from point> <to point> <from value> <to value>",
+        "ramp a value over the selected river's points (width in the file's metres; one undo entry)",
+        |e, a| {
+            let sel = primary(e);
+            let n = |i: usize| a.get(i).and_then(|v| number(v));
+            let (Some(attr), Some(from), Some(to), Some(va), Some(vb)) =
+                (a.first(), a.get(1).and_then(|v| v.parse::<usize>().ok()), a.get(2).and_then(|v| v.parse::<usize>().ok()), n(3), n(4))
+            else {
+                return fail("usage: river_ramp <attr> <from point> <to point> <from value> <to value>");
+            };
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            match d.ramp_river(r, attr, from, to, f64::from(va), f64::from(vb)) {
+                Ok(()) => ok(""),
+                Err(why) => fail(why),
+            }
+        },
+    );
+
+    c.add("river_profile", "river_profile", "log the selected river's points along it: how far, the water, joined to a link", |e, _| {
+        let sel = primary(e);
+        let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+        let Some(p) = d.river_profile(r) else { return fail("not a river drawn") };
+        ok(p.points
+            .iter()
+            .map(|q| format!("{}: {:.0} m, {:.2}{}", q.index, q.along, q.water, if q.locked { " (link)" } else { "" }))
+            .collect::<Vec<_>>()
+            .join("; "))
+    });
+
     c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
         match d.snap_river_ends() {
