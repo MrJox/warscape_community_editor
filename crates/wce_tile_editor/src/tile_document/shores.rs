@@ -19,8 +19,11 @@ pub const SHORES_ATTR: &str = "wce_shores";
 pub const REEDS_ATTR: &str = "wce_shore_reeds";
 pub const STONES_ATTR: &str = "wce_shore_stones";
 
+/// A river's fords splash at their edges (`1`, missing) or not (`0`).
+pub const SPLASHES_ATTR: &str = "wce_ford_splashes";
+
 /// The attributes the Inspector shows as rows of their own.
-pub(crate) const SHORE_ROW_ATTRS: [&str; 3] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR];
+pub(crate) const SHORE_ROW_ATTRS: [&str; 4] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR, SPLASHES_ATTR];
 
 /// The layer an export puts the shores in.
 pub const EXPORT_LAYER: &str = "WCE shores";
@@ -34,12 +37,13 @@ pub(crate) struct ShoreJob {
     signature: u64,
 }
 
-/// A water with a shore: its element, its water, its settings and its seed.
+/// A water with a shore: its element, its water, its settings, its seed and whether its fords splash.
 struct ShoreWater {
     elem: usize,
     water: Water,
     settings: ShoreSettings,
     seed: u64,
+    splashes: bool,
 }
 
 impl Tile {
@@ -54,7 +58,18 @@ impl Tile {
         let seed = |e: usize| sc.get(e, RIVER_ID_ATTR).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(e as u64);
         let mut out = vec![];
         for (e, (_, samples)) in self.river_ribbons_by_elem() {
-            if !on(e) || samples.len() < 2 {
+            // Its fords (its terrain patch on): their edges are marked whether or not it has a shore.
+            let patch = super::river_beds::river_patch_on(
+                sc.get(e, super::river_beds::PATCH_ATTR).as_deref(),
+                sc.get(e, super::river_beds::BED_ATTR).as_deref(),
+            );
+            let fords = if patch {
+                super::river_beds::river_fords(sc.get(e, super::river_beds::FORDS_ATTR).as_deref().unwrap_or_default())
+            } else {
+                vec![]
+            };
+            let shore = on(e);
+            if (!shore && fords.is_empty()) || !self.shown(e) || !self.of_tile_variation(e) || samples.len() < 2 {
                 continue;
             }
 
@@ -62,8 +77,11 @@ impl Tile {
                 line: samples.iter().map(|s| [s.x as f32, s.z as f32]).collect(),
                 water: samples.iter().map(|s| s.y as f32).collect(),
                 half: samples.iter().map(|s| (s.width * 0.5) as f32).collect(),
+                fords: fords.iter().map(|&(at, len)| [(at - len * 0.5) as f32, (at + len * 0.5) as f32]).collect(),
             };
-            out.push(ShoreWater { elem: e, water, settings: settings(e), seed: seed(e) });
+            let settings = if shore { settings(e) } else { ShoreSettings::of(0.0, 0.0) };
+            let splashes = sc.get(e, SPLASHES_ATTR).as_deref().map(str::trim) != Some("0");
+            out.push(ShoreWater { elem: e, water, settings, seed: seed(e), splashes });
         }
 
         for e in sc.find_all("SIMPLE_MESH_INSTANCE") {
@@ -75,7 +93,7 @@ impl Tile {
             let outline = super::lakes::lake_outline(&text).into_iter().map(|p| [p[0] as f32, p[1] as f32]).collect::<Vec<_>>();
             if outline.len() >= 3 {
                 let water = Water::Lake { outline, water: self.world_position(e).y };
-                out.push(ShoreWater { elem: e, water, settings: settings(e), seed: seed(e) });
+                out.push(ShoreWater { elem: e, water, settings: settings(e), seed: seed(e), splashes: false });
             }
         }
 
@@ -87,7 +105,7 @@ impl Tile {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for w in waters {
-            (w.elem, w.seed, format!("{:?}{:?}", w.water, w.settings)).hash(&mut h);
+            (w.elem, w.seed, w.splashes, format!("{:?}{:?}", w.water, w.settings)).hash(&mut h);
         }
 
         // The ground (as the texture rules hash it) and the buildings and roads they keep off (any edit).
@@ -161,12 +179,15 @@ impl Tile {
             let mut out = vec![];
             for w in &waters {
                 let shore = wce_tile::shores::place(&w.water, &w.settings, &height, &|x, z| keep_off.blocked(x, z), w.seed);
-                for (kind, list) in [("VEGETATION_INSTANCE", &shore.reeds), ("BUILDING_INSTANCE", &shore.stones)] {
+                let splashes = if w.splashes { shore.splashes.as_slice() } else { &[] };
+                for (kind, list) in
+                    [("VEGETATION_INSTANCE", shore.reeds.as_slice()), ("BUILDING_INSTANCE", &shore.stones), ("VFXInstance", splashes)]
+                {
                     for p in list {
                         let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
                         let Some(mut text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
-                        // A lily floats: at the water's height, not on the bed.
-                        if wce_tile::shores::LILIES.contains(&p.key.as_str()) {
+                        // A lily and a splash float: at the water's height, not on the bed.
+                        if kind == "VFXInstance" || wce_tile::shores::LILIES.contains(&p.key.as_str()) {
                             text = super::draft::with_root_attr(&text, "surface_mode", "MSM_FREEFORM");
                         }
 
@@ -232,7 +253,14 @@ impl Tile {
     #[must_use]
     pub fn shore_counts(&self) -> (usize, usize) {
         let reeds = self.shore_items.iter().filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE")).count();
-        (reeds, self.shore_items.len() - reeds)
+        let stones = self.shore_items.iter().filter(|i| i.text.starts_with(b"<BUILDING_INSTANCE")).count();
+        (reeds, stones)
+    }
+
+    /// How many splashes the fords have now.
+    #[must_use]
+    pub fn shore_splashes(&self) -> usize {
+        self.shore_items.iter().filter(|i| i.text.starts_with(b"<VFXInstance")).count()
     }
 }
 
@@ -246,7 +274,20 @@ impl TileDocument {
     pub(crate) fn shore_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
         let sc = self.tile().tscene();
         let on = sc.get(e, SHORES_ATTR).as_deref().map(str::trim) == Some("1");
+        let has_fords = !super::river_beds::river_fords(sc.get(e, super::river_beds::FORDS_ATTR).as_deref().unwrap_or_default()).is_empty();
+        let splashing = sc.get(e, SPLASHES_ATTR).as_deref().map(str::trim) != Some("0");
         ins.section("Shores");
+        if has_fords {
+            let mut s = splashing;
+            ins.hint(
+                "Splashes over the fords' edges (the game's battle water splash, a loop on the water). The fords' edges are lined \
+                 with stones whether or not the river has a shore.",
+            );
+            if ins.edit_bool(SPLASHES_ATTR, "ford splashes", &mut s) && s != splashing {
+                self.set_attribute(e, SPLASHES_ATTR, if s { "1" } else { "0" });
+            }
+        }
+
         let mut shores = on;
         ins.hint(
             "Reed beds in the shallows and on the wet bank, water lilies, small stones along the waterline; made again as the water or \

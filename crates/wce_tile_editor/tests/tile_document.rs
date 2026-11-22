@@ -3488,3 +3488,27 @@ fn a_drawn_river_has_reeds_and_stones_along_its_shore() {
     d.finish_shores();
     assert_eq!(d.tile().shore_counts(), (0, 0), "off");
 }
+
+/// A ford's edges are lined with stones and splash, whether or not its river has a shore.
+#[test]
+fn a_fords_edges_are_marked_with_stones_and_splashes() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.set_attribute(r, "wce_shores", "0");
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    assert_eq!(d.tile().shore_counts(), (0, 0), "no shore, no ford: nothing");
+
+    d.add_river_ford(r, 110.0, 30.0);
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    assert!(d.tile().shore_counts().1 > 10, "its edges lined: {:?}", d.tile().shore_counts());
+    assert!(d.tile().shore_splashes() >= 4, "two edges splashing: {}", d.tile().shore_splashes());
+
+    d.set_attribute(r, "wce_ford_splashes", "0");
+    d.finish_shores();
+    assert_eq!(d.tile().shore_splashes(), 0);
+}
