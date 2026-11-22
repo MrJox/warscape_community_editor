@@ -18,38 +18,35 @@ to a projects folder, to loose files or to a mod pack.
 
 ## Supported games
 
-| Game | Support |
-|---|---|
-| Total War: ATTILA | Main target: every editor, with or without the Assembly Kit |
-| Total War Saga: Thrones of Britannia | Same engine and Assembly Kit as Attila |
-| Total War: Rome II | From the game's packs (its Assembly Kit has no battle tiles to open) |
+- Total War: ATTILA
+- Total War Saga: Thrones of Britannia
+- Total War: Rome II
 
-The editor runs on **Windows** and **Linux** (where it finds the Steam / Proton install of the game).
+The editor runs on **Windows** and **Linux**.
 
 ## Editors
 
 ### Tile editor
 
-Build and edit battle and campaign tiles, the pieces the game's battle maps are made of:
+Build the battlefields your battles are fought on, from a single field to a whole fortified city:
 
-- Place and arrange buildings, props, vegetation, effects, lights and logic with a gizmo, snapping and multi-selection.
-- Paint the terrain: heights, ground textures and blends, with brushes, stamps and imported images.
-- Draw roads, rivers and walls along splines, and fences along a line; generate the siege AI layout of a settlement in one click.
-- See the tile in context, surrounded by its neighbours on the campaign's battle map, under any of the game's weathers.
-- Keep a tile's variations (a settlement's sizes, random alternatives) in one project.
-- Open tiles from the Assembly Kit, or extract them straight from the game's packs.
-- Export to the Assembly Kit, to the game's tile format or to a mod pack, with the battle minimap drawn for you.
-- **Launch in game**: one click exports the tile and starts the game straight into a battle on it.
+- Place and arrange buildings, props, trees, effects and lights, with snapping and multi-selection.
+- Sculpt and paint the ground with brushes, stamps and images.
+- Draw roads, rivers, walls and fences, and generate a city's siege AI in one click.
+- See your tile among its neighbours on the campaign map, in any of the game's weathers.
+- Keep every version of a tile (a city's sizes, its alternatives) in one project.
+- Open tiles from the Assembly Kit, or straight from the game.
+- Save them for the Assembly Kit, or export them ready for the game or as a mod pack, minimap included.
+- **Launch in game**: one click and the game starts straight into a battle on your tile.
 
 ### Prefab editor
 
-Groups of buildings and props you reuse across tiles. A prefab is edited on a stage of its own and placed in tiles as a reference: change
-the prefab, and every tile that uses it follows.
+Build groups of buildings and props once and reuse them in any tile. Change a prefab, and every tile that uses it updates.
 
 ### Weather and lighting editor
 
-Edit the game's `.environment` and `.lighting` files (sun, sky, clouds, fog, rain and snow, colour grading, exposure) with a live
-preview on a sample map or on the tile you are working on, and pick which weather a battle uses.
+Edit the game's weather and lighting (sun, sky, clouds, fog, rain and snow, colours) with a live preview on a sample map or on the tile
+you are working on, and pick which weather a battle uses.
 
 ### UI editor
 
@@ -58,17 +55,15 @@ or into a mod pack.
 
 ### Audio editor
 
-Browse the game's Wwise sound banks with names instead of numbers: search across every bank, see what an event plays, and listen to it.
-Replace sounds from WAV or Ogg files, add variations, edit music playlists and unit voice lines, and save the changed banks into your
-project.
+Browse the game's sounds with their names: search them, see what plays when, and listen to them. Replace sounds with your own WAV or Ogg
+files, add variations, and edit the music playlists and the units' voice lines.
 
 ### For every editor
 
 - Undo and redo for every edit, and autosave with recovery after a crash.
-- Your game's mod packs mounted alongside the game's own.
-- Built-in updates (Help > Update Manager), including the database schemas the editor needs to read the game's tables.
-- Shared art resources: a team can keep its models, prefabs and vegetation sets in a git repository the editor publishes to and updates
-  from.
+- Works with the mods you have installed.
+- Updates itself (Help > Update Manager).
+- Teams can share their models, prefabs and vegetation through a shared online repository.
 
 ## Installing
 
