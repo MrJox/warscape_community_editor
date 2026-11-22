@@ -672,6 +672,12 @@ impl TileDocument {
         merged_spans(roots.iter().map(|&r| (r, doc.subtree_size(r))).collect())
     }
 
+    /// `push_splice` of an edit that changed the scene's structure in ways no other effect describes (elements added and removed, points
+    /// moved between them): the index is made again.
+    pub(crate) fn push_splice_structure(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>) {
+        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Structure);
+    }
+
     pub(crate) fn begin(&mut self) -> Result<usize, String> {
         self.tscene_mut().begin_edit()
     }

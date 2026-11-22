@@ -13,6 +13,7 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   ran straight on where the river bent away).
   Step 3 (long profile in the Inspector, Make downhill, Reverse river, ramps, flow arrows) built; the flow check against `is_entry`
   waits for the in-game look R3 asks for.
+  Step 4 (tributaries snapped onto a river's middle line at its water, Split here, Join rivers) built.
 
 ## What there is today
 

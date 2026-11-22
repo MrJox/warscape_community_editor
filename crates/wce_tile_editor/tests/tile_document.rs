@@ -3209,3 +3209,70 @@ fn a_rivers_profile_is_edited_made_downhill_and_ramped() {
     assert_eq!((widths[0], widths[3]), (90.0, 40.0));
     assert!(widths[1] < 90.0 && widths[1] > widths[2] && widths[2] > 40.0, "{widths:?}");
 }
+
+#[test]
+fn rivers_split_join_and_take_a_tributary() {
+    let (_dir, mut d) = open_with_river_links();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let line =
+        vec![Float3::new(20.0, 0.0, 128.0), Float3::new(80.0, 1.0, 128.0), Float3::new(140.0, 2.0, 128.0), Float3::new(200.0, 3.0, 128.0)];
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    let world = |d: &TileDocument, e: usize| d.tile().polygon_world_points(e);
+    let before = world(&d, r);
+    let rivers = |d: &TileDocument| d.tile().tscene().find_all("SplineRiverInstance").len();
+
+    // Split at point 2: points 0..=2 and 2..=3, the same places.
+    let entries = d.history().position();
+    let copy = d.split_river(r, 2).unwrap();
+    assert_eq!(d.history().position(), entries + 1);
+    assert_eq!(rivers(&d), 2);
+    let sc = d.tile().tscene();
+    let copy = sc.find_all("SplineRiverInstance").into_iter().find(|&e| e != r).unwrap_or(copy);
+    let (a, b) = (world(&d, r), world(&d, copy));
+    assert_eq!((a.len(), b.len()), (3, 2));
+    assert!(
+        wce_foundation::math::length(a[2] - before[2]) < 1e-3
+            && wce_foundation::math::length(b[0] - before[2]) < 1e-3
+            && wce_foundation::math::length(b[1] - before[3]) < 1e-3,
+        "{a:?} {b:?}"
+    );
+    assert_ne!(sc.get(copy, "wce_river_id"), sc.get(r, "wce_river_id"));
+
+    // Joined back: the same four points (the shared one once).
+    d.join_rivers(r, copy).unwrap();
+    assert_eq!(rivers(&d), 1);
+    let r = d.tile().tscene().find_all("SplineRiverInstance")[0];
+    let joined = world(&d, r);
+    assert_eq!(joined.len(), 4);
+    for (p, q) in joined.iter().zip(&before) {
+        assert!(wce_foundation::math::length(*p - *q) < 1e-3, "{joined:?} against {before:?}");
+    }
+
+    // Split again and joined the other way round (the later river first): turned round, the same places backwards.
+    d.split_river(r, 2).unwrap();
+    let sc = d.tile().tscene();
+    let all = sc.find_all("SplineRiverInstance");
+    d.join_rivers(all[1], all[0]).unwrap();
+    assert_eq!(rivers(&d), 1);
+    let r2 = d.tile().tscene().find_all("SplineRiverInstance")[0];
+    let back = world(&d, r2);
+    assert_eq!(back.len(), 4);
+    for (p, q) in back.iter().zip(before.iter().rev()) {
+        assert!(wce_foundation::math::length(*p - *q) < 1e-3, "{back:?} against {before:?} backwards");
+    }
+
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(world(&d, r), joined, "undone twice: as joined the first time");
+
+    // A tributary: an end on the river's middle line goes to its water.
+    let on = d.river_join_point(Float3::new(110.0, 0.0, 135.0), None).expect("within the river");
+    assert!((on.z - 128.0).abs() < 1e-3 && (on.x - 110.0).abs() < 1e-3, "{on:?}");
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let t = d
+        .create("SplineRiverInstance", graph, &Create::Line(vec![Float3::new(110.0, 5.0, 230.0), Float3::new(on.x, 5.0, on.z)]), "")
+        .unwrap();
+    assert!(d.settle_river_on_rivers(t).unwrap());
+    let end = *world(&d, t).last().unwrap();
+    assert!((end.y - on.y).abs() < 1e-3, "at the main river's water: {end:?} against {on:?}");
+}

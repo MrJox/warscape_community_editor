@@ -32,6 +32,7 @@ impl Default for RiverUi {
 impl TileTool {
     pub(crate) fn inspect_river(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(river) = primary(e) else { return };
+        let selection = crate::tool::selected(e);
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         if d.tile().tscene().type_of(river) != "SplineRiverInstance" {
             self.river_ui.drag = None;
@@ -135,6 +136,41 @@ impl TileTool {
 
         if gui::is_item_hovered() {
             gui::set_tooltip("Its points the other way round: its first point is its last. The arrows on it show the way it runs.");
+        }
+
+        // Split at the point picked in the viewport; join with another river selected with it.
+        let point = self.poly_point.filter(|&i| i > 0 && i + 1 < p.points.len());
+        gui::same_line();
+        gui::begin_disabled(point.is_none());
+        if gui::button("Split here") {
+            if let Some(i) = point {
+                self.status = match d.split_river(river, i) {
+                    Ok(_) => format!("split at point {i}: two rivers"),
+                    Err(why) => why,
+                };
+            }
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(
+                "Splits the river at the point picked in the viewport (not an end): the part after it becomes a river of its own.",
+            );
+        }
+
+        let other = selection.into_iter().find(|&s| s != river && d.tile().tscene().type_of(s) == "SplineRiverInstance");
+        if let Some(other) = other {
+            gui::same_line();
+            if gui::button("Join rivers") {
+                self.status = match d.join_rivers(river, other) {
+                    Ok(()) => "joined into one river".to_owned(),
+                    Err(why) => why,
+                };
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Joins the two selected rivers whose ends meet into one (either turned round as needed).");
+            }
         }
 
         // The ramp: a value from one point to another, by the distance along.

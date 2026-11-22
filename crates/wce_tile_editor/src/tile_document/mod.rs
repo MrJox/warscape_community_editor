@@ -50,6 +50,7 @@ mod radar;
 pub use radar::RadarRequest;
 mod river_beds;
 mod river_checks;
+mod river_joins;
 pub mod river_links;
 pub mod river_profile;
 pub mod roads;
