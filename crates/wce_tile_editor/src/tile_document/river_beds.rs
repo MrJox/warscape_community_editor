@@ -840,6 +840,8 @@ fn river_terrain(i: RiverInput) -> RiverStacks {
         let origin = [f64::from(x0) * mx - border, f64::from(y0) * mz - border];
         let bed = river.bed.channel.as_ref().map(|c| c.fill_cells(origin, [mx, mz], (gw, gh)));
         let mut writes = vec![];
+        // The ground as the river leaves it, by pixel (the texture follows it).
+        let mut finals = vec![f64::NAN; gw * gh];
         for y in y0..y1 {
             for x in x0..x1 {
                 // The stack's samples are in the game's units, as the river's bed is.
@@ -848,7 +850,9 @@ fn river_terrain(i: RiverInput) -> RiverStacks {
                 let g = f64::from(v[0]);
                 let (wx, wz) = (f64::from(x) * mx - border, f64::from(y) * mz - border);
                 let cell = bed.as_ref().map_or(BedCell::default(), |b| b[(y - y0) as usize * gw + (x - x0) as usize]);
-                if let Some(h) = river.bed.height_of(wx, wz, g, cell) {
+                let h = river.bed.height_of(wx, wz, g, cell);
+                finals[(y - y0) as usize * gw + (x - x0) as usize] = h.unwrap_or(g);
+                if let Some(h) = h {
                     writes.push((x, y, (h - g) as f32));
                 }
             }
@@ -859,6 +863,14 @@ fn river_terrain(i: RiverInput) -> RiverStacks {
         }
 
         // The bed's grid place nearest a place (its line's distance, the ford there), for the texture and the ground type.
+        let final_at = |wx: f64, wz: f64| {
+            let (u, v) = (((wx + border) / mx).round(), ((wz + border) / mz).round());
+            if u < f64::from(x0) || v < f64::from(y0) || u >= f64::from(x1) || v >= f64::from(y1) {
+                return f64::NAN;
+            }
+
+            finals[(v as u32 - y0) as usize * gw + (u as u32 - x0) as usize]
+        };
         let cell_at = |wx: f64, wz: f64| {
             let (u, v) = (((wx + border) / mx).round(), ((wz + border) / mz).round());
             if u < f64::from(x0) || v < f64::from(y0) || u >= f64::from(x1) || v >= f64::from(y1) {
@@ -879,7 +891,7 @@ fn river_terrain(i: RiverInput) -> RiverStacks {
             for y in by0..by1 {
                 for x in bx0..bx1 {
                     let (wx, wz) = ((f64::from(x) + 0.5) / bpx - border, (f64::from(y) + 0.5) / bpz - border);
-                    let w = river.bed.paint(wx, wz, cell_at(wx, wz));
+                    let w = river.bed.paint(wx, wz, cell_at(wx, wz), final_at(wx, wz));
                     if w > 0.0 {
                         let mut p = [0u16; 16];
                         p[ch] = (w * 65535.0).round() as u16;
