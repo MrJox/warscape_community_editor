@@ -10,7 +10,10 @@ fn main() {
     let prefix = std::env::var("WCE_DEPS_PREFIX").unwrap_or_else(|_| format!("{}/../../build/_deps/prefix", env!("CARGO_MANIFEST_DIR")));
     let lib = std::path::Path::new(&prefix).join("lib");
     if !lib.join("libdxvk_d3d11.so").exists() {
-        panic!("DXVK-native is not in {}: configure the CMake build first (README, Linux), or set WCE_DEPS_PREFIX", lib.display());
+        panic!(
+            "DXVK-native is not in {}: configure the CMake build first (README, 'Building from source'), or set WCE_DEPS_PREFIX",
+            lib.display()
+        );
     }
 
     println!("cargo:rustc-link-search=native={}", lib.display());

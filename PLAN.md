@@ -9,7 +9,7 @@ Rust port (2026-10-13 to 10-19, then the C++ tree was removed) are done; their r
 and their baselines) and [docs/rust_port_app_and_gates.md](docs/rust_port_app_and_gates.md) (the port's decisions and the per-crate checks
 against the C++ code). What each tool does is in [docs/editor.md](docs/editor.md) and [docs/ui_editor.md](docs/ui_editor.md).
 
-Each tool is a Cargo feature of `wce_app` (README, "Editors"): the default features have them all, the `release` feature (CI releases,
+Each tool is a Cargo feature of `wce_app` ([docs/editor.md](docs/editor.md), "Tools"): the default features have them all, the `release` feature (CI releases,
 nightlies, the Flatpak) only the stable ones.
 
 | Tool | In `release` | State |
