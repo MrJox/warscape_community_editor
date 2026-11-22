@@ -8,6 +8,9 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
 
 - 2026-11-22: RE R1 to R4 done. Step 1 (link snap, the joins' layer, the Problems' fixes, the neighbour check in a map context) and
   step 2 (the carved bed and its texture) built; battle rivers are drawn at their file's width (they were twice the game's).
+  Step 7 (water checks: spills, buried, steps) built; the plan's "old factors" check dropped: the editor draws the game's heights
+  already, and the snap writes through the river's factors. The joins hold the connection 16 m in and fade by 64 m (held 64 m, they
+  ran straight on where the river bent away).
 
 ## What there is today
 

@@ -62,11 +62,14 @@ impl Connection {
     }
 }
 
-/// How far in from the edge a join holds the connection whole (metres): the export's blend zone, so that the export leaves it as it is.
-pub const JOIN_HELD: f64 = 64.0;
+/// How far in from the edge a join holds the connection whole (metres): where the export's blend is mostly the connection (its weight
+/// of the tile's heights is under 0.2 there, docs/re/battle_maps.md).
+pub const JOIN_HELD: f64 = 16.0;
 
-/// How far past that a join fades into what lies beyond (metres).
-pub const JOIN_FADE: f64 = 64.0;
+/// How far past that a join fades into what lies beyond (metres): to the end of the export's blend zone (64 m). Held further, it ran
+/// straight on where a river bends away, and the river's water stood over its deep middle; a river's own bed, the same profile, follows
+/// the river from there.
+pub const JOIN_FADE: f64 = 48.0;
 
 /// Half the width a join holds along the edge (the link's cell), and how far past that it fades sideways (metres).
 pub const JOIN_HALF: f64 = 64.0;
@@ -286,10 +289,10 @@ mod tests {
         let bed = RiverBed { joins: vec![j], ..Default::default() };
         assert_eq!(bed.height_at(10.0, 192.0, 5.0), Some(-11.9));
         assert_eq!(bed.height_at(-4.0, 192.0, 5.0), Some(-11.9), "the border past the edge");
-        assert_eq!(bed.height_at(64.0, 192.0 + 16.0, 5.0), Some(-6.8));
-        let half = bed.height_at(96.0, 192.0, 5.0).unwrap();
+        assert_eq!(bed.height_at(12.0, 192.0 + 16.0, 5.0), Some(-6.8));
+        let half = bed.height_at(40.0, 192.0, 5.0).unwrap();
         assert!((half - (5.0 + (-11.9 - 5.0) * 0.5)).abs() < 1e-9, "halfway through the fade: {half}");
-        assert_eq!(bed.height_at(129.0, 192.0, 5.0), None);
+        assert_eq!(bed.height_at(65.0, 192.0, 5.0), None);
         assert_eq!(bed.height_at(10.0, 192.0 + 97.0, 5.0), None);
         let side = bed.height_at(10.0, 192.0 + 80.0, 5.0).unwrap();
         assert!(side > 0.0 && side < 5.0, "fading sideways: {side}");

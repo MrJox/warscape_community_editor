@@ -62,6 +62,23 @@ fn parse_owner(owner: &str) -> Option<Owner> {
 pub(crate) const RIVER_ROW_ATTRS: [&str; 5] = [RIVER_ID_ATTR, BED_ATTR, BED_DEPTH_ATTR, BANK_SLOPE_ATTR, BED_TEXTURE_ATTR];
 
 impl super::TileDocument {
+    /// Has a river cut its bed (`BED_ATTR`), giving it an id if it has none: one undo entry.
+    pub fn cut_river_bed(&mut self, river: usize) {
+        let has_id = self.tile().tscene().get(river, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
+        use wce_editor_core::document::Document;
+        let before = self.history().position();
+        self.set_attribute(river, BED_ATTR, "1");
+        if !has_id {
+            let id = self.tile().next_river_id();
+            self.set_attribute(river, RIVER_ID_ATTR, &id.to_string());
+        }
+
+        let n = self.history().position() - before;
+        if n > 1 {
+            self.join_last(n, "Cut the river's bed");
+        }
+    }
+
     /// A river's bed in the Inspector: whether it cuts one, how deep under the water and how steep its banks.
     pub(crate) fn river_bed_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
         let sc = self.tile().tscene();
@@ -198,13 +215,7 @@ impl Tile {
     fn river_beds(&self) -> Vec<River> {
         let sc = self.tscene();
         let links = self.river_link_points();
-        // The ribbons as drawn (`river_ribbons`: the viewed variation's rivers, in the document's order) by their element.
-        let ribbon_elems = sc
-            .find_all("SplineRiverInstance")
-            .into_iter()
-            .filter(|&e| sc.in_variation(e) && self.polygon_world_points(e).len() >= 2)
-            .collect::<Vec<_>>();
-        let mut ribbons = ribbon_elems.into_iter().zip(self.river_ribbons()).collect::<std::collections::HashMap<_, _>>();
+        let mut ribbons = self.river_ribbons_by_elem();
         let mut out = vec![];
         for e in sc.find_all("SplineRiverInstance") {
             let Some(id) = sc.get(e, RIVER_ID_ATTR).and_then(|v| v.parse::<u32>().ok()) else { continue };
@@ -264,6 +275,19 @@ impl Tile {
         }
 
         out
+    }
+
+    /// The rivers' ribbons as drawn (`river_ribbons`: the viewed variation's rivers, in the document's order) by their element.
+    pub(super) fn river_ribbons_by_elem(
+        &self,
+    ) -> std::collections::HashMap<usize, (Vec<super::view::RiverPoint>, Vec<super::view::RiverSample>)> {
+        let sc = self.tscene();
+        let elems = sc
+            .find_all("SplineRiverInstance")
+            .into_iter()
+            .filter(|&e| sc.in_variation(e) && self.polygon_world_points(e).len() >= 2)
+            .collect::<Vec<_>>();
+        elems.into_iter().zip(self.river_ribbons()).collect()
     }
 
     /// The texture a river's bed takes unless it names one: the first of the tile's texture groups named like mud, dirt, rock or sand

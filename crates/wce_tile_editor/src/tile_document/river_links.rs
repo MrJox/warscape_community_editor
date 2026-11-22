@@ -48,6 +48,9 @@ pub enum RiverFix {
 
     /// Move a river's end (its point) to meet the neighbour's river: along the edge to it, at its height and width.
     MatchNeighbour { river: usize, point: usize, at: Float3, width: f32 },
+
+    /// Have the river cut its bed (`river_beds::BED_ATTR`).
+    CutBed { river: usize },
 }
 
 /// A river link problem: the river it is about (if any), what is wrong, what fixes it (if anything does in one go).

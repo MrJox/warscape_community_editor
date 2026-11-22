@@ -2707,6 +2707,12 @@ impl TileTool {
                 self.status = "drawing a river from the link: click its points, Enter to finish".to_owned();
             }
 
+            RiverFix::CutBed { river } => {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                d.cut_river_bed(river);
+                self.status = "the river cuts its bed".to_owned();
+            }
+
             RiverFix::MatchNeighbour { river, point, at, width } => {
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 self.status = match d.match_river_end(river, point, at, width) {
@@ -3238,6 +3244,7 @@ impl TileTool {
         if self.checks.problems.as_ref().is_none_or(|(s, _)| *s != stamp) && (settled || first) {
             self.checks.problems = Some((stamp, Arc::new(d.trees_outside_exclusions())));
             let mut rivers = d.river_link_problems();
+            rivers.extend(d.river_water_problems());
             // In a map context: the rivers against the neighbours' at the seams.
             if let Some(ends) = self.neighbour_river_ends(d) {
                 rivers.extend(d.river_seam_problems(&ends));
@@ -3347,6 +3354,10 @@ impl TileTool {
                         RiverFix::MatchNeighbour { .. } => (
                             "Match neighbour",
                             "Moves the river's end along the edge to the neighbour's river, at its water height and width.",
+                        ),
+                        RiverFix::CutBed { .. } => (
+                            "Cut its bed",
+                            "The river cuts its bed along its line (the Inspector's River bed): the ground over its water goes.",
                         ),
                     };
                     gui::same_line();

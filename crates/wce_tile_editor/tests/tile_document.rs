@@ -3008,7 +3008,7 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     assert_eq!(d.history().position(), entries);
     d.tile_mut().finish_road_jobs();
     assert!((y(&d, 4.0, 192.0) + 11.9).abs() < 0.15, "deep bed: {}", y(&d, 4.0, 192.0));
-    assert!((y(&d, 30.0, 192.0 + 40.0) + 1.2).abs() < 0.3, "deep bank: {}", y(&d, 30.0, 192.0 + 40.0));
+    assert!((y(&d, 8.0, 192.0 + 40.0) + 1.2).abs() < 0.3, "deep bank: {}", y(&d, 8.0, 192.0 + 40.0));
     assert!((y(&d, 192.0, 4.0) + 1.0).abs() < 0.15, "shallow bed: {}", y(&d, 192.0, 4.0));
     assert_eq!((y(&d, 160.0, 160.0), y(&d, 10.0, 40.0)), away, "away from the links");
 
@@ -3139,4 +3139,36 @@ fn a_rivers_bed_is_painted_with_its_texture_where_it_was_cut() {
     let bf = d.project().blend.as_ref().unwrap();
     let (u, v) = (((a.x + b.x) * 0.5 + border) / (ex + 2.0 * border) * bw as f32, (a.z + border) / (ez + 2.0 * border) * bh as f32);
     assert_eq!(bf.pixel(u as u32, v as u32)[6], 0);
+}
+
+#[test]
+fn a_rivers_water_is_checked_against_the_ground() {
+    use wce_tile_editor::tile_document::river_links::RiverFix;
+
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    // Drawn on the ground, no bed: buried where the ground rises over its water (2 m under where it was drawn), the fix cuts its bed.
+    let (a, b) = (Float3::new(40.0, y(&d, 40.0, 100.0), 100.0), Float3::new(220.0, y(&d, 220.0, 100.0), 100.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.set_attribute(r, "wce_bed", "0");
+    d.tile_mut().finish_road_jobs();
+    let p = d.river_water_problems();
+    let buried = p.iter().find(|p| p.message.contains("vanishes")).unwrap_or_else(|| panic!("{p:?}"));
+    assert_eq!(buried.fix, Some(RiverFix::CutBed { river: r }));
+    d.cut_river_bed(r);
+    d.tile_mut().finish_road_jobs();
+    assert!(d.river_water_problems().iter().all(|p| !p.message.contains("vanishes")), "{:?}", d.river_water_problems());
+
+    // Lifted 30 m into the air: its water floats over the ground.
+    let pts = d.tile().tscene().polygon_points(r).len();
+    for i in 0..pts {
+        let at = d.tile().polygon_world_points(r)[i];
+        d.polygon_point(r, "move", i, Float3::new(at.x, at.y + 30.0, at.z), 100 + i as u64).unwrap();
+    }
+
+    let at = d.tile().polygon_world_points(r)[0];
+    assert!(at.y > y(&d, at.x, at.z) + 20.0, "lifted: {at:?}");
+    d.tile_mut().finish_road_jobs();
+    assert!(d.river_water_problems().iter().any(|p| p.message.contains("floats")), "{:?}", d.river_water_problems());
 }

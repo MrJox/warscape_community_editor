@@ -49,6 +49,7 @@ mod preview;
 mod radar;
 pub use radar::RadarRequest;
 mod river_beds;
+mod river_checks;
 pub mod river_links;
 pub mod roads;
 mod shift;
