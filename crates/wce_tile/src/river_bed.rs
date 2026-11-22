@@ -227,11 +227,14 @@ pub struct BedCell {
     pub wet: bool,
     pub near: f64,
     pub half: f64,
+
+    /// The water at the nearest place of the line (NaN where none reaches).
+    pub water: f64,
 }
 
 impl Default for BedCell {
     fn default() -> Self {
-        Self { bed: f64::INFINITY, ford: 0.0, wet: false, near: f64::INFINITY, half: 0.0 }
+        Self { bed: f64::INFINITY, ford: 0.0, wet: false, near: f64::INFINITY, half: 0.0, water: f64::NAN }
     }
 }
 
@@ -249,6 +252,10 @@ fn paint_band(past: f64, bank: f64) -> f64 {
         1.0 - smooth((past - bank) / PAINT_FADE)
     }
 }
+
+/// How far over a river's water its bed's texture goes whole, and how far over that it fades out (metres).
+pub const PAINT_ABOVE: f64 = 0.3;
+pub const PAINT_ABOVE_FADE: f64 = 1.2;
 
 /// How deep a bed (the game's height units, under the water) is for its ground to be *deep water* rather than *shallow water* (the kit's
 /// `river` tiles: deep water under a bed 5.7 deep; `river_shallow`: shallow water under one 1.4 deep).
@@ -417,6 +424,7 @@ impl Channel {
                         c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at, r * side / (width * 0.5).max(1e-6)).0 };
                         c.wet = r <= width * 0.5;
                         c.half = width * 0.5;
+                        c.water = water;
                     }
                 }
             }
@@ -578,13 +586,31 @@ impl RiverBed {
     /// How much of the bed's texture goes at a place (0 .. 1): along a river that cuts its bed (or at its fords), its width and a bank
     /// past it, fading out ([`paint_band`]) however far its banks cut into a hill; in a join, its river's ([`Join::paint`]); in a lake's
     /// basin and a bank round it.
-    pub fn paint(&self, x: f64, z: f64, cell: BedCell) -> f64 {
+    ///
+    /// `ground`: the ground there as the river leaves it (the game's units; NaN: not known). A river's bed is painted where that ground is
+    /// under its water or just over it ([`PAINT_ABOVE`], fading out over [`PAINT_ABOVE_FADE`] more), not up its banks: they keep their
+    /// own texture, and the shore's decals show on it.
+    pub fn paint(&self, x: f64, z: f64, cell: BedCell, ground: f64) -> f64 {
         let mut w = 0.0f64;
         if let Some(c) = &self.channel
             && cell.near.is_finite()
             && (c.cuts || cell.ford > 0.0)
         {
-            w = w.max(paint_band(cell.near - cell.half, PAINT_BANK));
+            let by_distance = paint_band(cell.near - cell.half, PAINT_BANK);
+            let by_height = if ground.is_finite() && cell.water.is_finite() {
+                let v = if c.vertical > 0.0 { c.vertical } else { 1.0 };
+                let above = (ground - cell.water) / v;
+                if above <= PAINT_ABOVE {
+                    1.0
+                } else if above >= PAINT_ABOVE + PAINT_ABOVE_FADE {
+                    0.0
+                } else {
+                    1.0 - smooth((above - PAINT_ABOVE) / PAINT_ABOVE_FADE)
+                }
+            } else {
+                1.0
+            };
+            w = w.max(by_distance.min(by_height));
         }
 
         if let Some(b) = &self.basin
@@ -651,12 +677,12 @@ mod tests {
         let j = Join { at: [0.0, 192.0], inward: [1.0, 0.0], connection: DEEP };
         let bed = RiverBed { joins: vec![j], ..Default::default() };
         let none = BedCell::default();
-        assert_eq!(bed.paint(10.0, 192.0, none), 1.0, "the river");
-        assert_eq!(bed.paint(10.0, 192.0 + 25.0, none), 1.0, "its bank");
-        assert!(bed.paint(10.0, 192.0 + 28.0, none) > 0.0 && bed.paint(10.0, 192.0 + 28.0, none) < 1.0, "fading");
-        assert_eq!(bed.paint(10.0, 192.0 + 60.0, none), 0.0, "levelled, not painted");
+        assert_eq!(bed.paint(10.0, 192.0, none, f64::NAN), 1.0, "the river");
+        assert_eq!(bed.paint(10.0, 192.0 + 25.0, none, f64::NAN), 1.0, "its bank");
+        assert!(bed.paint(10.0, 192.0 + 28.0, none, f64::NAN) > 0.0 && bed.paint(10.0, 192.0 + 28.0, none, f64::NAN) < 1.0, "fading");
+        assert_eq!(bed.paint(10.0, 192.0 + 60.0, none, f64::NAN), 0.0, "levelled, not painted");
         assert!(bed.height_at(10.0, 192.0 + 60.0, 5.0).is_some(), "but levelled there");
-        assert_eq!(bed.paint(100.0, 192.0, none), 0.0, "past the join");
+        assert_eq!(bed.paint(100.0, 192.0, none, f64::NAN), 0.0, "past the join");
         assert_eq!(bed.water_ground(10.0, 192.0, none), Some(WaterGround::Deep));
         assert_eq!(bed.water_ground(10.0, 192.0 + 30.0, none), None);
     }
