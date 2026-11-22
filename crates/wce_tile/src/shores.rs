@@ -1,47 +1,71 @@
-//! Shores (docs/plans/rivers.md, step 10): reeds and stones along a river's or a lake's water, as the shelved ground coverage's Shores had
-//! them, laid along the water the editor knows rather than found in the heights. Reeds stand in the shallows (the water up to
-//! [`ShoreSettings::shallows`] deep) and thinner on the bank at its edge; stones lie along the bank (within [`ShoreSettings::bank`] metres
-//! of the water and less than [`ShoreSettings::rise`] over it) and a few in the shallows.
+//! Shores (docs/plans/rivers.md, step 10): reeds, water lilies and stones along a river's or a lake's water, laid along the water the
+//! editor knows rather than found in the heights.
 //!
-//! Each place of a 1 m grid draws its own numbers from the seed and its cell, so a shore keeps what it has where nothing changed when its
-//! water is edited elsewhere. Everything is in the editor's metres.
+//! - **Reed beds**: clumps where a smooth noise along the shore is high (dense inside, thinning at their edge, gaps between), each bed
+//!   mostly one kind of reed. They stand in the shallows (up to [`ShoreSettings::shallows`] deep) and on the wet bank up to
+//!   [`ShoreSettings::wet_bank`] metres from the water.
+//! - **Water lilies**: a few patches on the water a little further out, up to [`LILY_DEPTH`] deep.
+//! - **Stones**: small ones strung along the waterline (where the ground is within [`WATERLINE_HEIGHT`] of the water, near its edge), in
+//!   runs where another noise is high, and now and then a bigger one on the bank.
+//!
+//! Each place of a half-metre grid draws its own numbers from the seed and its cell, and the noises are of the place too, so a shore keeps
+//! what it has where nothing changed when its water is edited elsewhere. Everything is in the editor's metres.
 
-/// The built-in stones and reeds (Attila's: the built-in biomes' rocks, the Reeds and marsh biome's undergrowth).
-pub const STONES: [&str; 2] = ["gaul_rock_01", "gaul_rock_02"];
-pub const REEDS: [&str; 2] = ["shrub_calamus.shrub_calamus_a", "shrubs_med.water_a"];
+/// The built-in reeds (Attila's vanilla: the bulrush, the calamus, the marsh plants), lilies and stones (its small rocks; a few small
+/// boulders for the bank).
+pub const REEDS: [&str; 5] =
+    ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"];
+pub const LILIES: [&str; 2] = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"];
+pub const STONES: [&str; 11] = [
+    "attila_rock_small_01",
+    "attila_rock_small_02",
+    "attila_rock_small_03",
+    "attila_rock_small_04",
+    "attila_rock_small_05",
+    "attila_rock_small_06",
+    "attila_rock_small_07",
+    "smallrock_01",
+    "smallrock_02",
+    "smallrock_03",
+    "rocks_small_01",
+];
+pub const BANK_STONES: [&str; 3] = ["boulder_small_b", "boulder_small_c", "boulder_small_d"];
 
-/// How thick a shore is: reeds and stones per square metre of the shallows and the bank, how deep the shallows go, how wide the bank is
-/// and how far over the water it may stand.
+/// How deep lilies float at most (metres), and how far from the water's edge stones lie either side (metres).
+pub const LILY_DEPTH: f32 = 1.5;
+pub const WATERLINE: f32 = 1.5;
+
+/// How far over or under the water the ground at the waterline is (metres): the stones lie there.
+pub const WATERLINE_HEIGHT: f32 = 0.35;
+
+/// How a shore is: how much of it its reed beds cover and its stones (0 .. 1, [`AMOUNTS`]), how deep its reeds stand and how far up the
+/// bank they grow.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShoreSettings {
     pub reeds: f32,
     pub stones: f32,
     pub shallows: f32,
-    pub bank: f32,
-    pub rise: f32,
+    pub wet_bank: f32,
 }
 
 impl Default for ShoreSettings {
     fn default() -> Self {
-        Self { reeds: 1.0 / 6.0, stones: 1.0 / 25.0, shallows: 0.5, bank: 5.0, rise: 1.2 }
+        Self { reeds: 0.5, stones: 0.25, shallows: 0.8, wet_bank: 2.5 }
     }
 }
 
-/// The amounts a shore's reeds and stones can be set to, by name: per square metre.
-pub const AMOUNTS: [(&str, f32); 4] = [("none", 0.0), ("few", 1.0 / 12.0), ("some", 1.0 / 6.0), ("thick", 1.0 / 3.0)];
+/// The amounts a shore's reeds and stones can be set to, by name: how much of the shore they take (0 .. 1).
+pub const AMOUNTS: [(&str, f32); 4] = [("none", 0.0), ("few", 0.25), ("some", 0.5), ("thick", 0.85)];
 
-/// Stones are rarer than reeds by this, at the same amount.
-const STONE_SHARE: f32 = 0.25;
-
-/// An amount's density (per square metre) by its name; none for an unknown one.
+/// An amount by its name; none for an unknown one.
 pub fn amount(name: &str) -> Option<f32> {
     AMOUNTS.iter().find(|a| a.0 == name.trim()).map(|a| a.1)
 }
 
 impl ShoreSettings {
-    /// The settings of named amounts of reeds and stones ([`AMOUNTS`]).
+    /// The settings of amounts of reeds and stones ([`AMOUNTS`]).
     pub fn of(reeds: f32, stones: f32) -> Self {
-        Self { reeds, stones: stones * STONE_SHARE, ..Self::default() }
+        Self { reeds, stones, ..Self::default() }
     }
 }
 
@@ -141,46 +165,96 @@ fn cell_numbers(seed: u64, i: i64, j: i64) -> [f32; 4] {
     out
 }
 
-/// The grid's cell, metres: one draw a cell (so a density over 1 a square metre is 1).
-const CELL: f32 = 1.0;
+/// A smooth noise in [0, 1) over the ground, its features about `size` metres across (value noise: a lattice of the seed's numbers,
+/// smoothly interpolated).
+fn noise(seed: u64, x: f32, z: f32, size: f32) -> f32 {
+    let (u, v) = (x / size, z / size);
+    let (i, j) = (u.floor() as i64, v.floor() as i64);
+    let (fu, fv) = (u - u.floor(), v - v.floor());
+    let s = |t: f32| t * t * (3.0 - 2.0 * t);
+    let at = |di: i64, dj: i64| cell_numbers(seed ^ 0x5bd1_e995, i + di, j + dj)[0];
+    let (a, b) = (at(0, 0) + (at(1, 0) - at(0, 0)) * s(fu), at(0, 1) + (at(1, 1) - at(0, 1)) * s(fu));
+    a + (b - a) * s(fv)
+}
 
-/// The shore of a water: over a 1 m grid round it, each place in the shallows (under the water, up to `shallows` deep) or on the bank
-/// (dry, within `bank` of the water's edge and up to `rise` over it) draws a reed and a stone by their densities there (reeds thick in the
-/// shallows, half as thick on the bank's first half; stones on the bank, a quarter as many in the shallows), placed in the cell by its own
-/// numbers, off the places `blocked` says. `height`: the ground's.
+/// The grid's cell, metres: one draw a cell.
+const CELL: f32 = 0.5;
+
+/// Reeds a square metre inside a bed, at its heart.
+const BED_DENSITY: f32 = 2.4;
+
+/// How big the beds and the stones' runs are (metres across), and how much of a bed's edge thins out (of the noise's range).
+const BED_SIZE: f32 = 9.0;
+const STONE_RUN: f32 = 6.0;
+const BED_EDGE: f32 = 0.12;
+
+/// The shore of a water over a half-metre grid round it, each place by the ground there and its distance from the water's edge (see the
+/// module's notes), off the places `blocked` says. `height`: the ground's.
 pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32, blocked: &dyn Fn(f32, f32) -> bool, seed: u64) -> Shore {
     let mut out = Shore::default();
-    let Some([x0, z0, x1, z1]) = water.bounds(s.bank + CELL) else { return out };
+    let reach = s.wet_bank.max(WATERLINE).max(4.0);
+    let Some([x0, z0, x1, z1]) = water.bounds(reach + CELL) else { return out };
     let (i0, i1) = ((x0 / CELL).floor() as i64, (x1 / CELL).ceil() as i64);
     let (j0, j1) = ((z0 / CELL).floor() as i64, (z1 / CELL).ceil() as i64);
+    let area = CELL * CELL;
     for j in j0..j1 {
         for i in i0..i1 {
             let [a, b, c, d] = cell_numbers(seed, i, j);
             let (x, z) = ((i as f32 + b) * CELL, (j as f32 + c) * CELL);
             let (edge, level) = water.edge(x, z);
-            if edge > s.bank {
+            // Inside a river or a lake further than a lily floats from its edge, or out past the bank: nothing.
+            if edge > reach || edge < -12.0 {
                 continue;
             }
 
             let g = height(x, z);
             let depth = level - g;
-            let (reed, stone) = if depth > 0.0 {
-                // The shallows: under the water, not too deep.
-                if depth > s.shallows { (0.0, 0.0) } else { (s.reeds, s.stones * 0.25) }
-            } else if -depth <= s.rise && edge >= -0.5 {
-                // The bank: its first half has reeds.
-                (if edge <= s.bank * 0.5 { s.reeds * 0.5 } else { 0.0 }, s.stones)
-            } else {
-                (0.0, 0.0)
-            };
 
-            let area = CELL * CELL;
-            if a < reed * area && !blocked(x, z) {
-                let key = REEDS[(d * REEDS.len() as f32) as usize % REEDS.len()];
-                out.reeds.push(Placed { key: key.to_owned(), x, y: g, z, scale: 0.8 + 0.5 * c, yaw: 360.0 * d });
-            } else if a >= 1.0 - stone * area && !blocked(x, z) {
-                let key = STONES[(d * STONES.len() as f32) as usize % STONES.len()];
-                out.stones.push(Placed { key: key.to_owned(), x, y: g, z, scale: 0.5 + 0.5 * b, yaw: 360.0 * b });
+            // A reed bed: where the bed noise is over the threshold the amount sets, thinning over its edge.
+            if s.reeds > 0.0 && depth <= s.shallows && edge <= s.wet_bank && g - level <= 1.0 {
+                let n = noise(seed, x, z, BED_SIZE);
+                let threshold = 1.0 - s.reeds;
+                let heart = ((n - threshold) / BED_EDGE).clamp(0.0, 1.0);
+                // Thinner up the bank, away from the water.
+                let wet = if edge <= 0.0 { 1.0 } else { 1.0 - edge / s.wet_bank };
+                if a < BED_DENSITY * area * heart * wet.max(0.0) {
+                    if !blocked(x, z) {
+                        // The bed's kind (by another noise, coarser), now and then another's.
+                        let kind = noise(seed ^ 0x2545_f491, x, z, BED_SIZE * 1.6);
+                        let k = if d < 0.85 { (kind * REEDS.len() as f32) as usize } else { (d * 97.0) as usize };
+                        let key = REEDS[k % REEDS.len()];
+                        out.reeds.push(Placed { key: key.to_owned(), x, y: g, z, scale: 0.85 + 0.4 * d, yaw: 360.0 * d });
+                    }
+
+                    continue;
+                }
+            }
+
+            // Lilies: a few patches out on the water.
+            if s.reeds > 0.0 && depth > 0.3 && depth <= LILY_DEPTH && edge < -1.0 {
+                let n = noise(seed ^ 0x7f4a_7c15, x, z, BED_SIZE * 0.7);
+                if n > 1.0 - s.reeds * 0.35 && a < 0.5 * area && !blocked(x, z) {
+                    let key = LILIES[(d * LILIES.len() as f32) as usize % LILIES.len()];
+                    out.reeds.push(Placed { key: key.to_owned(), x, y: level, z, scale: 0.8 + 0.4 * c, yaw: 360.0 * d });
+                    continue;
+                }
+            }
+
+            // Stones: along the waterline in runs, a bigger one now and then on the bank.
+            if s.stones > 0.0 {
+                let run = noise(seed ^ 0x1234_5678, x, z, STONE_RUN);
+                // Where the ground meets the water (as the ground has it, not the ribbon's edge).
+                let waterline = depth.abs() <= WATERLINE_HEIGHT && (-6.0..=WATERLINE).contains(&edge);
+                // The noise keeps near its middle: a run takes from about a third of the waterline (few) to all of it (thick).
+                let density = if waterline && run > 0.85 - s.stones * 0.7 { 2.0 } else { 0.0 };
+                if a > 1.0 - density * area && !blocked(x, z) {
+                    let key = STONES[(d * STONES.len() as f32) as usize % STONES.len()];
+                    // Sunk a little: stones of a waterline lie in the mud.
+                    out.stones.push(Placed { key: key.to_owned(), x, y: g - 0.05, z, scale: 1.0, yaw: 360.0 * d });
+                } else if edge > WATERLINE && edge <= reach && g - level <= 1.5 && a > 1.0 - 0.02 * s.stones * area && !blocked(x, z) {
+                    let key = BANK_STONES[(d * BANK_STONES.len() as f32) as usize % BANK_STONES.len()];
+                    out.stones.push(Placed { key: key.to_owned(), x, y: g - 0.1, z, scale: 1.0, yaw: 360.0 * d });
+                }
             }
         }
     }
@@ -192,29 +266,44 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
 mod tests {
     use super::*;
 
-    /// A straight river along x at z 50, 10 m wide, its water at 0; the ground a slope from 2 m under it in the middle up to the sides.
+    /// A straight river along x at z 50, 10 m wide, its water at 0; the ground 2.4 m under it in the middle, rising 0.4 a metre to the
+    /// sides (the water's edge at 6 m from the middle).
     fn river() -> (Water, impl Fn(f32, f32) -> f32) {
-        let w = Water::River { line: vec![[0.0, 50.0], [100.0, 50.0]], water: vec![0.0, 0.0], half: vec![5.0, 5.0] };
+        let w = Water::River { line: vec![[0.0, 50.0], [200.0, 50.0]], water: vec![0.0, 0.0], half: vec![5.0, 5.0] };
         (w, |_: f32, z: f32| ((z - 50.0).abs() - 6.0) * 0.4)
     }
 
     #[test]
-    fn reeds_stand_in_the_shallows_and_stones_on_the_bank() {
+    fn reeds_stand_in_the_shallows_and_the_wet_bank_and_stones_on_the_waterline() {
         let (w, g) = river();
-        let shore = place(&w, &ShoreSettings::of(1.0 / 3.0, 1.0 / 3.0), &g, &|_, _| false, 7);
-        assert!(!shore.reeds.is_empty() && !shore.stones.is_empty());
-        for r in &shore.reeds {
-            let depth = -g(r.x, r.z);
-            assert!(depth <= 0.5 + 1e-4, "no reed deeper than the shallows: {depth} at {}", r.z);
+        let shore = place(&w, &ShoreSettings::of(0.85, 0.85), &g, &|_, _| false, 7);
+        let reeds = shore.reeds.iter().filter(|r| REEDS.contains(&r.key.as_str())).collect::<Vec<_>>();
+        assert!(reeds.len() > 50 && !shore.stones.is_empty(), "{} reeds, {} stones", reeds.len(), shore.stones.len());
+        for r in &reeds {
+            assert!(-g(r.x, r.z) <= 0.8 + 1e-4, "no reed deeper than the shallows: {} at {}", -g(r.x, r.z), r.z);
+            assert!((r.z - 50.0).abs() <= 5.0 + 2.5 + 0.01, "none far up the bank: {}", r.z);
             assert!((r.y - g(r.x, r.z)).abs() < 1e-4, "on the ground");
         }
 
-        for s in &shore.stones {
-            assert!(g(s.x, s.z) <= 1.2 + 1e-4 && (s.z - 50.0).abs() <= 5.0 + 5.0 + 1.0, "on the bank: {} at {}", g(s.x, s.z), s.z);
+        // The small stones where the ground meets the water (6 m from the middle).
+        for st in shore.stones.iter().filter(|s| STONES.contains(&s.key.as_str())) {
+            assert!(g(st.x, st.z).abs() <= WATERLINE_HEIGHT + 1e-4, "on the waterline: {} at {}", g(st.x, st.z), st.z);
+        }
+    }
+
+    #[test]
+    fn reeds_grow_in_beds_with_gaps_between() {
+        let (w, g) = river();
+        let shore = place(&w, &ShoreSettings::of(0.5, 0.0), &g, &|_, _| false, 11);
+        // Along the river in 4 m stretches: some full, some empty.
+        let mut bins = [0usize; 50];
+        for r in shore.reeds.iter().filter(|r| r.z > 50.0) {
+            bins[((r.x / 4.0) as usize).min(49)] += 1;
         }
 
-        // None in the deep middle, none far up the bank.
-        assert!(shore.reeds.iter().chain(&shore.stones).all(|p| (p.z - 50.0).abs() > 4.0 && (p.z - 50.0).abs() < 11.0));
+        let empty = bins.iter().filter(|&&n| n == 0).count();
+        let full = bins.iter().filter(|&&n| n >= 8).count();
+        assert!(empty >= 8 && full >= 8, "beds and gaps: {bins:?}");
     }
 
     #[test]
@@ -224,29 +313,30 @@ mod tests {
         let a = place(&w, &s, &g, &|_, _| false, 3);
         assert_eq!(a, place(&w, &s, &g, &|_, _| false, 3), "the same each time");
         assert_ne!(a, place(&w, &s, &g, &|_, _| false, 4), "another seed, another shore");
-        let b = place(&w, &s, &g, &|x, _| x < 50.0, 3);
-        assert!(b.reeds.iter().chain(&b.stones).all(|p| p.x >= 50.0));
+        let b = place(&w, &s, &g, &|x, _| x < 100.0, 3);
+        assert!(b.reeds.iter().chain(&b.stones).all(|p| p.x >= 100.0));
         assert!(b.reeds.iter().all(|p| a.reeds.contains(p)), "what is left is where it was");
         assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 3) == Shore::default(), "none");
     }
 
     #[test]
     fn a_lakes_shore_runs_round_its_outline() {
-        let w = Water::Lake { outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]], water: 0.0 };
-        // A bowl: 0.3 under the water 1 m in from the outline, deeper further in, rising outside.
+        let w = Water::Lake { outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]], water: 0.0 };
+        // A bowl: 0.3 under the water a metre in from the outline, deeper further in, rising outside.
         let g = |x: f32, z: f32| {
-            let e = x.min(40.0 - x).min(z).min(40.0 - z);
+            let e = x.min(60.0 - x).min(z).min(60.0 - z);
             if e > 0.0 { -0.3 * e } else { -0.2 * e }
         };
-        let shore = place(&w, &ShoreSettings::of(1.0 / 3.0, 1.0 / 3.0), &g, &|_, _| false, 1);
-        assert!(!shore.reeds.is_empty());
-        assert!(shore.reeds.iter().all(|r| g(r.x, r.z) >= -0.5 - 1e-4), "in the shallows or on the bank");
-        assert!(shore.reeds.iter().all(|r| !(r.x > 3.0 && r.x < 37.0 && r.z > 3.0 && r.z < 37.0)), "none in the deep middle");
+        let shore = place(&w, &ShoreSettings::of(0.85, 0.5), &g, &|_, _| false, 1);
+        let reeds = shore.reeds.iter().filter(|r| REEDS.contains(&r.key.as_str())).collect::<Vec<_>>();
+        assert!(!reeds.is_empty());
+        assert!(reeds.iter().all(|r| g(r.x, r.z) >= -0.8 - 1e-4), "in the shallows or on the bank");
+        assert!(reeds.iter().all(|r| !(r.x > 4.0 && r.x < 56.0 && r.z > 4.0 && r.z < 56.0)), "none in the deep middle");
     }
 
     #[test]
     fn the_amounts_read_by_name() {
-        assert_eq!(amount("thick"), Some(1.0 / 3.0));
+        assert_eq!(amount("thick"), Some(0.85));
         assert_eq!(amount(" none "), Some(0.0));
         assert_eq!(amount("lots"), None);
     }
