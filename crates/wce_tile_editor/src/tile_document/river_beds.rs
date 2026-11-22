@@ -7,11 +7,21 @@
 //! Kit rivers have no id until a snap gives them one: their ground is the user's, as TEd left it.
 
 use wce_foundation::math::Float3;
-use wce_tile::river_bed::{Join, RiverBed};
+use wce_tile::river_bed::{BedSettings, Channel, Join, RiverBed};
 use wce_tile::terrain_layers::{Height, Stack, TerrainLayers, order_of};
 
 use super::Tile;
 use super::river_links::{LINK_ATTR, RIVER_ID_ATTR};
+
+/// A river cuts its bed along its line (`1`; the rivers the editor draws), or leaves the ground to the user (missing or `0`: the kit's).
+pub const BED_ATTR: &str = "wce_bed";
+
+/// The bed's depth under the water (metres; missing: `BedSettings::default_depth` of its width) and its banks' slope (degrees).
+pub const BED_DEPTH_ATTR: &str = "wce_bed_depth";
+pub const BANK_SLOPE_ATTR: &str = "wce_bank_slope";
+
+/// How far under the ground it is drawn on a river the editor draws runs (metres): its bed is cut round it.
+pub const WATER_BELOW_BANK: f32 = 2.0;
 
 /// The owner prefix of the rivers' layers.
 pub(super) const OWNER: &str = "river:";
@@ -39,6 +49,61 @@ fn parse_owner(owner: &str) -> Option<Owner> {
     };
 
     Some(Owner { id: id.parse().ok()?, variation, signature: u64::from_str_radix(signature, 16).ok()? })
+}
+
+/// A river's attributes the Inspector shows as rows of their own (or not at all).
+pub(crate) const RIVER_ROW_ATTRS: [&str; 4] = [RIVER_ID_ATTR, BED_ATTR, BED_DEPTH_ATTR, BANK_SLOPE_ATTR];
+
+impl super::TileDocument {
+    /// A river's bed in the Inspector: whether it cuts one, how deep under the water and how steep its banks.
+    pub(crate) fn river_bed_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
+        let sc = self.tile().tscene();
+        if sc.type_of(e) != "SplineRiverInstance" {
+            return;
+        }
+
+        let on = sc.get(e, BED_ATTR).as_deref() == Some("1");
+        let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f32>().ok());
+        let width = {
+            let pts = sc.polygon_points(e);
+            let w = pts.iter().filter_map(|&p| sc.get(p, "width")?.parse::<f64>().ok()).collect::<Vec<_>>();
+            w.iter().sum::<f64>() / w.len().max(1) as f64 * self.tile().river_width_factor(e)
+        };
+        let (depth, slope) = (
+            num(BED_DEPTH_ATTR).unwrap_or(BedSettings::default_depth(width) as f32),
+            num(BANK_SLOPE_ATTR).unwrap_or(BedSettings::DEFAULT_BANK_SLOPE as f32),
+        );
+        ins.section("River bed");
+        let mut carve = on;
+        ins.hint(
+            "The river cuts its bed along its line: the kit's river bed, scaled to its width and depth, its banks climbing to the ground; \
+             where the ground is lower it stays. Its joins to the tile's river links are made whether or not. The rivers the editor draws \
+             cut one; the kit's leave the ground as it was sculpted.",
+        );
+        if ins.edit_bool("wce_bed", "cut its bed", &mut carve) && carve != on {
+            self.set_attribute(e, BED_ATTR, if carve { "1" } else { "0" });
+            if carve && self.tile().tscene().get(e, RIVER_ID_ATTR).is_none_or(|v| v.is_empty()) {
+                let id = self.tile().next_river_id();
+                self.set_attribute(e, RIVER_ID_ATTR, &id.to_string());
+            }
+        }
+
+        if !carve {
+            return;
+        }
+
+        let mut d = depth;
+        ins.hint("How deep the bed's middle is under the water (metres). The kit's rivers: 5.7 for 45 m wide.");
+        if ins.edit_float(BED_DEPTH_ATTR, "bed depth (m)", &mut d, 0.05, 0.0, 30.0) && (d - depth).abs() > 1e-4 {
+            self.set_attribute(e, BED_DEPTH_ATTR, &wce_tile::ted_scene::format_number(f64::from(d)));
+        }
+
+        let mut s = slope;
+        ins.hint("How steep the banks climb past the bed to the ground (degrees).");
+        if ins.edit_float(BANK_SLOPE_ATTR, "bank slope (deg)", &mut s, 0.5, 5.0, 85.0) && (s - slope).abs() > 1e-4 {
+            self.set_attribute(e, BANK_SLOPE_ATTR, &wce_tile::ted_scene::format_number(f64::from(s)));
+        }
+    }
 }
 
 /// Whether a layer's owner is a river's (the roads' layers go over them: `roads.rs`).
@@ -75,6 +140,12 @@ struct RiverInput {
 fn signature_of(bed: &RiverBed) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(c) = &bed.channel {
+        for v in c.line.iter().flatten().chain(&c.water).chain(&c.width).chain([&c.depth, &c.bank_slope]) {
+            v.to_bits().hash(&mut h);
+        }
+    }
+
     for j in &bed.joins {
         for v in [j.at[0], j.at[1], j.inward[0], j.inward[1], j.connection.water, j.connection.width] {
             v.to_bits().hash(&mut h);
@@ -94,6 +165,13 @@ impl Tile {
     fn river_beds(&self) -> Vec<River> {
         let sc = self.tscene();
         let links = self.river_link_points();
+        // The ribbons as drawn (`river_ribbons`: the viewed variation's rivers, in the document's order) by their element.
+        let ribbon_elems = sc
+            .find_all("SplineRiverInstance")
+            .into_iter()
+            .filter(|&e| sc.in_variation(e) && self.polygon_world_points(e).len() >= 2)
+            .collect::<Vec<_>>();
+        let mut ribbons = ribbon_elems.into_iter().zip(self.river_ribbons()).collect::<std::collections::HashMap<_, _>>();
         let mut out = vec![];
         for e in sc.find_all("SplineRiverInstance") {
             let Some(id) = sc.get(e, RIVER_ID_ATTR).and_then(|v| v.parse::<u32>().ok()) else { continue };
@@ -126,7 +204,19 @@ impl Tile {
                 }
             }
 
-            let bed = RiverBed { joins };
+            // Its bed along the ribbon's samples (the file's widths, the game's: the kit's profile is of those), when it cuts one.
+            let channel = (sc.get(e, BED_ATTR).as_deref() == Some("1")).then(|| ribbons.remove(&e)).flatten().map(|(_, samples)| {
+                let width = samples.iter().map(|s| s.width).sum::<f64>() / samples.len().max(1) as f64;
+                let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f64>().ok());
+                Channel {
+                    line: samples.iter().map(|s| [s.x, s.z]).collect(),
+                    water: samples.iter().map(|s| s.y).collect(),
+                    width: samples.iter().map(|s| s.width).collect(),
+                    depth: num(BED_DEPTH_ATTR).unwrap_or_else(|| BedSettings::default_depth(width)).max(0.0),
+                    bank_slope: num(BANK_SLOPE_ATTR).unwrap_or(BedSettings::DEFAULT_BANK_SLOPE).clamp(5.0, 85.0),
+                }
+            });
+            let bed = RiverBed { channel, joins };
             if bed.bounds().is_none() {
                 continue;
             }
@@ -310,6 +400,10 @@ fn river_terrain(i: RiverInput) -> Stack<Height> {
         let Some(b) = river.bed.bounds() else { continue };
         let px = |v: f64, m: f64, n: u32| (((v + border) / m).floor().max(0.0) as u32).min(n);
         let (x0, y0, x1, y1) = (px(b[0], mx, hw), px(b[1], mz, hh), (px(b[2], mx, hw) + 1).min(hw), (px(b[3], mz, hh) + 1).min(hh));
+        // The bed over the rectangle's pixels, then the joins over it.
+        let (gw, gh) = ((x1 - x0) as usize, (y1 - y0) as usize);
+        let origin = [f64::from(x0) * mx - border, f64::from(y0) * mz - border];
+        let bed = river.bed.channel.as_ref().map(|c| c.fill(origin, [mx, mz], (gw, gh)));
         let mut writes = vec![];
         for y in y0..y1 {
             for x in x0..x1 {
@@ -317,7 +411,8 @@ fn river_terrain(i: RiverInput) -> Stack<Height> {
                 height.below(id, x, y, &mut v);
                 let g = f64::from(v[0]) / unit;
                 let (wx, wz) = (f64::from(x) * mx - border, f64::from(y) * mz - border);
-                if let Some(h) = river.bed.height_at(wx, wz, g) {
+                let b = bed.as_ref().map_or(f64::INFINITY, |b| b[(y - y0) as usize * gw + (x - x0) as usize]);
+                if let Some(h) = river.bed.height_with(wx, wz, g, b) {
                     writes.push((x, y, ((h - g) * unit) as f32));
                 }
             }

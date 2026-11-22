@@ -110,16 +110,129 @@ impl Join {
     }
 }
 
-/// What a river does to the ground: its joins (and, step 2, its bed).
+/// The kit's deep river across its bed, relative to its water, every [`PROFILE_STEP`] metres from the centre: [`DEEP`]'s profile less
+/// its water. A river's bed is this, scaled across by its width over [`DEEP`]'s and down by its depth over [`KIT_DEPTH`].
+pub const KIT_BED: [f64; 9] = [-5.7, -5.4, -0.6, 2.3, 3.8, 5.0, 5.7, 6.1, 6.2];
+
+/// The kit's deep river's depth: its water over its bed's middle.
+pub const KIT_DEPTH: f64 = 5.7;
+
+/// The bed's settings: how deep under the water its middle is (metres), how steep its banks climb past the kit's profile (degrees).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BedSettings {
+    pub depth: f64,
+    pub bank_slope: f64,
+}
+
+impl BedSettings {
+    /// The depth a river of a width gets unless set: the kit's, in proportion below its width (a 5 m creek 0.6 m), 0.5 .. 8 m.
+    pub fn default_depth(width: f64) -> f64 {
+        (KIT_DEPTH * width / DEEP.width).clamp(0.5, 8.0)
+    }
+
+    pub const DEFAULT_BANK_SLOPE: f64 = 30.0;
+}
+
+/// How far the banks climb past the profile before the bed stops (metres): the ground is met before that but on cliffs.
+const BANK_RISE: f64 = 60.0;
+
+/// A river's bed along its line: the centre line's samples (x, z), the water there and the width, and its settings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Channel {
+    pub line: Vec<[f64; 2]>,
+    pub water: Vec<f64>,
+    pub width: Vec<f64>,
+    pub depth: f64,
+    pub bank_slope: f64,
+}
+
+impl Channel {
+    /// The bed's height `r` metres from the centre where the water is `water` and the river `width` wide.
+    pub fn across(&self, r: f64, water: f64, width: f64) -> f64 {
+        let k = (width / DEEP.width).max(0.05);
+        let scale = self.depth / KIT_DEPTH;
+        let t = r.abs() / (PROFILE_STEP * k);
+        let last = KIT_BED.len() - 1;
+        if t >= last as f64 {
+            let past = r.abs() - last as f64 * PROFILE_STEP * k;
+            return water + KIT_BED[last] * scale + past * self.bank_slope.to_radians().tan().max(0.05);
+        }
+
+        let i = t.floor() as usize;
+        let f = t - i as f64;
+        water + (KIT_BED[i] + (KIT_BED[i + 1] - KIT_BED[i]) * f) * scale
+    }
+
+    /// How far from the centre it reaches at a width (metres).
+    pub fn reach(&self, width: f64) -> f64 {
+        let k = (width / DEEP.width).max(0.05);
+        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.bank_slope.to_radians().tan().max(0.05)
+    }
+
+    /// The bounds it touches (x0, z0, x1, z1), none without a line.
+    pub fn bounds(&self) -> Option<[f64; 4]> {
+        let reach = self.width.iter().copied().fold(0.0, f64::max);
+        let reach = self.reach(reach);
+        self.line
+            .iter()
+            .map(|p| [p[0] - reach, p[1] - reach, p[0] + reach, p[1] + reach])
+            .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+    }
+
+    /// The bed over a grid (`w` x `h` places, the first at `origin`, `step` apart in x and z): for each place the lowest of the bed
+    /// across each segment of the line (the place's distance from the segment, the water and width there), infinite where none reaches.
+    pub fn fill(&self, origin: [f64; 2], step: [f64; 2], (w, h): (usize, usize)) -> Vec<f64> {
+        let mut out = vec![f64::INFINITY; w * h];
+        if self.line.len() < 2 {
+            return out;
+        }
+
+        for i in 0..self.line.len() - 1 {
+            let (a, b) = (self.line[i], self.line[i + 1]);
+            let reach = self.reach(self.width[i].max(self.width[i + 1]));
+            let (lo_x, hi_x) = (a[0].min(b[0]) - reach, a[0].max(b[0]) + reach);
+            let (lo_z, hi_z) = (a[1].min(b[1]) - reach, a[1].max(b[1]) + reach);
+            let col = |v: f64| ((v - origin[0]) / step[0]).clamp(0.0, w as f64) as usize;
+            let row = |v: f64| ((v - origin[1]) / step[1]).clamp(0.0, h as f64) as usize;
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+            for j in row(lo_z)..(row(hi_z) + 1).min(h) {
+                for k in col(lo_x)..(col(hi_x) + 1).min(w) {
+                    let p = [origin[0] + k as f64 * step[0], origin[1] + j as f64 * step[1]];
+                    let t = if len2 > 1e-12 { (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                    let r = (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t);
+                    let width = self.width[i] + (self.width[i + 1] - self.width[i]) * t;
+                    if r > self.reach(width) {
+                        continue;
+                    }
+
+                    let water = self.water[i] + (self.water[i + 1] - self.water[i]) * t;
+                    let v = self.across(r, water, width);
+                    let o = &mut out[j * w + k];
+                    if v < *o {
+                        *o = v;
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
+/// What a river does to the ground: the bed it cuts along its line (when it has one) and its joins to the tile's river links, laid over
+/// the bed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RiverBed {
+    pub channel: Option<Channel>,
     pub joins: Vec<Join>,
 }
 
 impl RiverBed {
-    /// The ground at a place over `below` (what lies under the river's layer), none where the river leaves it as it is.
-    pub fn height_at(&self, x: f64, z: f64, below: f64) -> Option<f64> {
-        let mut out: Option<f64> = None;
+    /// The ground at a place over `below` (what lies under the river's layer) and the bed there (`bed`: [`Channel::fill`]'s value,
+    /// infinite where the bed does not reach), none where the river leaves it as it is. The bed only cuts.
+    pub fn height_with(&self, x: f64, z: f64, below: f64, bed: f64) -> Option<f64> {
+        let mut out = (bed < below).then_some(bed);
         for j in &self.joins {
             if let Some((g, w)) = j.at(x, z) {
                 let base = out.unwrap_or(below);
@@ -130,9 +243,18 @@ impl RiverBed {
         out
     }
 
+    /// [`Self::height_with`] without a bed (the joins alone).
+    pub fn height_at(&self, x: f64, z: f64, below: f64) -> Option<f64> {
+        self.height_with(x, z, below, f64::INFINITY)
+    }
+
     /// The bounds of what it touches (x0, z0, x1, z1), none when nothing.
     pub fn bounds(&self) -> Option<[f64; 4]> {
-        self.joins.iter().map(Join::bounds).reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+        self.joins
+            .iter()
+            .map(Join::bounds)
+            .chain(self.channel.as_ref().and_then(Channel::bounds))
+            .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
     }
 }
 
@@ -161,7 +283,7 @@ mod tests {
     fn a_join_holds_the_connection_then_fades() {
         // A link at the west edge (x 0), its cell's centre at z 192, the tile to the east.
         let j = Join { at: [0.0, 192.0], inward: [1.0, 0.0], connection: DEEP };
-        let bed = RiverBed { joins: vec![j] };
+        let bed = RiverBed { joins: vec![j], ..Default::default() };
         assert_eq!(bed.height_at(10.0, 192.0, 5.0), Some(-11.9));
         assert_eq!(bed.height_at(-4.0, 192.0, 5.0), Some(-11.9), "the border past the edge");
         assert_eq!(bed.height_at(64.0, 192.0 + 16.0, 5.0), Some(-6.8));
@@ -171,5 +293,33 @@ mod tests {
         assert_eq!(bed.height_at(10.0, 192.0 + 97.0, 5.0), None);
         let side = bed.height_at(10.0, 192.0 + 80.0, 5.0).unwrap();
         assert!(side > 0.0 && side < 5.0, "fading sideways: {side}");
+    }
+
+    #[test]
+    fn a_bed_is_the_kits_scaled_and_its_banks_climb_to_the_ground() {
+        let c = Channel {
+            line: vec![[0.0, 0.0], [100.0, 0.0]],
+            water: vec![-6.2, -6.2],
+            width: vec![45.0, 45.0],
+            depth: 5.7,
+            bank_slope: 45.0,
+        };
+        // The kit's river: its profile.
+        assert!((c.across(0.0, -6.2, 45.0) - DEEP.profile[0]).abs() < 0.11);
+        assert!((c.across(24.0, -6.2, 45.0) - DEEP.profile[3]).abs() < 0.11);
+        assert!((c.across(64.0, -6.2, 45.0) - 0.0).abs() < 0.11);
+        assert!((c.across(74.0, -6.2, 45.0) - 10.0).abs() < 0.11, "past it, the bank at 45 degrees");
+
+        // Half as wide and half as deep: the same shape, halved.
+        let half = Channel { depth: 2.85, ..c.clone() };
+        assert!((half.across(12.0, 0.0, 22.5) - 2.3 * 0.5).abs() < 1e-9);
+
+        // On a grid: lowest along the line, the ground left where it is lower.
+        let g = c.fill([0.0, -100.0], [10.0, 10.0], (11, 21));
+        assert!((g[10 * 11 + 5] + 11.9).abs() < 0.11, "the middle of the bed");
+        assert!(g[0].is_infinite() || g[0] > 30.0, "far off: {}", g[0]);
+        let bed = RiverBed { channel: Some(c), joins: vec![] };
+        assert_eq!(bed.height_with(50.0, 0.0, -20.0, -11.9), None, "lower ground stays");
+        assert_eq!(bed.height_with(50.0, 0.0, 3.0, -11.9), Some(-11.9));
     }
 }

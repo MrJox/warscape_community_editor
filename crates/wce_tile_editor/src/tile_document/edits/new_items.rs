@@ -166,11 +166,21 @@ impl TileDocument {
                     return Err("draw at least 2 points".to_owned());
                 }
 
+                // A river the editor draws runs under the ground it was drawn on (its bed cut round it: below).
+                let river = kind == "SplineRiverInstance" && self.tile().rivers_keep_heights();
+                let pts = pts
+                    .iter()
+                    .map(|&p| if river { Float3::new(p.x, p.y - super::super::river_beds::WATER_BELOW_BANK, p.z) } else { p })
+                    .collect::<Vec<_>>();
                 let at = local(pts[0]);
                 let positions = pts.iter().map(|&p| local(p) - at).collect::<Vec<_>>();
                 let mut n = NewInstance::new(kind).position(at).attr("lf_offset", wce_tile::ted_scene::format_number(at.y));
-                if kind == "SplineRiverInstance" && self.tile().rivers_keep_heights() {
-                    n = n.attr(wce_tile::river_files::RIVER_HEIGHT_ATTR, "game");
+                // A river the editor draws keeps its real heights, cuts its bed and owns its layer for it (docs/plans/rivers.md, step 2).
+                if river {
+                    n = n
+                        .attr(wce_tile::river_files::RIVER_HEIGHT_ATTR, "game")
+                        .attr(super::super::river_beds::BED_ATTR, "1")
+                        .attr(super::super::river_links::RIVER_ID_ATTR, &self.tile().next_river_id().to_string());
                 }
 
                 n.points = wce_tile::splines::new_points(&positions)
