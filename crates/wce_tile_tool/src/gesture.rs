@@ -78,6 +78,17 @@ pub(crate) enum Gesture {
 
     /// Alt + a left drag in Select mode: the selection turning around its centre.
     AltRotate(AltRotate),
+
+    /// A selected river's ford: one of its handles dragged along the river (its start, its middle, its end), or a new one drawn from
+    /// where the press was (`anchor`, metres along). `history`: where the history was when it began (a drawn ford is one undo entry).
+    Ford {
+        river: usize,
+        index: usize,
+        part: wce_tile_editor::tile_document::river_fords::FordPart,
+        anchor: Option<f64>,
+        gesture: u64,
+        history: usize,
+    },
 }
 
 /// How a gesture ends.
@@ -97,7 +108,7 @@ impl Gesture {
         match self {
             Self::Grab(_) => "the grab",
             Self::TerrainStroke | Self::VegStroke(_) | Self::AreaStroke => "the brush stroke",
-            Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } => "the handle drag",
+            Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } | Self::Ford { .. } => "the handle drag",
             Self::AltRotate(_) => "the rotation",
         }
     }
@@ -182,6 +193,20 @@ impl TileTool {
                     if n > 0 {
                         d.join_last(n + 1, "Move river point");
                     }
+                }
+            }
+
+            // A drawn ford: its adding and its drag, one undo entry.
+            Gesture::Ford { anchor, history, .. } => {
+                // Drawn: the mode ends with it (a later press selects again).
+                if anchor.is_some() {
+                    self.river_ui.drawing_ford = false;
+                }
+
+                d.history_mut().break_merge();
+                let n = d.history().position().saturating_sub(history);
+                if n > 1 {
+                    d.join_last(n, if anchor.is_some() { "Draw ford" } else { "Move ford" });
                 }
             }
 

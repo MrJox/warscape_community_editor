@@ -18,6 +18,12 @@ const PICK_PX: f32 = 7.0;
 pub(crate) struct RiverUi {
     drag: Option<(usize, usize, u64)>,
 
+    /// A press on the selected river draws a new ford (dragged along it from there).
+    pub(crate) drawing_ford: bool,
+
+    /// A ford's band in the profile being dragged: its index, its part, the drag's gesture and the history's place when it began.
+    band_drag: Option<(usize, wce_tile_editor::tile_document::river_fords::FordPart, u64, usize)>,
+
     /// A new ford's place along the river and its length (metres).
     ford: [f32; 2],
     ramp: i32,
@@ -28,14 +34,14 @@ pub(crate) struct RiverUi {
 
 impl Default for RiverUi {
     fn default() -> Self {
-        Self { drag: None, ford: [0.0, 40.0], ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
+        Self { drag: None, drawing_ford: false, band_drag: None, ford: [0.0, 40.0], ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
     }
 }
 
 impl RiverUi {
     /// A point of the profile is being dragged.
     pub(crate) fn dragging(&self) -> bool {
-        self.drag.is_some()
+        self.drag.is_some() || self.band_drag.is_some()
     }
 }
 
@@ -105,8 +111,40 @@ impl TileTool {
         dl.text(v2(at.x + 4.0, at.y + GRAPH_HEIGHT - 16.0), col32(200, 200, 200, 255), &format!("{lo:.1} m   {:.0} m long", p.length));
 
         // A press on a point starts its drag; held, the point follows the mouse up and down; let go, the drag's entry closes.
+        // A ford's band: near one of its edges, that end; inside it, the whole ford (when no point is under the mouse).
+        use wce_tile_editor::tile_document::river_fords::FordPart;
+        let band = p.fords.iter().enumerate().find_map(|(k, &(a, l))| {
+            let (x0, x1) = (to_px(a - l * 0.5, lo).x, to_px(a + l * 0.5, lo).x);
+            if (mouse.x - x0).abs() <= 5.0 {
+                Some((k, FordPart::Start))
+            } else if (mouse.x - x1).abs() <= 5.0 {
+                Some((k, FordPart::End))
+            } else {
+                (mouse.x > x0 && mouse.x < x1).then_some((k, FordPart::Middle))
+            }
+        });
         if hovered && gui::is_mouse_clicked(0) {
             self.river_ui.drag = near.map(|i| (river, i, d.next_gesture()));
+            if self.river_ui.drag.is_none() {
+                use wce_editor_core::document::Document;
+                let history = d.history().position();
+                self.river_ui.band_drag = band.map(|(k, part)| (k, part, d.next_gesture(), history));
+            }
+        }
+
+        if let Some((k, part, g, _)) = self.river_ui.band_drag {
+            if active {
+                let along = f64::from((mouse.x - at.x) / width) * p.length;
+                d.move_ford_part(river, k, part, along, g);
+            } else {
+                use wce_editor_core::document::Document;
+                self.river_ui.band_drag = None;
+                d.history_mut().break_merge();
+            }
+        }
+
+        if hovered && self.river_ui.drag.is_none() && self.river_ui.band_drag.is_none() && band.is_some() {
+            gui::set_mouse_cursor_resize_ew();
         }
 
         if let Some((r, i, g)) = self.river_ui.drag {
@@ -191,6 +229,23 @@ impl TileTool {
 
         // Fords: a stretch raised to a wading depth, at the picked point or a place along it.
         gui::separator_text("Fords");
+        let drawing = self.river_ui.drawing_ford;
+        if gui::selectable_sized("Draw ford in the viewport##drawford", drawing, 0, v2(-1.0, 0.0)) {
+            self.river_ui.drawing_ford = !drawing;
+            self.status = if drawing {
+                String::new()
+            } else {
+                "press on the river's water and drag along it: the ford runs from there to where you let go".to_owned()
+            };
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Press on the river's water in the viewport and drag along it: a ford from there to where you let go. A ford's handles on \
+                 the water (its start, middle and end) drag it along the river, as do its band's edges and middle in the profile above.",
+            );
+        }
+
         if let Some(i) = self.poly_point.filter(|&i| i < p.points.len()) {
             self.river_ui.ford[0] = p.points[i].along as f32;
         }

@@ -2372,6 +2372,39 @@ impl TileTool {
                     next += 40.0;
                 }
             }
+
+            // Its fords: their curved ends on the water, and their handles (start, middle, end) as diamonds.
+            let green = overlay_colour(0.35, 1.0, 0.45, 1.0);
+            let lift = |p: Float3| Float3::new(p.x, p.y + 0.3, p.z);
+            let hs = (Self::handle_size(e) * 1.6).max(1.0);
+            for f in d.river_ford_shapes(river) {
+                for end in &f.ends {
+                    for w in end.windows(2) {
+                        o.line(lift(w[0]), lift(w[1]), green);
+                    }
+                }
+
+                // The sides: the ends' first and last points joined along the river's edges.
+                for k in [0, 16] {
+                    if let (Some(&a), Some(&b)) = (f.ends[0].get(k), f.ends[1].get(k)) {
+                        o.line(lift(a), lift(b), green);
+                    }
+                }
+
+                for h in f.handles {
+                    let c = lift(h);
+                    let (n, s, w_, e_) = (
+                        Float3::new(c.x, c.y, c.z - hs),
+                        Float3::new(c.x, c.y, c.z + hs),
+                        Float3::new(c.x - hs, c.y, c.z),
+                        Float3::new(c.x + hs, c.y, c.z),
+                    );
+                    o.line(n, e_, green);
+                    o.line(e_, s, green);
+                    o.line(s, w_, green);
+                    o.line(w_, n, green);
+                }
+            }
         }
 
         // A river's links the same way while a river is drawn or selected (snap rivers to river links), where its end goes.
@@ -2497,9 +2530,10 @@ impl TileTool {
         let sel = primary(e);
         let Some(d) = document(e) else { return };
         self.over_point = self.gesture.is_none()
-            && sel
-                .filter(|&s| d.tile().is_polygon(s))
-                .is_some_and(|s| nearest_handle(d.tile().polygon_display_points(s), o, dir).is_some());
+            && sel.filter(|&s| d.tile().is_polygon(s)).is_some_and(|s| {
+                nearest_handle(d.tile().polygon_display_points(s), o, dir).is_some()
+                    || (d.tile().tscene().type_of(s) == RIVER && Self::ford_handle_under(d, s, o, dir).is_some())
+            });
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
@@ -2749,6 +2783,69 @@ impl TileTool {
         let river = self.link_kind(sel, d) == Some(RIVER);
         let skip = if self.drawing { None } else { sel };
         link.or_else(|| river.then(|| d.river_join_point(p, skip)).flatten().map(|q| (q, false)))
+    }
+
+    /// The selected river, if a river is selected.
+    pub(crate) fn selected_river(&self, e: &Editor) -> Option<usize> {
+        let d = e.docs.find_as::<TileDocument>(document_id(e)?)?;
+        primary(e).filter(|&s| d.tile().tscene().type_of(s) == RIVER)
+    }
+
+    /// The ford handle of a river under a ray: the ford's index and its part.
+    fn ford_handle_under(
+        d: &TileDocument,
+        river: usize,
+        o: Float3,
+        dir: Float3,
+    ) -> Option<(usize, wce_tile_editor::tile_document::river_fords::FordPart)> {
+        use wce_tile_editor::tile_document::river_fords::FordPart;
+        let parts = [FordPart::Start, FordPart::Middle, FordPart::End];
+        let mut best: Option<(f32, usize, FordPart)> = None;
+        for (i, f) in d.river_ford_shapes(river).iter().enumerate() {
+            for (h, part) in f.handles.iter().zip(parts) {
+                if let Some(t) = handle_under_ray(Float3::new(h.x, h.y + 0.3, h.z), o, dir)
+                    && best.is_none_or(|b| t < b.0)
+                {
+                    best = Some((t, i, part));
+                }
+            }
+        }
+
+        best.map(|b| (b.1, b.2))
+    }
+
+    /// A press on the selected river's fords: drawing one (Draw ford on: a new ford where the press is, dragged along the river from
+    /// there), else on one's handle (its drag). Whether it began one.
+    fn begin_ford_gesture(&mut self, e: &mut Editor, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        use wce_editor_core::document::Document;
+        use wce_tile_editor::tile_document::river_fords::{FordPart, MIN_FORD_LENGTH};
+        let Some(river) = self.selected_river(e) else { return false };
+        let Some((o, dir)) = ray else { return false };
+        let (x, z) = (self.cursor.x, self.cursor.z);
+        let terrain_hit = self.terrain_hit;
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        if self.river_ui.drawing_ford {
+            let Some((along, across)) = d.river_along_at(river, x, z).filter(|_| terrain_hit) else { return false };
+            let half = d.river_half_width_at(river, along).unwrap_or(0.0);
+            if across.abs() > half + 2.0 {
+                self.status = "press on the river's water to draw a ford there".to_owned();
+                return true;
+            }
+
+            let history = d.history().position();
+            d.add_river_ford(river, along, MIN_FORD_LENGTH);
+            let index = d.river_ford_count(river).saturating_sub(1);
+            let gesture = d.next_gesture();
+            self.gesture = Some(Gesture::Ford { river, index, part: FordPart::End, anchor: Some(along), gesture, history });
+            self.status = "drag along the river to the ford's other end".to_owned();
+            return true;
+        }
+
+        let Some((index, part)) = Self::ford_handle_under(d, river, o, dir) else { return false };
+        let history = d.history().position();
+        let gesture = d.next_gesture();
+        self.gesture = Some(Gesture::Ford { river, index, part, anchor: None, gesture, history });
+        true
     }
 
     /// While a procedural road or a river is drawn: a point after the first put on a tile link ends it there, as Enter would.
@@ -4880,6 +4977,11 @@ impl TileTool {
             return true;
         }
 
+        // The selected river's fords: a press on the river draws a new one (Draw ford), on a ford's handle drags it.
+        if self.mode == TileMode::Select && self.begin_ford_gesture(e, id, ray) {
+            return true;
+        }
+
         // Select mode: a point light's radius handle starts a drag of the radius.
         let sel = primary(e);
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
@@ -5033,6 +5135,18 @@ impl TileTool {
                 let c = d.tile().world_position(light);
                 if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
                     d.set_light_radius(light, at + grab, gesture);
+                }
+            }
+
+            Some(Gesture::Ford { river, index, part, anchor, gesture, .. }) => {
+                self.on_hover(e, ev);
+                let (x, z) = (self.cursor.x, self.cursor.z);
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if let (true, Some((along, _))) = (self.terrain_hit, d.river_along_at(river, x, z)) {
+                    match anchor {
+                        Some(a) => d.place_ford(river, index, a, along, gesture),
+                        None => d.move_ford_part(river, index, part, along, gesture),
+                    }
                 }
             }
 
@@ -6363,7 +6477,8 @@ impl Tool for TileTool {
             // On a point of the selected line or polygon (or dragging one): the press is the point's, not the gizmo's, whose centre
             // may be on it (a river's first point).
             || self.over_point
-            || matches!(self.gesture, Some(Gesture::Point { .. }))
+            || matches!(self.gesture, Some(Gesture::Point { .. } | Gesture::Ford { .. }))
+            || (self.river_ui.drawing_ford && self.selected_river(e).is_some())
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {

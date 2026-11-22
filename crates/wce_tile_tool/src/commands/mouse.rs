@@ -43,6 +43,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             };
             let args = [a0.0, a0.1, a1.0, a1.1].map(|v| format!("{v:.1}"));
             let message = format!("pixels {} {} -> {} {}", args[0], args[1], args[2], args[3]);
+            // Over the place first, as a mouse is before it presses.
+            let _ = CommandRegistry::run_args(e, "mouse", &["move".to_owned(), args[0].clone(), args[1].clone()]);
             mouse(e, &["drag".to_owned(), args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone(), steps], message)
         },
     );

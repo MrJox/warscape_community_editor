@@ -3512,3 +3512,51 @@ fn a_fords_edges_are_marked_with_stones_and_splashes() {
     d.finish_shores();
     assert_eq!(d.tile().shore_splashes(), 0);
 }
+
+/// A ford edited where it is: its outline on the water (its ends curved across the river), its handles dragged along the river (a drag
+/// one undo entry), a ford drawn between two places.
+#[test]
+fn a_ford_is_shaped_and_dragged_on_the_river() {
+    use wce_editor_core::document::Document;
+    use wce_tile_editor::tile_document::river_fords::FordPart;
+
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+
+    // Along and across: the river runs along +x from x 20.
+    let (along, across) = d.river_along_at(r, 120.0, 135.0).unwrap();
+    assert!((along - 100.0).abs() < 1.0 && (across.abs() - 7.0).abs() < 0.5, "{along} {across}");
+    assert!(d.river_half_width_at(r, 100.0).is_some_and(|h| (h - 22.5).abs() < 0.5));
+
+    d.add_river_ford(r, 100.0, 30.0);
+    let shapes = d.river_ford_shapes(r);
+    assert_eq!(shapes.len(), 1);
+    let [s, m, e] = shapes[0].handles;
+    assert!((m.x - 120.0).abs() < 1.0 && s.x < m.x && e.x > m.x, "{s:?} {m:?} {e:?}");
+    let xs = shapes[0].ends[0].iter().map(|p| p.x).collect::<Vec<_>>();
+    assert!(xs.iter().fold(f32::INFINITY, |a, &b| a.min(b)) < xs.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)) - 0.5, "curved");
+
+    // A drag of its middle, in steps: one undo entry, the ford moved.
+    let before = d.history().position();
+    let g = d.next_gesture();
+    for at in [110.0, 120.0, 130.0] {
+        d.move_ford_part(r, 0, FordPart::Middle, at, g);
+    }
+    d.history_mut().break_merge();
+    assert_eq!(d.history().position(), before + 1, "one entry");
+    assert_eq!(d.tile().tscene().get(r, "wce_fords").as_deref(), Some("130:30"));
+
+    // Its end: the start stays.
+    let g = d.next_gesture();
+    d.move_ford_part(r, 0, FordPart::End, 160.0, g);
+    assert_eq!(d.tile().tscene().get(r, "wce_fords").as_deref(), Some("137.5:45"));
+
+    // Drawn backwards: from 60 to 40.
+    d.add_river_ford(r, 60.0, 5.0);
+    let g = d.next_gesture();
+    d.place_ford(r, 1, 60.0, 40.0, g);
+    assert_eq!(d.tile().tscene().get(r, "wce_fords").as_deref(), Some("137.5:45;50:20"));
+}
