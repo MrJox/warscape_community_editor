@@ -101,5 +101,9 @@ publish) or Take theirs, per file, before anything is done.
 output file per gate. `scripts/imgcmp.py <run a> <run b>` compares the reference screenshots of two runs. The recorded
 baseline and the comparison rules are in [docs/baseline.md](docs/baseline.md). Every migration step must reproduce it.
 
+The scripts run in bash: Git Bash (MSYS2) on Windows, the system's bash on Linux and macOS. `scripts/lib.sh` holds what differs between
+them (path forms, `.exe`, the settings folder); the game folder is `$WCE_GAME`, else the current game's folder in the editor's
+settings.toml.
+
 Requirements: the game, the battle/campaign tilemap assembly kits for the tile gates, and
 `manifest/corpus.tsv` (built by `scripts/corpus_inventory.py`; not in git).

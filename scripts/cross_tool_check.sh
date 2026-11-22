@@ -15,11 +15,9 @@
 #                                                WCE_KIT_TILES (the kit's terrain/tiles/battle; default: the game's battle tile map kit, else its kit)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="${1:-$ROOT/build/cross_tool_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
-export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
-GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 KIT="${WCE_KIT_TILES:-}"
 if [ -z "$KIT" ]; then
     for k in "$GAME/assembly_kit_battle_tilemap" "$GAME/assembly_kit"; do
@@ -34,8 +32,8 @@ ENV_PATH=weather/charlemagne/med_sp_land_day_dry.environment
 # the pack file as the packs have it, written by the editor (game_file --packs), in throw-away settings and projects folders
 pre="$OUT/pack"; rm -rf "$pre"; mkdir -p "$pre"; cp "$SETTINGS_SRC/settings.toml" "$pre/" 2>/dev/null
 ENV_SRC="$OUT/pack_original.environment"; rm -f "$ENV_SRC"
-printf 'game_file %s "%s" --packs\nquit\n' "$ENV_PATH" "$(cygpath -m "$ENV_SRC")" > "$OUT/pack.txt"
-WCE_SETTINGS_DIR="$(cygpath -w "$pre")" WCE_PROJECTS="$(cygpath -w "$pre/projects")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/pack.txt")" > "$OUT/pack.log" 2>&1
+printf 'game_file %s "%s" --packs\nquit\n' "$ENV_PATH" "$(mixpath "$ENV_SRC")" > "$OUT/pack.txt"
+WCE_SETTINGS_DIR="$(winpath "$pre")" WCE_PROJECTS="$(winpath "$pre/projects")" "$BIN/wce$EXE" --script "$(winpath "$OUT/pack.txt")" > "$OUT/pack.log" 2>&1
 [ -f "$ENV_SRC" ] || { echo "cannot read $ENV_PATH from the packs"; tail -5 "$OUT/pack.log"; exit 1; }
 bad=0
 fail() { echo "FAILED: $*"; bad=1; }
@@ -48,8 +46,8 @@ for run in 1 2; do
     cp -r "$SRC" "$copy/$TILE_REL"
     cp "$KIT/_tile_database/TILES/$ENTRY" "$copy/_tile_database/TILES/"
     tile="$copy/$TILE_REL"
-    sed -e "s|%TILE%|$(cygpath -m "$tile")|g" -e "s|%KIT%|$(cygpath -m "$dir/kit")|g" -e "s|%OUT%|$(cygpath -m "$dir")|g" "$ROOT/scripts/cross_tool.txt" > "$dir/script.txt"
-    WCE_SETTINGS_DIR="$(cygpath -w "$dir/settings")" WCE_PROJECTS="$(cygpath -w "$dir/projects")" "$BIN/wce.exe" --script "$(cygpath -w "$dir/script.txt")" > "$dir/run.log" 2>&1
+    sed -e "s|%TILE%|$(mixpath "$tile")|g" -e "s|%KIT%|$(mixpath "$dir/kit")|g" -e "s|%OUT%|$(mixpath "$dir")|g" "$ROOT/scripts/cross_tool.txt" > "$dir/script.txt"
+    WCE_SETTINGS_DIR="$(winpath "$dir/settings")" WCE_PROJECTS="$(winpath "$dir/projects")" "$BIN/wce$EXE" --script "$(winpath "$dir/script.txt")" > "$dir/run.log" 2>&1
     rc=$?
     echo "run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -E "error|FAILED" "$dir/run.log" | head -5; }
@@ -62,8 +60,8 @@ grep -q "kit copy untouched by Save All" "$D1/run.log" && echo "Save All saved t
 ls "$D1/projects/assembly_kit/raw_data/terrain/tiles/battle/$TILE_REL/tile.wce" >/dev/null 2>&1 && echo "the project has the tile (tile.wce)" || fail "no tile.wce in the project"
 
 # only the two edited spans changed
-python "$ROOT/scripts/span_diff.py" "$ENV_SRC" "$D1/saved.environment" --expect 26 41 && echo "the saved .environment (read through the editor's files) differs from the pack file in exactly the edited attribute value" || fail "the saved .environment is not the pack file with one value changed"
-python "$ROOT/scripts/span_diff.py" "$SRC/tile.ted" "$T1/tile.ted" && echo "the exported tile.ted differs from the original in exactly one span, inside one tag (the moved building)" || fail "the exported tile.ted is not the original with one span changed"
+"$PY" "$ROOT/scripts/span_diff.py" "$ENV_SRC" "$D1/saved.environment" --expect 26 41 && echo "the saved .environment (read through the editor's files) differs from the pack file in exactly the edited attribute value" || fail "the saved .environment is not the pack file with one value changed"
+"$PY" "$ROOT/scripts/span_diff.py" "$SRC/tile.ted" "$T1/tile.ted" && echo "the exported tile.ted differs from the original in exactly one span, inside one tag (the moved building)" || fail "the exported tile.ted is not the original with one span changed"
 for f in $(cd "$SRC" && find . -type f | sed 's|^\./||'); do
     [ "$f" = tile.ted ] && continue
     cmp -s "$SRC/$f" "$T1/$f" || fail "tile file $f changed"

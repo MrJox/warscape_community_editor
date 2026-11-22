@@ -20,11 +20,9 @@
 # brush stroke's pixels, the moved building's line): another tile in their place runs them, but not all of their checks can hold.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib.sh"
 OUT="${1:-$ROOT/build/tile_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
-SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
-export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
-GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
 KIT="${WCE_TILE_KIT:-$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle}"
 [ -d "$KIT" ] || [ -n "${WCE_TILE_KIT:-}" ] || KIT="$GAME/assembly_kit/raw_data/terrain/tiles/battle"
 SRC="${WCE_TILE_SRC:-$KIT/assembly_kit/khazad_wall_test/battlefield}"
@@ -54,8 +52,8 @@ have() {
 run_script() { # run_script <script name> <run> <tile dir> [second tile dir] -> $OUT/<name><run>/
     local name="$1" run="$2" tile="$3" tile2="${4:-}" dir="$OUT/$1$2"
     rm -rf "$dir"; mkdir -p "$dir/settings"; cp "$SETTINGS_SRC/settings.toml" "$dir/settings/" 2>/dev/null
-    sed -e "s|%TILE2%|$([ -n "$tile2" ] && cygpath -m "$tile2")|g" -e "s|%TILE%|$(cygpath -m "$tile")|g" -e "s|%OUT%|$(cygpath -m "$dir")|g" "$ROOT/scripts/$name.txt" > "$dir/script.txt"
-    WCE_SETTINGS_DIR="$(cygpath -w "$dir/settings")" "$BIN/wce.exe" --script "$(cygpath -w "$dir/script.txt")" > "$dir/run.log" 2>&1
+    sed -e "s|%TILE2%|$([ -n "$tile2" ] && mixpath "$tile2")|g" -e "s|%TILE%|$(mixpath "$tile")|g" -e "s|%OUT%|$(mixpath "$dir")|g" "$ROOT/scripts/$name.txt" > "$dir/script.txt"
+    WCE_SETTINGS_DIR="$(winpath "$dir/settings")" "$BIN/wce$EXE" --script "$(winpath "$dir/script.txt")" > "$dir/run.log" 2>&1
     local rc=$?
     echo "$name run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -E "error|FAILED" "$dir/run.log" | head -5; }
@@ -79,7 +77,7 @@ if have "$LOTH"; then
     done
     # the ground shows its textures (the shader reads the layer's uv scale from ps_texture_array_cb[mapping + 1] = array element [mapping]: layer 0 once got scale 0 and was one flat colour):
     # in the close capture no more than 1 % of the lit 8 x 8 pixel blocks may be flat (the broken build: 6 %, the right one: 0 %)
-    python - "$T1/detail.png" <<'PY' || bad=1
+    "$PY" - "$T1/detail.png" <<'PY' || bad=1
 import sys
 import numpy as np
 from PIL import Image
@@ -169,7 +167,7 @@ if have "$SRC"; then
     # minimal edit
     changed=$(diff <(tr -d '\r' < "$SRC/tile.ted") <(tr -d '\r' < "$OUT/tile_smoke1/saved/tile.ted") | grep -c '^>')
     [ "$changed" = 1 ] && echo "saved tile.ted differs from the original in exactly the moved building's line" || fail "saved tile.ted differs in $changed lines (expected 1)"
-    python - "$SRC/height_map_0.png" "$OUT/tile_smoke1/saved/height_map_0.png" <<'PY' || bad=1
+    "$PY" - "$SRC/height_map_0.png" "$OUT/tile_smoke1/saved/height_map_0.png" <<'PY' || bad=1
 import sys
 import numpy as np
 from PIL import Image
