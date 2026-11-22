@@ -647,6 +647,9 @@ pub struct Tile {
     /// A drag is under way (a point, a grab, a profile's point): the rivers' layers and what follows the water wait for its end.
     pub(crate) drag_open: bool,
 
+    /// The rivers' AI hints as last made and what they were made from (`river_fords.rs`): the viewport draws them every frame.
+    pub(crate) river_hint_cache: std::cell::RefCell<Option<((u64, u64), Vec<(&'static str, bool, Vec<wce_foundation::math::Float3>)>)>>,
+
     /// The signature of the roads when last looked at: a line that moved since waits.
     pub(crate) roads_seen: u64,
 
@@ -1056,6 +1059,7 @@ impl TileDocument {
             water_drawn: 0,
             water_last: 0,
             drag_open: false,
+            river_hint_cache: std::cell::RefCell::new(None),
             roads_seen: 0,
             texture_rules_job: None,
             texture_rules_basis: None,

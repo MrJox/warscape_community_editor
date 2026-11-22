@@ -191,6 +191,12 @@ impl Ford {
 /// The kit's fords' water over their bed (the game's height units; `river_ford/*`: 0.36 .. 0.5).
 pub const FORD_DEPTH: f64 = 0.5;
 
+/// How far short of the water's drawn edge a ford's flat stops (metres): a ford is narrower than its river, its sides climbing to the land.
+pub const FORD_SIDE_INSET: f64 = 4.0;
+
+/// How far over the water the ground stands at its drawn edge at least (metres).
+pub const EDGE_LIFT: f64 = 0.3;
+
 /// How steep a ford's sides climb from its water to the land (degrees): units walk down to it, and the water does not lie over land nearly
 /// as high as it (12° left so little between them that the water drew over the land from afar).
 pub const FORD_BANK_SLOPE: f64 = 25.0;
@@ -292,20 +298,29 @@ impl Channel {
     /// to the ford's depth, a flat valley as wide as the profile, 128 m for a 45 m river, its banks on past it: a great ring of cut ground).
     pub fn across_at(&self, r: f64, water: f64, width: f64, along: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        let river = self.profile(r, water, k);
+        let half = width * 0.5;
+        let river = self.profile(r, water, k).max(self.edge_floor(r, water, half));
         if along.is_nan() || self.fords.is_empty() {
             return river;
         }
 
-        let half = width * 0.5;
         let (w, ford_depth) = self.ford_at(along, r / half.max(1e-6));
         if w <= 0.0 {
             return river;
         }
 
-        let ford = water - ford_depth + (r.abs() - half).max(0.0) * Self::rise_of(FORD_BANK_SLOPE, self.vertical);
+        // Narrower than the river: flat a few metres short of its edges, then up to the land.
+        let floor = (half - FORD_SIDE_INSET).max(half * 0.6);
+        let ford = water - ford_depth + (r.abs() - floor).max(0.0) * Self::rise_of(FORD_BANK_SLOPE, self.vertical);
         let blended = river + (ford - river) * w;
-        if r.abs() <= half { blended } else { river.min(blended) }
+        if r.abs() <= floor { blended } else { river.min(blended).max(self.edge_floor(r, water, half)) }
+    }
+
+    /// The least the ground stands at near the water's drawn edge: over the water at the edge ([`EDGE_LIFT`]), down at the bank's slope
+    /// inside it, so that the edge of the water never hangs over lower ground (it showed the void under the river from low down).
+    fn edge_floor(&self, r: f64, water: f64, half: f64) -> f64 {
+        let v = if self.vertical > 0.0 { self.vertical } else { 1.0 };
+        water + EDGE_LIFT * v - (half - r.abs()).max(0.0) * self.rise()
     }
 
     /// The river's own bed `r` metres from its centre (the kit's profile scaled by its depth, its banks past it).
@@ -738,8 +753,11 @@ mod tests {
             assert!(ford >= river - 25.0, "at {r}: {ford}, the river's {river}");
         }
 
-        let climb = c.across_at(30.0, -6.2, 45.0, 150.0) - c.across_at(23.0, -6.2, 45.0, 150.0);
-        assert!(climb > 3.0, "its side climbs steeply to the land: {climb} over 7 m");
+        // Narrower than the river: flat to 4 m short of the water's edge, then climbing steeply, over the water at the edge.
+        assert!((c.across_at(17.0, -6.2, 45.0, 150.0) - (-6.2 - FORD_DEPTH)).abs() < 1e-9, "its floor");
+        let climb = c.across_at(22.5, -6.2, 45.0, 150.0) - c.across_at(18.5, -6.2, 45.0, 150.0);
+        assert!(climb > 1.5, "its side climbs steeply to the land: {climb} over 4 m");
+        assert!(c.across_at(22.5, -6.2, 45.0, 150.0) >= -6.2 + EDGE_LIFT - 1e-9, "over the water at its edge");
         let g = c.fill_cells([140.0, 0.0], [10.0, 1.0], (3, 1));
         assert!(g[1].bed > -7.0 && g[1].bed < -6.2 && g[1].ford == 1.0 && g[1].wet, "on the grid: {g:?}");
 

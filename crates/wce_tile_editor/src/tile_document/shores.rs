@@ -283,6 +283,29 @@ impl Tile {
         (reeds, stones)
     }
 
+    /// The shore items within a box (x0, z0, x1, z1, world metres): each one's element type, key and place (a script's look).
+    #[must_use]
+    pub fn shore_items_in(&self, b: [f32; 4]) -> Vec<String> {
+        let unit = self.unit();
+        self.shore_items
+            .iter()
+            .filter_map(|i| {
+                let (x, z) = ((i.position[0] / unit) as f32, (i.position[2] / unit) as f32);
+                if x < b[0] || x > b[2] || z < b[1] || z > b[3] {
+                    return None;
+                }
+
+                let text = String::from_utf8_lossy(&i.text);
+                let kind = text.trim_start_matches('<').split(' ').next().unwrap_or("").to_owned();
+                let key = ["key=\"", "vfx=\""]
+                    .iter()
+                    .find_map(|k| text.split(k).nth(1)?.split('"').next().map(str::to_owned))
+                    .unwrap_or_default();
+                Some(format!("{kind} {key} at ({x:.1}, {z:.1})"))
+            })
+            .collect()
+    }
+
     /// How many decals the banks have now.
     #[must_use]
     pub fn shore_decals(&self) -> usize {
