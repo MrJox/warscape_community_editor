@@ -1,7 +1,7 @@
 # Exported (binary) tiles
 
 What BOB writes into `working_data/terrain/tiles/<kind>/<set>/.../<variation>/` and the packs ship; Phase 2 of
-`docs/plans/tile_roundtrip.md`. Work in progress: this file grows with step 1 (the inventory and the decoding).
+`docs/plans/tile_roundtrip.md` (steps 1 and 2: the inventory, the decoding and the format `attila.tile_binary`).
 
 ## Inventory (2026-10-22, `wce_tile_io --example tile_pack_inventory`)
 
@@ -45,7 +45,7 @@ On 15,148 extracted files (every file of the kinds still to decode, five whole t
 | rpfm_lib rigid model | terrain meshes | vertices and indices |
 | `wce_formats::chmf` | `hf_height_map.data`, `hf_water_map.data` | **decoded** (heights; see below) |
 | `wce_formats::markers` | `*.markers` | **decoded** (records split and named per class and version; see below) |
-| `wce_formats::image_containers::DdsFile` | `*.dds` | container; DXT5 pixels decoded by `dds_decode`, the compressor not reproduced |
+| `wce_formats::image_containers::DdsFile` | `*.dds` | container; DXT5 pixels decoded by `dds_decode`; BOB's compressor ported since (`attila::ati_dxt`, docs/formats/tile_compile.md) |
 | lossless XML | the XML files | text |
 | `wce_formats::old_lists` | older `.tree_list` / `.grass_list` | **decoded** (below) |
 | lossless XML | `*.outlines` (XML text: `OUTLINE_LIST` > `OUTLINE` > `position x y`) | text |
@@ -100,11 +100,11 @@ class's `handle_backwards_compatibility`, e.g. `POINT_LIGHT_MARKER` 0x100a1520).
 | `AI_HINT_POLYLINE_MARKER` | 1 | 613 | u32 count + (x, z) f32 points |
 | `AI_HINT_POLYLINE_LIST_MARKER` | 1 | 281 | u32 count + point lists |
 | `AI_SEPARATOR_MARKER` | 1 | 175 | u32 count + points |
-| `AI_HINT_DIRECTED_POINT`, `BUILDING`, `DECAL`, `GENERIC`, `TREE` | | 27, 27, 27, 11, 27 | no records in any shipped file |
+| `AI_HINT_DIRECTED_POINT`, `BUILDING`, `DECAL`, `GENERIC`, `TREE` | | 27, 27, 27, 11, 27 | no records in any shipped Attila file (Rome 2's one `GENERIC_MARKER` file: docs/formats/rome2_tiles.md) |
 
 The names of the prop and particle bytes come from their distributions (seasons is 15 in every record, the four visibility bytes are 1 in
 all but 5 of 300k) and BMD's PROP / PARTICLE_EMITTER (docs/formats/fastbin_tile.md); the frames of positions against tile.ted (x, y doubled,
-z mirrored for the lights: docs/re/renderer.md) are settled in step 3.
+z mirrored for the lights: docs/re/renderer.md) are settled in the decompile (docs/formats/tile_decompile.md, "Frames").
 
 ## Building lists (`building_list`, `far_building_list`, `building_list_sprawl`, `building_list_veg`): decoded (2026-10-22)
 
@@ -143,16 +143,17 @@ An exported tile folder into the model and back (docs/formats/tile_model.md, "at
 over every tile folder of Attila's 31 packs, read from the packs (`docs/baseline/tile_binary_roundtrip_check.txt`, about 3 min): **1,756
 folders, every file the format reads identical** (49 kinds: markers, building lists, tree / grass lists of both formats, BMD binaries, the
 civilian lists, the tile databases, CHMF, every XML file including the ones with text and comments), the models read back from the written
-files equal; kept as original bytes: 545 CHMF (short tables) and 4,438 DXT5 textures (`blend`, `index`, `normal`: the compressor is
-step 4); carried as files: the terrain meshes (2,809), loading screens (194), `tile.ted_binary` (22), stray textures, `assembly_kit_rules.bob`.
+files equal; kept as original bytes: 545 CHMF (short tables) and 4,438 DXT5 textures (`blend`, `index`, `normal`: the compressor came
+later, step 4); carried as files: the terrain meshes (2,809), loading screens (194), `tile.ted_binary` (22), stray textures, `assembly_kit_rules.bob`.
 
 Notes from the gate: rpfm_lib invents an `id` (u64, random) for trees and capture locations that is not in the files; the model sets it
 to 0 (a re-read is the same model, the bytes prove no `id` is data). `building_list.xml` has the root of the binary list: the writer picks
 the codec by the file's name first.
 
-## Map-level files (not decoded; tilemaps are a later scope, docs/plans/tile.md)
+## Map-level files (survey of 2026-10-06)
 
-What the 2026-10-06 survey found about the files BOB_Terrain, Terry and the campaign tools write per map:
+What the 2026-10-06 survey found about the files BOB_Terrain, Terry and the campaign tools write per map. Most are read and written since
+(`wce_tile::battle_map`, the Terrain tool): docs/formats/map_files.md, docs/re/battle_maps.md, docs/re/terry.md.
 
 - `tile_map.index`: u32 9, width, height. `terrain.tile_list`: u32 11, then a u16-prefixed path table (campaign: 13 MB, 41 sets, 371
   variations). `tile_map.tiles` embeds heap pointers, so BOB itself does not reproduce it: compare it structurally only.

@@ -5,8 +5,8 @@ build (`empire.retail.dll` 33.5 MB, Attila's 32.2 MB; the kit's TEd, BOB and BOB
 feature strings: civilians, escalation, lite building zones, the alliances' indices, tile upgrades, `warscape_asset_variation_db`).
 The editor draws it as Attila (`RenderGame::of` gives `Attila` for any game but Rome 2). Status 2026-10-31: battle tiles (a
 settlement, a coast, a river, a custom tile) and the map context of `vik_attila_map` draw with their terrain, buildings, trees, grass,
-sky, clouds, the sun and its shadows, the sea, rivers and the weather's rain and snow; nothing to check against a frame of the game
-yet.
+sky, clouds, the sun and its shadows, the sea, rivers and the weather's rain and snow; no battle frame of the game has been captured to
+check them against. The campaign map was checked against captures of the game (V1, V2): docs/plans/campaign_tilemap.md, "6. Thrones".
 
 Tools: `shader_diff` (wce_d3d11 example: two games' `fxc/` side by side, by bytecode and by reflection), `shader_info`
 (`WCE_GAME_KEY=thrones_of_britannia`), and `D3DDisassemble` (d3dcompiler_47) on the shaders' DXBC for the instructions. The
@@ -30,7 +30,7 @@ reflection, 505 another reflection, none missing, 28 new. Of the shaders the edi
 - `directionallight ps30_slm_highdef` (gather 5.0): `directional_light_PS` 96 bytes (80): `g_cloud_shade_params` and
   `cloud_shade_sampler`. The shade multiplies the sun where the G-buffer's z / w is below `g_cloud_shade_params.w`, sampled at
   (the pixel projected along `sun_direction` onto y = 0) x `.z` + `.xy`: left at zero, the comparison
-  never holds (z / w >= 0) and the sun is as Attila's.
+  never holds (z / w >= 0) and the sun is as Attila's. The editor sets it with `gfx_cloud_shadows` ("Graphics options" below).
 - `ocean ps30_main_ultra_water_quality` (sm_4_0): the pixel shader reads the sea bed itself (`sea_bed_info_texture_sampler` at
   (xz + 3 x normal.xz + 1024) / 2048, height = red x `g_ps_sea_info.y` + `.x`, 0 outside) instead of
   `g_transparency_exponential_scale`, `g_sea_bed_light_scatter`, `g_refraction_light_scatter` (unused now). The editor already binds

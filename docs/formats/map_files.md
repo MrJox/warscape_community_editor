@@ -10,7 +10,9 @@ docs/re/battle_maps.md.
   every other file as its blob. `PagedU16` (LF fields: pages of 64 x 64 samples, page after page, the file's own 16-bit values),
   `CellLayer` (a cell layer: a palette of every colour the image has and a u16 index per cell), `ExplicitTiles` (line by line, each line's
   ending kept), `TerryProject` (the `.terry` as a lossless `XmlDoc` with its entities indexed: id, name, components, children).
-- `wce_terrain_io`: `MapFiles` (a folder as named blobs, `from_dir` / `write_to`) and `attila::read` / `attila::write`, in memory.
+- `wce_terrain_io`: `MapFiles` (a folder as named blobs, `from_dir` / `from_bytes`) and `attila::read` / `attila::write`, in memory;
+  `built` for a map's built folder (the packs' `terrain/battles/<map>`, Rome 2's only form). Writing to disk is the Terrain tool's save
+  (`wce_terrain_editor`, docs/plans/terrain_save_export.md).
 - The built files' readers and writers stay in `wce_tile::battle_map` (`tile_map`, `tile_list`, `locations`), which the tile tool's map
   context uses; `locations.blm` now keeps every record's last two values and the file's tail (cell count, climate table) and writes back.
 

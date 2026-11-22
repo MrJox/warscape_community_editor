@@ -1,8 +1,11 @@
 # MSAA (gfx_aa 2..4)
 
-Status 2026-11-01: steps 1 and 2 done (Attila, ToB; not Rome 2): the multisampled scene, its lighting and the coverage techniques.
-Measured on the ToB city tile's near view, hard edge steps (neighbours more than 60 apart): 31007 without, 27746 at 2x, 25243 at 4x,
-23475 at 8x. Step 3 is what remains (below). MLAA (gfx_aa 1) is separate (`Renderer::pass_mlaa`).
+Status 2026-11-22: built 2026-11-01 (Attila, ToB; not Rome 2): the scene drawn and lit multisampled as in the game's frame below,
+the coverage techniques, snowy terrain tiles and `hdr_to_screen`'s `_ms` variants. Measured on the ToB city tile's near view, hard
+edge steps (neighbours more than 60 apart): 31007 without, 27746 at 2x, 25243 at 4x, 23475 at 8x. Fixed since: the particles'
+distortion takes the one-sample depth (2026-11-06; the MS depth crashed the driver), and the shadow cascades split from the game's
+depth analysis run on the GPU (2026-11-21; the CPU readback of the resolved D24S8 depth never mapped). Open items: "Open" below. MLAA
+(gfx_aa 1) is separate (`Renderer::pass_mlaa`).
 
 ## The game's frame at 2x (`D:\renderdoc\rome.rdc`, Rome at its campaign placement, MSAA 2x)
 
@@ -38,28 +41,24 @@ Event numbers are the capture's.
 
 No MLAA with MSAA. The tone mapper's `..._with_bloom_and_gamma_ms_Nx` techniques are not used here (the hardware resolve instead).
 
-## Plan
+## As built
 
-1. **G-buffer and geometry.** MS G-buffer channels 1..4 and depth-stencil at the level's count (2 / 4 / 8). The terrain stays s1 (its
-   intermediates and view depth) and is resolved into the MS G-buffer; its depth and stencil expanded into the MS depth. Grass, rigid
-   meshes, trees and billboards drawn into the MS targets with their `_ms` techniques (`ps41_gbuffer_alpha_test_ms`,
-   `ps50_gbuffer_ms`, `ps50_gbuffer_grass_ms`: alpha as coverage, `g_num_of_samples`). Then the depth resolve into s1 depth and an s1
-   channel 4 for the s1 readers (SSAO, refraction, particles, depth analysis). Done together with step 2 (see "Design").
-2. **Lighting into an MS light buffer.** Directional and point lights, decals, environment specular and its blur, fog with their `_ms`
-   techniques; rivers, sea, sky, clouds, sun and particles drawn into the MS light buffer; `ResolveSubresource` before tone mapping;
-   `hdr_to_screen`'s `_ms` variant.
-3. **The rest.** Done: water refraction's `_ms` read, MLAA off with MSAA, the environment cube (one sample), the overlays (on the
-   resolved depth), picking (its own view). Open:
-   - Done 2026-11-01: snowy terrain tiles (the terrain's depth is expanded into the MS depth right after its depth pass, and a snowy
-     tile's boxes draw again into the MS depth-stencil alone, so their mark reaches the samples the snowy resolve tests; checked with
-     every tile forced snowy: the same snowy ground with and without MSAA). `hdr_to_screen`: the game's `ps50_main_high_ms` of each
-     variant (depth of field, distortion, ToB's grain), reading the MS depth, the one-sample shader if missing.
-   - OIT with MSAA: the fragments are stored per pixel against the MS depth and resolved into every sample; the game's OIT with MSAA
-     was not checked.
-   - The selection outline and the editor's own passes on the MS targets (they draw after the image, on the one-sample depth).
-   - A capture of the game at 4x / 8x to compare.
+- G-buffer and geometry: MS channels 1..4 and depth-stencil at the level's count; the terrain stays s1 and is resolved into the MS
+  G-buffer, its depth and stencil expanded into the MS depth right after its depth pass (a snowy tile's boxes draw again into the MS
+  depth-stencil, so the snowy resolve sees their mark); grass, rigid meshes, trees and billboards with their `_ms` techniques (alpha as
+  coverage); then the depth resolve into the s1 depth and an s1 channel 4 for the s1 readers.
+- Lighting into the MS light buffer (lights, decals, environment specular with its stencil stand-in, blur, fog in their `_ms`
+  variants; water, sky, clouds, sun, particles on the MS depth); `ResolveSubresource` before tone mapping; `hdr_to_screen`'s
+  `ps50_main_high_ms` per variant (depth of field, distortion, ToB's grain). Water refraction reads `_ms`; no MLAA with MSAA; the
+  environment cube is drawn with one sample; the overlays and picking use the resolved depth or their own view.
 
-Each step: captures at 2x / 4x / 8x against MSAA off and against `rome.rdc`.
+## Open
+
+- OIT with MSAA: the fragments are stored per pixel against the MS depth and resolved into every sample; the game's OIT with MSAA was
+  not checked.
+- The selection outline and the editor's own passes on the MS targets (they draw after the image, on the one-sample depth).
+- A capture of the game at 4x / 8x to compare against the 2x one the port follows; the in-game comparison is listed in
+  docs/plans/rendering_remaining.md ("To check in game").
 
 ## Design (2026-11-01)
 

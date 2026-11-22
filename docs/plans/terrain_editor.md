@@ -1,19 +1,21 @@
 # Terrain tool: Terry's replacement (plan, 2026-11-02)
 
-**17 November 2026 — exact land-LF region PNG interchange:** Terrain can export a bounded land-height rectangle and replace it from exact grayscale16 PNG on raw/kit maps, with one Undo/Redo step. Native maps permit read-only image export; native import remains refused. [Workflow, limits and focused checks](lf_region_png.md).
-
-Developer entry point: [Terrain Editor handover](../terrain_editor_handover.md), maintained from the accepted handover and current feature scope. Acceptance, publication and upstream merge are distinct; the dated progress below is historical.
-
-**15 November 2026 â€” locally prepared Reliable Terrain Save/Export:** complete-output staging, durable per-file publication, shared Save/Export Busy state, source/destination freshness, destination ownership, complete resource identity and native BLM/deployment preservation are implemented directly on current master, including the necessary shared publication modules/tests without an unmerged #51 dependency or its Tile I/O changes. Upstream autosave/recovery behavior is retained. Save As writes a copy without retargeting or clearing unsaved history. [Usage, profiles, refusal/recovery rules and focused tests](terrain_save_export.md). This is a local feature package, not upstream acceptance. Native normal-baseline continuity across close/reopen remains unresolved; no persisted baseline is included. Campaign-height preparation #52 remains held and excluded.
-
 The Terrain tool edits a map: the battle map a game's battles are cut from (the campaign's `main_attila_map`, a mod's `rom_third_age_map`, a
 historical battle, a settlement map), its low-frequency (LF) ground, the tiles painted on it and the metadata Terry keeps in the map's
 `.terry` project. It replaces the Assembly Kit's Terry: Attila's crashes at launch, Rome 2's kit has none, Thrones' works but slowly (user,
-2026-11-02). Attila first; every game fact behind the game profile. What Terry does: docs/re/terry.md. It takes over the map-level scope of
-docs/plans/tile.md (items 1, 3, 4, 5) and the map context's open items that are about the map rather than the open tile
+2026-11-02). Attila first; every game fact behind the game profile. What Terry does: docs/re/terry.md. It takes over the old tile plan's map-level
+scope ("The map pipeline scope taken over from the tile plan", below) and the map context's open items that are about the map rather than the open tile
 (docs/plans/map_context_todo.md, "Map-level terrain", "Large map contexts: performance").
 
-Historical status (2 November): **Phases 0, 1 and 2 done; the user's decisions are in "Decisions" at the end.** The handover and current feature note above describe later availability; this dated plan does not certify all game/map profiles.
+**State (2026-11-22).** Phases 0 to 9 built (2026-11-02 to 2026-11-05) for Attila's and Thrones' kit maps, battle and campaign, and Rome
+2's maps in their built form; the `terrain` feature of `wce_app` (in the default features, not in `release`). Since then, from an outside
+contributor (Jordanakoos, merged 2026-11-10 to 2026-11-22): checked single-byte BLM names (#49), the campaign height metadata from the
+layered tile database (#57), Terry overlays removed in bulk (#58), the native campaign props' model and I/O (#59), reliable Save and Export
+(#74, [terrain_save_export.md](terrain_save_export.md)) and the land LF region as 16-bit PNG (#75, [lf_region_png.md](lf_region_png.md)).
+The campaign map's rendering against the game is docs/plans/campaign_tilemap.md; its lighting docs/plans/campaign_environment.md; the
+startpos's settlements and figures docs/plans/startpos_editing.md. LF means the map's low-frequency height; HF the placed tiles' detail.
+`MapKind::Battle` includes a campaign's battle map under `terrain/battles/`; `MapKind::Campaign` is the strategic map under
+`terrain/campaigns/`: similar `main_*` names do not make their height and normal workflows interchangeable.
 
 ## What Terry does and what the tool does with it
 
@@ -25,56 +27,44 @@ Historical status (2 November): **Phases 0, 1 and 2 done; the user's decisions a
 | Paint tile sets (layers, fill), place / move / rotate / remove explicit tiles | cell layer painting (tile set, tile / variation colours, climate, culture, snow per season), explicit tiles with the gizmo and the fit test (`test_final_tile_position`) | 4 |
 | Paint LF heights and sea LF (falloff / image / disk / square brushes, size, aspect, rotation; one add / subtract operation; undo optional) | the tile tool's brushes and operations (raise, lower, smooth, flatten, level, ramp, noise, image brushes, falloff curves) on a paged LF field, always with undo; aspect ratio and rotation added | 3 |
 | Apply (per-tile) LF patches | the custom-mesh and sea tiles' `lf_mask.tif` into the LF (docs/re/terry.md, "Per-tile LF patches") | 3 |
-| Entities: battle catchment areas, deployment zones and regions, rivers, prop meshes, VFX, environment volumes, season masks; spot / circle / rectangle / polyline / spline creation; gizmo, clone, multi-selection, scene tree, properties, undo view | the `.terry` scene as a lossless ECS model; the editor's selection, inspector (multi-selection), gizmo and creation modes; overlays draped on the ground | 5 |
+| Entities: battle catchment areas, deployment zones and regions, rivers, prop meshes, VFX, environment volumes, season masks; spot / circle / rectangle / polyline / spline creation; gizmo, clone, multi-selection, scene tree, properties, undo view | the `.terry` scene as a lossless model; the editor's selection, inspector (multi-selection), gizmo and creation modes; overlays draped on the ground | 5 |
 | Generate battle catchment areas (`bca_generation_spec.xml`) | the generator ported, Thrones' Terry as the oracle | 6 |
-| BOB_Terrain: `Terry file`, `Tilemap`, `Heights & Normals` | reimplemented, BOB as the oracle (docs/plans/tile.md decisions); pack output; Launch in game at a chosen location | 7 |
+| BOB_Terrain: `Terry file`, `Tilemap`, `Heights & Normals` | reimplemented, BOB as the oracle ("The map pipeline scope taken over from the tile plan"); pack output; Launch in game at a chosen location | 7 |
 | Campaign projects (`terrain/campaigns/<map>`: props, VFX, season masks, the layout map) | a second document kind on the same model | 8 |
 | Thrones (same plugin), Rome 2 (no Terry) and later games | profiles and per-game readers / writers | 9 |
 
-## What exists to build on
-
-| Piece | Where | Use |
-|---|---|---|
-| Kit map fill, exact against BOB on 69 maps | `wce_tile::battle_map::fill` | the placements after a tile map edit |
-| `tile_map.index` / `.tiles` (v6, v7, v9), `terrain.tile_list` v11, `locations.blm` v7 / v8 readers, writers for the first two | `wce_tile::battle_map::{tile_map, tile_list, locations}` | load and build; `locations.blm` needs a writer |
-| The battle tile database (sets, tiles, variations, links, colours, climates) | `wce_tile::battle_map::tile_db`, `wce_tile_editor::climate_db` | palettes, the fit test, validation |
-| The map context: chunks of 8 x 8 cells at three levels, four workers, tile templates opened once and cached on disk (lz4), uploads off the render thread, removals by id range | `wce_tile_editor::tile_document::context::{stream, template, cache}` | the 3D view, as it is; its frame generalised (below) |
-| The LF in the game's vertex shader (a 2048 window around the camera, one uv offset), LF normals on a torus, render origin, the sea, custom-mesh tiles, climates, snow regions | `wce_render::renderer::terrain`, `context::Frame`, `LfMap` | the ground; the window and the normals become updatable in parts |
-| Brushes: falloff, falloff curves (LUT), image brushes; raise, noise, smooth, flatten, level, ramp; undo by touched rectangle (heights) or 64 x 64 blocks (`PixelLayer`) | `wce_tile::{height_field, falloff, brush_image, pixel_layer}`, `wce_tile_tool::{falloff_editor, image_brush, veg_brush}` | LF painting, cell painting |
-| Overview map (the LF shaded, the camera, click to go) | `wce_tile_tool::minimap_panel`, the Map context's overview | the Map panel's start |
-| Documents, commands, history, inspector, gizmo, shortcuts, scripts (`--script`, `--shot`) | `wce_editor_core`, `wce_editor` | the tool's frame; gates and captures |
-| Launch in game (pack, loose, Proton) | `wce_tile_tool::{launch, launch_prompt}` | a battle at a location of the edited map |
-| PNG (kit-exact encoder), TIFF, DDS templates, CHMF | `wce_formats` | the map's images and BOB's outputs |
-
 ## Architecture
 
-### Crates (the tile tool's split)
+### Crates and source map
 
-- `wce_terrain` (model, no GPU, no UI): the game-neutral map model (`MapModel`: cell layers, LF fields, explicit tiles, the `.terry` scene,
-  the map's settings), the edits and their undo records, the fill driver, the BCA generator, the builders of the game's files. Map-level
-  formats move here from `wce_tile::battle_map` (`tile_map`, `tile_list`, `locations`, `context`; `wce_tile` re-exports them so the tile
-  tool does not change).
-- `wce_terrain_io`: per-game readers and writers (`attila`, later `rome2`, `thrones`), as `wce_tile_io`.
-- The streamer stays in `wce_tile_editor` (its templates open whole `TileDocument`s, so a crate of its own would depend on the tile
-  editor and the tile editor on it): `tile_document::context` becomes a public `map_stream` module whose API takes a frame and no open
-  tile; the tile document is one client, the map document the other.
-- `wce_terrain_editor` (depends on `wce_tile_editor`): the `MapDocument` (the model, the streamer, the scene layer, picking, the GPU-side
-  dirty regions).
-- `wce_terrain_tool`: the `Tool` (the placeholder `terrain` becomes it, behind a `terrain` feature of `wce_app`), panels, chips, commands.
+Data flows from the mounted sources through `MapFiles` and a format reader into `MapModel`, then through `MapDocument`'s commands and
+history to the view. Save writes the authoring files (the kit layout, or a built map's working files); Export builds the game's files.
+
+| Layer | Where | Does |
+|---|---|---|
+| Sources, game facts | `wce_tile::sources`, `wce_vfs`, `wce_map_view::maps`, the open inputs in `wce_terrain_tool::tool`; `wce_foundation::game::MapFacts` | projects, ordered kits and packs; the map list; the profile and the tile database |
+| Model (no GPU, no UI) | `wce_terrain`: `map` (`MapModel`, `Item<T>`: origin bytes and edit state; carried opaque files), `paged`, `pyramid`, `lf_edit`, `lf_patch`, `lf_region`, `cells`, `cell_edit`, `explicit`, `terry`, `bca`, `deployment`, `locations`, `campaign_props`; `wce_formats` | the game-neutral map, its edits and undo records, the BCA generator, the deployment and blm builders |
+| Files and builders | `wce_terrain_io`: `attila` (kit maps; `build`, `heights`, `normals`, and the campaign start's `cities`, `roads`, `start`, `characters`, `borders`, `shroud` ...), `built` (maps in their built form; `built::scene`) | readers and writers per game and form, minimal edits, the built files |
+| Document, history | `wce_terrain_editor`: `document` (`MapDocument`, `TerryFrame`), `lf`, `cells`, `terry`, `lf_region`, `save_validation`; `wce_editor_core::{command, document}` | commands, undo / redo, saved state, the LF mirror, the Save destination |
+| Tool, UI, jobs | `wce_terrain_tool`: `tool`, `map_panel`, `cell_paint`, `explicit_tiles`, `placements`, `refill`, `terry_view`, `prop_models`, `validate`, `export`, `launch`, `lf_region`, `lighting`, `skybox`, `start_figures` | panels, worker refill and export, picking, overlays, checks |
+| View, stream, render | `wce_map_view` (`MapView`, `Rings`, `maps`), `wce_tile_editor::tile_document::context::{Frame, stream, template, cache}`, `wce_render::renderer::terrain` | map coordinates, cached tile templates, chunk streaming, the LF's dirty regions, the game's shaders |
+
+The built files' readers (`tile_map`, `tile_list`, `locations`) stayed in `wce_tile::battle_map` (the tile tool uses them) instead of
+moving into `wce_terrain`. The streamer stayed in `wce_tile_editor` (its templates open whole `TileDocument`s); `wce_map_view` drives it
+for both tools.
 
 ### The frame
 
 `context::Frame` is "the map seen from the open tile": the open tile's frame, the LF resampled into it (`lf_map`), the open tile's median
 LF as the zero. The Terrain tool has no open tile: its frame is the map's own (the game's: origin at the map's centre, `tile_list`'s
 `origin_offset`; x east, z north; world units as the `.terry` positions), the LF's lattice is the map's pixels (no resampling, no copy),
-the sea at 0. Step one of Phase 2 makes the frame a parameter (`Frame::for_tile` = today's, `Frame::for_map`) with the tile tool's captures
-unchanged (the gate below).
+the sea at 0 (`ContextRequest` with no cells). A campaign map is drawn in the game's hex world, z stretched by 2 / sqrt 3
+(docs/plans/campaign_tilemap.md, decision 1).
 
 ### Game seam
 
-The profile gets `MapFacts`: cell size (1/8 of a settlement tile), LF pixels a cell per map kind, `lf_height` 3000 / `vertical_offset` 20,
-the sea LF's zero, the file names and versions (`tile_map` 9 / 6, `blm` 8 / 7, `tile_list` 11), whether the kit has Terry projects, the
-BCA spec's path. The model never names a game; `wce_terrain_io::<game>` maps files to it.
+The profile has `MapFacts` (`wce_foundation::game`): the cell size, the file versions (`tile_map` 9 / 6, `blm` 8 / 7, `tile_list` 11),
+whether the kit has Terry projects. The model never names a game; `wce_terrain_io::<game>` maps files to it.
 
 ## Data structures, memory and frame time
 
@@ -84,402 +74,227 @@ Sizes to plan for (Attila): the campaign battle map is 2032 x 1437 cells (2.92 M
 - **LF fields: paged u16.** Pages of 64 x 64 samples (8 KB, L1-sized), stored page after page (a brush's rows stay in one page, a
   dab touches a few pages). The file's 16-bit values are the truth (byte-identical round trip; no float copy of the map). A stroke keeps a
   float shadow of the pages it touches (its start values plus the brush's sum), written back to u16 at every dab, so many small dabs do not
-  lose to rounding; the shadow goes at the stroke's end. Large brushes run in parallel over pages (the compute pool, not the streamer's).
-  Memory: 93 MB for the battle map's LF, 375 MB for the campaign map's (Phase 8: only the pages in use resident, the rest memory-mapped from
-  a page file in the cache).
-- **Per-page min / max and a pyramid** over them: picking (a ray against the LF walks the pyramid, not samples), the blend boxes' y range
-  (today `LfMap::range` walks samples), the overview's shading, and which pages a brush can reach.
-- **Undo by page, copy on write** (as `PixelLayer`'s 64 x 64 blocks; `HeightField::begin_edit` copies the whole field, 186 MB for this
-  map: not reused). A stroke of radius 256 px keeps about 80 pages (650 KB). One budget for the document's history (default 256 MB; the
-  oldest steps go first, the user is told).
-- **Cell layers: dense, row-major arrays per layer**: tile set / tile / variation as a u16 palette index (the palette holds every colour
-  the PNG has, unknown ones too: a PNG written from an unedited layer is the original bytes, an edited one goes through the kit-exact
-  encoder), climate and culture u8, snow one bit a season. About 13 MB for the campaign battle map. Dirty state per 8 x 8 cell chunk
-  (the streamer's `CHUNK`), so a dirty chunk is a chunk to rebuild.
-- **Placements**: the fill's result as a flat array of 24-byte records (location, variation, origin, size, rotation, flags, climate, LF
-  min / max) and a u32 cell -> placement grid (11.7 MB), instead of `tile_map.tiles`' 2 x 20 bytes a cell (117 MB).
-- **The `.terry` scene**: components in arrays by type (transforms, rectangles, polylines ...), entities as index ranges into them, a
-  chunk grid for picking and drawing; the XML kept as a token stream with spans (`wce_formats::xml_doc`), so unknown attributes, order and
-  whitespace come back and an edit rewrites only its attribute.
-- **GPU updates in parts**: the LF window becomes a `DEFAULT` texture updated by `UpdateSubresource` over the dirty rectangles (it is
-  `IMMUTABLE` and remade when the camera moves today); the LF normal map the same (its unrolled source and the rolled copy); the cell overlay
-  texture (one texel a cell, 11.7 MB RGBA); a budget of bytes uploaded a frame (4 MB), the rest the next frames.
-- **What an LF edit costs elsewhere**: the neighbours' objects are lifted by the LF (`Frame::place`), so a stroke marks the chunks under it;
-  their entities are moved again at the stroke's end (not every dab), on the workers. The blend boxes take a margin during a stroke. The sea
-  bed (5 to 8 ms to make) is made again at the stroke's end.
+  lose to rounding; the shadow goes at the stroke's end. As built: one copy of the samples (`wce_foundation::samples::SampleGrid`) shared
+  by the model (`PagedU16`), the placed map and the scene; a kit map's LF a copy-on-write mapping of its TIFF strip (the samples nobody
+  edited stay the file's pages).
+- **Per-page min / max and a pyramid** over them (`wce_terrain::pyramid::HeightPyramid`: 8 x 8-cell leaf blocks): picking (a ray against
+  the LF walks the pyramid, not samples), the blend boxes' y range, and which pages a brush can reach. The campaign battle map's: made in
+  8 ms, 1.6 us a ray (`lf_pyramid_bench`).
+- **Undo by page, copy on write** (`LfRecord`: the pages a stroke touched, before and after). A stroke of radius 256 px keeps about 80
+  pages (650 KB).
+- **Cell layers: dense, row-major arrays per layer**: tile set / tile / variation as a palette index (the palette holds every colour the
+  PNG has, unknown ones too: a PNG written from an unedited layer is the original bytes, an edited one goes through the kit-exact
+  encoder), climate and culture, snow per season. Dirty state per 8 x 8 cell chunk (the streamer's `CHUNK`), so a dirty chunk is a chunk
+  to rebuild.
+- **The `.terry` scene**: the XML kept as text with spans (`wce_formats::xml_doc`), so unknown attributes, order and whitespace come back
+  and an edit rewrites only its attribute; entities added and removed as text splices with small undo records.
+- **GPU updates in parts**: the LF window and the LF normal map are `DEFAULT` textures updated over the edited texels only.
+- **What an LF edit costs elsewhere**: the chunks under a stroke are built again once no stroke is painted (`Streamer::rebuild`), so their
+  objects stand on the new LF.
 
-Budgets (to check with a perf gate on `main_attila_map`, RX 7900 XTX and the integrated GPU): 16 ms a frame p95 at the battle camera's view
-distance while painting; a dab of radius 256 px under 2 ms CPU; the map open in under 10 s from the cache (Phase 0 measures what it is
-now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for the campaign battle map.
-
-Measured 2026-11-05 (the Alps from 9 000 units up, rings 24 / 48 / 96, 1600 x 960, no vsync): 68.8 ms a frame, CPU-bound on the terrain
-passes, became 13.7 ms (73 fps). Each of the 21 terrain passes a frame walked all 11 000 terrains: they are now in clusters that a pass
-culls by its frustum. Each 64-cell patch was a draw: a campaign tile is now one 256-cell patch, and flat patches share a vertex buffer.
-The frame's terrain list is reused while nothing it depends on changes. Now about even between CPU and GPU (16 M triangles: the near
-tiles at full grid); the next cuts would be a tile's level of detail by distance within it, and the blend boxes' per-material binds
-(`terrain.from_blend`, 1.8 ms).
+Budgets: 16 ms a frame p95 at the battle camera's view distance while painting; the map open in under 10 s from the cache. Measured
+2026-11-02 (campaign battle map, default rings, RX 7900 XTX): 10.4 ms at the map's centre, 11.0 ms around Rome (325 508 draw items).
+Measured 2026-11-05 (the campaign map, the Alps from 9 000 units up): 68.8 ms became 13.7 ms (the terrains in clusters culled by frustum,
+a campaign tile one 256-cell patch, flat patches sharing a vertex buffer). Later stream and render work: the terrain stream fixes of
+2026-11-17 (#73) and docs/plans/campaign_tilemap.md.
 
 ## Rendering
 
 - The game's look: the map context's passes, unchanged in what they draw. The tile window is the near ring around the focus; the mid and
-  far rings as today; the view distance slider up to the whole map.
-- Overlays (editor views, not the game's look, so editor shaders): the cell layers draped on the ground by a screen-space pass in
-  `renderer/editor.rs` (the depth to world xz, the cell's texel, alpha); the brush outline on the LF; BCA rectangles, deployment polylines,
-  rivers, volumes drawn as lines on the ground; the explicit tiles' footprints. Off in the game view (`view_mode game`).
-- The Map panel (2D): the same cell texture with the LF shaded under it, drawn by ImGui; painting there edits the same layers.
+  far rings as the Tile tool's; the view distance slider up to the whole map.
+- Overlays (editor views, not the game's look, so editor shaders, never in the game view): a Map panel layer draped on the ground
+  (`RenderScene::set_ground_overlay`, the renderer's `pass_ground_overlay`, `EDITOR_HLSL drape_ps`); the brush ring on the LF; the
+  `.terry` entities near the camera as pickable overlays; the explicit tiles' outlines in the Map panel; the campaign layout guide.
+- The Map panel (2D): the LF shaded, the placements in their tile set's colour, a kit map's cell layers; painting there edits the same
+  layers; the hovered cell named from the tile database.
+- DEVIATIONS (kept): a battle map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
+  tool's weather choice; the fog is an editor view option, "Fog (editor view)" in the camera chip (`view_fog`; docs/editor.md, view
+  modes).
 
 ## Editing
 
-- **LF**: the tile tool's operations on the paged field, through one `Brush` (aspect ratio and rotation added); the sea LF as a second
-  target; the LF bedding values (`lf_bedding`, docs/plans/tile.md item 4) as presets of flatten; import / export of a region as 16-bit PNG
-  or TIFF; the custom-mesh LF patches.
-- **Cell layers**: paint, fill (flood by colour), rectangle, picker; a layer's palette from the tile database (sets, tiles, variations, climates
-  by their colours); the brush in cells. **Explicit tiles**: placed with the gizmo on the cell grid, quarter turns, the fit test shown live
-  (green / red), written to `explicit_tiles.txt`.
-- **After a tile map edit**: the fill runs again on a worker and the chunks whose placements changed are rebuilt (the streamer's `Set` /
-  `Remove`); the others stay. The first version matches BOB (decision 3): BOB's fill draws from one random sequence over the whole map in row order, so one painted cell
-  changes the variations and turns of every placement after it.
-- **Entities**: the `.terry` scene picked in the viewport (no tree since the Outliner went, `outliner_removal.md`), the inspector on the components' fields, the gizmo on
-  transforms (snapped to the cell grid for `ECTileAlignment`), creation modes as Terry's; positions lifted to the LF (`ECLandscapeAbove`).
-- **Validation** (a panel, also a command for scripts): cells whose colour is in no database, tiles that do not fit, missing tile folders,
-  painted sizes against `tile_upgrades.xml` (`tilemap_audit`, docs/plans/tile.md item 3), BCAs whose infield holds restricted tiles.
+- **LF** (`wce_terrain::lf_edit`): `LfBrush` (the Tile tool's `Brush` with Terry's aspect and rotation), raise / lower, smooth, flatten
+  (to the height where the stroke starts), noise; dabs every quarter of the radius along the stroke's path; the land or the sea LF; the
+  per-tile LF patches (`lf_patch`, Terry's `Apply Per-Tile LF Patches`; no kit map has them applied); a land LF region exported to and
+  imported from 16-bit PNG (lf_region_png.md).
+- **Cell layers** (`wce_terrain::cell_edit`): round or square brush, rectangle, flood fill, the picker; a layer's colours from the tile
+  database (sets, tiles, variations, climates); painted in the Map panel or on the 3D view's ground. **Explicit tiles**: listed, placed
+  (tile or variation, a quarter turn, the fit shown: the map's edge and the other explicit tiles; BOB tests none), turned, removed;
+  `explicit_tiles.txt` kept ending as the kit's (BOB fails on an empty last line).
+- **After a tile map edit** (`refill`): the fill runs again on a worker (`place_images`), and the chunks whose placements differ (and those
+  their tiles reach into) are built again with a frame over the new placements (`Frame::with_map`); the others stay. Decision 3: BOB's fill
+  draws from one random sequence over the whole map in row order, so one painted cell changes every placement after it (on the campaign
+  battle map all 38 920 chunks are built again). The fill there: 18 s (BOB: 13 minutes), byte for byte BOB's tile map and tile list.
+- **Entities**: the `.terry` scene picked in the viewport (no tree since the Outliner went, `outliner_removal.md`), filters by kind, the
+  Inspector on one or several entities (the shared attributes, one history step), the gizmo (`ECTileAlignment` on the cell grid, a root
+  `ECLandscapeAbove` on the LF), a polyline's points edited (Shift+click adds, Ctrl+click removes); creation of BCAs with their catchment
+  region, deployment zones (in pairs, under a BCA), and on campaign maps props, VFX and environment volumes; delete, duplicate.
+- **Validation** (`validate`, "Check the map", `terrain_validate`): colours of no database entry, climate colours of no climate, the
+  cells no tile fits, explicit tiles unknown, off the map or unreadable, tiles in no kit, settlement and port BCAs on no settlement or port
+  tile, zones of no BCA. Not checked: painted settlement sizes against `tile_upgrades.xml` (`tilemap_audit`, map pipeline item 3 below;
+  its rule to be settled with the user), BCAs whose infield holds restricted tiles.
+- **Built form** (the maps of a game without kit maps, Rome 2's, and the packs' campaign maps of any game, a mod's among them;
+  `wce_terrain_io::built`, the model marked `built`; other pack maps open read-only): the LF painted (its DDS
+  and CHMF made again), the placements of a `terrain.tile_list` or a version 6 tile map (the Placements section: select, variation, turn,
+  remove, move, place a database tile; inside the map, on no other placement), the battle locations and deployments as a `.terry` scene
+  (`built::scene`); saved under the projects' `assembly_kit/working_data/terrain/{battles,campaigns}/<map>` (read first next time),
+  exported as the files that differ from the packs.
 
-## Building and checking
+## Saving, building and checking
 
-- Raw files: written only when edited, byte-identical otherwise; minimal edits (gates as the tile files').
-- BOB_Terrain's outputs from our builders: `tile_map.index` / `.tiles`, `terrain.tile_list` (exist), `lf_height_map.dds` / `.data`,
-  `lf_sea_height_map.dds`, the normal chunks, `locations.blm` and its masks, the deployment files. BOB on a scratch kit is the oracle
-  (`bob_run.py scratch`, never the user's kit; `Tilemap` takes 7 minutes on the campaign map, so its oracle files are kept in the cache).
-- Gates (Cargo examples, in `scripts/gates.sh`): `terry_roundtrip_check` (every `.terry` of the kits), `map_files_roundtrip_check` (the maps'
-  PNG / TIFF / DDS / TXT / XML), `map_edit_minimal_check`, `lf_build_check` and `locations_build_check` (against BOB's outputs),
-  `terrain_perf_check` (a scripted walk and strokes on `main_attila_map`: frame time p95 and memory), and the tile tool's map context
-  captures before / after the streamer moves (`scripts/shots.sh`).
-- Pack output and Launch in game: the edited map's built files in a pack (or loose), the battle at a BCA the user picks.
+- Raw files: written only when edited, byte-identical otherwise; a TIFF edit rewrites its pixel data only. Save, Save As and the
+  freshness, preservation and recovery rules: [terrain_save_export.md](terrain_save_export.md).
+- BOB_Terrain's outputs from our builders, byte for byte against BOB on a scratch kit (`bob_run.py scratch`, never the user's kit):
+  `tile_map.index` / `.tiles` and `terrain.tile_list` (the fill), `lf_height_map.dds` / `.data`, `lf_sea_height_map.dds`
+  (`attila::heights`), `locations.blm` and its masks (`wce_terrain::locations`), the deployment files (`wce_terrain::deployment`), the
+  whole build (`attila::build`, also `tile_map.png`), the campaign build (markers, environment collection, LF, fill with shared geometry,
+  campaign blm and masks, snow masks).
+- The LF normal chunks after an LF edit (`attila::normals`): the chunks the edit reaches, each moved over the edited samples by the change
+  of the LF's normal (Attila's from the kit's `normal.dds`, the built form's from its own shipped chunk, Rome 2 has no `normal.dds`); an
+  unedited LF exports none. The large maps' 256-sample grid of 576-pixel chunks and one chunk of a 512-sample LF are handled; the other
+  layouts keep the game's. A campaign map's normals have no such rule (open items).
+- Export (`export`, "Export built files..." in the Terrain panel, File > Export > Built files..., `terrain_export [--wait]`): on a worker, loose under the
+  output folder (`terrain/{battles,campaigns}/<map>/`) and as `terrain_<map>.pack`. Launch in game (`launch`, `terrain_launch [<id>]
+  [--dry-run]`): the export in the launch pack, a battle at the selected BCA (else the first), one unit a side, summer, day, dry; a
+  campaign map is refused (it starts a battle).
+- Gates (Cargo examples, `scripts/gates.sh`): `map_roundtrip_check` and `map_built_roundtrip_check` (every map folder of the kits and
+  every built map of the packs, Rome 2's too, through the model and back), and with a BOB scratch kit (`WCE_BOB_KIT`) per map
+  `heights_build_check`, `tile_map_check`, `built_check`, `build_check` (battle and campaign); `bca_check` (`WCE_BCA_ORACLE`); Rome 2's
+  `built_lf_check`, `built_scene_check`, `built_normals_check`, `tile_map_rebuild_check` (`WCE_ROME2_DB`). Other checks run by hand:
+  `cities_check`, `roads_check`, `normals_check`, `campaign_prop_check`. Unit and integration tests of Save, Export and the LF region:
+  terrain_save_export.md and lf_region_png.md.
 
-## Phase 0 results (2026-11-02)
+## Phases (as built)
 
-- **The oracle**: BOB_Terrain runs headless in a scratch kit (`I:\wce_scratch\attila\assembly_kit`; its needs in docs/re/bob.md):
-  `main_attila_map` in 14 minutes, a settlement-sized map in under a second.
-- **Already exact against fresh BOB output**: the fill's `terrain.tile_list` and the final `tile_map.tiles` / `.index` (the campaign
-  battle map byte for byte), `lf_height_map.dds` and `lf_sea_height_map.dds` (conversion and mip rules found), `lf_height_map.data`
-  (the CHMF encoder, one rule left: the region tag). To do: `locations.blm`'s rounding, its masks, the deployment files' writer.
-- **The fill on the campaign battle map: 74 s** (one thread, with loading and writing 117 MB; BOB: 13 minutes). Phase 4's "fill again
-  after an edit" cannot be a full fill per stroke: profile it, and run it on a worker after the stroke with the old placements shown
-  until it lands.
-- **The map context on the campaign map today** (`western_city_rome/small` at its placement, default rings 8 / 24 / 64, RX 7900 XTX,
-  vanilla packs): cold 117 tiles opened in 20.6 s (first ring 7.1 s), 206 MB of cache written; warm 1.2 s to the first ring; 877 MB of tile
-  templates, 297 093 draw items; **19.8 ms a frame (p95 21.6), CPU-bound**; peak working set about 3.0 GB. The viewer starts above the
-  16 ms budget: Phase 2 starts with the culling by area (docs/plans/map_context_todo.md, "Large map contexts").
+0. **Survey and measurements** (2026-11-02): BOB_Terrain runs headless in a scratch kit (docs/re/bob.md): `main_attila_map` in 14
+   minutes, a settlement-sized map in under a second; what each action writes in docs/re/terry.md, "BOB_Terrain's outputs".
+1. **Model and files** (2026-11-02, docs/formats/map_files.md): 129 kit maps of Attila and Thrones, 862 files, through the model and back;
+   the built files of Attila's and Thrones' packs and BOB's outputs written back byte for byte.
+2. **Viewer** (2026-11-02): `wce_map_view`, `MapDocument`, the Terrain panel's map list (the packs' maps and the kits'; where each is
+   read from: `[game files]`, `[project]`, `[kit: <game folder>]`), the rings and view distance, the Map panel, the overlays, the LF
+   picking pyramid. Scripts: `terrain_open`, `terrain_maps`, `terrain_settle`, `terrain_view`, `terrain_pick`, `terrain_map_layer`.
+3. **LF editing** (2026-11-03): the brushes on the paged field, the land and sea LF, undo, the GPU updates in parts, the per-tile LF
+   patches, `Heights & Normals` against BOB (`heights_build_check`). Scripts: `terrain_paint`, `terrain_stroke`, `terrain_lf_patches`,
+   `terrain_brush`.
+4. **Tile map editing** (2026-11-03): the cell layers, explicit tiles, the refill on a worker and the partial rebuild, validation; an
+   edited map through BOB's `Tilemap` the same (`tile_map_check`). Scripts: `terrain_cells`, `terrain_explicit`, `terrain_refill_wait`,
+   `terrain_validate`.
+5. **The `.terry` scene** (2026-11-03, 2026-11-04; docs/re/terry.md, "The scene's structure"): `wce_terrain::terry`, the entity tools
+   above; an edited `.terry` through BOB gives the blm and deployment files the model computes. Script: `terrain_terry`.
+6. **BCA generation** (2026-11-04; docs/re/terry.md, "The BCA generator"): `wce_terrain::bca`, ported from Thrones' TWeak DLL; on
+   Thrones' `vik_attila_map` all 636 BCAs, 780 zones, 1 088 regions and 8 317 points agree with Thrones' Terry; the campaign battle map in
+   3.2 s; "Generate battle catchment areas" (`terrain_terry generate`) replaces the procedural BCAs in one history step. DEVIATIONS
+   (kept): the generated entities' y is the LF's (no built file reads y); the errors go to the status line, not an errors file.
+7. **Export** (2026-11-04; docs/re/terry.md, "locations.blm and its masks"): the builders, the whole build against BOB (`build_check`: 892
+   files on `main_attila_map`, 393 on Thrones', `tile_map.tiles` but for BOB's uninitialised floats), the export, Launch in game (dry
+   run checked).
+8. **Campaign maps** (2026-11-04, 2026-11-05; docs/re/terry.md, "Campaign maps"): the kit's campaign maps open (the campaign tile
+   database; a cell the world's width in `map_data.esf` over the map's cells, 0.33391 on Attila's and TDD's maps), the campaign build
+   (`build_check campaigns/main_attila_map`: 13 of 13 files), export; props, VFX and environment volumes as entities (ASSUMPTION: a new
+   prop's y from the LF by the kit's props' least-squares line); the season filter and seasons in the view (`terrain_season`); the
+   season-mask and layout layers, the layout guide (`terrain_layout`; DEVIATION: outlines, not Terry's guide models); the LF paged from
+   disk. The campaign's start drawn (`terrain_roads`, `terrain_start`, `terrain_weather`; the campaign from the db's `campaigns` row whose
+   startpos names the map): the settlements (`attila::cities`), the roads and farmland (`attila::roads`; ASSUMPTIONS: a tile takes the
+   highest road level under it; farmland where the chain level >= the area level), sprawl and walls; the rest of the campaign view is in
+   campaign_tilemap.md, campaign_environment.md and startpos_editing.md.
+9. **Other games** (2026-11-04, 2026-11-05): Thrones as Attila (`vik_attila_map` opens, validates, exports exact against BOB, launch dry
+   run); Rome 2 read-only then in its built form (Editing, "Built form"), its seven `main_*` maps' blm and 8 304 deployment files byte for
+   byte through the scene, its campaign maps from the packs (`campaigns/<map> (game files)`; `main_rome_map`, `main_gaul`; the cliffs as
+   custom-mesh tiles, props from `prop_marker.markers`). Since 2026-11-16 every game lists its packs' campaign maps (a mod's too: TDD's
+   `rom_third_age_map` opens as Rome 2's do).
 
-## Phases
+## Supported workflows (2026-11-22)
 
-0. **Survey and measurements** (no tool code). Terry's outputs: run BOB_Terrain's three actions on a scratch kit for a settlement map and
-   `main_attila_map`, list what each writes; decode the normal chunks, `locations.blm.mask0` / `.mask1`, the deployment files, the `.terry`
-   -> `locations.blm` mapping (docs/re/terry.md, "Open"). Measure the port's fill on the campaign map (BOB: 5 minutes) and opening the map
-   context there (time, memory). Thrones' Terry as a reference: screenshots and a few black-box runs (the user sends them when a phase needs them).
-   **Done 2026-11-02** (results below and in docs/re/terry.md, "BOB_Terrain's outputs"); left for the phases that need them: the masks'
-   bits and the blm rounding (Phase 6), the normal chunks' source (Phase 3), Thrones' references.
-1. **Model and files**: `wce_terrain`, `wce_terrain_io::attila`; every map file of the kits and the packs read and written; the round-trip
-   gates; the profile's `MapFacts`. Done when every kit map round-trips byte for byte.
-   **Done 2026-11-02** (docs/formats/map_files.md): 129 kit maps of Attila and Thrones, 862 files, through the model and back with no
-   failure; the built files of Attila's and Thrones' packs and BOB's outputs written back byte for byte. Left: Rome 2's tile list (versions
-   8, 9) and tile map (version 6) writers (Phase 9). The built files' readers stay in `wce_tile::battle_map` (the tile tool uses them)
-   instead of moving into `wce_terrain`.
-2. **Viewer**: the streamer made a public module with the frame as a parameter (the tile tool's captures unchanged); `MapDocument`; the
-   Terrain tool opens a map (kit, project, or packs read-only), the whole map in 3D, the Map panel, the overlays, the LF picking pyramid.
-   Done when `main_attila_map` walks within the budgets.
-  The streamer's frame is the only part of this phase that touches the tile tool.
-   **Progress 2026-11-02.** Done: `wce_map_view` (the map context's scene driver and map loading moved out of the Tile panel: `MapView`,
-   `Rings`, `maps`; the Tile tool's map context captures unchanged, 92 to 107 dB against the baseline as two baseline runs are);
-   `ContextRequest` with no cells is the map's own frame (origin at the map's centre, heights from the sea); `wce_terrain_editor::
-   MapDocument`; `wce_terrain_tool` (the `terrain` feature of `wce_app`, replacing the placeholder): a Terrain panel with the map list
-   (the packs' maps, the kits'), Open (read on a worker; a kit map also into the model), the rings, the view distance;
-   the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
-   campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
-   DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
-   tool's weather choice. **Phase 2 done (2026-11-02).** The fog: an editor view option, "Fog (editor view)" in the camera chip
-   (`view_fog`), the user's permission for the deviation (docs/editor.md, view modes).
-   **Overlays (2026-11-02).** The Map panel's layer "on the ground" (with an opacity): `RenderScene::set_ground_overlay` (a picture, a
-   frame -> texel map, an id, the map view's layer: drawn while that layer is visible; not a structural change) and the renderer's
-   `pass_ground_overlay`, an editor pass (`EDITOR_HLSL drape_ps`, never in the game view): each pixel's world point from the scene's
-   depth (clip z / w) and the inverse view-projection, its texel blended over. The campaign map's placements line up with its coasts and
-   rivers. The Tile tool's captures are unchanged (one capture run in four showed scattered single-pixel speckle up to 38 levels on all
-   its shots, the next run did not: run-to-run noise to keep in mind when comparing).
-   **Map panel (2026-11-02).** The active map from above, a texel a cell: the LF (shaded), the placements (each in its tile set's colour;
-   what a map of the packs has instead of a tile map image) and a kit map's cell layers from the model; wheel zoom, middle-button pan, a
-   click moves the camera there; the camera and its view direction; the hovered cell's colour named from the map's tile database (tile
-   set, tile, variation, climate) and the placement over it. The Terrain tool's own default layout (Map left, Terrain and
-   Inspector right); `terrain_map_layer` for scripts. `MapDocument` keeps the tile database it was filled with.
-   **LF picking (2026-11-02).** `wce_terrain::pyramid::HeightPyramid`: min / max over 8 x 8-cell leaf blocks, merged 2 x 2 to one root;
-   a ray descends nearest block first and meets each cell's bilinear surface exactly (a quadratic along the ray; the field is solid below
-   its surface, so a ray coming in through a side meets it there); `update` measures again only the blocks an edit touched. Tests: 240
-   rays in every direction against a fine march. The campaign battle map's LF (8 128 x 5 748, `lf_pyramid_bench`): made in 8 ms (about
-   4 MB), 1.6 us a ray, a 256 x 256 edit's update 84 us. The Terrain tool keeps one for the shown map (from its view's LF) and shows the
-   LF under the cursor (cell, metres, raw sample); `terrain_pick <x> <y>` for scripts. At Rome: cell (619.24, 676.25), 59.88 m, the
-   median the map context reported under its tile.
-   **Frame time (2026-11-02).** CPU-bound (half the render scale changed nothing). Where it went and what was done, the Terrain tool on
-   the campaign battle map, default rings, game view distance, RX 7900 XTX:
-   - the terrain's ~5 500 entities (mostly far LF ground) made ready per view (5 times a frame, 0.46 ms each) and every patch tested in
-     every view (49 600 tests): now once a frame, each entity's box before its patches (5 400 tests), no map of the entities built per
-     draw, the placements in a hash map;
-   - the sea bed's update went over every scene entity each frame (325 k around Rome): skipped while the scene's revision and the sea's
-     origin stand;
-   - the selection outline went over every entity each frame looking for overlays: a list of the overlays per overlay revision;
-   - the environment cube looked for the ground under the battle's centre over every entity (3 ms every 4th frame, the p95): cached by
-     the scene's revision.
-   Map centre: 14.6 -> 10.4 ms (p95 15.5 -> 11.8). Around Rome (325 508 draw items): 15.5 -> 11.0 ms (p95 18.1 -> 11.9); the Tile tool's
-   map context there was 19.8 ms in Phase 0. The Tile tool's map context captures are unchanged. Left on the CPU around Rome: shadows
-   2.7 ms, terrain 2.0, the sea 1.5 (its chunks' waves 0.8), the G-buffer 1.2, view culling 1.8 (10 views).
-3. **LF editing**: the paged field, the brushes, the page undo, the GPU updates in parts, the normals, the sea LF, the LF patches, saving
-   the TIFFs, `Heights & Normals` against BOB.
-   **Progress 2026-11-02.** Done:
-   - `LfMap`'s samples shared and edited in place (`LfSamples`: a revision, the samples edited since the renderer looked); the renderer
-     updates only the edited texels of the LF window and normal map (`DEFAULT` textures, `LfMap::normal_texel` shared with the context's
-     normal map); the Tile tool's map context captures unchanged.
-   - `wce_terrain::lf_edit`: `LfBrush` (the Tile tool's `Brush` with Terry's aspect and rotation), `LfStroke` (a float copy of the pages
-     it touches, so small dabs add up; the pages before), `LfRecord` (the undo record of those pages: a 1500 m brush's stroke 592 KB);
-     raise / lower, smooth, flatten (to the height where the stroke starts), noise.
-   - `wce_terrain_editor::lf`: `LfMirror` (the model's field into the view's LF, rows the other way up; what it touched), the stroke
-     command (undo / redo on the model, mirrored); `MapDocument::lf_field_mut` / `push_stroke` / `save` (into the projects' kit layout,
-     `<projects>/assembly_kit/raw_data/terrain/battles/<map>`: the edited files made again, the others copied once).
-   - The Terrain tool's "LF brush" (paint with the left button, the settings, the ring on the ground); the picking pyramid follows every
-     edit; the chunks under an edit are built again once no stroke is painted (`Streamer::rebuild`: their objects stand on the new LF);
-     `terrain_paint` for scripts.
-   - Checked on `settlement_western_city_rome_medium`: a hill raised and smoothed, undone and redone in the view; saved, the kit's
-     `lf_heights.tif` and the saved one differ only in the pixel data (the header and size kept), the other files byte for byte; the map
-     reopens from the projects folder with the hill.
-   - `wce_terrain_io::attila::heights`: BOB's `Heights & Normals` outputs from the model's LF fields, `lf_height_map.dds`,
-     `lf_sea_height_map.dds` (its mips) and `lf_height_map.data` (CHMF), byte for byte against BOB on `wce_relief` and `main_attila_map`
-     (`heights_build_check`; `gates.sh` runs it over a BOB scratch kit's outputs when `WCE_BOB_KIT` names one).
-   **2026-11-03.** Opening: the kits' tile databases read as one (`TileDatabase::load_layered`: the projects' kit layout's few tiles over
-   the Assembly Kit's; the project's alone filled the campaign map with nothing); the view starts over the land nearest the map's centre.
-   The sea LF: the Terrain tool's sea tiles stand on it (`PlacedMap::sea_lf`, the frame's second `LfMap`: `LF * 400 - 20` m, Rome 2's
-   sea tiles' mapping taken as Attila's; without one, the Tile tool's map context, the flat -20 m as before); the LF brush paints either
-   field, with undo, redo and save (`lf_sea_heights.tif` rewritten in its pixels only). Dabs every quarter of the radius along the
-   stroke's path (`spacing`): the same stroke however fast the mouse goes (`terrain_stroke`: 2, 7 and 200 moves, the same field).
-   Note for scripts: a `shot` is taken a frame or more later, so the command after it may already show (`frames 5` after each).
-   The per-tile LF patches (Terry's `Apply Per-Tile LF Patches`, decompiled: docs/re/terry.md): `wce_terrain::lf_patch`, a button and
-   `terrain_lf_patches`, one undo step; no kit map has them applied (BOB never calls its copy).
-   Left: writing the built files on save / export (Phase 7), the edits of a map with a different view lattice (only the map's own frame
-   mirrors). **Phase 3 done (2026-11-03)** but for those.
-4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
-   **Progress 2026-11-03.** Done:
-   - Cell layers (`wce_terrain::cell_edit`): a stroke (round or square brush, rectangle, flood fill; the picker) keeps the 8 x 8-cell
-     chunks it touches, its record undoes them; the document's `CellStrokeCommand` and `CellWatch` (what changed, undo and redo too). The
-     Terrain panel's Cell layers section (the colour from the tile database's sets, tiles, variations, climates, or the layer's own),
-     painted in the Map panel or on the 3D view's ground; the Map panel's picture written where cells change (`ImageTextures` patchable
-     pictures). `terrain_cells`.
-   - The fill again after an edit of the tile map, the climates or the explicit tiles (`refill`): the model's layers taken on the UI
-     thread, filled on a worker (`place_images`, the LF as 16-bit samples), the chunks whose placements differ (and those their tiles
-     reach into) built again with a frame over the new placements (`Frame::with_map`; the streamer's frame swappable, results tagged with
-     its generation); the others stay. A kit map is filled from its model when opened too. `terrain_refill_wait`.
-   - The fill's speed: a tile is rejected at a cell when each rotation's first checked cell already fails, with the random draws BOB makes
-     all the same: the campaign battle map 72 s -> 18 s (byte for byte BOB's tile map and tile list still). One painted cell changes
-     every placement after it (decision 3): on the campaign map all 38 920 chunks are built again.
-   - Explicit tiles: listed, placed (tile or variation, a quarter turn, the fit shown: the map's edge and the other explicit tiles; BOB
-     tests none), turned, removed, outlined in the Map panel; `ExplicitCommand`; the file kept ending as the kit's (BOB fails on an empty
-     last line). `terrain_explicit`.
-   - Validation (`terrain_validate`): colours of no database entry, climate colours of no climate, the cells no tile fits (the fill's
-     messages), explicit tiles unknown, off the map or unreadable, tiles in no kit.
-   - Against BOB: an edited Rome map run through BOB's Terrain processor in the scratch kit (`wce_edit`): the battle field exact, the tile
-     map equal but for BOB's left-over memory in covered cells' LF min / max; `tile_map_check` fails on anything else, `gates.sh` runs it
-     over `WCE_BOB_KIT`'s maps.
-   Left: painted settlement sizes against `tile_upgrades.xml` (its rule, docs/plans/tile.md item 3, to be settled with the user); BCAs
-   with restricted tiles (Phase 6); the Tile tool's map context captures against the commit before the streamer's frame became swappable
-   (not run: C: too full for a second build); the fill's remaining 18 s on the campaign map.
-5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
-   **Progress 2026-11-03.** Done (battle maps; docs/re/terry.md, "The scene's structure"):
-   - `wce_terrain::terry`: positions through the transform tree, rectangles, polylines, kinds; attribute edits; entities added
-     (`insert_entities`, the kit's layout and line endings, an old header brought to 3 / 10), removed with their descendants and the
-     references to them (`remove_entities`), listed under a parent (`add_child`): text splices, exact and small undo records.
-   - The map document: `TerryAttrCommand` (merged per gesture), `TerrySpliceCommand`; the Outliner (by kind, then the entity tree; removed later with the Outliner), the
-     Inspector (every component's attributes; the enumerated ones as choices), the gizmo (`ECTileAlignment` on the cell grid, a root
-     `ECLandscapeAbove` on the LF).
-   - The Terrain tool: the entities within a radius of the camera as pickable overlays on the LF (editor view; the campaign map's 1 091
-     near its centre, no cost in frame time), filters by kind; creation of BCAs (with their `Catchment Region`) and deployment zones
-     (clicks; in pairs, under a BCA), delete, duplicate; `terrain_terry`. Validation: settlement and port BCAs on no settlement or port
-     tile, zones of no BCA.
-   - Against BOB: an edited `.terry` (two BCAs, a zone pair) through BOB's Terrain processor: `locations.blm` lists the BCAs at the cells
-     the model puts them, `deployment_0000.xml` has the zones' boundaries as the model computes them.
-   **2026-11-04**: a polyline's points edited (the left-button mode "edit the selected polyline's points": pick and move, Shift+click
-   adds, Ctrl+click removes; `TerryProject::set_polyline`, `terrain_terry points`), the Inspector on several entities (`inspect_many`:
-   the shared attributes, one history step for all); `locations.blm`'s rounding found (Phase 7). Left: the other creation modes
-   (circle, spline, river, prop, VFX: campaign maps, Phase 8).
-6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
-   **Progress 2026-11-04.** Done (docs/re/terry.md, "The BCA generator"):
-   - `wce_terrain::bca`: Terry's generator ported from Thrones' TWeak DLL: the spec, the BCAs (infield, restrictions, border, names),
-     the deployment zones (`bca::zones`: the 8 x 8 cells' regions with the deployment masks, the Zonifier, Douglas-Peucker, the coast
-     split, the dual configurations), the errors and `delete_invalid`; the `.terry` entities as Terry writes them (`terry_xml`).
-   - `bca_check` against Thrones' Terry on `vik_attila_map`: all 636 BCAs (name, type, cell), 780 zones, 1 088 regions, 8 317 points (to
-     5 cm) agree, given the tile map Terry reads (the game packs': Terry builds its battle field through the game's file system); with
-     BOB's battle field the same BCAs, 514 by name. Our written project reads back the same; its text is Terry's but for ids, y and the
-     last digit of about 290 of 11 000 points. Gate `bca_<map>` (`WCE_BCA_ORACLE`). The campaign battle map in 3.2 s.
-   - The Terrain tool: "Generate battle catchment areas" (`terrain_terry generate`): the procedural BCAs replaced, one step on the
-     history; on `main_attila_map` 24 895 BCAs with 1 778 zones in place of 24 882.
-   DEVIATIONS (kept): the y of the generated entities is the LF's (Terry's is the terrain's, tiles included: the editor has the tiles'
-   heights only near the camera; no built file reads y: the blm, deployment files and masks use x and z); the errors go to the status line,
-   not an errors file (where Terry writes it is not known; it wrote none for the oracle). Left: Attila has no oracle (its shipped
-   project was made from other inputs: 97 % of its zones agree), the deployment masks are unchecked against Terry (Thrones' kit has
-   none).
-7. **Export**: pack output, Launch in game at a location, the minimal-edit gates over the whole build.
-   **Progress 2026-11-04.** Done:
-   - The builders BOB's `Tilemap` metadata needed, decompiled (BOB_Terrain, ToolDataBuilderDll, the engine; docs/re/terry.md,
-     "locations.blm and its masks"): `wce_terrain::deployment` (the deployment files) and `wce_terrain::locations` (`locations.blm`, the
-     engine's hash map order, the climate table from `environment_map.xml`, `mask0` / `mask1`). `built_check`: byte for byte on Attila's
-     `main_attila_map`, `wce_edit`, `wce_relief` and Thrones' `vik_attila_map`.
-   - The whole build from the model (`wce_terrain_io::attila::build`: tile map, battle field, LF heights, blm and masks, deployment
-     files, `tile_map.png`). `build_check` (gate `build_<map>`): every file of BOB's runs the same (892 on `main_attila_map`, 21 s; 393 on
-     Thrones'), `tile_map.tiles` but for BOB's uninitialised floats.
-   - The Terrain tool's Export section: "Export built files" (`terrain_export [--wait]`, on a worker): loose under the output folder
-     (`terrain/battles/<map>/`) and as `terrain_<map>.pack`. "Launch in game" (`terrain_launch [<id>] [--dry-run]`): the export (made
-     again when the map changed) in the launch pack, a battle at the selected BCA (else the first) through the Tile tool's launch.
-     Dry run checked on `main_attila_map` (315 MB pack, Thermopylae at 0.438976, 0.536534).
-   The LF normal chunks (`wce_terrain_io::attila::normals`, 2026-11-04): the game's are DXT5 windows of the kit's `normal.dds`, which is
-   no function of the LF alone (correlation 0.2 to 0.3: the tiles' relief, most likely); an edited LF gets the chunks its edit reaches,
-   `normal.dds` where the LF is unchanged and the LF's own normals over the edited samples (ASSUMPTION: their scale, the editor's);
-   `normals_check`. An unedited LF: none (the game's stay).
-   DEVIATIONS: a map the game lacks gets no chunks unless its LF is edited; the launch's battle is one unit a side, summer, day, dry.
-   Left: a real launch (not run here: it takes the screen; the user's to try).
-8. **Campaign maps** (in scope, after the battle maps): `terrain/campaigns/<map>`: props, VFX, environment volumes, season masks, the layout map;
-   the 375 MB LF paged from disk.
-   **Progress 2026-11-04.** Done:
-   - The Terrain tool opens the kit's campaign maps (`campaigns/<map>`): the campaign tile database, the LF at its scale, the `.terry`'s
-     frame (from the bottom-left corner, z north; a cell is the world's width in `map_data.esf` over the map's cells, 0.33391 on Attila's
-     and TDD's maps, as the game scales its campaign terrain: 0.32 until 2026-11-16, which put TDD's Argonath 45 cells off Rauros), the props, VFX and environment volumes as overlays.
-   - The whole campaign build (docs/re/terry.md, "Campaign maps"): the markers with the kit's transform, the environment collection, the
-     LF DDSs and CHMF, the fill with shared geometry and `also_place_tile_set`, the campaign blm and masks. `build_check
-     campaigns/main_attila_map` (gate `build_campaign_<map>`): 13 of 13 of BOB's files byte for byte, 21 s.
-   - Export of a campaign map: under `terrain/campaigns/<map>/` and as `terrain_<map>.pack` (run in the app: 15 files, 287 MB, 31 s);
-     Launch in game refuses it (it starts a battle).
-   - Campaign entities: new prop (model, scale), VFX (effect) and environment volume (lighting, radii) at a click, with the kit's
-     components (`terrain_terry prop | vfx | ev`); editing through the Inspector and the gizmo as before. ASSUMPTION: a new prop's y from
-     the LF by the kit's props' least-squares line (theirs follow the tiles' geometry).
-   - Seasons: Terry's season filter (entities whose `ECSeasonMask` leaves the season out hidden). The season-mask and layout layers are
-     painted in the Map panel as the other cell layers; the game ships neither (`masks.xml` and the `season_mask_*.png` are the kit's
-     own). The snow masks: the map folder's `snow_mask/*.tga` built into the game's `snow_mask_*.dds` (L8).
-   - The layout guide: `layout_map.png`'s legend colours (`layout_map_legend.xml`) outlined on the ground near the camera
-     (`terrain_layout`). DEVIATION: outlines, not Terry's guide models.
-   - Render modes: the geometry-only placements (0x100) are left out of the view; the textured tiles over them draw with their own mesh
-     (ASSUMPTION: the bits' meaning, from how BOB sets them).
-   - Memory: the LF shared between the placed map and the fill (`LfField` over an `Arc`): opening the campaign map 4.25 -> 3.34 GB
-     private.
-   - The LF paged from disk (2026-11-04): one copy of its samples (`wce_foundation::samples::SampleGrid`) shared by the model
-     (`PagedU16`, pages the unit of undo), the placed map (`LfField`) and the scene (`LfSamples`, its rows read upside down); a kit map's
-     LF a copy-on-write view of its TIFF strip (Windows `MapViewOfFile`, `FILE_MAP_COPY`; Unix `mmap`, `MAP_PRIVATE`): the samples nobody
-     edited are the file's pages, not the process's memory. A save over the file it was read from detaches the samples first. The
-     refill shares the field too (it copied it twice) and locks it for the LF step alone. The campaign map opened: heap 1 572 -> 431 MB,
-     settled 3 349 -> 2 209 MB (`mem`, a counting allocator). Most of the private memory left (about 5 GB of 7.8) is the GPU driver's.
-   - Campaign rendering from the game's (user's screenshots, 2026-11-04): the texture group `climate`, the campaign lighting, the
-     campaign water shader and `lf_sea_colour`, the open sea on the sea LF, the forests (`trees.campaign_tree_list`), the tiles' rivers
-     from BOB's files (docs/re/terry.md, "Campaign maps"); traversal 77 -> 41 ms a frame.
-   - The render modes (2026-11-04): no change needed. Every tile of a set sharing geometry is flat, in the packs and the kits (Attila's
-     and Thrones' campaigns; no battle database shares geometry; docs/re/battle_maps.md), so the textured tile drawn with its own mesh
-     over the left-out geometry-only placement is the game's ground. The bits' meaning stays read from BOB, not decompiled.
-   - The settlements at the campaign's start (2026-11-04; Attila's main campaign; `wce_terrain_io::attila::cities`, after RPFM's
-     startpos code): each slot's building from the startpos (`campaigns/<campaign>/startpos.esf`, the packs' else the game's `data`; since
-     2026-11-16 the campaign is the db's, `wce_terrain_io::attila::start`: a `campaigns` row of the map whose startpos names the map, not
-     the map's name less `_map`: TDD's `rom_third_age_map` is campaign `main_attila_map`'s), its model from the settlement
-     display tables by the owner's faction, subculture or culture, at its cell of the map's `map_data.esf` (the hex grid in the world of
-     the tree list); drawn near the camera with the props, a model unit a world unit, standing on the ground. `cities_check`: 745 slots,
-     408 buildings with a model (every one in the packs). ASSUMPTIONS: a model at its cell's centre, unturned. 2026-11-05: the slots
-     paired with the map's cells by kind (a region without a port has no port slot), checked against the startpos's own slot cells
-     (745 agree, none differ): the 109 buildings without a cell found, 517 drawn; the aqueducts of the regions with an aqueduct
-     building (`campaign_settlement_display_aqueducts`: Ravenna's). Left: the empty slots, the sprawl pieces, walls and attachment
-     points (the startpos's sprawl, footprint and wall cells, `campaign_settlement_display_sprawl_pieces`), Thrones' and Rome 2's
-     startposes.
-   - The roads at the campaign's start (2026-11-05; `wce_terrain_io::attila::roads`, docs/re/terry.md "Roads"): each region's level
-     from its buildings' road effect in the startpos against `campaign_map_roads`' thresholds, the kit's `roads_climate` tiles upgraded
-     by `tile_upgrades.xml`'s `road0_to_road<n>` in the view only (`MapDocument::shown_placed`; the files keep the kit's tiles); the
-     Terrain panel's "roads at the campaign's start" and `terrain_roads [on|off]`. `roads_check`: main_attila 161 / 54 / 9 regions at
-     levels 0 / 1 / 2 (Roma 2, stone, as the game's first turn shows), 2747 road tiles upgraded; the 186 settlements' cells all in
-     their own region. ASSUMPTION: a tile takes the highest level of the road cells under it. A level-0 road hardly shows, as its
-     tiles' blend maps have it (100 % the climate's ground).
-   - The farmland at the campaign's start (2026-11-05; the same module and switch): `dynamic_resources.esf`'s areas whose region has
-     an agriculture building of the area's level (ASSUMPTION: chain level >= area level; 17 of 531 areas on main_attila, 721 tiles)
-     take `tile_upgrades.xml`'s farmland group.
-   - Thrones and Rome 2 (2026-11-05): their startposes read (the slots' two layouts, Rome 2's display table links): settlements on
-     `vik_attila` (353 models) and Rome 2's `main_rome` (316, its map `main_rome_map`); the roads' rules (Thrones' `vik_road_mod` is
-     given by nothing in vanilla: level 0 everywhere; Rome 2's tier-1 buildings give no road value: all at the first level on turn
-     1). Thrones' `vik_attila_map` opens in the Terrain tool with them; its look against the game is not checked (screenshots
-     needed). Rome 2's campaign maps are not opened by the Terrain tool (out of the plan's scope so far); Rome 2 has no
-     `has_aqueduct`, so its aqueducts are not drawn.
-   - 2026-11-05 (later): the settlement models' scale (0.405 world units a model unit, from their footprint decal: they were 2.5
-     times too big, ports reaching into the sea) and the cells' centres (RPFM's `world_position`; half a cell off before); the roads
-     and farmland applied by hex cell centres, as the game's `FUN_10b28060` does; a campaign map's season in the view (Terrain panel,
-     `terrain_season`): the season's ground textures and, in winter, the map's snow mask through the resolve's snow layer; the tile
-     cache keeps a material's campaign flag (cached campaign tiles resolved as battle tiles).
-   - 2026-11-05 (from the game's turn-1 screenshots): road levels (every region at least `road1`), the start season and climate
-     stage (spring, `snow_mask_sp1`), the far ring's ground from a grass tile, the sprawl (the startpos's pieces and turns, levels
-     from the buildings' tiers: ASSUMPTION) and walls with gatehouses and connecting towers around the zones' union; a campaign
-     weather selector (Terrain panel, `terrain_weather`: the map's lighting files, automatic the season's global lighting).
-   Left: a campaign launch (noted, not for now); the settlement buildings' turn (an integer of the display-side slot, not stored
-   and not found: docs/re/terry.md "Settlement models"), the sprawl's runtime levels, the farmland's level rule and walls around
-   zones without a building (ASSUMPTIONS), the trees' size and lean, Thrones' campaign look (screenshots), the GPU's terrain cost
-   (smaller rings for campaign maps). Startposes for Thrones and Rome 2 and every TDD victory mission type: in RPFM
-   (`rpfm_extensions::startpos`), the TDD missions waiting for TDD's victory missions file.
-9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
-   games when their profiles come (their Terry is another tool: out of this seam's first pass).
-   **Progress 2026-11-04.** Done:
-   - Thrones in the Terrain tool (its own settings: game, kit): `vik_attila_map` opens (84 356 placements, 3 094 entities), its 133
-     tiles decompiled from the packs, validation, export (394 files, 4 s; the build exact against BOB, Phase 7) and the launch's dry run.
-     Fixed on the way: the packs' tile provider took a project with only a battle database as its kit (every pack tile failed).
-   - Rome 2's built files all read and write back byte for byte (`map_built_roundtrip_check`, 111 maps): `terrain.tile_list` versions
-     7 to 9 and `tile_map` version 6 (docs/formats/map_files.md).
-   - Rome 2's maps in the Terrain tool, read-only (user, 2026-11-04: view first, then edit the built files): its 111 pack maps listed
-     (a tile list is enough), the packs' tile database; a tile named alone takes its variation from the placement's byte 12 (the
-     game clamps it to the tile's variations); `main_gaul` and the multiplayer `canyon` shown. Fixed on the way: the Terrain tool's
-     frame (no open tile) left out the placement at the map's centre.
-   - Editing a Rome 2 map in its built form (`wce_terrain_io::built`; the model marked `built`): the LF painted (its DDS and CHMF made
-     again: 110 of 111 CHMFs byte for byte from their DDS with the shipped tags kept, `built_lf_check`), the placements of a map with a
-     `terrain.tile_list` (the Placements section, `terrain_placements`: select, variation, turn, remove, move, place a database tile;
-     inside the map, on no other placement; the bounds made again); Save into the projects' `working_data/terrain/battles/<map>` (read
-     first next time); export of the files that differ from the packs. The refill keeps a campaign map's LF metres (it reset them).
-   - Rome 2's battle locations and deployments (the seven `main_*` maps: `locations.blm` version 7, `deployment/`) as a `.terry` scene
-     (`wce_terrain_io::built::scene`), so the entity tools work on them (BCAs, catchment regions, deployment zones and regions,
-     Outliner, Inspector, gizmo, creation): a location is a BCA at the middle of its centre cell, its region placed and sized so that
-     its rectangle comes back; a location's id `0xffff0000 + n` is its deployment file's number. Written back (after an edit only): the
-     blm in the file's type order (new types after; its per-cell masks kept: two u16 a cell, Rome 2's `.mask0` / `.mask1`, from the
-     tiles, not the locations), the deployment files numbered in entity order (CRLF, an area's `orientation` kept, a location with an
-     empty file keeps its number); the files no location names (879 on `main_rome_map`) kept. `built_scene_check` (gate
-     `rome2_built_scene`): all seven maps' blm and 8 304 named deployment files byte for byte through the scene. Checked in the app: a
-     new BCA and a zone on `main_gaul` export the blm and `deployment_0504.xml`.
-   - The seven `main_*` maps' placements: their version 6 tile maps seen as a tile list (`TileMap::placements`) in the Placements
-     section, the tile map made again from the list after an edit (`TileMap::with_placements`: `place_tile`'s cover, an origin cell's
-     64-cell chunk number in bytes 10 and 11, the flip byte kept): all seven byte for byte from their own placements
-     (`tile_map_rebuild_check`, gate `rome2_tile_map_rebuild` with `WCE_ROME2_DB`). Checked in the app: a road removed on `main_gaul`.
-   - The LF normal chunks after an LF edit (2026-11-04): the chunks the edit reaches, each from its own shipped chunk (Rome 2 has no
-     `normal.dds`), moved over the edited samples by the change of the LF's normal (`normals::edited_shipped_chunks`; Attila's export
-     now moves its `normal.dds` the same way, keeping the tiles' relief). The layouts: the 256-sample grid of 576-pixel chunks (the
-     large maps, 27 of 94) and one chunk of a 512-sample LF with a 32-pixel margin; the 67 small maps whose normal map is not the LF's size
-     (one chunk of 320, 640 or 1152 pixels) keep the game's. `built_normals_check` (gates `rome2_built_normals_<map>`): away from the edit
-     within 0.2 of the shipped chunk, every changed normal moving out of a raised hill.
-   - Rome 2's campaign maps from the packs (2026-11-05): a game without kit maps lists `terrain/campaigns/<map>/terrain.tile_list` as
-     `campaigns/<map> (game files)` (`wce_map_view::maps::game_campaign_maps`; the Terrain tool only, not the Tile tool's map
-     context), read with the packs' campaign tile database and saved under the projects' `working_data/terrain/campaigns/<map>`.
-     `main_rome_map` (2032 x 1441 cells, 383 033 placements, LF 8128 x 5764) and `main_gaul` (880 x 761) open, with their roads at the
-     start. The campaign cliffs (`cliff_custom`, only BOB's `custom_mesh.rigid_model_v2` in the packs) open as custom-mesh tiles from the
-     model (`custom_mesh::from_model`; they were left out for want of a material). The settlements, forests and props no longer need a
-     `.terry`: props from the packs' `prop_marker.markers` (9 614 on `main_rome_map`). Lighting: a folder without
-     `environment_collection.xml` takes `environment/<season>.lighting` (ASSUMPTION; `default.environment` hazed the view).
-     Since 2026-11-16 every game lists its packs' campaign maps (a mod's in a game with kit maps: TDD's `rom_third_age_map`, 2032 x
-     1441 cells, 534 972 placements, opens as Rome 2's do: the packs' tile database and settings, saved copies in the projects' layout),
-     and the map list shows where each map is read from: `[game files]`, `[project]` (the projects' kit layout) or `[kit: <game
-     folder>]` (an Assembly Kit; a map in several is read from the first, as `inputs` does). The names stay the maps' keys
-     (`terrain_open`, saving); `terrain_maps [text]` prints the list as shown.
-   Left for Rome 2: `tile_map.png` after an edit (the packs' stays); a launch. Its campaign maps: the sprawl pieces (the db names
-   `testdata/campaigntestdata/models/...` models no pack has: the game's real ones not looked up), the sky under the season lighting
-   (black), the other campaigns' folders checked one by one (`main_emperor`, `main_greek`, `main_punic`, `main_invasion`,
-   `prologue_map_01`), editing and export of a campaign map in its built form (the save path exists, not exercised), the map list's
-   selection after `terrain_open` (shows the first entry).
+| Workflow | Input and authoring | Save and export |
+|---|---|---|
+| Attila / Thrones kit map, battle or campaign | `assembly_kit/raw_data/terrain/{battles,campaigns}/<map>`: land and sea TIFF, cell PNGs, explicit tiles, `.terry`, XML and opaque files; every edit above | Save to the projects' raw layout and reopen; Export builds loose files and a pack. The campaign height scale and offset come from the first layered tile database settings file that exists (#57), not from the saved map folder |
+| Built battle map (Rome 2) | the pack's `terrain/battles/<map>` or the projects' `working_data` copy: LF DDS, CHMF, tile list or v6 tile map, blm and deployments, normals | LF, placement and scene edits within the writers' guards; Save the working files, Export the differences from the packs. Never a made-up raw kit map |
+| Built campaign map | `terrain/campaigns/<map>` with the campaign tile database | view, placements and LF in the model; native props read and written losslessly (#59) but not editable in the tool; the save path exists, an edited campaign LF's export is not checked (open items) |
+
+Lookup order: the projects' kit layout, then the Assembly Kits in the settings' order, then the packs; models and textures follow the
+mounted game sources. Placement edits are guarded by the writers: a tile list's bounds and overlaps; a v6 tile map made again needs the
+right database. Unknown or malformed metadata stays opaque for unchanged output and refuses unsafe edits.
+
+## Open items
+
+- **Campaign normals**: no rule for a campaign map's normal chunks after an LF edit (their scale, registration, slope composition,
+  overlapping chunk updates, ten mips and compression are not established); a controlled before / after bake is needed. A built
+  campaign map's edited LF export is not checked; Rome 2's campaign maps' editing and export in the built form are not exercised.
+- **Native normal baseline across reopen**: the export moves the shipped normals by the LF's change since the original; that original is
+  kept only while the document is open (`MapDocument`'s `normal_source_bytes`). Repeated edits with Save between them and a reopen have
+  no established continuity. A candidate exists (Contributed work, below), rejected in review.
+- **Rome 2 / built form**: `tile_map.png` after an edit (the packs' stays); a launch; Rome 2's campaign maps' sprawl pieces (the db names
+  models no pack has), the sky under the season lighting (black), the other campaigns' folders (`main_emperor`, `main_greek`,
+  `main_punic`, `main_invasion`, `prologue_map_01`); the map list's selection after `terrain_open` (shows the first entry).
+- **Fill**: the remaining 18 s on the campaign battle map; a stable fill (decision 3) later, measured against this baseline. terrain.pack's
+  `tile_map.tiles` as a base (decision 5).
+- **Checks**: settlement sizes against `tile_upgrades.xml`; BCAs with restricted tiles; the deployment masks unchecked against Terry
+  (Thrones' kit has none); Attila's BCA generation has no oracle (97 % of its shipped zones agree).
+- **Not built**: the other creation modes (circle, spline, river; rivers are the Tile tool's, docs/plans/rivers.md); the Tile tool's map
+  context captures against the commit before the streamer's frame became swappable (not run); a real Launch in game (the user's to try); a
+  campaign launch (decision 8: a nice-to-have).
+- **Campaign view**: the settlement buildings' turn, the sprawl's runtime levels, the farmland's level rule, walls around zones without a
+  building (ASSUMPTIONS), Thrones' campaign look: docs/plans/campaign_tilemap.md.
+
+## Contributed work not in master
+
+From the contributor's handover (2026-11-17; the contributor stopped major development then, small fixes may follow). Open upstream PRs:
+
+- [#50](https://github.com/MrJox/warscape_community_editor/pull/50): Rome 2 v9 tile list trailers (`u32 4`, names, a row count, 32 opaque
+  bytes a row) parsed and guarded: placement count changes only with zero rows, same-count edits only with paired rows.
+- [#51](https://github.com/MrJox/warscape_community_editor/pull/51): the Tile tool's I/O through the shared publication helpers (the
+  helpers themselves came with #74: `wce_foundation::publication`).
+- [#52](https://github.com/MrJox/warscape_community_editor/pull/52): bounded campaign height deltas (held; no native strategic height
+  export; fork PRs #5 to #7 depend on it).
+
+Reference branches on the contributor's fork (`git remote add jordan-handoff https://github.com/Jordanakoos/warscape_community_editor.git`,
+`git fetch jordan-handoff 'refs/heads/handoff/*:refs/remotes/jordan-handoff/handoff/*'`); each is on an older base, so compare it against
+its own base before taking anything, and keep master's newer campaign coordinates (`TerryFrame::campaign(..., bounds)`), startpos lookup,
+prop grounding and scene APIs:
+
+- `handoff/source-native-battle-baseline` (`d1ec429f`): the original LF, normals and CHMF kept outside the game's folders, so continuous,
+  saved-between and reopened editing give the same output. Rejected in the second independent review (2026-11-17) for two defects: a
+  redirected authoring subfolder can send copy writes into the source map or its store (preflight must check the real destinations,
+  junctions included, before any write); a missing normal reference whose key is not in the original inventory is tolerated (recovery
+  must require an exact inventoried key). Its notes: `docs/formats/terrain_authoring.md` and
+  `docs/investigations/fb_phase4_r1_corrections.md` on that branch.
+- `handoff/source-native-props` (`1ac29cd3`): Inspector, gizmo and history for the native campaign props (horizontal moves only); the
+  model and I/O are master's (#59).
+- `handoff/source-campaign-validation` (`5f6dca25`): read-only campaign checks; carries #52's height work in its ancestry.
+- Fork PR #8 (`8be7b8c7`): incremental Terry prop preview (depends on #58, merged).
+
+A playable new strategic campaign also needs logical geography, navigation, settlements and startpos consistency: the campaign readers
+above (roads, farmland, trees, cities) are previews, not authoring.
 
 ## Risks
 
 - The fill's global random sequence: matched for now (decision 3); a stable alternative is a later step, measured against this baseline.
-- The normal chunks and deployment files are undecoded; until they are, the export may have to keep the game's copies or run BOB.
 - The kit's `main_attila_map/tile_map.tiles` is an old file and terrain.pack's tiles are not BOB's fill of the kit's map (72 % of origins
   agree, docs/re/battle_maps.md): the kit's is the base first, terrain.pack's after (decision 5).
-- Moving the streamer out of the tile document touches the tile tool's map context; the capture gate guards it.
-- Memory with the campaign map's LF (375 MB) on top of the tile templates.
+- Memory with the campaign map's LF on top of the tile templates (opening the campaign map: 2.2 GB settled, most of the private memory the
+  GPU driver's).
+
+## The map pipeline scope taken over from the tile plan (2026-10-08)
+
+The old Tile Studio plan's map-level scope, deferred by the user on 2026-10-08 and taken over by this plan (its file, docs/plans/tile.md,
+was folded in here on 2026-11-22; code comments cite these items as "map pipeline item N"). Scope note (user, 2026-10-08): campaign map
+files (`map.hex`, `map_data.esf`, `pathfinding.ppd`, trade routes, `.ptd` / `.pbd`) are out altogether: they are not campaign tiles.
+
+Decisions: BOB's processors are reimplemented, real BOB runs (scratch kit, never the user's kit) are the oracle in the checks, not a
+runtime dependency; "byte-identical" means round trip, minimal edit and BOB equivalence; unknown bytes are kept; files BOB itself does
+not reproduce (`tile_map.tiles` embeds heap pointers) are compared structurally.
+
+1. **Map pipeline** (BOB_Terrain): `tile_map.png` -> `terrain.tile_list`, `tile_map.index`, `tile_map.tiles`; `climate_map.png` ->
+   `locations.blm`; `lf_heights.tif` / `lf_sea_heights.tif` -> `lf_height_map.dds` / `.data` (CHMF), `lf_sea_height_map.dds`; the map's
+   `.agf` and `map_info.xml`. Built (Phases 3, 4 and 7).
+2. **Campaign map inputs**: the campaign `tile_upgrades.xml`, `masks.xml` and the season masks, `layout_map.png`. The season-mask layers
+   are painted in the Map panel, `layout_map.png` is outlined as a guide.
+3. **`tilemap_audit`**: painted tile size against `tile_upgrades.xml`, missing catchments, missing tile folders. Open (its rules to be
+   settled).
+4. **LF height tools**: painting the map's LF heights with the bedding rules of `lf_bedding` (beach 1.88144 m, port 0.141909 m, sea plane
+   raw 436.9, flat bedding for swamp and lake); metres = raw x `lf_height` / 65535 - `vertical_offset` (`_settings.xml`: 3000, 20). The
+   painting is built (Phase 3); the bedding rules are not applied by the brushes.
+5. **`.terry`** read first (ECS entities, catchment areas, deployment zones), editing only if asked. Built (Phase 5).
 
 ## Decisions (user, 2026-11-02)
 
@@ -494,3 +309,4 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
 7. **BCA generation**: in the first version (Phase 6 is part of the battle map release, not optional).
 8. **After Phase 8** (2026-11-04): a campaign launch stays a nice-to-have (not now); the LF paged from disk comes last, once the rest of
    the plan is done.
+9. **Rome 2's maps** (2026-11-04): view first, then edit the built files.

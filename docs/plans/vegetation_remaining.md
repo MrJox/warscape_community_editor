@@ -1,10 +1,12 @@
 # Vegetation: what's left
 
-Status (2026-10-26). `wce_tile::vegetation` generates everything BOB's Vegetation processor writes for a battle tile (tree lists with
+Status (2026-11-22). `wce_tile::vegetation` generates everything BOB's Vegetation processor writes for a battle tile (tree lists with
 static trees converted per climate, the grass list, the props / decals / VFX of `<category>_procedural_bmd_data`, the list heights),
 bit-exact against fresh BOB. Done: writing the files (`wce_tile_io::attila::stage_c`, byte for byte against fresh BOB on 13 tiles;
 docs/re/vegetation.md, "The writers") and the PROPS key order (`compile::marker_table_order`, docs/re/ted_export.md "Marker tables").
-RE, check commands, the BOB-under-Wine recipe and its rounding caveat: docs/re/vegetation.md.
+Since 2026-11-12 the editor generates a tile's trees and grass itself, on a thread of their own, made again when what they come from
+changes (the packed lists drawn only when they can't be generated; the grass always generated); the tree list follows the ground's
+climate (2026-10-30). RE, check commands, the BOB-under-Wine recipe and its rounding caveat: docs/re/vegetation.md.
 
 ## Open
 

@@ -1,5 +1,5 @@
 //! The `.terry` scene of the shown kit map in the 3D view (docs/plans/terrain_editor.md, Phase 5): each entity near the camera an overlay
-//! on the LF (rectangles, polylines; pickable, so selection, the Outliner, the Inspector and the gizmo reach it through the map
+//! on the LF (rectangles, polylines; pickable, so selection, the Inspector and the gizmo reach it through the map
 //! document), drawn again when the scene changes or the camera moves on; and Terry's creation modes for battle maps: a battle catchment area
 //! (a click: a 2048 m rectangle on the cell grid, with its `Catchment Region`), a deployment zone (clicks for its region's points); for
 //! campaign maps a prop, a VFX and an environment volume (a click each, as the kit's are); and delete and duplicate of the selected

@@ -1,20 +1,19 @@
-# Tile editor: automatic detail (plan, 2026-11-18)
-
-**2026-11-21:** B (clutter around buildings) is shelved with the ground coverage (`feature/shelved_ground_coverage`); A and C stay.
-
+# Tile editor: automatic detail (2026-11-18)
 
 Make tiles more detailed with less hand work: the ground textured by rules from the terrain itself, props laid around buildings by what
-they are, and whole biomes painted at once. Three features, in this order, on `feature/auto_detail`:
+they are, and whole biomes painted at once. Three features, built in this order on `feature/auto_detail` (2026-11-18 .. 20), now on master:
 
 - **A. Texture rules**: a generated blend layer: rock on steep slopes, mud in hollows and by the water, dry grass on ridges, worn ground by
   roads and buildings. Rebuilt live as the terrain changes; hand paint stays over it.
 - **B. Clutter around buildings**: props from weighted sets laid around buildings by their category, as a kind of the ground coverage.
-- **C. Biome brush**: a brush or a polygon that lays a preset's texture rules, trees, undergrowth and rocks at once, with a graded edge.
+  **Shelved 2026-11-21** with the ground coverage (kept as built on `feature/shelved_ground_coverage`; [ground_coverage.md](ground_coverage.md)).
+- **C. Biome areas**: a polygon (drawn, or painted with the area brush) that lays a preset's texture rules, trees, undergrowth and rocks
+  at once, with a graded edge.
 
-B and C build on the ground coverage (docs/plans/ground_coverage.md: kinds, presets, fill or brush, the `(AUTOGEN) Ground Coverage`
-layer, exclusion polygons around what it plants), rebased onto this branch and merged into it (user, 2026-11-18).
+What the biomes and texture rules shared of the ground coverage (the terrain grid, a placed item, inside a polygon, the real buildings'
+categories) stays on master as `wce_tile::placing`. The follow-up ideas are [auto_detail_2.md](auto_detail_2.md).
 
-Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Default`'s values) is the user's. B's steps 1 to 4 done (the user's look left). C's steps 1 to 6 done (the user's look left) The ground coverage rebased onto master (19 commits and a formatting one, `feature/auto_ground_coverage`) and merged into this branch.
+Status (2026-11-22): A and C built; the user's look on kit tiles is left (A's `Default` values, C's biomes).
 
 ## Decisions (user, 2026-11-18)
 
@@ -23,7 +22,7 @@ Status (2026-11-18): A's steps 1 to 6 done; step 7 (the look on kit tiles, `Defa
 | Hand paint and the rules | **Hand paint wins**: the rules' layer lies under the user's blend layers, right over the base |
 | A tile's own painting (2026-11-18) | **Only over the main ground**: a rule's weight is scaled by how much the base is the texture group most of it is; what the base has painted in other textures (a kit tile's forest, streets, mud) stays |
 | When the rules run | **Live**: made again off the editor's thread once an edit settles, as the roads' layers are |
-| The ground coverage | Rebased onto `feature/auto_detail` and merged into it; B and C continue it here |
+| The ground coverage | Rebased onto `feature/auto_detail` and merged into it; B and C continued it (shelved again 2026-11-21, B with it) |
 
 ## A. Texture rules
 
@@ -39,8 +38,11 @@ earlier one, as blend layers go over each other).
   - **height** (metres; absolute, or over the sea level of a tile that meets the sea),
   - **slope** (degrees),
   - **curvature** (hollows to ridges, from the height's Laplacian over a radius in metres: where water collects, where wind dries),
-  - **distance to water** (rivers, lakes, the sea: stage B's water map, as the ground coverage's context has it),
-  - **distance to roads** (the procedural roads' strips) and **to buildings** (the real buildings' footprints, the coverage's categories).
+  - **distance to water** (rivers, lakes, the sea: the roads' `WaterMap`, live, not stage B's),
+  - **distance to roads** (the road-owned blend layers' pixels) and **to buildings** (the real buildings by the kits' categories, discs of
+    their models' radius),
+  - **water flow** (where water runs, worked out from the heights; `Default`'s *Silt where water runs*; the erosion's Deposit went with
+    the erosion, [auto_detail_2.md](auto_detail_2.md)).
 - **Breakup**: noise over the result (scale in metres, amount, the rule's seed), so that edges are not contour lines.
 - **Strength**, 0 .. 1.
 - Optional **ground type**: where the rule's weight is over a threshold, the ground type map gets that type too (sounds, unit speed). Off
@@ -48,24 +50,28 @@ earlier one, as blend layers go over each other).
 
 ### The layer
 
-- One blend layer owned by the rules (owner `texture_rules`), **right over the base, under every layer of the user's**: the first owned
-  layer that is not on top. `Stack::add`, `put_owned_on_top` and the roads' sort (`roads.rs`, `road_terrain`) learn an owned layer that
-  goes under (the rule today: what procedural features own applies last). The roads and kit walls stay on top of everything.
+- One blend layer owned by the rules (owner `texture_rules#<signature>`), **right over the base, under every layer of the user's**
+  (`terrain_layers::order_of`: 0 under the user's, 1 theirs, 2 on top; `UNDER_OWNERS`, `Stack::first_on_top`). The roads and kit walls
+  stay on top of everything. Merge down stops at the rules' layer.
 - A pixel of the layer is the rules' channels with a cover of their summed weight: where no rule holds, the layer is empty and what is
   below shows.
 - **Painting with no working layer goes to the base**, which lies under the rules: the paint would not show where a rule covers it. When a
   tile has rules, the editor makes the working layer a user layer (`Painted`, made once if there is none) before the first stroke.
-- Made again **live**: a job off the editor's thread (`tile_document::jobs`, as `road_terrain`), started when the heights, water, roads or
-  buildings changed and nothing has moved for a moment; over the edited rectangle widened by the rules' largest reach (curvature radius,
-  distances), the whole map when the rules changed. The result goes in as the stack's own change, so undo takes the edit and its texture
-  back together.
+- Made again **live** (`tile_document/texture_rules.rs`): a job off the editor's thread, started when the heights, water, roads or
+  buildings changed and nothing has moved for a moment. Only what changed is made again (2026-11-19: `RulesBasis`,
+  `Fields::changed_area`, the heights widened by the rules' reach); another rule set or grid, or an undo past the layer, makes the whole
+  map. It goes in when the blend stack is as it was taken, with no undo entry (an undo puts back what it is made from); edits of the rules
+  are undo entries (`set_texture_rules`). Exports wait for it after the roads (`finish_road_jobs`). Grass follows.
+- **Ground types**: a rule may name a ground type and a weight threshold (`ground="rock" ground_threshold="0.5"`), into a ground type
+  layer the rules own, under the user's; `Default` lays none (gameplay).
 - Combined projects: made per variation, as the roads' layers.
 
 ### Rule sets
 
-- A **preset** is a file under the projects' `raw_data/art/texture_rule_sets/<name>.wce` (beside `vegetation_sets` and the coverage's
-  presets), XML as they are. Built in: `Default` (rock on slopes, mud in hollows and by water, worn ground by roads and buildings) and a few
-  by climate if the group names allow.
+- A **preset** is a file under the projects' `raw_data/art/texture_rule_sets/<name>.wce` (beside `vegetation_sets`), XML
+  (`texture_rules::Preset`, `scan_presets`). Groups by alternatives (`mud|mud_a|mud_b`: the kits name the same ground differently).
+  Built in: `Default` (mud by the water and in hollows, silt where water runs, worn ground by roads and buildings, rock on slopes;
+  settlement tiles' `settlement_2` as worn ground and `settlement_3` as rock, the packs' textures in every climate).
 - **The tile keeps its own copy** of the rules and the preset's name, in `texture_rules.wce` beside its `tile.wce` (as
   `terrain_layers.wcl`; changed while building from an element in tile.wce: a file of its own needs nothing of the TEd conversion, the
   variations' scene or the splices): a tile is shareable without the preset, and editing a preset does not change tiles until they load
@@ -73,118 +79,30 @@ earlier one, as blend layers go over each other).
 
 ### UI
 
-- Tile panel, Terrain layers section: the rules' layer shows as owned (not editable by hand), with **Rules...** opening the rules window.
-- The rules window: preset combo (Save, Save as, Delete, "(changed)"), the list of rules (on / off, reorder, add, remove, duplicate), the
-  selected rule's texture and conditions, each condition with a small graph of its range and fades.
-- **Preview** of a rule: the ground views get a "rule weight" view (white where the rule lays its texture) for the selected rule.
+- The Terrain layers' Blend row over the base (and Paint mode's *Texture rules...*) shows the rules in the Inspector
+  (`texture_rules_panel.rs`, styled: Simple and Advanced views, condition chips, range bars): on / off, the preset combo (Save, Save as,
+  Delete), the tile's groups and the rules that lay nothing, the list (on / off, add, duplicate, remove, up, down) and the selected rule.
+- The selected rule's **outline** in the viewport: where its weight is at least a half (a debug terrain view would have touched the bake,
+  the minimap and the view).
+- Painting with rules and no working layer makes or picks a `Painted` layer first (the base lies under the rules), for the blend and the
+  ground type brushes.
+- Script command `texture_rules`.
 
-### Steps (a commit per step)
+Checked on kit tiles (2026-11-18, `~/wce_re/scratch/auto_detail/check`): river/2x2_lt_rb (0.4 % of the map once only over the main
+ground: its banks are painted mud already), mediterranean_mountains/custom_pillar_hercules_a (8.6 %, 76 % rock as `mountain`),
+settlement_nordic_cities/nordic_city_a/medium (2.7 %: worn ground round the huts and by the streets, rock on the cliff).
 
-1. **The rules in `wce_tile`** (done: `texture_rules.rs`): rules, conditions, fades, breakup; a rule set from and to text; the analysis fields
-   (slope, curvature) from a height field; `generate` over a rectangle into a blend layer's pixels. Unit tests on synthetic fields: a
-   ramp gets rock from its threshold, a bowl mud at its bottom, a later rule over an earlier one, an unknown group skipped, nothing where no
-   rule holds. Done as planned, plus a built-in `Default` (mud in hollows, rock on slopes) and the rules' reach (how far past an edit the
-   result can change). The breakup moves each condition's value by up to its fade times the amount, so the inside of a range never changes
-   and no spots appear far from an edge.
-2. **The owned layer under the user's** (done): the stack's ordering (an owned layer that goes under), the roads' sort, painting with no working
-   layer into `Painted`. Tests: hand paint over the rules shows; roads stay on top; undo of a stroke and of the rules' change.
-   Done: `terrain_layers::order_of` (0 under the user's, 1 theirs, 2 on top), `UNDER_OWNERS`, `Stack::first_on_top`; the roads' and the
-   prefabs' ground follow it. Merge down stops at the rules' layer (it would go when the layer is made again). Painting with texture rules
-   and no working layer makes or picks `Painted` first (its own undo entry), for strokes, strokes along a line and Paint the whole tile.
-3. **Live regeneration in the editor** (done): the job, the triggers, the reach-widened rectangle, combined projects. Script command
-   `texture_rules <on|off|regenerate|load <preset>>`; a check script on a kit tile (a few tiles with `--filter`, no corpus run).
-   Done: `tile_document/texture_rules.rs`. The layer's owner is `texture_rules#<signature>`, the signature a hash of the rules, the texture
-   group slots and the heights' content (hashed again only when the field's version moves): a tile opened again does not remake it. A
-   change waits a look (a drag, a stroke), then a job remakes the **whole map** (the rectangle widened by the reach is left for when it is
-   measured to be needed); it goes in when the blend stack is as it was taken, no undo entry (an undo puts back what it is made from).
-   Edits of the rules are undo entries (`set_texture_rules`); exports wait for it after the roads (`finish_road_jobs`). Grass follows.
-   Left for step 5: the script command and the check on kit tiles.
-   Later (2026-11-19): **only what changed is made again**. The layer keeps what it was made from (`RulesBasis`: the rules' key, its
-   owner, the fields); a remake under the same rules diffs the new fields against those (`Fields::changed_area`: the heights widened by
-   the rules' reach, the distances, the main ground and the areas where they changed), clears and makes only that part of the layer
-   (and of the rules' ground layer), and composes only it again. Another rule set, another grid or a layer that is not the one made
-   (an undo past it) make the whole map. Checked: a bump on the mountain tile remakes 15 x 15 blend map pixels; a test has the part
-   equal to a whole remake.
-4. **Distances** (done): water, roads, buildings. Done as: `texture_rules::Distances` (exact Euclidean distance transform on the blend
-   map's grid), the rules' `water`, `road` and `building` ranges (endless where the tile has none). Water is the roads' `WaterMap`
-   (rivers' ribbons and lake planes over the ground, the sea under 0 in the sea's sets), not stage B's (live, without a compile); roads
-   are the road-owned blend layers' pixels; buildings are the real ones by the kits' categories (the coverage's), discs of their models'
-   radius. Only what an enabled rule uses is worked out; the scene's part is cached by the scene's and the models' versions.
-5. **Presets and the window** (done), the rule weight view. Done as: `texture_rules::Preset` / `scan_presets` (the built-in `Default` and
-   the files), groups by alternatives (`mud|mud_a|mud_b`: the kit names the same ground differently), a fuller `Default` (mud by the
-   water and in hollows, worn ground by roads and by buildings, rock on slopes); the window (`texture_rules_panel.rs`, Tile panel >
-   Texture rules...): on / off, preset combo with Save, Save as, Delete, the tile's groups and the rules that lay nothing, the list
-   (on / off, add, duplicate, remove, up, down) and the selected rule's fields, an edit given to the tile as one undo entry once no field
-   is active. The rule weight view became an **outline in the viewport** of where the selected rule's weight is at least a half (on a
-   grid of a 256th of the tile, 1 m at least): a debug terrain view would have touched the bake, the minimap and the view. Script
-   command `texture_rules`. Checked on kit tiles (2026-11-18, `~/wce_re/scratch/auto_detail/check`): river/2x2_lt_rb (mud by the water
-   19 % of the tile, rock skipped: the tile has none), mediterranean_mountains/custom_pillar_hercules_a (8.6 % of the map, 76 % rock as
-   `mountain`, 24 % mud; the rock band widens along the face), settlement_nordic_cities/nordic_city_a/medium (nothing: its groups are
-   `settlement_1..3` and `forest`; settlements need their own preset). Later (2026-11-18): the packs' textures show `settlement_1` is
-   the base ground, `settlement_2` packed earth or sand, `settlement_3` rock in every climate, so `Default`'s groups take 2 as worn
-   ground and 3 as rock: the nordic city gets 3.9 % of its map (92 % worn ground round the huts and by the streets, 8 % rock on the
-   cliff, `check/settle_crop.png`). Then only over the main ground (decision above): the nordic city 2.7 % (its forest paint and streets stay,
-   `check/settle_three.png`), river/2x2_lt_rb 0.4 % (its banks are painted mud already).
-6. **Ground types per rule** (done). A rule may name a ground type and a weight threshold (`ground="rock" ground_threshold="0.5"`);
-   where its weight passes it, the type goes into a ground type layer the rules own, under the user's as their blend layer; the latest
-   rule laying one at a place wins. `Default` lays none (gameplay). A tile without a ground type map still gets its textures. The ground
-   brush with rules that lay ground types and no working layer goes into a `Painted` ground layer, as the paint brush does.
-7. **Check in the app** (the user): defaults of `Default` on a few kit tiles of different climates.
+## B. Clutter around buildings (shelved 2026-11-21)
 
-## B. Clutter around buildings
+A ground coverage kind, **Around buildings**: for each real building a clutter rule matches (key patterns with exceptions, categories as
+a fallback), incidental buildings from the rule's set in a ring around its footprint rectangle. Built and checked on kit settlement tiles
+(2026-11-18), then shelved with the ground coverage (`feature/shelved_ground_coverage`). Decisions (user, 2026-11-18): key patterns
+(`*villa*|*farm*`, `except`), all around (the user clears a door), incidental buildings as the kit's props, a tab of the ground coverage
+window. Found: the kit's `battlefield_buildings` has 823 `generic` keys (houses, temples, farms alike), 371 `incidental`, 129
+`fort_wall`, 76 `ground_platform`, 30 `fort_tower`, 22 unbreachable walls, 10 gates, 10 bridges: the category alone can't tell a farm from
+a temple; the kit's `*_villa_*` keys are the cities' houses.
 
-A ground coverage kind, **Around buildings** (`Kind::Buildings`): for each real building a clutter rule matches, props from the rule's
-set in a ring around its footprint. Fill and brush as the other kinds, its own group in the coverage's layer.
-
-### Decisions (user, 2026-11-18)
-
-| Question | Answer |
-|---|---|
-| Which buildings get what | **Key patterns** (`*villa*\|*farm*`), the category as a fallback; the first rule matching a building is its |
-| Doors and streets | **All around**: the user clears a door by hand (or Ctrl + drag with the brush) |
-| The props | **Incidental buildings**, the kit's way (barrels, crates, carts are `incidental` BUILDING_INSTANCEs) |
-| Where | **A fourth tab of the ground coverage window**: presets, Fill the tile / Brush, its group in `(AUTOGEN) Ground Coverage` |
-
-Found: the kit's `battlefield_buildings` has 823 `generic` keys (houses, temples, farms alike), 371 `incidental` (tents, washing lines,
-market stands, barricades, carts, hides, dock goods), 129 `fort_wall`, 76 `ground_platform`, 30 `fort_tower`, 22 unbreachable walls, 10
-gates, 10 bridges: the category alone can't tell a farm from a temple.
-
-### Design
-
-- A building is a `Target`: its key and category, where it stands, its turn and its footprint as a **rectangle** in its own frame (the
-  model's bounds, scaled): a circle's corners would leave the long sides of a house bare. Its ring is the ground `ring_gap` ..
-  `ring_gap + ring_width` out of the rectangle; ground within `ring_gap` of any building (a neighbour) is left out.
-- A `ClutterRule`: name, key patterns (`*`, `|`), categories (`|`), and its props: a building set by name, or keys inline (the built-in
-  rules', so that they work without set files).
-- Props stand on the ground (seat at the centre, not sunk, scale 1), at the density, apart from each other, no more than
-  `max_per_building` a building.
-
-### Steps (a commit per step)
-
-1. **The kind in `wce_tile::ground_coverage`** (done): `Kind::Buildings`, `Target`, `ClutterRule`, `glob`, the ring classification,
-   the props per region's rule in the fill and the brush (`Classified::owner`), the three parameters. Tests: patterns, a turned
-   footprint, a ring round a matched house clear of its unmatched neighbour, the cap.
-2. **Rules in the presets** (done: `ClutterDef`, one attribute `clutter` in a preset's file and `wce_autogen_clutter` on the kind's group) and the built-in ones (markets, docks, townhouses, barbarian houses, stables and farms, from the kit's own
-   incidental keys).
-3. **The tile's side and the window's tab** (done): `TileDocument::coverage_targets` (the real buildings by the packs' categories, else
-   the kits', their models' bounds through their world matrices, a mirrored one's rectangle flipped), the rules' editor in the Around
-   buildings tab (name, keys like, except, categories, props: a building set or keys), the ring's parameters, the rules resolved into
-   sets (`clutter_rules`), the props' sizes with the rocks', Fill and Brush; a summary by rule and by key.
-   Changed while building: a rule's key patterns look among the **ordinary buildings** (`generic`) unless it names categories, and a
-   rule has **exceptions** (`except`): the kit's houses come in pieces (`*_wall*`, `*_door*`, `*tower*`, corners) and `*barbarian*`
-   caught the palisades, `*gaul*` the `gaul_rock_*`s (which the kit files as `generic`). The built-in rules were tuned on the kit's 190
-   generic keys of houses, markets, docks and villas, the nordic and barbarian houses before the townhouses.
-4. **Check on kit settlement tiles** (done 2026-11-18): settlement_nordic_cities/nordic_city_a/medium, Default, seed 7: 159 buildings
-   matched (Docks 48: its fishing sheds; Barbarian and nordic houses 111), 667 props around 151 (8 with no room); hay, hides, carts and
-   woodpiles stand round the turf houses (`~/wce_re/scratch/auto_detail/check/turf_after.png`). Other cultures (2026-11-18): the kit's
-   `*_villa_*` keys are the cities' houses (`eastern_villa_house01`, `_straight01`, `_angled02`, `_atrium`), so they moved from
-   "Farms and villas" (hay and carts round every city house) to Townhouses, and the rule became "Stables and farms" (`*stables*`,
-   `*farm*`, `*barn*`). eastern_city_a/medium: 661 matched (Eastern markets 74, Markets 94, Docks 2, Townhouses 402, Stables and farms
-   89), 1336 props round 501; western_city_a/medium: 730 (Markets 182, Docks 46, Townhouses 422, Stables and farms 80), 1625 round 525
-   (`check/east_pair.png`). The streets of decals are not roads to the rule: a prop may stand in one (all around, the user clears it).
-   Left: the user's look.
-
-## C. Biome areas and brush
+## C. Biome areas
 
 A biome is a preset of a kind of ground: its trees, undergrowth and rocks (sets, or keys inline), their densities, an edge band (smaller,
 sparser trees and denser undergrowth towards the edge) and texture rules. It is laid in **areas**: polygons drawn on the tile (and
@@ -214,44 +132,32 @@ touched up with a brush), kept live.
   buildings are (locked, not tile.ted's), and added in a layer of their own by an export (as `with_road_items`).
 - The texture: the rules' job (A) also lays every area's biome rules, each weighted by the area's mask (1 inside past the edge band,
   fading to 0 at the boundary).
-- The brush: a stroke's circles rasterised with the nearest area's mask on a 1 m grid (added, or taken away with Ctrl), the outline
-  traced again and simplified (one undo entry); a stroke away from every area makes a new one.
+- The brush: a stroke's circles rasterised with the area's mask on a grid (added, or taken away with Ctrl), the outline traced again and
+  simplified (`biomes::stroke_outline`, `TileDocument::biome_stroke`, one undo entry); a stroke away from every area makes a new one.
+  Since 2026-11-21 this is the area brush of every closed polygon type (`area_brush.rs`: the Inspector's *Draw by* Click points or
+  Paint).
 
-### Steps (a commit per step)
+### As built (2026-11-18 .. 20)
 
-1. **The biome and its generation in `wce_tile`** (done: `biomes.rs`; `texture_rules::rule_lines` and `rules_in` shared with it): model, text, built-ins, `generate`. Tests: inside the polygon only, the edge band
-   (sparser, smaller trees and denser undergrowth there), the spacing, the same seed the same result, the text read back.
-2. **The area** (done: `tile_document/biomes.rs`, `Make::Biome` in the Create panel's Vegetation > Biomes, `TileProject::biomes`): Create panel entry (an exclusion polygon with `wce_biome`), `biomes.wce` (the biomes the areas use, copied in when an
-   area takes one), the `to_ted` report. Tests: an area exports as a plain exclusion polygon; the file round trip; undo.
-3. **Live contents** (done): made off the editor's thread when an area, its biome, the heights, the buildings or the roads changed
-   (a content signature; a change waits a look), clear of the real buildings and the roads' texture, drawn locked through
-   `preview_payloads` (trees leaning with the ground as the tree list's), added by the exports in a layer `WCE biomes`
-   (`with_biome_items`, after `finish_road_jobs`). Named sets come from the tool (`set_biome_sets`).
-4. **The texture** (done) through A's rules job: `Rule::area` binds a rule to an `AreaMask` of `Fields`; the job lays the tile's rules,
-   then each area's biome's (its seed mixed into theirs), each weighted by its area's mask (the biome's edge band). The layer is made
-   for areas alone too (a tile without rules of its own).
-5. **The window** (biome presets, the selected area's biome and seed) and the **brush**; script commands. Done: `biomes_panel.rs`
-   (Tile panel > Biomes...): the presets (Save, Save as, Delete), the chosen biome's fields (its props as a set or keys, densities,
-   spacing, scales, the edge band, its texture rules with the texture rules window's rule editor), Draw an area, Brush (radius; a stroke
-   on an area grows it, away from every area makes one of the chosen biome, Ctrl takes away), the selected area's biome ("Give it ...")
-   and seed (Reroll). `wce_tile::biomes::stroke_outline` (the area and the stroke's circles on a grid, the outer outlines traced along
-   the cells' edges and simplified, holes left out) and `TileDocument::biome_stroke` (one undo entry: the area reshaped, the other
-   pieces new areas, an area cut away entirely removed). The projects' sets go to the document every frame (`feed_sets`). Commands
-   `biome_area`, `biome_brush`, `biomes_wait`, `biomes window`.
-6. **Check on kit tiles** (2026-11-18, river/2x2_lt_rb): a Pine forest area drawn and a Broadleaf wood brushed: 2 areas, 1135 trees and
-   plants, 34 rocks; the texture rules' layer made for the areas alone (1.9 % of the blend map, all forest). The pines, shrubs and rocks
-   stand in the area (`~/wce_re/scratch/auto_detail/check/biome_close.png`). Left: the user's look. Found while checking: scripted runs
-   froze after a while with the screen blanked (FIFO presentation waits for a display that is off); master's binary froze the same way.
+`wce_tile::biomes` (model, text, built-ins, `generate`, tests), `tile_document/biomes.rs` (the area, `biomes.wce`, live contents off the
+editor's thread clear of the real buildings and the roads' texture, drawn locked, exported in a layer `WCE biomes` after
+`finish_road_jobs`), the texture through A's job (`Rule::area`, an `AreaMask`; the layer is made for areas alone too),
+`biomes_panel.rs` (presets, the biome's fields, its texture rules with A's rule editor, key pickers with thumbnails). Commands
+`biome_area`, `biome_brush`, `area_brush`, `biomes_wait`, `biomes`. Checked on river/2x2_lt_rb (2026-11-18): a Pine forest area drawn and
+a Broadleaf wood brushed, 1135 trees and plants, 34 rocks, the rules' layer 1.9 % of the map.
 
 ## Where the tools live (user, 2026-11-19)
 
 Out of the Tile panel's Experimental section and their floating windows, into the Inspector, where the editor sets up what it makes:
-biomes and the ground coverage are Create panel entries (Vegetation > Biomes; Vegetation / Buildings > Ground coverage) shown in the
-Inspector with their settings, laying first (Draw an area / Brush; Fill the tile / Brush, Preview, Generate); the texture rules are
-the Terrain layers > Blend row over the base (and Paint mode's *Texture rules...*). One shows at a time; selecting something else, or
+biomes are Create panel entries (Vegetation > Biomes) shown in the Inspector with their settings, laying first (Draw an area / Brush);
+the texture rules are the Terrain layers > Blend row over the base (and Paint mode's *Texture rules...*). One shows at a time; selecting something else, or
 making another entry, gives the Inspector back; a selected biome area shows its biome below its properties (*Edit its biome*, Reroll).
-Then (user, same day): the texture rules lose their "experimental" mark; the ground coverage goes back to its window in the Tile
-panel's Experimental section (more passes before it has a place, if it stays); the biomes' Create panel entries get a picture (a 20 m
+Then (user, same day): the texture rules lose their "experimental" mark; the biomes' Create panel entries get a picture (a 20 m
 patch of the biome's inside, kept by its values), and the vegetation is listed by species (the Create panel's folders, the key
-picker's headings).
+picker's headings). The ground coverage went back to the Tile panel's Experimental section, and both left master on 2026-11-21.
+
+## Open
+
+- [ ] The user's look in the app: A's `Default` on kit tiles of different climates; C's biomes.
+
 

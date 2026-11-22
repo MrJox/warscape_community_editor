@@ -28,7 +28,8 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
 
 ## The tool
 
-`UI` in the tool switcher (Ctrl+3). Panels:
+`UI` in the tool switcher (Ctrl+6 in the default build, where Weather, VFX, Prefab, Tile and Terrain come first; Ctrl+4 in a release
+build). The tool has no 3D viewport. Panels:
 
 * **UI Canvas**: the layout drawn from its default states: pictures from the game's packs (mod packs over vanilla; a picture that is not found is a
   magenta outline), text with the editor's font. Click selects the topmost component under the cursor, drag moves, the eight handles resize, the
@@ -40,9 +41,9 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
 * **Inspector** (name, offsets, size, text, text colour), **History**.
   The fields carry the names of the Fields panel (`<offset_x>`, `<visible>yes</visible>`, `<component>`, `<picture_use>`); tick *Converter names* for the converter's own tags and guessed comments. Either form can be edited and pasted, and the file saved is the same. Fields the editor has no name for keep their primitive tag (`<i>`) and comment. Values are shown as stored (a dock point is its number); the Fields panel shows them in words.
 
-Everything is one model with one undo stack, so the canvas, the XML and the fields cannot disagree. Menu `UI`: add child, duplicate, delete, paint
-order, move into the previous sibling / out of the parent (the place on screen is kept), new skin. File > Export: the layout into a mod pack,
-the project as a mod pack, XML.
+Everything is one model with one undo stack, so the canvas, the XML and the fields cannot disagree. The Edit menu: add child, duplicate,
+delete, paint order, move into the previous sibling / out of the parent (the place on screen is kept); File > New skin.... File > Export:
+the layout into a mod pack, the project as a mod pack, XML.
 
 Saving: File > Save writes the binary layout as a loose file into the project's loose folder at its in-pack path, or in place for
 a file opened from disk. `File > Export > Layout into a mod pack...` writes it into a `.pack` (created if missing). The game's own packs are never written.
@@ -126,17 +127,17 @@ to type) with - and + buttons; a drag is one undo step.
 A skin is a folder of pictures under `ui/skins/<name>`; a component's picture `ui/skins/default/x.png` is taken from `ui/skins/<name>/x.png` when
 the skin has one, else from the default skin.
 
-* **New skin**: *UI > New skin...* (or the button beside the Skin list) asks for a name and makes the folder on disk (the first time also the
-  working folder, `Documents\WarscapeCommunityEditor\ui_skins_project`). The skin is selected at once. Put PNGs in it, named like the game's pictures; the
+* **New skin**: *File > New skin...* (or the button beside the Skin list) asks for a name and makes the folder in the project's loose folder
+  (`<projects>/loose/ui/skins/<name>`). The skin is selected at once. Put PNGs in it, named like the game's pictures; the
   preview updates within a second of each save. *Open skin folder* (next to the list, for loose skins) opens the folder in the file explorer.
 * **In the Skin list**: `[loose]` is a skin of your own, a folder on disk; `[loose, overrides game packs]` is one whose name the game's packs also have.
   The order the editor reads pictures in is always: your loose folder, then the mod packs you chose, then the game's release packs. So a loose
   picture beats a pack's picture of the same name, a picture you did not provide comes from the pack's skin of that name, and anything missing
   from both comes from the default skin. If a pack that contains your skin is selected later, your loose files still win in the editor (in the game
   the pack's own priority decides).
-* **Layouts**: Ctrl+S saves a layout into the working folder under its game path; that version opens next time. A layout file that changes on disk
+* **Layouts**: Ctrl+S saves a layout into the project's loose folder under its game path (`<projects>/loose/<its path>`); that version opens next time. A layout file that changes on disk
   reloads by itself (as an undo step) unless you have unsaved changes in it; the status line says so then.
-* **Export**: *File > Export > Project as a mod pack...* saves layouts with unsaved changes into the folder, then writes every file of it (all your skins and layouts)
+* **Export**: *File > Export > Project as a mod pack...* saves layouts with unsaved changes into the loose folder, then writes every file of it (all your skins and layouts)
   into a new `.pack` to share. The game's own packs are never written.
 
 ## Which packs are read

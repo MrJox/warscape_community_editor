@@ -44,6 +44,9 @@ kit's escalation layers hold their content in normal sub-layers: "Gates and Towe
   true, false, false); `start_disabled` false, `position_type` 2 (`lf_relative`), scale 1.
 - `lite`: the building's position inside a `LiteBuildingZone` of a normal layer (the main list only).
 
+Measured over the packs (1,654 tile folders, 4,063,006 buildings): keys and every flag identical; positions identical or within the
+text's precision; quaternions within 1e-5 but the 6 not unit; every `building_list_<layer>` byte-identical.
+
 ## Markers
 
 The instances of the normal layers in the scene's order, one record each, grouped by key in `MARKER_TABLE` order (docs/re/ted_export.md:
@@ -138,9 +141,6 @@ extent - z / 2) (rpfm's `area` min and max; the position from the world matrix, 
 has a capacity. Written when there are shelters; an empty shipped file is carried by the project. BOB writes none.
 Checks: from the kit's raw tiles, the shipped files on 15 of 35 settlements (the first difference of 19 of the 20 others a capacity); from the
 decompiled projects, every shipped file of 36 settlement tiles (vanilla and TDD) byte for byte.
-
-Measured over the packs (1,654 tile folders, 4,063,006 buildings): keys and every flag identical; positions identical or within the
-text's precision; quaternions within 1e-5 but the 6 not unit; every `building_list_<layer>` byte-identical.
 
 ## Stage B: BOB's Tile processor (`attila::bob_tile`, `attila::ati_dxt`)
 
@@ -367,7 +367,7 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     rivers. When only the rivers changed, the carried meshes are kept with their river block made again in the game's format
     (`river::with_river_block`: the other blocks as they were, the LOD header's counts and byte totals adjusted), the variation keeps
     the database's height range, and `hf_water_map.data` is made again. Rome 2's meshes are not the port's format (its terrain blocks
-    are type 0x42, 16-byte vertices), so a river edit keeps the game's terrain. Checked with `examples/tile_workflow_check.rs`
+    are type 0x42, 16-byte vertices), so a river edit keeps the game's terrain. Checked with `tile_workflow_check`
     (`WCE_WORKFLOW_RIVER=1`) on Rome 2's and Attila's river tiles: the meshes the same but their river block.
 - **`hf_water_map.data`** (`FUN_10089b80`): written only when there is a river or a water plane (BOB deletes it otherwise).
   - The field (the final heights' size) starts at -1000.

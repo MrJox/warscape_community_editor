@@ -56,7 +56,7 @@ pub fn apply_environment(e: &EnvironmentParams, cbs: &mut ConstantBuffers) {
     // Verified (memory dump): sun colour = pow(c, 2.2) * sun_colour_scale * 5000 (the shaders multiply by 0.004 in HDR).
     // Verified (rain + snow dumps, use_custom_ambient_cube_colours = true): ambient = pow(c, 2.2) * ambient_cube_hdr_scaler (ambient_scale
     // isn't applied), stored as lr = (left, right), tb = (top, bottom), fb = (front, back). With use_custom_ambient_cube_colours = false
-    // the engine takes the cube from elsewhere (open item).
+    // the engine takes the cube from the environment cube map (its per-face averages, renderer/sky.rs).
     set3(cbs, "lighting_VS_PS", "sun_direction", -to_sun);
     set3(cbs, "lighting_VS_PS", "sun_colour", colour_to_linear(e.sun_colour) * (e.sun_colour_scale * SUN_HDR_SCALE));
     let amb = e.ambient_hdr_scaler;

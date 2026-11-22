@@ -1,6 +1,9 @@
 # Save and Export publication performance
 
-This correction addresses the remaining performance feedback in [PR #74](https://github.com/MrJox/warscape_community_editor/pull/74#issuecomment-6992126283). It changes publication work, leaving format writers, normal calculations and document/Undo semantics intact.
+A correction made for the Terrain tool's Save and Export (PR #74, merged; the review's performance feedback:
+[PR #74](https://github.com/MrJox/warscape_community_editor/pull/74#issuecomment-6992126283)). The code: `wce_foundation::disk_changes`
+(`Changes`, `Attempt`) and `wce_foundation::publication` (`Staged`). It changes publication work, leaving format writers, normal
+calculations and document/Undo semantics intact.
 
 ## Save
 
@@ -22,11 +25,11 @@ Generator failure, a synchronization failure or a read-only changed destination 
 cargo test --release --locked -p wce_terrain_tool --lib large_synthetic_save_export_measurement -- --ignored --nocapture --test-threads=1
 ```
 
-The opt-in fixture has a 4096 × 4096 land LF, 128 MiB of carried bulk data and 1,024 small carried resources (about 161 MiB total). It measures changed/unchanged owned Saves, repeat Save As copies, and changed/unchanged Export publication. Three sequential runs per case report elapsed time and logical process read/write bytes. Windows uses process I/O counters; Linux uses `/proc/self/io`. These are logical transfers, including cached I/O, rather than physical disk traffic.
+The opt-in fixture (`wce_terrain_tool`'s `publication_bench.rs`) has a 4096 × 4096 land LF, 128 MiB of carried bulk data and 1,024 small carried resources (about 161 MiB total). It measures changed/unchanged owned Saves, repeat Save As copies, and changed/unchanged Export publication. Three sequential runs per case report elapsed time and logical process read/write bytes. Windows uses process I/O counters; Linux uses `/proc/self/io`. These are logical transfers, including cached I/O, rather than physical disk traffic.
 
 The benchmark uses the real document manager, raw map writer, publication path and RPFM pack writer. It checks retained/copy bytes and every decoded pack resource exactly, then removes its verified temporary tree. It creates no native window or game assets. The Export workload starts from prepared synthetic resources, so its timings measure publication rather than tilemap/normal compilation. It is not a complete game-ready map or a game/runtime performance certification. No wall-time threshold is part of routine CI.
 
-Windows release measurements on 19 November 2026 compare the same workload on the preceding PR implementation and this correction. Medians of three runs:
+Windows release measurements on 2026-11-19 compare the same workload on the preceding PR implementation and this correction. Medians of three runs:
 
 | Publication case | Before | After | Elapsed reduction |
 |---|---:|---:|---:|

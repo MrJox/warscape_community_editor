@@ -61,7 +61,8 @@ frontend|naval> opt:<xml name> opt:<xsd name> opt:<building list>`, `add_working
 default `data/TestData/world/DemoLandBattle.xml`), and of the battle XML's elements all but three: `deployment_area_alliance_index`,
 `battlefield_owner_alliance_index` and `tile_upgrade` are not among its strings (its benchmark, `script/bm_benchmark/bm_battle.xml`, has
 none of them either), so Launch in game leaves them out for Rome 2 (`GameProfile::launch`). Its vanilla armies: `rom_rome` with
-`Rom_Hastati` against `rom_suebi` with `Ger_Spear_Levy`, subculture `sc_rom_roman` (keys of the release's tables). Not launched yet.
+`Rom_Hastati` against `rom_suebi` with `Ger_Spear_Levy`, subculture `sc_rom_roman` (keys of the release's tables). A tile launched alone shows only water across the map (user report
+2026-11-01): Rome 2's battles all name a battle map's folder, and no lone-tile path was found in its loader (docs/plans/rome2.md).
 
 `game_startup_mode` is not in docudemon's command library (it lists the commands of a running game); the start-up commands are in the
 dll's strings next to their help texts.

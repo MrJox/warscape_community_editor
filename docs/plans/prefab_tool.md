@@ -5,34 +5,15 @@ prefabs are the editor's (`<key>.wce` in the projects' `art/prefabs`), and they 
 tile, a prefab's height layer shows in the reference's own settings (the Inspector), not in the tile's Terrain layers list. The goal is
 prefabs that stop needing hand-made meshes that fake the terrain.
 
-State: planned 2026-11-07, decisions taken with the user (the list at the end). Steps 1 to 8 done (2026-11-07/08), the tool built by default; what is left is in the follow-ups below.
+State (2026-11-22): planned 2026-11-07, decisions taken with the user (the list at the end); steps 1 to 8 and the follow-ups built
+2026-11-07 / 08, in master; `prefab` is a default feature and in the `release` set. How it works now: docs/editor.md (the Prefab tool).
+What is left: "Open" below.
 
 ## Why
 
-Today a prefab is edited inside a tile (`wce_tile_tool::prefab_panel`): "Edit prefab" opens one copy, Apply writes the file and replays the
-contents into the other copies **of that tile only**, Cancel puts the file's contents back. Problems:
-
-- The edit happens over whatever ground, weather and neighbours the tile has, mixed into its undo history and its scene tree.
-- Other open tiles see the change only when they next fill their references in.
-- A prefab has no terrain, so prefabs that need a platform, a mound or a dip ship meshes that pretend to be ground. They don't blend with
-  the tile's terrain.
-
-## What the code has to build on
-
-- **Prefab files** (`wce_tile::prefabs`): `PrefabLibrary` scans the projects' prefab folder first, then the kits'; a `.wce` takes the place
-  of the `.xml` of the same key. `save_edit` writes the `.wce`, `save_for_kit` writes TEd's `.xml` (references baked, props as models).
-- **References** (`wce_tile::prefab_refs`, `project_files`): a group with `wce_prefab="<key>"` keeps empty `children` in tile.wce and is
-  filled in on open; per-copy edits are `WceOverrides`. Structural edits inside a reference are refused.
-- **Terrain layers** (`wce_tile::terrain_layers`): a `Stack` per map type beside each field; the field holds the composite, so the renderer,
-  Save for Assembly Kit and the game export see the result without knowing about layers. Height layers add. Layers have an **`owner`**: a
-  procedural feature's layers are not listed in the Tile panel, not edited by hand, and apply after the user's.
-- **Procedural roads** (`tile_document/roads.rs`) are the model to copy: each `WceRoadSpline` owns a layer per type, owner
-  `road:<id>#<signature>`; `refresh_roads` remakes the layers of roads whose signature changed and drops those of roads that went, so undo
-  needs nothing of its own and opening a tile doesn't remake them. A road's height layer is made against what lies below it
-  (`Stack::below`): a target height turned into an additive layer.
-- **New tile** (`wce_tile::new_tile`): writes a flat tile project (entry, tile.wce, the three maps) at a size and density: what a stage
-  needs.
-- **Tools** (`wce_editor::tool::Tool`, `wce_app::tools`): each tool behind a Cargo feature; `e.with_tool::<T>()` finds a tool by type.
+Before, a prefab was edited inside a tile (Edit prefab / Apply / Cancel): over that tile's ground, weather and neighbours, mixed into its
+undo history, and other open tiles saw the change only when they next filled their references in. And a prefab had no terrain, so
+prefabs that need a platform, a mound or a dip shipped meshes pretending to be ground, which don't blend with the tile's terrain.
 
 ## Design
 
@@ -78,9 +59,9 @@ contents into the other copies **of that tile only**, Cancel puts the file's con
 
 ### The tool
 
-- **Crate** `wce_prefab_tool`, Cargo feature `prefab` (built as `wce_tile_tool::prefab_tool`, see the follow-ups). Listed in the
-  switcher after Weather.
-- **Stage**: a flat tile the tool makes itself (`new_tile`), outside the user's projects (`<projects>/.wce/prefab_stage/<settings>`), never
+- `wce_tile_tool::prefab_tool` (planned as a crate of its own; `tool::with_tile` has to name it), Cargo feature `prefab`. Listed in the
+  switcher before the Tile tool.
+- **Stage**: a flat tile the tool makes itself (`wce_tile::prefab_stage`, as `new_tile` does), under `<projects>/.prefab_stage`, never
   saved as a tile. Settings: size (default 2 x 2 cells, 256 m), density (128: 1 m a pixel), base height, climate and tile set (textures,
   weather chips), a grid and an origin marker. A real tile's ground as the base is for later.
 - **The document** is the stage's `TileDocument` with one group at the origin, the prefab's group; the scene tree is rooted at it. The
@@ -106,50 +87,33 @@ contents into the other copies **of that tile only**, Cancel puts the file's con
 - A save in the Prefab tool reaches every open tile: the library and the contents cache (`PrefabBase`) are refreshed, references filled in
   again with their overrides, owned layers remade (their signatures change by themselves). Closed tiles pick it up on open, as now.
 
-## Steps
+## As built (2026-11-07 / 08)
 
-Each a commit or a few, on `feature/prefab_tool`.
+Steps 1 to 8 as designed above: `wce_tile::prefab_terrain` (the patch, `WceTerrain`), `wce_tile::prefab_stage`,
+`tile_document/prefab_ground.rs` (`refresh_prefab_ground`), `tile_document/stage.rs`, `wce_tile_tool::prefab_tool`. Where it differs
+from the design:
+- The footprint is painted with the Ground brush (one ground type) and read back from the stage's ground type map; sculpted samples count
+  as covered too. The flag and feather are attributes of the stage's group (`wce_stage_normalize`, `wce_stage_feather`): undoable, saved
+  in the prefab's `WceTerrain`.
+- The stage's settings (size, ground height, density) are in the Inspector under the root; climate and season in the viewport's ground
+  chip, kept from one stage to the next. The prefab's group is right under the stage's root; the working layer on a stage is the group
+  (or a layer inside it), never the root. A stage starts without grass (`grass on`).
+- The stage is a tile placement (f55cf611): the group's origin on the stage's ground, its landscape parts snapped onto it; a save gives
+  the file's height back to what is still where the stage put it (byte-identical).
+- Outlines of the ground's cover (orange) and the feather's reach (yellow); Save as / Duplicate / Rename / Delete for the projects'
+  prefabs (a rename leaves tiles' references to the old name as they are); nested prefabs' ground on a stage; a reference's ground
+  following its opacity and feather while dragged.
+- The Prefabs panel lists the library by folder as the Create panel does, as a grid of pictures since 2026-11-14. The in-tile Edit /
+  Apply / Cancel is gone. The Prefab menu went in the menus' review (2026-11-14): File's Save, Revert and Close document do it.
+- Later: prefab references keep their contents' exact values (landscape heights and drift saved as overrides, 2026-11-15); the
+  Assembly Kits' prefabs can be ported to the projects (2026-11-16). Prefab stages are not autosaved (autosave.md).
 
-1. **Height patch format** (`wce_tile::prefab_terrain`): heights + coverage, frame, flag, feather, crop; the `WceTerrain` element read and
-   written in the `.wce`; `to_ted` drops it with a report line. Unit tests: round trip, a prefab without terrain byte-identical.
-2. **Applying a patch** (`wce_tile`): rotate and resample into a height stack, normalize off and on (plain at the origin, coverage x
-   feather), nested composition. Unit tests on small synthetic fields (a 90 degree yaw lands exactly; a normalized platform on a slope
-   comes out as on the stage; off adds).
-3. **References own layers** (`wce_tile_editor`): `refresh_prefab_ground` before the roads, remade on move/rotate, on ground changes
-   under a normalized one and on library change, undo through signatures; per-reference settings as `wce_terrain*` attributes in
-   tile.wce. Tests in `tests/tile_document.rs`.
-4. **Inspector Prefab section and Unpack** in the Tile tool; Save prefab for Assembly Kit report.
-5. **Tool shell**: crate, feature, registration, layout, the stage tile, the Prefabs panel, open/new/save/save as/revert, unsaved work.
-6. **Prefab profile** of the Tile tool: scene tree rooted at the prefab, height brushes into the prefab's layer with coverage, base locked,
-   what is left out hidden, `with_tile` routing, menus, the flag and feather on the properties page.
-7. **Tile tool integration**: Open in Prefab tool, Edit/Apply/Cancel removed, live refresh of open tiles after a prefab save.
-8. **Stage settings and polish**: climate/tile set, weather chips, size, grid, feather preview, thumbnails of the prefab with its terrain.
+## Open
 
-Checks: unit tests per step; a `--script` run (open a prefab, sculpt a platform, normalize on, save, place it in a scratch copy of a tile on
-a slope, move and rotate it, Save for Assembly Kit) with a viewport capture, non-activating, ending with `quit`. The user checks in the
-GUI and in game (a prefab with a normalized platform under a building, units walking on it).
-
-## Follow-ups (after step 7, 2026-11-08)
-
-- **How it was built, where it differs from the design above**: the tool is `wce_tile_tool::prefab_tool` (not its own crate: `tool::with_tile`
-  has to name it), behind `wce_app`'s `prefab` feature. The stage is under `<projects>/.prefab_stage`. The footprint is painted with the
-  Ground brush (one ground type) and read back from the stage's ground type map; sculpted samples count as covered too. The flag and
-  feather are attributes of the stage's group (`wce_stage_normalize`, `wce_stage_feather`): undoable, never saved with the contents.
-- Done 2026-11-08: step 8's stage settings (size, ground height, density; now in the Inspector under the root; climate and season in the
-  viewport's ground chip, kept from one stage to the next), the camera close on the prefab and the prefab selected on open, outlines of the
-  ground's cover (orange) and the feather's reach (yellow), Save as / Duplicate / Rename / Delete (projects' prefabs only; a rename leaves
-  tiles' references to the old name as they are), nested prefabs' ground under the prefab's own on a stage, a reference's ground
-  following its opacity and feather while dragged, `prefab` a default feature and the in-tile Edit / Apply / Cancel removed. The tools'
-  order is Weather, Prefab, Tile, Terrain, UI.
-- The stage puts the group's origin on its ground and what is on the landscape inside onto the ground, as placing in a tile does
-  (f55cf611); a save gives the file's height back to what is still where the stage put it. A stage starts without grass (`grass on`).
-- UX pass (2026-11-08, with the user): the prefab's group is right under the stage's root (no layer between them); the working layer
-  on a stage is the group by default and never the root (nothing is added, dropped, moved or grouped outside the group; a layer
-  inside it can be the working layer); the Prefabs panel lists the library by folder as the Create panel does (folders first, with counts; the
-  projects' prefabs green with the link icon); the stage's settings are in the Inspector under the root, the prefab's ground settings
-  (Normalize ground, feather, its size) under the prefab's group, saved in the prefab's `WceTerrain` as before.
-- Still open: thumbnails of prefabs with their ground; smoother outlines (they follow the samples, in steps).
+- Thumbnails of prefabs with their ground (today they stand on the thumbnails' flat grey ground); smoother outlines (they follow the
+  samples, in steps).
 - The user's checks: the GUI flow, and in game a normalized platform under a building with units on it.
+- A real tile's ground as the stage's base (decision 1: later).
 
 ## Decisions (2026-11-07, with the user)
 

@@ -1,15 +1,17 @@
 # Warscape Community Editor
 
-One editor for Total War: Attila (Warscape engine) content: weather and lighting, battle and campaign tiles, and later
-units, VFX, battle maps and cinematics. It shares one viewport and one renderer built on the game's own shaders. Plan
-and status: [PLAN.md](PLAN.md).
+One editor for Total War content on the Warscape engine (Attila first, Rome II and Thrones of Britannia too): weather and lighting,
+prefabs, battle and campaign tiles, battle and campaign maps, UI layouts, sound banks, units, VFX and cinematics. It shares one viewport
+and one renderer built on the game's own shaders. Plan and status: [PLAN.md](PLAN.md); what each tool does: [docs/editor.md](docs/editor.md).
 
-**State:** `wce` is one Rust application (a Cargo workspace, `crates/`): the weather tool, the tile tool and the UI editor in a shared
-shell. The gates are Cargo examples and tests, run by `scripts/`. The earlier plans are in [docs/plans/](docs/plans/).
+**State:** `wce` is one Rust application (a Cargo workspace, `crates/`) with every tool in a shared shell; the stable ones ship in releases
+("Editors" below). The gates are Cargo examples and tests, run by `scripts/`. The plans are in [docs/plans/](docs/plans/), the
+reverse-engineering notes and file formats in [docs/re/](docs/re/) and [docs/formats/](docs/formats/).
 
 ## Build
 
-rpfm_lib is a path dependency: check out [RPFM](https://github.com/Frodo45127/rpfm) (develop branch) next to this repo, as `../rpfm`.
+rpfm_lib comes from [RPFM](https://github.com/Frodo45127/rpfm)'s develop branch (a git dependency); to work against a local checkout,
+put it next to this repo as `../rpfm` and use the path line in `Cargo.toml`.
 
 ### Windows
 

@@ -55,6 +55,9 @@ The variation folder of a tile in Attila's Assembly Kit and its entry (`_tile_da
 | the entry | `entry` | XML, `EntrySchema` (`%.6f`, tabs, single quotes) |
 | everything else (BOB outputs, artists' files, legacy `.markers` and lists, sub folders) | `files` | untouched |
 
+The editor's own project files (`tile.wce`, `terrain_layers.wcl`: docs/formats/tile_wce.md) are not this format's: an export turns them
+into TEd's `tile.ted` and maps first (`wce_tile::project_files::to_ted`, `TileProject::export_maps`).
+
 **The XML codec** (`wce_tile_io::xml`) reads the shape of TEd's family of files: one element per line, a fixed indent, attributes on the
 element's line, leaves self-closed, no text or comments. `DocStyle` (prolog, epilog, line end, indent, quote) is detected per document; the
 writer predicts every byte between tokens from it and the node's layout trivia holds the exceptions (none in the kit). Number styles:
@@ -78,7 +81,7 @@ An exported tile: a variation folder as BOB writes it into `working_data` and th
 | `*.tree_list.bin`, `*grass_list.bin` | `TREE_LIST_BIN` / `GRASS_LIST_BIN`: a `type` child per type, the trees as columns | rpfm_lib |
 | `*.tree_list`, `*.grass_list` (older) | `TREE_LIST` / `GRASS_LIST`: `type` children, a `records` child with columns | `wce_formats::old_lists` |
 | BMD binaries, civilian lists, `tile_database.bin`, other ESF | `BMD`, `CIVILIAN_*`, `TILE_DATABASE`, `ESF` documents | rpfm_lib through `serde_node` |
-| `blend.dds`, `index.dds`, `normal.dds` | decoded RGBA rasters | kept while unchanged (no compressor yet) |
+| `blend.dds`, `index.dds`, `normal.dds` | decoded RGBA rasters | kept while unchanged (the format has no compressor: the compile's stage B makes new ones, `attila::ati_dxt`) |
 | `ground_types.dds` | a `GroundType` raster | header + pixels |
 | XML (`definition.xml`, `zones.xml`, outlines ...) | documents, values as text, `#text` / `#comment` children | the XML codec |
 | meshes, loading screens, `tile.ted_binary`, anything that does not read | `files` | untouched |

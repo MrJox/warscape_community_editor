@@ -643,7 +643,7 @@ pub struct RenderSettings {
     /// gfx_god_rays: the sun's rays (Thrones of Britannia's HDR_GOD_RAYS views, added by hdr_to_screen).
     pub god_rays: bool,
 
-    /// gfx_aa: 1 is MLAA (`pass_mlaa`); the MSAA levels (2..4) are drawn without anti-aliasing yet.
+    /// gfx_aa: 1 is MLAA (`pass_mlaa`); 2..4 are MSAA 2x, 4x, 8x (`msaa_samples`, docs/plans/msaa.md).
     pub aa: i32,
 
     /// gfx_alpha_blend: above 0 the near leaves and grass are drawn with order-independent transparency (`pass_oit`); AOIT (2) as the

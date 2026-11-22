@@ -2,9 +2,9 @@
 
 `wce_render`'s renderer draws Rome 2 with its own shaders (`fxc/` of `data.pack` and `data_rome2.pack`; the containers' signature is
 0xF8C5DEAD, Attila's 0x075BCD15, otherwise the same v4 layout). The renderer knows the game from its files
-(`Files::game` -> `renderer::game::RenderGame`) and switches the passes that differ. Status 2026-10-26: a Rome 2 tile draws with
-its terrain, buildings, sky, clouds, the sun and its shadows, the sea, rivers and water planes, trees, grass and decals;
-the effects are not drawn.
+(`Files::game` -> `renderer::game::RenderGame`) and switches the passes that differ. A Rome 2 tile draws with its terrain,
+buildings, sky, clouds, the sun and its shadows (cascades and the baked map), the sea, rivers and water planes, trees, grass, decals and
+the effects' billboards ("Not drawn yet" below lists what is left).
 
 Tools: `shader_info` (wce_d3d11 example: a game's shaders' reflection, `WCE_GAME_KEY=rome_2`), and the scratch scripts
 `fxc2dxbc.py` / `disasm.sh` (vkd3d-compiler's disassembly) under `~/wce_re/scratch/rome2/scripts`.
@@ -52,12 +52,12 @@ holds the environment's four points as log10 (the shaders raise 10 to them). The
   4096 (2048 tiles); ours is 2048 (1024 tiles);
 - baked shadows (`g_tBakedShadowBuffer`; `g_vBakedShadowmapScale` / `Offset` / `Shear` / `Params`): used beyond
   `g_vBakedShadowmapParams.y` of distance from the camera. Left at zero, every pixel took them (the map unbound: in shadow, the
-  sun gone): the distance is set out of reach;
+  sun gone). Drawn since 2026-11-01 as the Carthage capture shows them ("Sea" below, `renderer/shadow_baked.rs`);
 - a cloud shade texture (`cloud_shade_sampler`, `g_cloud_shade_params`; `terrain/textures/common/cloud_shade` in the engine's
-  strings): off (`.w` 0);
+  strings): a capture of a battle binds `cloud_shade.dds`, scale 0.0005, `.w` 1, as Thrones of Britannia (docs/re/thrones_renderer.md);
+  the editor applies it with `gfx_cloud_shadows`;
 - no `g_apply_environment_specular`.
 
-To check against a frame of the game: the baked map's use, the cloud shade.
 `weather_shared` is 16 bytes (`g_weather_type`, `g_season_type`, `g_snow_mask`).
 
 ## Weather
@@ -142,7 +142,8 @@ its square (x, z in [-1024, 1024] around the world origin, the battle's centre; 
 `rome2_carthage_beach.rdc`; the tile `settlement_greek_ports/greek_carthage/medium` (not large: no round harbour), weather
 `rome_med/su/land/day/dry/day_dry_05`, Rome 2 on Windows with RenderDoc 1.46, MSAA off, water quality 5):
 - The sea at water quality 5 (Extreme) is `ps30_main_high_water_quality` (the shadowed gather 5_0 variant), not ultra: no whitecap
-  sample, so no whitecaps over the open sea (`ocean::ROME2_WATER`).
+  sample, so no whitecaps over the open sea. The editor maps Rome 2's water levels as its engine does (docs/re/graphics_options.md,
+  "Rome 2").
 - The reflection (R11G11B10, half size): a mirrored camera (its eye under the water, its projection oblique at the water) draws a fog
   pass (fog_VS_PS, the sky cube, alpha blended), the sky dome and the cloud planes, before the G-buffer; after the lights, the water's
   refraction copy (half size, RGBA16F) and then `helpers.hlsl` `scree_space_reflections_ps` (screen_space_refl_params: the camera's

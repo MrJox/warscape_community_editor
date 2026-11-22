@@ -4,10 +4,11 @@ One editor, one scene model, two outputs: a **game-ready movie** (`.ca_vp8` with
 the editor, and a **historical battle** (battle XML, Lua, DB rows, loc, sounds) that the game plays. Plus a movie viewer and editor for
 the game's own movies. Everything on a timeline is keyed: moving the timeline gives the same picture every time.
 
-State: decided with the user 2026-11-20 (the grilling, decisions below); static spikes done the same day (findings below; the CAMV survey, the camera methods and the node canvas binding added later that day). The Audio plan's bank writer
-landed (its steps 4 to 8), so work started the same day (user: run unattended): the video layer and the movie viewer are built
-(steps 1.10 and 2), then the scene editor, the preview, both exports and the logic graph (steps 3 to 8, each with what is
-left); movie editing (9) and every in-game check are open.
+State (2026-11-22): decided with the user 2026-11-20 (the grilling, decisions below); static spikes done the same day (findings
+below). Built 2026-11-20 .. 11-21 in master (feature `cinematic`, in the default features, not in the `release` set): the video
+layer, the movie viewer, the scene editor and its preview, both exports, the logic graph and movie editing (steps 1.10 to 9), then a
+UX pass on the Tile tool's model and Launch in game. Left: every in-game check, the items each step lists, and the Tile tool's other
+tools below (3 to 8).
 
 ## Decisions (user, 2026-11-20)
 
@@ -187,21 +188,23 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
    start and the ground covered). `support::track_support` flags each track for battles (exact, approximate, movie only).
    Tool: the scene is a document (`scene_doc.rs`: undo / redo / History / Save, `<projects>/cinematics/<key>/project.json`); panels
    Scene (setup, armies, units, texts), Timeline (clips, play / scrub, tracks with a support dot, keys selected, dragged, added at the
-   playhead holding the value there), Key (the selected key's values), Layout (the field from above at the playhead; Ctrl+click keys
+   playhead holding the value there), Key (the selected key's values; replaced by the Inspector in the UX pass), Layout (the field from above at the playhead; Ctrl+click keys
    the selected unit's path). File > New / Open cinematic scene. Autosave (2026-11-21): a scene's
    `project.json` is copied and taken back (`Tool::restore`), unsaved until saved. Texts in the game's nine languages (Scene >
    Texts' language; the Key panel and the exports follow it, English standing in). Clips are deleted (a scene keeps one); not
    reordered.
-4. **Scene preview.** **partial** (2026-11-20, 2026-11-21): `preview.rs` draws the scene in the viewport at the playhead: a flat battle ground
-   (grass, as the weather tool's sample map), each unit's men in formation (`formation` of `land_units` rank depth and spacing)
+4. **Scene preview.** **done** (2026-11-20, 2026-11-21): `preview.rs` draws the scene in the viewport at the playhead: the battle's ground
+   (`ground.rs`, see "The Tile tool's other tools" 2; flat grass until it loads), each unit's men in formation (`formation` of `land_units` rank depth and spacing)
    posed by the game's animations in the evaluated slot (`UnitModel`, 6 soldiers a unit and slot taken in turn, the slot's time
    from its start), the camera following its keys (Free camera to fly; a camera key holds the viewport's view), the weather blended
    between keyed environments (`set_weather_params`, `blend_environments`). Keyed depth of field through the environment's DOF block (the
    game's DOF constants are `change_depth_of_field`'s values), written to the scene at once (a movie renders many frames in one
    editor frame). A moving slot plays by the ground covered over its clip's own travel speed (no foot sliding). Battle preview
    (the Timeline's Battle, `eval::evaluate_battle`): units teleported to their first key, then under orders at their own walk /
-   run speed in straight lines (early or late against their keys), movie-only tracks gone. Not done: the campaign-map ground at
-   the battle's position (Map context), VFX instances, sounds heard while scrubbing.
+   run speed in straight lines (early or late against their keys), movie-only tracks gone. VFX instances (2026-11-21): the keyed
+   instances alive at the playhead as `VfxEmitter` entities, in the preview and in movies; scrubbing back does not rewind particles
+   already emitted. The sound while it plays (2026-11-21, `scene_audio.rs`): the clip's sound and music mixed as the movie export
+   does and played from the playhead through the Audio tool's player; scripted runs stay silent; not checked by ear.
 5. **Movie export.** **done** (2026-11-20; motion blur 2026-11-21: per clip, four sub-frames over a 180 degree shutter) but the in-game test. `movie_export.rs`: `MovieEncoder`,
    `render_clip`, `mixdown` (48 kHz stereo: sound events at their times and volumes, music cues with fades; a switched event's
    stereo version, a random container's first child), `movie_files` (an overriding `global_movies.bnk` with `Play_Movie_<name>` on
@@ -250,76 +253,38 @@ battle libraries, `tsv\` and `loc\` / `locall\` the menu, movie and subtitle tab
 ## UX (user, 2026-11-21)
 
 The user found the first version built for scripts rather than people (keys typed by hand, no visible first step, no obvious way
-to fill a scene), then asked for the Tile tool's ways of making and editing things to be reused ("a very nice ref").
+to fill a scene), then asked for the Tile tool's ways of making and editing things to be reused ("a very nice ref"). All **done**
+2026-11-21:
 
-1. Pickers fed from the packs for every field naming game data (units by name and by the factions that field them, factions,
-   weather files, VFX, battle maps, sound and music events, animation slots; armies and clips in logic nodes); New scene / Open a
-   scene in the empty panels; the Timeline's bar on two lines. **done** (2026-11-21)
-2. The Tile tool's model (2026-11-21). **done**:
-   - The scene's items (`items.rs`: the battle, armies, units, VFX instances) are the editor's selection; the document gives their
-     place to the editor's gizmo (`item_transform` / `transform_items`): units move and turn in the 3D viewport, a unit with a path in
-     the clip shown is keyed at the playhead (its start stays). A drag is one undo entry (merged snapshots, closed when it ends).
-   - **Create** panel (`create.rs`, as the Tile tool's): one search, Units / Effects / Armies tabs, the units as the game's cards
-     (`unit_variants.unit_card`, `ui/units/icons`), the chosen army's faction's first; a click starts placing, clicks on the viewport's
-     ground or the Layout put copies (R / Shift+R turn, Esc or a right click stops), the Inspector shows the draft every copy takes
-     (army, men from `main_units.num_men`, width, turn, general; an effect's length and scale); Space over the viewport: the quick-add
-     popup, placing at the mouse. Armies are added by faction.
-   - **Scene** panel (`outliner.rs`, as the Tile tool's): the battle, each army with its units (side colour, the player's star, an
-     eye that hides a unit in the editor only, drag units onto another army, right-click menus: place units, duplicate, look at it,
-     delete), the clip's effects; Ctrl / Shift click.
-   - **Inspector** (`inspect.rs`): the selected item's rows in the shared Inspector (battle setup and texts, army faction / side /
-     zone, unit kind / army / start / facing / men / width / general, its card; "Key its place here" and "Animate" at the playhead;
-     effect kind / times / place / scale); a key clicked on the timeline shows there (the Key panel is gone).
-   - **Viewport** (`view.rs`): clicks select units (by their formation on the ground) and effects (their markers), box select in
-     Select mode, formations drawn in their side's colour, the selected ones named with their path's keys, the placing ghost and its
-     hint, a right-click menu (duplicate, look at it, delete, add here). Delete, Ctrl+D, Space, R / Shift+R, Esc in the shortcut
-     registry.
-   - A new or opened scene shows the Scene, Timeline and Viewport tabs, the camera behind the player's zone.
-   - Found on the way: the unit list by faction compared land-unit keys with main-unit keys (fixed); the gizmo read a unit's place
-     from the previous frame (it is evaluated when asked now).
-   - Gate: `scripts/cinematic_ux.txt` in `cinematic_check.sh` (placing by clicks, moves and turns as one undo entry each, duplicate,
-     delete, a move keying a path, an army deleted with its units; the saved project identical between two runs).
-3. The battle's map position picked on a picture (`map_pick.rs`: the battle map's `lf_height_map.dds` coloured as the Tile tool's
-   minimap; click, wheel zoom, right-drag pan; the Battle's Inspector, "Pick on the map..."). **done** (2026-11-21)
-4. The Timeline: a double-click on a track's row adds a key there (the hover says how). **done** (2026-11-21)
-5. Camera keys as scene items (2026-11-21). **done**: drawn in the viewport while the camera is free (each key, its target, the
-   path), picked, moved and turned by the gizmo (the target goes along; a turn pans it about itself), in the Scene panel (Camera in
-   the clip) and the Inspector (time, place, target, field of view, interpolation; Look through it, Take the view). The viewport's
-   chips at the top left: play, free camera, key this view (a camera track made when the clip has none), battle preview. The
-   playhead runs whichever panels show.
-6. A first-run walkthrough: not built as text (UI explanations are one-line tooltips); every empty state offers its next step as a
-   button instead (New scene / Open, Place units... under an army without units, Pick on the map..., the chips, the Timeline's
-   double-click). **done** that way.
-7. Smaller ones (2026-11-21). **done**: the Timeline's Add track lists the units without a track in the clip by name (it needed a
-   unit selected first); Logic has an Add a node button over its canvas (the right click alone was hidden); which faction fields a
-   unit comes from `units_custom_battle_permissions` as well as `unit_variants` (the Huns listed none).
-8. Placing in the 3D viewport did not work (user, 2026-11-21): while the Create panel places, the tool owns the left button and
-   the editor sends it a press, never a click; the placing waited for a click. It places on the press now. The gate drives the
-   real mouse (`click_ground`: the scripted mouse at a point of the ground): a unit placed by a click, selected by a click,
-   the selection cleared by a click on empty ground, placing stopped by a right click. **done**
-9. The battle on one battle tile (user, 2026-11-21: "a selection instead of typing"): Battle > Fought on: a place on a campaign
-   map (the map's picker and its picture) or one battle tile (`map.tile`, a searchable list of the packs' tile folders,
-   `terrain/tiles/battle/...` with a `definition.xml`); the battle XML names the tile alone, as Launch in game does
-   (`battle_export_check`). A third choice, a whole battle map: vanilla's historical battles are fought on their own map
-   (`terrain/battles/catalaunian_plains/`, made in TEd) named alone, without `tile_map_position` (`map.whole_map`). **done**; in
-   game: **todo**
-10. A sample scene (`wce_cinematic::sample`: ten vanilla units in two armies, a camera move, the Hun lancers riding in, a cohort
-    cheering, two fires, a subtitle, the bars and a fade in): Open the sample scene in the empty panels and the File menu, made in
-    `<projects>/cinematics/wce_sample_battle` the first time; `examples/sample_scene.rs` writes it. **done**
+1. Pickers fed from the packs for every field naming game data (units by name and by the factions that field them, from
+   `unit_variants` and `units_custom_battle_permissions`; factions, weather files, VFX, battle maps, sound and music events, animation
+   slots; armies and clips in logic nodes).
+2. The Tile tool's model: the scene's items (`items.rs`: battle, armies, units, VFX instances, camera keys) are the editor's selection
+   and move with its gizmo (a unit with a path keyed at the playhead; a drag is one undo entry); a **Create** panel (`create.rs`: unit
+   cards, placing by clicks or the Space quick-add, the Inspector showing the draft); a **Scene** panel (`outliner.rs`); the shared
+   **Inspector** (`inspect.rs`; the Key panel is gone); the **viewport** (`view.rs`: click and box select, formations in their side's
+   colour, the placing ghost, a right-click menu, the shortcuts). Gate: `scripts/cinematic_ux.txt` in `cinematic_check.sh`.
+3. The battle's map position picked on a picture (`map_pick.rs`, the Battle's Inspector, "Pick on the map...").
+4. The Timeline: a double-click on a track's row adds a key there; Add track lists the units without a track by name.
+5. Camera keys as scene items, drawn in the viewport while the camera is free; the viewport's chips (play, free camera, key this
+   view, battle preview).
+6. No first-run walkthrough text: every empty state offers its next step as a button (New scene / Open, Place units..., Pick on the
+   map..., the Timeline's double-click); Logic has an Add a node button.
+7. Placing on the press, not the click (the tool owns the left button while placing); the gate drives the real mouse (`click_ground`).
+8. Battle > Fought on: a place on a campaign map, one battle tile (`map.tile`, named alone in the battle XML as Launch in game does), or
+   a whole battle map (`map.whole_map`, as vanilla's historical battles); in game: **todo**.
+9. A sample scene (`wce_cinematic::sample`, `examples/sample_scene.rs`): ten vanilla units in two armies, a camera move, fires, a
+   subtitle, the bars and a fade in; Open the sample scene in the empty panels and the File menu.
 
 ## The Tile tool's other tools for historical battles (assessment, 2026-11-21)
 
 The official pipeline makes a historical battle's map in TEd (vanilla's `terrain/battles/<name>/`: a tile map of tiles) and its
-setup in the battle XML; the Lua is written apart. What the Tile tool has that would serve the scene, by worth:
+setup in the battle XML; the Lua is written apart. What the Tile tool has that would serve the scene:
 
-1. **Launch in game** (`wce_launch`): start the exported battle straight from the editor. **done** (2026-11-21, `launch.rs`): the
-   battle's pack (scripts, tables, loc, without the menu picture) as `data\wce_launch.pack` with the editor's marker, the mods
-   chosen in the editor after it, `game_startup_mode battle script/<key>/<key>_battle.xml` (its own XML: the start script is
-   named relative to it, so not the tiles' `script/wce/wce_launch.xml`); the checks of the Tile and Terrain tools' launches (the
-   game not running, Steam running, stray movie-type packs: a question with Launch anyway); the pack removed when the game exits.
-   Cinematic > Launch in game (the tool's menu, as Tile > Launch in game; "(running)" while the game runs), the viewport's launch
-   chip, `scene_launch [--dry-run] [--ignore-movie-packs]`
-   (the gate's dry run: the pack in the build folder). In game: **todo** (the user).
+1. **Launch in game** (`wce_launch`). **done** (2026-11-21, `launch.rs`): the battle's pack as `data\wce_launch.pack`, the editor's
+   mods after it, `game_startup_mode battle script/<key>/<key>_battle.xml` (its own XML: the start script is named relative to it), the
+   Tile and Terrain tools' launch checks, the pack removed when the game exits. Cinematic > Launch in game, the viewport's launch chip,
+   `scene_launch [--dry-run] [--ignore-movie-packs]`. In game: **todo** (the user).
 2. **The ground** (`wce_map_view::MapView`, the Map context). **done** (2026-11-21, `ground.rs`): the Tile tool's map streamer on
    the battle's map from the packs (`load_map`, the packs' tiles through `PacksTree`, the kits' first), 2 m a scene unit as the
    Terrain tool draws battle maps. A place on a campaign map: the map with its origin at the position; a whole battle map: at its
@@ -328,8 +293,11 @@ setup in the battle XML; the Lua is written apart. What the Tile tool has that w
    formations, paths and the placing ghost are drawn on it, effects are placed at their height over it, the gizmo is at its height;
    the camera is framed on it when it arrives; the movie streams it around each frame's camera. Camera keys stay absolute heights,
    as `cam:move_to` takes them (Catalaunian Plains' ground is about 460 to 515 m). New Attila scenes and the sample are fought on
-   vanilla's Catalaunian Plains map, whole (the campaign map's centre is the Aegean). Gate: `assert_ground` on the sample's map and a
-   tile (`scene_ground`).
+   vanilla's Catalaunian Plains map, whole (the campaign map's centre is the Aegean). Gate: `assert_ground_height` on the sample's map
+   and a tile (`scene_ground`).
+
+Not built yet, by worth:
+
 3. **Deployment zones and objectives drawn** (the Create panel's gameplay markers and areas, holders' shapes): zones as the battle
    XML has them (centre, width, height, orientation) drawn and dragged in the viewport; capture points and victory locations for the
    logic's zone and objective events (step 7's missing events). High.

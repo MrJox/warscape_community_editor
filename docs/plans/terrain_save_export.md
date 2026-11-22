@@ -1,10 +1,13 @@
 # Reliable Terrain Save and Export
 
-Complete-output staging, freshness checks and native scene preservation for the Terrain Editor, with the required shared publication implementation and tests included directly. No unmerged #51 branch is required; upstream Tile I/O is unchanged. This feature adds no Tile Editor Save/conversion, campaign-height preparation or persisted normal-baseline format. See the [developer handover](../terrain_editor_handover.md) and [Terrain roadmap](terrain_editor.md).
+Complete-output staging, freshness checks and native scene preservation for the Terrain tool's Save and Export, with the shared
+publication helpers (`wce_foundation::{publication, disk_changes, save_path, operation}`). Contributed by Jordanakoos, merged 2026-11-22
+(#74). It adds no Tile tool Save changes (open PR #51), campaign-height preparation (held PR #52) or persisted normal-baseline format. The
+Terrain tool's plan, its supported workflows and the contributed work not in master: [terrain_editor.md](terrain_editor.md).
 
 ## Usage
 
-1. Select the correct game, project directory and ordered kits in settings; open the map in Terrain. Project resources take precedence over kits/packs. Attila campaign render metadata retains its layered database lookup.
+1. Select the correct game, project directory and ordered kits in settings; open the map in Terrain. Project resources take precedence over kits/packs. Attila campaign render metadata keeps its layered database lookup (#57).
 2. Edit a supported LF, layer, placement or scene field. **Save** writes the active project map folder: raw maps under `assembly_kit/raw_data/terrain/{battles,campaigns}/<map>`, built maps under `assembly_kit/working_data/terrain/{battles,campaigns}/<map>`.
 3. **Save As** chooses a map-copy folder. It keeps the original active Save destination and history: dirty stays dirty, clean stays clean. A document restored from autosave also stays restored/unsaved after a copy; only successful Save to its owned project folder clears that status. The next Save writes the original project folder. A copy cannot take over a destination owned by another open document.
 4. When disk files changed, choose **Overwrite** or **Cancel**. Cancel preserves files/model/history. Overwrite approves the observed disk change, but never bypasses native representability, complete resource identity or ownership checks. Unsupported changes still require correction/reopening.
@@ -15,11 +18,11 @@ Complete-output staging, freshness checks and native scene preservation for the 
 
 | Profile | Boundary |
 |---|---|
-| Attila raw/kit battle and campaign | Existing TIFF/cell/Terry authoring, project Save and native builders, retaining F1 metadata lookup. No new raw/native profile or all-campaign certification. |
+| Attila raw/kit battle and campaign | Existing TIFF/cell/Terry authoring, project Save and native builders, keeping #57's metadata lookup. No new raw/native profile or all-campaign certification. |
 | Rome II built/native battle | Existing bounded LF/CHMF/placement output and preservation-safe v7 BLM/deployment changes. Opaque tails/masks, key spelling and unrelated resources are retained; v6 placement reconstruction needs the correct database. |
-| Other/native campaign | Preserve existing supported reader/writer behavior and opaque resources. No new native campaign-height/normal eligibility, native-Y semantics, prop controls or native Attila/Thrones certification. Held [#52](https://github.com/MrJox/warscape_community_editor/pull/52) is excluded. |
+| Other/native campaign | Preserve existing supported reader/writer behavior and opaque resources. No new native campaign-height/normal eligibility, native-Y semantics, prop controls or native Attila/Thrones certification. Held [#52](https://github.com/MrJox/warscape_community_editor/pull/52) is not included. |
 
-Native v9 placement integrity is the separate [#50](https://github.com/MrJox/warscape_community_editor/pull/50) contribution. This feature does not duplicate it or change placement policy; retain its provenance/paired-row guards when composing those contributions. This feature alone is not a replacement for that guard.
+Rome 2's v9 placement integrity is the separate open [#50](https://github.com/MrJox/warscape_community_editor/pull/50). This feature does not duplicate it or change placement policy, and is no replacement for that guard.
 
 ## Preservation and refusal
 

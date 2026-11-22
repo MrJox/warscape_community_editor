@@ -6,7 +6,9 @@ the localised voice packs. High-level recipes do the common jobs in one dialog; 
 Wwise and no other dependency at runtime. The audio layer is headless so that the Cinematic tool (and later the Terrain and Unit tools)
 reuse it.
 
-State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 done, the encoder spike (4) waits on the dependency question.
+State (2026-11-22): decided with the user 2026-11-19 (the decisions below); built 2026-11-19 .. 11-20, steps 1 to 10 below, in master
+(feature `audio`, in the `release` set). Left: the in-game checks and the items under "Open". How the tool works for a user:
+docs/editor.md.
 
 ## Decisions (user, 2026-11-19)
 
@@ -14,7 +16,7 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
 |---|---|
 | Games | Attila and Rome 2 (both Wwise bank v112). Every parser is keyed on game and bank version, so later games (ToB, Warhammer...) slot in. |
 | Decode | `lewton` (pure Rust Vorbis decoder, MIT/Apache) after our own Wwise-Vorbis -> Vorbis packet rebuild. Output through SDL3's audio (already linked). |
-| Encode | Wwise Vorbis, as vanilla, with aoTuV (libvorbis + aoTuV's encoder, C, BSD-3, built from source like SDL3) and our own Ogg -> Wwise Vorbis conversion: chosen after the spike (user, 2026-11-19; step 1.4). |
+| Encode | Wwise Vorbis, as vanilla, with aoTuV (libvorbis + aoTuV's encoder, C, BSD-3, built from source like SDL3) and our own Ogg -> Wwise Vorbis conversion: chosen after the spike (user, 2026-11-19; step 1). |
 | Reference | Wwise 2014.1.3 (on the user's machine) is a dev-only oracle: tests compare our WEMs and banks with its output and are skipped without it. WCE never needs Wwise. |
 | Output | Whole-bank override, as the game loads banks by name (TDD already ships overriding banks). Save writes the bank, WEMs and other files to `<projects>/loose/<path>` like every tool; a round trip is byte-identical and an edit changes only its spans. |
 | UI | Bank-centric: banks open as documents with a readable object tree (names, not IDs); a global search over banks, WEMs, DB rows and VO jumps into the right bank; cross-bank links are clickable. A raw object inspector for the rest. |
@@ -31,7 +33,7 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
 
 ## What the game has (Attila, checked 2026-11-19)
 
-- `sound.pack`: 51 banks, 1,478 WEMs, `audio/event_data.dat` (165 KB, layout below), `audio/sound_animation_triggers.csv`. `music.pack`: 4 banks (`battle_music`, `global_movies`, `global_music`, `music_data`),
+- `sound.pack`: 51 banks, 1,478 WEMs, `audio/event_data.dat` (165 KB, layout in docs/formats/sound_data.md), `audio/sound_animation_triggers.csv`. `music.pack`: 4 banks (`battle_music`, `global_movies`, `global_music`, `music_data`),
   546 WEMs. `local_en_shared_rome2.pack`: about 39,000 VO files (`audio/`, `audio/advisor`, `audio/diplomacy`) and the VO banks
   (`battle_advice`, `battle_vo_orders_*`...). `music_en_shared_rome2.pack`: 99 files.
 - `data.pack`: `.snd.meta` next to the animations, `audio/{main,bel,cha}_attila_map.amb` + `.xml` (campaign map ambience), and the DB
@@ -62,25 +64,10 @@ State: decided with the user 2026-11-19 (the decisions below); spikes 1 to 3 don
   codebooks. Our encoder must emit streams that use only codebooks of that library.
 - Bitrate: median 57 kbps per channel (10th percentile 47, 90th 67).
 
-### `event_data.dat`
+### `event_data.dat`, the WEM and bank layouts
 
-The same layout in Attila and both Rome 2 copies, consumed exactly to the end by all three (checked 2026-11-19 with a scratch reader;
-SoundbankEditor reads it this way, TheAssetEditor's Rome 2 variant with min/max floats per setting does not fit either game). All
-integers u32 LE, strings u32 length + UTF-8:
-
-1. Events: count, then name + a 4-byte value read as f32 (0 for most; 57 distinct values in Attila such as 32, 35, 133, 140; meaning
-   not yet known). Attila 1,864, Rome 2 1,361 / 1,523.
-2. State groups A: count, then group name + count + state names (`VO_battle_actor`, `VO_battle_culture`, `VO_battle_order` with 517
-   states...). Attila 32.
-3. State groups B: same shape (`Mixer`, `Music_Dynamic`, `animation_data_pool`...). Attila 37.
-4. Dialogue events: count, then event name + count + u32 state-group IDs (FNV-1 of the group's name: `vo_battle_subculture`,
-   `vo_battle_remark`...). Attila 171.
-5. Settings / game parameters: count + names (`meter_advice`, `setting_music_battle_intensity_...`; Rome 2: `advisor_volume`,
-   `amount_forest_under_listener`...). Attila 393.
-6. Dialogue trees: count, then a dialogue event ID + count + (state value ID + count + state value IDs). Attila 98. The IDs resolve
-   with FNV-1 of the names above (`battle_vo_about_to_disembark`, `Barbarian`, `conversation_03`...).
-
-It is a names source in itself: every string in it hashes to an ID the banks use. To document in `docs/formats/event_data.md` (step 2).
+In [sound_data.md](../formats/sound_data.md), [wem.md](../formats/wem.md) (the Wwise Vorbis header, packing, the setups by quality and
+the encoding findings of step 1) and [wwise_bank.md](../formats/wwise_bank.md).
 
 ### The Wwise 2014.1.3 oracle
 
@@ -89,414 +76,85 @@ Headless conversion works: `WwiseCLI.exe <project>.wproj -ConvertExternalSources
 conversion ShareSets are Vorbis on Windows. The output has vanilla's exact layout (0x42 `fmt`, external codebook IDs, blocksizes 8/11);
 only the `uid` differs per file. So tests can convert the same WAV with Wwise and with WCE and compare.
 
-### Wwise Vorbis encoding (spike findings)
-
-The vorb block (fmt + 0x18, 0x2A bytes), named after Wwise's runtime header and checked on the oracle's output:
-
-| Offset | Field | Value written |
-|---|---|---|
-| 0x00 | total PCM frames | the source's frame count |
-| 0x04 | loop start packet offset | size of the setup packet with its 2-byte header (relative to the end of the seek table) |
-| 0x08 | loop end packet offset | data size minus the seek table |
-| 0x0C | loop begin extra (u16), loop end extra (u16) | 0, and the same value as last-granule extra |
-| 0x10 | seek table size | 0 (Voice preset), 0x80 (Music preset with seek table granularity) |
-| 0x14 | Vorbis data offset | seek table + setup packet: the first audio packet |
-| 0x18 | max packet size (u16), last granule extra (u16) | largest audio packet; samples decoded beyond the frame count (52 for the test tone) |
-| 0x1C, 0x20 | decode alloc size, x64 alloc size | fixed per setup: taken from a table of known setups (all 18 seen so far); unknown setups: formula still to find |
-| 0x24 | codebook hash | FNV-1 32 of the setup packet's payload |
-| 0x28, 0x29 | blocksize exponents | from the Vorbis identification header |
-
-The `fmt` before it: codec 0xFFFF, channels, rate, average bytes per second = data size x rate / frames, block align 0, bits 0,
-cbSize 0x30, a u16 (0 from Wwise 2014 for 16-bit WAVs; vanilla 5, 4 and 6 channel files have 16 or 24, apparently the source's
-bit depth: metadata), the channel mask: mono 0x4, stereo 0x3, quad 0x603, 5 channels 0x607, 5.1 0x60F. Data: [seek table], the setup packet (u16 size + payload), then audio packets (u16
-size + payload).
-
-Conversion from a standard Vorbis stream (ww2ogg's rebuild, reversed): the setup drops the 'vorbis' header, the time section, floor
-types (always 1), residue types to 2 bits, mapping types, the modes' window/transform types and the framing bit; codebooks become
-10-bit IDs into Wwise's library (`packed_codebooks_aoTuV_603.bin`, 598 entries, 26 contents present twice). When a codebook has two
-IDs, Wwise uses the copies that keep each quality level's block contiguous: choose the assignment minimising the sum of every ID's
-distance to its nearest other ID (ties: lowest). Audio packets drop the packet-type bit and, for long blocks, the previous/next window
-flags (the decoder recomputes them from the neighbouring packets' modes).
-
 ## Crates
 
 - `wce_audio_format`: the files, no audio. Banks (`BKHD`, `DIDX`, `DATA`, `HIRC`, `STID` and any other chunk raw; HIRC objects of an
-  unknown type kept as bytes), WEM RIFF, the Wwise-Vorbis <-> Vorbis packet rebuild and the codebook library, `event_data.dat`,
-  `.snd.meta`, `.amb`/`.xml`, `sound_animation_triggers.csv`, FNV-1 IDs. Versioned per game and bank version.
-- `wce_audio`: the headless runtime: the name index across banks/DB/files, decode, encode, the event resolver (what an event plays,
-  across banks), the timeline player (seekable, seeded), 3D attenuation and panning, mixdown to WAV, SDL3 output. The Cinematic tool's
-  dependency.
-- `wce_audio_tool`: the Audio tool's UI, like the other tools.
+  unknown type kept as bytes), WEM RIFF, `event_data.dat`, `.amb`, `sound_animation_triggers.csv`, FNV-1 IDs. Versioned per game and
+  bank version. `.snd.meta` is `wce_formats::anim_meta`.
+- `wce_audio`: the headless layer: the codebook library and the Wwise Vorbis -> Vorbis rebuild, decode, encode, imports, the name
+  index, the resolver (`SoundLibrary`), edits (`EditSet`), references, music, decision trees, animation sounds, the sound DB tables,
+  unit voices, recipes, analysis. The Cinematic tool's dependency. Not built in it: a timeline player and 3D attenuation and panning;
+  the Cinematic tool's movie export mixes its own sound track (`wce_cinematic::movie_export::mixdown`).
+- `wce_audio_tool`: the Audio tool's UI (SDL3 playback in `player.rs`), like the other tools.
 
-Gates (Cargo examples, in `scripts/gates.sh`): every vanilla and TDD bank, `event_data.dat`, `.snd.meta` and `.amb` re-saves
-byte-identical; every WEM decodes; the encoder and the bank writer match the Wwise oracle (skipped without it).
+Gates (Cargo examples, in `scripts/gates.sh`): `audio_formats` and `rome2_audio_formats` (every bank, WEM and `event_data.dat` written
+back byte for byte), `audio_decode` and `rome2_audio_decode`, `audio_encode`, `audio_edit`, `audio_music`, `audio_recipes`. No gate
+compares with the Wwise oracle: it was used by hand (scratch scripts) for the setups and alloc sizes.
 
-## Steps
+## Steps (as built)
 
-Status legend: **done**, **in progress**, **partial**, **todo**, **blocked** (with why). Every step and sub-step keeps its status here,
-updated as work lands (user, 2026-11-19), so the work can be resumed from this file alone.
+Every step was done 2026-11-19 .. 11-20; the detail is in the git history. Scratch work (Windows, not in the repo, may be lost): the
+test packs under `%TEMP%\claude\439e225181e38936\b8cb548f-d7a7-4438-97ec-8a54f498b744\scratchpad\spike\` (`ingame*`), the
+downloaded sources and the oracle project beside them.
 
-Scratch work (not in the repo, may be lost on a reboot; the findings that matter are recorded here):
-`%TEMP%\claude\439e225181e38936\b8cb548f-d7a7-4438-97ec-8a54f498b744\scratchpad\` — `dl\` the downloaded sources (aoTuV, libogg,
-ww2ogg), `build\prefix` the built static libs, `tools\` (`build_vorbis.bat`, `vtool.c` an aoTuV encode/decode tool, `wwvorbis.py`
-the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` the oracle project and its outputs, `audio\` vanilla
-`sound.pack` audio, `rome2own\` Rome 2's banks.
+1. **Spikes.** Rome 2 loads only v112 banks; the vanilla WEM survey; the Wwise 2014.1.3 oracle; the encoder: **aoTuV** (user,
+   2026-11-19): it gives Wwise's own setups and headers, equal or better quality, slightly smaller files, not bit-identical (no encoder
+   short of Wwise's own would be); an aoTuV WEM plays in game (the main menu's ambience stream replaced by a mod pack). Findings:
+   docs/formats/wem.md.
+2. **Formats** (`wce_audio_format`): FNV-1 IDs, bank chunks, every v112 HIRC kind the games use typed (`hirc::parse`,
+   `Object::write`; v88 banks round-trip as chunks), WEM RIFF and the Wwise Vorbis header, `event_data.dat`, `.amb`, the triggers CSV;
+   `.snd.meta` through `wce_formats::anim_meta`. Gate `audio_formats_check` (`audio_formats`, `rome2_audio_formats`): every bank, WEM
+   and `event_data.dat` of Attila + TDD v1.2.0 (134 banks, 44,802 WEMs) and Rome 2 (159 banks, 42,371 WEMs) byte for byte. Layouts
+   learnt from pywarscape-sound's models (MIT), written anew. Effect plug-in parameters stay bytes (no edit needs them).
+3. **Browse and listen** (`wce_audio`, `wce_audio_tool`): the codebook library (vendored `third_party/ww2ogg`), the Wwise Vorbis ->
+   Vorbis rebuild and `lewton` decoding (`decode::decode_wem`, gate `audio_decode_check`: every WEM the game loads decodes); the name
+   index (`names`: `event_data.dat`, `STID`, file names, the triggers CSV, TheTollski's `TWA_Names.txt` in
+   `third_party/soundbank_editor`, the DB tables, user labels); the resolver (`library::SoundLibrary`, example `audio_library_check`:
+   an event to the sounds and media it plays, across banks); SDL3 playback; the tool's panels Audio Banks, Audio Bank, Audio Search,
+   Audio Object. Script commands `audio_bank`, `audio_search`, `audio_select`, `audio_expand`.
+4. **Replace and add variations.** Encoder `encode::encode_wem` (`aotuv_lancer_vorbis_sys`; qualities 0 and 2 to 10, 1 to 5
+   channels; 5.1 and 7.1 imports folded to 5.0; decoder alloc sizes from `setup_allocs`; gate `audio_encode_check`); imports of WAV,
+   Ogg Vorbis and WEM (`import::read_sound`); the bank writer and `edit::EditSet` (replace, add / remove a variation, properties,
+   containers' mode and weights; gate `audio_edit_check`). In game: **the game does not take edited `*_data.bnk` banks from a mod
+   pack**, while loose WEMs and event banks do, so a replace of in-bank media redirects its sources to a new loose
+   `audio/<id>.wem` (`redirect_media`) and new variations stream from loose files. Property IDs: only volume (0), pitch (2) and low-pass
+   (3) are checked; the others carry Wwise 2014's names as wwiser lists them.
+5. **Remove and delete, new events** (`references`: the game's uses (`event_data.dat`, triggers CSV, `.amb`, UI layouts, DB rows,
+   animations) and the banks'; `EditSet::delete_object`, `new_event`, `add_trigger`, `add_emitter`). Tool: "Used by", Delete with the
+   game's uses as warnings, "New event playing this", "Add to the animation triggers", the "Nothing triggers this event" warning; names
+   given by the user in `<projects>/audio/names.txt`.
+6. **Music** (`music`, `trees`): playlists as trees (add after, remove, weight, loop), a segment's audio replaced, transition rules and
+   stingers typed and edited, new playlists (`new_playlist_like`), what a music switch plays for a path of states
+   (`EditSet::set_music_path`); gate `audio_music_check`. No game segment has several tracks.
+7. **Game data** (panel Audio Game Data): animation sounds (`anim_sounds`: a `.snd.meta`'s frames on a timeline as long as its clip,
+   added, dragged, removed; `audio_animation`), campaign ambience by sound, the sound DB tables (`sound_db`), the localised voice banks.
+8. **Recipes** (`recipes`, gate `audio_recipes_check`): music playlists named by their switch paths, an animation sound (existing
+   event or a new sound), a culture's voice lines. The Audio Recipes panel was **removed** (user, 2026-11-20: "it doesn't make sense to
+   me"); the library stays, gated. What only the panel offered (a unit's own selection line, a culture's lines copied to another, a new
+   sound for an animation from a file) has no UI now: if wanted back, as actions where the object is (Audio Object, Audio Game Data).
+9. **Player and visuals**: the waveform as the progress bar (seek by clicking), play / pause / stop, loop, volume; a selected sound's
+   waveform in Audio Object.
+10. **User review 2 and the open items**: a new SDL stream per sound (the loop and rate bugs); the player and the sound's details in the
+    Inspector (codec, setup in words, peak, RMS, loudness by ITU-R BS.1770-4: `analysis`); the unit voice banks browsable (tabs
+    Containers and Sounds); unit voices (`unit_voices`, `EditSet::add_order_line`, `sound_db::set_cell`); every bank's copy of a switch
+    or event merged (`SoundLibrary::merged`) and edits written to every copy; decision trees laid out again byte for byte
+    (`hirc::tree_from_paths`), `add_dialogue_value` and `recipes::new_voice_culture` (a culture of the engine's list given another's
+    lines); actions read field by field (`Action::parts`, delay and fade time edited); the edit session as an editor document
+    (`AudioDocument`, "Audio edits": Edit > Undo / Redo, History, File > Save, Revert; script command `audio_volume`).
 
-1. **Spikes.** **done** (1.4.10 carried into step 4)
-   1. Rome 2's banks' version: v112 wherever the game loads them (its v88 release banks are all overridden). **done**
-   2. The vanilla WEM survey (above). **done**
-   3. The Wwise 2014.1.3 oracle (above). **done**
-   4. The encoder (aoTuV vs native). **done: aoTuV**
-      1. Downloads (aoTuV `AO-Yumi/vorbis_aotuv` ef858ad, libogg `xiph/ogg` 06a5e02, ww2ogg `hcs64/ww2ogg` 14ed9b0 for
-         `packed_codebooks_aoTuV_603.bin`; all BSD; user approved 2026-11-19) and an MSVC build of both libraries. **done**
-      2. Wwise header fields understood (see "Wwise Vorbis encoding" below): codebook hash = FNV-1 of the setup packet (1,480 of
-         1,480 WEMs); decoder alloc sizes fixed per setup. **done**
-      3. Ogg Vorbis -> Wwise Vorbis conversion: every aoTuV codebook (q0.0 to q0.6) is in Wwise's library; the duplicate-ID rule
-         reproduces all 18 distinct vanilla + oracle setups; aoTuV q0.4 gives Wwise's Voice preset's setup byte for byte (hash
-         3017712712); aoTuV q0.0 gives vanilla's most common mono setup (997642109). **done**
-      4. Back conversion (WEM -> Ogg) for decoding: vanilla and oracle WEMs decode; our WEM decodes to exactly the samples of the Ogg
-         it came from. **done**
-      5. Synthetic comparison with Wwise (3 s mono tone + noise, q0.4 vs Voice): same setup, same packet count, audio not
-         bit-identical (encoder decisions differ from bit 2 of the first packet), size +0.08 %, SNR 20.48 dB vs Wwise's 20.22 dB.
-         **done**
-      6. Realistic comparison (`tools\compare.sh 0.4`): 7 vanilla WEMs decoded (mono 28/32/44.1 kHz, stereo 28/44.1 kHz, 5 and 6
-         channels), re-encoded by Wwise (Voice preset) and by aoTuV q0.4. Every file: **the same setup as Wwise's** (hash and alloc
-         sizes); size -0.1 % to -3.1 % against Wwise's; channel order kept; SNR against the source equal or higher (Wwise's output
-         is noisier, gain 0.89 to 0.98: stronger noise normalisation in its encoder). Bit-exact audio: no, at any input scaling
-         (/32767, /32768, /65536) or nearby quality; Wwise's encoder is a modified aoTuV, and matching it bit for bit would need its
-         encoder reverse engineered (a native encoder would not be closer). **done**
-      7. Exact packet sizes: aoTuV's exact bit count per packet is `oggpack_bits(&vorbis_block.opb)` right after
-         `vorbis_analysis` (public, no patch); a packet is ceil((bits - 1 - 2 for long blocks) / 8) bytes. With it 38 % of our
-         packets end in a 0x00 byte, as Wwise's (37 %); decoding stays identical to aoTuV's own Ogg. **done**
-      8. In-game test. `269336611.wem` is the 177 s quad stream `frontend.bnk` plays (the main menu's ambience; streamed, not in any
-         bank's DIDX; TDD does not override `frontend.bnk`). Test signal `spike\ingame\src\beeps_quad.wav`: 30 s of beeps stepping
-         FL 440 Hz, FR 660, RL 880, RR 1100, every 0.5 s. Packs in `spike\ingame\packs\`: `wce_audio_test_ours.pack` (aoTuV q0.4,
-         converted) and `wce_audio_test_wwise.pack` (the control: Wwise's own encode of the same WAV). Test: one pack at a time in
-         `data\`, enabled in the launcher, start the game, listen on the main menu; remove the pack after. **done** (user,
-         2026-11-19: our pack plays; the beeps replace the horse-sound ambience layered under the main menu music; the other layer,
-         vanilla's throat-singing music, is a different stream). The control pack was not needed.
-      9. Verdict: **aoTuV** (user, 2026-11-19). Built from source like SDL3 (libogg + aoTuV, BSD; `THIRD_PARTY.md` when it goes
-         in, step 4): plays in game, same setups and headers as Wwise, equal or better quality, slightly smaller; not bit-identical,
-         which no encoder short of Wwise's own would be. **done**
-      10. Decoder alloc sizes for setups not seen yet: they depend only on the setup (the same for mono and quad); the table covers
-          the 19 setups seen; a formula (from the codebooks) or more oracle conversions per quality and channel layout. **todo,
-          moved to step 4** (the encoder needs it, nothing before it does)
-2. **Formats** with the round-trip gates (crate `wce_audio_format`). **done** (2026-11-19)
-   1. Crate, FNV-1 IDs (`fnv::id`, `fnv::bytes`), bank chunks (`BKHD`, `DIDX`, `DATA`, `HIRC` objects as kind + ID + raw body,
-      `STID`, others raw), WEM RIFF chunks + the `fmt`/Wwise Vorbis header view, `event_data.dat` typed; unit tests. **done**
-   2. Gate `audio_formats_check <game> [mod packs]` (in `scripts/gates.sh`: `audio_formats`, `rome2_audio_formats`): every copy of
-      every bank, WEM and `event_data.dat`, written back and compared; Vorbis codebook hash vs setup. **done**: Attila + TDD v1.2.0
-      134 banks (all v112, the encrypted music packs too), 44,802 WEMs, 1 `event_data.dat`, 0 failures, all hashes match (53 s);
-      Rome 2 159 banks (42 v88, 117 v112), 42,371 WEMs, 2 `event_data.dat`, 0 failures. HIRC object counts (Attila + TDD): Sound
-      95,259, Random/Sequence 12,514, Action 3,318, Event 2,308, Switch 2,123, Music Segment 624, Music Track 600, Attenuation 546,
-      Blend 289, Dialogue Event 220, Music Playlist 206, Effect 200, Actor-Mixer 199, Bus 198, Effect ShareSet 136, State 103,
-      Music Switch 58, Aux Bus 14.
-   3. Typed HIRC objects, v112 (`hirc::parse`, `Object::write`), one kind at a time, each gated (parse consumes the body
-      exactly, writes it back identically); the bank keeps bodies raw, so untyped kinds still round-trip. Layouts learnt from
-      pywarscape-sound's models (MIT), written anew. **done**
-      - **done** (Attila + TDD, 0 failures): State 103, Sound 95,259, Action 3,318 (type + target typed, parameters raw), Event
-        2,308, Random/Sequence 12,514, Switch 2,123, Actor-Mixer 199, Blend 289. Rome 2's v112 banks: 0 failures too (Sound
-        83,677, Random/Sequence 13,103...). `hirc::parse` takes the bank version: v88 banks (Rome 2's release packs, all
-        overridden) are not typed, they round-trip as chunks.
-      - **done** (both games, 0 failures): Bus 198 + Aux Bus 14, Attenuation 546, Dialogue Event 220 (decision tree as its flat
-        12-byte nodes, `DialogueEvent::leaves`), Effect 200 + ShareSet 136, Music Segment 624, Track 600, Switch 58, Playlist
-        206 (`hirc/music.rs`). Every v112 kind the games use is typed.
-      - **todo** (later, when editing needs it): Action parameters per action type (kept as bytes), the music transition rules'
-        source/destination/transition blocks (kept as bytes), Effect plug-in parameters per plug-in.
-   4. `.snd.meta`: the `.meta` layout, already read and written byte for byte by `wce_formats::anim_meta` (gate
-      `unit_formats_check`); its `SOUND_TRIGGER` entries hold a 0-based row index into `sound_animation_triggers.csv` (checked: a
-      bird's 84 is `50_Bird_Wing_Flaps`, a boar's 92 to 94 footsteps). The audio layer joins them (step 7). **done**
-   5. Campaign `.amb` (`amb::Ambience`: emitters = event ID + polyline; IDs are `campaign_spot_ambience_*` events): all 3
-      Attila and 14 Rome 2 copies byte for byte. The `.xml` beside it is plain settings XML (listener scaling, climate blends),
-      read with `wce_formats`' XML when the tool needs it. **done**
-   6. `sound_animation_triggers.csv` (`triggers::Triggers`: kept as bytes, columns read): Attila 168 rows x 24 columns, Rome 2
-      163 x 18 and 20; every row has the header's field count. **done**
-   7. Format docs: [wwise_bank.md](../formats/wwise_bank.md) (chunks, every HIRC layout), [wem.md](../formats/wem.md) (RIFF,
-      the Wwise Vorbis header, the packing and encoding), [sound_data.md](../formats/sound_data.md) (`event_data.dat`,
-      `.snd.meta` + triggers, `.amb` + `.xml`). **done**
-3. **Browse and listen**: the bank documents, the name index, the global search, decode and playback. **done** (2026-11-19; playback
-   heard by the user)
-   1. Crate `wce_audio` (headless): the Wwise codebook library (ww2ogg's `packed_codebooks_aoTuV_603.bin`, BSD-3, vendored in
-      `third_party/ww2ogg`; user 2026-11-19), the Wwise Vorbis -> Vorbis packet rebuild (`tools\wwvorbis.py`'s `wem2ogg`, in Rust,
-      no Ogg container), decoding with `lewton` 0.10 (no default features; user-approved). `wce_audio::decode::decode_wem` ->
-      `Pcm` (interleaved f32, WAVE channel order). About 400x real time (a 9-minute track in 1.3 s): decode on a worker. **done**
-   2. Decode gate `audio_decode_check` (`scripts/gates.sh`: `audio_decode`, `rome2_audio_decode`): every WEM the game loads
-      decodes to its header's frame count. Attila + TDD: 44,703 loose WEMs and 25,140 media inside banks (51 hours), 0 failures;
-      12 bank media are prefetched starts of loose files (stream type 1: only the start is in the bank) and 1 is plug-in data
-      (not RIFF). Rome 2: 41,088 loose WEMs, 0 failures. **done**
-   3. Name index (`wce_audio::names`): `event_data.dat`, `STID`, bank file names, the triggers CSV, TheTollski's `TWA_Names.txt`
-      (vendored in `third_party/soundbank_editor`, user's permission), user labels (`NameSource::Label`, first in priority; the
-      UI to set them is step 3.6 or later); FNV-1 match. Attila + TDD: 3,559 names; every event (1,629) and dialogue event (171)
-      named, 22 of 198 buses; containers and sounds have no names in Wwise (the tool labels them by content). DB tables as a
-      source: later. **done**
-   4. Resolver (`wce_audio::library::SoundLibrary`, example `audio_library_check`): loads every bank through `Files` (packs +
-      loose project files; 126 banks, 98,009 objects in 0.2 s), indexes objects and media by ID across banks, resolves an object
-      to a `PlayNode` tree (event -> actions -> play targets -> containers / switch values / dialogue tree leaves / music ->
-      sounds -> media in a bank's `DATA` or a loose `audio/<id>.wem`). All 1,629 events in 0.1 s: 215,360 sound leaves, 204,360
-      in banks, 9,635 loose, 1,365 missing (195 sound objects whose media is in no bank or pack: the game's own leftovers,
-      silent in game too); 280 events play nothing (stop, set state...). **done**
-   5. Playback (`wce_audio_tool::player`): one SDL3 audio stream per sound on the default device (SDL converts rate and
-      channels), stop, progress; decoding on a worker thread. **done, not yet heard by the user** (unattended runs must not make
-      sound).
-   6. The Audio tool (`wce_audio_tool`, feature `audio`, on by default; icon `AUDIO_LINES`): panels Audio Banks (filter, every
-      bank, the player strip), Audio Bank (tabs Events, Dialogue events, Music, Sounds in the bank, All objects; each event a
-      Play button and a tree of what it plays, unnamed containers described: "Random of 3", "Switch on <group>"), Audio Search
-      (names or #IDs across every bank), Audio Object (name and its source, banks, fields by kind, parent, bus, properties,
-      children; Play). Event Play picks one sound: random and switch containers at random. Script commands `audio_bank`,
-      `audio_search`, `audio_select`, `audio_expand`. The library loads on a worker when the game's files are mounted. **done**
-   7. Seen working in the app (2026-11-19, `wce.exe --tool audio --cmd "audio_expand battle_bird_wing_flaps" --shot`): banks,
-      events with names, the expanded tree, Audio Object. **done**; playback by ear: the user.
-   - Follow-ups (later steps): property IDs beyond volume (0), pitch (2) and low-pass (3) to name (check with the oracle);
-     labels set by the user (UI); DB tables as a names source; Wwise-faithful playback (blend layers mixed, sequences in order)
-     is the Cinematic layer's (not chosen for v1). Property names, user labels and DB names: done (10.5, 10.7).
-4. **Replace and add variations**. **done** (2026-11-20; known anomaly: UI button sounds, 4.7)
-   1. Decoder alloc sizes (1.4.10): oracle grid (scratch `tools\setup_grid.py`: Wwise at qualities 0 to 10 x 1, 2, 4, 5, 6
-      channels x 8 rates, 440 conversions, against aoTuV at Q/10): Wwise uses one setup per quality and channel layout at any
-      rate (chosen as for 44.1 kHz); ours matches for qualities 0 and 2 to 10 with 1 to 5 channels; quality 1 and 5.1 differ
-      (docs/formats/wem.md). Table `wce_audio::setup_allocs` (35 setups). Import offers qualities 0 and 2 to 10, 1 to 5 channels;
-      6 channels: folded to 5.0 (10.7). **done**
-   2. Encoder in `wce_audio::encode`: `aotuv_lancer_vorbis_sys` 0.1.6 (crates.io, BSD-3; user 2026-11-19), set up for 44.1 kHz
-      whatever the rate, exact packet bits from `vorbis_block.opb`, the Ogg -> Wwise conversion of `tools\wwvorbis.py` (setup,
-      duplicate-ID rule, packets, header fields): `wce_audio::encode::encode_wem(pcm, quality)`, `QUALITIES` (0, 2 to 10),
-      `DEFAULT_QUALITY` 4. The crate's (Lancer) aoTuV gives Wwise's Voice setup byte for byte (test). Gate `audio_encode_check`
-      (`scripts/gates.sh`: `audio_encode`): 10 qualities x 1, 2, 4, 5 channels x 8 rates = 320 encodes, every setup known, one
-      setup per quality and channels over the rates, all decode back to their frame count. Mono 44.1 kHz: 53 kbps (quality 0)
-      to 252 (10); quality 4: 77. **done**
-   3. Audio import (`wce_audio::import::read_sound`): WAV (PCM 8/16/24/32-bit, float 32/64, extensible), Ogg Vorbis (pages read
-      here, lewton decodes), WEM; any rate (no resampling: the WEM keeps the rate). **done**
-   4. Bank writer and edits. The game's rules (checked on every Attila bank): media in `DATA` at 16-byte boundaries, zeros
-      between, nothing after the last; an in-bank source has `file_id` = its media bank's ID, `file_offset` = the media's offset
-      from the start of that bank's file, `in_memory_size` = its size (all 38,117); a streamed one `file_id` = its media ID,
-      `in_memory_size` 0. `Bank::set_media` / `remove_media` / `data_position` / `objects_mut`; `wce_audio::edit::EditSet`:
-      `replace_media` (banks and loose file; a prefetched start keeps its length), `add_variation` (a sound copied from the
-      container's first sound, new IDs, media in the same bank or loose), `remove_variation`, `set_property`, `fix_offsets` (every
-      source into a changed media bank). Gate `audio_edit_check` (`audio_edit`) on Attila + TDD: 0 inconsistent sources as
-      shipped; replace by the same bytes changes nothing; replace by a new sound edits 8 banks, stays consistent, decodes; add then
-      remove a variation gives the banks back byte for byte; a property reads back. **done**
-   5. Saving: the Audio tool keeps an edit session (`EditSet`) with Undo / Redo (20 steps), Revert, and Save, which writes the
-      edited banks and sound files to `<projects>/loose/<path>` (read before the packs) and tells the editor
-      (`loose_changed`, so the library reads them again); unsaved edits are listed on exit (`unsaved_work`). **done**; follow-up:
-      the editor's Document / History (File > Save, autosave, the History panel) instead of the tool's own session.
-   6. Tool: Audio Object offers Replace audio... (a sound: WAV, Ogg Vorbis or WEM, encoded on a worker at the chosen import
-      quality), Add variation... (a random/sequence container), Remove (each child of such a container), Volume and Pitch
-      (any node); edited objects show at once ("Edited, not saved"), the trees after Save; Play plays the edited audio. Seen in the
-      app (2026-11-19, `audio_select 715511747`). **done**; follow-ups weights and mode, edits shown in the trees before Save: done (10.7).
-   7. In game: an in-bank replace. `grp_gw_generic_button` (global_ui, the generic button) plays media #25654632 (click) and
-      #13563058 (mouse-over), held in `battle_ui_data` and copied in `campaign_ui_data` and `global_ui_data`; both replaced through
-      `EditSet` with test tones (click: 660 then 990 Hz; mouse-over: a short 1,760 Hz blip). 6 banks edited (the 3 data banks
-      and `battle_ui`, `campaign_ui`, `global_ui`, whose offsets moved). Pack: scratch `spike\ingame2\wce_audio_test_ui.pack`
-      (vanilla banks; TDD overrides `campaign_ui`, so test without TDD). Result (user, 2026-11-19): **the original button sounds**,
-      with the pack enabled alone (`used_mods.txt`). The main menu layout (`frontend ui/main`) does use
-      `grp_gw_generic_button_small`, whose `lclick` / `mouse_on` play exactly the replaced media; every copy of them was
-      replaced. Next: `spike\ingame2\wce_audio_test_ui2.pack` = the same banks + the main menu ambience WEM that worked in 1.4.8,
-      to tell "the pack does not load" from "the game does not take the edited banks". Result: the ambience beeps, the buttons
-      stay original: **the game does not take edited `*_data.bnk` banks from a mod pack** (TDD, also a Mod pack, only ever ships
-      event banks, never data banks), while loose WEMs and event banks from a mod pack do load. So replacing in-bank media now
-      redirects: `EditSet::replace_audio` (the tool's Replace) writes a streamed media file again under its ID, and for media in a
-      data bank points every source using it at a new loose `audio/<new id>.wem` (`redirect_media`; stream type 2, no data bank
-      touched); `add_variation` streams its new sound from a loose file too. Gate 3b checks it. Test pack 3:
-      `spike\ingame3\wce_audio_test_ui3.pack` (`battle_ui`, `campaign_ui`, `global_ui` + the two new loose WEMs + the ambience
-      control). Result of pack 3 (user): ambience beeps, buttons still original. **Open; next session starts here.**
-      Findings so far: a UI component names its sound event in the string the UI XML labels `end of uientry 1?` (wce-ui to-xml);
-      over the front-end and common layouts the most used are `grp_gw_generic_button_small` (248 components),
-      `grp_gw_generic_button` (118), drop-downs, tick boxes, sliders; `frontend ui/main` sets only two (the small button and
-      `ind_fe_start_campaign`), so the big main-menu buttons take their sound elsewhere (template, skin or the game's code).
-      (1) The big buttons' event: likely `grp_fe_tutorial_main_buttons` (global_ui; no layout sets it, so the game's code fires
-      it), whose click / hover play the same media (#25654632, #13563058) as the generic buttons. (2) The decisive pack:
-      `spike\ingame4\wce_audio_test_ui4.pack`: all 60 media of every `global_ui` and `frontend` event redirected to one 880 Hz
-      beep (`battle_ui`, `campaign_ui`, `frontend`, `global_ui` + 60 loose WEMs) + the ambience control. Beeping UI: the redirect
-      works and pack 3 tested the wrong event; original UI: event banks of the UI are not taken from a mod pack either (loaded
-      before mods?) and UI sounds need another route. Result (user, 2026-11-20): the main menu ambience beeps, the buttons (most
-      of them) sound original. **Known anomaly, set aside by the user**: UI button sounds do not change through a mod pack's
-      banks (event or data banks), while loose WEMs do; cause unknown (UI banks loaded before mods, another event, or cached
-      media). Revisit with a runtime trace or a non-UI event (a battle sound) later. An added variation in game: todo.
-5. **Remove and delete** with the reference warnings; **new events** with their triggers. **done** (2026-11-20)
-   1. References finder (`wce_audio::references`): `ReferenceIndex::build` (once, about 5 s: on a worker) indexes the game's
-      references by ID: `event_data.dat` (the game's code triggers these events by name), `sound_animation_triggers.csv` rows,
-      campaign `.amb` emitters, UI layouts (their words hashed, kept when a bank has that ID); `references::find` adds the
-      banks' own (child of, action of, target of, switch value of, in the tree of, in the playlist of), as edited. Gate step 6:
-      `grp_gw_generic_button_small` 79 references (UI layouts), `battle_bird_wing_flaps` (the triggers CSV),
-      `campaign_spot_ambience_coastal_waves_cliff` (`.amb`), `Battle_Order_VO_Mute` (`event_data.dat`), a container's parent and
-      Play action. **done**
-   2. Delete (`EditSet::delete_object`): the object, its subtree (children whose parent it is), an event's actions, the Play
-      actions on any of them; every list naming them drops them (events, random/sequence children and playlists, switch
-      children / assignments / child parameters, actor-mixers, blend children and layers); media stay (the game's packs are not
-      changed); loose files of these edits no longer used are dropped. Music objects: step 6. Gate step 7: a container with
-      its 4 sounds and its Play action (6 objects), nothing left naming them, the banks re-read. **done**
-   3. New events (`EditSet::new_event`): a named event (ID = FNV-1 of the name, letters / digits / `_`) with a Play action on an
-      object of the bank, the action copied from a Play action of that bank; the name kept in `EditSet::names`. Gate step 8.
-      **done**
-   4. Wiring: `EditSet::add_trigger` (a `sound_animation_triggers.csv` row firing battle / campaign events, its conditions
-      copied from another row; returns the row index a `.snd.meta` holds; the frames themselves: step 7) and
-      `EditSet::add_emitter` (a campaign `.amb` emitter along points). Gate step 8: row 168 added, an emitter added. **done**;
-      the "nothing triggers it" warning: with the tool (5.5).
-   5. Tool: Audio Object lists "Used by" (the game's references and the banks', objects selectable; the index builds on a
-      worker after the banks), Delete... (a confirmation listing the game's uses as warnings), "New event playing this" (a name,
-      for sounds and containers; the event lands in the object's first bank), "Add to the animation triggers" (an event: a
-      new CSV row firing it in battle; the row index is what a `.snd.meta` frame holds), and the warning "Nothing triggers this
-      event" for an event nobody names. New objects show from the edits ("New, not saved"); names given here are kept in
-      `<projects>/audio/names.txt` and read with the banks (`NameSource::Label`). **done**; seen in the app (2026-11-20, the
-      "Used by" section under a playlist).
-6. **Music**: playlists, segments, tracks, transitions, switches, stingers. **done** (2026-11-20; 6.4 follow-ups open)
-   1. How the game's music is built (Attila, TDD's music banks): a playlist's items are a depth-first tree, groups (no segment,
-      a child count, a play kind: 0 sequence continuous, 1 sequence step, 2 random continuous, 3 random step) and leaves (a
-      segment, kind 0xFFFFFFFF, weight 50,000); a segment holds one track with one streamed source and one clip; its duration
-      is the entry cue's position plus the clip's end; markers: the entry cue (43573010) and the exit cue (1539036744, at the
-      duration). **done**
-   2. Music edits (`wce_audio::music`, on `EditSet`): `replace_segment_audio` (the track's source redirected to a new loose WEM,
-      the clip the whole sound, the segment's duration and exit cue fitted), `add_playlist_entry` (a segment and track copied
-      from a leaf's, the new leaf after it in its group, the group's count +1, new audio loose), `remove_playlist_entry` (the
-      leaf, and its segment and tracks when nothing else plays them), `set_playlist_item` (weight, loop); `item_tree`,
-      `group_kind` for display. Gate `audio_music_check` (`audio_music`) on Attila + TDD, a 22-item playlist with nested
-      random groups: the entry added keeps the tree whole and fits its 3 s sound, removing it gives the banks back byte for byte,
-      a segment's replace fits, weight and loop read back. **done**
-   3. Tool: Audio Object shows a playlist's entries as a tree (groups with how they play and loop, segments with their length),
-      each segment with Play, "Add after..." (a sound file, a new segment in the same group), Remove and its weight; a segment
-      offers "Replace music..."; the playlist's transition rules and stingers are counted. Seen in the app (2026-11-20,
-      `audio_select 487233623`: global_music's 22-entry playlist, 5 random groups). **done**; loop per entry: done (10.7).
-   4. Later (follow-ups): editing transition rules (their source / destination / transition-segment blocks are kept as bytes),
-      stingers, music switch trees (which playlist plays for which state), segments with several tracks, new playlists.
-7. **`.snd.meta` timeline, `.amb` list, the sound DB tables, the localised VO.** **done** (2026-11-20)
-   1. Animation sounds (`wce_audio::anim_sounds`): a `.snd.meta`'s `SOUND_TRIGGER` frames (time, trigger row), the row's
-      events, `add_frame` / `move_frame` / `set_trigger` (`Meta::encode` writes the file again; unit test). Tool: the panel
-      Audio Game Data (docked beside Audio Bank), tab Animations: every `.snd.meta` (2,943 with the user's mods), a filter, the
-      chosen one's frames as marks on a timeline (seconds), and per frame Play (its battle event), time, trigger row, the
-      trigger's name and event (selects it), Remove; "Add a sound frame" with a row. Edits are loose `.snd.meta` files of the
-      edit session. Script command `audio_animation <part of a path>`. Seen in the app (2026-11-20, `boar_charge.snd.meta`:
-      4 footstep frames, rows 91 to 94). **done**; follow-ups: the clip's real length and dragging frames done (10.7); the unit's
-      model (the Unit / Cinematic tools).
-   2. Campaign ambience: tab Campaign ambience: the maps' `.amb`, a map's emitters grouped by sound (emitters, points), Play and
-      select. Placing emitters on the map: the campaign / terrain editor. **done**
-   3. Sound DB tables (`wce_audio::sound_db`, rpfm's DB decoder and schema): Attila's sound tables are small:
-      `audio_projectiles` (28 rows: fire, in-flight, impact, idle, hit-tree events per projectile) and `audio_explosions`
-      (10) name events; `subculture_religion_voiceover_junctions` (120) gives the voice-over culture; `main_units.voiceover`
-      each unit's; `sound_events`, `voice_types`, `unit_voice_categories`, `audio_campaign_building_enums` are key lists;
-      `voice_events`, `unit_voice_events_junctions`, `agent_voice_events_junctions` are empty. Tab DB tables: the events the
-      tables name (Play, select), unit voice-overs, voice-over by subculture and religion. The references gain DB rows and
-      animations (`Reference::Db`, `Reference::Animations`: how many `.snd.meta` fire an event); gate step 6:
-      `projectile_fire_arrow` (DB), `battle_footstep_walk_01` (animations). **done**; editing DB rows: with RPFM for now.
-   4. Localised VO: the voice banks and files of the language the game is set to come from its `local_*` packs and are read
-      with the others (banks, search, playback); tab Languages lists the voice banks. Attila installs one language (English).
-      **done**
-8. **Recipes**: music tracks, unit voice set, advisor/VO line, animation sound. **done** (2026-11-20; a new culture: 10.6)
-   1. Library (`wce_audio::recipes`, `EditSet::new_sound_like`, `hirc::tree_paths`): `music_playlists` names the 157 playlists by
-      the state values on the music switch paths choosing them ("Barbarian, prebattle / Barbarian", "BattleMusic_BigCombat,
-      Bb / ..."); `animation_sound` adds a `.snd.meta` frame firing an existing event (its trigger row reused) or a new sound
-      (made like another event's first sound, under the nearest actor-mixer or alone on the chain's bus; a new event; a trigger
-      row) ; `culture_lines` / `group_values`: the battle voice trees decide on `vo_battle_subculture`, whose values
-      (`Roman`, `barbarian_christian`, `nomad_hunnic_generic`...) are the DB's voice-over cultures. Gate `audio_recipes_check`
-      (`audio_recipes`) on Attila: playlists named, a frame on existing row 91, the whole new-sound chain (frame -> row ->
-      event -> sound -> loose media that decodes), 87 `Roman` lines of `battle_vo_land_idle`. **done**
-   2. Tool: the panel Audio Recipes (docked beside Audio Bank): Music tracks (playlists by name, "Add a track...", select for
-      the entries), A voice line (voice and advice events, Play, select, then Replace audio), A culture's voice lines (a voice
-      event, a culture, its lines with Play and Replace audio), An animation sound (the animation picked in Audio Game Data, a
-      time, an existing event or a new sound file). Script command `audio_show <panel>`. Seen in the app (2026-11-20). **done**
-   3. Follow-up: a new voice-over culture: done for the engine's own cultures (10.6); the engine knows no other.
-9. **Player and visuals** (user, 2026-11-20): a nicer, more useful player: the sound's waveform (amplitude envelope) as the
-   progress bar, as is common now; seek by clicking it; the bar reset when the sound ends; play / pause / stop, loop, volume;
-   waveforms next to sounds in the trees; overall polish of the Audio tool's panels (icons, colours, spacing). **done**
-   (2026-11-20; the controls by ear: user)
-   1. Player (`wce_audio_tool::player`): keeps the decoded sound, so it seeks, loops and replays; `peaks` (the loudest sample
-      of 600 slices, all channels) for the waveform; pause / resume, stop (back to the start, the sound stays loaded), loop,
-      volume 0 to 150 % (SDL stream gain); at the end it loops or goes back to the start (the bar resets). Unit test
-      `envelope`. **done**
-   2. Player strip (top of Audio Banks, `tool/player_view.rs`): play / pause, stop, loop, volume, time / length, the sound's
-      name, and its waveform as the progress bar (played part in the accent colour, a playhead); a click seeks and plays.
-      **done**
-   3. Waveforms: Audio Object shows a selected sound's waveform (a click plays from there); every sound row of the trees has a
-      small one. Read on a worker one at a time, only for what is shown, cached by media ID and read again after an edit,
-      undo or redo. Each column draws the loudest of the peaks it covers. **done**
-   4. Polish: Lucide icons on the Play buttons and the strip; `audio_expand` opens the event's first levels (down to the
-      sounds of most events), and a select queued with it keeps the selection. Seen in the app (screenshots, no sound played
-      by the unattended runs, 2026-11-20). **done**
-   5. To check by ear (user): pause, seek by clicking, loop, volume, and the bar reset at the end. **todo (user)**; the loop and
-      rate bugs the user found are fixed in 10.1.
+## Open
 
-10. **User review 2 and the open items** (user, 2026-11-20: battle_vo banks empty, loop, the Inspector, unit voices, then every
-    open item of this plan). **in progress** (2026-11-20; what is left: 10.8 pack 2, 10.9.3 seen in the app, 10.9.5)
-    1. Player: a new SDL stream per sound (a looped sound kept the stream, so the next sound played at the previous one's rate:
-       too fast and high); loop and end handled every frame whatever panel is shown (the Audio Banks strip drew them only while
-       visible), the next loop queued 0.5 s ahead (no gap). **done**; by ear: user.
-    2. Inspector (`Tool::inspect`; the layout puts it above Audio Object, View > Reset layout for an older layout): the player
-       (controls, the waveform as the progress bar, click to seek) and the selected sound (waveform, click to play from there),
-       each with its info: media place, codec, sample rate, channels and speakers, samples, length, file size, bitrate, Vorbis
-       blocks / largest packet / setup, peak (and per channel), RMS, DC offset, loudness (`wce_audio::analysis`, ITU-R BS.1770-4,
-       B. De Man's K-weighting: the standard's 48 kHz coefficients exactly; unit test on its reference tone at 48 / 44.1 / 32
-       kHz). The browsers have no waveforms (user): their Play buttons turn into Stop while their sound plays. **done**
-    3. Audio Bank: the unit voice banks (`battle_vo_orders_<culture>_<actor>`) hold no events (`Battle_Order_VO_Play` is in
-       `battle_vo_orders`), only containers and streamed sounds: tabs Containers (a bank's own top containers: through copies
-       holding a single container of the bank, named by the switch values choosing them, "Barbarian / Inf1: Switch on
-       VO_battle_order (517 values)") and Sounds (every sound object); empty tabs hidden; a bank opens on its first non-empty
-       tab. Seen in the app (2026-11-20). **done**
-    4. Unit voices (`wce_audio::unit_voices`): `Battle_Order_VO_Play` -> `VO_battle_culture` (Barbarian, Eastern, Nomad, Roman)
-       -> `VO_battle_actor` (Inf1 to Inf12, Mtd1 to Mtd7) -> `VO_battle_order` (517 lines) -> random containers of takes. A unit's
-       set: `main_units.voiceover`'s first word, else the switch's default (as the game: TDD's own `battle_vo_orders.bnk` has a
-       single default set, one actor, 97 lines, mostly units' own `selected_<unit>` lines); its actors by `land_units.category`
-       (all of a set's when it has none of the family); its selection lines `selection_vo`, `selected_vo_secondary`,
-       `selected_vo_tertiary` (values of `VO_battle_order`). `EditSet::add_order_line` (a new line under the actors: a container
-       like a line's, one take streaming a loose file), `sound_db::set_cell` (a unit's row with a column changed, written to
-       `db/<table>/wce_audio`). Tool: Audio Recipes > A unit's voice (units, set, actors, lines with Play / Add a take / select,
-       the unit's own first; a new selection line for the unit, its DB column set). Script command `audio_unit`. Gate
-       `audio_recipes` step 5. Seen in the app with TDD (2026-11-20). **done**; in game: 10.8.
-    5. Library: `SoundLibrary::merged` joins every bank's copy of a switch (values, children) and of an event (actions): a voice
-       bank holds partial copies of the switches above its own, a mod's bank may hold an event again; the resolver uses it.
-       Edits write every whole copy of an object (`put_object_copies`: an actor's switch is whole in two banks) and put new
-       children into each of their banks. Names from the DB tables (`NameSource::Db`: selection lines, voice-overs, events):
-       92 of TDD's 97 order lines get names. **done**
-    6. Decision trees laid out again (`hirc::tree_from_paths`, `tree_all_paths`, `tree_leaf`): a node's children together,
-       sorted by key, each child's block before the next sibling's; every tree of both games comes out byte for byte (gate
-       `audio_formats`). `EditSet::set_music_path` (what a music switch plays for a path of states; Audio Object lists the paths
-       with "play instead"), `EditSet::add_dialogue_value` and `recipes::new_voice_culture`: one of the engine's voice-over
-       cultures (10.9) given another's lines where it has none (new containers, the same files): `eastern_persian` from Roman,
-       94 events, 1,584 lines. Gate `audio_recipes` steps 6, 7. **done** (closes 8.3; a culture outside the engine's list is not
-       possible)
-    7. The other open items done: 5.1 / 7.1 imports folded to 5.0 (`encode::downmix_to_5`, test; Wwise's 6-channel setups are
-       not reproduced, quality 1 stays out); containers' random / sequence, shuffle, avoid last, weights (`set_container`, gate
-       `audio_edit`); a playlist entry's loop count; your own names (Audio Object, names.txt); Wwise 2014's property names (as
-       wwiser lists them, only volume / pitch / low-pass checked); trees show unsaved edits (`resolve_edited`); the timeline
-       shows the clip's length (its `.anim`) and frames drag on it. **done**
-    8. In game (user): `spike\ingame5\wce_audio_test_units.pack` (scratch), vanilla Attila, the pack enabled alone: every land
-       unit's `selection_vo` is `selected_wce_test`, a two-tone beep (880 then 660 Hz) added under all 68 actors of the four sets.
-       Select units in a custom battle: a beep means mod packs' voice banks, new streamed takes and a DB row override all work
-       (and answers "an added variation in game", 4.7). Result (user, 2026-11-20): **part of the selections beep**, the others
-       play the units' usual voices: the edited voice banks, the new takes and the DB row work in game (4.7's added variation:
-       done). Likely the game picks among the three selection columns (only `selection_vo` was set), or adds generic lines by
-       class. Pack 2: `spike\ingame6\wce_audio_test_units2.pack`, all three columns set: every selection beeping means the
-       three columns are all there is. The tool's new unit line now sets all three by default ("all three", or one column).
-       **pack 2: todo (user)**
-    9. The rest of the open items (user, 2026-11-20: "work on the rest of the list"). **done** but where said
-       1. Music transitions and stingers: a transition rule's source rule, destination rule and transition segment typed
-          (`Fade`, `SourceRule`, `DestinationRule`, `TransitionObject`: Wwise 2014's layouts; every music object of both games
-          still byte for byte; Attila's rules leave at the exit cue (220) or the next custom cue (159), fades 0 to 15 s);
-          `set_transition_rule`, `set_stingers`, `new_playlist_like` (a playlist set up like another with one new segment).
-          Audio Object: Transitions (leave at / fade out / curve, enter at / fade in / curve, the segment between), Stingers
-          (trigger, segment, when, not again for; remove; add), New music... on a music switch's paths. Gate `audio_music`
-          steps 5, 6. **done**. Segments with several tracks: none in the game (624 segments, 600 tracks): nothing to do.
-       2. Actions read field by field (`Action::parts` / `set_parts`): properties (14 delay, 15 fade time, 16 probability),
-          ranged modifiers, Play's fade curve and bank (all 2,219 name a bank there is), Set State / Set Switch's group and value
-          (all 85 named), other types' rest as bytes; every action of both games reads (gate `audio_formats`).
-          `set_action_property` (gate `audio_edit`); Audio Object edits delay and fade time. **done**. Effect plug-in
-          parameters stay bytes: each plug-in (reverb, delay...) has its own layout and no edit needs them.
-       3. The editor's Document / History (`crate::document::AudioDocument`, the tool's document "Audio edits"): the session
-          in the editor's command stack (snapshot commands sharing the sessions), so Edit > Undo / Redo, the History panel,
-          File > Save, the modified mark, the quit prompt and Revert work as for any document; the tool follows its history
-          (`sync_document`). Your names for objects are kept by ID in `audio/names.txt` (`#<id> <name>`; plain names are
-          hashed, as before). Unit test `labels_by_id`; script command `audio_volume <object> <dB>` (an edit from a script).
-          **done**; seen in the app: **todo** (no display when it landed).
-       4. Captures: the unit voice view with TDD (Aragorn's line, named lines), a container's settings, the timeline with
-          the clip's end (boar_charge, 0.53 s). **done**
-       5. The engine's music and voice groups: their IDs are constants in its code, the values fixed ("What the game lets
-          mods choose"). **done**
-       6. Audio Recipes: **removed** (user, 2026-11-20, after two rewrites: "it doesn't make sense to me"). The library under it
-          stays, gated (`wce_audio::recipes`, `unit_voices`, `trees`: gate `audio_recipes`); what only the panel offered (a
-          unit's own selection line, a culture's lines copied to another, a new sound for an animation from a file) has no UI
-          now: if wanted back, as actions in the place the object is (Audio Object, Audio Game Data), not a panel of its own.
-       7. The Inspector's Vorbis setup in words (user): "Encoding: Vorbis quality 3, tuned for 32 kHz" (the setup's hash on
-          hover), from `setup_allocs::SETUP_KINDS`: the oracle grid's 65 setups (Wwise 2014's own per quality and stereo, and
-          aoTuV's per rate, as the game's older files were encoded) with their quality range, stereo and rates. Unit test.
-          **done**
-       8. Still open: the UI button anomaly (4.7: no pack shadows the UI banks; test pack 2, 10.8, tells more); whether the
-          empty voice junction tables are read (a test pack). **todo**
+- **UI button sounds** (step 4, set aside by the user 2026-11-20): they do not change through a mod pack's banks (event or data banks),
+  while loose WEMs do; cause unknown (UI banks loaded before mods, another event, or cached media). Revisit with a runtime trace or a
+  non-UI event (a battle sound).
+- **Unit selection lines, pack 2** (user): with only `selection_vo` set, part of the selections beeped (pack `ingame5`): edited voice
+  banks, new streamed takes and a DB row do work in game. Pack `ingame6` sets all three selection columns: every selection beeping
+  would mean the three columns are all there is. The tool now sets all three by default.
+- Whether the empty voice junction tables (`voice_events`, `unit_voice_events_junctions`, `agent_voice_events_junctions`) are read (a
+  test pack with rows).
+- By ear (user): pause, seek by clicking, loop, volume, the bar reset at the end.
+- The editor document (10, "Audio edits") not yet seen in the app.
+- Wwise-faithful playback (blend layers mixed, sequences in order) is the Cinematic layer's, not chosen for v1.
 
 ## What the game lets mods choose (checked 2026-11-20, Attila's banks, DB and scripts)
 
@@ -518,7 +176,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
   voice-over cultures it knows (barbarian, barbarian_christian, barbarian_pagan, barbarian_generic, nomad, nomad_hunnic,
   nomad_hunnic_generic, eastern, eastern_desert, eastern_persian, eastern_generic, roman, roman_christian, roman_generic) and
   reports any other as `invalid_voiceover_culture`: no new culture, but cultures without lines of their own can get them
-  (10.6); it loads the order banks by fixed names (`Battle_VO_Orders_<Barbarian|Eastern|Nomad|Roman>[_Inf1-12|_Mtd1-7].bnk`):
+  (step 10, `recipes::new_voice_culture`); it loads the order banks by fixed names (`Battle_VO_Orders_<Barbarian|Eastern|Nomad|Roman>[_Inf1-12|_Mtd1-7].bnk`):
   new order lines go into those banks.
 - The engine's hashed IDs (2026-11-20, the FNV-1 IDs as 4-byte constants in `empire.retail.dll`): `music_culture` (5 places)
   with its values Barbarian, arabic and hunnic side by side (0x946792, 0x946799, 0x9467a0: a fixed table), `campaign_music_state`,
@@ -529,11 +187,7 @@ the Ogg <-> Wwise Vorbis converter, `snr.py`), `spike\` the encodes, `wwise\` th
   gets them.
 - Open lead: whether the empty voice junction tables are still read (a test pack with rows).
 
-## Open questions and risks
+## Open questions
 
-- Attila's Wwise runtime plays our aoTuV-encoded Vorbis WEMs (step 1.4.8, a streamed WEM replaced by a mod pack). Not yet tested:
-  media held in a bank's DIDX/DATA (needs the bank writer, step 4).
-- `event_data.dat`: the meaning of the events' f32 value and the difference between state groups A and B are still open.
-- Music editing is the hardest part to keep byte-identical; the oracle can generate reference objects for it.
-- pywarscape-sound (MIT) reports v112
-  round trips and PCM WEMs (32 kHz mono) that load in Attila: a fallback if the encoder fails, and a cross-check for the bank writer.
+- `event_data.dat`: the meaning of the events' f32 value and the difference between the two kinds of state groups.
+- pywarscape-sound (MIT) reports v112 round trips and PCM WEMs (32 kHz mono) that load in Attila: a cross-check for the bank writer.

@@ -1,44 +1,22 @@
 # One home for saves: the projects folder
 
-The editor has two places where it writes the user's work: the **projects folder** (`<data>/projects/<game>/`, from
+The editor had two places where it wrote the user's work: the **projects folder** (`<data>/projects/<game>/`, from
 `Settings::projects_dir`) and the **output folder** (`output_dir`, default `Documents\AttilaWeatherEditor\out` for Attila,
-`Documents\WCE\<game>\out` for the others). The output folder comes from the old weather editor, from before the projects folder existed.
-This plan drops it: **Save** always writes into the project, everything written for the game or for TEd goes under **File > Export**, and
+`Documents\WCE\<game>\out` for the others). The output folder came from the old weather editor, from before the projects folder existed.
+This plan dropped it: **Save** always writes into the project, everything written for the game or for TEd goes under **File > Export**, and
 throw-away build files get a folder of their own.
 
-State: planned 2026-11-08 with the user, steps 1 to 10 done the same day (how it works now: [editor.md, Saving and
-exporting](../editor.md#saving-and-exporting)). The Outliner (the other half of that discussion) was out of scope here; it went later with
-[outliner_removal.md](outliner_removal.md).
+State (2026-11-22): planned 2026-11-08 with the user, steps 1 to 10 done the same day, in master (how it works now: [editor.md,
+Saving and exporting](../editor.md#saving-and-exporting)). Nothing is left open. The Outliner (the other half of that discussion)
+was out of scope here; it went later with [outliner_removal.md](outliner_removal.md).
 
 ## Why
 
-- Two homes for the user's work, with different rules: `<projects>/loose` is mounted before every pack (`Editor::overlay_folders`), the
-  output folder is not. Only `Editor::output_copy` reads the output folder back (the weather preview and the Weather tool's open), so a
-  saved weather file is invisible to every other loader.
-- The output folder mixes real work (edited weather files, the weather database, UI layouts) with build output (launch staging, dry runs,
-  exports).
-- The save actions write to five kinds of place (the project, the output folder, a kit, a pack, the game's data folder), and the menus
-  don't say which.
-- Its default name refers to an app that no longer exists, and the setting is one more thing a new user has to understand.
-
-## Where things were written (before this plan)
-
-| Action | Writes to |
-|---|---|
-| Tile > Save, Map (terrain) > Save, Prefab > Save | `<projects>/assembly_kit/raw_data/...` |
-| UI skins, saved layouts, pictures | `<projects>/loose/...` (mounted) |
-| Weather file > Save (opened from the packs) | `<output>/<path in the packs>` (`XmlFileDocument::default_save_path`) |
-| Weather database > Save | `<output>/warscape_asset_variation_db/warscape_asset_variation_db.{xml,bin}` (`picker.rs`) |
-| UI layout > Save (opened from the packs) | `<projects>/loose/<path in the packs>` already (`UiDocument::default_save_path`), but not indexed again after a save |
-| UI > Export XML | `<output>/ui_xml/<name>.uixml` |
-| Tile > Save as exported tile, `save_exported` | `<output>/...` (exported tile folders and the tile database) |
-| Terrain export | `<output>/...` (the map's folder and pack, `wce_terrain_tool::export`) |
-| Launch staging, dry runs | `<output>/launch/<id>/game`, `<output>/launch/terrain`, `<output>/dry_*` |
-| File > Open file / Save as | dialogs start in the output folder |
-| Weather / UI Save of a file opened from disk | back in place |
-| Save for Assembly Kit (tile, prefab) | the chosen kit's `raw_data` |
-| Tile > Save to mod pack, UI > Export mod pack | the chosen `.pack` |
-| Launch in game (launch pack) | `<game>/data/wce_launch.pack`, removed afterwards |
+Two homes for the user's work with different rules (`<projects>/loose` is mounted before every pack, the output folder was not, so a
+saved weather file was invisible to every loader but the weather preview); the output folder mixed real work with build output; the save
+actions wrote to five kinds of place without the menus saying which; the setting's default named an app that no longer exists. Before
+this plan, weather files, the weather database, UI XML exports, exported tiles, the terrain export, launch staging and dry runs went to
+the output folder, and the file dialogs started there.
 
 ## Where they are written now
 
@@ -47,7 +25,7 @@ exporting](../editor.md#saving-and-exporting)). The Outliner (the other half of 
 | Tile, Map, Prefab > Save | `<projects>/assembly_kit/raw_data/...` (unchanged) |
 | Weather file, weather database, UI layout > Save (opened from the packs) | `<projects>/loose/<path in the packs>` |
 | UI skins, saved layouts, pictures | `<projects>/loose/...` (unchanged) |
-| **Revert to game's version** (new) | deletes the loose copy, the packs' file shows again |
+| **File > Revert > To the game's version...** (new) | deletes the loose copy, the packs' file shows again |
 | Launch staging, dry runs | `<projects>/build/...` (throw-away, no setting) |
 | File > Export > For Assembly Kit | the chosen kit's `raw_data` |
 | File > Export > As exported tile | a chosen folder |
@@ -67,33 +45,19 @@ Each Export entry asks for its destination and remembers the last one per game (
 - Saves stay minimal edits: only where the bytes go changes. The weather gates (`cross_tool_check`, `span_diff.py`) keep comparing the
   saved file with the packs' file.
 
-## Steps
+## As built (2026-11-08)
 
-1. **The VFS sees a save at once.** `Vfs::mount` indexes the files when it mounts (`Vfs::files`), so a new file in `loose/` is not seen
-   until a remount. Add a way to add or drop one loose path in the index (or remount only the loose folders) and call it after every save
-   into `loose/` and every revert. Whatever reads through the VFS (the weather preview, the tile tool's weather list, the launch's
-   `needs`) then sees the edit.
-2. **Weather files save into `loose/`.** `XmlFileDocument` gets the loose folder instead of the output folder. The Weather tool's `open`
-   and `Editor::set_weather_preview` read through the VFS alone (`loose/` wins over the packs), so `output_copy` and `copy_to_output` go.
-   The document's source label says "project" when the file came from `loose/`.
-3. **The weather database saves into `loose/warscape_asset_variation_db/`.** The picker's Open / Save / Save As / Convert dialogs start
-   there.
-4. **UI layouts from the packs save into `loose/`** (`UiDocument::default_save_path`).
-5. **Revert to game's version**: a File menu entry (and an Outliner context entry, until the Outliner went) for a document whose file is a loose copy of a packs'
-   file. It asks first, deletes the copy, refreshes the VFS (step 1) and reopens the document from the packs.
-6. **Build output into `<projects>/build/`**: the tile and terrain launch staging and the dry runs. It is throw-away: nothing reads it back
-   between runs.
-7. **File > Export submenu.** Move Save for Assembly Kit, Save as exported tile, Save to mod pack, Export mod pack, Export XML and the
-   terrain export under it. Each asks for a destination (the kit prompt stays for kits). Their script commands keep their names and take
-   the destination as their argument, as `save_exported [folder]` already does.
-8. **Remove the setting.** `GameSettings::output_dir`, the top-level legacy field, `WCE_OUTPUT_DIR`, the Weather tool's Settings menu
-   field, the `output_dir` command and the Folders page entry go. Open file and Save as start in the projects folder.
-9. **Migration, once per game.** If the old output folder (the setting's, or the default) holds files under a packs' path, offer to move
-   them into `loose/`. A file that `loose/` already has stays where it is and is listed in the log. Build leftovers (`launch/`, `dry_*`)
-   are not moved. Until the release, like the other migrations in `settings/mod.rs`. (Removed 2026-11-21 for the release, with them.)
-10. **Scripts and docs.** `scripts/cross_tool.txt` and `scripts/weather_smoke.txt` use the output folder; they move to the projects
-    folder (`$WCE_SETTINGS_DIR` already gives scripts a throw-away one). Update `docs/editor.md`: the Weather tool section, Save All, the
-    settings table, and the Save All row that still says tiles save as `tile.ted` with a `.bak` (tiles save as `tile.wce` in the project).
+1. The VFS sees a save into `loose/` (and a revert) at once, without a remount.
+2. to 4. Weather files, the weather database (`loose/warscape_asset_variation_db/`) and UI layouts opened from the packs save into
+   `loose/` (`XmlFileDocument::default_save_path`, `UiDocument::default_save_path`); the Weather tool and the weather preview read through
+   the VFS alone. A document's source label says "project" when the file came from `loose/`.
+5. Revert to the game's version (`project_prompts.rs`): asks first, deletes the copy, refreshes the VFS, reopens from the packs.
+6. Launch staging and dry runs go into `<projects>/build/`: throw-away, nothing reads it back between runs.
+7. File > Export: For Assembly Kit, As exported tile..., To mod pack..., XML... (UI), the terrain export; each asks for its destination
+   and remembers the last one per game. The script commands kept their names and take the destination as their argument.
+8. The `output_dir` setting, `WCE_OUTPUT_DIR` and the `output_dir` command are gone. Open file and Save as start in the projects folder.
+9. The one-time migration of the old output folder into `loose/` was removed on 2026-11-21 for the release, with the other migrations.
+10. Scripts (`cross_tool.txt`, `weather_smoke.txt`) and docs/editor.md updated.
 
 ## Launch in game
 
@@ -116,5 +80,5 @@ matters for a tile without a weather file.
 
 ## Open points
 
-- **Several tiles drawn at once** (from the Outliner discussion): not wanted. One document per tool, and the Outliner goes:
-  [outliner_removal.md](outliner_removal.md).
+- None. **Several tiles drawn at once** (from the Outliner discussion): not wanted; one document per tool, and the Outliner went
+  ([outliner_removal.md](outliner_removal.md)).

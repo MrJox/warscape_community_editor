@@ -1,14 +1,14 @@
 # One document per tool, no Outliner
 
-The editor holds any number of documents of any tool at once (`DocumentManager`: a list, one of them active), and the shared **Outliner**
-panel lists them all, each with its tree. This plan makes it **one document per tool**: opening a tile closes the open tile, opening a
+The editor held any number of documents of any tool at once (`DocumentManager`: a list, one of them active), and the shared **Outliner**
+panel listed them all, each with its tree. This plan makes it **one document per tool**: opening a tile closes the open tile, opening a
 weather file closes the open weather file, and so on. Documents of *different* tools still live side by side (a tile and a weather file;
 a tile and the Prefab tool's stage). The Outliner goes with it: what it did for documents moves to the File menu and the menu bar, and
 its trees are dropped.
 
-State: planned 2026-11-08 with the user, steps 1 to 9 done the same day (how it works now: [editor.md, Cross-tool
-composition](../editor.md#cross-tool-composition-phase-7)). It closes the save system plan's open point ("several tiles drawn at once":
-not wanted).
+State (2026-11-22): planned 2026-11-08 with the user, steps 1 to 9 done the same day, in master (how it works now: [editor.md,
+Cross-tool composition](../editor.md#cross-tool-composition-phase-7)). It closes the save system plan's open point ("several tiles drawn
+at once": not wanted). Left: the open point at the end.
 
 ## Why
 
@@ -53,53 +53,19 @@ not wanted).
   the `documents` command's output only.
 - `outline_items` (what the viewport outlines for a selected item) has nothing to do with the Outliner and stays.
 
-## Steps
+## As built (2026-11-08)
 
-1. **`DocumentManager` keyed by tool.** `of_tool(tool) -> Option<DocumentId>` (the tool's document, stand-ins excluded) replaces
-   `active` / `active_id` / `set_active`; `active()` takes the active tool's id (or the editor wraps it: `Editor::active_document`).
-   `add` refuses a second non-stand-in document of a tool (an error, not a silent replace: the replace is the editor's, with its
-   prompt). `order`, `unsaved`, `save_all`, `close` stay (the list is now at most one per tool plus the stand-ins). Rewrite the
-   multi-document part of `wce_editor_core/tests/editor_check.rs`: a second document of a tool is refused, documents of two tools
-   coexist, the stand-in rules unchanged.
-2. **The editor's open replaces.** `open_path_with`: when the claiming tool has another document, close it through the prompt (a new
-   `PromptKind::Replace`, or `Close` with a pending open), then open; the old one closes only after the new one opened. Every other place
-   a tool adds a document goes through the same path: the Tile tool's New tile, kit and exported-tile opens (`open_exported`) and the
-   tile browser; the UI tool's folder open; the Terrain tool's `adopt` and `open_now` (the map is read on a worker for up to a minute
-   and a half: ask before the read starts, replace in `adopt`); the Prefab tool's `open_prefab` (already closes its stage: move it onto
-   the shared path). Scripts: `open <path> [save|discard]` (and the tools' own open commands) fail when the tool's document has unsaved
-   changes and no answer, as `close` does; `open_prompt <path>` opens the prompt as the menu would, `answer` answers it.
-3. **The tools drop their "which one" rules.** Tile: `document_id` becomes the owner tool's document (Tile or Prefab), the `busy` list
-   of open project folders (`tool.rs:1290`) and the loops of `prefab_panel.rs` / `prefab_tool.rs` over `docs.order()` work on the one
-   tile and the one stage. UI: `active_doc`, `export_pack` and the reload loop (`tool.rs:1469`, `1532`) on the one layout. Terrain: one
-   map: `cameras` becomes one saved camera (or goes), the view follows the tool's document, `Job::Built` checks it is still that one.
-   Weather: `env_doc` is the tool's document when it is an environment. Remove the `set_active` calls after selections
-   (`viewport.rs:952`, the tile tool's `select_elem`, `tile_select_all`, the Scene panel's row click, the Prefab tool).
-4. **The cross-fade goes**: the combo and slider (`wce_weather_tool/src/tool.rs` around line 308), `blend_doc` / `blend_t` and their use
-   in `update`, the `blend` command (`commands.rs:150`), and its lines in `scripts/weather_smoke.txt` (which opens the rain environment
-   after the dry one: the second open now replaces the first, `assert_documents 3` becomes 2: the environment and the sample map).
-5. **The Outliner panel goes.** `panels::outliner` and `draw_node`, `Panels::outliner` and its View menu entry, `"outliner"` in the
-   `panel` / `show_panel` lists (`commands.rs:70`, `822`, `1114`), the `Outliner` dock entry of the base layout (`tool.rs:57`) and of the
-   Tile, Weather, UI and Terrain layouts (the Terrain tool's left slot keeps its Map panel). The `layer_visible` command goes (it was the
-   eye); `assert_layer_visible` stays for tests of the tools' visibility rules. The `activate` command goes: `scripts/cross_tool.txt`
-   uses `tool weather` / `tool tile` instead. Users' saved layout files may still name an Outliner window: Dear ImGui ignores it, and
-   `layout reset` gives the new default.
-6. **The menu bar label and the window title** (decision above), with the dirty colour from `theme::modified`.
-7. **The trees go from the documents.** `OutlinerNode`, `Document::outline`, `outline_cached`, `invalidate_outline`, `outline_stamp` and
-   `DocumentCore::outline`; the implementations in `wce_tile_editor` (`view.rs:2091`, `mod.rs:1055`), `wce_weather`
-   (`xml_file_document.rs:330`, `sample_map_document.rs:178`), `wce_ui_tool/src/document.rs:279`, `wce_terrain_editor/src/document.rs:380`;
-   `SpliceEffect::Touched::outline` and what feeds it in `tile_document/commands.rs` and `edits.rs` (it only told the outline stamp to
-   move). Tests and examples: `wce_tile_editor/tests/tile_document.rs` finds pieces through `piece_item` instead of the outline;
-   `doc_dump` and `weather_dump` drop their outline column (the C++ comparison is retired and its code gone, so nothing else changes).
-8. **Docs.** `docs/editor.md` (the panels row, the documents paragraph at line 62, the activate / Outliner sentence at 149, the Save
-   All, Dirty markers, Close prompts and Outliner rows, the Revert paragraph, the default layout at 202: describe one document per tool,
-   the replace prompt, the menu bar label); `docs/ui_editor.md:40`; `docs/rust_port_app_and_gates.md` (the shell's panel list);
-   `docs/formats/tile_ted.md:68` (pieces: no longer outliner children, commands only); `docs/plans/tile_ted_parity.md` (the "shared
-   Outliner" notes); `docs/plans/terrain_editor.md` (the entities: no tree, viewport picking); `docs/plans/save_system.md` (step 5's
-   Outliner context entry, the open point answered). `docs/performance.md` keeps its history.
-9. **Scripts and gates.** Go through the `scripts/*.txt` that open more than one file of a tool (found so far: `weather_smoke.txt`;
-   `cross_tool.txt` opens a tile and an environment, which is fine; `tile_extracted.txt` reopens the same tile, which switches to it) and
-   the ones using `activate`, `layer_visible`, `blend` or counting documents (`assert_documents`). Run the gates and the scripts touched
-   (`--filter` sized, per the usual rule) once all steps are in.
+- `DocumentManager::of_tool` replaced the manager's own active document; `add` refuses a second non-stand-in document of a tool. The
+  active document is the active tool's, else its stand-in.
+- Every open goes through the editor's replace (`Editor::clear_to_replace`, the Save / Discard / Cancel prompt); scripts: `open <path>
+  [save|discard]`, `open_prompt`, `answer`. The tools' own opens ask before they start (the Tile tool's `open_tile`, the Prefab tool's
+  `open_prefab`, the Terrain tool's `start_open`, `open_now` and `adopt`).
+- The tools' "which one" rules, the `set_active` calls, the cross-fade (`blend_doc` / `blend_t`, the `blend` command), the Outliner panel,
+  the `layer_visible` and `activate` commands, and the trees (`OutlinerNode`, `Document::outline` and its cache) are gone. The building
+  pieces' code stays, reached through `tile_inspect <elem> [piece]` and `tile_edit ... piece <n>`. `assert_layer_visible`, and
+  `assert_modified` / `assert_history` with an optional document, are the scripts' checks.
+- The menu bar's `[Tool] title *` label and the OS window title (`WCE - [Tile] aa *`), amber while unsaved (`theme::modified`).
+- Docs and scripts updated (`weather_smoke.txt`, `cross_tool.txt`, `tile_copy_paste.txt`, `tile_roundtrip.txt`).
 
 ## Found on the way
 

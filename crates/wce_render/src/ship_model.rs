@@ -5,7 +5,7 @@
 //! not traced): its origin is at the waterline.
 //!
 //! Its motion: on the battle sea, [`ShipModel::afloat`] fits the ship to the waves under its buoyancy spheres (the logic's `bobbies`); its
-//! oars row with their `models_oars` clips ([`ShipModel::oar_at`]).
+//! oars row with their `models_oars` clips ([`ShipModel::part_at`]).
 
 use std::collections::HashMap;
 use std::io::Cursor;

@@ -2,7 +2,7 @@
 
 Status legend: **verified** (disassembly of the shader and/or empire.retail.dll), **assumption** (to check against a memory dump with `scripts/re/dump_cbs.py`), **todo**.
 
-## Frame (as implemented in `src/render/renderer.cpp`)
+## Frame (the first port's order; the passes are now in `wce_render`'s `renderer/` modules)
 
 | # | Pass | Game shader(s) | Notes |
 | --- | --- | --- | --- |
@@ -17,7 +17,8 @@ Status legend: **verified** (disassembly of the shader and/or empire.retail.dll)
 | 8 | Tone map | constant_tone_mapper_with_bloom | linear output; S-curve LUT (see below) |
 | 9 | To screen | `hdr_to_screen.hlsl` ps30_main_high | fog of war (off), `g_brightness`, gamma, then `colour_matrix` in gamma space |
 
-Not yet: shadow cascades (split count 0 = unshadowed), SSAO (white), clouds (`cloud_plane.hlsl`), sun (`sun.hlsl`), precipitation/VFX, DOF, terrain/ground.
+Added since (sections below): shadow cascades, SSAO, clouds (`cloud_plane.hlsl`), sun (`sun.hlsl`), lens flare, VFX, DOF, the environment
+specular pass, terrain and grass.
 
 ## G-buffer (from rigidstandard ps30_gbuffer and directionallight)
 
@@ -51,7 +52,7 @@ Matrices: clip.i = dot(pos, row i) — row-major upload, column-vector maths.
 | `colour_matrix` | **verified** fn 0x172c100: Overlay * Hue * Saturation(Haeberli 0.3086/0.6094/0.0820) * Contrast(pivot 0.5) * Brightness(x engine factor [this+0xe0]); hue rotation sign layout assumption |
 | S-curve LUT | **verified** 256x1 RGBA16F: per channel the cubic Bezier (0,0), (1/3, low_tones_bias_c), (2/3, high_tones_bias_c), (1,1), 5120 samples binned to the nearest texel (fn 0x174a780, upload fn 0x17940b0, biases from the HDR block in fn 0x17284a0). lock_rgb_relative_tones only links channels in the engine debug panel |
 | colorimetry gamma | assumption 2.2 (graphics option) |
-| **HDR light scale** | **key open item**: with `g_hdr_on` the lighting and fog shaders multiply light colours by 0.004 (1/250); ambient by 360*0.004. So the engine's `sun_colour` constant is ~250x the plain linear(colour)*scale. Exact factor: memory dump |
+| **HDR light scale** | **verified** (dumps, "Point lights" below): with `g_hdr_on` the lighting and fog shaders multiply light colours by 0.004 (1/250); ambient by 360*0.004. The engine's `sun_colour` is linear(colour) * scale * 5000 (`MAX_HDR_SUN_COLOUR_SCALE` 25000 * 0.2) |
 
 ## Building mesh materials (2026-10-18)
 
@@ -75,8 +76,8 @@ ShipAmbientmap 530 (all drawn before), and:
 - **Weighted** (the battering rams' `_weighted_anim` models, placed by no tile): skinned. Not drawn.
 - **Water** (Uk8 vertices: `garden_fountain`, `garden_pool_1`, `tannery`, `water_plane`): with the water planes.
 
-Note: the editor draws a building at its `destruct01` pieces unless its destruction level is edited in the Property Editor; the
-`destruction_level` saved in tile.ted (321 damaged decal buildings on eastern_city_a/medium) is not applied when the tile opens.
+Note: the editor draws a building at the pieces of the `destruction_level` saved in tile.ted (321 damaged decal buildings on
+eastern_city_a/medium), or of the level edited in the Inspector.
 
 - Placeholder textures (verified 2026-10-18, the material resolver fn 0x1186c880, every rigid material): a texture path containing
   `/test_gray` loads `CommonTextures/default_grey`, `/test_black`, `/test_mask` and `/test_gloss` `default_black`, `/test_white`
@@ -143,20 +144,20 @@ A battle building is a folder of pieces; `<name>_pieceNN_destruct01.rigid_model_
 
 ## Verified against a memory dump (2026-10-06, med_sp_land_day_dry.environment, tdd_pack6)
 
-`cli/env_vs_dump` compares the editor's mapping with `scripts/re/dump_cbs.py` output. All file-driven values match:
+`wce_render`'s `env_vs_dump` example compares the editor's mapping with `scripts/re/dump_cbs.py` output. All file-driven values match:
 sky (pow 2.2 * scale * 7.5; horizon decay *-0.5, circumsolar *-10, backscatter as is), sun colour (pow 2.2 * scale * 5000),
 sun direction (cos el sin az, sin el, cos el cos az), fog (argb = r,g,b,a; start - precipitation modifier; top >= 0.001),
 colour_matrix, water colours, colorimetry (= gfx_gamma_setting / gfx_brightness_setting from preferences.script.txt).
 The game's live tone mapper is basic_tone_mapper (constant_tone_mapping_buffer is all zero).
 
 Open:
-- Ambient cube when use_custom_ambient_cube_colours = false (276 files): not the XML colours, and not a plain integral
-  of the sky (per-channel ratios differ). set_ambient is fn 0x178ab70 (6 colours via device vfunc +0x260), reached
-  through vtable 0x1c99868. Values are multiples of 0.025.
-  Dry dump (hdr_scaler 3.45): lr (3.45 3.75 3.7)(2.3 2.575 2.65), tb (3.175 3.7 3.9)(0.8953 0.8701 0.8323),
-  fb (1.925 2.25 2.45)(2.15 2.45 2.55). lr[0].x equals ambient_cube_hdr_scaler, so this is probably another colour
-  source times the same scaler; ambient_scale (unused by custom cubes) may belong to this path.
-- S-curve LUT fill code; shadow cascades (dump: 4 splits, 2048 atlas, fade 0.1/0.296), clouds, sun, SSAO.
+- Ambient cube when use_custom_ambient_cube_colours = false (276 files; solved 2026-10-08, "Non-custom ambient cube" below): not the XML
+  colours, and not a plain integral of the sky (per-channel ratios differ). set_ambient is fn 0x178ab70 (6 colours via device vfunc
+  +0x260), reached through vtable 0x1c99868. Values are multiples of 0.025. Dry dump (hdr_scaler 3.45): lr (3.45 3.75 3.7)(2.3 2.575
+  2.65), tb (3.175 3.7 3.9)(0.8953 0.8701 0.8323), fb (1.925 2.25 2.45)(2.15 2.45 2.55). lr[0].x equals ambient_cube_hdr_scaler, so this
+  is probably another colour source times the same scaler; ambient_scale (unused by custom cubes) may belong to this path.
+- S-curve LUT fill code; shadow cascades (dump: 4 splits, 2048 atlas, fade 0.1/0.296), clouds, sun, SSAO (all solved or drawn since:
+  sections below).
 
 ## Second and third dumps (2026-10-07, rain and snow battles)
 
@@ -166,7 +167,7 @@ Every file-driven lighting_VS_PS / skydome_PS / fog_VS_PS / tone-mapper value no
 
 ## Clouds (2026-10-07)
 
-Rebuilt from the DLL plus the live objects in the memory dump (`src/render/clouds.cpp`):
+Rebuilt from the DLL plus the live objects in the memory dump (`wce_scene` `clouds.rs`):
 - init fn 0x18e5b10: every cell of a (grid_size+2)^2 grid spawns a cloud when `rand <= cloud_density`.
 - spawn fn 0x18f0bf0: jitter, cloud rotation (+-cloud_rotation*pi), template, per-element sprites (4 rands each),
   element offset * cell size, angular size min(scale, 4) * cell angle, texture_row/column/index 0 = random.
@@ -179,7 +180,7 @@ Open: drift with cloud_velocity (update body not decoded), g_wind_alignment, ble
 
 ## Open-item investigation (2026-10-07, second pass)
 
-S-curve (tone mapper LUT), not yet located:
+S-curve (tone mapper LUT), not located in this pass (solved the next day, below):
 - Two LUT textures: `HDR_CONSTANT_TONE_MAP_VIEW_COMMON SCurve Texture` (fn 0x178c710, view +0x80, dirty byte +0x84) and
   `HDR_DYNAMIC_TONE_MAP_VIEW SCurve Texture` (fn 0x17659b0, view +0x88); both 256x1, engine format 0x1e.
   ps_basic_tone_mapper (the variant the game uses) samples it per channel at (luma-normalised colour, 0.5).
@@ -192,7 +193,7 @@ S-curve (tone mapper LUT), not yet located:
 - Ruled out: Perlin bias (no ln 0.5 constants), GPU generation (no generator shader), the float3->texture path
   (fn 0x177cc70/0x18d7cb0, used only by the CPU environment cube). The LUT bytes are not in either dump.
 
-Ambient (use_custom_ambient_cube_colours = false), not yet located:
+Ambient (use_custom_ambient_cube_colours = false), not located in this pass (solved the next day, below):
 - set_ambient fn 0x178ab70 <- fn 0x177cfe0 (copies 6 float3 from a struct at +0x18..+0x5c) <- fn 0x177d090 =
   vtable 0x1c997d0 slot +0x98 (35 call sites in 0x1700000-0x1960000; none tests the custom flag directly).
 - fn 0x18f0a70 averages the six faces of the CPU-generated environment cube (fn 0x18d7d20 per face: sky through
@@ -211,9 +212,8 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
 - Ambient apply fn 0x178a300: if use_custom_ambient_cube_colours or no computed cube: linear(XML) * hdr_scaler; else
   computed * ambient_scale with lr = (+x, -x), tb = (+y, bottom), fb = (+z, -z). Dry dump: computed * 0.8 matches every
   cbuffer value exactly. Blending two lighting blocks (fn 0x175f4e0) mixes custom and computed cubes the same way.
-- Editor: implemented with the sky cube's face averages. The game's cube also contains clouds, sun and terrain, so the
-  editor's values differ (dry file: game top (3.97, 4.63, 4.88) vs editor (1.55, 2.99, 4.75)); next step is to render
-  clouds and ground into the editor's environment cube.
+- Editor: first implemented with the sky cube's face averages (dry file: game top (3.97, 4.63, 4.88) vs editor (1.55, 2.99, 4.75)).
+  What the game's cube holds was settled on 2026-10-30 ("The cube at max settings" below): the sky and the clouds, no scene.
 
 ## S-curve and HDR properties (2026-10-08, solved)
 
@@ -253,8 +253,9 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
 
 ## Environment cube (2026-10-08)
 
-The editor now renders EnvMapGen itself (Renderer::render_env_cube): six 256^2 faces from (0, 50, 0) through the
-G-buffer, sky, cloud, directional-light and fog passes (no shadows, XML ambient while rendering, sky cube as
+Superseded on 2026-10-30 ("The cube at max settings" below: the cube is the sky and the clouds only). At the time the editor
+rendered EnvMapGen (Renderer::render_env_cube) as six 256^2 faces from (0, 50, 0) through the G-buffer, sky, cloud, directional-light
+and fog passes (no shadows, XML ambient while rendering, sky cube as
 s_environment). The result is s_environment for reflections and the source of the non-custom ambient cube.
 Dry dump comparison (game computed cube = cbuffer / ambient_scale 0.8):
 
@@ -269,13 +270,13 @@ Dry dump comparison (game computed cube = cbuffer / ambient_scale 0.8):
 So the game skips the sun disc. Clouds are needed for the top face but the editor's clouds add about twice the game's
 amount (the dump's cloud layout is random and unknown; horizon_alpha_start's remap is still an assumption). Open.
 
-Follow-up (2026-10-08): the dry dump's own 743 cloud sprites (extracted from memory, loaded with AWE_CLOUD_SPRITES) give
-the same editor cube (+y 7.19 7.13 6.14) as the editor's random field, so the gap is not the cloud layout. Lighting the
-clouds with the previously computed ambient instead of the XML ambient makes it brighter (8.7), not dimmer. The cloud
-PS brightness depends on ambient_cube_tb[0], sun_colour and camera_position (cloud_plane.hlsl ps30_main); what the
-game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvMapGen pass.
+Follow-up (2026-10-08): the dry dump's own 743 cloud sprites (extracted from memory, loaded with an environment variable of the C++
+editor, since removed) give the same editor cube (+y 7.19 7.13 6.14) as the editor's random field, so the gap is not the cloud layout.
+Lighting the clouds with the previously computed ambient instead of the XML ambient makes it brighter (8.7), not dimmer. The cloud PS
+brightness depends on ambient_cube_tb[0], sun_colour and camera_position (cloud_plane.hlsl ps30_main); what the game feeds it during
+EnvMapGen is still unknown. Needs a GPU capture of the EnvMapGen pass.
 
-### Env-cube clouds: EnvMapGen scene render (in progress)
+### Env-cube clouds: EnvMapGen scene render (2026-10-08; settled 2026-10-30, below)
 - fn 0x1192b640 (EnvMapGen per-face scene) calls fn 0x1192a900 twice (cloud planes, object +0x620; guarded by +0x598/+0x59c), last argument 0.
 - fn 0x1192a900: if byte[1]==0 init (fn 0x118e5b10); if dirty byte[0] set: timer +0xc += dt; when timer > interval +0x8 and
   (+0x48)->+0xec * k > threshold, for each of +0x44 columns LCG (0x343fd/0x269ec3) roll <= probability +0x4 spawns (fn 0x118f0bf0), timer reset;
@@ -365,7 +366,8 @@ game feeds it during EnvMapGen is still unknown. Needs a GPU capture of the EnvM
 ### Env-cube clouds: top face only (2026-10-08)
 - Per-face experiment (dry file): without clouds the side faces are +x 4.11 5.07 4.95, -x 2.13 2.92 3.01, +z 2.46 3.29 3.39,
   -z 2.72 3.58 3.64 against the game's 4.31 4.69 4.63, 2.88 3.22 3.31, 2.41 2.81 3.06, 2.69 3.06 3.19 (within 10-15%), while
-  clouds on every face put them 100% off. The editor now draws the env-pass clouds on the +y face only.
+  clouds on every face put them 100% off. The editor then drew the env-pass clouds on the +y face only (superseded on 2026-10-30, below:
+  the editor's cloud sprites were four times too big).
 - Top face is still 7.21 7.16 6.16 against 3.97 4.63 4.88 (cloud-free 1.55 2.99 4.75). A fit of the cloud lighting needs
   sun scale 0.46/0.58/0.75 per channel (ambient on), i.e. not a uniform factor, so the top-face cloud colour or the game's
   cloud-free sky differs. Open.
@@ -592,11 +594,11 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
   - The rendering: fn 0x117f5b00 (the queue of a decal mesh) copies the decal's world matrix into its instance (fn 0x117c8400, 0x17
     floats: the three rows, the size and parallax from the decal, ...), so the refitted matrix is what the box is drawn with.
   - The editor does the same (2026-11-16): a decal's box is refitted when its entity is made or refreshed (`wce_tile::decal_refit`,
-    `Tile::refit_decal`: the tile's decals and the roads' generated ones), and the G-buffer pass marks every model but trees and ropes
-    for decals (`DECAL_RECEIVER`). On wce_decal_test the ruts paint the ground and not the bridge's planks, the house's roof is clean, as
-    in game; on wce_bridge_test a generated bridge's deck takes its road's decals (V7's 0.7 boxes, kept). Not done: the ground
-    surfaces of the measure (they lie at about the ground's height, so they would raise a box's top by little), and the map-bounds check
-    (every decal is refitted).
+    `wce_tile_editor`'s `Tile::refit_decal`: the tile's decals and the roads' generated ones), and the G-buffer pass marks every model but
+    trees and ropes for decals (`DECAL_RECEIVER`). On wce_decal_test the ruts paint the ground and not the bridge's planks, the house's
+    roof is clean, as in game; on wce_bridge_test a generated bridge's deck takes its road's decals (V7's 0.7 boxes, kept). Not done: the
+    ground surfaces of the measure (they lie at about the ground's height, so they would raise a box's top by little), and the map-bounds
+    check (every decal is refitted).
 
 ## Shadow cascades: units and pull-back (2026-10-31, the coast memory dump)
 
@@ -633,7 +635,7 @@ For a pixel at world position P, the camera at E, d = |P - E| and r = |(P - E).x
 - alpha = saturate(f * smoothstep(min(r / max(clear_distance, 0.001), 1))): clear_distance (metres, horizontal) fades the whole fog in
   from the camera; in the charlemagne files it is 2500 to 2600 m, so it shapes the fog over the ground more than the distance term.
 
-The Weather tool's fog rings (`wce_weather_tool` `visual.rs` `fog_opacity`) evaluate this over the ground.
+The Weather tool's fog rings (`wce_weather_tool` `visual.rs`, through `wce_scene::environment::fog_opacity`) evaluate this over the ground.
 
 ## The campaign frame (2026-11-19, RenderDoc)
 

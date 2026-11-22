@@ -14,7 +14,7 @@ two at once; any bare argument pops a modal dialog and hangs. CA's tile example:
 ## Verified
 
 - Processor names follow the plugin DLL names: `Tile` (BOB_Tile), `Vegetation` (BOB_Vegetation) work for battle tiles; `Terrain` actions are named in Terry's real log.
-- A scratch kit (copy of `binaries` + one tile + helpers, ~900 MB, `tile_editor/scratch/kit1`) runs BOB headless in about 40 s for a 1x1 tile. Created with `bob_run.py scratch --tile-deps --raw terrain/tiles/battle/<tile>` (the kit1 copy was made before the flag existed and then completed by hand).
+- A scratch kit (copy of `binaries` + one tile + helpers, ~900 MB, `tile_editor/scratch/kit1`) runs BOB headless in about 40 s for a 1x1 tile. Created with `bob_run.py scratch --tile-deps --raw terrain/tiles/battle/<tile>` (a spike script, not in this repository) (the kit1 copy was made before the flag existed and then completed by hand).
 - Kit requirements found by elimination: `raw_data/db` (489 MB DB schema) and `raw_data/EmpireDesignData`, otherwise BOB exits 1 after 20 s with empty logs; `working_data/terrain/vegetation/battle/grass/max_grass.xml` for Vegetation.
 - Consumer list: the tile's `tile.ted` plus its raw files; processors `Tile`, `Vegetation`, `Battle` together gave 15 actions (Create tile agf, Blendmap, Prepare/Generate Vegetation x8, Generate Grass, Cleanup, Tile).
 - **The Terrain processor headless** (2026-11-02, this machine; scratch kit `I:\wce_scratch\attila\assembly_kit`, run on a hidden desktop
@@ -51,7 +51,7 @@ So the oracle is usable: every byte of the main outputs is reproducible; the onl
 
 - Why `hf_water_map.data` differs from the kit's copy (stale raw inputs in the kit, or a river spline / water input missing in the scratch kit).
 - Which consumer triggers `tree_list.bin`, `building_list`, `civilian_*.bin`, `definition.xml`, `non_terrain_outlines.xml`, `prop_marker.markers` (TEd's stage-A export or other actions).
-- `Battle` processor target (`groupformations.bin`), `Campaign`, and `Terrain` (out of scope for now: tilemaps).
+- `Battle` processor target (`groupformations.bin`) and `Campaign` (`Terrain` was run headless 2026-11-02, above).
 - Campaign tiles: same recipe with `raw:/terrain/tiles/campaign/` in the campaign kit and `TileDatabase = terrain\tiles\campaign\_tile_database`. Not run yet.
 
 ## Who reads and writes what (DLL strings, 2026-10-06)

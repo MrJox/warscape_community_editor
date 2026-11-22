@@ -34,10 +34,10 @@ and the per-particle curves of the VFX (`ranged_property`).
 
 ## VFX (`vfx/*.xml`)
 
-UTF-16 LE with BOM, CRLF (one shipped file has an odd byte count and is carried as is). `shader_library`
-(`fx/particle_vfx_library.hlsl`), `emitters`, `behaviour_chains`, `effect_render_stacks`; `property`, `ranged_property` (curves),
-`modifier`, `texture_property`; `vfx_references` to library effects (e.g. `library_vfx_weather_snow`). Weather VFX: `att_bel_weather_*`,
-`weather_vfx_*`, `campaign_clouds_*`, `campaign_mountain_cloud`.
+UTF-16 LE with BOM, CRLF (one shipped file has an odd byte count and is carried as is). `shader_library` (`fx/particle_vfx_library.hlsl`),
+`emitters`, `behaviour_chains`, `effect_render_stacks`; `property`, `ranged_property` (curves), `modifier`, `texture_property`;
+`vfx_references` to library effects (e.g. `library_vfx_weather_snow`). Weather VFX: `att_bel_weather_*`, `weather_vfx_*`,
+`campaign_clouds_*`, `campaign_mountain_cloud`. The VFX tool (`wce_vfx_tool`, docs/plans/vfx_tool.md) edits these files.
 
 ## Shaders (`data.pack/fxc/*.fxc`)
 

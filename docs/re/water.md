@@ -51,13 +51,14 @@ Textures (in the packs): `battleterrain/river/river_normal.dds`, `river_diffuse.
   -0.632 .. 1.485 of its units, not centred on its origin; scaled, a unit is a scene unit (half a metre). Two lakes (16x19, 20x16) have
   their plane under the ground: drawn nowhere.
 - **Sea**: the tile sets `sea`, `sea_coast`, `sea_coast_landing`, `river_mouth` have heights below 0 (lakes: min_height -17 .. -40 with scale 20 .. 43); the water surface is at y = 0 and the terrain cuts it. River tiles also go below 0 (the ford's heights are all <= 0) and have no
-  plane: the rule is the tile set. BOB writes `hf_water_map.data` and the ground type map carries `GT_SHALLOW_WATER` / `GT_DEEP_WATER`; neither is read yet.
+  plane: the rule is the tile set. BOB writes `hf_water_map.data` and the ground type map carries `GT_SHALLOW_WATER` / `GT_DEEP_WATER`; `wce_formats` `chmf.rs`
+  reads the format, and the editor makes the same map (`terrain_mesh::water_fields`) for its water depth view (`wce_tile_tool` `water_view.rs`).
 - Environment: `lighting` has `deep_water` / `shallow_water` colours and `refraction_scatter` / `sea_bed_scatter`, already mapped into `lighting_VS_PS` (`g_deep_water_colour`, ...).
 
-## What the tool does (`libs/render/water_pass.cpp`, `tools/tile/tile_document.cpp` `rebuild_water`)
+## What the tool does (`wce_render` `renderer/water.rs`, `wce_tile_editor` `tile_document/view.rs` `rebuild_water`)
 
 **The game's own shaders** (rule of 2026-10-10: everything rendered uses them, no look-alikes): `rigidriver.hlsl` `vs30_main_battle_river` / `ps30_main_battle_river`, `waterplane.hlsl` `vs30_water_battle` /
-`ps30_battle_ultra_water_quality` (the "ultra" quality level) and `waterrefraction.hlsl` `ps30_main_3_channel`, the `dx11_sm_3_0_*` variants without the shadow inputs, bound through `ShaderLibrary` / `ConstantBuffers` by their reflected names
+`ps30_battle_<level>_water_quality` (the level of `gfx_water_quality`, docs/re/graphics_options.md; at first "ultra" only) and `waterrefraction.hlsl` `ps30_main_3_channel`, the `dx11_sm_3_0_*` variants without the shadow inputs, bound through `ShaderLibrary` / `ConstantBuffers` by their reflected names
 like every other pass. Frame order (as far as the shaders show it): the lit scene is copied at half resolution by `waterrefraction` into `s_terrain_refraction` (rgb = light buffer, alpha = `saturate(-ground_y * g_refraction_depth)`, 1 above y = 2, from the depth channel);
 the **sea / lake plane is drawn after the light and before the fog** (its shader has no fog, the fog pass covers it: stencil 1); the **river is drawn after the fog** (its shader fogs itself). Both pixel shaders write four targets (G-buffer channels 1 .. 3
 and the final lit colour into the HDR target), opaque, depth-tested and writing depth; the water thickness comes from the depth channel read in the shader, the refraction displaces by the normal x the thickness, the colour tints by `g_sea_bed_light_scatter` /
@@ -71,7 +72,8 @@ and the final lit colour into the HDR target), opaque, depth-tested and writing 
   rivers after the fog); the rivers are stencil 2 so the fog pass (stencil 1) leaves them, as their shader fogs itself. The river at the
   Rome view: editor (60, 70, 75) against the game's (53, 65, 73), from (69, 80, 85). The editor's reflection pass reflects the scene
   (the pier, the bridge), which the low-settings capture did not (its screen-space march read a placeholder).
-- **Vertex data**: the river vertex is `P0 = (x, y, z, across)`, `P1 = (u, v, flow, fade)`, the instance stream is the identity 3x4 matrix; the shader's low-res height map contribution is switched off (`g_height_map_lf_scale` 0, a black map) because the mesh carries its own world height (the Bezier chain on the terrain / the spline's stored height, see above) and is rebuilt after a height stroke. The sea plane is a quad over the bordered tile at y = 0 with an identity instance.
+- **Vertex data**: the river vertex is `P0 = (x, y, z, across)`, `P1 = (u, v, flow, fade)`, the instance stream is the identity 3x4 matrix; the shader's low-res height map contribution is switched off (`g_height_map_lf_scale` 0, a black map) because the mesh carries its own world height (the Bezier chain on the terrain / the spline's stored height, see above) and is rebuilt after a height stroke. The sea plane was then a quad over the bordered tile at y = 0 with an identity instance; the sea is now drawn with `ocean.hlsl` ("The
+battle sea of a coastal battle" below).
 - **Textures**: `battleterrain/river/river_normal.dds` (rivers), `sea/water_detail_normal.dds` (sea), the sky cube for `s_sky`, the environment cube for `s_environment`, the refraction copy, the depth channel. Samplers as in `docs/re/samplers.tsv` (normals and cubes linear wrap, refraction and depth point clamp).
 - **A river's height in game is its file's, not the scene's** (2026-11-06, the 83 tiles of Attila's packs with a river block, compared with `hf_height_map.data` and the kit): the block's y is the `river_spline<n>.xml`'s y in every tile compared, in the same frame as the ground's metres. The kit's tiles have both factors: `river/*` and `river_ford/*` have scene -7.85, file -6.28, game -6.28 (ground -12: 5.72 above it, where TEd's scene says 4.15), the eastern cities scene -8, file -8, game -8. So `y scene / 1.25` reaches the game, and it pulls a river towards 0: harmless on a shipped bed (the largest river height in those tiles is about 10 m, and they are below 0), a river on ground at +3.78 goes 0.76 m low. The user reports that TEd breaks river heights when it saves a river whose points differ in height: don't take TEd's numbers as the truth. The editor draws a battle river at the height its file gives it, and writes the rivers it makes (and the ones Flip mirrors) with their real heights: `river_files::RIVER_HEIGHT_ATTR` (`wce_river_height`, factor 1). Rivers without the mark keep their file's factor: they join their neighbours across tiles at those heights. Confirmed in game on `plains/8x8/8x8_aa`: a drawn river and its mirror, on ground 2 m higher, sit level with their banks.
 - **Settled 2026-10-27** (disassembly of the D3D shaders with vkd3d-compiler; the game's BOB port in `wce_tile_io::attila::river`):
@@ -107,9 +109,9 @@ and the final lit colour into the HDR target), opaque, depth-tested and writing 
   would be a flat sea-shader quad over the node's bounds; `ice_diffuse_1 / _2` have no sampler in that shader. Each mode also writes a
   float to `FUN_117b6660(scene)+0x1b4` (1.333 for mode 1, 1/36 for mode 2; meaning unknown). Most likely dead code. **Not moddable**: no
   db table, tweaker, script, battle setting or pack file reaches it; frozen battle rivers would need a new shader and engine code.
-  Battles do not use mode 1 (checked in game, above). The `ultra` quality level is fixed; the sea's normal texture
-  (`water_detail_normal`) is the one the battle plane is believed to use.
-- **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`cli/fxc_dump <fxc dir> <out> <asm dir>`), not the GLSL.
+  Battles do not use mode 1 (checked in game, above). The sea's normal texture (`water_detail_normal`) is the one the battle plane is
+  believed to use.
+- **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`wce_render`'s `fxc_dump` example: `<fxc dir> <out> <asm dir>`), not the GLSL.
 
 ## The battle sea of a coastal battle (2026-10-19: decompiled empire.retail.dll + a memory dump)
 

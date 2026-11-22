@@ -4,8 +4,8 @@ A tool of its own for `vfx/*.xml` effects, edited visually: the effect plays on 
 spawn shapes and references are handles in the viewport, its curves and colours are drawn and dragged in the Inspector. Before it, VFX files
 were a category of the Weather tool's Files panel, edited as a raw XML tree (docs/plans/weather.md, "Open" item 1).
 
-State: planned and built 2026-11-18 with the user (decisions below) on `feature/vfx_tool`, steps 1 to 7 done; user review pending.
-Behind the `vfx` feature of `wce_app`: on by default, not in releases yet. What the tool does: [docs/editor.md](../editor.md), "VFX tool".
+State: planned and built 2026-11-18 with the user (decisions below), in master; user review pending. Behind the `vfx` feature of
+`wce_app`: in the default features, not in the `release` set. What the tool does: [docs/editor.md](../editor.md), "VFX tool".
 
 ## Decisions (user, 2026-11-18)
 
@@ -32,38 +32,20 @@ Behind the `vfx` feature of `wce_app`: on by default, not in releases yet. What 
 - The weather tool's live overlay (open vfx / weather XML -> the particle reader): moved into the editor (`Editor::particle_overlay`) so
   edits show live whichever tool is active.
 
-## Steps
+## As built (2026-11-18)
 
-1. Infrastructure: the editor-level particle overlay (with per-tool preview overrides, for mutes and drags), tool routing by path prefix
-   (`Tool::claims_path`), placed effects reloading when an open vfx file changes, a particle time scale, `XmlDoc::with_inner_text`, an
-   `edit_curve` Inspector row.
-2. The `wce_vfx_tool` crate and the `vfx` feature: Files panel, the document, the preview entity on the sample map, the Weather tool's VFX
-   category and placeholder tab removed.
-3. The Inspector: file attributes, playback, emitters (grouped properties), behaviour chains and modifiers, render stacks, references;
-   duplicate / delete of emitters, chains and references.
-4. Playback and solo / mute.
-5. Gizmos: spawn area box, ring, spawn point, emission direction cone; reference offsets and scale; drag to edit.
-6. Docs (docs/editor.md, weather.md, PLAN.md).
-7. The follow-ups of the first version (2026-11-18): new effects (a copy, or one that plays a library), adding a property with
-   vanilla's value and a quality variant, the box's height handle, placed effects reloaded only when their files change, scripted
-   handle drags (`vfx_handles`, `vfx_drag_handle`).
-
-## Checked (2026-11-18, scripted runs on vanilla Attila files)
-
-- `burning_entity` (a reference file) and `library_burning_entity` (ten emitters) open, play and list their parts; solo and mute change
-  what plays without touching the file.
-- An attribute edit and a curve edit, undone and redone, saved: the file differs from the pack's in those two spans only (UTF-16,
-  CRLF kept). Duplicate emitter (`embers_copy` with its own stack), delete emitter (its stack goes), a refused chain delete (in use),
-  duplicate chain, undo / redo of them: the saved file is whole.
-- Handle drags by script (`vfx_drag_handle`): the ring's outer radius 0 -> 3.37 m and the box's height 0 -> 4.71 m on `embers`, each
-  one undo entry. Found and fixed with it: a size-0 shape's dots sat on the move gizmo's arrows, and the gizmo took the press.
-- New effects: `test_fire` (plays `library_burning_entity`) reads and plays as one reference of it, its text the game's layout but the
-  reference's name; a copy is the open file byte for byte; taken names are refused.
-- Adding properties: vanilla's continuous_mesh emitters all have the same set but the sound events; `SoundEventStart` added to
-  `smoke` and a quality 1 `LifeTime`, saved: two lines in the emitter, in the file's indentation and line ends, nothing else.
-- A placed effect follows its file: `ParticleLifeTime` 0.1 against 10 on a soloed `fire`: 3 particles against 92.
-- Not checked by a script: curve keys dragged in the Inspector (the mouse command reaches the viewport only); what they write is
-  unit-tested (`curves.rs`).
+- Infrastructure: the editor-level particle overlay (`wce_editor::particle_overlay`, with per-tool preview overrides for mutes and
+  drags), routing of `vfx/` files to the tool (`Tool::opens_under`), placed effects reloaded only when their open file changes, a
+  particle time scale (`particle_time_scale`), `XmlDoc::with_inner_text`, an `edit_curve` Inspector row.
+- The `wce_vfx_tool` crate: Files panel, the document, the preview entity on the sample map; the Inspector (file attributes, playback,
+  emitters, behaviour chains and modifiers, render stacks, references; duplicate / delete of emitters, chains and references);
+  playback and solo / mute; gizmos (spawn box with its height handle, ring, spawn point, emission cone, reference offsets and scale,
+  dragged to edit); new effects (a copy, or one that plays a library); adding a property with vanilla's value and a quality variant.
+  Script commands `vfx_handles`, `vfx_drag_handle`.
+- Checked by scripted runs on vanilla Attila files (2026-11-18): `burning_entity` and `library_burning_entity` open, play and list
+  their parts; attribute, curve and structural edits with undo / redo save with only their spans changed (UTF-16, CRLF kept); handle
+  drags are one undo entry each; new effects and added properties write the game's layout; a placed effect follows its file. Curve
+  keys dragged in the Inspector are unit-tested only (`curves.rs`): the scripted mouse reaches the viewport alone.
 
 ## Left elsewhere
 

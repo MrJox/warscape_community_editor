@@ -158,7 +158,7 @@ the rows at 0, 1/8 .. 6/8 of the length.
 - Where the values change between two rows, the spline point lies somewhere between them: a straight segment bridges the two rows,
   with the next row's values (BOB's rows are near straight between neighbours). Where the first row's values are not the second's, a
   0.5 m lead-in segment holds them.
-- Over the packs' meshes (`examples/river_fit_check.rs`: Rome 2's 283 with a river block, 69,573 rows; Attila's 228, 9,512 rows) every
+- Over the packs' meshes (`river_fit_check`: Rome 2's 283 with a river block, 69,573 rows; Attila's 228, 9,512 rows) every
   row lies within 1.9 cm of the fitted curves, with its width, flow and foam, and its alpha within 0.002. Rome 2's rivers come out at
   about 13 rows a segment (a 2x2 river tile: 9 to 11 points), Attila's at under 2 (its rows are sparse). Thrones of Britannia's 155
   (within 1.6 cm) are Attila's type 90 but five that keep Rome 2's type 48 (`river_ford/2x2_lt_tl_ford`, `2x2_lt_tr_ford`,

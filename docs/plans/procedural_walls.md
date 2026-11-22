@@ -1,4 +1,4 @@
-# Tile editor: procedural walls (plan, 2026-10-24)
+# Tile editor: procedural walls (2026-10-24)
 
 A wall drawn as a spline between gates and bastions placed by hand. The editor generates buildings that follow the spline exactly: bent
 along its curves, mitred at its sharp corners, stepped on slopes, their foot on the terrain. Siege battles must work on them: units on the
@@ -54,8 +54,9 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   the corner on one, after it on the other), so at their own levels the two arms' inner sides stood apart in height. Three changes:
   - a step with no room between its runs goes to the nearest free place anywhere along the wall, clear of the steps already laid
     (between steps the level is the one the step before left, so its runs need not be moved);
-  - near a corner's face a point's level goes to the corner's own level (`PieceWarp::level_at_faces`, over `FACE_BLEND`, as `s_at`
-    moves it): both arms meet at one height along the bisector whatever the walkway does there;
+  - near a corner's face a point's level goes to the arms' mean level there (`PieceWarp::level_at_faces`, over `FACE_BLEND`, as `s_at`
+    moves it), fading out past the wall's depth from the corner (2026-11-16: the corner's own level, pulled far back along a sharp
+    corner's inner side, made spikes over it): both arms meet at one height along the bisector whatever the walkway does there;
   - steps keep from a corner as far along each arm as it takes to be the margin away from the other arm: the margin over the sine of
     the turn (at most 5 times). At an acute corner (25 degrees inside, the test tile's wall) the stepped bastions 18 m from the tip
     stood across the other arm; now 33 m.
@@ -105,17 +106,18 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   Amon Calen: 406 under 0.2, median 3.6. After the weld, neighbours in one plane with the same flags that share edges and stay
   convex become one, the thinnest first, firing lines renumbered: 2094 platforms, 135 under 0.2 (mostly the stairs' treads and risers),
   median 6.0; the prow's two pieces 68 to 23. Corners other platforms share stay on the outlines, so some have up to 12 (the game's 6).
-- **A stair was one platform for a test** (`pieces::STEPPED_STAIRS`, back to true once the winding was found; user 2026-11-05: units did not even step onto the stairs; a test of
-  whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
-  where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped
-  profile (flat on each tread, a slope at each riser) stays behind the switch.
+- **A stair was one platform for a test** (user 2026-11-05: units did not even step onto the stairs): one slope across the walkway, as
+  the stepped bastion's own stair. The switch (`pieces::STEPPED_STAIRS`) is back to the stepped profile since the winding was found
+  (next item).
 - **Platforms go round as the game's** (2026-11-05, comparing the stepped bastion with ours: every game platform is clockwise from
   above, ours were too but for all 20 stairs, built the other way round; neighbours run a shared edge opposite ways only when both
   follow it). Every generated platform is turned to it after the weld (`logic::wind_as_the_game`). Slivers are taken out in door
   sections too (pipes name no platforms).
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
-  (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
+  (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`),
+  tower and bastion in turn (`profile.defences`); each tower gets a capture location (user 2026-11-13, `wce_walls::towers`,
+  [kit_walls.md](kit_walls.md) follow-up 8).
 - **Access on 15 m walls:** a door section every `wall_access_every` (default 200 units), only where the 20 x 20 landing inside is free of
   no-go and buildings; else skipped with a note. 8 m walls need none (the bank).
 - **A free end gets the culture's cap** (8 m endcaps, 15 m tower ends), the game's piece as it is, joined at the wall's end.
@@ -125,10 +127,13 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   its base's collapses, warped as its meshes are (`mesh::warp_collapse`).
 - **The spline is a custom element (`WceWallSpline`) of the tile model**, not editable piece by piece; its pieces are regenerated.
 - **TEd sees the pieces** (2026-10-25, option A of three): Save for Assembly Kit lowers the walls into a top layer *WCE procedural walls*,
-  their files and rows into the movie pack `@wce_proc_data.pack`; Import from Assembly Kit drops that layer and restores the walls.
+  their files and rows into the movie pack `@wce_proc_data.pack`; File > Revert > *To the Assembly Kit's version* drops that layer and
+  restores the walls.
 - **Live preview while editing; generated files only on export**, one pack per tile (configurable later).
 - **Families:** 8 m and 15 m now; TDD's Rohan and cliff walls later.
-- **Not in this iteration:** terrain shaping.
+- **Not in this iteration:** terrain shaping (kit walls have their own height layer, [kit_walls.md](kit_walls.md); procedural walls
+  still adapt to the ground).
+- **Procedural off** (2026-11-12): a `WceWallSpline` with *Procedural* off is laid with the game's own fort pieces: [kit_walls.md](kit_walls.md).
 
 ## Design (as built)
 
@@ -167,11 +172,13 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   (`profile::available_bases`): Rome 2 has five (barbarian, roman, greek, egyptian and persian forts); a Rome 2 tile with a roman and a
   greek wall passes `wall_pack_check <pack> schema_rom2.ron rome_2`.
 
-## Status (2026-10-26)
+## Status (2026-11-22)
 
-Phases 0-5 done and four review rounds (commits 5082a93..a93070a, e77b7d1): the in-game spike (bent copies load, units cross joints,
-breach), model and editing, generator, bends and mitres, steps, export, caps, spacings, the docking fix, destroyed stairs, the TEd
-polyfill. Checks:
+Phases 0-5 done and four review rounds (commits 5082a93..a93070a, e77b7d1, 2026-10-26): the in-game spike (bent copies load, units cross
+joints, breach), model and editing, generator, bends and mitres, steps, export, caps, spacings, the docking fix, destroyed stairs, the TEd
+polyfill. Then the platform rounds on Amon Calen (2026-11-03 .. 05, the decisions above), corners on slopes and folding handles
+(2026-11-08), the preview off the editor's thread (2026-11-08), towers and their captures (2026-11-13), collapses (2026-11-15), the bases
+in `walls.toml` (2026-11-16). Checks:
 
 - `cargo run --release -p wce_walls --example wall_generate_check -- <game> --mods <...>`: S curves with a corner over slope and dip, a
   flat 15 m wall with doors; deterministic, firing lines on platforms, door feet on the ground, stairless levels unchanged.

@@ -1,7 +1,6 @@
 # Generate SiegeAI (one click)
 
-The Tile menu's **Generate SiegeAI** (after Import from Assembly Kit; `crates/wce_tile_tool/src/tool.rs`, command
-`tile_generate_siege_ai`) writes a settlement's whole siege AI layout: the street graph, the wall edges, the fort perimeter, separators,
+The Tile menu's **Generate SiegeAI** (`crates/wce_tile_tool/src/tool.rs`, command `tile_generate_siege_ai`) writes a settlement's whole siege AI layout: the street graph, the wall edges, the fort perimeter, separators,
 the approach lines and the deployment zones. What the game needs and CA's layouts (incl. encampments, ports, separators):
 [docs/re/siege_ai.md](../re/siege_ai.md). Scene units (su) throughout. The minimap's siege AI view and logging siege problems on save are
 in [editor_todo.md](editor_todo.md).
@@ -57,12 +56,16 @@ in [editor_todo.md](editor_todo.md).
   area connections between touching Boundaries.
 - **Document side:** `wce_tile_editor` `tile_document/siege.rs`.
 
-## Status (2026-10-26)
+## Status (2026-11-22)
 
-Done: `wce_siege`, the document side, the menu item and command, the Export type menu (Separate, Don't Export), encampments, ports,
-separators. On the kit's 73 settlements and camps (`cargo run --release -p wce_tile_editor --example siege_check -- <game> <out> <kit
-tiles>/settlement_* <...>/encampments`, SVGs of ours and CA's, about 3 s a tile, 2026-10-24) every tile gets a layout that exports and
-reads back; counts of entries, palisades, deployment lines, beaches and separators mostly match CA's.
+Done: `wce_siege` (`generate()` in its seven steps, unit tests from synthetic data), the document side, the menu item and command, the
+Export type menu (Separate, Don't Export), encampments, ports, separators, steep ground and inner gates (2026-11-02), the walls' battlefield
+zones (2026-11-03). Procedural walls' towers, bastions and caps and kit walls' pieces ([kit_walls.md](kit_walls.md), phase 5) block in the
+input. Hand tools for a node (docs/editor.md): a drawn Bounding Box is a true rectangle, *Adjust the Boundary to what is around it*, *Fit
+the street boundaries* of a street edge; `siege_check` checks a tile's layout. On the kit's 73 settlements and camps (`cargo run --release
+-p wce_tile_editor --example siege_check -- <game> <out> <kit tiles>/settlement_* <...>/encampments`, SVGs of ours and CA's, about 3 s a
+tile, 2026-10-24) every tile gets a layout that exports and reads back; counts of entries, palisades, deployment lines, beaches and
+separators mostly match CA's.
 
 ## Open
 

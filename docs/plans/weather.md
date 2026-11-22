@@ -1,14 +1,15 @@
 # Weather tool: plan
 
-Edit Attila's weather and lighting (`.environment`, `.lighting`, `weather_definitions.xml`, VFX XML) with a preview that runs the game's
-own shaders; game data through the VFS, loose files written byte-identically. File layouts: docs/formats/weather_files.md.
+Edit Attila's weather and lighting (`.environment`, `.lighting`, `weather_definitions.xml`; VFX XML since 2026-11-18 in the VFX tool) with
+a preview that runs the game's own shaders; game data through the VFS, loose files written byte-identically. File layouts: docs/formats/weather_files.md.
 
-## Status (2026-10-26)
+## Status (2026-11-22)
 
 Done: the battle weather pipeline (Phases 0 and 1), wind, precipitation and the VFX runtime (Phase 2 items 1 to 3), the weather
 selection database (Phase 4: `warscape_asset_variation_db` picker and XML / FASTBIN conversion), more materials (Phase 5), real battle tiles
-(Phase 6: the Tile tool). The weather tool in `wce.exe` (docs/editor.md); `.lighting` files open and light the scene. Engine leftovers of the
-weather and particle code: docs/plans/weather_current_state.md.
+(Phase 6: the Tile tool), the visual editing pass (2026-11-13, item 3 below). The weather tool in `wce.exe` (docs/editor.md); `.lighting`
+files open and light the scene. VFX files moved to the VFX tool (2026-11-18). Engine leftovers of the weather and particle code:
+docs/plans/weather_current_state.md.
 
 ## Decisions
 
@@ -22,15 +23,9 @@ weather and particle code: docs/plans/weather_current_state.md.
 
 ## Open
 
-1. **VFX editor** (Phase 2 item 4): moved to a tool of its own, [vfx_tool.md](vfx_tool.md) (2026-11-18). The Weather tool no longer
-   lists or opens vfx files.
-2. **Campaign mode** (Phase 3): moved to docs/plans/campaign_environment.md (2026-11-16); the list below is its first draft.
-   - A campaign camera rig and scale.
-   - A campaign test map: a flat plane with random `rigidmodels/campaign` models.
-   - Campaign shaders: shroud, campaign fog, campaign cloud and mountain VFX. `g_is_campaign` is hardcoded 0
-     (`wce_render` `renderer/decals.rs` ~391, `renderer/terrain.rs` ~1107).
-   - The campaign skybox model and cube map.
-   - A season cross-fade preview (spring, summer, autumn, winter) as the game does it.
+1. **VFX editor** (Phase 2 item 4): moved to a tool of its own, [vfx_tool.md](vfx_tool.md) (2026-11-18, built). The Weather tool no
+   longer lists or opens vfx files.
+2. **Campaign mode** (Phase 3): moved to [campaign_environment.md](campaign_environment.md) (2026-11-16), which holds its plan.
 3. **Visual editing** (UX pass, 2026-11-13): done. The sun handle, the focus pick, the split compare, the tone curve and histogram,
    Mix with another file, the wind arrow, the fog rings and the Inspector's fog curve, the preview switches, the sky strips, the gallery,
    the reference screenshot with its colour comparison (`wce_weather_tool` `visual.rs`, `mix.rs`, `preview.rs`, `sky_strip.rs`,

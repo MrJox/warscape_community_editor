@@ -330,8 +330,8 @@ tiles with the same pieces none. Not checked in game.
 
 Bridges, as before:
 
-The Tile panel's Problems section has a *Check bridges* button (`check_bridges`; `tile_document/bridges.rs`, its overlay in the tool's
-`bridge_check.rs`). It gathers the platforms of the tile's `bridge` buildings and of the roads' generated bridges, and of the buildings and
+The same *Check platforms* button of the Tile panel's Problems section (`check_platforms`, the bridges' part `check_bridges`;
+`tile_document/bridges.rs`, its overlay in the tool's `bridge_check.rs`). It gathers the platforms of the tile's `bridge` buildings and of the roads' generated bridges, and of the buildings and
 walls around them, in the world at the states their pieces show, and applies the rules above: ground links along plain collision outline
 edges (corner for corner, the ground within the snap tolerance), joints along reversed edges. A bridge is its platforms joined together;
 its ways off are its ground links and its joints to other buildings' platforms, grouped by side (closer than a third of its length, at
@@ -345,7 +345,7 @@ ground's height from a ground platform where there is one (on it, or on its edge
 kit river crossings pass. `farm_eastern/4x4/ab`'s four lone `bridge_wood_1_end` pieces (no deck, no ground platform, 0.6 to 2.6 m over the
 terrain) are flagged, and a road's generated bridge passes (its feet run along its outline edges since 88348e13).
 
-## Checker: `bridge_check` (`crates/wce_walls/examples/bridge_check.rs`)
+## Checker: `bridge_check` (the `wce_walls` example)
 
 `cargo run --release -p wce_walls --example bridge_check -- <game folder> [radius] [rise] [rpfm schema .ron] [exported .pack]`
 
@@ -363,7 +363,8 @@ Implemented, from the traced rules (2026-11-08):
 
   It prints "n of m foot edge(s) along its collision outline" and fails on any shortfall.
 
-Still to add (traced, not yet implemented):
+Still to add to the example (traced; E6 and E7 are what the editor's *Check platforms* does on a tile, above: `SNAP_BRIDGE` /
+`SNAP_OTHER`, `CORNER`, `JOINT_HEIGHT` in `tile_document/bridges.rs`):
 
 - **E1** A bridge piece whose `battlefield_buildings` category is not `bridge`.
 - **E2** A logic file version ≤ 5 with any `flag_2` / `flag_3` set.

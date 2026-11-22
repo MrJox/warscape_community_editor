@@ -1,8 +1,9 @@
 # Terry: the kit's terrain tool (survey, 2026-11-02)
 
-What the Assembly Kit's map-level terrain tool does, for the Terrain tool's plan (docs/plans/terrain_editor.md). Black box only so far:
-the strings and exported symbols of the binaries (no decompilation), the kit's data files and the projects it saved. Nothing here was run:
-Attila's Terry crashes at launch (user, 2026-11-02); Thrones of Britannia's runs (slowly) and is the one to take references from.
+What the Assembly Kit's map-level terrain tool does, for the Terrain tool's plan (docs/plans/terrain_editor.md). The survey (the first
+sections) is black box: the strings and exported symbols of the binaries, the kit's data files and the projects it saved. The later
+sections, each dated, add BOB runs, Thrones' Terry as an oracle and Ghidra readings. Attila's Terry crashes at launch (user, 2026-11-02);
+Thrones of Britannia's runs (slowly) and is the one to take references from.
 
 ## Where it is
 
@@ -170,7 +171,8 @@ their 780 zones, 1 088 regions and 8 317 polyline points (to 5 cm) agrees (gate 
     (`DZRT_ADDITIVE`, a negative area `DZRT_SUBTRACTIVE`), the points `tile_to_world_space(centre + p)`; the region's transform at its
     first point, the points relative (y as z).
   - With `delete_invalid` a BCA with any error goes (the oracle: 57 of 693, its number not reused).
-- The y of the BCAs and regions is the terrain's height (the tiles' too: -21.8 on a sea tile whose LF is 0 .. 0.014): not ported.
+- The y of the BCAs and regions is the terrain's height (the tiles' too: -21.8 on a sea tile whose LF is 0 .. 0.014): the editor
+  writes the LF's alone (`terry_view.rs`, `lf_metres_at`), not the tiles'.
 
 ## locations.blm and its masks (Ghidra, 2026-11-04)
 

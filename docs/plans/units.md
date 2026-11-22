@@ -1,14 +1,15 @@
 # Units: rendering and animation
 
-Draws units through the game's own weighted shaders, animated. It serves three consumers: the tile editor's scale reference (and later
-historical battle scripting), the Cinematic tool (the most pressing, after the terrain editor) and the Unit tool, a VMD editor
-([unit_editor.md](unit_editor.md), planned 2026-11-14). This is the renderer and data work they share, not any of those tools. Formats already specified:
+Draws units through the game's own weighted shaders, animated. It serves three consumers: the tile editor's scale reference, the
+Cinematic tool ([cinematic.md](cinematic.md): its preview, movies and historical battles) and the Unit tool, a VMD editor
+([unit_editor.md](unit_editor.md)). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3, 5 and 7's references are done, step 4's code, and step 6's idle: the Tile tool shows any unit of the DB
-standing in a tile, a mount under a rider, with materials and skin lighting, looping its idle, TDD's trolls too. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
-Waiting for the screenshots' weather to compare the lighting. The scratch scripts and disassembly are in
-`~/wce_re/scratch/units`.
+State (2026-11-22): investigated and decided 2026-11-06 (decisions at the end); steps 1 to 7 and 7b built 2026-11-06 .. 11-11, in
+master: the Tile tool shows any unit of the DB standing in a tile (a mount under a rider, materials and skin lighting, idles, TDD's
+trolls too) and ships afloat with their men, oars, sails and ropes; the Cinematic tool poses units in its slots. Compared with the
+game's screenshots by eye 2026-11-07 (below). Left: what each step lists, and step 8. The scratch scripts and disassembly are in
+`~/wce_re/scratch/units`, the screenshots in `~/wce_re/scratch/units/ref`.
 
 ## What the game does
 
@@ -46,8 +47,9 @@ All 3,210 models under `variantmeshes/_variantmodels` decode with rpfm_lib, no f
 | DefaultMaterial, Dirtmap, DecalDirtmap | Static | weapons, crests, bosses, shields | attached rigid parts |
 | Cloth, CollisionShape | Static, Collision | 4 + 8 cloak blocks; the rest are ship sails | not for units at first |
 
-Most models have 4 or 5 LODs, with distances in the file (100 / 200 / 400 / 500 on a sample). Today `model_cache` flattens `Weighted` into
-a static mesh posed once on the CPU (`pose_first_frame`) and rejects every other weighted material.
+Most models have 4 or 5 LODs, with distances in the file (100 / 200 / 400 / 500 on a sample). Units load with `MODEL_SKINNED_SUFFIX`
+(step 3); without it the model cache still poses an `_anim` model's Weighted blocks once on the CPU (`pose_first_frame`) as a static
+mesh.
 
 ### Pixel shaders
 
@@ -161,18 +163,20 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    costs no structural change), `MODEL_SKINNED_SUFFIX` in the model cache, `renderer/skinned.rs`: one dynamic palette texture and instance
    buffer written once a frame, one instanced draw per mesh, G-buffer and sun shadows through `weightedcommon`. Gate `unit_render_check`:
    the picture against the same vertices skinned on the CPU, 2 and 4 bones. Left for later: no culling at all (the clipper does it; fine for
-   a few units, not for a crowd), not drawn in the environment cube, Rome 2's baked shadows, or with faded opacity. Not tried with MSAA or
-   in a tile. Picking: the G-buffer's id target gets 0, and the id pass doesn't know them; `ref_human` needs one of those in step 7.
-4. **Materials.** Done but for the comparison with the game's screenshots: the four families, dirt, decals (their textures come with the part,
-   from the VMD in step 5), faction colours, tints, skin lighting for the sun and point lights.
-5. **Assembly** (done 2026-11-07 but a tile). `unit_assembly::assemble`: a definition and a seed give a soldier's parts:
+   a few units, not for a crowd), not drawn in the environment cube, Rome 2's baked shadows, or with faded opacity. Not tried with MSAA.
+   Picking: the G-buffer's id target gets 0 and the id pass doesn't know them; the tile's references and the Unit tool pick on the CPU
+   instead (step 7, unit_editor.md).
+4. **Materials.** Done: the four families, dirt, decals (their textures come with the part, from the VMD in step 5), faction colours, tints,
+   skin lighting for the sun and point lights. Compared by eye with the game's screenshots 2026-11-07 ("Comparison with the game"):
+   they agree; the game looks brighter by a factor not measured, and the dirt map's small black mark is not seen in the editor.
+5. **Assembly** (done 2026-11-07; in a tile with step 7). `unit_assembly::assemble`: a definition and a seed give a soldier's parts:
    slots by `probability`, references, tints, mask remaps, decals (`.texture_array`s pick one). Static parts (shields, weapons, crests) are in the
    `SkinnedInstance` too, on a bone (`SkinnedInstance::bones`) or an attachment point of their parent's model, and `renderer/skinned.rs` draws
    them through the rigid shaders with their own decal and colours: `rigidwithdecalmesh`, `rigidwithdecaldirtmesh` are drawn nowhere else.
    The picks use the editor's generator, so a seed is not the game's soldier (since 2026-11-14 a generator per node, for the Unit tool's pins).
    `unit_catalog` reads `unit_variants`, `unit_variants_colours` (a unit's own colours, 2026-11-14), `main_units`, `land_units`,
-   `mounts`, `factions` and the animation tables, mods included; a unit's mount is a second figure at the same origin. Left: the whole model in
-   a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons other than bows.
+   `mounts`, `factions` and the animation tables, mods included; a unit's mount is a second figure at the same origin. Left: weighted weapons other
+   than bows.
 6. **Animator.** `unit_animation::UnitModel`: `instances(t)` is a pure function of the time, so a timeline can scrub it. Done: slots from
    the table's fragments, loops, hand poses (a clip's `RHAND_POSE` / `LHAND_POSE` numbers are the `HAND_POSE_*` slots in the engine's order,
    `BATTLE_ENTITY_ANIMATION_TYPE`), the rig of the clip's own skeleton (TDD's trolls: the table says `rome_man_game`, the clip `humanoid04f_s068`).
@@ -197,8 +201,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    **ASSUMPTION**: a quarter of the men per step of `gfx_unit_size`: the game's formula wasn't found, only the debug panel that names it. Attila's `main_units` has
    no `unit_scaling` column: there every unit scales, which artillery and generals may not. Deployment gaps, officers and loose formation aren't modelled.
    Skinned meshes aren't in the id pass: a click finds a soldier by a sphere per man (`Tile::set_ref_spots`), and there is no selection outline on them. They
-   follow the ground man by man; freeform keeps them level at the element's height. No viewer in the Unit tool yet: the references and `unit_render_check` are the
-   test bench so far.
+   follow the ground man by man; freeform keeps them level at the element's height. The Unit tool (2026-11-15, unit_editor.md) is the
+   viewer now.
 7b. **Naval units** (`ref_ship`, 2026-11-11; decided with the user: a third reference, the men placed by the ship's own logic, afloat on the
    water, all of the ship in scope). Tile element `WceRefShip` (Create panel's References, `tile_ref ship`), its `unit` a naval `main_units` key
    (Attila's default `att_shp_rom_heavy_marines_lib_heavy`). The tables: `main_units.is_naval` -> `land_unit` (the men; their `unit_variants` rows
@@ -248,13 +252,14 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.
 
-The first goal is steps 1 to 7 with units standing or idling for reference. Steps 1 to 6 stay what they are, but in step 6 only what an
-idle needs comes first (one slot, loops, hand poses); blending and the rest of the slots can wait for the Cinematic tool.
+The first goal was steps 1 to 7 with units standing or idling for reference (reached 2026-11-07); blending and the rest of the slots came
+with step 6's schedules, the moving slots with the Cinematic tool.
 
 Mounts move earlier than the first draft had them: comparing cavalry with infantry needs a horse and its rider together in step 5, standing
-at least. It costs little: the clips already fit (see Assembly); what is left is `mounts`' `variant` to the horse's VMD.
+at least. Done in step 5: the clips already fit (see Assembly), and `mounts`' `variant` gives the horse's VMD.
 
-Out of scope: battle simulation, formations, pathing, sounds and blood, dismemberment, imposters, real cloth simulation.
+Out of scope: battle simulation, formations, pathing, sounds and blood, dismemberment, imposters, real cloth simulation (the ships'
+sails got the game's own verlet simulation in 7b; `ref_unit` draws a close formation).
 
 ## Decisions (user, 2026-11-06)
 
@@ -270,5 +275,6 @@ Out of scope: battle simulation, formations, pathing, sounds and blood, dismembe
 - **Oracle:** screenshots of the game, taken by the user; RenderDoc does not work here. The skin lighting is the riskiest part to match
   this way.
 - **Faction colours, tints and variation seed** are exposed directly, in `ref_human`'s Inspector too, not only as renderer inputs.
-- **Unit tool viewer:** dev-only. Replaced 2026-11-14: the Unit tool is a release tool ([unit_editor.md](unit_editor.md)).
+- **Unit tool viewer:** dev-only. Replaced 2026-11-14: the Unit tool is a tool of its own behind the `unit` feature
+  ([unit_editor.md](unit_editor.md)); kept out of the `release` set (2026-11-21, not ready for production).
 - **Parsers** live in `wce_formats`.
