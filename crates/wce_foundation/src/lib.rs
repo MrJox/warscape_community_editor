@@ -7,6 +7,7 @@ pub mod files;
 pub mod game;
 pub mod graphics;
 pub mod heap;
+pub mod id_hash;
 pub mod jobs;
 pub mod log;
 pub mod math;
