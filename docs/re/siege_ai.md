@@ -82,6 +82,14 @@ No ids: an edge's nodes come from geometry. Every vanilla instance has `add_boun
   end (on its line within ~3 units) along the perimeter, through the no-go just outside the streets, over the harbour water in ports.
   Walls + separators + no-go regions close the ring in 47 of 48 walled tiles (not Olbia). Their direction is mixed.
 
+## In game (2026-11-02 / 03)
+
+- **Steep ground:** the game will not walk ground steeper than 30 degrees (BOB's automatic no-go areas, `terrain_outlines.xml`). A graph
+  across it sends units through nodes they cannot reach: Amon Calen (2026-11-02), a hill city with no no-go regions, had streets up 14 m
+  escarpments and areas spanning two circles, and the game crashed in the battle advice (a unit without soldiers).
+- **Units on the walls need battlefield zones** (2026-11-03): without them units could not be put on the walls. CA's settlements have
+  `EFP_LOW_WALL` `ZONE_POLYGON_INSTANCE`s in 70 of 71 tiles, TDD's along its gatehouses.
+
 ## Open
 
 - The ingest's spatial test (`FUN_116a06d0`); what an edge missing a node does at runtime; how the attack and defence tactics use the

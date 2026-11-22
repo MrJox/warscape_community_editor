@@ -356,6 +356,25 @@ border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are ne
 - The packed tile has `hf_height_map.data` ("CHMF" version 5, 1025 x 1025, min / max floats -20 / 22.1): the game's copy of the final
   heights, presumably. It also has a tree list per climate (`rome_med.tree_list.bin` ...).
 
+## Radar (`loading_screen_radar.jpg`; black box, 2026-11-11)
+
+The battle minimap the game shows when the tile folder has this file (else it draws one from the buildings, plain). The editor draws
+one: docs/plans/radar.md.
+
+- `loading_screen_radar.jpg` in the battle tile folder: 512 x 512 JPEG (Photoshop CS2, 2014), 87 vanilla folders have one.
+  Nothing in TEd or BOB makes it.
+- It covers **the tile without its border** (0 .. extent), north (+z) up: CA's port radars line up with the tile's coast and quays
+  only that way (the bordered area is 1.25 x too big on a 1024 m tile with a 128 m border).
+- CA's look, measured on nordic_city_b, sassanid_port_b, western_city_b, dunedain_city_c and the TDD ports:
+  - parchment, median land about (147, 115, 78), with a faint pattern of rectangular field strips and grain;
+  - roads cream-white, about 3 px (6 m) wide, an even network;
+  - forests olive (about 90, 95, 50) blobs with a dark edge, only the dense woods;
+  - the sea grey-blue to teal (about 100, 120, 125), textured, an ink shore;
+  - buildings grey-brown with black outlines, merged into blocks, some red;
+  - walls thick black lines;
+  - **cliffs**: their top edge a cyan line with ink ticks hanging down the slope (not walls: elven_port_a's cyan lines follow its
+    cliffs; western_city_b's arc is the cliff north of the town, its rocks grey beyond).
+
 ## Open
 
 - The flags / byte / floats of a placement; the header fields after the origin.

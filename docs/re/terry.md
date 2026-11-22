@@ -96,7 +96,9 @@ built with an older tile database: they are not fill oracles (33 of 43 differ, a
 
 - `Terry file` (7 s on the 32 MB project) writes nothing visible; the blm, masks and deployments come out of `Tilemap` when the map's
   folder has a `rules.bob` with `save_meta_data_map` (docs/re/bob.md).
-- No normal chunks were written: the game's 736 (`normals/normal_N.dds`, 576 x 576 DXT5 with mips by NVTT: 144-cell squares 64 cells apart, the old tile map's chunk grid) come from elsewhere, likely cut from the kit's 250 MB `normal.dds` (8128 x 5764 ARGB); not made (open).
+- No normal chunks were written: the game's 736 (`normals/normal_N.dds`, 576 x 576 DXT5 with mips by NVTT: 144-cell squares 64 cells
+  apart, the old tile map's chunk grid) come from elsewhere, likely cut from the kit's 250 MB `normal.dds` (8128 x 5764 ARGB); not made
+  (open).
 - `Tilemap` logs "Failed to find tile for point 360x977" (and three more points) on `main_attila_map`; the port gives 4 messages too.
 
 ## The scene's structure, from the files and BOB (2026-11-03)
@@ -447,6 +449,76 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
 - **Props' seasons**: `prop_marker.markers`' `seasons` / the `.terry`'s `ECSeasonMask`: main_attila_map's `fallen_leaves` and
   `fallen_leaves_medium` (7 838 decal patches) are autumn's alone, many animals spring's or winter's (`campaign_prop_seasons`); the
   game's spring frame draws no leaves. The view draws the props of its season (2026-11-19; the effects already were).
+
+## The campaign's start: the startpos and its figures (2026-11-21)
+
+What the game reads of a campaign's start and how it draws its armies, agents and navies (moved from docs/plans/startpos_editing.md and
+docs/plans/campaign_tilemap.md, 2026-11-22; captures: docs/re/renderer.md, "The campaign map"). The settlements: "Campaign maps" above.
+
+### The startpos (`CAMPAIGN_STARTPOS/CAMPAIGN_ENV/CAMPAIGN_MODEL/WORLD`)
+
+- Characters: `FACTION_ARRAY/FACTION/CHARACTER_ARRAY/CHARACTER`, their faction the FACTION they sit under. [0] `LOCOMOTABLE`
+  ([0] Coord2d world x, y; [1] / [2] hex column / row; [3] facing, pi in 574 of 578), [1] id, [2] `CHARACTER_DETAILS` ([5] faction
+  key, [16] agent type), [3] type (Attila's start: 337 `general`, 240 `colonel` (garrison commanders), 1 `spy`), [4] force id.
+  Off the map: (0, 0) (59 in Attila, 155 in TDD). In a settlement: on its primary slot's cell. A faction leader: `CHARACTER` [28] 4,
+  [29] true.
+- Armies and navies: `FACTION/ARMY_ARRAY/MILITARY_FORCE`: [0] id, [1] commander, [6] `UNIT_CONTAINER/UNITS_ARRAY/UNIT` ([1]
+  `UNIT_RECORD_KEY`[0] the unit key, [4] / [5] men now / max), [7] the residence it stands in, [19] navy. No position of its own:
+  its commander's. Garrisons are forces led by a `colonel`, hung off `REGION/SETTLEMENT/GARRISON_RESIDENCE`. An army's legacy:
+  `MILITARY_FORCE_LEGACY` [5].
+- Thrones: its `FACTION` record has a `CAMPAIGN_EFFECT_BUNDLES` record between the id and the key (a reader of Attila's layout takes
+  every faction for the rebels).
+- Regions: `REGION` [14] owner faction id, [31] unowned; slots `REGION_SLOT_MANAGER/.../REGION_SLOT` with `BUILDING_BASE` ([1]
+  key, [4] owner faction key) when built.
+- Coordinates (RPFM `coords.rs` `MapScale`): the kit's `startx` / `starty` are hex cells (1016 x 720 on `main_attila_map`); world
+  x = col W / (cols - 1), y = row 8 sy + (odd col ? 4 sy : 0), sy = H / (rows 8 + 4), W x H `map_data.esf`'s theatre (678.5 x
+  556.144). The same world frame as `wce_terrain_io::attila::cities`.
+- The kit's tables: `start_pos_characters` (ID, Type, faction, startx / starty, portrait_id = art set, override_general_unit, ...),
+  `start_pos_land_units` (general, unit_type, soldiers %), `start_pos_naval_units`, `start_pos_settlements` (primary_building,
+  port_building, building1..5), `start_pos_regions` (owning_faction), `start_pos_character_to_settlements`, `start_pos_factions`.
+  Garrison units are derived from the buildings, not stored.
+- Thrones' starting rebels are not in the startpos: the campaign scripts raise them for the player (`vik_starting_rebellions.lua`'s
+  `CreateStartingRebels` calls). Their faction is the one whose key ends `rebels_<culture>` (ASSUMPTION, by V2's colours).
+
+### The models
+
+- Character -> art set (`start_pos_characters.portrait_id`; agents with none: `campaign_character_art_sets` by agent type, faction,
+  culture, subculture, sex) -> `campaign_character_arts` rows by level / age / season / faction leader -> `uniform` (land),
+  `sea_uniform` (army at sea), `navy_uniform` (admiral) -> `agent_uniforms.filename` ->
+  `variantmeshes/variantmeshdefinitions/<f>.variantmeshdefinition`. Skinned (`rome_man`, agents `rome_man_game`); idles from the
+  campaign animation tables (`animations/campaign_animation_tables/`, set -> fragment -> clips: `sword_general`, `champion_male`).
+  Ships the same way (`campaign_ship_civ_army` / `_fleet` / `_agent`, animated). The general stands on foot (the horse only in the
+  walk); his banner is a separate 3D UI piece (`ui/3dui/models/<skin>/army_banner_*`, `ARMY_FLAG_SCALE` 0.65).
+- Who the map shows: the characters who lead a force or stand alone (not on a settlement's cell, nor an army's: a horde's family);
+  garrison commanders never. The art set's row by faction leader, season (`winter` rows in winter), rank 0 (all at a start), adult; land,
+  at sea (an army standing on water: its `sea_uniform`) or navy (`navy_uniform`, afloat on the sea's level). A model unit is a world unit
+  (capture T2). `CHARACTER_MODEL_SCALE` is 1.0, times a per-entity factor not traced (and 0.4 in some settlement case).
+- An army's banner (captures A and T0): the campaign flagpole and its legacy emblem's `banner_decorator` (`MILITARY_FORCE_LEGACY` [5]
+  -> `military_force_legacy_emblems`; none: `nomadic_emblem_07`, the DLLs' fallback), the faction's skin's models else the default's;
+  all at one point 0.40 west, 0.11 south of the army's and 0.80 over its feet, scale 0.65 (`ARMY_FLAG_SCALE`), unturned. Agents and
+  fleets carry none (T2's spy; a fleet's sail is its flag). Thrones' standard stands elsewhere: (265.18, 256.38) for Anaraud at
+  (265.20, 256.47) (V2; its rule not found).
+- Faction colours (Thrones, V2): standards and figures take `rigid_faction_colours` = the faction's `faction_uniform_colours` and its
+  `faction_banners` primary. The game permutes the three uniform colours on some meshes (V2's skinned draws; its rule not found).
+  Settlement flags (the wall pieces' `Cloth` blocks) take the owner's `faction_banners` primary, secondary, tertiary and black; Thrones'
+  tertiaries are all black, so whether the third is the tertiary or black is not known on Attila.
+
+## Terrain layers in a newer Terry's project (Warhammer III, `nuln_map_reduced_wh1`, 2026-11-07)
+
+A `.terry` project has a `QTU::TerrainMap` per type (`Height`, `Blend8`, `GroundType`), each with an ordered list of
+`QTU::TerrainMapLayer`: `id`, `name`, `visible`, `opacity`. Each layer is a file beside the project, `<name>.<type>.<id>.tif`, all 1280 x 1280
+for this 16 x 16 tile (LZW). Decoded:
+
+| Type | Pixel | Nothing there | Seen in the example |
+|---|---|---|---|
+| Height | 32-bit float | 0 | base almost all 0 (1 638 043 of 1 638 400). River -30 .. 32, hills at 35, 50, 60, 70: round offsets |
+| Blend8 | 8 weights, one byte each | all 0 | sums of 255 where painted; base almost empty, `Streets` covers 25% of the tile |
+| GroundType | one byte | 16 | `Roads` is 8 (road in our `GROUND_TYPES`), `River` 6, 7, 8 |
+
+So: **height layers add, blend layers go over what is below by their weights, a ground type layer replaces where it is not 16**, and
+`opacity` scales a layer. A hidden `Guide` layer (`visible="0" opacity="0"`) shows layers are used as drafts too. ASSUMPTION: the composition
+is read from the data, not checked against what Terry itself builds (docs/plans/procedural_roads.md, "Open", Phase 0). There is no sign of
+masks or blend modes in the project file.
 
 ## Open
 

@@ -50,7 +50,7 @@ uses occlusion queries (docs/re/renderer.md, "Lens flare and vignette").
 | `g_deep_water_colour`, `g_shallow_water_colour` | same-named | name |
 | `g_sea_bed_light_scatter` | `sea_bed_light_scatter_red/green/blue` | name |
 | `g_refraction_light_scatter` | same-named | name |
-| `g_apply_environment_specular`, `g_hdr_on`, `g_ssr_enabled` | engine settings (`g_apply_environment_specular` 0 in the captures) | RE |
+| `g_apply_environment_specular`, `g_hdr_on`, `g_ssr_enabled` | engine settings (`g_apply_environment_specular` 0 with screen space reflections on, 1 at 0: graphics_options.md) | RE |
 
 `cubemap_sun_colour_scale` scales the sky's colours (the skydome table above): verified.
 

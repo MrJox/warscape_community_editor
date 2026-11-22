@@ -36,19 +36,7 @@ prefabs strung along the road, chains of the kit's bridge buildings) are gone. L
 
 ## What the example shows (Warhammer III, `nuln_map_reduced_wh1`)
 
-A `.terry` project has a `QTU::TerrainMap` per type (`Height`, `Blend8`, `GroundType`), each with an ordered list of
-`QTU::TerrainMapLayer`: `id`, `name`, `visible`, `opacity`. Each layer is a file beside the project, `<name>.<type>.<id>.tif`, all 1280 x 1280
-for this 16 x 16 tile (LZW). Decoded:
-
-| Type | Pixel | Nothing there | Seen in the example |
-|---|---|---|---|
-| Height | 32-bit float | 0 | base almost all 0 (1 638 043 of 1 638 400). River -30 .. 32, hills at 35, 50, 60, 70: round offsets |
-| Blend8 | 8 weights, one byte each | all 0 | sums of 255 where painted; base almost empty, `Streets` covers 25% of the tile |
-| GroundType | one byte | 16 | `Roads` is 8 (road in our `GROUND_TYPES`), `River` 6, 7, 8 |
-
-So: **height layers add, blend layers go over what is below by their weights, a ground type layer replaces where it is not 16**, and
-`opacity` scales a layer. A hidden `Guide` layer (`visible="0" opacity="0"`) shows layers are used as drafts too. ASSUMPTION: the composition
-is read from the data; Phase 0 checks it against what Terry itself builds. There is no sign of masks or blend modes in the project file.
+A newer Terry's terrain layers, their files, pixels and how they compose: docs/re/terry.md, "Terrain layers in a newer Terry's project".
 
 Attila differs in one place: 16 blend channels (4 groups x 4 variations), not 8. Layers keep the tile's own channels.
 
@@ -267,8 +255,7 @@ Generated on the walls' code (`wce_walls::bridge`), replacing chains of the kit'
 
 ## The AI at a crossing, and the checks in game (R7, 2026-11-08)
 
-Every `river_crossing` tile of Attila's kit has one closed `AIH_BRIDGE_CROSSING` hint polygon over its bridge (about 35 scene units across
-by 115 to 120 along, foot to foot); its `river_ford` tiles have one over the ford (65 to 80 by 100 to 115), not an `AIH_FORDING_POINT`. A
+The kit's crossing hints (one `AIH_BRIDGE_CROSSING` polygon over each bridge and ford): docs/re/platforms_and_bridges.md, "Not traced". A
 road writes that hint over each of its bridges and fords in an export (`road_layout::crossing_hint`, its outline following the road; over
 a ford at least 32 m across), in the layer *WCE procedural roads*; not drawn in the editor. `tile_export_text <file>` writes the scene as
 an export reads it.

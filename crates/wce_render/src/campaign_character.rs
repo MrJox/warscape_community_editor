@@ -1,4 +1,4 @@
-//! A campaign map's characters as the game draws them (docs/plans/startpos_editing.md, "The models"): a character's art set
+//! A campaign map's characters as the game draws them (docs/re/terry.md, "The campaign's start", "The models"): a character's art set
 //! (`campaign_character_art_sets`) gives rows of `campaign_character_arts` by rank, age, season and faction leader, each a uniform for
 //! land, for an army at sea and for a navy (`agent_uniforms`: the uniform's variant mesh) and their animation sets. The animation sets
 //! are the campaign's own text tables (`animations/campaign_animation_tables/`): `animation_set_table.txt` (a set's states and their

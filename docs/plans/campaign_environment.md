@@ -12,71 +12,9 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
 
 ## How the game does it
 
-### Data (V)
-
-- `terrain/campaigns/<map>/environment_collection.xml`: `ENVIRONMENT_COLLECTION@global_lighting`, `ENVIRONMENT_SPHERES/SPHERE`
-  (`lighting x y z inner_radius outer_radius`). main_attila 11 spheres (global `europe_sp`), TDD's rom_third_age 9 (global
-  `lighting/europe.lighting`, bare stems), cha 7, Thrones' vik 3.
-- `terrain/campaigns/<map>/lighting/<climate>_<season>[N].lighting`: main_attila 4 climates (desert, england, europe, med) x 4 seasons
-  x {none, 1..4}, plus `global.lighting`; TDD the same set (most byte-identical); Thrones `{bri,ire,scot}_<season>`; cha region stems.
-  Also `lighting/environment_map.dds` (512², DXT1).
-- `.lighting` = `SCENE_ENVIRONMENT` with `LIGHTING`, `FOG`, `POST_PROCESSING`, `DEPTH_OF_FIELD`, `HDR`, `WEATHER`: the battle blocks
-  less every scene node (no sky dome, clouds, sun mesh). `WEATHER@definition_name` names `weather_definitions.xml`'s `C_*` entries,
-  whose `vfx1` are the `*_camp` precipitation VFX. Campaign files use DOF (`use_DOF='true'`).
-- Skybox: `campaign_maps/<map>/display/skybox/campaign_skybox.rigid_model_v2` (an RMV2 dome, material `default_dry`,
-  `campaign_skybox_diffuse.dds`) and `cubemap.dds` (1024², RGBA16F, 11 mips). Attila (main, bel, cha), TDD, Thrones; Rome 2 has no
-  cubemap.
-- Placed atmosphere: the kit's 310 `ECVFX` with season masks, built into `particle_emitter_marker.markers` (seasonal
-  `weather_attila_campaign_clouds_*`, `campaign_mountain_cloud`, rain / snow / storm spots, lake fog, leaves, blossom...).
-  `campaign_display_emitter_marker.markers` has no reader in the DLL (a leftover).
-- `environment/{season}.lighting` and `rigidmodels/skybox/default_campaign_*.lighting`: old euler-format files (`sun_direction`,
-  `light_colour`, `hdr_*`...) that nothing in the game loads; every file of the maps' `lighting/` folders has the new set.
-  `default.environment` (a full battle-style sky, identical in Attila, TDD, Rome 2): no campaign reader found (H).
-- Rome 2: no collection; `light_grid.xml` (`ENV_GRID width=2 height=5`, four `SEASON` blocks of 10 files) and
-  `lighting/<season>/<season>_{00..04,10..14}.lighting`.
-- No database table names a campaign lighting, sky or cloud file; `campaign_vfx_*` are UI / event effects. No campaign storm system.
-
-### Engine
-
-- Collection parser 16c5a50 / 16c5530 / 16bd080; loader 1760cf0 multiplies each sphere's z by `CAMPAIGN_Z_SCALE` = 1.1547 (2/√3) (V).
-  Without a collection, `light_grid.xml` (1760e00), bilinear lookup 1791ea0 (V).
-- Season names (fn 0x118f6360, V): per season (`sp su au wi`) stage 0 is `<stem>_<season>.lighting`, stage n
-  `<stem>_<season><n>.lighting`, else the name as written; the snow masks the same (`snow_mask_<season>[n].dds`). main_attila's names
-  already end in `_sp`, so its lighting stays spring all year (V, the winter captures; decision 1); TDD's and cha's bare stems change.
-  Both startposes start at stage 0 (`WORLD/CLIMATE`).
-- Blend (173d760, 17609c0; V): a sphere's weight w = 1 - clamp((d² - inner²) / (outer² - inner²), 0, 1) at the eye (3D distance, the
-  sphere's raw y, z x 1.1547; the captures' weights reproduced to 0.001); sum w·env; if Σw > 1 divide by Σw, if Σw < 1 add
-  (1 - Σw)·global. The sun colour blends linear (to the power 2.2). The weather is the heaviest input's definition (fn 0x11721160:
-  strict >, the global's top-up competes), only its wind degrees and snowing intensity blended. No fade on a season change found (H).
-- Skybox (afd250, drawn b29f60; V): the dome at the camera, scaled by `campaign_sky_scale` = 37.5, drawn in the G-buffer unlit
-  (`rigid_config_PS.g_unlit` 1, the only such draw), fogged; `s_sky` the engine's white cube, `s_environment` the map's `cubemap.dds`.
-  No SKYGEN, cloud planes or sun mesh; the sun is static per file, no time of day.
-- Fog: `battlefog` fullscreen with the file's values, then the shroud plane (`shroud_plane.hlsl`, set up 190dd5c): a 256 x 256 grid
-  over ±500 world units following the camera quantised by 1000 / 255, draped over the low-res land LF, drawn twice; the battle fog
-  formula mixed with `s_sky`, the shroud's density (1 - a)^6.4 and four layers of `s_shroud_cloud` scrolled by time (scales 0.04 /
-  0.026 / 0.01333 / 0.008667) lit by the sun.
-- `directionallight.hlsl` has a campaign branch: `s_overlay` through `g_overlay_view_projection`, and the shroud as a light factor
-  (0.05..1) when `g_shroud_enabled`.
-- The overlay camera (fn 0x11729930, `overlay_camera_push` 0.7): the view's rotation and fov moved back horizontally by
-  d = 0.7 x 8 x |(ray_xz . forward_xz) / ray_y|, the ray from the eye to the near plane's bottom middle; near + d, far - d (the 8 fitted
-  from five captures, its writer not traced).
-- Shadows (fns 0x117665e0, 0x11784c00, 0x117329a0, 0x118debf0; V): the battle's cascade code with the table's campaign rows (mode * 4 +
-  quality at dll+0x1c88aa0: (10, 30, 30, 30), (5, 15, 35, 35), (5, 10, 20, 40), (5, 10, 20, 40)), the depth analysis as in battle,
-  pull-back `shadow_cam_depth_offset_campaign` 14; the terrain casts only at the top quality. `campaign_shadow_split_scale`,
-  `battle_shadow_split_scale`, `g_campaign_depth_bias` and `g_campaign_terrain_slope_scale_depth_bias` have no reader;
-  `shadow_split_campaign_min_distance_delta` only gates the depth analysis's refresh.
-- Campaign-only cbuffer fields: `shroud_PS` (enabled, `g_campaign_world_bounds`, `g_uv_offset`), `shroud_plane_buffer`,
-  `vs_height_map_cb`, `g_overlay_view_projection`, `campaign_CB`, `campaign_ocean_cb`, `campaign_tree_ps`, `trade_route_PS`,
-  `campaign_border_PS`, `g_is_campaign` = 1. Read by no shader: `g_season_type`, `g_campaign_autumn_timer`, `g_snow_height`. The
-  campaign's weather constants are 0 (`g_snowing_intensity`, `g_weather_type`, `g_season_type`, `g_wind`, `wind_VS`) and its VFX wind
-  a fixed (2, 0, 0) units / s in all five captures (its source not traced).
-- Placed effects (fns 0x10af7dc0, 0x10b053d0, 0x10acca10): an effect plays while in view (within 1.15 of the screen's half size, in
-  front) and within 80 units of the eye, whatever its CullDistances; stopped, it stops emitting and its particles live on. `autoplay`
-  and `use_in_outfield` are never read on the campaign. Snow zone: the season's snow mask at the marker. `burst_rigid` carriers start
-  their `property_event OnRigidSpawn` effects once per rigid born (fns 0x1187aed0, 0x11863820, 0x1183fa30, 0x11895130). The
-  `scene_view_type` 2 `cloud_heavy` is simulated but never drawn.
-- Tweakables: `terrain_campaign_waterplane_scale_*` 15/15/2/2, `CAMPAIGN_WATER_SEA_INTENSITY_SHROUD` 0.9, `shroud_padding` 20 /
-  `shroud_edge_padding` 128 / `shroud_half_edge_padding` 64, `shroud_blur_kernel_size_v2` 10, `terrain_override_season` -1.
+The files: docs/formats/weather_files.md, "Campaign and porthole lighting". The engine (the collection's loader, season names, the
+spheres' blend, the skybox, fog and shroud plane, the overlay camera, shadows, campaign-only constants, placed effects, tweakables):
+docs/re/renderer.md, "The campaign map".
 
 ## Phases
 
@@ -92,9 +30,8 @@ Marks: **V** verified (data, disassembly, code), **H** hypothesis, to be checked
 7. **Other games**: Thrones (its lighting and weather fold checked against captures V1 / V2 on 2026-11-21, campaign_tilemap.md),
    Rome 2 (`light_grid.xml` bilinear, no cubemap: not read yet; a map without a collection takes `environment/<season>.lighting`), TDD
    (bare stems, its own stage thresholds `rom_climate_change_phases`).
-8. **Docs**: docs/formats/weather_files.md (the `lighting/` set, the collection, `light_grid.xml`, `environment_map.dds`), a "Campaign"
-   section in docs/re/renderer.md with the constants above, docs/re/environment_to_shader.md for the campaign fields. Not done
-   (docs/re/renderer.md has "The campaign frame", the pass list, from campaign_tilemap.md's Phase 1).
+8. **Docs**: docs/formats/weather_files.md (the `lighting/` set, the collection, `light_grid.xml`, `environment_map.dds`) and
+   docs/re/renderer.md, "The campaign map", done 2026-11-22. Left: docs/re/environment_to_shader.md for the campaign fields.
 
 ## Progress
 
@@ -104,8 +41,8 @@ As built (2026-11-16 to 2026-11-18; the detail is in the git history):
   `RenderScene::game_units` the frame's unit (0.0026087), `RenderScene::terrain_units` 0.2 only for the tile database's repeats
   (`Renderer::tile_scale`, `Renderer::in_tile_units`); `RenderScene::campaign` (the decals' `g_is_campaign`, skipping the weather's
   snow). The older `.lighting` attributes are not read, on purpose (only the leftover files have them).
-- **The cascades:** the campaign rows and pull-back 14 in the shaders' units; capture A's splits 1, 6.25, 16.8, 37.8, 79.8 are the rows
-  x 1.05. Their fit against the game's (the depth analysis) was finished under campaign_tilemap.md (2026-11-21).
+- **The cascades:** the campaign rows and pull-back 14 in the shaders' units (docs/re/renderer.md, "The campaign map", "Shadows").
+  Their fit against the game's (the depth analysis) was finished under campaign_tilemap.md (2026-11-21).
 - **Lighting spheres** (`wce_scene::campaign_lighting`, `wce_terrain_tool/src/lighting.rs`): the collection read, names resolved per
   season and stage as fn 0x118f6360, blended at the eye every frame the weights change (`blend_weighted`, the spheres in their order,
   the global last: Thrones' V2 decided the order, 2026-11-21, campaign_tilemap.md). The Terrain panel's weather: automatic (the
@@ -116,8 +53,8 @@ As built (2026-11-16 to 2026-11-18; the detail is in the git history):
 
 `wce_terrain_tool/src/skybox.rs`: the skybox at the eye x 37.5 (plus its pivot), drawn unlit (`model_cache`'s `unlit`, the
 `display/skybox/` models), fogged; `s_sky` `commontextures/default_white_cubemap.dds`, `s_environment` the map's `cubemap.dds`; no sky
-or environment cube of the editor's, no engine ambient read-back (161 of 163 campaign files have their own ambient). It casts no shadow
-(decision of 2026-11-20: the game's four cascade draws change no texel of capture A's shadow atlas). Checked against the screenshots:
+or environment cube of the editor's, no engine ambient read-back (the files have their own: docs/re/renderer.md, "The campaign map").
+It casts no shadow (decision of 2026-11-20). Checked against the screenshots:
 the cloud band and pale sky over Italy and TDD's Argonath.
 
 ### Fog, overlay and fog of war
@@ -162,7 +99,7 @@ the cloud band and pale sky over Italy and TDD's Argonath.
   flags (every vanilla marker shows inside and outside); the source of the fixed VFX wind; OnParticleSpawn (the waterfall's
   `vfx_name="3"` names no file).
 - Phase 6 (editing) and Phase 7's Rome 2 (`light_grid.xml`, its sky).
-- Phase 8's docs.
+- Phase 8's docs: docs/re/environment_to_shader.md's campaign fields.
 - The other rendering items (cascades, far ground, settlements, `enviro_vfx_lake_fog` over Rauros): docs/plans/campaign_tilemap.md.
 
 ## Decisions (user, 2026-11-16)

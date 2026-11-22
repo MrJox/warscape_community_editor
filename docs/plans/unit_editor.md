@@ -81,13 +81,10 @@ is under "Left". How it works for a user: [editor.md, Unit tool](../editor.md#un
 - **Tables:** `unit_variants` (faction, unit, variant, height_scale, height_variation, unit_card), `variants` (variant_name, variant_filename,
   low_poly_filename, scale, scale_variation, mount_scale), `mounts` (variant), `unit_variants_colours` (per unit and faction colours).
   Stats (`land_units`, `main_units`) are out of scope until asked for.
-- **Checked** (step 6, `wce_render` example `unit_tables_check`, 2026-11-14): in Attila, vanilla and with TDD, `variants` has only
-  `variant_name` (the schema's `variant_filename`, `scale`, `mount_scale` columns are other games' versions), so a unit's `variant` is its
-  VMD's file name, as the catalog had it: 1440 of 1445 vanilla rows find their file (the 5 others are transport crews with none), 2087 of
-  2112 with TDD (25 of TDD's Arnor and Gondor units name files it doesn't ship). What the catalog missed is `unit_variants_colours`: a
-  unit's own colours by faction and soldier type (soldier, officer, standard bearer, musician), 2 rows in vanilla, 57 (28 units) in TDD.
-  It reads them now, the soldiers' row over the faction's colours (**ASSUMPTION**: not compared with the game). Rome 2's packs aren't on
-  this machine: not checked there.
+- **Checked** (step 6, `wce_render` example `unit_tables_check`, 2026-11-14; the tables' contents in Attila: docs/re/units.md, "The
+  looks tables (DB)"): a unit's `variant` is its VMD's file name, as the catalog had it. What the catalog missed is
+  `unit_variants_colours`; it reads them now, the soldiers' row over the faction's colours (**ASSUMPTION**: not compared with the game).
+  Rome 2's packs aren't on this machine: not checked there.
 - **Keys:** a `unit_variants` row is told apart by its unit and faction (the schema's key columns), not its `name`, which repeats per
   faction. Every table's rows are keyed by the schema's key columns.
 - **Storage:** the edited rows as rpfm DB files in the project, `<projects>/loose/db/<table>_tables/!wce_unit_tool`, encoded by rpfm. The
@@ -103,7 +100,7 @@ is under "Left". How it works for a user: [editor.md, Unit tool](../editor.md#un
 
 ### Other games
 
-Rome 2 has the same VMD, anim and table formats (units.md): the tool works there with the same code. Later games (`wsmodel`, `.anim` v6+,
+Rome 2 has the same VMD, anim and table formats (docs/re/units.md, "Other games"): the tool works there with the same code. Later games (`wsmodel`, `.anim` v6+,
 binary fragments) need their own readers behind the game profile; until then the tool is listed in their `unsupported_tools`.
 
 ## Plan (as built)
@@ -125,8 +122,7 @@ weather chips.
 
 ## What the build found
 
-- **A part's file** (a helmet's, a shield's: most of the 8,507 definitions under `variantmeshes/`, where references point; only 4,894 are
-  under `variantmeshdefinitions/`) worn alone floats in the air. `Pins::focus` names the file the paths are in, wherever it is referenced,
+- **A part's file** (a helmet's, a shield's: most definitions are parts, docs/re/units.md, "Assembly") worn alone floats in the air. `Pins::focus` names the file the paths are in, wherever it is referenced,
   and `show_focus` has every slot on the way to it pick it: the unit is dressed through its own definition (or its mount's), the edited text
   served for the open file. Alone only when the unit's definitions never reference it. Opening such a file, a thread reads every
   definition's references once and finds a unit that wears it.

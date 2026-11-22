@@ -22,8 +22,8 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **Firing lines along the wall are cut where the platforms are** (2026-11-04): the base's lines the length of a piece (the inner
   side's `LowWall` and `Overflow`) were bent only at their ends, chords of a curve that went off the walkway.
 - **A piece is as long as its base** (2026-11-04): TDD's gondor pieces are 21 long (-10.5..10.5), not 20; at 20 every joint had the
-  pieces a metre over each other (platforms, footprints, lines). A mitre's copies filling the outer side bring their collision outlines
-  and footprints too, not only their platforms and lines.
+  pieces a metre over each other (platforms, footprints, lines; the gondor frame: docs/re/buildings.md, "The families"). A mitre's
+  copies filling the outer side bring their collision outlines and footprints too, not only their platforms and lines.
 - **Check:** `wall_tech_check [gaps stacked loose]` (the selected walls' pieces in the world: stretches no footprint covers, platforms
   over one another, formation line ends on no platform; `scripts/tile_wall_tech.txt`).
 - **A corner's directions are measured a unit in from it** (2026-11-04): the centre line's sample on a sharp corner is rounded, which
@@ -42,10 +42,10 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   path over it): flat on each tread (`mesh::treads`: the upward faces of its wood across at least half its width), a short slope (at most
   0.25) just before each riser on its lower side, from the walkway's height before to its height after (`pieces::stepped_platforms`);
   the base's hull goes down 0.35 under the stair, from 0.3 in from its ends, so the platforms lie above it.
-- **Platforms meet edge to edge** (`logic::weld_platforms`, 2026-11-05: the game joins platforms on shared edges, as the stepped
-  bastion's stair shares its top edge's corners with the landing; ours met the walkway's pieces partway along their edges, and units
-  did not go from the walkway onto the stair): each level's platforms of every piece, corners within 1 cm made one, a corner on another
-  platform's edge made a corner of it too (379 such meetings on Amon Calen before).
+- **Platforms meet edge to edge** (`logic::weld_platforms`, 2026-11-05: the game joins platforms on shared edges, docs/re/buildings.md,
+  "Logic file fields to decode properly in rpfm", and docs/re/platforms_and_bridges.md, "5. Platform ↔ platform"; ours met the walkway's
+  pieces partway along their edges, and units did not go from the walkway onto the stair): each level's platforms of every piece,
+  corners within 1 cm made one, a corner on another platform's edge made a corner of it too (379 such meetings on Amon Calen before).
 - **A corner's faces land on the bisector exactly** (`PieceWarp::s_at`, 2026-11-05): the straight shear in the base's frame left a
   curved arm's face off the bisector (a slit along Amon Calen's prow, 7 cm 3 m in); the points within 3 of a face are moved along the
   wall onto it, both pieces taking the same corner and bisector.
@@ -65,17 +65,18 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   curve's tightest radius over the point's two segments is at least the footprint's reach from the line (`Profile::fold_radius`, the
   larger of `depth`); otherwise the point is a corner and its handles are not used, as a marked corner's. The test tile's turn: radius
   0.66 with its handles; 45-unit handles give about 21, a curve.
-- **TDD's gondor stair has its own z range** (`slab_zy` 3.74..8.09, user 2026-11-08: the stairs looked misaligned). Measured in the
-  step pieces' meshes: the game's and TDD's other 15 m step pieces have their treads at z 5.15..8.65 (side beams 4.90..9.25), the
-  gondor ones at 3.99..7.49 (beams 3.74..8.09). Spread over the gondor walkway (1.8..8.5) from the game's 5.1..8.9, the treads stuck
-  a metre out of the parapet's outer face (0.74) and stopped short of the inner side; now the beams lie on the walkway's two edges.
+- **TDD's gondor stair has its own z range** (`slab_zy` 3.74..8.09, user 2026-11-08: the stairs looked misaligned; the step pieces'
+  z ranges: docs/re/buildings.md, "The families"). Spread over the gondor walkway from the game's 5.1..8.9, the treads stuck a metre
+  out of the parapet's outer face (0.74) and stopped short of the inner side; now the beams lie on the walkway's two edges.
 - **Audit of a step against the stepped bastion** (user 2026-11-05: units still did not climb the stairs; every part of the logic file
-  checked on Amon Calen, `~/wce_re/scratch/audit`):
-  - `bin_data` groups the hull's triangles (as many groups as `action_vfx`; each triangle in one): the remade hull kept the base's
-    groups (440 of 544 triangles in none); each new triangle now goes into its source triangle's groups.
-  - Each level's box holds its hull and platforms, the building's all its levels (a corner's copies were up to a piece outside).
-  - The zone regions: the bastion has its stair in one region (the inner one, widened around it); ours straddled the two halves. The
-    regions of the straight bases are reshaped around each stair (`zones::reshape_for_steps`).
+  checked on Amon Calen, `~/wce_re/scratch/audit`; the game's side: docs/re/buildings.md, "Logic file fields to decode properly in rpfm"
+  and "The families"):
+  - `bin_data` (the hull's triangle groups): the remade hull kept the base's groups (440 of 544 triangles in none); each new triangle
+    now goes into its source triangle's groups.
+  - Each level's box holds its hull and platforms, the building's all its levels, as the game's (a corner's copies were up to a piece
+    outside).
+  - The zone regions: ours straddled the two halves where the bastion has its stair in one. The regions of the straight bases are
+    reshaped around each stair (`zones::reshape_for_steps`).
   - The stair's platforms: slopes no steeper than 39 degrees measured on the wall (the bastion's own is 40; ours were 68), its ends
     at the walkway's heights exactly, treads only within 0.4 of its slope (another face 0.6 under it sent it past the walkway).
   - Slivers the weld folds are taken out and the firing lines renumbered; the base's platforms are cut to the frame (a piece's walkway
@@ -96,23 +97,23 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   inner side's LowWall and Overflow lines, kept by their middle, reached up to 0.64 past the bisector over the other side's walkway,
   5 of them on Amon Calen's prow). Each part is cut to the mitre (and an attached end's face), a part under 5 cm left out.
 - **A hull cut by a face is closed again** (`logic::hull_caps`, 2026-11-05: soldiers fell through at the prow, on the curved arm's side;
-  its walkway has no crack, platforms at one height, hull under every point and none over it, but both pieces' hulls lay open along
-  the seam): the open edges on a cut plane are chained into loops and filled, facing out, in the group of the hull they close; hull
-  points within 6 mm are one. The game's own hulls are not all closed (the door section 6 open edges, the stepped bastion 3 and 17),
+  its walkway has no crack, platforms at one height, hull under every point and none over it, but both pieces' hulls lay open along the
+  seam): the open edges on a cut plane are chained into loops and filled, facing out, in the group of the hull they close; hull points
+  within 6 mm are one. The game's own hulls are not all closed (docs/re/buildings.md, "Logic file fields to decode properly in rpfm"),
   so this is not known to be the cause: to confirm in game.
 - **Platforms merged where they can be** (`logic::merge_platforms`, 2026-11-05: at the prow soldiers spun on the spot near the inner
-  side and kept falling on the curved arm, where the platforms were thinnest; user's idea: fewer moves from platform to platform). The
-  game's fort pieces have 2530 platforms: none concave, 11 under 0.2 across, at most 6 corners, median area 8.6. Ours were 3961 on
-  Amon Calen: 406 under 0.2, median 3.6. After the weld, neighbours in one plane with the same flags that share edges and stay
-  convex become one, the thinnest first, firing lines renumbered: 2094 platforms, 135 under 0.2 (mostly the stairs' treads and risers),
-  median 6.0; the prow's two pieces 68 to 23. Corners other platforms share stay on the outlines, so some have up to 12 (the game's 6).
+  side and kept falling on the curved arm, where the platforms were thinnest; user's idea: fewer moves from platform to platform; the
+  game's platform shapes: docs/re/buildings.md, "Logic file fields to decode properly in rpfm"). Ours were 3961 on Amon Calen: 406 under
+  0.2, median 3.6. After the weld, neighbours in one plane with the same flags that share edges and stay convex become one, the thinnest
+  first, firing lines renumbered: 2094 platforms, 135 under 0.2 (mostly the stairs' treads and risers), median 6.0; the prow's two
+  pieces 68 to 23. Corners other platforms share stay on the outlines, so some have up to 12 (the game's 6).
 - **A stair was one platform for a test** (user 2026-11-05: units did not even step onto the stairs): one slope across the walkway, as
   the stepped bastion's own stair. The switch (`pieces::STEPPED_STAIRS`) is back to the stepped profile since the winding was found
   (next item).
-- **Platforms go round as the game's** (2026-11-05, comparing the stepped bastion with ours: every game platform is clockwise from
-  above, ours were too but for all 20 stairs, built the other way round; neighbours run a shared edge opposite ways only when both
-  follow it). Every generated platform is turned to it after the weld (`logic::wind_as_the_game`). Slivers are taken out in door
-  sections too (pipes name no platforms).
+- **Platforms go round as the game's** (2026-11-05, comparing the stepped bastion with ours; the game's winding: docs/re/buildings.md,
+  "Logic file fields to decode properly in rpfm"; ours were clockwise too but for all 20 stairs, built the other way round). Every
+  generated platform is turned to it after the weld (`logic::wind_as_the_game`). Slivers are taken out in door sections too (pipes name
+  no platforms).
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`),

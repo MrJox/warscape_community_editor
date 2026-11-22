@@ -14,6 +14,14 @@ assembly kit's TEd). The compiler that follows it: `wce_tile_io::attila::compile
   `MATRIX_44`, whose element (r, c) is at r + 4 c (`UTILITYLIB::MATRIX_44::e`, UtilMatrix.inl).
 - **Position** (`Ted::transform_to_game_tile_space`, `FUN_005059d0`): x * s, the extent minus z * s, y unchanged; s from the tile
   database's render parameters (0.5), the extent the entry's height in cells * `m_terrain_tile_size` (128).
+- **The stacked crates** (2026-10-26, `Ted::BMDExporter::export_`, `BMDExport.cpp`): TEd's export puts 15 stacked crates exactly 2.701 m
+  (5.402 scene units) above the tool's world y, on every tile and at any ground height (`docs/baseline/placement_check.txt`: osgiliath_test,
+  TDD's wildmen_city_a medium / small). The exported y is the node's own world position (the scene object's virtual +0x14), passed through
+  `Ted::transform_to_game_tile_space` unchanged (it only scales x / z and mirrors z). Confirmed from the game's copy (2026-10-29): TDD's
+  `gen_dun_medium_final.pack` has wildmen_city_a/medium's 24 top crates at y 50.47 .. 50.50 on columns at 47.79, 48.69, 49.59 (0.9 m a
+  crate); the tool draws the top crate at the bottom one's height, losing the top layer's own 2.701 m. Not the nesting itself: freeform
+  buildings inside landscape groups occur 256,480 times in the vanilla kit and only these are off. Settling it needs the raw tiles, which
+  are not available.
 - **Quaternion** (`FUN_00474030`): Shoemake's method on the 3 x 3; constants 1, 2, 0.25, 0.5; x87 work at 53-bit precision, stores to
   float where the code has them (the port in `compile.rs`).
 - **Starting damage**: the building's levels {level, min 0, max} (max = the most destructs over its pieces - 1). Without a

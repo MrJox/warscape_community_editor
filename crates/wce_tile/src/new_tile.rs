@@ -1,6 +1,6 @@
 //! A new battle tile (File > New tile...), as TEd's New Tile makes it and its first "Save As Battlefield" writes it (static RE of
-//! `TEd.AssemblyKit.exe`, docs/plans/workflow_review.md), written straight away as a project: `<projects>/assembly_kit/raw_data`, the
-//! kit's layout, never the Assembly Kit.
+//! `TEd.AssemblyKit.exe`, docs/formats/tile_ted.md, "TEd's New Tile and Save As"), written straight away as a project:
+//! `<projects>/assembly_kit/raw_data`, the kit's layout, never the Assembly Kit.
 //!
 //! - The entry `terrain/tiles/battle/_tile_database/TILES/assembly_kit_<name>.xml`: tile set `assembly_kit`, the size, one variation
 //!   `battlefield` with the density, TEd's flags and texture groups (`grass`, `mud`, `forest`, `rock`), the colour TEd picks (`colour`) and

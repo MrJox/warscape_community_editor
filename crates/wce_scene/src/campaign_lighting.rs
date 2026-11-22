@@ -1,5 +1,6 @@
-//! A campaign map's lighting as the game evaluates it (docs/plans/campaign_environment.md, "Engine"): `environment_collection.xml`'s
-//! global lighting and spheres, each sphere's file resolved for the season and climate stage, and the spheres blended at the camera.
+//! A campaign map's lighting as the game evaluates it (docs/re/renderer.md, "The campaign map", "Lighting and weather"):
+//! `environment_collection.xml`'s global lighting and spheres, each sphere's file resolved for the season and climate stage, and the
+//! spheres blended at the camera.
 //!
 //! - The collection (parser fns 0x116c5a50 / 0x116c5530 / 0x116bd080): `ENVIRONMENT_COLLECTION@global_lighting`,
 //!   `ENVIRONMENT_SPHERES/SPHERE@lighting x y z inner_radius outer_radius`, in the `.terry`'s units (the campaign world's, a cell

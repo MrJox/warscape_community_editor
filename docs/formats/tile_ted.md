@@ -2,7 +2,7 @@
 
 XML, `<project version="N">` with N in {1, 6, 8, 9, 11, 12, 14, 15, 16, 17} (850 files are v16, 52 v17). Read and edited with `wce_tile::ted_scene` (`TedScene`) on top of the lossless `XmlDoc`; gate `scene_check` (`wce_tile` example; 1,393 files, 1.47 M instances, 3.24 M numbers).
 
-Structure: `modules` (`Vegetation` generation_seed(s), `Grass`, `Particle_Effects_VFX` seeds), `scene` > `SCENE_GRAPH` > `children` > layers and instances, `camera`. Layers: `LayerInstance` (export_type `LayerExportType_Normal|Escalation1..3`), `UserInstanceGroup`, `INSTANCE_GROUP`, `LAYER_INSTANCE_GROUP` (older). Every instance has `flags` (`OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE...`), `lf_offset`, `name`, `position`, `orientation`, `surface_mode` (`MSM_FREEFORM`, `MSM_LANDSCAPE`).
+Structure: `modules` (`Vegetation` generation_seed(s), `Grass`, `Particle_Effects_VFX` seeds), `scene` > `SCENE_GRAPH` > `children` > layers and instances, `camera`. A nested group's `position` is relative to its parent. Layers: `LayerInstance` (export_type `LayerExportType_Normal|Escalation1..3`), `UserInstanceGroup`, `INSTANCE_GROUP`, `LAYER_INSTANCE_GROUP` (older). Every instance has `flags` (`OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE...`), `lf_offset`, `name`, `position`, `orientation`, `surface_mode` (`MSM_FREEFORM`, `MSM_LANDSCAPE`).
 
 Instance types in the corpus (count of instances with a position, files up to 12 MB): VEGETATION_INSTANCE 427k, BUILDING_INSTANCE 347k, ProjectedDecalInstance 310k, UserInstanceGroup 339k, VFXInstance 7.3k, SIEGE_AI_POLYGON_INSTANCE 7.1k, AI_HINT_POLYGON_INSTANCE 5.7k, POINT_LIGHT_INSTANCE 5.4k, VegetationExclusionPolygonInstance 2.9k, NOGO_REGION_POLYGON_INSTANCE 2.4k, SIMPLE_MESH_INSTANCE 1.3k, SiegeAINode/EdgeInstance 1.3k/1.8k, ZONE_POLYGON_INSTANCE, DEPLOYMENT_ZONE_POLYGON_INSTANCE, DeploymentZonePolygonInstanceGroup, CaptureLocationInstance + CaptureLocationPolygonInstance, CivilianDeploymentZone, CivilianShelter, GO_REGION_POLYGON_INSTANCE, AISeparatorInstance, SplineRiverInstance, SEGMENTED_SPLINE_INSTANCE, LiteBuildingZone. Polygons carry a `points` child (`<point position="x,y,z"/>`); rivers carry points with width / foam_amount / alpha_fade / flow_speed / controlIn / controlOut / terrain_offset.
 
@@ -30,7 +30,7 @@ Instance orientations: `euler(a, b, c)` is `Rz(c) * Ry(a) * Rx(-b)` (above); the
 
 ## Against TEd's own export (Phase 0, 2026-10-09; `placement_check`, a `wce_tile_editor` example; `docs/baseline/placement_check.txt`)
 TEd's stage A export `working_data/.../building_list.xml` (`BATTLEFIELD_BUILDING key position_x/y/z position_type orientation_i/j/k/w scale_x/y/z ...`, `position_type='lf_relative'` in all 373,955 entries) is the oracle for building transforms. For 357,666 buildings of the 73 kit tiles that have one:
-- `position_x` = the tool's world x (scene x / 2), `position_z` = tile length in z - the tool's world z (the export mirrors z about the tile: 1024 m for an 8 x 8 tile), `position_y` = the tool's world y: **absolute metres** in spite of `lf_relative`. Maximum error 0.0001 m. 15 crates (freeform groups nested under a landscape group) are up to 2.70 m off.
+- `position_x` = the tool's world x (scene x / 2), `position_z` = tile length in z - the tool's world z (the export mirrors z about the tile: 1024 m for an 8 x 8 tile), `position_y` = the tool's world y: **absolute metres** in spite of `lf_relative`. Maximum error 0.0001 m. 15 crates (freeform groups nested under a landscape group) are 2.701 m off: TEd's export, not the nesting (docs/re/ted_export.md, "The BMD exporter").
 - The quaternion `(i, j, k, w)` equals the tool's world rotation `Rz(c) * Ry(a) * Rx(-b)` as is (0.00 degrees); mirroring it with the z flip is 90 degrees off on average.
 - Landscape buildings sit on `min_height + scale * raw / 65535` of the tile database entry with a median error of 0.000 m (94 % within 5 cm, 6 % off by 5 cm to 5 m: stored as snapped by TEd at placement, not re-snapped on save / export); freeform ones are free (median 0.59 m above the terrain). `surface_mode` changes how TEd edits an instance, not the numbers in the file. Five TDD tiles (`dead_marshes` 1x1 / 2x2, `lothlorien` 1x1 / 2x2 / 4x4) do not fit their entry's `min_height` / `scale`.
 - **Models are drawn at 1 / unit scale** (2026-10-18, `western_city_rome/medium` against TEd screenshots): positions are half metres horizontally
@@ -81,6 +81,53 @@ Every instance class of TEd (`Ted::BUILDING_INSTANCE` ...) is a reflected class:
 ## TEd's modules and UI (2026-10-09, `public_ted.script` and strings of `TEd.AssemblyKit.exe`; the user's screenshots)
 - Modules (`add_module`): `ai_hint_view`, `building_view`, `campaign_tile_view`, `capture_point_view`, `castle_view`, `deployment_zone_view`, `effects_view`, `efline_editor_view`, `hardoutline_view`, `marker_view`, `point_light_view`, `polygon_editor_view`, `prop_view`, `ship_view`, `sky_view`, `spline_editor_view`, `stats_view`, `terrain_decal_view`, `vegetation_painting_view`, `zone_editor_view`, `projectile_firer`. Classes: `TileModule` (New tile, Load tile, Save tile as, Resize tile, Tile properties, Database management, Integrity errors, New tile set), `TileLinkEditor`, `TileLinkTargetEditor`, `SEA_MODULE`, `SPLINE_MODULE`, `UnitsModule`, `SiegeAIModule`, `AISeparatorModule`, `CaptureLocationModule`, `CivilianDeploymentZoneModule`, `LiteBuildingZoneModule`, `PrefabModule`, `ProjectedDecalModule`, `VFXModule`, `SkyModuleSettings`, `UtilsModule` (generate buildings map, create zone outlines); brushes `FalloffBrush`, `ImageBrush`, Brush Falloff Editor, Load Brush, Spline Paint Stroke, Spline Segment brush, Spline Road; ground type painting `GBP_GROUND_TYPE1..5`; `CLIMATE_CONDITIONS`, `SEASON_*`, weather auto generator; saved selections, compass, ground plane; grid / angle snap 6 m / 90 degrees (`public_ted.script`).
 - UI: mode tabs Select / Create / Paint; selection shape (Rectangle ...), transform mode, World / Local space and X / Y / Z fields for the selection's transform; menus File, Edit, Environment, Tools. The Property Editor has a **Scene** tab (the layer tree, *Main Camera* first, an eye and a cursor arrow per row, a Name / Value grid below) and a **Settings** tab (Building, Sky, Vegetation, Drawing, Application, Application Startup, compass_content, Grid and Snapping, skin, Tile Settings). Floating windows: Brush Falloff Editor, Blendmap Filters, Building Selector, Prefab Selector.
+
+## TEd's tools (static RE of `TEd.AssemblyKit.exe`, 2026-10-26 .. 30; TEd was not run)
+- **Height tools**: TEd's Height Map module (fn 0x00487d50) has Add, Subtract, Smooth (a blur), Set (`PM2OpFalloffSet0`) and Spline Road.
+- **Snapping** (2026-10-30): `Ted::GRID_SETTINGS` ("Grid and Snapping Settings", constructor `FUN_005516d0`, `get_property`
+  `FUN_00551a70`) holds grid_cell_count 100, grid_major_line_frequency 5, grid_spacing 10, the two colours, show_grid on,
+  `horizontal_snap` / `vertical_snap` off (bytes +0x45 / +0x46), `grid_snap_tolerance` 10, `angle_snap_tolerance` 90 (degrees) and
+  `snap_mode` 0, a bit set: grid 1, angle 2, edges 4, vertices 8. These are the constructor's values; `public_ted.script` sets a grid /
+  angle snap of 6 m / 90 degrees (above). The toolbar's two snapping buttons (`TedAppProxy::on_grid_snapping_activated` /
+  `on_angle_snapping_activated`, `FUN_004f62a0` / `FUN_004f6310`) flip bits 1 and 2 through `set_property(10)`; edges and vertices are
+  only settable in the settings dialog. No code reads `horizontal_snap` or `vertical_snap` at their offsets; the gizmo's slots
+  (`SelectModeProxy::on_manipulator_moved` / `_rotated`, `FUN_0048e370` / `FUN_0048e4d0`) take the position and angle back through
+  virtuals, and the code that applies the snap mode was not found statically.
+- **A shelter's handles**: TERRAIN_LINE_INSTANCE (the base of `CivilianShelter`) has two viewport handles (its mouse handler at 0x46c910:
+  1 moves the position, 2 the target, over the ground).
+- **Integrity errors**: TEd's dialog is `FUN_004bb1e0` (error, type, name); a polygon's own check is `FUN_00452180` (clipped to the
+  tile, at least one part inside, two distinct points for a line, three for a closed one). "Building overlaps with another" has a message
+  in TEd but nothing calls it.
+- **Stats**: TEd's `stats_view` is only a module name in its scripts; its executable has no stats view.
+
+## TEd's New Tile and Save As (static RE, 2026-10-26)
+Static RE of `TEd.AssemblyKit.exe` and `Warscape.AssemblyKit.dll`, both 32-bit (Ghidra projects in `C:\Users\frodo\ghidra_work\ted`,
+full notes in its `new_tile_findings.md`); TEd was not run.
+- **New Tile writes nothing.** Menu `FUN_004b85d0` -> `FUN_004b9d80` -> dialog `FUN_004db6f0` (rows: Database, Size X x Y, Triangle
+  Density, Terrain Height), then `FUN_004b9f30(db, X, Y, H, density)`: the terrain editor makes the tile in memory (Warscape `0x104b4890`),
+  every height sample is set to H (`FUN_004b74a0`), the document gets `normal_strength` 2, `requires_infield_lodding`, colour (0, 0, 0), no
+  name; texture groups `grass, mud, forest, rock` for battle (`grass_a, grass_b, sand_a, rock` otherwise). No name is asked: the window is
+  "new tile (XxY)", the name and variation come with Save As.
+- **Limits:** X and Y 1..64 (`FUN_004dac00(1, 0x40)`); density Normal 128, Low 32 or Custom (a spin box, 16..128); above 16 cells on a side
+  the density switches to Low unless the user changed it (`FUN_004dc370`); Terrain Height 10 for battle, 0 for campaign (`FUN_004b7a30`). No
+  size or memory check: 64 x 64 at 128 means about 4.5 GB of blend floats, which the 32-bit TEd cannot allocate.
+- **On save** (`FUN_004bbd30`, Save As `FUN_004bc4a0`): `height_map_0.png` (16-bit grey), `blend_map.tif` (16 channels; at creation
+  channel 0 = 1, the rest 0), `ground_type_map.png` (RGBA; at creation (0, 0, 0, 255)), all `(cells + 2) * density` a side; `tile.ted`
+  (version 17: Vegetation with generation, decal and vfx seeds, Grass with one, the scene, the camera; a seed of 0 becomes
+  `round(timeGetTime() * 0.5)`); the entry; a BMD export into working_data and `protection_map.dds`.
+- **The height range is fitted on every save** (`FUN_0051a310` / `FUN_00518d60`, TerrainIO.cpp): min_height = the lowest sample, scale =
+  the highest minus the lowest, no padding; a flat map gets scale 50. A new flat tile at H is saved with min_height H, scale 50, every
+  sample 0.
+- **The colour** (Save As Battlefield, `FUN_004b7300`): the first three bytes of the MD5 of
+  `<kit>/working_data/terrain/tiles/battle/assembly_kit/<name>/battlefield/` (forward slashes, trailing slash), then the colour + 1 as a
+  24-bit number while another tile has it. Checked on tesd, testd, testdoras, hornburg, orc_test and testise.
+- **Names:** Save As needs a name and a variation (`FUN_004dd210`), lower-cased, nothing else checked. Save As Battlefield forces the
+  `ak_battle` database, variation `battlefield`, outfield tile set `plains`; an existing name of another size is refused, of the same size
+  it offers to save as a variation (a battlefield has one); its entry goes to working_data's `_ak_bf_tile_database/TILES`. Save As
+  Battlefield then also makes the battle (`terrain/battles/<name>`) and runs BOB.
+- **The tile database:** New Tile never touches `tile_database.bin`; TEd lists tiles from the `TILES/*.xml` entries (Warscape's
+  `TILE_DATABASE` constructor `0x1029b570` reads the binary only for a path ending in `tile_database.bin`, else the XML folder, merging
+  `_ak_bf_tile_database` for battle).
 
 ## TEd's instance types against the editor's (2026-11-11, strings of `TEd.AssemblyKit.exe`; every tile.ted, tile.wce and prefab .xml of the Attila kit, the WCE projects and the old awe workspace)
 TEd has more instance classes with a tag and property code of their own (`Ted::<CLASS>::get_property` / `set_property`) than any file uses: the kit's tiles hold

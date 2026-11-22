@@ -33,6 +33,7 @@ two at once; any bare argument pops a modal dialog and hangs. CA's tile example:
     (`save_final_tile_map`, `save_meta_data_map`) are read from a `rules.bob` **in the map's folder** (listed as a consumer too);
     `raw_data/terrain/battles/rules.bob` and `raw_data/terrain/rules.bob` did not reach the map (without the map's own, only
     `terrain.tile_list` and the LF files come out).
+  - BOB fails on an `explicit_tiles.txt` whose last line is empty (2026-11-03): the kit's files end without one.
 
 ## Determinism (tile `tdd_custom_dead_marshes/1x1/aa`)
 
