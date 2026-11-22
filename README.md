@@ -2,15 +2,13 @@
 
 **An all-in-one modding editor for Total War games on the Warscape engine.**
 
-Warscape Community Editor (WCE) brings the work of the Assembly Kit's separate tools into one modern application: you build the tiles
-battles are fought on, tune the weather and lighting, rework the interface and edit the game's sounds in the same window, with the same
-3D viewport.
+With Warscape Community Editor (WCE) you create new content for Total War games: build the battlefields your battles are fought on,
+tune the weather and lighting, rework the interface and edit the game's sounds, all in one application. Its 3D view draws everything
+with **the game's own shaders**, so what you see in the editor is what you get in the game.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/572c01d3-4599-4cb5-8481-e7911767d3ed" alt="The Tile editor with a battle tile open" width="100%">
 </p>
-
-The viewport renders with **the game's own shaders**, so what you see in the editor is what you get in the game.
 
 ## Supported games
 
