@@ -272,7 +272,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         let Some(d) = document(e) else { return fail("no tile open") };
         d.finish_shores();
         let (reeds, stones) = d.tile().shore_counts();
-        ok(format!("{reeds} reed(s), {stones} stone(s), {} splash(es)", d.tile().shore_splashes()))
+        ok(format!("{reeds} reed(s), {stones} stone(s), {} decal(s), {} splash(es)", d.tile().shore_decals(), d.tile().shore_splashes()))
     });
 
     c.add(

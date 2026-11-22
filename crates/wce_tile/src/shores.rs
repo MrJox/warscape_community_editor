@@ -44,13 +44,16 @@ pub const WATERLINE_HEIGHT: f32 = 0.35;
 pub struct ShoreSettings {
     pub reeds: f32,
     pub stones: f32,
+
+    /// How many decals lie along a river's banks (0 .. 1, [`AMOUNTS`]).
+    pub decals: f32,
     pub shallows: f32,
     pub wet_bank: f32,
 }
 
 impl Default for ShoreSettings {
     fn default() -> Self {
-        Self { reeds: 0.5, stones: 0.25, shallows: 0.8, wet_bank: 2.5 }
+        Self { reeds: 0.5, stones: 0.25, decals: 0.5, shallows: 0.8, wet_bank: 2.5 }
     }
 }
 
@@ -65,7 +68,12 @@ pub fn amount(name: &str) -> Option<f32> {
 impl ShoreSettings {
     /// The settings of amounts of reeds and stones ([`AMOUNTS`]).
     pub fn of(reeds: f32, stones: f32) -> Self {
-        Self { reeds, stones, ..Self::default() }
+        Self { reeds, stones, decals: 0.0, ..Self::default() }
+    }
+
+    /// With decals along the banks ([`AMOUNTS`]).
+    pub fn with_decals(self, decals: f32) -> Self {
+        Self { decals, ..self }
     }
 }
 
@@ -157,7 +165,29 @@ pub struct Shore {
 
     /// The splashes over a ford's edges ([`SPLASH`], at the water's height).
     pub splashes: Vec<Placed>,
+
+    /// Along a river's banks (not at its fords): decals over the seam of water and land (their `scale`: their size, metres), and now and
+    /// then a long flat rock or a low ground mound laid along the bank (buildings).
+    pub decals: Vec<Placed>,
+    pub bank_pieces: Vec<Placed>,
 }
+
+/// The decals along a river's banks (the kit's mud, dirt and bank decals; its fords' rocks decal now and then).
+pub const BANK_DECALS: [&str; 6] = [
+    "rigidmodels/decals/battle/global_bank_1.rigid_model_v2",
+    "rigidmodels/decals/battle/global_terrain_mud_01.rigid_model_v2",
+    "rigidmodels/decals/battle/global_terrain_mud_02.rigid_model_v2",
+    "rigidmodels/decals/battle/dirt_1.rigid_model_v2",
+    "rigidmodels/decals/battle/dirt_2.rigid_model_v2",
+    "rigidmodels/decals/battle/global_terrain_rocks_04.rigid_model_v2",
+];
+
+/// A long flat rock (10 x 7 m, 2 m high) and a low ground mound (19 x 11 m, 2 m high) laid along a bank, their long side (x) along it.
+pub const BANK_ROCK: &str = "rock_flat";
+pub const BANK_MOUND: &str = "global_ground_pathborder";
+
+/// How far apart along a bank its dressing is looked for (metres).
+const BANK_STEP: f32 = 4.0;
 
 /// The splash over a ford's edges: Attila's vanilla battle water splash (a looping foam on the water).
 pub const SPLASH: &str = "enviro_vfx_watersplashes";
@@ -338,6 +368,60 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
         }
     }
 
+    // A river's banks: decals over the seam, now and then a flat rock or a mound along them; not at a ford nor its clear banks.
+    if let Water::River { line, half, fords, .. } = water {
+        let length = line.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f32>();
+        let mut along = BANK_STEP * 0.5;
+        let mut k = 0i64;
+        while along < length {
+            if let Some((p, dir, h)) = at_along(line, half, along) {
+                for side in [-1.0f32, 1.0] {
+                    let near_ford = fords.iter().any(|f| {
+                        let (s0, s1) = f.ends(f64::from(side));
+                        let margin = f64::from(FORD_BANK_MARGIN).max(f.length * 0.5);
+                        f64::from(along) >= s0 - margin && f64::from(along) <= s1 + margin
+                    });
+                    let [a, b, c, d] = cell_numbers(seed ^ 0x6c07_8965, k, if side < 0.0 { 1 } else { 2 });
+                    let yaw = -dir[1].atan2(dir[0]).to_degrees();
+                    // Out from the middle line: past the water's edge a little (on the bank's top).
+                    let at = |off: f32| {
+                        let r = (h + off) * side;
+                        (p[0] - dir[1] * r, p[1] + dir[0] * r)
+                    };
+
+                    if s.decals > 0.0 && !near_ford && a < s.decals * 0.6 {
+                        let (x, z) = at(1.0 + 2.5 * b);
+                        if !blocked(x, z) {
+                            let key = BANK_DECALS[(c * BANK_DECALS.len() as f32) as usize % BANK_DECALS.len()];
+                            let size = 5.0 + 4.0 * d;
+                            out.decals.push(Placed {
+                                key: key.to_owned(),
+                                x,
+                                y: height(x, z),
+                                z,
+                                scale: size,
+                                yaw: yaw + 30.0 * (b - 0.5),
+                            });
+                        }
+                    }
+
+                    if s.stones > 0.0 && !near_ford {
+                        let n = noise(seed ^ 0x2c1b_3c6d, along, side * 1000.0, 40.0);
+                        let (x, z) = at(2.0 + 2.0 * c);
+                        if n > 0.62 && b < 0.035 * s.stones && !blocked(x, z) {
+                            out.bank_pieces.push(Placed { key: BANK_ROCK.to_owned(), x, y: height(x, z) - 0.6, z, scale: 1.0, yaw });
+                        } else if n < 0.3 && b > 1.0 - 0.02 * s.stones && !blocked(x, z) {
+                            out.bank_pieces.push(Placed { key: BANK_MOUND.to_owned(), x, y: height(x, z) - 1.2, z, scale: 1.0, yaw });
+                        }
+                    }
+                }
+            }
+
+            along += BANK_STEP;
+            k += 1;
+        }
+    }
+
     // The splashes: across each ford's two curved ends, every few metres, on the water.
     if let Water::River { line, half, fords, .. } = water {
         for f in fords {
@@ -433,6 +517,21 @@ mod tests {
         let reedy = place(&w, &ShoreSettings::of(0.85, 0.0), &g, &|_, _| false, 5);
         assert!(reedy.reeds.iter().any(|r| (r.z - 50.0).abs() < 5.0), "on the ford");
         assert!(reedy.reeds.iter().all(|r| g(r.x, r.z) > -1.0), "not in the deep");
+    }
+
+    #[test]
+    fn a_rivers_banks_take_decals_and_now_and_then_a_rock_but_not_at_its_fords() {
+        let ford = crate::river_bed::Ford { at: 300.0, length: 30.0, depth: 0.5 };
+        let w = Water::River { line: vec![[0.0, 50.0], [600.0, 50.0]], water: vec![0.0, 0.0], half: vec![10.0, 10.0], fords: vec![ford] };
+        let g = |_: f32, z: f32| ((z - 50.0).abs() - 11.0) * 0.5;
+        let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85), &g, &|_, _| false, 9);
+        assert!(shore.decals.len() > 100, "{} decals", shore.decals.len());
+        assert!(shore.decals.iter().all(|d| ((d.z - 50.0).abs() - 10.0) > 0.9 && ((d.z - 50.0).abs() - 10.0) < 3.6), "past the edge");
+        assert!(shore.decals.iter().all(|d| d.scale >= 5.0 && d.scale <= 9.0 && BANK_DECALS.contains(&d.key.as_str())));
+        assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());
+        let at_ford = |x: f32| x > 270.0 && x < 330.0;
+        assert!(shore.decals.iter().chain(&shore.bank_pieces).all(|p| !at_ford(p.x)), "none at the ford's banks");
+        assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 9).decals.is_empty(), "none asked");
     }
 
     #[test]

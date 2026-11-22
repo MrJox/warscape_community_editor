@@ -22,8 +22,13 @@ pub const STONES_ATTR: &str = "wce_shore_stones";
 /// A river's fords splash at their edges (`1`, missing) or not (`0`).
 pub const SPLASHES_ATTR: &str = "wce_ford_splashes";
 
+/// How many decals lie along a river's banks: an amount's name; missing: `some`.
+pub const DECALS_ATTR: &str = "wce_shore_decals";
+
 /// The attributes the Inspector shows as rows of their own.
-pub(crate) const SHORE_ROW_ATTRS: [&str; 4] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR, SPLASHES_ATTR];
+pub(crate) const SHORE_ROW_ATTRS: [&str; 5] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR, SPLASHES_ATTR, DECALS_ATTR];
+
+const DEFAULT_DECALS: &str = "some";
 
 /// The layer an export puts the shores in.
 pub const EXPORT_LAYER: &str = "WCE shores";
@@ -54,6 +59,7 @@ impl Tile {
         let settings = |e: usize| {
             let read = |a: &str, d: &str| amount(sc.get(e, a).as_deref().unwrap_or(d)).unwrap_or_else(|| amount(d).unwrap_or(0.0));
             ShoreSettings::of(read(REEDS_ATTR, DEFAULT_REEDS), read(STONES_ATTR, DEFAULT_STONES))
+                .with_decals(read(DECALS_ATTR, DEFAULT_DECALS))
         };
         let seed = |e: usize| sc.get(e, RIVER_ID_ATTR).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(e as u64);
         let mut out = vec![];
@@ -183,10 +189,27 @@ impl Tile {
             let mut out = vec![];
             for w in &waters {
                 let shore = wce_tile::shores::place(&w.water, &w.settings, &height, &|x, z| keep_off.blocked(x, z), w.seed);
+                // The bank's decals: projected on the ground, at their size (the kit's ford decals are freeform, as these).
+                for p in &shore.decals {
+                    let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
+                    let size = f64::from(p.scale) * unit;
+                    let n = wce_tile::new_instances::NewInstance::new("ProjectedDecalInstance")
+                        .position(at)
+                        .attr("key", &p.key)
+                        .attr("scale", wce_tile::new_instances::vector(Double3::new(size, 6.0, -size)))
+                        .attr("surface_mode", "MSM_FREEFORM");
+                    let Ok(text) = wce_tile::new_instances::element_text(&n) else { continue };
+                    let text = super::draft::turned(&text, p.yaw);
+                    out.push(BiomeItem { area: w.elem, text, position: [at.x, at.y, at.z] });
+                }
+
                 let splashes = if w.splashes { shore.splashes.as_slice() } else { &[] };
-                for (kind, list) in
-                    [("VEGETATION_INSTANCE", shore.reeds.as_slice()), ("BUILDING_INSTANCE", &shore.stones), ("VFXInstance", splashes)]
-                {
+                for (kind, list) in [
+                    ("VEGETATION_INSTANCE", shore.reeds.as_slice()),
+                    ("BUILDING_INSTANCE", &shore.stones),
+                    ("BUILDING_INSTANCE", &shore.bank_pieces),
+                    ("VFXInstance", splashes),
+                ] {
                     for p in list {
                         let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
                         let Some(mut text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
@@ -261,6 +284,12 @@ impl Tile {
         (reeds, stones)
     }
 
+    /// How many decals the banks have now.
+    #[must_use]
+    pub fn shore_decals(&self) -> usize {
+        self.shore_items.iter().filter(|i| i.text.starts_with(b"<ProjectedDecalInstance")).count()
+    }
+
     /// How many splashes the fords have now.
     #[must_use]
     pub fn shore_splashes(&self) -> usize {
@@ -318,7 +347,14 @@ impl TileDocument {
                 STONES_ATTR,
                 "stones",
                 DEFAULT_STONES,
-                "How much of the waterline small stones line, with a small boulder on the bank now and then.",
+                "How much of the waterline small stones line, with a small boulder on the bank now and then, and a long flat rock or a low \
+                 mound laid along a river's bank rarely (not by its fords).",
+            ),
+            (
+                DECALS_ATTR,
+                "bank decals",
+                DEFAULT_DECALS,
+                "How many mud, dirt and bank decals lie along a river's banks, over the seam of water and land (not by its fords).",
             ),
         ] {
             let sc = self.tile().tscene();
