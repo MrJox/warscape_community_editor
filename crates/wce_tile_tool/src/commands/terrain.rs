@@ -416,10 +416,23 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "river_ford",
-        "river_ford <along m> <length m> | remove <i>",
-        "add a ford to the selected river, or take one away (one undo entry)",
+        "river_ford <along m> <length m> | remove <i> | draw | list",
+        "add a ford to the selected river, or take one away (one undo entry); draw: the next press on its water draws one; list: its fords",
         |e, a| {
+            if a.first().is_some_and(|w| w == "draw") {
+                return with_tile(e, |t, _| {
+                    t.river_ui.drawing_ford = true;
+                    ok("drawing a ford: press on the river and drag")
+                });
+            }
+
             let sel = primary(e);
+            if a.first().is_some_and(|w| w == "list") {
+                let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+                let fords = d.tile().tscene().get(r, "wce_fords").unwrap_or_default();
+                return ok(if fords.is_empty() { "no fords".to_owned() } else { fords });
+            }
+
             let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
             if a.first().is_some_and(|w| w == "remove") {
                 let Some(i) = a.get(1).and_then(|v| v.parse::<usize>().ok()) else { return fail("usage: river_ford remove <i>") };
