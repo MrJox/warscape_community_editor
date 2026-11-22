@@ -140,8 +140,23 @@ impl BedSettings {
 /// How far the banks climb past the profile before the bed stops (metres): the ground is met before that but on cliffs.
 const BANK_RISE: f64 = 60.0;
 
+/// A ford: a stretch of a river's bed raised to a wading depth (the kit's fords: 0.5 of the game's height units, 0.25 m in the
+/// editor), its banks eased to [`FORD_BANK_SLOPE`]: where along the river its middle is (metres), how long it is held, its depth.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ford {
+    pub at: f64,
+    pub length: f64,
+    pub depth: f64,
+}
+
+/// The kit's fords' water over their bed (the game's height units; `river_ford/*`: 0.36 .. 0.5).
+pub const FORD_DEPTH: f64 = 0.5;
+
+/// How steep a ford's banks climb (degrees): units walk down to it.
+pub const FORD_BANK_SLOPE: f64 = 12.0;
+
 /// A river's bed along its line: the centre line's samples (x, z), the water there (the game's units) and the width, and its settings
-/// (the depth in the game's units); `vertical`: the game's height units a metre across (the tile's unit), for the banks' slope.
+/// (the depth in the game's units); `vertical`: the game's height units a metre across (the tile's unit), for the banks' slope; its fords.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Channel {
     pub line: Vec<[f64; 2]>,
@@ -150,18 +165,61 @@ pub struct Channel {
     pub depth: f64,
     pub bank_slope: f64,
     pub vertical: f64,
+    pub fords: Vec<Ford>,
+
+    /// Whether it cuts its bed along its whole line; else only its fords change the ground.
+    pub cuts: bool,
+}
+
+/// A place of a bed's grid ([`Channel::fill_cells`]): the lowest bed over it (infinite where none reaches), how much of a ford is there
+/// (at the nearest place of the line) and whether it is under the river's water (within half its width of its line), and how far the
+/// line is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BedCell {
+    pub bed: f64,
+    pub ford: f64,
+    pub wet: bool,
+    pub near: f64,
+}
+
+impl Default for BedCell {
+    fn default() -> Self {
+        Self { bed: f64::INFINITY, ford: 0.0, wet: false, near: f64::INFINITY }
+    }
 }
 
 impl Channel {
     /// The bed's height `r` metres from the centre where the water is `water` and the river `width` wide.
     pub fn across(&self, r: f64, water: f64, width: f64) -> f64 {
+        self.across_at(r, water, width, f64::NAN)
+    }
+
+    /// How much of a ford is at a place along the river (0 .. 1: held over its length, fading over half of it more each side), and its
+    /// depth.
+    pub fn ford_at(&self, along: f64) -> (f64, f64) {
+        self.fords
+            .iter()
+            .map(|f| {
+                let d = (along - f.at).abs() - f.length * 0.5;
+                let ramp = (f.length * 0.5).max(10.0);
+                let t = (1.0 - d / ramp).clamp(0.0, 1.0);
+                (if d <= 0.0 { 1.0 } else { t * t * (3.0 - 2.0 * t) }, f.depth)
+            })
+            .fold((0.0, self.depth), |a, b| if b.0 > a.0 { b } else { a })
+    }
+
+    /// [`Self::across`] at a place along the river (metres; NaN: no fords counted).
+    pub fn across_at(&self, r: f64, water: f64, width: f64, along: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        let scale = self.depth / KIT_DEPTH;
+        let (w, ford_depth) = if along.is_nan() { (0.0, self.depth) } else { self.ford_at(along) };
+        let depth = self.depth + (ford_depth - self.depth) * w;
+        let rise = self.rise() + (Self::rise_of(FORD_BANK_SLOPE, self.vertical) - self.rise()) * w;
+        let scale = depth / KIT_DEPTH;
         let t = r.abs() / (PROFILE_STEP * k);
         let last = KIT_BED.len() - 1;
         if t >= last as f64 {
             let past = r.abs() - last as f64 * PROFILE_STEP * k;
-            return water + KIT_BED[last] * scale + past * self.rise();
+            return water + KIT_BED[last] * scale + past * rise;
         }
 
         let i = t.floor() as usize;
@@ -169,15 +227,20 @@ impl Channel {
         water + (KIT_BED[i] + (KIT_BED[i + 1] - KIT_BED[i]) * f) * scale
     }
 
-    /// How far from the centre it reaches at a width (metres).
+    /// How far from the centre it reaches at a width (metres): a ford's gentler banks reach further.
     pub fn reach(&self, width: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.rise()
+        let rise = if self.fords.is_empty() { self.rise() } else { self.rise().min(Self::rise_of(FORD_BANK_SLOPE, self.vertical)) };
+        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / rise
     }
 
     /// How far the banks climb a metre across (the game's units).
     fn rise(&self) -> f64 {
-        self.bank_slope.to_radians().tan().max(0.05) * if self.vertical > 0.0 { self.vertical } else { 1.0 }
+        Self::rise_of(self.bank_slope, self.vertical)
+    }
+
+    fn rise_of(slope: f64, vertical: f64) -> f64 {
+        slope.to_radians().tan().max(0.05) * if vertical > 0.0 { vertical } else { 1.0 }
     }
 
     /// The bounds it touches (x0, z0, x1, z1), none without a line.
@@ -192,10 +255,21 @@ impl Channel {
 
     /// The bed over a grid (`w` x `h` places, the first at `origin`, `step` apart in x and z): for each place the lowest of the bed
     /// across each segment of the line (the place's distance from the segment, the water and width there), infinite where none reaches.
-    pub fn fill(&self, origin: [f64; 2], step: [f64; 2], (w, h): (usize, usize)) -> Vec<f64> {
-        let mut out = vec![f64::INFINITY; w * h];
+    pub fn fill(&self, origin: [f64; 2], step: [f64; 2], size: (usize, usize)) -> Vec<f64> {
+        self.fill_cells(origin, step, size).into_iter().map(|c| c.bed).collect()
+    }
+
+    /// [`Self::fill`] with the fords: each place's lowest bed, the most of a ford over it, and whether it is under the water.
+    pub fn fill_cells(&self, origin: [f64; 2], step: [f64; 2], (w, h): (usize, usize)) -> Vec<BedCell> {
+        let mut out = vec![BedCell::default(); w * h];
         if self.line.len() < 2 {
             return out;
+        }
+
+        // How far along each sample is (for the fords).
+        let mut along = vec![0.0; self.line.len()];
+        for i in 1..self.line.len() {
+            along[i] = along[i - 1] + (self.line[i][0] - self.line[i - 1][0]).hypot(self.line[i][1] - self.line[i - 1][1]);
         }
 
         for i in 0..self.line.len() - 1 {
@@ -217,11 +291,19 @@ impl Channel {
                         continue;
                     }
 
+                    let at = along[i] + (along[i + 1] - along[i]) * t;
                     let water = self.water[i] + (self.water[i + 1] - self.water[i]) * t;
-                    let v = self.across(r, water, width);
-                    let o = &mut out[j * w + k];
-                    if v < *o {
-                        *o = v;
+                    let v = self.across_at(r, water, width, at);
+                    let c = &mut out[j * w + k];
+                    if v < c.bed {
+                        c.bed = v;
+                    }
+
+                    // The ford and the water of the nearest place of the line.
+                    if r < c.near {
+                        c.near = r;
+                        c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at).0 };
+                        c.wet = r <= width * 0.5;
                     }
                 }
             }
@@ -243,7 +325,21 @@ impl RiverBed {
     /// The ground at a place over `below` (what lies under the river's layer) and the bed there (`bed`: [`Channel::fill`]'s value,
     /// infinite where the bed does not reach), none where the river leaves it as it is. The bed only cuts.
     pub fn height_with(&self, x: f64, z: f64, below: f64, bed: f64) -> Option<f64> {
-        let mut out = (bed < below).then_some(bed);
+        self.height_of(x, z, below, BedCell { bed, ..Default::default() })
+    }
+
+    /// [`Self::height_with`] with a place's fords ([`Channel::fill_cells`]): a river that cuts its bed cuts it; a ford pulls the ground
+    /// under the water to its bed (raised or cut) and cuts its eased banks; a river that cuts no bed changes the ground at its fords only.
+    pub fn height_of(&self, x: f64, z: f64, below: f64, cell: BedCell) -> Option<f64> {
+        let cuts = self.channel.as_ref().is_some_and(|c| c.cuts);
+        let bed = cell.bed;
+        let mut out = if cuts { (bed < below).then_some(bed) } else { None };
+        if cell.ford > 0.0 && bed.is_finite() {
+            let base = out.unwrap_or(below);
+            let target = if cell.wet { bed } else { bed.min(base) };
+            out = Some(base + (target - base) * cell.ford);
+        }
+
         for j in &self.joins {
             if let Some((g, w)) = j.at(x, z) {
                 let base = out.unwrap_or(below);
@@ -315,6 +411,8 @@ mod tests {
             depth: 5.7,
             bank_slope: 45.0,
             vertical: 1.0,
+            fords: vec![],
+            cuts: true,
         };
         // The kit's river: its profile.
         assert!((c.across(0.0, -6.2, 45.0) - DEEP.profile[0]).abs() < 0.11);
@@ -330,8 +428,34 @@ mod tests {
         let g = c.fill([0.0, -100.0], [10.0, 10.0], (11, 21));
         assert!((g[10 * 11 + 5] + 11.9).abs() < 0.11, "the middle of the bed");
         assert!(g[0].is_infinite() || g[0] > 30.0, "far off: {}", g[0]);
-        let bed = RiverBed { channel: Some(c), joins: vec![] };
+        let bed = RiverBed { channel: Some(Channel { cuts: true, ..c }), joins: vec![] };
         assert_eq!(bed.height_with(50.0, 0.0, -20.0, -11.9), None, "lower ground stays");
         assert_eq!(bed.height_with(50.0, 0.0, 3.0, -11.9), Some(-11.9));
+    }
+
+    #[test]
+    fn a_ford_raises_the_bed_to_its_depth_and_fades_out() {
+        let c = Channel {
+            line: vec![[0.0, 0.0], [300.0, 0.0]],
+            water: vec![-6.2, -6.2],
+            width: vec![45.0, 45.0],
+            depth: 5.7,
+            bank_slope: 30.0,
+            vertical: 1.0,
+            fords: vec![Ford { at: 150.0, length: 40.0, depth: FORD_DEPTH }],
+            cuts: false,
+        };
+        assert!((c.across_at(0.0, -6.2, 45.0, 150.0) - (-6.2 + KIT_BED[0] * FORD_DEPTH / KIT_DEPTH)).abs() < 1e-9, "the ford's bed");
+        assert!((c.across_at(0.0, -6.2, 45.0, 10.0) - (-6.2 + KIT_BED[0])).abs() < 1e-9, "the river's own away from it");
+        let mid = c.across_at(0.0, -6.2, 45.0, 180.0);
+        assert!(mid > -6.2 + KIT_BED[0] && mid < -6.2 + KIT_BED[0] * FORD_DEPTH / KIT_DEPTH, "fading: {mid}");
+        let g = c.fill_cells([140.0, 0.0], [10.0, 1.0], (3, 1));
+        assert!(g[1].bed > -7.0 && g[1].bed < -6.2 && g[1].ford == 1.0 && g[1].wet, "on the grid: {g:?}");
+
+        // A river that cuts no bed: a kit bed at -12 filled to the ford's, nothing away from it.
+        let bed = RiverBed { channel: Some(c.clone()), joins: vec![] };
+        assert_eq!(bed.height_of(150.0, 0.0, -12.0, g[1]), Some(g[1].bed));
+        let far = c.fill_cells([20.0, 0.0], [1.0, 1.0], (1, 1))[0];
+        assert_eq!(bed.height_of(20.0, 0.0, -12.0, far), None);
     }
 }

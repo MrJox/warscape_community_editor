@@ -32,6 +32,9 @@ pub struct RiverProfile {
     pub length: f64,
     pub samples: Vec<ProfileSample>,
     pub points: Vec<ProfilePoint>,
+
+    /// Its fords: each one's middle along it and its length (metres).
+    pub fords: Vec<(f64, f64)>,
 }
 
 /// The values a ramp sets on a river's points: the attribute and its label (`width` in the file's metres).
@@ -80,7 +83,8 @@ impl TileDocument {
                 }
             })
             .collect();
-        Some(RiverProfile { length: along, samples: out, points })
+        let fords = super::river_beds::river_fords(sc.get(river, super::river_beds::FORDS_ATTR).as_deref().unwrap_or_default());
+        Some(RiverProfile { length: along, samples: out, points, fords })
     }
 
     /// Sets river points' water heights (the file's metres), their handles moving with them: one undo entry per `gesture` (a drag's steps

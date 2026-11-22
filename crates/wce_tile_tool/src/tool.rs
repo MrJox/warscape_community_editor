@@ -365,6 +365,9 @@ pub struct TileTool {
     /// as the export makes it). On by default.
     pub(crate) snap_river_links: bool,
 
+    /// Where a kit bridge being placed was snapped onto a river (`snap_bridge_to_river`): placed there, freeform.
+    pub(crate) bridge_over: Option<Float3>,
+
     /// The road link the cursor is snapped to now (drawing a procedural road or dragging its point), on the ground.
     pub(crate) road_link_hit: Option<Float3>,
 
@@ -922,6 +925,7 @@ impl Default for TileTool {
             snap_edges: false,
             snap_road_links: true,
             snap_river_links: true,
+            bridge_over: None,
             road_link_hit: None,
             snap_heights: false,
             angle_tolerance: 0.0,
@@ -2500,6 +2504,8 @@ impl TileTool {
             self.snapped_cursor = q;
         }
 
+        self.snap_bridge_to_river(d);
+
         let grab = self.grab().map(|g| (g.elem, g.y_offset, g.gesture, g.last, g.others.clone()));
         if let (true, Some((g, y_offset, gesture, last, others))) = (self.terrain_hit, grab) {
             let (gx, gz) = (self.snapped_cursor.x, self.snapped_cursor.z);
@@ -2792,6 +2798,35 @@ impl TileTool {
         }
 
         Some(out)
+    }
+
+    /// A kit bridge being placed over a river (snap rivers to river links): on the river's middle line, turned to span across it.
+    pub(crate) fn snap_bridge_to_river(&mut self, d: &TileDocument) {
+        self.bridge_over = None;
+        if self.terrain_hit && self.snap_river_links && matches!(self.placing, Some(Placing::Draft)) {
+            let bridge = self
+                .draft
+                .as_ref()
+                .filter(|dr| dr.kind == "BUILDING_INSTANCE")
+                .map(|dr| dr.key.clone())
+                .filter(|k| d.tile().building_category(k).is_some_and(|c| c.to_lowercase().contains("bridge")));
+            if let Some(key) = bridge
+                && let Some((q, dir)) = d.river_crossing(self.cursor)
+            {
+                // Its longer side spans the river: local x turned by yaw a points at -a, local z at 90 - a (degrees, from +x to +z). Its
+                // model's bounds unknown (not loaded yet), along z: the kit's `bridge_wood_complete` spans its rivers along its local z.
+                let span_x = d.tile().building_model(&key).is_some_and(|m| (m.bmax.x - m.bmin.x).abs() > (m.bmax.z - m.bmin.z).abs());
+                let across = dir.to_degrees() + 90.0;
+                let yaw = if span_x { -across } else { 90.0 - across };
+                // Freeform over the water, as the kit's (`bridge_wood_complete` over its river crossings: its origin 1 m over the water).
+                let over = Float3::new(q.x, q.y + BRIDGE_OVER_WATER_M, q.z);
+                self.snapped_cursor = over;
+                self.bridge_over = Some(over);
+                if let Some(dr) = self.draft.as_mut() {
+                    dr.yaw = (yaw as f32).rem_euclid(360.0);
+                }
+            }
+        }
     }
 
     /// The tile's outlines for the snapping, from the cache while the tile and `skip` are the same.
@@ -4702,6 +4737,9 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
 
 /// Metres within which a procedural road's point snaps to a road link (or the snap tolerance, when more).
 pub(crate) const ROAD_LINK_REACH: f32 = 12.0;
+
+/// How far over a river's water a kit bridge snapped onto it is placed (metres; the kit's river crossings' `bridge_wood_complete`).
+const BRIDGE_OVER_WATER_M: f32 = 1.0;
 
 /// The type of a river.
 const RIVER: &str = "SplineRiverInstance";

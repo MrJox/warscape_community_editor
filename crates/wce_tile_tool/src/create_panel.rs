@@ -1140,7 +1140,7 @@ impl TileTool {
 
         let d = document(e).ok_or("no tile open")?;
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
-        let (at, on_terrain) = if self.preview_forced { (at, true) } else { self.place_point() };
+        let (at, on_terrain) = if self.preview_forced && self.bridge_over.is_none() { (at, true) } else { self.place_point() };
         // Upright on the slope where it goes (the Follow slope chip).
         let text = if self.modes.unwrap_or_default().1 == crate::settings::RotationMode::Slope {
             d.tile().slope_tilted_text(&text, at)

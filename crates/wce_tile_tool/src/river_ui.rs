@@ -17,6 +17,9 @@ const PICK_PX: f32 = 7.0;
 /// The profile's state: the point being dragged (the river, its index, the drag's gesture), and the ramp's settings.
 pub(crate) struct RiverUi {
     drag: Option<(usize, usize, u64)>,
+
+    /// A new ford's place along the river and its length (metres).
+    ford: [f32; 2],
     ramp: i32,
     from: i32,
     to: i32,
@@ -25,7 +28,7 @@ pub(crate) struct RiverUi {
 
 impl Default for RiverUi {
     fn default() -> Self {
-        Self { drag: None, ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
+        Self { drag: None, ford: [0.0, 40.0], ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
     }
 }
 
@@ -60,6 +63,12 @@ impl TileTool {
         };
         let dl = gui::window_draw_list();
         dl.rect_filled(at, v2(at.x + width, at.y + GRAPH_HEIGHT), col32(24, 26, 30, 255), 3.0);
+        // The fords as bands over their length.
+        for &(a, l) in &p.fords {
+            let (x0, x1) = (to_px(a - l * 0.5, lo).x.max(at.x), to_px(a + l * 0.5, lo).x.min(at.x + width));
+            dl.rect_filled(v2(x0, at.y), v2(x1, at.y + GRAPH_HEIGHT), col32(60, 90, 60, 160), 0.0);
+        }
+
         let ground = p.samples.iter().map(|s| to_px(s.along, s.ground)).collect::<Vec<_>>();
         let water = p.samples.iter().map(|s| to_px(s.along, s.water)).collect::<Vec<_>>();
         dl.polyline(&ground, col32(150, 120, 80, 255), false, 2.0);
@@ -171,6 +180,42 @@ impl TileTool {
             if gui::is_item_hovered() {
                 gui::set_tooltip("Joins the two selected rivers whose ends meet into one (either turned round as needed).");
             }
+        }
+
+        // Fords: a stretch raised to a wading depth, at the picked point or a place along it.
+        gui::separator_text("Fords");
+        if let Some(i) = self.poly_point.filter(|&i| i < p.points.len()) {
+            self.river_ui.ford[0] = p.points[i].along as f32;
+        }
+
+        gui::set_next_item_width(140.0);
+        gui::drag_float2("at, length (m)##river_ford", &mut self.river_ui.ford, 1.0, "%.0f");
+        gui::same_line();
+        if gui::button("Add ford") {
+            let [a, l] = self.river_ui.ford;
+            d.add_river_ford(river, f64::from(a.clamp(0.0, p.length as f32)), f64::from(l.max(5.0)));
+            self.status = "ford added: the bed rises to a wading depth there".to_owned();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Raises the river's bed to a wading depth over that stretch (the kit's fords: a quarter metre of water), its banks eased so \
+                 units walk down to it; on a river that cuts no bed, the ford alone. Picking a point in the viewport puts the ford there.",
+            );
+        }
+
+        let mut remove = None;
+        for (k, &(a, l)) in p.fords.iter().enumerate() {
+            if gui::small_button(&format!("{}##ford{k}", wce_editor::icons::X)) {
+                remove = Some(k);
+            }
+
+            gui::same_line();
+            gui::text(&format!("ford at {a:.0} m, {l:.0} m long"));
+        }
+
+        if let Some(k) = remove {
+            d.remove_river_ford(river, k);
         }
 
         // The ramp: a value from one point to another, by the distance along.

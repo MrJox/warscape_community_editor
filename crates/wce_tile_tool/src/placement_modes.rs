@@ -71,6 +71,11 @@ impl TileTool {
             return (t.point, t.on_terrain);
         }
 
+        // A kit bridge snapped onto a river: over its water.
+        if let Some(at) = self.bridge_over {
+            return (at, false);
+        }
+
         match (self.modes.unwrap_or_default().0, self.surface_hit) {
             (SurfaceMode::Entity, Some(h)) => (h.point, false),
             _ => (self.snapped_cursor, true),
@@ -112,7 +117,8 @@ impl TileTool {
     /// preview's text, `preview_normal`).
     pub(crate) fn apply_placement_modes_on(&self, text: Vec<u8>, normal: Option<Double3>) -> Vec<u8> {
         let (surface, rotation) = self.modes.unwrap_or_default();
-        let mode = if surface == SurfaceMode::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" };
+        // A kit bridge snapped onto a river stands over its water, not on the ground.
+        let mode = if surface == SurfaceMode::Landscape && self.bridge_over.is_none() { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" };
         let mut text = with_root_attr(&text, "surface_mode", mode);
         if surface == SurfaceMode::Entity {
             text = with_root_attr(&text, "wce_surface", "entity");

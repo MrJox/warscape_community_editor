@@ -7,7 +7,7 @@
 //! Kit rivers have no id until a snap gives them one: their ground is the user's, as TEd left it.
 
 use wce_foundation::math::Float3;
-use wce_tile::river_bed::{BedSettings, Channel, Join, RiverBed};
+use wce_tile::river_bed::{BedCell, BedSettings, Channel, Ford, Join, RiverBed};
 use wce_tile::terrain_layers::{Blend, Height, Kind, Stack, TerrainLayers, order_of};
 
 use super::Tile;
@@ -26,6 +26,21 @@ pub const BED_TEXTURE_ATTR: &str = "wce_bed_texture";
 
 /// How far the ground is cut for the bed's texture to cover it whole (metres): less, it fades.
 const TEXTURE_FULL_CUT: f64 = 1.5;
+
+/// A river's fords (`along:length;...`, the editor's metres: where along the river each one's middle is, how long it is held) and their
+/// water's depth (the editor's metres; missing: the kit's, `river_bed::FORD_DEPTH`).
+pub const FORDS_ATTR: &str = "wce_fords";
+pub const FORD_DEPTH_ATTR: &str = "wce_ford_depth";
+
+/// A river's fords read (`FORDS_ATTR`): each one's middle along it and its length (metres).
+pub fn river_fords(text: &str) -> Vec<(f64, f64)> {
+    text.split(';')
+        .filter_map(|f| {
+            let (a, l) = f.split_once(':')?;
+            Some((a.trim().parse().ok()?, l.trim().parse::<f64>().ok()?.max(1.0)))
+        })
+        .collect()
+}
 
 /// How far under the ground it is drawn on a river the editor draws runs (metres): its bed is cut round it.
 pub const WATER_BELOW_BANK: f32 = 2.0;
@@ -59,9 +74,44 @@ fn parse_owner(owner: &str) -> Option<Owner> {
 }
 
 /// A river's attributes the Inspector shows as rows of their own (or not at all).
-pub(crate) const RIVER_ROW_ATTRS: [&str; 5] = [RIVER_ID_ATTR, BED_ATTR, BED_DEPTH_ATTR, BANK_SLOPE_ATTR, BED_TEXTURE_ATTR];
+pub(crate) const RIVER_ROW_ATTRS: [&str; 7] =
+    [RIVER_ID_ATTR, BED_ATTR, BED_DEPTH_ATTR, BANK_SLOPE_ATTR, BED_TEXTURE_ATTR, FORDS_ATTR, FORD_DEPTH_ATTR];
 
 impl super::TileDocument {
+    /// Adds a ford to a river: its middle `along` metres along it, held over `length`. One undo entry. A river that cuts no bed gets the
+    /// ford alone (an id if it has none).
+    pub fn add_river_ford(&mut self, river: usize, along: f64, length: f64) {
+        use wce_editor_core::document::Document;
+        use wce_tile::ted_scene::format_number;
+        let sc = self.tile().tscene();
+        let mut fords = river_fords(sc.get(river, FORDS_ATTR).as_deref().unwrap_or_default());
+        let has_id = sc.get(river, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
+        fords.push((along, length));
+        let text = fords.iter().map(|(a, l)| format!("{}:{}", format_number(*a), format_number(*l))).collect::<Vec<_>>().join(";");
+        let before = self.history().position();
+        self.set_attribute(river, FORDS_ATTR, &text);
+        if !has_id {
+            let id = self.tile().next_river_id();
+            self.set_attribute(river, RIVER_ID_ATTR, &id.to_string());
+        }
+
+        let n = self.history().position() - before;
+        if n > 1 {
+            self.join_last(n, "Add ford");
+        }
+    }
+
+    /// Takes a river's ford `index` away. One undo entry.
+    pub fn remove_river_ford(&mut self, river: usize, index: usize) {
+        use wce_tile::ted_scene::format_number;
+        let mut fords = river_fords(self.tile().tscene().get(river, FORDS_ATTR).as_deref().unwrap_or_default());
+        if index < fords.len() {
+            fords.remove(index);
+            let text = fords.iter().map(|(a, l)| format!("{}:{}", format_number(*a), format_number(*l))).collect::<Vec<_>>().join(";");
+            self.set_attribute(river, FORDS_ATTR, &text);
+        }
+    }
+
     /// Has a river cut its bed (`BED_ATTR`), giving it an id if it has none: one undo entry.
     pub fn cut_river_bed(&mut self, river: usize) {
         let has_id = self.tile().tscene().get(river, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
@@ -196,6 +246,13 @@ fn signature_of(bed: &RiverBed, texture: Option<usize>) -> u64 {
         for v in c.line.iter().flatten().chain(&c.water).chain(&c.width).chain([&c.depth, &c.bank_slope]) {
             v.to_bits().hash(&mut h);
         }
+
+        c.cuts.hash(&mut h);
+        for f in &c.fords {
+            for v in [f.at, f.length, f.depth] {
+                v.to_bits().hash(&mut h);
+            }
+        }
     }
 
     for j in &bed.joins {
@@ -252,10 +309,14 @@ impl Tile {
             }
 
             // Its bed along the ribbon's samples (the file's widths, the game's: the kit's profile is of those), when it cuts one.
-            let channel = (sc.get(e, BED_ATTR).as_deref() == Some("1")).then(|| ribbons.remove(&e)).flatten().map(|(_, samples)| {
+            // Its bed along the ribbon's samples when it cuts one or has fords (the file's widths, the game's: the kit's profile is of
+            // those), in the game's height units (the ribbons are in the editor's metres; the depths are set in them too).
+            let cuts = sc.get(e, BED_ATTR).as_deref() == Some("1");
+            let fords = river_fords(sc.get(e, FORDS_ATTR).as_deref().unwrap_or_default());
+            let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f64>().ok());
+            let ford_depth = num(FORD_DEPTH_ATTR).map_or(wce_tile::river_bed::FORD_DEPTH, |d| d * unit);
+            let channel = (cuts || !fords.is_empty()).then(|| ribbons.remove(&e)).flatten().map(|(_, samples)| {
                 let width = samples.iter().map(|s| s.width).sum::<f64>() / samples.len().max(1) as f64;
-                let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f64>().ok());
-                // In the game's height units (the ribbons are in the editor's metres; the depth is set in them too).
                 Channel {
                     line: samples.iter().map(|s| [s.x, s.z]).collect(),
                     water: samples.iter().map(|s| s.y * unit).collect(),
@@ -263,6 +324,8 @@ impl Tile {
                     depth: num(BED_DEPTH_ATTR).map_or_else(|| BedSettings::default_depth(width), |d| d * unit).max(0.0),
                     bank_slope: num(BANK_SLOPE_ATTR).unwrap_or(BedSettings::DEFAULT_BANK_SLOPE).clamp(5.0, 85.0),
                     vertical: unit,
+                    fords: fords.iter().map(|&(at, length)| Ford { at, length, depth: ford_depth }).collect(),
+                    cuts,
                 }
             });
             let bed = RiverBed { channel, joins };
@@ -513,7 +576,7 @@ fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
         // The bed over the rectangle's pixels, then the joins over it.
         let (gw, gh) = ((x1 - x0) as usize, (y1 - y0) as usize);
         let origin = [f64::from(x0) * mx - border, f64::from(y0) * mz - border];
-        let bed = river.bed.channel.as_ref().map(|c| c.fill(origin, [mx, mz], (gw, gh)));
+        let bed = river.bed.channel.as_ref().map(|c| c.fill_cells(origin, [mx, mz], (gw, gh)));
         let mut writes = vec![];
         for y in y0..y1 {
             for x in x0..x1 {
@@ -522,8 +585,8 @@ fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
                 height.below(id, x, y, &mut v);
                 let g = f64::from(v[0]);
                 let (wx, wz) = (f64::from(x) * mx - border, f64::from(y) * mz - border);
-                let b = bed.as_ref().map_or(f64::INFINITY, |b| b[(y - y0) as usize * gw + (x - x0) as usize]);
-                if let Some(h) = river.bed.height_with(wx, wz, g, b) {
+                let cell = bed.as_ref().map_or(BedCell::default(), |b| b[(y - y0) as usize * gw + (x - x0) as usize]);
+                if let Some(h) = river.bed.height_of(wx, wz, g, cell) {
                     writes.push((x, y, (h - g) as f32));
                 }
             }
