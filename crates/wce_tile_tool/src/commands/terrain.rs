@@ -278,7 +278,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             ok(if p.is_empty() {
                 "the rivers meet their link targets".to_owned()
             } else {
-                p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("\n")
+                p.into_iter().map(|p| p.message).collect::<Vec<_>>().join("\n")
             })
         },
     );
@@ -291,9 +291,30 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         if p.len() == n {
             ok("")
         } else {
-            fail(format!("{} problem(s): {}", p.len(), p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("; ")))
+            fail(format!("{} problem(s): {}", p.len(), p.into_iter().map(|p| p.message).collect::<Vec<_>>().join("; ")))
         }
     });
+
+    c.add(
+        "river_fix",
+        "river_fix <n>",
+        "apply the fix of the tile's n-th river link problem (river_problems' order, from 0): add the link, start a river from it, or match the neighbour's",
+        |e, a| {
+            let Some(n) = a.first().and_then(|x| x.parse::<usize>().ok()) else { return fail("usage: river_fix <n>") };
+            let Some(id) = document(e).map(|d| d.id()) else { return no_tile() };
+            with_tile(e, |t, e| {
+                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+                let mut p = d.river_link_problems();
+                if let Some(ends) = t.neighbour_river_ends(d) {
+                    p.extend(d.river_seam_problems(&ends));
+                }
+
+                let Some(fix) = p.get(n).and_then(|p| p.fix.clone()) else { return fail(format!("problem {n} has no fix ({} problems)", p.len())) };
+                t.apply_river_fix(e, id, fix);
+                ok(t.status.clone())
+            })
+        },
+    );
 
     c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };

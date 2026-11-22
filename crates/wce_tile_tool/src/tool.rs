@@ -857,7 +857,7 @@ pub(crate) struct Checks {
     problems: Option<((DocumentId, u64, u64), Arc<Vec<usize>>)>,
 
     /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
-    rivers: Option<((DocumentId, u64, u64), Arc<Vec<(Option<usize>, String)>>)>,
+    rivers: Option<((DocumentId, u64, u64), Arc<Vec<wce_tile_editor::tile_document::river_links::RiverProblem>>)>,
     links: Option<((DocumentId, u64, u64), Arc<Vec<wce_tile::link_checks::LinkProblem>>)>,
     integrity: Option<((DocumentId, u64, u64), Arc<Vec<(usize, String)>>)>,
 
@@ -2684,6 +2684,73 @@ impl TileTool {
         near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
     }
 
+    /// A river link problem's fix (`RiverFix`): a link added, a river started from a link, an end moved to the neighbour's.
+    pub(crate) fn apply_river_fix(&mut self, e: &mut Editor, id: DocumentId, fix: wce_tile_editor::tile_document::river_links::RiverFix) {
+        use wce_tile_editor::tile_document::river_links::RiverFix;
+        match fix {
+            RiverFix::AddLink { cell, past, set } => {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                self.status = match d.add_river_link(cell, past, set) {
+                    Ok(_) => format!("{set} link added at cell ({}, {})", cell.0, cell.1),
+                    Err(why) => why,
+                };
+            }
+
+            RiverFix::DrawFrom { at } => {
+                let mut draft =
+                    self.create.drafts.get(RIVER).cloned().unwrap_or_else(|| wce_tile_editor::tile_document::Draft::new(RIVER, ""));
+                draft.kind = RIVER.to_owned();
+                self.draft = Some(draft);
+                self.making = Some("River".to_owned());
+                self.start_drawing();
+                self.draw_pts.push(at);
+                self.status = "drawing a river from the link: click its points, Enter to finish".to_owned();
+            }
+
+            RiverFix::MatchNeighbour { river, point, at, width } => {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                self.status = match d.match_river_end(river, point, at, width) {
+                    Ok(()) => "the river's end meets the neighbour's".to_owned(),
+                    Err(why) => why,
+                };
+            }
+        }
+    }
+
+    /// The rivers' ends of the tiles around the open one in the map context shown on it (their `river_spline<n>.xml`, in the open
+    /// tile's frame), none without one.
+    pub(crate) fn neighbour_river_ends(&self, d: &TileDocument) -> Option<Vec<wce_tile_editor::tile_document::river_links::NeighbourEnd>> {
+        use wce_tile_editor::tile_document::river_links::NeighbourEnd;
+        let s = self.context.view.streamer.as_ref().filter(|_| self.context.view.doc() == d.id())?;
+        let frame = s.frame();
+        let mut roots = self.context.tile_roots.clone();
+        roots.extend(self.context.raw_of(d));
+        let o = frame.open;
+        let mut out = vec![];
+        for p in &frame.map.placements {
+            let r = p.rect();
+            let overlaps = r[0] < o[2] && o[0] < r[2] && r[1] < o[3] && o[1] < r[3];
+            let touches = r[0] <= o[2] && o[0] <= r[2] && r[1] <= o[3] && o[1] <= r[3];
+            if overlaps || !touches {
+                continue;
+            }
+
+            let Some(dir) = wce_tile::sources::find_tile_folder(&roots, &p.location, &p.variation) else { continue };
+            let to_map = p.to_map();
+            for n in 0.. {
+                let Ok(text) = std::fs::read_to_string(dir.join(format!("river_spline{n}.xml"))) else { break };
+                let pts = wce_tile_editor::tile_document::river_links::file_points(&text);
+                for q in [pts.first(), pts.last()].into_iter().flatten() {
+                    let (u, v) = to_map.apply(q[0], q[2]);
+                    let (x, z) = frame.from_map.apply(u, v);
+                    out.push(NeighbourEnd { at: Float3::new(x as f32, q[1] as f32, z as f32), width: q[3] as f32 });
+                }
+            }
+        }
+
+        Some(out)
+    }
+
     /// The tile's outlines for the snapping, from the cache while the tile and `skip` are the same.
     fn outlines_for(&self, d: &TileDocument, skip: Option<usize>) -> Arc<Vec<(Vec<Float3>, bool)>> {
         let key = (d.id(), d.history().version(), d.tile().structure_version(), skip);
@@ -3170,7 +3237,13 @@ impl TileTool {
         let first = self.checks.problems.as_ref().is_none_or(|(s, _)| s.0 != id);
         if self.checks.problems.as_ref().is_none_or(|(s, _)| *s != stamp) && (settled || first) {
             self.checks.problems = Some((stamp, Arc::new(d.trees_outside_exclusions())));
-            self.checks.rivers = Some((stamp, Arc::new(d.river_link_problems())));
+            let mut rivers = d.river_link_problems();
+            // In a map context: the rivers against the neighbours' at the seams.
+            if let Some(ends) = self.neighbour_river_ends(d) {
+                rivers.extend(d.river_seam_problems(&ends));
+            }
+
+            self.checks.rivers = Some((stamp, Arc::new(rivers)));
             self.checks.links = Some((stamp, Arc::new(d.link_problems())));
             self.checks.integrity = Some((stamp, Arc::new(d.tile().integrity_errors())));
         }
@@ -3250,14 +3323,46 @@ impl TileTool {
                 "{} river link problem(s): the rivers must end just past the edge, level with the centre of the cells the tile offers as river links, for the neighbours' rivers to meet them.",
                 rivers.len()
             ));
-            for (i, (el, msg)) in rivers.iter().enumerate() {
-                if gui::selectable(&format!("{}  {msg}##river{i}", icons::WAVES), false, 0) {
-                    pick = *el;
+            let mut fix = None;
+            for (i, p) in rivers.iter().enumerate() {
+                if gui::selectable(&format!("{}  {}##river{i}", icons::WAVES, p.message), false, 0) {
+                    pick = p.elem;
                 }
 
-                if el.is_some() && gui::is_item_hovered() {
+                if p.elem.is_some() && gui::is_item_hovered() {
                     gui::set_tooltip(SELECT_AND_FRAME_TIP);
                 }
+
+                if let Some(f) = &p.fix {
+                    use wce_tile_editor::tile_document::river_links::RiverFix;
+                    let (label, tip) = match f {
+                        RiverFix::AddLink { .. } => (
+                            "Add river link",
+                            "Adds a river link at this cell: a target and the rule that the tile past the edge is a river's too, as the kit's river tiles have them (Tile links).",
+                        ),
+                        RiverFix::DrawFrom { .. } => (
+                            "Draw river from here",
+                            "Starts drawing a river from this link: its first point where a river's end goes, snapped to it.",
+                        ),
+                        RiverFix::MatchNeighbour { .. } => (
+                            "Match neighbour",
+                            "Moves the river's end along the edge to the neighbour's river, at its water height and width.",
+                        ),
+                    };
+                    gui::same_line();
+                    if gui::small_button(&format!("{label}##riverfix{i}")) {
+                        fix = Some(f.clone());
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(tip);
+                    }
+                }
+            }
+
+            if let Some(f) = fix {
+                self.apply_river_fix(e, id, f);
+                return;
             }
 
             if gui::button("Snap river ends to link targets") {
