@@ -12,9 +12,7 @@ battles are fought on, tune the weather and lighting, rework the interface and e
   <img src="https://github.com/user-attachments/assets/572c01d3-4599-4cb5-8481-e7911767d3ed" alt="The Tile editor with a battle tile open" width="100%">
 </p>
 
-The viewport renders with **the game's own shaders**, so what you see in the editor is what you get in the game. Edits are
-**lossless**: a file you open and save changes only where you edited it, and the game's own files are never touched; your work goes
-to a projects folder, to loose files or to a mod pack.
+The viewport renders with **the game's own shaders**, so what you see in the editor is what you get in the game.
 
 ## Supported games
 
