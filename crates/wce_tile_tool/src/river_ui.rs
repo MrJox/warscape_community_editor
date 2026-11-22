@@ -230,7 +230,17 @@ impl TileTool {
         // Fords: a stretch raised to a wading depth, at the picked point or a place along it.
         gui::separator_text("Fords");
         let drawing = self.river_ui.drawing_ford;
-        if gui::selectable_sized("Draw ford in the viewport##drawford", drawing, 0, v2(-1.0, 0.0)) {
+        if drawing {
+            gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+        }
+
+        let label = if drawing { "Drawing a ford: press on the river and drag##drawford" } else { "Draw ford in the viewport##drawford" };
+        let clicked = gui::button_sized(label, v2(gui::content_region_avail().x, 0.0));
+        if drawing {
+            gui::pop_style_color(1);
+        }
+
+        if clicked {
             self.river_ui.drawing_ford = !drawing;
             self.status = if drawing {
                 String::new()

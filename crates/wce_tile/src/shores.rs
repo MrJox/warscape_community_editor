@@ -164,6 +164,11 @@ pub const SPLASH: &str = "enviro_vfx_watersplashes";
 
 /// How far apart a ford's splashes are across the river, and how far its edge's stones reach either side of it (metres).
 const SPLASH_STEP: f32 = 8.0;
+
+/// How far in from the water's edge, and how far past a ford's ends along the river, its banks are kept clear of stones (metres): units
+/// step in and out of it there.
+const FORD_BANK_CLEAR: f32 = 3.0;
+const FORD_BANK_MARGIN: f32 = 4.0;
 const FORD_EDGE: f32 = 1.0;
 
 /// A river's middle line at a distance along it: the place and the direction there.
@@ -263,8 +268,15 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
             let g = height(x, z);
             let depth = level - g;
 
+            // The banks along a ford, where units step in and out of it: no stones (the ford's lines stop short of them too).
+            let ford_bank = edge > -FORD_BANK_CLEAR
+                && fords.iter().any(|f| {
+                    let (s0, s1) = ends(f);
+                    along >= s0 - FORD_BANK_MARGIN && along <= s1 + FORD_BANK_MARGIN
+                });
+
             // A ford's ends lined with small stones (gaps here and there), so that it shows where it is: whatever the shore's stones.
-            if ford_edge {
+            if ford_edge && !ford_bank {
                 let gaps = noise(seed ^ 0x0f0e_d0c1, x, z, 3.0);
                 if gaps > 0.3 && a < 2.0 * area && !blocked(x, z) {
                     let key = FORD_STONES[(d * 61.0) as usize % FORD_STONES.len()];
@@ -305,8 +317,8 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                 }
             }
 
-            // Stones: along the waterline in runs, a bigger one now and then on the bank.
-            if s.stones > 0.0 {
+            // Stones: along the waterline in runs, a bigger one now and then on the bank; none where units leave a ford.
+            if s.stones > 0.0 && !ford_bank {
                 let run = noise(seed ^ 0x1234_5678, x, z, STONE_RUN);
                 // Where the ground meets the water (as the ground has it, not the ribbon's edge).
                 let waterline = depth.abs() <= WATERLINE_HEIGHT && (-6.0..=WATERLINE).contains(&edge);
@@ -398,8 +410,14 @@ mod tests {
             (f64::from(s.x) - s0).abs() <= 1.01 || (f64::from(s.x) - s1).abs() <= 1.01
         };
         assert!(shore.stones.iter().all(on_end), "on its curved ends only");
+        assert!(shore.stones.iter().all(|s| (s.z - 50.0).abs() < 10.0 - FORD_BANK_CLEAR), "none at its banks, where units step out");
+        let stony = place(&w, &ShoreSettings::of(0.0, 0.85), &g, &|_, _| false, 5);
+        assert!(
+            stony.stones.iter().all(|s| (s.z - 50.0).abs() < 7.0 || f64::from(s.x) < 87.5 || f64::from(s.x) > 112.5),
+            "the shore's stones keep off its banks"
+        );
         let (mid, side) = (ford.ends(0.0), ford.ends(1.0));
-        assert!((mid.0 - side.0).abs() > 0.5 && (mid.1 - side.1).abs() > 0.5, "not straight across: {mid:?} {side:?}");
+        assert!((mid.0 - side.0).abs() > 0.2 && (mid.1 - side.1).abs() > 0.2, "slightly curved, not straight across: {mid:?} {side:?}");
         assert!(shore.stones.iter().any(|s| (s.z - 50.0).abs() < 3.0), "across the river, its middle too");
         assert_eq!(
             shore.splashes.len(),

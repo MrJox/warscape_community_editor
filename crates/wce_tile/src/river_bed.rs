@@ -177,12 +177,13 @@ pub const FORD_RAMP_SLOPE: f64 = 8.0;
 
 impl Ford {
     /// Where its held stretch starts and ends along the river at a place across it (`u`: -1 at one edge of the water, 1 at the other):
-    /// not straight across, but bowed out in its middle, skewed and waving a little, by its place (each ford its own shape).
+    /// not quite straight across, but slightly bowed out in its middle and skewed, by its place (each ford its own shape).
     pub fn ends(&self, u: f64) -> (f64, f64) {
         let u = u.clamp(-1.2, 1.2);
-        let amp = (self.length * 0.2).clamp(2.0, 8.0);
+        // Slight: a metre or two over the river's width (the user: just enough not to be straight).
+        let amp = (self.length * 0.05).clamp(0.8, 2.0);
         let phase = self.at * 0.137;
-        let shape = |side: f64| amp * (0.6 * (1.0 - u * u) - 0.3 + 0.35 * u * side * phase.sin() + 0.15 * (2.3 * u + phase * side).sin());
+        let shape = |side: f64| amp * (0.6 * (1.0 - u * u) - 0.3 + 0.25 * u * side * phase.sin() + 0.05 * (2.3 * u + phase * side).sin());
         (self.at - self.length * 0.5 - shape(-1.0), self.at + self.length * 0.5 + shape(1.0))
     }
 }
