@@ -265,6 +265,9 @@ plains (aa .. ad) elsewhere.
     lowest height), as under the custom-mesh tiles: without it the views through that gap ran under the tile to the sky, which the sea
     refracted as a bright strip along its edges. A skirt on the open tile's grid closed the gap too, but showed along its land edges (a
     dotted dark line wherever a neighbour's ground lay a little lower than the edge, and a seam where it shifted the normal map).
+    The floor has no blend box of its own (2026-11-22): `ps30_blend` discards by the box's xz rectangle only, not its heights, so the
+    floor's plain colour went into every pixel of the tile above it (TDD's `middle_men_port_a` in `rom_third_age_map`: its ground dull and
+    green); the open tile's box covers the same cells and colours the floor where it shows through the sea.
     Only where the land LF under the tile is at or under the sea (the median of its quarter-cell samples at most 10 m above 0;
     `Frame::on_sea_lf`): TDD builds the Long Lake of `rom_third_age_map` from `sea` tiles on a flat 626 m LF, and its battle sea LF is
     -20 m there; on it the lake's tiles sank 646 m into pits between their coast tiles.
