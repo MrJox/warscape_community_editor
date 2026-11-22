@@ -5,7 +5,9 @@
 
 use wce_foundation::math::Float3;
 
-use super::{TileDocument, item_of};
+use wce_foundation::math::Double3;
+
+use super::{Tile, TileDocument, item_of};
 
 /// How far past the edge a snapped end goes when it is not past it already (the kit's median, rounded).
 pub const RIVER_END_OVERSHOOT_M: f32 = 6.0;
@@ -135,56 +137,224 @@ impl TileDocument {
         wce_tile::link_checks::link_problems(entry, sets)
     }
 
-    /// Snaps the river ends at the edge onto their target cells (`RiverEnd::snapped`; the handles move with the end, the height stays); ends
-    /// at cells that are no target are left alone. One undo entry; returns how many ends moved.
+    /// Snaps the rivers' ends at the edge onto their river links, whole: each end within half a cell of a link's place on the edge goes
+    /// [`RIVER_END_OVERSHOOT_M`] past it through the cell's middle, at the link's water height and width, its handle turned square to the
+    /// edge, marked as joined to it (`wce_link`), so that the river's layer shapes the ground there as the export does
+    /// (docs/plans/rivers.md, step 1). Ends at cells that are no target are left alone. One undo entry; returns how many ends were snapped.
     ///
     /// # Errors
     ///
     /// The scene could not be edited.
     pub fn snap_river_ends(&mut self) -> Result<usize, String> {
-        use wce_tile::new_instances::point_text;
+        let rivers = self.tile().tscene().find_all(RIVER);
+        self.snap_rivers_to_links(&rivers, LINK_REACH_M, "Snap river ends to link targets")
+    }
 
-        let targets = self.river_targets();
-        let moves = self
-            .river_ends()
-            .into_iter()
-            .filter(|en| {
-                targets.contains(&en.cell) && {
-                    let d = en.snapped - en.at;
-                    d.x.abs() + d.z.abs() > 1e-3
+    /// After a river was drawn or one of its ends dragged: its ends left on a link's snapped place ([`Tile::river_link_points`], where
+    /// the live snap puts them) are snapped whole ([`Self::snap_river_ends`]); an end marked as joined that is no longer there loses the
+    /// mark. One undo entry, none when nothing changes; returns how many ends were snapped.
+    ///
+    /// # Errors
+    ///
+    /// The scene could not be edited.
+    pub fn snap_river_to_links(&mut self, river: usize) -> Result<usize, String> {
+        self.snap_rivers_to_links(&[river], 0.5, "Snap river to links")
+    }
+
+    fn snap_rivers_to_links(&mut self, rivers: &[usize], reach: f32, label: &str) -> Result<usize, String> {
+        let links = self.tile().river_link_points();
+        // What each end becomes: its river, its point, the link, the end's old place and its neighbour's.
+        let mut snaps = vec![];
+        let mut unmark = vec![];
+        for &e in rivers {
+            let t = self.tile();
+            let sc = t.tscene();
+            let pts = t.polygon_world_points(e);
+            let points = sc.polygon_points(e);
+            if pts.len() < 2 || points.len() != pts.len() {
+                continue;
+            }
+
+            for i in [0, pts.len() - 1] {
+                let at = pts[i];
+                let near = links
+                    .iter()
+                    .filter(|l| {
+                        if reach < 1.0 {
+                            (l.snapped.x - at.x).hypot(l.snapped.z - at.z) <= reach
+                        } else {
+                            // Within half a cell of the link's place on the edge, along it and across it.
+                            let (dx, dz) = (at.x - l.on_edge.x, at.z - l.on_edge.z);
+                            (dx * l.inward[0] + dz * l.inward[1]).abs() <= reach && (dx * -l.inward[1] + dz * l.inward[0]).abs() <= reach
+                        }
+                    })
+                    .min_by(|a, b| {
+                        let d = |l: &RiverLinkPoint| (l.on_edge.x - at.x).hypot(l.on_edge.z - at.z);
+                        d(a).total_cmp(&d(b))
+                    });
+                match near {
+                    Some(l) => snaps.push((e, i, l.clone(), pts[if i == 0 { 1 } else { i - 1 }])),
+                    None if sc.get(points[i], LINK_ATTR).is_some_and(|v| !v.is_empty()) => unmark.push((e, points[i])),
+                    None => {}
                 }
-            })
-            .collect::<Vec<_>>();
-        if moves.is_empty() {
+            }
+        }
+
+        // Nothing to do: every snapped end already as it would be made.
+        let wanted = snaps.iter().map(|(e, i, l, prev)| self.snapped_end(*e, *i, l, *prev)).collect::<Vec<_>>();
+        let same = snaps.iter().zip(&wanted).all(|((e, i, ..), w)| {
+            let sc = self.tile().tscene();
+            let point = sc.polygon_points(*e)[*i];
+            w.iter().all(|(name, v)| sc.get(point, name).as_deref() == Some(v.as_str()))
+                && sc.get(*e, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty())
+        });
+        if unmark.is_empty() && same {
             return Ok(0);
         }
 
         self.end_stroke();
         let mark = self.begin()?;
         let mut items = vec![];
-        for en in &moves {
-            let t = self.tile();
-            let sc = t.tscene();
-            let point = sc.polygon_points(en.elem)[en.point];
-            let (old, new) = (t.to_local(en.elem, en.at), t.to_local(en.elem, en.snapped));
-            let d = new - old;
-            let handles = ["controlIn", "controlOut"].map(|h| (h, sc.get(point, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
+        let mut next_id = self.tile().next_river_id();
+        for ((e, i, ..), w) in snaps.iter().zip(&wanted) {
+            let point = self.tile().tscene().polygon_points(*e)[*i];
+            let has_id = self.tile().tscene().get(*e, RIVER_ID_ATTR).is_some_and(|v| !v.is_empty());
             let sc = self.tscene_mut();
-            sc.set_attr(point, "position", &point_text(new));
-
-            // The end's handle that a segment uses goes with it; the unused one stays `0,0,0`.
-            for (h, v) in handles {
-                if let Some(v) = v.filter(|v| *v != wce_foundation::math::Double3::ZERO) {
-                    sc.set_attr(point, h, &point_text(v + d));
-                }
+            for (name, v) in w {
+                sc.set_attr(point, name, v);
             }
 
-            items.push(item_of(en.elem));
+            if !has_id {
+                sc.set_attr(*e, RIVER_ID_ATTR, &next_id.to_string());
+                next_id += 1;
+            }
+
+            items.push(item_of(*e));
         }
 
+        for &(e, p) in &unmark {
+            self.tscene_mut().set_attr(p, LINK_ATTR, "");
+            items.push(item_of(e));
+        }
+
+        items.sort_unstable();
         items.dedup();
         let elems = items.iter().filter_map(|&i| super::elem_of(i)).collect();
-        self.push_splice_touching("Snap river ends to link targets".to_owned(), mark, items.clone(), items, elems);
-        Ok(moves.len())
+        self.push_splice_touching(label.to_owned(), mark, items.clone(), items, elems);
+        Ok(snaps.len())
+    }
+
+    /// The attributes an end of a river (point `i`) gets when snapped to a link: its place, its handle square to the edge (the length
+    /// it had, else a third of the way to its neighbour `prev`), its width and the link's mark.
+    fn snapped_end(&self, e: usize, i: usize, l: &RiverLinkPoint, prev: Float3) -> Vec<(&'static str, String)> {
+        use wce_tile::new_instances::point_text;
+
+        let t = self.tile();
+        let sc = t.tscene();
+        let point = sc.polygon_points(e)[i];
+        // The water at the link's height, in the river's frame (its file's height factor).
+        let y = (l.connection.water * t.river_height_factor(e)) as f32;
+        let at = Float3::new(l.snapped.x, y, l.snapped.z);
+        let first = i == 0;
+        let handle = if first { "controlOut" } else { "controlIn" };
+        let old = sc.get(point, handle).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "")).filter(|v| *v != Double3::ZERO);
+        let here = sc.point_position(point).unwrap_or_default();
+        let unit = t.unit();
+        let len = old.map_or(0.0, |h| ((h.x - here.x).hypot(h.z - here.z) / unit) as f32);
+        let len = if len > 0.5 { len } else { (prev.x - at.x).hypot(prev.z - at.z) / 3.0 };
+        let h = Float3::new(at.x + l.inward[0] * len, y, at.z + l.inward[1] * len);
+        vec![
+            ("position", point_text(t.to_local(e, at))),
+            (handle, point_text(t.to_local(e, h))),
+            ("width", wce_tile::ted_scene::format_number(l.connection.width)),
+            (LINK_ATTR, format!("{},{}", l.cell.0, l.cell.1)),
+        ]
+    }
+}
+
+/// The type of a river.
+const RIVER: &str = "SplineRiverInstance";
+
+/// The mark on a river's end point that it is joined to a link: the link's cell (`x,y`, the entry's numbering), empty when not.
+pub const LINK_ATTR: &str = "wce_link";
+
+/// A river's id (on the instance), which its terrain layer's owner names (`river_beds.rs`).
+pub const RIVER_ID_ATTR: &str = "wce_river_id";
+
+/// How far an end may be from a link's place on the edge, along it and across it, for *Snap river ends* (half a cell).
+const LINK_REACH_M: f32 = 64.0;
+
+/// A river link of the tile: where a river leaves it to a neighbour's (docs/re/tile_links.md, "Rivers at their links").
+#[derive(Clone, Debug, PartialEq)]
+pub struct RiverLinkPoint {
+    /// The target cell (the entry's numbering: x along +x, y from the +z edge).
+    pub cell: (i32, i32),
+    pub connection: &'static wce_tile::river_bed::Connection,
+
+    /// The middle of the cell's side on the tile's edge, on the ground.
+    pub on_edge: Float3,
+
+    /// Where a river's end goes: [`RIVER_END_OVERSHOOT_M`] past it, on the ground.
+    pub snapped: Float3,
+
+    /// Into the tile, across the edge (x, z).
+    pub inward: [f32; 2],
+}
+
+impl Tile {
+    /// The tile's river links: for each river target cell (`river`, `river_shallow`...), the sides of it on the tile's edge that a river
+    /// leaves by: those with a rule of a river set just past them, else (no such rule for the cell) every side of it on the edge. Its
+    /// connection is the rule's set's, else the target's.
+    pub fn river_link_points(&self) -> Vec<RiverLinkPoint> {
+        let Some(entry) = &self.project.entry else { return vec![] };
+        let info = &self.project.info;
+        let (w, h) = (info.cells_x.max(1) as i32, info.cells_y.max(1) as i32);
+        let rules = entry
+            .links()
+            .into_iter()
+            .filter(|l| l.test != "TLT_NOT_EQUALS" && wce_tile::river_bed::connection_of(&l.link_set).is_some())
+            .collect::<Vec<_>>();
+        let mut out = vec![];
+        for t in entry.link_targets() {
+            let Some(target_conn) = wce_tile::river_bed::connection_of(&t.tile_set) else { continue };
+            // The sides on the edge: (the cell just past, the inward normal in x, z).
+            let sides = [
+                ((t.x - 1, t.y), [1.0f32, 0.0]),
+                ((t.x + 1, t.y), [-1.0, 0.0]),
+                ((t.x, t.y - 1), [0.0, -1.0]),
+                ((t.x, t.y + 1), [0.0, 1.0]),
+            ];
+            let outside = |c: (i32, i32)| c.0 < 0 || c.0 >= w || c.1 < 0 || c.1 >= h;
+            let edge_sides = sides.iter().filter(|(c, _)| outside(*c)).collect::<Vec<_>>();
+            let ruled = edge_sides.iter().filter(|(c, _)| rules.iter().any(|r| (r.x, r.y) == *c)).copied().collect::<Vec<_>>();
+            let cell_ruled = rules.iter().any(|r| edge_sides.iter().any(|(c, _)| (r.x, r.y) == *c));
+            for (past, inward) in if cell_ruled { ruled } else { edge_sides } {
+                let connection = rules
+                    .iter()
+                    .find(|r| (r.x, r.y) == *past)
+                    .and_then(|r| wce_tile::river_bed::connection_of(&r.link_set))
+                    .unwrap_or(target_conn);
+                let (x0, z0, x1, z1) = self.cell_rect(t.x, t.y);
+                let (cx, cz) = ((x0 + x1) * 0.5, (z0 + z1) * 0.5);
+                // The side's middle: half a cell from the centre, against the inward normal.
+                let (ex, ez) = (cx - inward[0] * 64.0, cz - inward[1] * 64.0);
+                let (sx, sz) = (ex - inward[0] * RIVER_END_OVERSHOOT_M, ez - inward[1] * RIVER_END_OVERSHOOT_M);
+                out.push(RiverLinkPoint {
+                    cell: (t.x, t.y),
+                    connection,
+                    on_edge: Float3::new(ex, self.terrain_height(ex, ez), ez),
+                    snapped: Float3::new(sx, self.terrain_height(sx, sz), sz),
+                    inward: *inward,
+                });
+            }
+        }
+
+        out
+    }
+
+    /// An id for a river's terrain layer (`RIVER_ID_ATTR`): one more than the highest.
+    pub(super) fn next_river_id(&self) -> u32 {
+        let sc = self.tscene();
+        sc.find_all(RIVER).into_iter().filter_map(|e| sc.get(e, RIVER_ID_ATTR)?.parse::<u32>().ok()).max().unwrap_or(0) + 1
     }
 }

@@ -1000,6 +1000,7 @@ impl Tile {
         self.material_base = None;
         self.skin = None;
         self.roads_stale = true;
+        self.rivers_stale = true;
         self.prefab_ground_stale = true;
         self.links_dirty = true;
         {

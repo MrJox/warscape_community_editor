@@ -123,7 +123,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "snap",
-        "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [roads on|off] [heights on|off] [angle <deg>]",
+        "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [roads on|off] [rivers on|off] [heights on|off] [angle <deg>]",
         "the snapping of the grab and the placing (the viewport's snap chip); no argument: log it",
         |e, a| {
             with_tile(e, |t, _| {
@@ -135,6 +135,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                         "vertices" => t.snap_vertices = on,
                         "edges" => t.snap_edges = on,
                         "roads" => t.snap_road_links = on,
+                        "rivers" => t.snap_river_links = on,
                         "heights" => t.snap_heights = on,
                         "angle" => t.angle_tolerance = number(&a[i + 1]).unwrap_or(t.angle_tolerance).clamp(0.0, 90.0),
                         "size" => t.grid_m = number(&a[i + 1]).unwrap_or(t.grid_m),
@@ -146,13 +147,14 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 }
 
                 ok(format!(
-                    "grid {} size {} tolerance {} vertices {} edges {} roads {} heights {} angle {}",
+                    "grid {} size {} tolerance {} vertices {} edges {} roads {} rivers {} heights {} angle {}",
                     t.snap_grid,
                     t.grid_m,
                     t.snap_tolerance,
                     t.snap_vertices,
                     t.snap_edges,
                     t.snap_road_links,
+                    t.snap_river_links,
                     t.snap_heights,
                     t.angle_tolerance,
                 ))
@@ -591,9 +593,9 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 }
 
                 let Some(d) = document(e) else { return fail("no tile open") };
-                // A procedural road's point snaps to a road link as a click's does.
+                // A procedural road's or a river's point snaps to a link as a click's does.
                 let p = Float3::new(x, d.tile().terrain_height(x, z), z);
-                let p = if t.road_link_snapping(None, d) { t.road_link_near(d, p).unwrap_or(p) } else { p };
+                let p = if t.road_link_snapping(None, d) { t.road_link_near(d, None, p).unwrap_or(p) } else { p };
                 t.draw_pts.push(p);
                 ok(format!("{} points", t.draw_pts.len()))
             })

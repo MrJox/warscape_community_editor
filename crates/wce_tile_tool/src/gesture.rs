@@ -149,6 +149,7 @@ impl TileTool {
             Some(g) => g,
         };
 
+        let sel = crate::tool::primary(e);
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         match gesture {
             Gesture::Grab(grab) => {
@@ -166,6 +167,21 @@ impl TileTool {
             }
 
             Gesture::TerrainStroke => d.end_stroke(),
+
+            // A river's end dragged onto a river link (or off one) is snapped to it whole, in the drag's undo entry.
+            Gesture::Point { handle: None, moving: true, .. } => {
+                d.history_mut().break_merge();
+                let river = sel.filter(|&s| d.tile().tscene().type_of(s) == "SplineRiverInstance");
+                if let (true, Some(river), true) = (self.snap_river_links, river, end != End::Cancel) {
+                    let before = d.history().position();
+                    match d.snap_river_to_links(river) {
+                        Ok(_) if d.history().position() > before => d.join_last(2, "Move river point"),
+                        Ok(_) => {}
+                        Err(err) => wce_foundation::log::warn(format!("river links: {err}")),
+                    }
+                }
+            }
+
             _ => d.history_mut().break_merge(),
         }
     }

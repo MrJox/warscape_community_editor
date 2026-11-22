@@ -31,6 +31,7 @@ pub mod project_files;
 pub mod properties;
 pub mod property_enums;
 pub mod resize;
+pub mod river_bed;
 pub mod river_files;
 pub mod road_dirt;
 pub mod road_fences;
