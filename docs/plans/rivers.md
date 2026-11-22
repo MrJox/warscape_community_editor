@@ -25,9 +25,19 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
 - 2026-11-22, after the user's review: a river's first point drags (the gizmo's centre sat on it), ends snap along a link cell, a
   terrain patch toggle (`wce_river_patch`, off for the kit's rivers), the texture a band along the water, ground types (deep / shallow
   water), lakes brushed, smoothed, painted and with a height patch, drawing ends on a link, a click on the water picks the river.
-- Step 9 (Rome 2) **waits**: Rome 2's packs are not installed on this machine (its kit alone; the tiles are in the packs only), so its
-  river tiles cannot be decompiled and measured (its link sets, its standard connection, its heights). The user: shores first, Rome 2
-  once it is installed again.
+- Step 9 (Rome 2) done 2026-11-22, once its packs were installed again: its 252 river tiles decompiled, 77 of them measured
+  (`river_link_profile`: 177 ends): the same link sets and tile set names (`river`, `river_shallow`, `river_ford`, `river_crossing`,
+  ...), the same standard connections (water -6.19 deep / 0.42 shallow in the game's units, width 45, the same cross-section), the
+  same flipped z; the tools needed no change. Checked in the editor on its tiles: a river drawn onto a link finishes there at -3.1 m,
+  its bed, fords, shores, decals, hints and go region; saved into a mod pack and decompiled back (hints, go region, decals, stones
+  whole). Its shores table (`tables/rome_2/shores.toml`) has its own keys: Attila's `attila_rock_small_*`, `global_ground_pathborder`
+  and decals are not in its packs, its `boulder_small_*` lack their textures (drawn white), so: `smallrock_*` and `rocks_small_01`
+  stones, `gaul_rock_02` and `smallrock_01` bank stones (its `rock_0*_small` are 12 m), no mounds (the bank lists may be empty now),
+  `mud_rock_0` / `atlantic_mud_3` shore decals and `mud_01/02`, `global_dirt_5/3` bed decals (normal maps in alpha and green; seen
+  on and off by pixel diff). Open: Rome 2's kit has no vegetation parameters, so its exports carry the packed tree lists and a
+  tile's `VEGETATION_INSTANCE`s (the reeds and lilies, as any placed vegetation) do not reach the game; Snap river ends squares a
+  kit river's end handles as in Attila (one Rome 2 kit river then floats 0.8 m over 39 m); Thrones of Britannia's table is still
+  Attila's (not installed).
 - Step 10 (shores) built: reeds and stones along the rivers' and lakes' water (`wce_tile::shores`), derived and exported as the biome
   areas' contents are, on for the editor's rivers and lakes.
 

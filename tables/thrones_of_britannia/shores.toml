@@ -8,7 +8,7 @@
 # order; a list in one replaces the list of the same name before it (whole); a list it does not have stays. The editor reads them each
 # time a tile is opened.
 #
-# Every list needs one key at least. A place picks one of its list's keys.
+# Every list needs one key at least, but bank_rocks and bank_mounds (none: no such piece is laid). A place picks one of its list's keys.
 #   reeds         vegetation (species.variant): the reed beds, in the shallows and on the wet bank. Each bed is mostly one of them.
 #   lilies        vegetation: floating on the water a little out from the reeds (freeform, at the water's height).
 #   stones        buildings: the small stones along the waterline (half a metre to a metre).

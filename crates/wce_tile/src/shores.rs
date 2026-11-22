@@ -97,13 +97,28 @@ pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<
         ("stones", &k.stones),
         ("ford_stones", &k.ford_stones),
         ("bank_stones", &k.bank_stones),
+        ("shore_decals", &k.shore_decals),
+        ("bed_decals", &k.bed_decals),
+    ] {
+        if list.is_empty() {
+            return Err(format!("{FILE_NAME}: {name} needs one key at least"));
+        }
+    }
+
+    // The bank's rocks and mounds may be none (a game without such pieces); no list has an empty key.
+    for (name, list) in [
+        ("reeds", &k.reeds),
+        ("lilies", &k.lilies),
+        ("stones", &k.stones),
+        ("ford_stones", &k.ford_stones),
+        ("bank_stones", &k.bank_stones),
         ("bank_rocks", &k.bank_rocks),
         ("bank_mounds", &k.bank_mounds),
         ("shore_decals", &k.shore_decals),
         ("bed_decals", &k.bed_decals),
     ] {
-        if list.is_empty() || list.iter().any(|v| v.trim().is_empty()) {
-            return Err(format!("{FILE_NAME}: {name} needs one key at least, and no empty one"));
+        if list.iter().any(|v| v.trim().is_empty()) {
+            return Err(format!("{FILE_NAME}: {name} has an empty key"));
         }
     }
 
@@ -578,7 +593,7 @@ pub fn place(
                     if s.stones > 0.0 && !near_ford {
                         let n = noise(seed ^ 0x2c1b_3c6d, along, side * 1000.0, 40.0);
                         let (x, z) = at(2.0 + 2.0 * c);
-                        if n > 0.62 && b < 0.035 * s.stones && !blocked(x, z) {
+                        if n > 0.62 && b < 0.035 * s.stones && !keys.bank_rocks.is_empty() && !blocked(x, z) {
                             out.bank_pieces.push(Placed {
                                 key: pick(&keys.bank_rocks, (c * 31.0) as usize).to_owned(),
                                 x,
@@ -587,7 +602,7 @@ pub fn place(
                                 scale: 1.0,
                                 yaw,
                             });
-                        } else if n < 0.3 && b > 1.0 - 0.02 * s.stones && !blocked(x, z) {
+                        } else if n < 0.3 && b > 1.0 - 0.02 * s.stones && !keys.bank_mounds.is_empty() && !blocked(x, z) {
                             out.bank_pieces.push(Placed {
                                 key: pick(&keys.bank_mounds, (c * 31.0) as usize).to_owned(),
                                 x,
@@ -755,6 +770,11 @@ mod tests {
         assert!(near * 10 >= bed_d.len() * 8, "clumped: {near} of {}", bed_d.len());
         assert!(shore_d.iter().all(|d| !(d.x > 270.0 && d.x < 330.0)), "no rocks' decals by the ford");
         assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());
+        let none = ShoreKeys { bank_rocks: vec![], bank_mounds: vec![], ..ShoreKeys::default() };
+        assert!(
+            place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85, 0.85), &none, &g, &|_, _| false, 9).bank_pieces.is_empty(),
+            "a game without them"
+        );
         let at_ford = |x: f32| x > 270.0 && x < 330.0;
         assert!(shore.bank_pieces.iter().all(|p| !at_ford(p.x)), "no rocks or mounds at the ford's banks");
         assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 9).decals.is_empty(), "none asked");
@@ -816,6 +836,11 @@ mod tests {
         assert_eq!((k.reeds.as_slice(), k.splash.as_str()), (["my_reed".to_owned()].as_slice(), "my_splash"));
         assert_eq!(k.stones, shipped.stones, "the lists it does not have stay");
         assert!(parse_with(BUILT_IN[0].1, &over("mod_key = \"\"\nstones = []\n")).is_err(), "an empty list");
+        assert!(parse_with(BUILT_IN[0].1, &over("mod_key = \"\"\nreeds = [\" \"]\n")).is_err(), "an empty key");
+        assert!(
+            parse_with(BUILT_IN[0].1, &over("mod_key = \"\"\nbank_mounds = []\n")).is_ok_and(|k| k.bank_mounds.is_empty()),
+            "no mounds"
+        );
     }
 
     #[test]

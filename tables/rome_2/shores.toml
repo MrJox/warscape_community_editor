@@ -1,5 +1,4 @@
-# Rome 2: what the rivers' and lakes' shores are made of. UNCHECKED: Attila's keys (this game's packs were not looked at for its own); a
-# key the game lacks draws nothing. Correct them in a shores_<anything>.toml beside it (below).
+# Rome 2: what the rivers' and lakes' shores are made of (the Inspector's Shores; docs/editor.md, Shores).
 #
 # This file comes with the editor (its tables folder) and an update replaces it: do not edit it. Put changes in a file beside it named
 # shores_<anything>.toml that starts with a mod_key: the start of a mod pack's name, the file then read only while such a pack is loaded
@@ -8,7 +7,7 @@
 # order; a list in one replaces the list of the same name before it (whole); a list it does not have stays. The editor reads them each
 # time a tile is opened.
 #
-# Every list needs one key at least. A place picks one of its list's keys.
+# Every list needs one key at least, but bank_rocks and bank_mounds (none: no such piece is laid). A place picks one of its list's keys.
 #   reeds         vegetation (species.variant): the reed beds, in the shallows and on the wet bank. Each bed is mostly one of them.
 #   lilies        vegetation: floating on the water a little out from the reeds (freeform, at the water's height).
 #   stones        buildings: the small stones along the waterline (half a metre to a metre).
@@ -21,32 +20,24 @@
 #   bed_decals    decals: mud and dirt from the waterline into the shallow water, and in clumps over a ford's floor.
 #   splash        an effect (vfx): the looping splash over a ford's ends.
 
+# Rome 2 has no low ground mound like Attila's global_ground_pathborder: no mounds; its boulder_small_* lack their textures in its packs
+# (mediterranean_boulder_*: drawn white), and its rock_0*_small are big (12 m): its bank stones are a Gaul rock and the biggest small one.
+
 reeds = ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"]
 lilies = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"]
-stones = [
-    "attila_rock_small_02",
-    "attila_rock_small_03",
-    "attila_rock_small_05",
-    "attila_rock_small_07",
-    "smallrock_01",
-    "smallrock_02",
-    "smallrock_03",
-    "rocks_small_01",
-]
-ford_stones = ["smallrock_02", "smallrock_03", "rocks_small_01", "attila_rock_small_02", "attila_rock_small_07"]
-bank_stones = ["boulder_small_b", "boulder_small_c", "boulder_small_d"]
+stones = ["smallrock_01", "smallrock_02", "smallrock_03", "rocks_small_01"]
+ford_stones = ["smallrock_02", "smallrock_03", "rocks_small_01"]
+bank_stones = ["gaul_rock_02", "smallrock_01"]
 bank_rocks = ["rock_flat"]
-bank_mounds = ["global_ground_pathborder"]
+bank_mounds = []
 shore_decals = [
-    'rigidmodels\decals\battle\global_terrain_rocks_04.rigid_model_v2',
-    'rigidmodels\decals\battle\global_terrain_rocks_01.rigid_model_v2',
-    'rigidmodels\decals\battle\global_terrain_rocks_03.rigid_model_v2',
-    'rigidmodels\decals\battle\beachrocks01.rigid_model_v2',
+    'rigidmodels\decals\battle\mud_rock_0.rigid_model_v2',
+    'rigidmodels\decals\battle\atlantic_mud_3.rigid_model_v2',
 ]
 bed_decals = [
-    'rigidmodels\decals\battle\global_terrain_mud_01.rigid_model_v2',
-    'rigidmodels\decals\battle\global_terrain_mud_02.rigid_model_v2',
-    'rigidmodels\decals\battle\dirt_1.rigid_model_v2',
-    'rigidmodels\decals\battle\dirt_2.rigid_model_v2',
+    'rigidmodels\decals\battle\mud_01.rigid_model_v2',
+    'rigidmodels\decals\battle\mud_02.rigid_model_v2',
+    'rigidmodels\decals\battle\global_dirt_5.rigid_model_v2',
+    'rigidmodels\decals\battle\global_dirt_3.rigid_model_v2',
 ]
 splash = "enviro_vfx_watersplashes"
