@@ -11,25 +11,124 @@
 //! Each place of a half-metre grid draws its own numbers from the seed and its cell, and the noises are of the place too, so a shore keeps
 //! what it has where nothing changed when its water is edited elsewhere. Everything is in the editor's metres.
 
-/// The built-in reeds (Attila's vanilla: the bulrush, the calamus, the marsh plants), lilies and stones (its small rocks; a few small
-/// boulders for the bank).
-pub const REEDS: [&str; 5] =
-    ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"];
-pub const LILIES: [&str; 2] = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"];
-pub const STONES: [&str; 8] = [
-    "attila_rock_small_02",
-    "attila_rock_small_03",
-    "attila_rock_small_05",
-    "attila_rock_small_07",
-    "smallrock_01",
-    "smallrock_02",
-    "smallrock_03",
-    "rocks_small_01",
-];
-pub const BANK_STONES: [&str; 3] = ["boulder_small_b", "boulder_small_c", "boulder_small_d"];
+/// What shores are made of (the app's `tables/<game>/shores.toml` and the mods' and the user's `shores_*.toml` over it, as the road
+/// fences: `user_files`): each list's keys, a place picking one.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ShoreKeys {
+    pub reeds: Vec<String>,
+    pub lilies: Vec<String>,
+    pub stones: Vec<String>,
+    pub ford_stones: Vec<String>,
+    pub bank_stones: Vec<String>,
+    pub bank_rocks: Vec<String>,
+    pub bank_mounds: Vec<String>,
+    pub shore_decals: Vec<String>,
+    pub bed_decals: Vec<String>,
+    pub splash: String,
+}
 
-/// The smallest of them (half a metre to a metre across), for a ford's ends.
-pub const FORD_STONES: [&str; 5] = ["smallrock_02", "smallrock_03", "rocks_small_01", "attila_rock_small_02", "attila_rock_small_07"];
+impl Default for ShoreKeys {
+    /// The built-in table.
+    fn default() -> Self {
+        KEYS.shipped().clone()
+    }
+}
+
+/// The shipped file's name, in the app's tables folder.
+pub const FILE_NAME: &str = "shores.toml";
+
+/// The shipped files as built into the editor, by game.
+pub const BUILT_IN: crate::user_files::BuiltIn = &[
+    ("attila", include_str!("../../../tables/attila/shores.toml")),
+    ("rome_2", include_str!("../../../tables/rome_2/shores.toml")),
+    ("thrones_of_britannia", include_str!("../../../tables/thrones_of_britannia/shores.toml")),
+];
+
+/// The table, from the files ([`load`]) or as built in.
+pub static KEYS: crate::user_files::Registry<ShoreKeys> = crate::user_files::Registry::new(FILE_NAME, BUILT_IN, parse_with);
+
+/// A file over the vanilla one: each list it has in place of the vanilla one's.
+#[derive(Debug, Default, serde::Deserialize)]
+struct Custom {
+    reeds: Option<Vec<String>>,
+    lilies: Option<Vec<String>>,
+    stones: Option<Vec<String>>,
+    ford_stones: Option<Vec<String>>,
+    bank_stones: Option<Vec<String>>,
+    bank_rocks: Option<Vec<String>>,
+    bank_mounds: Option<Vec<String>>,
+    shore_decals: Option<Vec<String>>,
+    bed_decals: Option<Vec<String>>,
+    splash: Option<String>,
+}
+
+/// Reads the vanilla shores file and the files over it, in order.
+///
+/// # Errors
+///
+/// One is not TOML of its shape, or a list is empty, or a key is.
+pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<ShoreKeys, String> {
+    let mut k: ShoreKeys = toml::from_str(vanilla).map_err(|e| format!("{FILE_NAME}: {e}"))?;
+    for c in crate::user_files::read_extras::<Custom>(extras)? {
+        for (list, over) in [
+            (&mut k.reeds, c.reeds),
+            (&mut k.lilies, c.lilies),
+            (&mut k.stones, c.stones),
+            (&mut k.ford_stones, c.ford_stones),
+            (&mut k.bank_stones, c.bank_stones),
+            (&mut k.bank_rocks, c.bank_rocks),
+            (&mut k.bank_mounds, c.bank_mounds),
+            (&mut k.shore_decals, c.shore_decals),
+            (&mut k.bed_decals, c.bed_decals),
+        ] {
+            if let Some(over) = over {
+                *list = over;
+            }
+        }
+
+        if let Some(splash) = c.splash {
+            k.splash = splash;
+        }
+    }
+
+    for (name, list) in [
+        ("reeds", &k.reeds),
+        ("lilies", &k.lilies),
+        ("stones", &k.stones),
+        ("ford_stones", &k.ford_stones),
+        ("bank_stones", &k.bank_stones),
+        ("bank_rocks", &k.bank_rocks),
+        ("bank_mounds", &k.bank_mounds),
+        ("shore_decals", &k.shore_decals),
+        ("bed_decals", &k.bed_decals),
+    ] {
+        if list.is_empty() || list.iter().any(|v| v.trim().is_empty()) {
+            return Err(format!("{FILE_NAME}: {name} needs one key at least, and no empty one"));
+        }
+    }
+
+    if k.splash.trim().is_empty() {
+        return Err(format!("{FILE_NAME}: splash is empty"));
+    }
+
+    Ok(k)
+}
+
+/// Reads a game's shores files in the tables folder, those of the mods loaded (`mods`) too: the table from then on.
+pub fn load(tables: &std::path::Path, game: &str, mods: &[String]) {
+    KEYS.load(tables, game, mods);
+}
+
+/// The table: the files' last read, else the built-in one.
+#[must_use]
+pub fn keys() -> &'static ShoreKeys {
+    KEYS.get()
+}
+
+/// A list's key at an index (wrapped).
+fn pick(list: &[String], i: usize) -> &str {
+    &list[i % list.len()]
+}
 
 /// How deep lilies float at most (metres), and how far from the water's edge stones lie either side (metres).
 pub const LILY_DEPTH: f32 = 1.5;
@@ -165,7 +264,7 @@ pub struct Shore {
     pub reeds: Vec<Placed>,
     pub stones: Vec<Placed>,
 
-    /// The splashes over a ford's edges ([`SPLASH`], at the water's height).
+    /// The splashes over a ford's edges (the table's `splash`, at the water's height).
     pub splashes: Vec<Placed>,
 
     /// Along a river's banks (not at its fords): decals over the seam of water and land (their `scale`: their size, metres), and now and
@@ -174,32 +273,8 @@ pub struct Shore {
     pub bank_pieces: Vec<Placed>,
 }
 
-/// The decals of a river's bed (mud, under the water by its edge) and of its shore (muddy rocks, over the waterline): the kit's, their
-/// keys as its tiles write them.
-pub const BED_DECALS: [&str; 4] = [
-    r"rigidmodels\decals\battle\global_terrain_mud_01.rigid_model_v2",
-    r"rigidmodels\decals\battle\global_terrain_mud_02.rigid_model_v2",
-    r"rigidmodels\decals\battle\mud_01.rigid_model_v2",
-    r"rigidmodels\decals\battle\mud_02.rigid_model_v2",
-];
-pub const SHORE_DECALS: [&str; 6] = [
-    r"rigidmodels\decals\battle\mud_stone01.rigid_model_v2",
-    r"rigidmodels\decals\battle\mud_rock_0.rigid_model_v2",
-    r"rigidmodels\decals\battle\global_terrain_rocks_01.rigid_model_v2",
-    r"rigidmodels\decals\battle\global_terrain_rocks_02.rigid_model_v2",
-    r"rigidmodels\decals\battle\global_terrain_rocks_04.rigid_model_v2",
-    r"rigidmodels\decals\battle\global_terrain_rocks_05.rigid_model_v2",
-];
-
-/// A long flat rock (10 x 7 m, 2 m high) and a low ground mound (19 x 11 m, 2 m high) laid along a bank, their long side (x) along it.
-pub const BANK_ROCK: &str = "rock_flat";
-pub const BANK_MOUND: &str = "global_ground_pathborder";
-
 /// How far apart along a bank its dressing is looked for (metres).
 const BANK_STEP: f32 = 4.0;
-
-/// The splash over a ford's edges: Attila's vanilla battle water splash (a looping foam on the water).
-pub const SPLASH: &str = "enviro_vfx_watersplashes";
 
 /// How far apart a ford's splashes are across the river, and how far its edge's stones reach either side of it (metres).
 const SPLASH_STEP: f32 = 8.0;
@@ -211,6 +286,24 @@ const FORD_BANK_MARGIN: f32 = 6.0;
 /// How far across the river (of its half width) a ford's end lines reach: short of its sides, where units step on and off it.
 const FORD_LINE_REACH: f32 = 0.75;
 const FORD_EDGE: f32 = 1.0;
+
+/// Steps of a range by a stride (`step_by` for floats).
+trait StepByF32 {
+    fn step_by_f32(self, step: f32) -> Vec<f32>;
+}
+
+impl StepByF32 for std::ops::Range<f32> {
+    fn step_by_f32(self, step: f32) -> Vec<f32> {
+        let mut out = vec![];
+        let mut v = self.start;
+        while v < self.end {
+            out.push(v);
+            v += step;
+        }
+
+        out
+    }
+}
 
 /// A river's middle line at a distance along it: the place and the direction there.
 fn at_along(line: &[[f32; 2]], half: &[f32], along: f32) -> Option<([f32; 2], [f32; 2], f32)> {
@@ -269,9 +362,47 @@ const BED_SIZE: f32 = 9.0;
 const STONE_RUN: f32 = 6.0;
 const BED_EDGE: f32 = 0.12;
 
+/// A clump of bed decals round a place: three to six of them, each off its middle by up to `radius` metres, its own size and turn,
+/// most of one kind (the clump's) and now and then another, so that they overlap into a patch of no set shape rather than squares
+/// scattered.
+#[allow(clippy::too_many_arguments)]
+fn clump(
+    out: &mut Vec<Placed>,
+    cx: f32,
+    cz: f32,
+    radius: f32,
+    id: (i64, i64),
+    keys: &ShoreKeys,
+    height: &dyn Fn(f32, f32) -> f32,
+    blocked: &dyn Fn(f32, f32) -> bool,
+    seed: u64,
+) {
+    let [q, kind, ..] = cell_numbers(seed ^ 0x5851_f42d, id.0, id.1);
+    let n = 3 + (q * 4.0) as i64;
+    let own = (kind * keys.bed_decals.len() as f32) as usize;
+    for j in 0..n {
+        let [r1, r2, r3, r4] = cell_numbers(seed ^ 0x2545_f491 ^ (j as u64).wrapping_mul(0x9e37), id.0, id.1);
+        let (angle, dist) = (r1 * std::f32::consts::TAU, radius * r2.sqrt());
+        let (x, z) = (cx + angle.cos() * dist, cz + angle.sin() * dist);
+        if blocked(x, z) {
+            continue;
+        }
+
+        let key = if r4 < 0.75 { pick(&keys.bed_decals, own) } else { pick(&keys.bed_decals, (r4 * 97.0) as usize) };
+        out.push(Placed { key: key.to_owned(), x, y: height(x, z), z, scale: 2.5 + 3.0 * r3, yaw: 360.0 * r4 });
+    }
+}
+
 /// The shore of a water over a half-metre grid round it, each place by the ground there and its distance from the water's edge (see the
 /// module's notes), off the places `blocked` says. `height`: the ground's.
-pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32, blocked: &dyn Fn(f32, f32) -> bool, seed: u64) -> Shore {
+pub fn place(
+    water: &Water,
+    s: &ShoreSettings,
+    keys: &ShoreKeys,
+    height: &dyn Fn(f32, f32) -> f32,
+    blocked: &dyn Fn(f32, f32) -> bool,
+    seed: u64,
+) -> Shore {
     let mut out = Shore::default();
     let reach = s.wet_bank.max(WATERLINE).max(4.0);
     let Some([x0, z0, x1, z1]) = water.bounds(reach + CELL) else { return out };
@@ -323,7 +454,7 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
             if ford_edge && u.abs() <= FORD_LINE_REACH {
                 let gaps = noise(seed ^ 0x0f0e_d0c1, x, z, 3.0);
                 if gaps > 0.3 && a < 2.0 * area && !blocked(x, z) {
-                    let key = FORD_STONES[(d * 61.0) as usize % FORD_STONES.len()];
+                    let key = pick(&keys.ford_stones, (d * 61.0) as usize);
                     out.stones.push(Placed { key: key.to_owned(), x, y: g - 0.05, z, scale: 1.0, yaw: 360.0 * c });
                 }
 
@@ -342,8 +473,8 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                     if !blocked(x, z) {
                         // The bed's kind (by another noise, coarser), now and then another's.
                         let kind = noise(seed ^ 0x2545_f491, x, z, BED_SIZE * 1.6);
-                        let k = if d < 0.85 { (kind * REEDS.len() as f32) as usize } else { (d * 97.0) as usize };
-                        let key = REEDS[k % REEDS.len()];
+                        let k = if d < 0.85 { (kind * keys.reeds.len() as f32) as usize } else { (d * 97.0) as usize };
+                        let key = pick(&keys.reeds, k);
                         out.reeds.push(Placed { key: key.to_owned(), x, y: g, z, scale: 0.85 + 0.4 * d, yaw: 360.0 * d });
                     }
 
@@ -355,7 +486,7 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
             if s.reeds > 0.0 && depth > 0.3 && depth <= LILY_DEPTH && edge < -1.0 {
                 let n = noise(seed ^ 0x7f4a_7c15, x, z, BED_SIZE * 0.7);
                 if n > 1.0 - s.reeds * 0.35 && a < 0.5 * area && !blocked(x, z) {
-                    let key = LILIES[(d * LILIES.len() as f32) as usize % LILIES.len()];
+                    let key = pick(&keys.lilies, (d * keys.lilies.len() as f32) as usize);
                     out.reeds.push(Placed { key: key.to_owned(), x, y: level, z, scale: 0.8 + 0.4 * c, yaw: 360.0 * d });
                     continue;
                 }
@@ -369,11 +500,11 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                 // The noise keeps near its middle: a run takes from about a third of the waterline (few) to all of it (thick).
                 let density = if waterline && run > 0.85 - s.stones * 0.7 { 2.0 } else { 0.0 };
                 if a > 1.0 - density * area && !blocked(x, z) {
-                    let key = STONES[(d * STONES.len() as f32) as usize % STONES.len()];
+                    let key = pick(&keys.stones, (d * keys.stones.len() as f32) as usize);
                     // Sunk a little: stones of a waterline lie in the mud.
                     out.stones.push(Placed { key: key.to_owned(), x, y: g - 0.05, z, scale: 1.0, yaw: 360.0 * d });
                 } else if edge > WATERLINE && edge <= reach && g - level <= 1.5 && a > 1.0 - 0.02 * s.stones * area && !blocked(x, z) {
-                    let key = BANK_STONES[(d * BANK_STONES.len() as f32) as usize % BANK_STONES.len()];
+                    let key = pick(&keys.bank_stones, (d * keys.bank_stones.len() as f32) as usize);
                     out.stones.push(Placed { key: key.to_owned(), x, y: g - 0.1, z, scale: 1.0, yaw: 360.0 * d });
                 }
             }
@@ -417,6 +548,7 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                     };
 
                     // The shore: muddy rocks over the waterline, a little into the water and onto the bank.
+                    // Not by a ford: its banks are where units step on and off it.
                     if let (true, Some(wl)) = (s.decals > 0.0 && !near_ford && a < (s.decals * 2.0).min(1.0), waterline()) {
                         // On the land side of the waterline, over its seam: near continuous along it (the reeds and stones stand on
                         // it too; they hid sparse ones).
@@ -424,7 +556,7 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                         // From the waterline up the bank: the bed's meet it there.
                         let (x, z) = at(wl + size * 0.5 + 0.3 * b);
                         if !blocked(x, z) {
-                            let key = SHORE_DECALS[(c * SHORE_DECALS.len() as f32) as usize % SHORE_DECALS.len()];
+                            let key = pick(&keys.shore_decals, (c * keys.shore_decals.len() as f32) as usize);
                             out.decals.push(Placed {
                                 key: key.to_owned(),
                                 x,
@@ -436,27 +568,55 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                         }
                     }
 
-                    // The bed: mud under the water, by its edge (seen through the shallows).
-                    let [e1, e2, e3, e4] = cell_numbers(seed ^ 0x1b87_3593, k, if side < 0.0 { 3 } else { 4 });
-                    if let (true, Some(wl)) = (s.bed_decals > 0.0 && !near_ford && e1 < s.bed_decals * 1.2, waterline()) {
-                        // From the waterline into the water, where it is shallowest and the bed shows most (the editor's water, the game's
-                        // river shader, hides it a metre deep): the shore's meet it there.
-                        let size = 3.0 + 2.0 * e4;
-                        let (x, z) = at(wl - size * 0.5 - 0.3 * e2);
-                        if !blocked(x, z) {
-                            let key = BED_DECALS[(e3 * BED_DECALS.len() as f32) as usize % BED_DECALS.len()];
-                            out.decals.push(Placed { key: key.to_owned(), x, y: height(x, z), z, scale: size, yaw: yaw + 360.0 * e2 });
-                        }
+                    // The bed: clumps of mud and dirt under the water by its edge (seen through the shallows), a clump now and then.
+                    let [e1, e2, ..] = cell_numbers(seed ^ 0x1b87_3593, k, if side < 0.0 { 3 } else { 4 });
+                    if let (true, Some(wl)) = (s.bed_decals > 0.0 && !near_ford && e1 < s.bed_decals * 0.5, waterline()) {
+                        let (x, z) = at(wl - 2.0 - 1.5 * e2);
+                        clump(&mut out.decals, x, z, 2.5, (k, if side < 0.0 { 3 } else { 4 }), keys, height, blocked, seed);
                     }
 
                     if s.stones > 0.0 && !near_ford {
                         let n = noise(seed ^ 0x2c1b_3c6d, along, side * 1000.0, 40.0);
                         let (x, z) = at(2.0 + 2.0 * c);
                         if n > 0.62 && b < 0.035 * s.stones && !blocked(x, z) {
-                            out.bank_pieces.push(Placed { key: BANK_ROCK.to_owned(), x, y: height(x, z) - 0.6, z, scale: 1.0, yaw });
+                            out.bank_pieces.push(Placed {
+                                key: pick(&keys.bank_rocks, (c * 31.0) as usize).to_owned(),
+                                x,
+                                y: height(x, z) - 0.6,
+                                z,
+                                scale: 1.0,
+                                yaw,
+                            });
                         } else if n < 0.3 && b > 1.0 - 0.02 * s.stones && !blocked(x, z) {
-                            out.bank_pieces.push(Placed { key: BANK_MOUND.to_owned(), x, y: height(x, z) - 1.2, z, scale: 1.0, yaw });
+                            out.bank_pieces.push(Placed {
+                                key: pick(&keys.bank_mounds, (c * 31.0) as usize).to_owned(),
+                                x,
+                                y: height(x, z) - 1.2,
+                                z,
+                                scale: 1.0,
+                                yaw,
+                            });
                         }
+                    }
+                }
+            }
+
+            // A ford's floor: clumps of mud and dirt over it (its water is shallow: the bed shows there most).
+            if s.bed_decals > 0.0
+                && let Some((p, dir, h)) = at_along(line, half, along)
+            {
+                let across = (-h + 3.0..h - 3.0).step_by_f32(6.0);
+                for (n, off) in across.into_iter().enumerate() {
+                    let [a, b, ..] = cell_numbers(seed ^ 0x3c6e_f372, k, 10 + n as i64);
+                    let off = off + 3.0 * (b - 0.5);
+                    let (x, z) = (p[0] - dir[1] * off, p[1] + dir[0] * off);
+                    let (_, _, al, u) = water.edge(x, z);
+                    let on_floor = fords.iter().any(|f| {
+                        let (s0, s1) = f.ends(f64::from(u));
+                        f64::from(al) >= s0 && f64::from(al) <= s1
+                    });
+                    if on_floor && a < s.bed_decals * 0.9 {
+                        clump(&mut out.decals, x, z, 3.5, (k, 10 + n as i64), keys, height, blocked, seed);
                     }
                 }
             }
@@ -484,7 +644,7 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                     let (_, level, ..) = water.edge(x, z);
                     if !blocked(x, z) {
                         let yaw = dir[1].atan2(dir[0]).to_degrees();
-                        out.splashes.push(Placed { key: SPLASH.to_owned(), x, y: level, z, scale: 1.0, yaw });
+                        out.splashes.push(Placed { key: keys.splash.clone(), x, y: level, z, scale: 1.0, yaw });
                     }
                 }
             }
@@ -508,8 +668,8 @@ mod tests {
     #[test]
     fn reeds_stand_in_the_shallows_and_the_wet_bank_and_stones_on_the_waterline() {
         let (w, g) = river();
-        let shore = place(&w, &ShoreSettings::of(0.85, 0.85), &g, &|_, _| false, 7);
-        let reeds = shore.reeds.iter().filter(|r| REEDS.contains(&r.key.as_str())).collect::<Vec<_>>();
+        let shore = place(&w, &ShoreSettings::of(0.85, 0.85), &ShoreKeys::default(), &g, &|_, _| false, 7);
+        let reeds = shore.reeds.iter().filter(|r| ShoreKeys::default().reeds.contains(&r.key)).collect::<Vec<_>>();
         assert!(reeds.len() > 50 && !shore.stones.is_empty(), "{} reeds, {} stones", reeds.len(), shore.stones.len());
         for r in &reeds {
             assert!(-g(r.x, r.z) <= 0.8 + 1e-4, "no reed deeper than the shallows: {} at {}", -g(r.x, r.z), r.z);
@@ -518,7 +678,7 @@ mod tests {
         }
 
         // The small stones where the ground meets the water (6 m from the middle).
-        for st in shore.stones.iter().filter(|s| STONES.contains(&s.key.as_str())) {
+        for st in shore.stones.iter().filter(|s| ShoreKeys::default().stones.contains(&s.key)) {
             assert!(g(st.x, st.z).abs() <= WATERLINE_HEIGHT + 1e-4, "on the waterline: {} at {}", g(st.x, st.z), st.z);
         }
     }
@@ -532,9 +692,9 @@ mod tests {
             let (s0, s1) = ford.ends(f64::from((z - 50.0) / 10.0));
             if f64::from(x) >= s0 && f64::from(x) <= s1 { -0.25 } else { -3.0 }
         };
-        let shore = place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 5);
+        let shore = place(&w, &ShoreSettings::of(0.0, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 5);
         assert!(shore.stones.len() > 20, "the edges lined whatever the shore's stones: {}", shore.stones.len());
-        assert!(shore.stones.iter().all(|s| FORD_STONES.contains(&s.key.as_str())), "small ones");
+        assert!(shore.stones.iter().all(|s| ShoreKeys::default().ford_stones.contains(&s.key)), "small ones");
         let on_end = |s: &Placed| {
             let (s0, s1) = ford.ends(f64::from((s.z - 50.0) / 10.0));
             (f64::from(s.x) - s0).abs() <= 1.01 || (f64::from(s.x) - s1).abs() <= 1.01
@@ -544,9 +704,12 @@ mod tests {
             shore.stones.iter().all(|s| (s.z - 50.0).abs() <= 10.0 * FORD_LINE_REACH + 0.5),
             "none by its sides, where units step on and off"
         );
-        let stony = place(&w, &ShoreSettings::of(0.0, 0.85), &g, &|_, _| false, 5);
+        let stony = place(&w, &ShoreSettings::of(0.0, 0.85), &ShoreKeys::default(), &g, &|_, _| false, 5);
         assert!(
-            stony.stones.iter().all(|s| FORD_STONES.contains(&s.key.as_str()) || f64::from(s.x) < 80.5 || f64::from(s.x) > 119.5),
+            stony
+                .stones
+                .iter()
+                .all(|s| ShoreKeys::default().ford_stones.contains(&s.key) || f64::from(s.x) < 80.5 || f64::from(s.x) > 119.5),
             "the shore's stones keep off the ford, bank to bank"
         );
         let (mid, side) = (ford.ends(0.0), ford.ends(1.0));
@@ -558,39 +721,49 @@ mod tests {
             "three across each edge: {:?}",
             shore.splashes.iter().map(|s| (s.x, s.z)).collect::<Vec<_>>()
         );
-        assert!(shore.splashes.iter().all(|s| s.key == SPLASH && s.y == 0.0));
+        assert!(shore.splashes.iter().all(|s| s.key == ShoreKeys::default().splash && s.y == 0.0));
 
         // Reeds may stand on it (its middle, shallow), never on the deep water beside it.
-        let reedy = place(&w, &ShoreSettings::of(0.85, 0.0), &g, &|_, _| false, 5);
+        let reedy = place(&w, &ShoreSettings::of(0.85, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 5);
         assert!(reedy.reeds.iter().any(|r| (r.z - 50.0).abs() < 5.0), "on the ford");
         assert!(reedy.reeds.iter().all(|r| g(r.x, r.z) > -1.0), "not in the deep");
     }
 
     #[test]
-    fn a_rivers_banks_take_decals_and_now_and_then_a_rock_but_not_at_its_fords() {
+    fn a_rivers_banks_take_decals_its_fords_bed_decals_and_now_and_then_a_rock_not_at_them() {
         let ford = crate::river_bed::Ford { at: 300.0, length: 30.0, depth: 0.5 };
         let w = Water::River { line: vec![[0.0, 50.0], [600.0, 50.0]], water: vec![0.0, 0.0], half: vec![10.0, 10.0], fords: vec![ford] };
         let g = |_: f32, z: f32| ((z - 50.0).abs() - 11.0) * 0.5;
-        let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85, 0.85), &g, &|_, _| false, 9);
-        let (shore_d, bed_d): (Vec<_>, Vec<_>) = shore.decals.iter().partition(|d| SHORE_DECALS.contains(&d.key.as_str()));
+        let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85, 0.85), &ShoreKeys::default(), &g, &|_, _| false, 9);
+        let (shore_d, bed_d): (Vec<_>, Vec<_>) = shore.decals.iter().partition(|d| ShoreKeys::default().shore_decals.contains(&d.key));
         assert!(shore_d.len() > 100 && bed_d.len() > 100, "{} shore decals, {} bed decals", shore_d.len(), bed_d.len());
         // The ground meets the water 11 m from the middle (past the ribbon's 10): the shore's decals there, the bed's inside it.
         let off = |d: &&Placed| (d.z - 50.0).abs() - 11.0;
         assert!(shore_d.iter().all(|d| off(d) >= d.scale * 0.5 - 0.6 && off(d) <= d.scale * 0.5 + 0.9), "from the waterline up the bank");
+        // The bed's in clumps by the waterline (inside it, a clump's radius either way), or over a ford's floor (its held stretch: 285 to
+        // 315, a metre or two either way by its curve, and a clump's radius).
+        let on_ford_floor = |d: &&Placed| d.x > 276.0 && d.x < 324.0 && (d.z - 50.0).abs() < 11.0;
         assert!(
-            bed_d.iter().all(|d| BED_DECALS.contains(&d.key.as_str()) && off(d) <= -d.scale * 0.5 + 0.6 && off(d) >= -d.scale * 0.5 - 0.9),
+            bed_d
+                .iter()
+                .all(|d| ShoreKeys::default().bed_decals.contains(&d.key) && (on_ford_floor(d) || (off(d) <= 0.6 && off(d) >= -6.6))),
             "on the bed"
         );
+        assert!(bed_d.iter().filter(|d| on_ford_floor(d)).count() >= 10, "over the ford's floor");
+        // In clumps: most have another within 3 m.
+        let near = bed_d.iter().filter(|d| bed_d.iter().any(|e| !std::ptr::eq(**d, *e) && (d.x - e.x).hypot(d.z - e.z) < 3.0)).count();
+        assert!(near * 10 >= bed_d.len() * 8, "clumped: {near} of {}", bed_d.len());
+        assert!(shore_d.iter().all(|d| !(d.x > 270.0 && d.x < 330.0)), "no rocks' decals by the ford");
         assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());
         let at_ford = |x: f32| x > 270.0 && x < 330.0;
-        assert!(shore.decals.iter().chain(&shore.bank_pieces).all(|p| !at_ford(p.x)), "none at the ford's banks");
-        assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 9).decals.is_empty(), "none asked");
+        assert!(shore.bank_pieces.iter().all(|p| !at_ford(p.x)), "no rocks or mounds at the ford's banks");
+        assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 9).decals.is_empty(), "none asked");
     }
 
     #[test]
     fn reeds_grow_in_beds_with_gaps_between() {
         let (w, g) = river();
-        let shore = place(&w, &ShoreSettings::of(0.5, 0.0), &g, &|_, _| false, 11);
+        let shore = place(&w, &ShoreSettings::of(0.5, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 11);
         // Along the river in 4 m stretches: some full, some empty.
         let mut bins = [0usize; 50];
         for r in shore.reeds.iter().filter(|r| r.z > 50.0) {
@@ -606,13 +779,13 @@ mod tests {
     fn a_shore_keeps_its_places_and_its_blocked_ground() {
         let (w, g) = river();
         let s = ShoreSettings::default();
-        let a = place(&w, &s, &g, &|_, _| false, 3);
-        assert_eq!(a, place(&w, &s, &g, &|_, _| false, 3), "the same each time");
-        assert_ne!(a, place(&w, &s, &g, &|_, _| false, 4), "another seed, another shore");
-        let b = place(&w, &s, &g, &|x, _| x < 100.0, 3);
+        let a = place(&w, &s, &ShoreKeys::default(), &g, &|_, _| false, 3);
+        assert_eq!(a, place(&w, &s, &ShoreKeys::default(), &g, &|_, _| false, 3), "the same each time");
+        assert_ne!(a, place(&w, &s, &ShoreKeys::default(), &g, &|_, _| false, 4), "another seed, another shore");
+        let b = place(&w, &s, &ShoreKeys::default(), &g, &|x, _| x < 100.0, 3);
         assert!(b.reeds.iter().chain(&b.stones).all(|p| p.x >= 100.0));
         assert!(b.reeds.iter().all(|p| a.reeds.contains(p)), "what is left is where it was");
-        assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 3) == Shore::default(), "none");
+        assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 3) == Shore::default(), "none");
     }
 
     #[test]
@@ -623,11 +796,26 @@ mod tests {
             let e = x.min(60.0 - x).min(z).min(60.0 - z);
             if e > 0.0 { -0.3 * e } else { -0.2 * e }
         };
-        let shore = place(&w, &ShoreSettings::of(0.85, 0.5), &g, &|_, _| false, 1);
-        let reeds = shore.reeds.iter().filter(|r| REEDS.contains(&r.key.as_str())).collect::<Vec<_>>();
+        let shore = place(&w, &ShoreSettings::of(0.85, 0.5), &ShoreKeys::default(), &g, &|_, _| false, 1);
+        let reeds = shore.reeds.iter().filter(|r| ShoreKeys::default().reeds.contains(&r.key)).collect::<Vec<_>>();
         assert!(!reeds.is_empty());
         assert!(reeds.iter().all(|r| g(r.x, r.z) >= -0.8 - 1e-4), "in the shallows or on the bank");
         assert!(reeds.iter().all(|r| !(r.x > 4.0 && r.x < 56.0 && r.z > 4.0 && r.z < 56.0)), "none in the deep middle");
+    }
+
+    #[test]
+    fn the_shores_tables_read_and_a_file_over_them_replaces_its_lists() {
+        for (game, text) in BUILT_IN {
+            let k = parse_with(text, &[]).unwrap_or_else(|e| panic!("{game}: {e}"));
+            assert!(!k.reeds.is_empty() && !k.bed_decals.is_empty(), "{game}");
+        }
+
+        let over = |t: &str| [("shores_mine.toml".to_owned(), t.to_owned())];
+        let k = parse_with(BUILT_IN[0].1, &over("mod_key = \"\"\nreeds = [\"my_reed\"]\nsplash = \"my_splash\"\n")).unwrap();
+        let shipped = ShoreKeys::default();
+        assert_eq!((k.reeds.as_slice(), k.splash.as_str()), (["my_reed".to_owned()].as_slice(), "my_splash"));
+        assert_eq!(k.stones, shipped.stones, "the lists it does not have stay");
+        assert!(parse_with(BUILT_IN[0].1, &over("mod_key = \"\"\nstones = []\n")).is_err(), "an empty list");
     }
 
     #[test]

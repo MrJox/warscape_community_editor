@@ -294,27 +294,39 @@ impl TileTool {
         }
 
         self.river_ui.from = self.river_ui.from.clamp(0, n - 1);
-        gui::separator_text("Ramp");
+        gui::separator_text("Gradual change along the river");
+        gui::push_text_wrap_pos(0.0);
+        gui::text_disabled(
+            "Changes one setting of the river's points gradually from one point to another, by their distance along it: a river widening \
+             towards its mouth, its current slowing as it widens, its foam fading.",
+        );
+        gui::pop_text_wrap_pos();
         let labels = RAMPS.iter().map(|r| r.1).collect::<Vec<_>>();
-        gui::row_tip("value", "The points' value the ramp sets.");
+        gui::row_tip("setting", "What changes: the water's width (the game's metres), its flow speed, its foam or its terrain offset.");
         gui::set_next_item_width(-1.0);
         gui::combo("##river_ramp_value", &mut self.river_ui.ramp, &labels);
-        gui::row_tip("from point", "The point the ramp starts at (its first value).");
+        gui::row_tip(
+            "from point",
+            "The point the change starts at: 0 is the river's first point, the first dot of the profile above from the left.",
+        );
         gui::set_next_item_width(-1.0);
         gui::slider_int("##river_ramp_from", &mut self.river_ui.from, 0, n - 1);
-        gui::row_tip("to point", "The point the ramp ends at (its second value).");
+        gui::row_tip("to point", "The point the change ends at.");
         gui::set_next_item_width(-1.0);
         gui::slider_int("##river_ramp_to", &mut self.river_ui.to, 0, n - 1);
-        gui::row_tip("from .. to", "The value at the first point and at the last; those between take it by their distance along.");
+        gui::row_tip(
+            "start, end value",
+            "The setting at the start point and at the end point; the points between take it by their distance along.",
+        );
         gui::set_next_item_width(-1.0);
         gui::drag_float2("##river_ramp_values", &mut self.river_ui.values, 0.1, "%.2f");
         gui::row("");
-        if gui::button_sized("Ramp", v2(-1.0, 0.0)) {
+        if gui::button_sized("Apply##river_ramp", v2(-1.0, 0.0)) {
             let (attr, _) = RAMPS[self.river_ui.ramp.clamp(0, RAMPS.len() as i32 - 1) as usize];
             let [a, b] = self.river_ui.values;
             self.status =
                 match d.ramp_river(river, attr, self.river_ui.from as usize, self.river_ui.to as usize, f64::from(a), f64::from(b)) {
-                    Ok(()) => format!("{attr} ramped"),
+                    Ok(()) => format!("{attr} changed gradually from point {} to point {}", self.river_ui.from, self.river_ui.to),
                     Err(why) => why,
                 };
         }

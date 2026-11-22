@@ -6777,13 +6777,14 @@ fn snap_heading(m: Float4x4, step: f32, tolerance: f32) -> Float4x4 {
 }
 
 /// Reads the game's tables from their files in the app's `tables/<game key>` folder, each with the files over it of the mods loaded
-/// (`wce_tile::user_files`): the wall and bridge bases, the road fences and the road types.
+/// (`wce_tile::user_files`): the wall and bridge bases, the road fences, the road types and the shores.
 pub(crate) fn load_tables(e: &Editor) {
     let (dir, game, mods) = (wce_tile::user_files::tables_dir(), e.settings_ref().game_profile().key, e.selected_mod_packs());
     wce_walls::profile::load(&dir, game, &mods);
     wce_walls::bridge::load(&dir, game, &mods);
     wce_tile::road_fences::load(&dir, game, &mods);
     wce_tile::road_dirt::load(&dir, game, &mods);
+    wce_tile::shores::load(&dir, game, &mods);
 }
 
 #[cfg(test)]
