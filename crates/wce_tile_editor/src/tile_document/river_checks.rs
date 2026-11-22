@@ -142,6 +142,26 @@ impl TileDocument {
             }
         }
 
+        // The lakes: their water over ground past their outline.
+        for lake in self.lakes() {
+            let (n, worst) = self.lake_spills(lake);
+            let Some(w) = worst else { continue };
+            let outline = super::lakes::lake_outline(&sc.get(lake, super::lakes::OUTLINE_ATTR).unwrap_or_default());
+            let pts = outline.iter().map(|p| wce_foundation::math::Float3::new(p[0] as f32, 0.0, p[1] as f32)).collect::<Vec<_>>();
+            out.push(RiverProblem {
+                elem: Some(lake),
+                message: format!(
+                    "'{}': its water stands over the ground past its outline at {n} place(s), {:.1} m deep around ({:.0}, {:.0}): it floods past \
+                     its shore",
+                    sc.name(lake),
+                    self.lake_water(lake) - w.y,
+                    w.x,
+                    w.z
+                ),
+                fix: self.lake_level(&pts).map(|level| RiverFix::LakeLevel { lake, level }),
+            });
+        }
+
         out
     }
 }

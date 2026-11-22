@@ -51,6 +51,9 @@ pub enum RiverFix {
 
     /// Have the river cut its bed (`river_beds::BED_ATTR`).
     CutBed { river: usize },
+
+    /// Put a lake's water at a height (the editor's metres): just under its shore's lowest ground.
+    LakeLevel { lake: usize, level: f32 },
 }
 
 /// A river link problem: the river it is about (if any), what is wrong, what fixes it (if anything does in one go).
@@ -550,10 +553,17 @@ impl Tile {
         out
     }
 
-    /// An id for a river's terrain layer (`RIVER_ID_ATTR`): one more than the highest.
+    /// An id for a river's or a lake's terrain layer (`RIVER_ID_ATTR`): one more than the highest.
     pub(super) fn next_river_id(&self) -> u32 {
         let sc = self.tscene();
-        sc.find_all(RIVER).into_iter().filter_map(|e| sc.get(e, RIVER_ID_ATTR)?.parse::<u32>().ok()).max().unwrap_or(0) + 1
+        // The lakes' planes share the ids (`lakes.rs`).
+        sc.find_all(RIVER)
+            .into_iter()
+            .chain(sc.find_all("SIMPLE_MESH_INSTANCE"))
+            .filter_map(|e| sc.get(e, RIVER_ID_ATTR)?.parse::<u32>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1
     }
 }
 

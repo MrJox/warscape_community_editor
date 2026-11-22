@@ -108,7 +108,7 @@ fn generic_folder(counts: &std::collections::HashMap<String, usize>, key: &str) 
 }
 
 /// The types without a key of each fixed category (category, type, drawn).
-const FIXED: [(usize, &str, bool); 20] = [
+const FIXED: [(usize, &str, bool); 21] = [
     (11, "WceRefHuman", false),
     (11, "WceRefUnit", false),
     (11, "WceRefShip", false),
@@ -129,6 +129,7 @@ const FIXED: [(usize, &str, bool); 20] = [
     (8, "VegetationExclusionPolygonInstance", true),
     (8, "AISeparatorInstance", true),
     (10, "SplineRiverInstance", true),
+    (10, wce_tile_editor::tile_document::LAKE, true),
 ];
 
 /// The types made only inside a holder (`wce_tile::parents`), drawn from the holder's Inspector (`TileTool::inspect_holder`): not entries of
@@ -728,6 +729,7 @@ impl TileTool {
         let kind = draft.kind.as_str();
         let closed = match kind {
             "SIEGE_AI_POLYGON_INSTANCE" => matches!(draft.attrs.get("name").map(String::as_str), Some("Bounding Box" | "Boundary")),
+            wce_tile_editor::tile_document::LAKE => true,
             k => wce_tile_editor::tile_document::FILLED_TYPES.contains(&k),
         };
 
@@ -1203,7 +1205,14 @@ impl TileTool {
         self.drawing = false;
         let kind = draft.kind.as_str();
         let into = self.drawing_into(d, sel);
-        let added = into.and_then(|into| d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs));
+        let added = into.and_then(|into| {
+            // A lake: its water plane over the outline (`lakes.rs`).
+            if kind == wce_tile_editor::tile_document::LAKE {
+                d.create_lake(into, &self.draw_pts, None)
+            } else {
+                d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs)
+            }
+        });
 
         // A river drawn to a river link is snapped to it whole (its water, width, direction and the ground there), in the same undo entry.
         if let Ok(el) = added

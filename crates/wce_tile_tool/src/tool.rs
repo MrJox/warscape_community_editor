@@ -2748,6 +2748,15 @@ impl TileTool {
                 self.status = "drawing a river from the link: click its points, Enter to finish".to_owned();
             }
 
+            RiverFix::LakeLevel { lake, level } => {
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                let g = d.next_gesture();
+                self.status = match d.set_lake_water(lake, level, g) {
+                    Ok(()) => format!("the lake's water at {level:.2} m"),
+                    Err(why) => why,
+                };
+            }
+
             RiverFix::CutBed { river } => {
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 d.cut_river_bed(river);
@@ -3426,6 +3435,10 @@ impl TileTool {
                         RiverFix::MatchNeighbour { .. } => (
                             "Match neighbour",
                             "Moves the river's end along the edge to the neighbour's river, at its water height and width.",
+                        ),
+                        RiverFix::LakeLevel { .. } => (
+                            "Lower to its shore",
+                            "Puts the lake's water just under the lowest ground of its outline, so that it stays inside it.",
                         ),
                         RiverFix::CutBed { .. } => (
                             "Cut its bed",

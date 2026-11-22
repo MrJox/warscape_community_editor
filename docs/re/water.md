@@ -45,6 +45,11 @@ Textures (in the packs): `battleterrain/river/river_normal.dds`, `river_diffuse.
   rows (P1..P3; the ripples' uv are world x / z * 0.01 scrolled by the clock), so the tool draws these meshes with the sea plane's shaders in
   the sea pass, from the G-buffer pass's visible instances. The D3D shader declares TEXCOORD0 and POSITION4..6 as well (the input layout
   must provide them).
+- **The kit's lakes** (2026-11-22, `crates/wce_tile/examples/lake_planes.rs` over the 22 `lakes` tiles): one plane each, freeform,
+  unturned, its water at -4 .. -15 (the game's units) over a dug basin (down to -22 .. -38), the shores gentle (0.04 .. 0.13 game units
+  a metre). The plane model (`RigidModels/campaign/settlements/resources/water_plane.rigid_model_v2`) spans x -0.414 .. 0.909 and z
+  -0.632 .. 1.485 of its units, not centred on its origin; scaled, a unit is a scene unit (half a metre). Two lakes (16x19, 20x16) have
+  their plane under the ground: drawn nowhere.
 - **Sea**: the tile sets `sea`, `sea_coast`, `sea_coast_landing`, `river_mouth` have heights below 0 (lakes: min_height -17 .. -40 with scale 20 .. 43); the water surface is at y = 0 and the terrain cuts it. River tiles also go below 0 (the ford's heights are all <= 0) and have no
   plane: the rule is the tile set. BOB writes `hf_water_map.data` and the ground type map carries `GT_SHALLOW_WATER` / `GT_DEEP_WATER`; neither is read yet.
 - Environment: `lighting` has `deep_water` / `shallow_water` colours and `refraction_scatter` / `sea_bed_scatter`, already mapped into `lighting_VS_PS` (`g_deep_water_colour`, ...).

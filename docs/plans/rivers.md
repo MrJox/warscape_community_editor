@@ -18,6 +18,10 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   rivers and joins had been twice as deep (their files' water at the bed). The file of a snapped river now has the kit's -6.2 / 45.
   Step 6 (fords: the kit's wading depth over a stretch, eased banks, on rivers with or without a bed; kit bridges snapped across rivers)
   built. A ford needs no link change (the kit's `river_ford/*` link as deep `river`). The bridge's platform check stays the Problems' button.
+  L1 and step 5 (lakes: a water plane over a drawn outline at its shore's level, an optional basin, the spill check) built; the live
+  flood preview while drawing is not (the spill check and the plane's water height in the Inspector stand in). Whether units treat a
+  plane as water in game is for the in-game look.
+  **Stopped before Rome 2** (as the user asked): steps 9 (Rome 2) and 10 (shores) are left.
 
 ## What there is today
 

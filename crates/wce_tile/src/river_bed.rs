@@ -313,12 +313,57 @@ impl Channel {
     }
 }
 
+/// A lake's basin: dug inside its outline (x, z) to `depth` under its `water` (the game's units), its sides climbing `rise` a metre in
+/// from the outline (the game's units).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Basin {
+    pub outline: Vec<[f64; 2]>,
+    pub water: f64,
+    pub depth: f64,
+    pub rise: f64,
+}
+
+impl Basin {
+    /// The basin's floor at a place: inside the outline, the water less the depth, or less the distance from the outline times the rise
+    /// nearer its edge; none outside.
+    pub fn floor(&self, x: f64, z: f64) -> Option<f64> {
+        let n = self.outline.len();
+        if n < 3 {
+            return None;
+        }
+
+        let mut inside = false;
+        let mut near = f64::INFINITY;
+        for i in 0..n {
+            let (a, b) = (self.outline[i], self.outline[(i + n - 1) % n]);
+            if (a[1] > z) != (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0] {
+                inside = !inside;
+            }
+
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let l2 = dx * dx + dz * dz;
+            let t = if l2 > 1e-12 { (((x - a[0]) * dx + (z - a[1]) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+            near = near.min((x - a[0] - dx * t).hypot(z - a[1] - dz * t));
+        }
+
+        inside.then(|| self.water - self.depth.min(near * self.rise))
+    }
+
+    fn bounds(&self) -> Option<[f64; 4]> {
+        self.outline
+            .iter()
+            .map(|p| [p[0], p[1], p[0], p[1]])
+            .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+    }
+}
+
 /// What a river does to the ground: the bed it cuts along its line (when it has one) and its joins to the tile's river links, laid over
-/// the bed.
+/// the bed; or a lake's basin.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RiverBed {
     pub channel: Option<Channel>,
     pub joins: Vec<Join>,
+    pub basin: Option<Basin>,
 }
 
 impl RiverBed {
@@ -338,6 +383,14 @@ impl RiverBed {
             let base = out.unwrap_or(below);
             let target = if cell.wet { bed } else { bed.min(base) };
             out = Some(base + (target - base) * cell.ford);
+        }
+
+        // A lake's basin only digs.
+        if let Some(f) = self.basin.as_ref().and_then(|b| b.floor(x, z)) {
+            let base = out.unwrap_or(below);
+            if f < base {
+                out = Some(f);
+            }
         }
 
         for j in &self.joins {
@@ -361,6 +414,7 @@ impl RiverBed {
             .iter()
             .map(Join::bounds)
             .chain(self.channel.as_ref().and_then(Channel::bounds))
+            .chain(self.basin.as_ref().and_then(Basin::bounds))
             .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
     }
 }
@@ -428,7 +482,7 @@ mod tests {
         let g = c.fill([0.0, -100.0], [10.0, 10.0], (11, 21));
         assert!((g[10 * 11 + 5] + 11.9).abs() < 0.11, "the middle of the bed");
         assert!(g[0].is_infinite() || g[0] > 30.0, "far off: {}", g[0]);
-        let bed = RiverBed { channel: Some(Channel { cuts: true, ..c }), joins: vec![] };
+        let bed = RiverBed { channel: Some(Channel { cuts: true, ..c }), ..Default::default() };
         assert_eq!(bed.height_with(50.0, 0.0, -20.0, -11.9), None, "lower ground stays");
         assert_eq!(bed.height_with(50.0, 0.0, 3.0, -11.9), Some(-11.9));
     }
@@ -453,7 +507,7 @@ mod tests {
         assert!(g[1].bed > -7.0 && g[1].bed < -6.2 && g[1].ford == 1.0 && g[1].wet, "on the grid: {g:?}");
 
         // A river that cuts no bed: a kit bed at -12 filled to the ford's, nothing away from it.
-        let bed = RiverBed { channel: Some(c.clone()), joins: vec![] };
+        let bed = RiverBed { channel: Some(c.clone()), ..Default::default() };
         assert_eq!(bed.height_of(150.0, 0.0, -12.0, g[1]), Some(g[1].bed));
         let far = c.fill_cells([20.0, 0.0], [1.0, 1.0], (1, 1))[0];
         assert_eq!(bed.height_of(20.0, 0.0, -12.0, far), None);
