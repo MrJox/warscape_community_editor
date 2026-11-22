@@ -630,8 +630,13 @@ pub fn focus_selection(e: &mut Editor) {
     }
 
     let selected = e.selection_entities();
-    let Some(r) = e.renderer.as_mut() else { return };
+    let Some((lo, hi)) = entity_bounds(e, &selected) else { return };
+    e.viewport.controller().focus((lo + hi) * 0.5, (length(hi - lo) * 0.5).max(2.0));
+}
 
+/// The world bounds (low and high corners) of some entities: their models' boxes and their overlays' points; `None` when none has any.
+pub fn entity_bounds(e: &mut Editor, ids: &[EntityId]) -> Option<(Float3, Float3)> {
+    let r = e.renderer.as_mut()?;
     let mut lo = Float3::new(1e30, 1e30, 1e30);
     let mut hi = Float3::new(-1e30, -1e30, -1e30);
     let mut grow = |p: Float3| {
@@ -639,7 +644,7 @@ pub fn focus_selection(e: &mut Editor) {
         hi = Float3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
     };
 
-    for id in selected {
+    for &id in ids {
         let Some(ent) = e.scene.find(id) else { continue };
         match &ent.payload {
             Payload::MeshInstance(mi) => {
@@ -665,11 +670,7 @@ pub fn focus_selection(e: &mut Editor) {
         }
     }
 
-    if lo.x > hi.x {
-        return;
-    }
-
-    e.viewport.controller().focus((lo + hi) * 0.5, (length(hi - lo) * 0.5).max(2.0));
+    (lo.x <= hi.x).then_some((lo, hi))
 }
 
 /// The camera's heading in degrees from north (clockwise seen from above: east is 90), `None` looking straight down or up.

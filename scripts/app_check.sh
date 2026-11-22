@@ -14,6 +14,7 @@ for run in 1 2; do
     dir="$OUT/settings$run"
     rm -rf "$dir"; mkdir -p "$dir"
     [ -f "$SETTINGS_SRC/settings.toml" ] && cp "$SETTINGS_SRC/settings.toml" "$dir/"
+    no_mod_packs "$dir/settings.toml"   # the sample map's buildings come from the mounted packs: the game's own only
     sed -e "s|%CAPTURE%|$(mixpath "$OUT/capture$run.png")|" -e "s|%SHOT%|$(mixpath "$OUT/shot$run.png")|" "$ROOT/scripts/app_smoke.txt" > "$OUT/smoke$run.txt"
     WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/smoke$run.txt")" > "$OUT/run$run.log" 2>&1
     rc=$?

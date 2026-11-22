@@ -1202,16 +1202,20 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     c.add(
         "click_item",
         "click_item <item> [ctrl]",
-        "click the viewport pixel where an item of the active document is (its pivot), as the mouse would",
+        "click the viewport pixel where an item of the active document is (the centre of its models' bounds, else its pivot), as the mouse \
+         would",
         |e, a| {
-            let world = e
-                .docs
-                .active()
-                .zip(a.first().and_then(|x| parse_u64(x)))
-                .and_then(|(d, item)| d.item_transform(SourceRef { doc: d.id(), item }));
-            let Some(world) = world else { return fail("usage: click_item <item> [ctrl] (the item needs a transform)") };
+            let source = e.docs.active().zip(a.first().and_then(|x| parse_u64(x))).map(|(d, item)| SourceRef { doc: d.id(), item });
+            let world = source.and_then(|s| e.docs.active().and_then(|d| d.item_transform(s)));
+            let Some((source, world)) = source.zip(world) else {
+                return fail("usage: click_item <item> [ctrl] (the item needs a transform)");
+            };
+
+            // The pivot sits at a building's foot, on the ground: which of the two a pick there finds depends on the GPU's depth.
+            let ids = e.scene.entities_of(source);
+            let p = viewport::entity_bounds(e, &ids)
+                .map_or(Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]), |(lo, hi)| (lo + hi) * 0.5);
             let vp = &e.viewport;
-            let p = Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]);
             let Some((px, py)) = vp.target().valid().then(|| Renderer::project(&vp.camera(), vp.width(), vp.height(), p)).flatten() else {
                 return fail("the item is not in view");
             };
