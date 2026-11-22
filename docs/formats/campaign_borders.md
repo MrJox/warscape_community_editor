@@ -123,6 +123,9 @@ The faction list: `CAMPAIGN_PREOPEN_MAP_INFO/FACTION_INFOS`, per faction its key
 its regions at the start. No default is in the data read; the editor picks the playable faction with the most regions (the Western
 Roman Empire on `main_attila`, the captures' player).
 
+The faction colours of standards, figures and settlement flags (models, not the overlay): docs/re/terry.md, "The campaign's start",
+"The models".
+
 ## `campaign_maps/<map>/trade_routes.ptd` (loader fn 0x1084eb70)
 
 | Field | |

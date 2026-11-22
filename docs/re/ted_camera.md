@@ -15,5 +15,9 @@ The game (Attila): `default_camera_type` in `preferences.script.txt` (0 totalwar
 `move_speed_min_multiplier` 0.15, `move_speed_max_multiplier` 1.5, `turn_speed_multiplier` 1.5 (mixed: min 4, naval: min 6.5). ASSUMPTION:
 the heights are in game units (two per scene unit on a tile), which the editor's limits follow.
 
+The game's camera read from a memory dump (2026-10-29 .. 31, the in-game checks of docs/plans/tile_ted_parity.md), in a tile's scene
+units: x / 2 + half, y / 2 + offset, z / 2 + half. Check the dump's `camera_near_far` (1 / 13000): a dump can hold another pass's camera.
+RenderDoc runs out of the 32-bit game's memory at high settings; its captures of a battle were made at low settings.
+
 The editor's cameras (`wce_editor_core::camera_controller`) take these as their models: Total War (the game's), Top-down (Ortho Top),
 Walk, Fly (Look) and Orbit. Not ported: `head_bob`, `roll`, depth of field.

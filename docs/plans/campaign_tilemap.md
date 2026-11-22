@@ -45,13 +45,11 @@ frame for the same reading.
 
 ### 2. The game's world and lens
 
-Built 2026-11-19. Capture A's instances (V): the tiles, cliff meshes, sea tiles and river meshes carry z x 1.1547 after a tile's turn;
-buildings, props, decals and units are unstretched at their places in the stretched world; tree clumps are (x, y, z, angle), the angle
-in sixths. `ContextRequest::z_stretch` / `Frame::z_stretch` (2 / √3 on campaign maps, 1 elsewhere) in the frame's `from_map` /
-`to_map`, `Frame::unstretch` for models, `LfMap::step_z`, `RenderScene::z_stretch`, `TerryFrame::z_stretch` at the view's edge. The
-lens: `Lens::CAMPAIGN_FOV_Y` (1.4 rad), near 1, far `Lens::CAMPAIGN_FAR` 500 world units (`Viewport::set_campaign_lens`; capture T1's
-projection and `camera_near_far` equal); the camera limits from `campaign_variables` (Thrones 7 - 23 units and 0.75 - 1.15 rad,
-Attila 9 - 45 and 0.35 - 1.15). `terrain_cam_game <eye> <forward>` puts the camera at a capture's. Battle maps unchanged.
+Built 2026-11-19. What the game does (the hex stretch, the lens, the camera limits): docs/re/renderer.md, "The campaign frame" and "The
+campaign map", "The world and the camera". `ContextRequest::z_stretch` / `Frame::z_stretch` (2 / √3 on campaign maps, 1 elsewhere) in the
+frame's `from_map` / `to_map`, `Frame::unstretch` for models, `LfMap::step_z`, `RenderScene::z_stretch`, `TerryFrame::z_stretch` at the
+view's edge. The lens: `Lens::CAMPAIGN_FOV_Y` (1.4 rad), near 1, far `Lens::CAMPAIGN_FAR` 500 world units (`Viewport::set_campaign_lens`);
+the camera limits from `campaign_variables`. `terrain_cam_game <eye> <forward>` puts the camera at a capture's. Battle maps unchanged.
 
 ### 3. The comparison
 
@@ -78,9 +76,10 @@ weather fold, banners, flags and the starting rebels fixed. Left in the open lis
 
 ### 7. Docs
 
-docs/re/renderer.md "The campaign frame" written (Phase 1); docs/re/terry.md has the settlements, forests and walls. Left: the findings
-under Progress that have no docs/re or docs/formats home yet (the far material, the LFs as the game reads them, the hex stretch, the
-cascades' analysis mask, Thrones' `FACTION` record, the faction colours of standards and flags).
+docs/re/renderer.md "The campaign frame" written (Phase 1); docs/re/terry.md has the settlements, forests and walls. The findings
+under Progress moved on 2026-11-22: the far material, the LFs as the game reads them, the hex stretch, the camera limits, the cascades'
+analysis mask to docs/re/renderer.md, "The campaign map"; Thrones' `FACTION` record and the faction colours of standards and flags to
+docs/re/terry.md, "The campaign's start".
 
 ## Captures
 
@@ -150,41 +149,35 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
 
 - **Frame and constants:** `camera_near_far` and `g_vertical_fov` set from the projection on every map; the campaign water's
   `OceanSharedConstants`, `g_refraction_depth` 36, the tone map's DOF focus and focal length 0, `pos_transform`,
-  `g_vSoftShadowBufferSize` as the game's. The remaining differences (`g_blend_contrast`, `g_lq_infield_blend_range`, `g_snow_height`,
-  `g_rock_*`, `g_foam_anim_data`, `g_wind_offset`, `g_amSoftSplit`) are read by no shader that draws them (disassembled).
+  `g_vSoftShadowBufferSize` as the game's. The remaining differences are read by no shader that draws them (docs/re/renderer.md,
+  "The campaign map", "The ground's inputs").
 - **Rings:** a campaign map's own (`Rings::campaign` in `wce_map_view`: full detail 9 world units, the tiles to 37 as the game's far
   blend, the LF ground to 128; props 64). Past the rings the blocks go by a quadtree (`Lod::Distant(n)`, only the 2 x 2 squares keep
   their custom-mesh tiles, `DISTANT_CUSTOM`); the far LF ring streams to the far plane. A chunk's level goes by the cells its tiles draw
   (`Frame::chunk_extent`).
-- **The horizon and the far material (V, capture A event 6762):** the game's resolve blends from the tiles' ground to a map-wide far
-  material between 9 and 37 world units (`ps_height_map_cb.g_far_tile_distance` 0, `g_far_blend_range` (9, 37)): `s_far_diffuse_map`
-  and `s_far_normal_map` (8192², BC3, made at load) and `s_mask_map` (the snow mask). The editor bakes its own (`Frame::far_map`,
-  `FarMap` with the tiles' relief, `Frame::far_map_over` for edited windows, `Streamer::refresh_far`; cached as `<key>.far` by
-  `cache::write_far`); `terrain_far_wait`, `terrain_far_dump`, `terrain_far_relief` for scripts. Against the game's over six land boxes:
-  within 2 of 255 a channel. A cell takes the highest of the tiles' own heights over it; sea-tile cells bake as sea bed.
-- **The LFs as the game reads them (V):** the land texture is the field's 4 x 4 box averages from sample 0, the sea's the 2 x 2 read on
-  its second mip's grid (`wce_scene::lf_derive`, `Frame::lf` / `sea_lf`, `LfMirror::with_derived`): the ground at twelve bay points
-  6.8 m rms -> 0.36. The campaign sea reads its depth from the terrain's z / w before the sea pass.
-- **The LF normals (V):** the terrain binds one `s_lf_normal_map`, the map's `lf_normal.dds` (BOB's DXT5 of the kit's `normal.dds`); no
-  `normals/` chunk is bound. The editor reads the kit's `normal.dds`, else the packs' `lf_normal.dds` (`game_lf_normals`, mip 1).
+- **The horizon and the far material** (the game's: docs/re/renderer.md, "The campaign map", "The far material"): the editor bakes its own
+  (`Frame::far_map`, `FarMap` with the tiles' relief, `Frame::far_map_over` for edited windows, `Streamer::refresh_far`; cached as
+  `<key>.far` by `cache::write_far`); `terrain_far_wait`, `terrain_far_dump`, `terrain_far_relief` for scripts. Against the game's over
+  six land boxes: within 2 of 255 a channel. A cell takes the highest of the tiles' own heights over it; sea-tile cells bake as sea bed.
+- **The LFs as the game reads them** (docs/re/renderer.md, "The campaign map", "The ground's inputs"; `wce_scene::lf_derive`, `Frame::lf`
+  / `sea_lf`, `LfMirror::with_derived`): the ground at twelve bay points 6.8 m rms -> 0.36.
+- **The LF normals** (the game's one `s_lf_normal_map`: docs/re/renderer.md, "The campaign map", "The ground's inputs"): the editor reads
+  the kit's `normal.dds`, else the packs' `lf_normal.dds` (`game_lf_normals`, mip 1).
 - **Coasts and sea tiles** (docs/re/renderer.md, "The sea tiles and the coast"): a campaign map's sea tiles are `Terrain::sea_floor`
   drawn by `ps_sea_geom` after the resolve (`Frame::offer_sea` past the rings); a coast cell with a land tile is land; the points over
   the sea at the sea bed (`Frame::ground_with`); the shroud's bounds move with the patches' frame (`ShroudGpu::world`). No coast strip:
   `ps30_main_coast` is drawn in none of the captures.
-- **Cliffs (V, captures A, F, T0):** every campaign cliff draw binds `terrain/textures/campaign/default/rock_b/3_su_diffuse.dds`
-  whatever the climate or season; one blend box a tile (`Terrain::no_blend_box` on the floor); a bare floor point is land only away
-  from the faces in a land region of 16 points or more. Cliff meshes upload all their rows at once.
-- **Forests (V):** `MeshKind::CampaignVegetation` through `rigidcampaignvegetation.hlsl` (Uk12 vertices, instance (x, y, z, angle) =
-  the list's position plus 0.4 x the pivot, sixths), the view's season's diffuse and `commontextures/dissolve.dds`; drawn 240 world
-  units ahead of the view (`prop_models::TREE_REACH`; the game's reach 186 to 236 units, about 21 000 trees). Props follow their seasons
-  (`ECSeasonMask` / the markers' `seasons`). No grass pass on a campaign map; TDD's reeds are the tiles' models.
-- **Shadows:** the cascades' near was taken in scene units (every split 383 off): fixed; the game's depth analysis ported
-  (`shadow_map_depth_buffer_analysis`: `ps30_downsize_store_data` to 256² R32G32, then `ps30_downsize_data` to one texel, read two
-  frames later). Its `gbuffer_channel_3_sampler` holds `commontextures/no_texture.dds` (the snow normals' slot left bound) through a
-  top-mip-only sampler (`States::s_clamp_point_top`), whose alpha bit 2 leaves only a few edge columns: F's splits within 0.2 %.
-  Alpha-tested materials cast through `rigidcommon`'s `ps30_shadow_alpha_test`.
-- **Samplers:** the overlay's lines and the rivers' `s_lf_colour` wrap 16 x anisotropic as the game's (`s_wrap_aniso`); `shroud_cloud.dds`
-  read linear (the game's BC3_UNORM; capture G).
+- **Cliffs** (the game's one texture: docs/re/renderer.md, "The campaign map", "The ground's inputs"): one blend box a tile
+  (`Terrain::no_blend_box` on the floor); a bare floor point is land only away from the faces in a land region of 16 points or more. Cliff
+  meshes upload all their rows at once.
+- **Forests:** `MeshKind::CampaignVegetation` through `rigidcampaignvegetation.hlsl` (the game's: docs/re/terry.md, "Forests"), the view's
+  season's diffuse and `commontextures/dissolve.dds`; drawn 240 world units ahead of the view (`prop_models::TREE_REACH`; the game's
+  reach: docs/re/renderer.md, "The campaign map", "The ground's inputs"). Props follow their seasons (`ECSeasonMask` / the markers'
+  `seasons`). No grass pass.
+- **Shadows:** the cascades' near was taken in scene units (every split 383 off): fixed; the game's depth analysis ported, its mask
+  and the alpha-tested casters as the game's (docs/re/renderer.md, "The campaign map", "Shadows"): F's splits within 0.2 %.
+- **Samplers:** the overlay's lines, the rivers' `s_lf_colour` and `shroud_cloud.dds` as the game's (docs/re/renderer.md, "The campaign
+  map", "The ground's inputs").
 - **Lakes and custom tiles:** `terrain_heights::mesh_heights` (`wce_tile_io`) takes every mesh triangle and the lowest where they
   overlap (Rauros within 1 - 2 m); `decompile::mesh_filled` no longer sinks a height map's missing blocks to the map's minimum; Snowdon's
   plateau the highest of the mesh's long fans.
@@ -198,10 +191,9 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   `terrain_settle` waits for the settlements' and borders' workers.
 - **Particles:** a fixed block of 16 emitter slots for the weather, placed instances keep their slots, a gone instance's slot keeps its
   data until its particles die (`Particles::retired`): clouds no longer fall with the rain.
-- **Thrones:** its `FACTION` record has a `CAMPAIGN_EFFECT_BUNDLES` record between the id and the key (the readers took every faction
-  for the rebels); the weather folds the spheres in their order (`blend_weighted`; ASSUMPTION from V2); standards and figures take
-  `rigid_faction_colours` = the faction's `faction_uniform_colours` and its `faction_banners` primary (`CampaignCatalog`,
-  `MeshInstance::faction_colours`); the starting rebels from the campaign scripts' `CreateStartingRebels` calls
-  (`characters::scripted_rebels`).
+- **Thrones:** its `FACTION` record read (the readers took every faction for the rebels); the weather folds the spheres in their order
+  (`blend_weighted`); standards and figures in the faction's colours (`CampaignCatalog`, `MeshInstance::faction_colours`); the starting
+  rebels from the campaign scripts (`characters::scripted_rebels`). The game's side of each: docs/re/terry.md, "The campaign's start",
+  and docs/re/renderer.md, "The campaign map", "Lighting and weather".
 - **Performance (relative numbers, loaded machine unless noted):** at capture A the frame 7.4 ms before the far ring, 10.1 ms with the
   quadtree; the far bake 29 s on main_attila (1.1 s from the cache); idle default rings 5.8 ms (p95 7.5).

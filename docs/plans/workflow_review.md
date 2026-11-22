@@ -12,33 +12,9 @@ tools went through docs/plans/tile_ted_parity.md instead.
 extracted from the packs (`open_exported`, `_extracted`), or a loose `tile.ted`. `save_to <folder>` writes a copy elsewhere, without a new
 entry or location. The entry was read-only (Phase 6b of tile_ted_parity.md: New tile, Save as, resize, tile properties, database management).
 
-### What TEd does (static RE of `TEd.AssemblyKit.exe` and `Warscape.AssemblyKit.dll`, both 32-bit; Ghidra projects in `C:\Users\frodo\ghidra_work\ted`, full notes in its `new_tile_findings.md`; TEd was not run)
+### What TEd does
 
-- **New Tile writes nothing.** Menu `FUN_004b85d0` -> `FUN_004b9d80` -> dialog `FUN_004db6f0` (rows: Database, Size X x Y, Triangle
-  Density, Terrain Height), then `FUN_004b9f30(db, X, Y, H, density)`: the terrain editor makes the tile in memory (Warscape `0x104b4890`),
-  every height sample is set to H (`FUN_004b74a0`), the document gets `normal_strength` 2, `requires_infield_lodding`, colour (0, 0, 0), no
-  name; texture groups `grass, mud, forest, rock` for battle (`grass_a, grass_b, sand_a, rock` otherwise). No name is asked: the window is
-  "new tile (XxY)", the name and variation come with Save As.
-- **Limits:** X and Y 1..64 (`FUN_004dac00(1, 0x40)`); density Normal 128, Low 32 or Custom (a spin box, 16..128); above 16 cells on a side
-  the density switches to Low unless the user changed it (`FUN_004dc370`); Terrain Height 10 for battle, 0 for campaign (`FUN_004b7a30`). No
-  size or memory check: 64 x 64 at 128 means about 4.5 GB of blend floats, which the 32-bit TEd cannot allocate.
-- **On save** (`FUN_004bbd30`, Save As `FUN_004bc4a0`): `height_map_0.png` (16-bit grey), `blend_map.tif` (16 channels; at creation
-  channel 0 = 1, the rest 0), `ground_type_map.png` (RGBA; at creation (0, 0, 0, 255)), all `(cells + 2) * density` a side; `tile.ted`
-  (version 17: Vegetation with generation, decal and vfx seeds, Grass with one, the scene, the camera; a seed of 0 becomes
-  `round(timeGetTime() * 0.5)`); the entry; a BMD export into working_data and `protection_map.dds`.
-- **The height range is fitted on every save** (`FUN_0051a310` / `FUN_00518d60`, TerrainIO.cpp): min_height = the lowest sample, scale =
-  the highest minus the lowest, no padding; a flat map gets scale 50. A new flat tile at H is saved with min_height H, scale 50, every
-  sample 0.
-- **The colour** (Save As Battlefield, `FUN_004b7300`): the first three bytes of the MD5 of
-  `<kit>/working_data/terrain/tiles/battle/assembly_kit/<name>/battlefield/` (forward slashes, trailing slash), then the colour + 1 as a
-  24-bit number while another tile has it. Checked on tesd, testd, testdoras, hornburg, orc_test and testise.
-- **Names:** Save As needs a name and a variation (`FUN_004dd210`), lower-cased, nothing else checked. Save As Battlefield forces the
-  `ak_battle` database, variation `battlefield`, outfield tile set `plains`; an existing name of another size is refused, of the same size
-  it offers to save as a variation (a battlefield has one); its entry goes to working_data's `_ak_bf_tile_database/TILES`. Save As
-  Battlefield then also makes the battle (`terrain/battles/<name>`) and runs BOB: the next workflow (making a battle from a tile).
-- **The tile database:** New Tile never touches `tile_database.bin`; TEd lists tiles from the `TILES/*.xml` entries (Warscape's
-  `TILE_DATABASE` constructor `0x1029b570` reads the binary only for a path ending in `tile_database.bin`, else the XML folder, merging
-  `_ak_bf_tile_database` for battle).
+TEd's New Tile and Save As (static RE, 2026-10-26): docs/formats/tile_ted.md, "TEd's New Tile and Save As".
 
 ### Decisions (user, 2026-10-26)
 

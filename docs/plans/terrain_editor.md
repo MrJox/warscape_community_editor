@@ -120,7 +120,7 @@ a campaign tile one 256-cell patch, flat patches sharing a vertex buffer). Later
 - **Cell layers** (`wce_terrain::cell_edit`): round or square brush, rectangle, flood fill, the picker; a layer's colours from the tile
   database (sets, tiles, variations, climates); painted in the Map panel or on the 3D view's ground. **Explicit tiles**: listed, placed
   (tile or variation, a quarter turn, the fit shown: the map's edge and the other explicit tiles; BOB tests none), turned, removed;
-  `explicit_tiles.txt` kept ending as the kit's (BOB fails on an empty last line).
+  `explicit_tiles.txt` kept ending as the kit's (BOB fails on an empty last line, docs/re/bob.md).
 - **After a tile map edit** (`refill`): the fill runs again on a worker (`place_images`), and the chunks whose placements differ (and those
   their tiles reach into) are built again with a frame over the new placements (`Frame::with_map`); the others stay. Decision 3: BOB's fill
   draws from one random sequence over the whole map in row order, so one painted cell changes every placement after it (on the campaign

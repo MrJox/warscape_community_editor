@@ -20,11 +20,34 @@ Value syntax: plain floats and bools, `rgb(r,g,b)`, `argb(a,r,g,b)`, `variance(a
 
 ## Campaign and porthole lighting (`.lighting`)
 
-`SCENE_ENVIRONMENT` files with the same blocks, one per season:
-- `terrain/campaigns/<map>/environment/{spring,summer,autumn,winter}.lighting` (`terrain.pack`);
-- `rigidmodels/skybox/default_campaign_*.lighting` (`models.pack`);
-- the campaign skybox: `campaign_maps/<map>/display/skybox/` (`campaign_skybox.rigid_model_v2`, `cubemap.dds`);
-- porthole / UI lighting: `porthole/**.lighting`, same format.
+The campaign set as surveyed 2026-11-16 (docs/plans/campaign_environment.md; how the game picks and blends the files: docs/re/renderer.md,
+"The campaign map", "Lighting and weather"). No database table names a campaign lighting, sky or cloud file; `campaign_vfx_*` are UI /
+event effects. No campaign storm system.
+
+- `.lighting` = `SCENE_ENVIRONMENT` with `LIGHTING`, `FOG`, `POST_PROCESSING`, `DEPTH_OF_FIELD`, `HDR`, `WEATHER`: the battle blocks
+  less every scene node (no sky dome, clouds, sun mesh). `WEATHER@definition_name` names `weather_definitions.xml`'s `C_*` entries,
+  whose `vfx1` are the `*_camp` precipitation VFX. Campaign files use DOF (`use_DOF='true'`).
+- `terrain/campaigns/<map>/environment_collection.xml`: `ENVIRONMENT_COLLECTION@global_lighting`, `ENVIRONMENT_SPHERES/SPHERE`
+  (`lighting x y z inner_radius outer_radius`, in the `.terry`'s units). main_attila 11 spheres (global `europe_sp`), TDD's
+  rom_third_age 9 (global `lighting/europe.lighting`, bare stems), cha 7, Thrones' vik 3. BOB writes it from the `.terry`'s
+  `ECEnvironmentVolume`s (docs/re/terry.md, "Campaign maps").
+- `terrain/campaigns/<map>/lighting/<climate>_<season>[N].lighting`: main_attila 4 climates (desert, england, europe, med) x 4 seasons
+  x {none, 1..4}, plus `global.lighting`; TDD the same set (most byte-identical); Thrones `{bri,ire,scot}_<season>`; cha region stems.
+  Also `lighting/environment_map.dds` (512², DXT1).
+- Rome 2: no collection; `light_grid.xml` (`ENV_GRID width=2 height=5`, four `SEASON` blocks of 10 files) and
+  `lighting/<season>/<season>_{00..04,10..14}.lighting`, looked up bilinearly.
+- The skybox: `campaign_maps/<map>/display/skybox/campaign_skybox.rigid_model_v2` (an RMV2 dome, material `default_dry`,
+  `campaign_skybox_diffuse.dds`) and `cubemap.dds` (1024², RGBA16F, 11 mips). Attila (main, bel, cha), TDD, Thrones; Rome 2 has no
+  cubemap.
+- Placed atmosphere: the kit's 310 `ECVFX` with season masks, built into `particle_emitter_marker.markers` (seasonal
+  `weather_attila_campaign_clouds_*`, `campaign_mountain_cloud`, rain / snow / storm spots, lake fog, leaves, blossom...).
+  `campaign_display_emitter_marker.markers` has no reader in the DLL (a leftover).
+- Leftovers: `terrain/campaigns/<map>/environment/{spring,summer,autumn,winter}.lighting` (`terrain.pack`) and
+  `rigidmodels/skybox/default_campaign_*.lighting` (`models.pack`) are old euler-format files (`sun_direction`, `light_colour`,
+  `hdr_*`...) that nothing in the game loads; every file of the maps' `lighting/` folders has the new set. `default.environment` (a
+  full battle-style sky, identical in Attila, TDD, Rome 2): no campaign reader found (a hypothesis, not checked). The weather plan's
+  survey (2026-10-06) took the `environment/` files for the campaign's lighting; the campaign survey (2026-11-16) corrected it.
+- Porthole / UI lighting: `porthole/**.lighting`, same format.
 
 ## No keyframes
 

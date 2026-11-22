@@ -28,6 +28,17 @@ Vorbis header:
 
 `data`: [seek table], the setup packet (u16 size + payload), then audio packets (u16 size + payload; no granule).
 
+## Vanilla files (the 1,478 WEMs of Attila's `sound.pack`, 2026-11-19)
+
+- All Wwise Vorbis (codec `0xFFFF`), all with a 0x42-byte `fmt ` (the `vorb` data embedded: sample count, setup and first audio packet
+  offsets, uid, blocksize exponents). Chunks: `fmt`+`data` (1,314), plus `JUNK`+`akd ` (155), `LIST`+`cue `(+`smpl`) (9).
+- Channels 1 (1,227), 2 (230), 6 (7), 5 (12), 4 (2). Sample rates mostly 28,000 Hz (1,132) and 32,000 (189); 15 others from 11,025 to
+  48,000 (Wwise's sample-rate conversion settings).
+- Blocksizes 2^8/2^11 (1,389), 2^9/2^9, 2^9/2^10, 2^10/2^10.
+- The setup packet references codebooks by 10-bit ID (18 to 44 per file, highest ID 462): Wwise's built-in codebook library, not inline
+  codebooks. An encoder must emit streams that use only codebooks of that library.
+- Bitrate: median 57 kbps per channel (10th percentile 47, 90th 67).
+
 ## Wwise Vorbis
 
 A Vorbis stream with Wwise's packing (what ww2ogg undoes; the encoder does the reverse):
@@ -41,6 +52,13 @@ A Vorbis stream with Wwise's packing (what ww2ogg undoes; the encoder does the r
   distinct setups of vanilla and Wwise 2014.1.3's output.
 - Audio packets drop the packet-type bit and, for long blocks, the previous/next window flags (a decoder recomputes them from the
   neighbouring packets' modes). A packet is ceil((bits - 1 - 2 for long blocks) / 8) bytes of the encoder's exact bit count.
+
+## The Wwise 2014.1.3 oracle (2026-11-19)
+
+Headless conversion works: `WwiseCLI.exe <project>.wproj -ConvertExternalSources Windows <list>.wsources -ExternalSourcesOutput Windows
+<dir>` on a scratch copy of the SDK's `samples/IntegrationDemo/WwiseProject` (2014 has no `-CreateNewProject`); its `Voice` and `Music`
+conversion ShareSets are Vorbis on Windows. The output has vanilla's exact layout (0x42 `fmt`, external codebook IDs, blocksizes 8/11);
+only the `uid` differs per file.
 
 ## Setups by quality, channels and rate (oracle grid, 2026-11-19)
 

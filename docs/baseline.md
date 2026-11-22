@@ -21,9 +21,10 @@ early ones on the C++ tree, whose `libs/`, `cli/` and `tools/` paths are gone; t
 [rust_port_app_and_gates.md](rust_port_app_and_gates.md)). Since then:
 
 - `foundation_check`, `editor_check`, `unit_tests` and `height_check` are crate tests (`wce_editor_core/tests/editor_check.rs` and the
-  others), run by the `tests` gate (`cargo test --workspace`); their files in `docs/baseline/` are the C++ outputs.
-- `vfs_compare` is gone with rpfm_server: the packs are read in-process ([vfs.md](vfs.md)); `docs/baseline/vfs_compare.txt` is history.
-- The legacy window shots (`shot_*`, `docs/baseline/shot_*.diag.txt`) are no longer produced (Phase 8 below).
+  others), run by the `tests` gate (`cargo test --workspace`); their C++ outputs were removed from `docs/baseline/` on 2026-11-22 (git
+  history has them), the results quoted below stay.
+- `vfs_compare` is gone with rpfm_server: the packs are read in-process ([vfs.md](vfs.md)); its output file was removed on 2026-11-22.
+- The legacy window shots (`shot_*`) are no longer produced (Phase 8 below); their `.diag.txt` outputs were removed on 2026-11-22.
 - `env_vs_dump_all` runs only with `WCE_CBS`; `placement_check`, `tile_open_check` and the `*_all` gates are in `--corpus`; `app_check`,
   `weather_tool_check`, `tile_tool_check`, `tile_entry_script`, `cinematic_tool_check`, `cross_tool_check` and `render_check` in `--render`.
 - Gates added after the last section below have no reference output here; their results are in their plans: the audio gates

@@ -7,7 +7,7 @@ below). What remains are small renderer details and things to confirm in game, l
 `docs/editor.md` ("Tile tool"); what each `tile.ted` element type can do (create / edit / draw / export) is in
 `docs/tile_entity_types.md`. Findings are in `docs/formats/tile_ted.md` (placement, layer flags, TEd's modules, Property Editor),
 `docs/formats/tile_database.md` (the entry), `docs/re/terrain.md`, `docs/re/water.md`, `docs/re/buildings.md` ("Look properties") and
-`docs/re/tile_links.md`; the TEd findings that are only here are under "Findings kept here".
+`docs/re/tile_links.md`; TEd's tools and the stacked crates: `docs/formats/tile_ted.md` ("TEd's tools"), `docs/re/ted_export.md`.
 
 | Area | State | Where |
 |---|---|---|
@@ -43,7 +43,7 @@ and docs/editor.md.
   in a translucent blue (`FREEFORM_TINT`); Tile menu, `tint_freeform on|off`.
 - The 15 stacked crates of `docs/baseline/placement_check.txt` (osgiliath_test, TDD's wildmen_city_a medium / small): **closed, not
   fixed** (user, 2026-10-30): the tool loses the top layer's own 2.701 m; fixing it needs the raw tiles, which are not available
-  (finding under "Findings kept here").
+  (the cause: docs/re/ted_export.md, "The BMD exporter").
 
 ### Phase 3
 - 3e season mixing: settled in game (2026-10-30): the game shows one season's ground, as the season combo does
@@ -61,10 +61,9 @@ and docs/editor.md.
   texture from RenderDoc (2026-10-30; docs/re/water.md).
 
 ### Phase 5a: terrain painting
-- TEd's height tools (its Height Map module, fn 0x00487d50) are Add, Subtract, Smooth (a blur), Set (`PM2OpFalloffSet0`) and Spline Road;
-  wce has them all: raise, lower, smooth, flatten / level, and **Spline Road** as `TileDocument::level_along` (`level_along`). Noise
-  (`BrushKind::Noise`), stamp (`BrushKind::Stamp`) and Tile > Import height map... (`TileDocument::import_height_map`, `import_heights`)
-  are wce's, asked for by the user (2026-10-27).
+- TEd's height tools (Add, Subtract, Smooth, Set, Spline Road; docs/formats/tile_ted.md, "TEd's tools") are all in wce: raise, lower,
+  smooth, flatten / level, and **Spline Road** as `TileDocument::level_along` (`level_along`). Noise (`BrushKind::Noise`), stamp
+  (`BrushKind::Stamp`) and Tile > Import height map... (`TileDocument::import_height_map`, `import_heights`) are wce's, asked for by the user (2026-10-27).
 - TEd's Normal (Grouped) (`PaintMode::Grouped`, `grouped_pixel`, `grouped_gate`) and blur (`PaintMode::Blur`), 2026-10-27 / 30
   (docs/re/terrain.md). Auto-Flange, Rock-painting and the Blendmap Filters: `workflow_review.md`, section 3.
 - Paint the whole tile (2026-11-11, wce's): `TileDocument::paint_whole_tile`, `paint_whole_tile [g v]`. Flip the whole tile: docs/editor.md.
@@ -129,9 +128,8 @@ and docs/editor.md.
   Problems), Stats (`tile_stats.rs`: numbers, no limits; the game's per-tile budgets are not known). All 2026-10-28.
 
 ### In-game checks (2026-10-29 .. 31, branch `ingame-checks`)
-Captures with the cameras read from memory dumps (the game's camera in scene units: x / 2 + half, y / 2 + offset, z / 2 + half; check
-a dump's `camera_near_far`, 1 / 13000: a dump can hold another pass's camera), the editor's matching renders, RenderDoc captures of a
-coastal battle at low settings (RenderDoc runs out of the 32-bit game's memory at high settings).
+Captures with the cameras read from memory dumps (reading them: docs/re/ted_camera.md), the editor's matching renders, RenderDoc
+captures of a coastal battle at low settings.
 - Settled: the ground (docs/re/terrain.md, docs/re/game_command_line.md), the battle sea (docs/re/water.md), the renderer's roofs,
   environment specular, rivers' order, exposure, trees, faded buildings, escalation layers, the fog at the horizon, projected decals and
   the shadow cascades (docs/re/renderer.md). The image gates' references re-recorded (2026-10-31).
@@ -143,28 +141,10 @@ coastal battle at low settings (RenderDoc runs out of the 32-bit game's memory a
   shadows and the coast's beach after these fixes. The dark draped rocks of gen_dun_medium_final_2 are TDD's `rocklarge_*` textures
   (a different layout than the vanilla rock models' uv), in game as well.
 
-## Findings kept here (TEd static RE; to move into docs/formats/tile_ted.md)
+## Findings
 
-- **The stacked crates** (2026-10-26, `Ted::BMDExporter::export_`, `BMDExport.cpp`): TEd's export puts 15 stacked crates exactly 2.701 m
-  (5.402 scene units) above the tool's world y, on every tile and at any ground height. The exported y is the node's own world position
-  (the scene object's virtual +0x14), passed through `Ted::transform_to_game_tile_space` unchanged (it only scales x / z and mirrors z).
-  Confirmed from the game's copy (2026-10-29): TDD's `gen_dun_medium_final.pack` has wildmen_city_a/medium's 24 top crates at y 50.47 ..
-  50.50 on columns at 47.79, 48.69, 49.59 (0.9 m a crate); the tool draws the top crate at the bottom one's height. Not the nesting
-  itself: freeform buildings inside landscape groups occur 256,480 times in the vanilla kit and only these are off.
-- **TEd's snapping** (2026-10-30, `TEd.AssemblyKit.exe`): `Ted::GRID_SETTINGS` ("Grid and Snapping Settings", constructor
-  `FUN_005516d0`, `get_property` `FUN_00551a70`) holds grid_cell_count 100, grid_major_line_frequency 5, grid_spacing 10, the two
-  colours, show_grid on, `horizontal_snap` / `vertical_snap` off (bytes +0x45 / +0x46), `grid_snap_tolerance` 10, `angle_snap_tolerance`
-  90 (degrees) and `snap_mode` 0, a bit set: grid 1, angle 2, edges 4, vertices 8. The toolbar's two snapping buttons
-  (`TedAppProxy::on_grid_snapping_activated` / `on_angle_snapping_activated`, `FUN_004f62a0` / `FUN_004f6310`) flip bits 1 and 2 through
-  `set_property(10)`; edges and vertices are only settable in the settings dialog. No code reads `horizontal_snap` or `vertical_snap` at
-  their offsets; the gizmo's slots (`SelectModeProxy::on_manipulator_moved` / `_rotated`, `FUN_0048e370` / `FUN_0048e4d0`) take the
-  position and angle back through virtuals, and the code that applies the snap mode was not found statically.
-- **A shelter's handles**: TERRAIN_LINE_INSTANCE has two viewport handles (its mouse handler at 0x46c910: 1 moves the position, 2 the
-  target, over the ground).
-- **Integrity errors**: TEd's dialog is `FUN_004bb1e0` (error, type, name); a polygon's own check is `FUN_00452180` (clipped to the
-  tile, at least one part inside, two distinct points for a line, three for a closed one). "Building overlaps with another" has a message
-  in TEd but nothing calls it.
-- **Stats**: TEd's `stats_view` is only a module name in its scripts; its executable has no stats view.
+TEd's static RE from this plan: docs/formats/tile_ted.md ("TEd's tools": snapping, a shelter's handles, integrity errors, stats) and
+docs/re/ted_export.md ("The BMD exporter": the stacked crates).
 
 ## Decisions
 - The tile's root is its database entry, not the folder of `tile.ted` (2026-10-09).

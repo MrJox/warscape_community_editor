@@ -94,7 +94,8 @@ names or with wrong descriptions. To rename and document in rpfm (`~/Proyectos/r
 - **Hull winding and closure**: hull triangles face out ((v2 - v1) x (v3 - v1), a positive volume). Most hulls are closed, not all: the
   door section's intact state has 6 open edges, the stepped bastion's 3 and 17.
 - **`collision_3d`** (`Collision3d`): `uk_1` 1 and `uk_2` 0 in the walls; its `bounding_box` is all zeros in the files seen (the
-  state's own `bounding_box` is the hull's extent).
+  state's own `bounding_box` is the hull's extent). Each level's box holds its hull and platforms, and the building's box all its
+  levels (the stepped bastion, 2026-11-05).
 - **The state's `uk_2`** -1, **`uk_7`** 0, **`f_1`** 0.0 in every wall piece seen.
 - **Platforms**: `flag_1..3` all false on walls (the editor draws flag_2 as ground, flag_3 as a siege ramp: unconfirmed). The game's
   pieces join platforms edge to edge (the stepped bastion's stair shares its top edge's two corners with the landing); whether it
@@ -392,4 +393,25 @@ walls never turn at a joint, only inside a piece (kinks, curves). The exact rule
 | TDD cliff | `persian_cliff_fort_straight` | x -10..10 | y 15, 2 platforms | ? | ? | 1, no firing lines |
 
 `gondor_fort_straight`'s logic box is x -10.53..10.76, but its walkways, footprint and meshes end at -10.5 and 10.5 (its frame: 21 long;
-the tower and the other gondor pieces the same).
+the tower and the other gondor pieces the same). Some bases' walkways run 1.5 cm past their joint (2026-11-05).
+
+The 15 m stepped bastion (2026-11-05, Amon Calen audit): its stair is one sloped platform across the walkway, about 40 degrees
+measured on the wall, its ends at the walkway's heights; its zone file has the stair in one region (the inner one, widened around it).
+The step pieces' stairs (2026-11-08, measured in their meshes): the game's and TDD's 15 m step pieces have their treads at z 5.15..8.65
+(side beams 4.90..9.25), TDD's gondor ones at 3.99..7.49 (beams 3.74..8.09); the gondor walkway is z 1.8..8.5.
+
+### Each culture's fort pieces (2026-11-12, `wce_walls` example `kit_pieces`)
+
+Measured between each piece's joints (its walkway's ends), not its origin: TDD's gondor curves sit hundreds of units from theirs.
+
+- Attila: barbarian, eastern / sassanid / western small walls (8 m: straight, two kinks, the 20 m and 60 m curves, steps, curved bastion,
+  caps), roman (15 m: straight, angled joiner, 6 turns, steps, 3 defences, a door section, tower caps), eastern and sassanid (both sets).
+  Greek, egyptian and persian have a few pieces only in Attila's packs (no straight): Rome 2's cultures.
+- With TDD's packs: all 15 bases complete; khazad and mordor as the 8 m set; easterling and gondorean as the roman set; TDD's barbarian has
+  the five `600m` curves (17.8 degrees); gondor has 3 straights, 6 turns, 5 curves (5 degrees each, 41.5 chord, whatever their names
+  say), 9 defences, 3 access pieces, caps. **TDD's `gondor_fort_straight_stepped_up_bastion_a` and `gondor_fort_curve_600m` have no
+  platforms**, so gondor has a step down and no step up.
+- Rome 2: barbarian, roman, greek, egyptian, persian complete.
+- Ends that do not match the straights': TDD's barbarian `600m` curves are 4.70 across where its straights are 4.10, and gondor's curves
+  have one edge at an end where its straights have two, so neither joins a straight corner for corner (docs/re/platforms_and_bridges.md,
+  rule 6).

@@ -235,6 +235,9 @@ This runs for R and each later candidate, both with a surface. For each edge pai
 A match makes a type-3 link both ways. A flag then stops further edge links for the pair, so **one shared edge per pair of platforms**
 is linked. Corners that coincide get `FUN_10354aa0`.
 
+Seen in game (2026-11-05, generated walls on Amon Calen): walkway platforms that met a stair's platform partway along their edges, not
+corner to corner, gave no way between them; units did not go from the walkway onto the stair.
+
 For pairs where one region has no surface (the ground), the function's second branch does the following:
 
 - it matches reversed edges with 0.01 per coordinate (`DAT_11b0ef84`);
@@ -316,7 +319,10 @@ the kit's `bridge_wood_2_end` (1 of 1 foot edges along its outline). So the gene
   [buildings.md](buildings.md) is that extending one without the other kept units off the difference. Also not seen: what the
   collision outlines' corner types ("hard" 0, "soft" 1, other 2) change, and the "outline" / "gate" / "secondary" paths.
 - `collision_3d`'s part in movement.
-- `AIH_BRIDGE_CROSSING` (string at file offset 0x1bab290): no code references its address directly.
+- `AIH_BRIDGE_CROSSING` (string at file offset 0x1bab290): no code references its address directly. What the kit's tiles have
+  (2026-11-08): every `river_crossing` tile of Attila's kit has one closed `AIH_BRIDGE_CROSSING` hint polygon over its bridge (about 35
+  scene units across by 115 to 120 along, foot to foot); its `river_ford` tiles have one over the ford (65 to 80 by 100 to 115), not an
+  `AIH_FORDING_POINT`.
 - Water under bridges.
 
 ## The editor's check: *Check platforms* (2026-11-11; walls 2026-11-12)

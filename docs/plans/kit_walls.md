@@ -62,20 +62,13 @@ walls (2026-11-15). The step-by-step logs and their test runs are in the git his
 
 `wce_walls::kit`: `culture_keys`, `catalogue` / `measure` / `classify`, `joints` (`logic::ends`, else `walkway_ends`), `footprint`.
 Roles: Straight, Turn, **Jog** (a kink: joints in parallel, shifted across the wall), Curve, Step, Defence, Access, Cap; each piece's
-span, turn, rise, shift and walk height between its joints (not its origin: TDD's gondor curves sit hundreds of units from theirs).
+span, turn, rise, shift and walk height between its joints (not its origin, which some pieces are far from).
 Gates, gateways, stairs, watchtowers, bridging columns and TDD's helper pieces are left out (listed with why). `examples/kit_pieces.rs`
 lists every culture (`KIT_DETAIL=key,...` a piece's joints and platforms, `KIT_LAY=1` lays test lines, `KIT_ENDS=1` dumps every fort
 piece's ends).
 
-Measured (`kit_pieces`):
-- Attila: barbarian, eastern / sassanid / western small walls (8 m: straight, two kinks, the 20 m and 60 m curves, steps, curved bastion,
-  caps), roman (15 m: straight, angled joiner, 6 turns, steps, 3 defences, a door section, tower caps), eastern and sassanid (both sets).
-  Greek, egyptian and persian have a few pieces only in Attila's packs (no straight): Rome 2's cultures.
-- With TDD's packs: all 15 bases complete; khazad and mordor as the 8 m set; easterling and gondorean as the roman set; TDD's barbarian has
-  the five `600m` curves (17.8 degrees); gondor has 3 straights, 6 turns, 5 curves (5 degrees each, 41.5 chord, whatever their names
-  say), 9 defences, 3 access pieces, caps. **TDD's `gondor_fort_straight_stepped_up_bastion_a` and `gondor_fort_curve_600m` have no
-  platforms** (left out), so gondor has a step down and no step up (a step down gone through backwards is its step up, user 2026-11-12).
-- Rome 2: barbarian, roman, greek, egyptian, persian complete.
+Measured (`kit_pieces`): each culture's pieces, in Attila, TDD and Rome 2: docs/re/buildings.md, "Each culture's fort pieces". TDD's
+gondor has a step down and no step up: a step down gone through backwards is its step up (user, 2026-11-12).
 
 ## Phase 2: the flat fit
 
@@ -94,8 +87,8 @@ building of its own; `wall_info` reports the pieces, the stray and how short of 
 - **Stretches** (`kit::Stretch`): a procedural wall of two points, both ends held, made with the procedural walls' pieces on the editor's
   thread (`spawn_wall_job`).
 - **Every joint joins**: a piece follows another only where an edge of each has the same corners (`kit::joint_edges`, `kit::joins`, rule
-  6 of `docs/re/platforms_and_bridges.md`), so TDD's barbarian `600m` curves (4.70 across where its straights are 4.10) and gondor's
-  curves (one edge where its straights have two) are laid only after each other or a joiner, never after a straight.
+  6 of `docs/re/platforms_and_bridges.md`), so TDD's barbarian `600m` curves and gondor's curves (their ends: docs/re/buildings.md,
+  "Each culture's fort pieces") are laid only after each other or a joiner, never after a straight.
 - Fixed on the way: `logic::ends` read the Roman external corners' and `tower_b_corner_with_extension`'s joints on their outer face
   (Attila, TDD, Rome 2); `solver::runs` gave a run with both ends attached the far end's level throughout.
 

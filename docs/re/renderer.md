@@ -409,9 +409,10 @@ pixel:
   environment's specular in a pass of its own after the lights (`environment_specular_light.hlsl`, DEFERRED_ENVIRONMENT_SPECULAR_SHADER,
   at a lower resolution, then blurred in x and y; events 9460 / 9477 / 9488 of rome_tdd), which on that roof adds only (0.09, 0.12,
   0.16). With the flag at 1 the directional light reflected the sky at full strength on the white specular: grey-blue roofs and walls.
-- The editor now sets 0 (`environment_apply.rs`) and, since, draws the separate pass too (below). ASSUMPTION: the
-  flag is 0 at every graphics setting (both captures were at low settings, and the separate pass ran there); its writer was not traced
-  (the variable is declared by fn 0x116f6870).
+- The editor now sets 0 (`environment_apply.rs`) and, since, draws the separate pass too (below). The flag is 0
+  whenever screen space reflections are on (both captures; the separate pass is that setting's) and 1 at 0, where the directional light
+  adds the specular itself (2026-11-01, fn 0x11904130: docs/re/graphics_options.md, "Screen space reflections"; the renderer's
+  `reflections_off`).
 - The exposure (2026-10-30, the same capture): the game's tone mapper downsamples the 1920 x 1080 image into a fixed 256 x 256 (the
   "quarter" image; the bloom works on it too), then halves it to 1 x 1 in the luma statistics (128, 64, ... 1; events 9780-9863). The
   statistics shader takes four point taps at +-1/4 of an output texel, a 2 x 2 block. The editor had a quarter of the view's size and
@@ -617,7 +618,7 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
     (`g_battle_terrain_on_...`) gives n 249 and depth 5072 for the first cascade. `shadow_fit::DEPTH_OFFSET` is 150.
 - Resolved 2026-11-16 (fn 0x117329a0 at 0x11732af2 - 0x11732b14): a battle always uses 150. The 5000 is taken when
   `terrain_enable_shadows` is set, and fns 0x117665e0 / 0x11794ca0 set it only at quality index 2 in the campaign mode, where the
-  campaign's 14 wins anyway. The campaign's cascades: docs/plans/campaign_environment.md, "Progress".
+  campaign's 14 wins anyway. The campaign's cascades: "The campaign map", "Shadows", below.
 
 
 ## Battle fog (2026-11-13)
@@ -691,3 +692,110 @@ The world (the instance matrices, `instances.csv`):
   no per-instance scale (the shader's 0.4).
 - The main camera: eye (207.54, 9.29, 280.10), pitched 37.1 degrees down, vertical fov 80.2 degrees (`projection` [1][1] 1.1872),
   near 1, far 500, 1920 x 1080.
+
+## The campaign map (2026-11-16 to 2026-11-21, Ghidra and RenderDoc)
+
+What the game does on a campaign map, beside the frame above, gathered from the campaign plans (docs/plans/campaign_environment.md,
+docs/plans/campaign_tilemap.md). Marks: **V** verified (data, disassembly, captures), **H** hypothesis. Captures are the user's
+(`D:\renderdoc\camp_*.rdc`: A, rain, winter, G, E, C, F, T0 - T2, V1, V2; the list in campaign_tilemap.md, "Captures"). Addresses
+in the lighting notes are written as offsets of Attila's `empire.retail.dll` from 0x10000000 (16c5a50 is fn 0x116c5a50), the others
+as full addresses (Ghidra project `attila`). The files the lighting reads: docs/formats/weather_files.md, "Campaign and porthole
+lighting".
+
+### The world and the camera
+
+- The campaign world is the hex grid's: z is 1.1547 (2/√3, `CAMPAIGN_Z_SCALE`) times x (V: the terrain patches' instance matrices in
+  capture A, above; `map_data.esf`'s height 556.144 = 1441 rows x 0.33391 x 1.1547). The tiles, cliff meshes, sea tiles and river
+  meshes carry it after a tile's turn; buildings, props, decals and units stand unstretched at their places in the stretched world.
+- The lens: vertical fov 1.4 rad, near 1, far 500 world units (captures A and T1: the projection and `camera_near_far`).
+- The camera limits come from `campaign_variables`: Thrones 7 - 23 world units and 0.75 - 1.15 rad, Attila 9 - 45 and 0.35 - 1.15.
+
+### The far material (V, capture A event 6762)
+
+The resolve (`ps30_terrain_to_gbuffer_ss`) blends from the tiles' ground to a map-wide far material between 9 and 37 world units
+(`ps_height_map_cb.g_far_tile_distance` 0, `g_far_blend_range` (9, 37); docs/re/terrain.md, "Pass structure", item 3): `s_far_diffuse_map` and
+`s_far_normal_map` (8192², BC3, made at load) and `s_mask_map` (the snow mask).
+
+### The ground's inputs
+
+- The LFs as the game reads them (V): the land texture is the field's 4 x 4 box averages from sample 0, the sea's the 2 x 2 read on its
+  second mip's grid ("The campaign frame", above). The campaign sea reads its depth from the terrain's z / w before the sea pass.
+- The LF normals (V): the terrain binds one `s_lf_normal_map`, the map's `lf_normal.dds` (BOB's DXT5 of the kit's `normal.dds`); no
+  `normals/` chunk is bound.
+- Cliffs (V, captures A, F, T0): every campaign cliff draw binds `terrain/textures/campaign/default/rock_b/3_su_diffuse.dds` whatever
+  the climate or season. Where the engine names it (fn 0x117ca6f0) is not traced.
+- Forests (V): `rigidcampaignvegetation.hlsl` (docs/re/terry.md, "Forests"); the game's reach is 186 to 236 world units ahead of the
+  view, about 21 000 trees. No grass pass on a campaign map; TDD's reeds are the tiles' models.
+- Samplers: the overlay's lines and the rivers' `s_lf_colour` wrap 16 x anisotropic (`s_wrap_aniso`); `shroud_cloud.dds` is BC3_UNORM,
+  read linear (capture G).
+- Constants: `g_refraction_depth` 36, the tone map's DOF focus and focal length 0. `g_blend_contrast`, `g_lq_infield_blend_range`,
+  `g_snow_height`, `g_rock_*`, `g_foam_anim_data`, `g_wind_offset` and `g_amSoftSplit` are read by no shader that draws a campaign map
+  (disassembled).
+
+### Lighting and weather (V unless marked)
+
+- The collection parser 16c5a50 / 16c5530 / 16bd080; its loader 1760cf0 multiplies each sphere's z by `CAMPAIGN_Z_SCALE` = 1.1547.
+  Without a collection, `light_grid.xml` (1760e00), bilinear lookup 1791ea0.
+- Season names (fn 0x118f6360): per season (`sp su au wi`) stage 0 is `<stem>_<season>.lighting`, stage n
+  `<stem>_<season><n>.lighting`, else the name as written; the snow masks the same (`snow_mask_<season>[n].dds`). main_attila's names
+  already end in `_sp`, so its lighting stays spring all year (the winter captures); TDD's and cha's bare stems change. Both startposes
+  start at stage 0 (`WORLD/CLIMATE`).
+- Blend (173d760, 17609c0): a sphere's weight w = 1 - clamp((d² - inner²) / (outer² - inner²), 0, 1) at the eye (3D distance, the
+  sphere's raw y, z x 1.1547; the captures' weights reproduced to 0.001); sum w·env; if Σw > 1 divide by Σw, if Σw < 1 add
+  (1 - Σw)·global. The sun colour blends linear (to the power 2.2). The weather is the heaviest input's definition (fn 0x11721160:
+  strict >, the global's top-up competes), only its wind degrees and snowing intensity blended; the spheres are folded in their order,
+  the global last (ASSUMPTION from Thrones' V2, 2026-11-21; Attila's Londinium agrees either way). No fade on a season change found (H).
+- 161 of 163 campaign `.lighting` files have their own ambient; the engine's ambient is not read back.
+
+### Sky, fog and the overlay (V)
+
+- Skybox (afd250, drawn b29f60): the dome at the camera, scaled by `campaign_sky_scale` = 37.5, drawn in the G-buffer unlit
+  (`rigid_config_PS.g_unlit` 1, the only such draw), fogged; `s_sky` the engine's white cube
+  (`commontextures/default_white_cubemap.dds`), `s_environment` the map's `cubemap.dds`. No SKYGEN, cloud planes or sun mesh; the sun
+  is static per file, no time of day. The game draws the dome into every cascade, but its four draws change no texel of capture A's
+  shadow atlas: it lands outside each cascade, so in effect it casts no shadow (2026-11-20).
+- Fog: `battlefog` fullscreen with the file's values ("Battle fog", above), then the shroud plane (`shroud_plane.hlsl`, set up
+  190dd5c): a 256 x 256 grid over ±500 world units following the camera quantised by 1000 / 255, draped over the low-res land LF,
+  drawn twice; the battle fog formula mixed with `s_sky`, the shroud's density (1 - a)^6.4 and four layers of `s_shroud_cloud`
+  scrolled by time (scales 0.04 / 0.026 / 0.01333 / 0.008667) lit by the sun. Its depth write goes to a depth copy nothing reads
+  after it (2026-11-20).
+- `directionallight.hlsl` has a campaign branch: `s_overlay` through `g_overlay_view_projection`, and the shroud as a light factor
+  (0.05..1) when `g_shroud_enabled`.
+- The overlay camera (fn 0x11729930, `overlay_camera_push` 0.7): the view's rotation and fov moved back horizontally by
+  d = 0.7 x 8 x |(ray_xz . forward_xz) / ray_y|, the ray from the eye to the near plane's bottom middle; near + d, far - d (the 8 fitted
+  from five captures, its writer not traced).
+- Lakes: the tiles' water planes through `waterplane.hlsl` `vs30_water_campaign_lake` / `ps30_campaign_lake`.
+
+### Shadows (V)
+
+- Fns 0x117665e0, 0x11784c00, 0x117329a0, 0x118debf0: the battle's cascade code with the table's campaign rows (mode * 4 + quality at
+  dll+0x1c88aa0: (10, 30, 30, 30), (5, 15, 35, 35), (5, 10, 20, 40), (5, 10, 20, 40)), the depth analysis as in battle, pull-back
+  `shadow_cam_depth_offset_campaign` 14 ("Shadow cascades: units and pull-back", above); the terrain casts only at the top quality.
+  `campaign_shadow_split_scale`, `battle_shadow_split_scale`, `g_campaign_depth_bias` and `g_campaign_terrain_slope_scale_depth_bias`
+  have no reader; `shadow_split_campaign_min_distance_delta` only gates the depth analysis's refresh. Capture A's splits 1, 6.25, 16.8,
+  37.8, 79.8 are the rows x 1.05.
+- The depth analysis (`shadow_map_depth_buffer_analysis`): `ps30_downsize_store_data` to 256² R32G32, then `ps30_downsize_data` to one
+  texel, read two frames later. Its `gbuffer_channel_3_sampler` holds `commontextures/no_texture.dds` (the snow normals' slot left
+  bound) through a top-mip-only sampler (`States::s_clamp_point_top`), whose alpha bit 2 leaves only a few edge columns (capture F).
+- Alpha-tested materials cast through `rigidcommon`'s `ps30_shadow_alpha_test`.
+
+### Campaign-only constants and tweakables (V)
+
+- Campaign-only cbuffer fields: `shroud_PS` (enabled, `g_campaign_world_bounds`, `g_uv_offset`), `shroud_plane_buffer`,
+  `vs_height_map_cb`, `g_overlay_view_projection`, `campaign_CB`, `campaign_ocean_cb`, `campaign_tree_ps`, `trade_route_PS`,
+  `campaign_border_PS`, `g_is_campaign` = 1. Read by no shader: `g_season_type`, `g_campaign_autumn_timer`, `g_snow_height`. The
+  campaign's weather constants are 0 (`g_snowing_intensity`, `g_weather_type`, `g_season_type`, `g_wind`, `wind_VS`) and its VFX wind
+  a fixed (2, 0, 0) units / s in all five captures (its source not traced). Thrones' V2 has `g_rain_specular_*` / `g_rain_terrain_*`
+  at 1.
+- Tweakables: `terrain_campaign_waterplane_scale_*` 15/15/2/2, `CAMPAIGN_WATER_SEA_INTENSITY_SHROUD` 0.9, `shroud_padding` 20 /
+  `shroud_edge_padding` 128 / `shroud_half_edge_padding` 64, `shroud_blur_kernel_size_v2` 10, `terrain_override_season` -1.
+
+### Effects (V unless marked)
+
+- The precipitation is the lighting's `WEATHER definition_name`, drawn around the eye at scale 1 in the campaign world's units (the rain
+  capture: `rain_heavy_BTL`, the 30-unit recycle box).
+- Placed effects (fns 0x10af7dc0, 0x10b053d0, 0x10acca10): an effect plays while in view (within 1.15 of the screen's half size, in
+  front) and within 80 units of the eye, whatever its CullDistances; stopped, it stops emitting and its particles live on. `autoplay`
+  and `use_in_outfield` are never read on the campaign. Snow zone: the season's snow mask at the marker. `burst_rigid` carriers start
+  their `property_event OnRigidSpawn` effects once per rigid born (fns 0x1187aed0, 0x11863820, 0x1183fa30, 0x11895130). The
+  `scene_view_type` 2 `cloud_heavy` is simulated but never drawn.

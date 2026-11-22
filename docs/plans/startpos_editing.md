@@ -14,29 +14,14 @@ owner, army units, settlement buildings.
 
 ## What is known (research of 2026-11-21)
 
-### The startpos (`CAMPAIGN_STARTPOS/CAMPAIGN_ENV/CAMPAIGN_MODEL/WORLD`)
-
-- Characters: `FACTION_ARRAY/FACTION/CHARACTER_ARRAY/CHARACTER`, their faction the FACTION they sit under. [0] `LOCOMOTABLE`
-  ([0] Coord2d world x, y; [1] / [2] hex column / row; [3] facing, pi in 574 of 578), [1] id, [2] `CHARACTER_DETAILS` ([5] faction
-  key, [16] agent type), [3] type (Attila's start: 337 `general`, 240 `colonel` (garrison commanders), 1 `spy`), [4] force id.
-  Off the map: (0, 0) (59 in Attila, 155 in TDD). In a settlement: on its primary slot's cell.
-- Armies and navies: `FACTION/ARMY_ARRAY/MILITARY_FORCE`: [0] id, [1] commander, [6] `UNIT_CONTAINER/UNITS_ARRAY/UNIT` ([1]
-  `UNIT_RECORD_KEY`[0] the unit key, [4] / [5] men now / max), [7] the residence it stands in, [19] navy. No position of its own:
-  its commander's. Garrisons are forces led by a `colonel`, hung off `REGION/SETTLEMENT/GARRISON_RESIDENCE`.
-- Regions: `REGION` [14] owner faction id, [31] unowned; slots `REGION_SLOT_MANAGER/.../REGION_SLOT` with `BUILDING_BASE` ([1]
-  key, [4] owner faction key) when built.
-- Coordinates (RPFM `coords.rs` `MapScale`): the kit's `startx` / `starty` are hex cells (1016 x 720 on `main_attila_map`); world
-  x = col W / (cols - 1), y = row 8 sy + (odd col ? 4 sy : 0), sy = H / (rows 8 + 4), W x H `map_data.esf`'s theatre (678.5 x
-  556.144). The same world frame as `wce_terrain_io::attila::cities`.
+What the game reads and draws (the startpos's records, the kit's `start_pos_*` tables, the models, banners and colours):
+docs/re/terry.md, "The campaign's start: the startpos and its figures".
 
 ### The kit tables and RPFM
 
-- `start_pos_characters` (ID, Type, faction, startx / starty, portrait_id = art set, override_general_unit, ...),
-  `start_pos_land_units` (general, unit_type, soldiers %), `start_pos_naval_units`, `start_pos_settlements` (primary_building,
-  port_building, building1..5), `start_pos_regions` (owning_faction), `start_pos_character_to_settlements`, `start_pos_factions`.
-- RPFM's generator (`rpfm_extensions::startpos`, the user's `../rpfm`) builds the startpos from them (Attila about 0.90 of the
-  fields equal to the game's); its extractor (`extract::extract_tables`) turns a startpos back into the tables (TDD's included). Garrison
-  units are derived from the buildings, not stored.
+- RPFM's generator (`rpfm_extensions::startpos`, the user's `../rpfm`) builds the startpos from the kit's `start_pos_*` tables
+  (Attila about 0.90 of the fields equal to the game's); its extractor (`extract::extract_tables`) turns a startpos back into the
+  tables (TDD's included).
 - Patching a startpos directly: a move is three leaves (plus `MILITARY_FORCE`[7] / `GARRISON_RESIDENCE`[1] in and out of a
   settlement, and the AI's `CAI_SITUATED` cell); an owner change moves records between factions' arrays and touches a dozen linked
   records (provinces, ownership lists, buildings, garrisons, AI mirrors); new units need fresh global ids and AI entries; a building in
@@ -46,17 +31,10 @@ owner, army units, settlement buildings.
 
 ### The models
 
-- Character -> art set (`start_pos_characters.portrait_id`; agents with none: `campaign_character_art_sets` by agent type, faction,
-  culture, subculture, sex) -> `campaign_character_arts` rows by level / age / season / faction leader -> `uniform` (land),
-  `sea_uniform` (army at sea), `navy_uniform` (admiral) -> `agent_uniforms.filename` ->
-  `variantmeshes/variantmeshdefinitions/<f>.variantmeshdefinition`. Skinned (`rome_man`, agents `rome_man_game`); idles from the
-  campaign animation tables (`animations/campaign_animation_tables/`, set -> fragment -> clips: `sword_general`, `champion_male`).
-  Ships the same way (`campaign_ship_civ_army` / `_fleet` / `_agent`, animated). The general stands on foot (the horse only in the
-  walk); his banner is a separate 3D UI piece (`ui/3dui/models/<skin>/army_banner_*`, `ARMY_FLAG_SCALE` 0.65).
+- The chain from a character to its variant mesh and idles: docs/re/terry.md, "The campaign's start", "The models".
 - The editor already assembles and draws skinned variant meshes for battle units (`unit_assembly.rs`, `renderer/skinned.rs`,
   `unit_animation.rs`, `Payload::SkinnedInstance`); missing: the campaign animation tables and a campaign loader.
-- Scale: `CHARACTER_MODEL_SCALE` 1.0, times a per-entity factor not traced (and 0.4 in some settlement case); check against the
-  user's screenshots before guessing.
+- Scale: check against the user's screenshots before guessing (the per-entity factor is not traced).
 
 ### The Terrain tool
 
@@ -72,16 +50,10 @@ As built, the start is read from the compiled startpos only (`wce_terrain_io::at
 Thrones' layouts), not from the kit tables; phase 1's shared model below is not built. Drawn by the Terrain tool
 (`wce_terrain_tool::start_figures`, locked, not pickable):
 
-- The start's characters: those the map shows lead a force or stand alone (not on a settlement's cell, nor an army's: a horde's
-  family); garrison commanders never. Attila 105, TDD 46. Thrones' starting rebels too: the armies its scripts raise for the player
-  (`vik_starting_rebellions.lua`, `characters::scripted_rebels`; ASSUMPTION: the faction whose key ends `rebels_<culture>`).
-- Their figures (`wce_render::campaign_character`, idles from `animations/campaign_animation_tables`): the art set's row by faction
-  leader (`CHARACTER` [28] 4, [29] true), season (`winter` rows in winter), rank 0 (all at a start), adult; land, at sea (an army
-  standing on water: its `sea_uniform`) or navy (`navy_uniform`, afloat on the sea's level). A model unit is a world unit (capture T2).
-- An army's banner (captures A and T0): the campaign flagpole and its legacy emblem's `banner_decorator` (`MILITARY_FORCE_LEGACY` [5]
-  -> `military_force_legacy_emblems`; none: `nomadic_emblem_07`, the DLLs' fallback), the faction's skin's models else the default's;
-  all at one point 0.40 west, 0.11 south of the army's and 0.80 over its feet, scale 0.65 (`ARMY_FLAG_SCALE`), unturned. Agents and
-  fleets carry none (T2's spy; a fleet's sail is its flag). Thrones: the faction's uniform and banner colours on the standard.
+- The start's characters the map shows (Attila 105, TDD 46), and Thrones' starting rebels (`characters::scripted_rebels`).
+- Their figures (`wce_render::campaign_character`) and an army's banner (`ARMY_FLAG_SCALE`, Attila's offset), Thrones' in the
+  faction's uniform and banner colours. Which characters, rows, banners and colours the game takes: docs/re/terry.md, "The campaign's
+  start".
 - The fauna: a model with its own `.anim` beside it, posed skinned (`wce_render::animated_prop`).
 - Left: a navy's banner, if the game gives one (not in the captures); the banner's wind (the flag's `TextureComboVertexWind` draws
   static); the figures' idles only (no walking: the start stands still). The open items of the campaign captures (Thrones' banner
