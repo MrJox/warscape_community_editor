@@ -24,8 +24,6 @@ pub(crate) struct RiverUi {
     /// A ford's band in the profile being dragged: its index, its part, the drag's gesture and the history's place when it began.
     band_drag: Option<(usize, wce_tile_editor::tile_document::river_fords::FordPart, u64, usize)>,
 
-    /// A new ford's place along the river and its length (metres).
-    ford: [f32; 2],
     ramp: i32,
     from: i32,
     to: i32,
@@ -34,7 +32,7 @@ pub(crate) struct RiverUi {
 
 impl Default for RiverUi {
     fn default() -> Self {
-        Self { drag: None, drawing_ford: false, band_drag: None, ford: [0.0, 40.0], ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
+        Self { drag: None, drawing_ford: false, band_drag: None, ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
     }
 }
 
@@ -253,27 +251,6 @@ impl TileTool {
             gui::set_tooltip(
                 "Press on the river's water in the viewport and drag along it: a ford from there to where you let go. A ford's handles on \
                  the water (its start, middle and end) drag it along the river, as do its band's edges and middle in the profile above.",
-            );
-        }
-
-        if let Some(i) = self.poly_point.filter(|&i| i < p.points.len()) {
-            self.river_ui.ford[0] = p.points[i].along as f32;
-        }
-
-        gui::row_tip("at, length (m)", "Where along the river the ford's middle is, and how long it is (metres).");
-        gui::set_next_item_width(-1.0);
-        gui::drag_float2("##river_ford", &mut self.river_ui.ford, 1.0, "%.0f");
-        gui::row("");
-        if gui::button_sized("Add ford", v2(-1.0, 0.0)) {
-            let [a, l] = self.river_ui.ford;
-            d.add_river_ford(river, f64::from(a.clamp(0.0, p.length as f32)), f64::from(l.max(5.0)));
-            self.status = "ford added: the bed rises to a wading depth there".to_owned();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "Raises the river's bed to a wading depth over that stretch (the kit's fords: a quarter metre of water), its banks eased so \
-                 units walk down to it; on a river that cuts no bed, the ford alone. Picking a point in the viewport puts the ford there.",
             );
         }
 

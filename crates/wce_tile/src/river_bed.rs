@@ -191,8 +191,9 @@ impl Ford {
 /// The kit's fords' water over their bed (the game's height units; `river_ford/*`: 0.36 .. 0.5).
 pub const FORD_DEPTH: f64 = 0.5;
 
-/// How steep a ford's banks climb (degrees): units walk down to it.
-pub const FORD_BANK_SLOPE: f64 = 12.0;
+/// How steep a ford's sides climb from its water to the land (degrees): units walk down to it, and the water does not lie over land nearly
+/// as high as it (12° left so little between them that the water drew over the land from afar).
+pub const FORD_BANK_SLOPE: f64 = 25.0;
 
 /// A river's bed along its line: the centre line's samples (x, z), the water there (the game's units) and the width, and its settings
 /// (the depth in the game's units); `vertical`: the game's height units a metre across (the tile's unit), for the banks' slope; its fords.
@@ -285,18 +286,36 @@ impl Channel {
 
     /// [`Self::across`] at a place along the river (metres; NaN: no fords counted). `r` is signed: which side of the line (a ford's
     /// ends curve across it).
+    ///
+    /// A ford there: its bed flat at its depth across the water, then climbing at [`FORD_BANK_SLOPE`] to the land, blended in by how much
+    /// of it is there ([`Self::ford_at`]); out of the water it only ever lowers the river's own profile (it was the whole profile scaled
+    /// to the ford's depth, a flat valley as wide as the profile, 128 m for a 45 m river, its banks on past it: a great ring of cut ground).
     pub fn across_at(&self, r: f64, water: f64, width: f64, along: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        let u = r / (width * 0.5).max(1e-6);
-        let (w, ford_depth) = if along.is_nan() { (0.0, self.depth) } else { self.ford_at(along, u) };
-        let depth = self.depth + (ford_depth - self.depth) * w;
-        let rise = self.rise() + (Self::rise_of(FORD_BANK_SLOPE, self.vertical) - self.rise()) * w;
-        let scale = depth / KIT_DEPTH;
+        let river = self.profile(r, water, k);
+        if along.is_nan() || self.fords.is_empty() {
+            return river;
+        }
+
+        let half = width * 0.5;
+        let (w, ford_depth) = self.ford_at(along, r / half.max(1e-6));
+        if w <= 0.0 {
+            return river;
+        }
+
+        let ford = water - ford_depth + (r.abs() - half).max(0.0) * Self::rise_of(FORD_BANK_SLOPE, self.vertical);
+        let blended = river + (ford - river) * w;
+        if r.abs() <= half { blended } else { river.min(blended) }
+    }
+
+    /// The river's own bed `r` metres from its centre (the kit's profile scaled by its depth, its banks past it).
+    fn profile(&self, r: f64, water: f64, k: f64) -> f64 {
+        let scale = self.depth / KIT_DEPTH;
         let t = r.abs() / (PROFILE_STEP * k);
         let last = KIT_BED.len() - 1;
         if t >= last as f64 {
             let past = r.abs() - last as f64 * PROFILE_STEP * k;
-            return water + KIT_BED[last] * scale + past * rise;
+            return water + KIT_BED[last] * scale + past * self.rise();
         }
 
         let i = t.floor() as usize;
@@ -304,11 +323,10 @@ impl Channel {
         water + (KIT_BED[i] + (KIT_BED[i + 1] - KIT_BED[i]) * f) * scale
     }
 
-    /// How far from the centre it reaches at a width (metres): a ford's gentler banks reach further.
+    /// How far from the centre it reaches at a width (metres).
     pub fn reach(&self, width: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        let rise = if self.fords.is_empty() { self.rise() } else { self.rise().min(Self::rise_of(FORD_BANK_SLOPE, self.vertical)) };
-        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / rise
+        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.rise()
     }
 
     /// How far the banks climb a metre across (the game's units).
@@ -713,6 +731,15 @@ mod tests {
         assert!((c.across_at(0.0, -6.2, 45.0, 10.0) - (-6.2 + KIT_BED[0])).abs() < 1e-9, "the river's own away from it");
         let mid = c.across_at(0.0, -6.2, 45.0, 180.0);
         assert!(mid > -6.2 + KIT_BED[0] && mid < -6.2 + KIT_BED[0] * FORD_DEPTH / KIT_DEPTH, "fading: {mid}");
+        // Out of the water the ford only ever lowers the river's profile: no flat valley out to the profile's end.
+        for r in [30.0, 45.0, 64.0, 80.0] {
+            let (ford, river) = (c.across_at(r, -6.2, 45.0, 150.0), c.across(r, -6.2, 45.0));
+            assert!(ford <= river + 1e-9, "at {r}: {ford} over the river's {river}");
+            assert!(ford >= river - 25.0, "at {r}: {ford}, the river's {river}");
+        }
+
+        let climb = c.across_at(30.0, -6.2, 45.0, 150.0) - c.across_at(23.0, -6.2, 45.0, 150.0);
+        assert!(climb > 3.0, "its side climbs steeply to the land: {climb} over 7 m");
         let g = c.fill_cells([140.0, 0.0], [10.0, 1.0], (3, 1));
         assert!(g[1].bed > -7.0 && g[1].bed < -6.2 && g[1].ford == 1.0 && g[1].wet, "on the grid: {g:?}");
 
