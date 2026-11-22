@@ -56,6 +56,7 @@ pub mod river_links;
 pub mod river_profile;
 pub mod roads;
 mod shift;
+pub mod shores;
 pub mod siege;
 pub mod stage;
 mod tech;
@@ -667,6 +668,14 @@ pub struct Tile {
     pub(crate) biome_items_shown: bool,
     pub(crate) biome_made: u64,
     pub(crate) biome_seen: u64,
+
+    /// The shores along the rivers and lakes (`shores.rs`): as the biome areas' contents.
+    pub(crate) shore_items: Vec<biomes::BiomeItem>,
+    pub(crate) shore_job: Option<shores::ShoreJob>,
+    pub(crate) shore_entities: Vec<wce_scene::render_scene::EntityId>,
+    pub(crate) shore_items_shown: bool,
+    pub(crate) shore_made: u64,
+    pub(crate) shore_seen: u64,
     pub(crate) biome_sets: std::sync::Arc<Vec<wce_tile::vegetation_sets::VegetationSet>>,
 
     /// The prefabs' ground (`prefab_ground.rs`): the history's version the document last gave (any edit, undo or redo changes it), what
@@ -1058,6 +1067,12 @@ impl TileDocument {
             biome_items_shown: false,
             biome_made: 0,
             biome_seen: 0,
+            shore_items: vec![],
+            shore_job: None,
+            shore_entities: vec![],
+            shore_items_shown: false,
+            shore_made: 0,
+            shore_seen: 0,
             biome_sets: Default::default(),
             history_version: 0,
             prefab_ground_seen: 0,
@@ -1265,6 +1280,7 @@ impl TileDocument {
         t.refresh_roads();
         t.refresh_texture_rules();
         t.refresh_biomes(false);
+        t.refresh_shores(false);
     }
 
     /// Whether a drag is under way in the viewport or a panel: the rivers' terrain and what follows the water wait for its end.

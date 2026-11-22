@@ -850,8 +850,9 @@ impl Tile {
         // The texture rules read the heights the roads made, and an export composes the blend map with their layer.
         self.refresh_texture_rules_with(true);
 
-        // The biome areas' contents keep off the roads, and an export writes them.
+        // The biome areas' contents keep off the roads, and an export writes them; the shores too.
         self.refresh_biomes(true);
+        self.refresh_shores(true);
     }
 
     /// How many destruction levels a building has: its piece files' `_destructNN` (1: one, intact).

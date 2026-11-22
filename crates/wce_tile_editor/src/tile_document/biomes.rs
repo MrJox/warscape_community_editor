@@ -25,9 +25,9 @@ const KEEP_OFF_BUILDING: f32 = 1.0;
 /// A tree, a plant of the undergrowth or a rock of an area: its element's text (its world position in it, scene units) and that position.
 #[derive(Clone, Debug)]
 pub(crate) struct BiomeItem {
-    area: usize,
-    text: Vec<u8>,
-    position: [f64; 3],
+    pub(super) area: usize,
+    pub(super) text: Vec<u8>,
+    pub(super) position: [f64; 3],
 }
 
 /// The areas' contents being made off the editor's thread, and the signature of what they are made from.
@@ -39,13 +39,13 @@ pub(crate) struct BiomeJob {
 /// What the contents keep off (world metres): the real buildings (x, z, radius) and the roads' pixels on the blend map (from its corner;
 /// `ppm` pixels a metre, `border` metres from its corner to the tile's origin).
 #[derive(Clone, Default)]
-struct KeepOff {
+pub(super) struct KeepOff {
     buildings: Vec<[f64; 3]>,
     roads: Option<(wce_tile::texture_rules::Distances, (f64, f64), f64)>,
 }
 
 impl KeepOff {
-    fn blocked(&self, x: f32, z: f32) -> bool {
+    pub(super) fn blocked(&self, x: f32, z: f32) -> bool {
         let near_building =
             self.buildings.iter().any(|&[bx, bz, r]| (f64::from(x) - bx).hypot(f64::from(z) - bz) < r + f64::from(KEEP_OFF_BUILDING));
         let on_road = self.roads.as_ref().is_some_and(|(d, _, border)| d.at(f64::from(x) + border, f64::from(z) + border) < KEEP_OFF_ROAD);
@@ -187,15 +187,7 @@ impl Tile {
         let (mx, mz) = (p.mpp_x(), p.mpp_z());
         let fields = p.height.as_ref().map(|hf| wce_tile::texture_rules::Fields::from_height_field(hf, (mx, mz), unit));
         let border = p.border_m();
-        let roads = p.blend.as_ref().zip(p.layers.as_ref().and_then(|l| l.blend.as_ref())).and_then(|(bf, stack)| {
-            let (bw, bh) = (bf.width(), bf.height());
-            let ppm = (f64::from(bw) / (p.extent_x() + 2.0 * border), f64::from(bh) / (p.extent_z() + 2.0 * border));
-            let empty = |px: &[u16]| px.iter().all(|&v| v == 0);
-            let mask =
-                (0..bh).flat_map(|y| (0..bw).map(move |x| (x, y))).map(|(x, y)| stack.owned_at("road:", x, y, empty)).collect::<Vec<_>>();
-            mask.iter().any(|&m| m).then(|| (wce_tile::texture_rules::Distances::from_mask(bw, bh, ppm, &mask), ppm, border))
-        });
-        let keep_off = KeepOff { buildings: self.texture_rules_buildings(), roads };
+        let keep_off = self.keep_off();
         let job = super::jobs::Job::spawn("biomes", move || {
             wce_foundation::wce_prof!("tile.biomes");
             let height = |x: f32, z: f32| fields.as_ref().map_or(0.0, |f| f.height(f64::from(x) + border, f64::from(z) + border) as f32);
@@ -218,6 +210,21 @@ impl Tile {
             out
         });
         self.biome_job = Some(BiomeJob { job, signature });
+    }
+
+    /// What generated contents keep off: the real buildings and the roads' texture.
+    pub(super) fn keep_off(&self) -> KeepOff {
+        let p = &self.project;
+        let border = p.border_m();
+        let roads = p.blend.as_ref().zip(p.layers.as_ref().and_then(|l| l.blend.as_ref())).and_then(|(bf, stack)| {
+            let (bw, bh) = (bf.width(), bf.height());
+            let ppm = (f64::from(bw) / (p.extent_x() + 2.0 * border), f64::from(bh) / (p.extent_z() + 2.0 * border));
+            let empty = |px: &[u16]| px.iter().all(|&v| v == 0);
+            let mask =
+                (0..bh).flat_map(|y| (0..bw).map(move |x| (x, y))).map(|(x, y)| stack.owned_at("road:", x, y, empty)).collect::<Vec<_>>();
+            mask.iter().any(|&m| m).then(|| (wce_tile::texture_rules::Distances::from_mask(bw, bh, ppm, &mask), ppm, border))
+        });
+        KeepOff { buildings: self.texture_rules_buildings(), roads }
     }
 
     fn take_biomes(&mut self, wait: bool) {

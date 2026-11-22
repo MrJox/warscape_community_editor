@@ -22,6 +22,14 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   flood preview while drawing is not (the spill check and the plane's water height in the Inspector stand in). Whether units treat a
   plane as water in game is for the in-game look.
   **Stopped before Rome 2** (as the user asked): steps 9 (Rome 2) and 10 (shores) are left.
+- 2026-11-22, after the user's review: a river's first point drags (the gizmo's centre sat on it), ends snap along a link cell, a
+  terrain patch toggle (`wce_river_patch`, off for the kit's rivers), the texture a band along the water, ground types (deep / shallow
+  water), lakes brushed, smoothed, painted and with a height patch, drawing ends on a link, a click on the water picks the river.
+- Step 9 (Rome 2) **waits**: Rome 2's packs are not installed on this machine (its kit alone; the tiles are in the packs only), so its
+  river tiles cannot be decompiled and measured (its link sets, its standard connection, its heights). The user: shores first, Rome 2
+  once it is installed again.
+- Step 10 (shores) built: reeds and stones along the rivers' and lakes' water (`wce_tile::shores`), derived and exported as the biome
+  areas' contents are, on for the editor's rivers and lakes.
 
 ## What there is today
 

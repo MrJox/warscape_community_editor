@@ -178,6 +178,7 @@ impl TileDocument {
             ("surface_mode", "MSM_FREEFORM".to_owned()),
             ("name", "Lake".to_owned()),
             (OUTLINE_ATTR, outline_text(outline)),
+            (super::shores::SHORES_ATTR, "1".to_owned()),
             (GROUND_ATTR, "1".to_owned()),
             (BASIN_ATTR, format_number(DEFAULT_BASIN_M)),
             (RIVER_ID_ATTR, id.to_string()),

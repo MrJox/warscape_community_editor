@@ -211,12 +211,21 @@ impl super::TileDocument {
         let sc = self.tile().tscene();
         if sc.get(e, super::lakes::OUTLINE_ATTR).is_some() {
             self.lake_rows(e, ins);
+            self.shore_rows(e, ins);
             return;
         }
 
         if sc.type_of(e) != "SplineRiverInstance" {
             return;
         }
+
+        self.river_patch_rows(e, ins);
+        self.shore_rows(e, ins);
+    }
+
+    /// A river's terrain patch in the Inspector: on or off, its bed's depth, slope and texture.
+    fn river_patch_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
+        let sc = self.tile().tscene();
 
         let patch = river_patch_on(sc.get(e, PATCH_ATTR).as_deref(), sc.get(e, BED_ATTR).as_deref());
         let on = sc.get(e, BED_ATTR).as_deref() == Some("1");
