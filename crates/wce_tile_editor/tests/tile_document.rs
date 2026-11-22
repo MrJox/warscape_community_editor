@@ -2936,3 +2936,91 @@ fn any_closed_polygon_is_painted_grown_and_cut_in_pieces() {
     // Taking away from nothing: refused.
     assert!(d.area_stroke(None, None, &cut, 3.0, true).is_err());
 }
+
+/// `open`'s tile as 2 x 2 cells with a deep river link out of the west edge's upper row (target (0, 0), the rule past it at (-1, 0)) and
+/// a shallow one out of the bottom edge's right column (target (1, 1), the rule at (1, 2)).
+fn open_with_river_links() -> (tempfile::TempDir, TileDocument) {
+    let (dir, _) = open();
+    let mut p = TileProject::open(dir.path()).unwrap();
+    let link = |set: &str, x: i32, y: i32| {
+        format!(
+            "<TILE_LINK serialise_version='1' link_set='{set}' x='{x}' y='{y}' base_x='1' base_y='0' is_entry='false' blend_size='64' \
+             no_offline_blend='false' test='TLT_EQUALS'><blend_quad/></TILE_LINK>"
+        )
+    };
+    let entry = format!(
+        "<TILE serialise_version='3' location='terrain\\tiles\\battle\\test\\2x2' tile_set='test' width='2' height='2'>\
+         <TEXTURE_GROUP red='grass' green='mud' blue='forest' alpha='rock'/><VARIATIONS/>\
+         <TILE_LINK_TARGETS><TILE_LINK_TARGET serialise_version='1' tile_set='river' x='0' y='0'/>\
+         <TILE_LINK_TARGET serialise_version='1' tile_set='river_shallow' x='1' y='1'/></TILE_LINK_TARGETS><TILE_LINKS>{}{}</TILE_LINKS></TILE>",
+        link("river", -1, 0),
+        link("river_shallow", 1, 2),
+    );
+    p.entry = Some(wce_formats::tile_entry::TileEntry::parse(entry.into_bytes()).unwrap());
+    (p.info.cells_x, p.info.cells_y) = (2, 2);
+    (dir, TileDocument::new(p, None))
+}
+
+#[test]
+fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() {
+    let (_dir, mut d) = open_with_river_links();
+    let links = d.tile().river_link_points();
+    let summary = links
+        .iter()
+        .map(|l| (l.cell, l.connection.name, (l.on_edge.x, l.on_edge.z), (l.snapped.x, l.snapped.z), l.inward))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        [((0, 0), "river", (0.0, 192.0), (-6.0, 192.0), [1.0, 0.0]), ((1, 1), "river_shallow", (192.0, 0.0), (192.0, -6.0), [0.0, 1.0])]
+    );
+
+    // Drawn from one link to the other, with a point between.
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let line =
+        vec![Float3::new(-6.0, y(&d, 0.0, 192.0), 192.0), Float3::new(100.0, 0.0, 120.0), Float3::new(192.0, y(&d, 192.0, 0.0), -6.0)];
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    let away = (y(&d, 160.0, 160.0), y(&d, 10.0, 40.0));
+    assert_eq!(d.snap_river_to_links(r).unwrap(), 2);
+    let world = d.tile().polygon_world_points(r);
+    let (first, last) = (world[0], world[2]);
+    assert!((first.x + 6.0).abs() < 1e-3 && (first.z - 192.0).abs() < 1e-3 && (first.y + 6.2).abs() < 1e-3, "{first:?}");
+    assert!((last.x - 192.0).abs() < 1e-3 && (last.z + 6.0).abs() < 1e-3 && (last.y - 0.42).abs() < 1e-3, "{last:?}");
+    let sc = d.tile().tscene();
+    let points = sc.polygon_points(r);
+    let attr = |p: usize, n: &str| sc.get(p, n).unwrap_or_default();
+    assert_eq!((attr(points[0], "wce_link"), attr(points[2], "wce_link")), ("0,0".to_owned(), "1,1".to_owned()));
+    assert_eq!((attr(points[0], "width"), attr(points[2], "width")), ("45".to_owned(), "45".to_owned()));
+    assert_eq!(sc.get(r, "wce_river_id").as_deref(), Some("1"));
+
+    // The first end's handle goes square into the tile.
+    let s = wce_tile::splines::read(sc, r);
+    let out = s[0].control_out - s[0].position;
+    assert!(out.x > 1.0 && out.z.abs() < 1e-6 && out.y.abs() < 1e-6, "{out:?}");
+
+    // Snapping again changes nothing (no undo entry); the ground at both links becomes the connection's, away from them it stays.
+    let entries = d.history().position();
+    assert_eq!(d.snap_river_to_links(r).unwrap(), 0);
+    assert_eq!(d.history().position(), entries);
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 4.0, 192.0) + 11.9).abs() < 0.15, "deep bed: {}", y(&d, 4.0, 192.0));
+    assert!((y(&d, 30.0, 192.0 + 40.0) + 1.2).abs() < 0.3, "deep bank: {}", y(&d, 30.0, 192.0 + 40.0));
+    assert!((y(&d, 192.0, 4.0) + 1.0).abs() < 0.15, "shallow bed: {}", y(&d, 192.0, 4.0));
+    assert_eq!((y(&d, 160.0, 160.0), y(&d, 10.0, 40.0)), away, "away from the links");
+
+    // Undone, the river is as drawn and its layer goes.
+    d.history_mut().undo();
+    d.tile_mut().finish_road_jobs();
+    assert_eq!(d.tile().tscene().get(r, "wce_river_id"), None);
+    assert!((y(&d, 4.0, 192.0) + 11.9).abs() > 1.0, "the ground back: {}", y(&d, 4.0, 192.0));
+    d.history_mut().redo();
+
+    // An end dragged off its link loses the mark (and its join).
+    d.polygon_point(r, "move", 0, Float3::new(40.0, 0.0, 150.0), 7).unwrap();
+    d.snap_river_to_links(r).unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!(sc.get(sc.polygon_points(r)[0], "wce_link").as_deref(), Some(""));
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 4.0, 192.0) + 11.9).abs() > 1.0, "the west join gone: {}", y(&d, 4.0, 192.0));
+    assert!((y(&d, 192.0, 4.0) + 1.0).abs() < 0.15, "the shallow join stays: {}", y(&d, 192.0, 4.0));
+}

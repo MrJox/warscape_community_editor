@@ -838,6 +838,8 @@ impl Tile {
 
     /// The roads as an export reads them: their terrain and their instances made, waiting for what is being made off the editor's thread.
     pub fn finish_road_jobs(&mut self) {
+        // The rivers' layers lie under the roads'.
+        self.finish_river_jobs();
         self.refresh_roads_with(true);
         if self.road_items_stale && self.road_prefabs.is_some() {
             self.start_road_items();
@@ -1204,8 +1206,11 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
     let rank = |o: &str| {
         if o.starts_with(super::kit_walls::OWNER) {
             usize::MAX
+        } else if super::river_beds::is_river_owner(o) {
+            // The rivers' under the roads': a road crossing a river is laid over its bed.
+            0
         } else {
-            parse_owner(o).filter(|o| o.variation == variation).and_then(|o| roads.iter().position(|r| r.id == o.id)).unwrap_or(0)
+            parse_owner(o).filter(|o| o.variation == variation).and_then(|o| roads.iter().position(|r| r.id == o.id)).map_or(1, |i| i + 1)
         }
     };
     height.layers.sort_by_key(|l| (order_of(&l.owner), rank(&l.owner)));

@@ -242,6 +242,7 @@ impl Tile {
 
             self.layers_shown = true;
             self.roads_stale = true;
+            self.rivers_stale = true;
         }
 
         self.prefab_ground_stale = false;

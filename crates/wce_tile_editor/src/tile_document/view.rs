@@ -2026,6 +2026,7 @@ impl Tile {
 
         self.sync_terrain_layers();
         self.refresh_prefab_ground();
+        self.refresh_rivers();
         self.refresh_roads();
         self.refresh_texture_rules();
         self.refresh_biomes(false);

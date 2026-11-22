@@ -191,6 +191,13 @@ impl TileTool {
             );
         }
 
+        gui::checkbox("snap rivers to river links", &mut self.snap_river_links);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "A river's point, drawn or dragged, goes just past the middle of a river link's cell on the tile's edge (the tile's river and river_shallow targets), within 12 m or the tolerance; the river then takes the link's water height, width and direction, and the ground there is shaped as the game's export shapes it, so the river runs on into the next tile's. The links show as rings while a river is drawn or selected. Before the other snapping.",
+            );
+        }
+
         gui::set_next_item_width(120.0);
         gui::drag_float("tolerance (m)", &mut self.snap_tolerance, 0.05, 0.0, 32.0, "%.2f");
         if gui::is_item_hovered() {
@@ -228,6 +235,10 @@ impl TileTool {
 
         if self.snap_road_links {
             parts.push("roads to road links".to_owned());
+        }
+
+        if self.snap_river_links {
+            parts.push("rivers to river links".to_owned());
         }
 
         if self.snap_grid {

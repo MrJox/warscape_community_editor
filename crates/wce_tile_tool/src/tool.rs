@@ -360,6 +360,11 @@ pub struct TileTool {
     /// (`Tile::road_link_points`) within [`ROAD_LINK_REACH`], so that it meets the neighbour's road. On by default.
     pub(crate) snap_road_links: bool,
 
+    /// A river's point, drawn or dragged, goes onto a river link of the tile (`Tile::river_link_points`) within [`ROAD_LINK_REACH`], and
+    /// the river is then snapped to it whole (`TileDocument::snap_river_to_links`: its water, width and direction, and the ground there
+    /// as the export makes it). On by default.
+    pub(crate) snap_river_links: bool,
+
     /// The road link the cursor is snapped to now (drawing a procedural road or dragging its point), on the ground.
     pub(crate) road_link_hit: Option<Float3>,
 
@@ -913,6 +918,7 @@ impl Default for TileTool {
             snap_vertices: false,
             snap_edges: false,
             snap_road_links: true,
+            snap_river_links: true,
             road_link_hit: None,
             snap_heights: false,
             angle_tolerance: 0.0,
@@ -2325,14 +2331,18 @@ impl TileTool {
         }
 
         // Where a road leaves the tile, while a procedural road is drawn or selected (snap to road links): a ring, filled when snapped to.
-        let road_selected = primary(e).is_some_and(|s| t.tscene().type_of(s) == wce_tile_editor::tile_document::ROAD_SPLINE);
-        if self.snap_road_links
-            && ((self.drawing && self.draft.as_ref().is_some_and(|dr| dr.kind == wce_tile_editor::tile_document::ROAD_SPLINE))
-                || road_selected)
-        {
+        // A river's links the same way while a river is drawn or selected (snap rivers to river links), where its end goes.
+        let line_kind =
+            if self.drawing { self.draft.as_ref().map(|dr| dr.kind.clone()) } else { primary(e).map(|s| t.tscene().type_of(s).to_owned()) };
+        let rings = match line_kind.as_deref() {
+            Some(wce_tile_editor::tile_document::ROAD_SPLINE) if self.snap_road_links => t.road_link_points(),
+            Some(RIVER) if self.snap_river_links => t.river_link_points().into_iter().map(|l| l.snapped).collect(),
+            _ => vec![],
+        };
+        if !rings.is_empty() {
             let ring = Self::handle_size(e) * 2.5;
             let cyan = overlay_colour(0.2, 0.9, 1.0, 1.0);
-            for p in t.road_link_points() {
+            for p in rings {
                 let hit = self.road_link_hit.is_some_and(|q| (q.x - p.x).abs() < 0.01 && (q.z - p.z).abs() < 0.01);
                 let mut prev = None;
                 for i in 0..=32 {
@@ -2454,7 +2464,7 @@ impl TileTool {
         self.road_link_hit = None;
         if self.terrain_hit
             && self.road_link_snapping(sel, d)
-            && let Some(q) = self.road_link_near(d, self.cursor)
+            && let Some(q) = self.road_link_near(d, sel, self.cursor)
         {
             self.road_link_hit = Some(q);
             self.snapped_cursor = q;
@@ -2629,19 +2639,48 @@ impl TileTool {
         self.snap_axes(d, p, skip, true, true)
     }
 
-    /// Whether a procedural road's point is being placed (drawing one) or dragged (its point, not a handle), with snap to road links on.
-    pub(crate) fn road_link_snapping(&self, sel: Option<usize>, d: &TileDocument) -> bool {
+    /// The kind of line whose point is being placed (drawing one) or dragged (its point, not a handle): a procedural road or a river,
+    /// with its link snapping on.
+    fn link_kind(&self, sel: Option<usize>, d: &TileDocument) -> Option<&'static str> {
         use wce_tile_editor::tile_document::ROAD_SPLINE;
-        self.snap_road_links
-            && ((self.drawing && self.draft.as_ref().is_some_and(|dr| dr.kind == ROAD_SPLINE))
-                || (matches!(self.gesture, Some(Gesture::Point { handle: None, .. }))
-                    && sel.is_some_and(|s| d.tile().tscene().type_of(s) == ROAD_SPLINE)))
+        let on = |k: &str| match k {
+            ROAD_SPLINE => self.snap_road_links,
+            RIVER => self.snap_river_links,
+            _ => false,
+        };
+        let kind = if self.drawing {
+            self.draft.as_ref().map(|dr| dr.kind.as_str())
+        } else if matches!(self.gesture, Some(Gesture::Point { handle: None, .. })) {
+            sel.map(|s| d.tile().tscene().type_of(s))
+        } else {
+            None
+        }?;
+        [ROAD_SPLINE, RIVER].into_iter().find(|&k| k == kind && on(k))
     }
 
-    /// The road link (`Tile::road_link_points`) nearest a point, within [`ROAD_LINK_REACH`] or the snap tolerance when more.
-    pub(crate) fn road_link_near(&self, d: &TileDocument, p: Float3) -> Option<Float3> {
+    /// Whether a procedural road's or a river's point is being placed or dragged with its link snapping on.
+    pub(crate) fn road_link_snapping(&self, sel: Option<usize>, d: &TileDocument) -> bool {
+        self.link_kind(sel, d).is_some()
+    }
+
+    /// The links a point of the line being drawn or dragged goes onto: where it goes, and the place it is measured from (a road's link
+    /// on the edge; a river's past it, measured from the edge or from there).
+    fn link_targets(&self, sel: Option<usize>, d: &TileDocument) -> Vec<(Float3, Vec<Float3>)> {
+        match self.link_kind(sel, d) {
+            Some(RIVER) => d.tile().river_link_points().into_iter().map(|l| (l.snapped, vec![l.snapped, l.on_edge])).collect(),
+            Some(_) => d.tile().road_link_points().into_iter().map(|q| (q, vec![q])).collect(),
+            None => vec![],
+        }
+    }
+
+    /// The link (a road's or a river's, [`Self::link_targets`]) nearest a point, within [`ROAD_LINK_REACH`] or the snap tolerance when
+    /// more.
+    pub(crate) fn road_link_near(&self, d: &TileDocument, sel: Option<usize>, p: Float3) -> Option<Float3> {
         let reach = self.snap_tolerance.max(ROAD_LINK_REACH);
-        let near = d.tile().road_link_points().into_iter().map(|q| ((q.x - p.x).hypot(q.z - p.z), q));
+        let near = self
+            .link_targets(sel, d)
+            .into_iter()
+            .map(|(q, from)| (from.iter().map(|f| (f.x - p.x).hypot(f.z - p.z)).fold(f32::INFINITY, f32::min), q));
         near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
     }
 
@@ -4511,6 +4550,9 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
 /// Metres within which a procedural road's point snaps to a road link (or the snap tolerance, when more).
 pub(crate) const ROAD_LINK_REACH: f32 = 12.0;
 
+/// The type of a river.
+const RIVER: &str = "SplineRiverInstance";
+
 impl TileTool {
     /// A press in the viewport (no flip under way): ends a grab, starts a gesture (a stroke, a handle's drag, Alt rotation), places or draws.
     fn on_press(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
@@ -4862,6 +4904,7 @@ impl Tool for TileTool {
             snap_vertices: old.snap_vertices,
             snap_edges: old.snap_edges,
             snap_road_links: old.snap_road_links,
+            snap_river_links: old.snap_river_links,
             snap_heights: old.snap_heights,
             angle_tolerance: old.angle_tolerance,
             angle_step: old.angle_step,

@@ -1204,6 +1204,19 @@ impl TileTool {
         let kind = draft.kind.as_str();
         let into = self.drawing_into(d, sel);
         let added = into.and_then(|into| d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs));
+
+        // A river drawn to a river link is snapped to it whole (its water, width, direction and the ground there), in the same undo entry.
+        if let Ok(el) = added
+            && kind == "SplineRiverInstance"
+            && self.snap_river_links
+        {
+            let before = d.history().position();
+            match d.snap_river_to_links(el) {
+                Ok(_) if d.history().position() > before => d.join_last(2, "Draw river"),
+                Ok(_) => {}
+                Err(err) => wce_foundation::log::warn(format!("river links: {err}")),
+            }
+        }
         self.create.holder = None;
         self.draw_pts.clear();
         self.poly_point = None;

@@ -48,6 +48,7 @@ pub mod prefab_ground;
 mod preview;
 mod radar;
 pub use radar::RadarRequest;
+mod river_beds;
 pub mod river_links;
 pub mod roads;
 mod shift;
@@ -619,6 +620,12 @@ pub struct Tile {
     /// The ground under the roads changed: they are made again (`refresh_roads`).
     pub(crate) roads_stale: bool,
 
+    /// The rivers' terrain being made off the editor's thread, whether the ground under them changed, and their signature when last
+    /// looked at (`river_beds.rs`).
+    pub(crate) river_terrain_job: Option<river_beds::RiverTerrainJob>,
+    pub(crate) rivers_stale: bool,
+    pub(crate) rivers_seen: u64,
+
     /// The signature of the roads when last looked at: a line that moved since waits.
     pub(crate) roads_seen: u64,
 
@@ -1009,6 +1016,9 @@ impl TileDocument {
             bridge_bases: HashMap::new(),
             layers_shown: false,
             roads_stale: false,
+            river_terrain_job: None,
+            rivers_stale: false,
+            rivers_seen: 0,
             roads_seen: 0,
             texture_rules_job: None,
             texture_rules_basis: None,
@@ -1224,6 +1234,7 @@ impl TileDocument {
         t.history_version = version;
         t.sync_terrain_layers();
         t.refresh_prefab_ground();
+        t.refresh_rivers();
         t.refresh_roads();
         t.refresh_texture_rules();
         t.refresh_biomes(false);

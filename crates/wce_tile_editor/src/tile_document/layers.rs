@@ -177,6 +177,7 @@ impl Tile {
         {
             changed = true;
             self.roads_stale = true;
+            self.rivers_stale = true;
         }
 
         if let (Some(s), Some(f)) = (l.blend.as_mut(), p.blend.as_mut()) {
