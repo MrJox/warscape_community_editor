@@ -61,7 +61,8 @@ pub struct RiverProblem {
     pub fix: Option<RiverFix>,
 }
 
-/// A river's end in a neighbour tile of the map context, in the open tile's frame (metres; its height its file's).
+/// A river's end in a neighbour tile of the map context, in the open tile's frame (the editor's metres; its height its file's over the
+/// tile's unit, as the open tile's rivers are drawn).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NeighbourEnd {
     pub at: Float3,
@@ -160,8 +161,9 @@ impl TileDocument {
         for en in &ends {
             let name = self.tile().tscene().name(en.elem);
             if !targets.contains(&en.cell) {
-                // Deep unless the river is as shallow as the shallow connection's water.
-                let set = if en.at.y as f64 > (wce_tile::river_bed::SHALLOW.water + wce_tile::river_bed::DEEP.water) * 0.5 {
+                // Deep unless the river is as shallow as the shallow connection's water (its file's height, the game's units).
+                let file_y = f64::from(en.at.y) * self.tile().unit() / self.tile().river_height_factor(en.elem);
+                let set = if file_y > (wce_tile::river_bed::SHALLOW.water + wce_tile::river_bed::DEEP.water) * 0.5 {
                     wce_tile::river_bed::SHALLOW.name
                 } else {
                     wce_tile::river_bed::DEEP.name
@@ -447,8 +449,8 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         let point = sc.polygon_points(e)[i];
-        // The water at the link's height, in the river's frame (its file's height factor).
-        let y = (l.connection.water * t.river_height_factor(e)) as f32;
+        // The water at the link's height: the file's (the game's units), in the editor's metres through the river's file factor.
+        let y = (l.connection.water * t.river_height_factor(e) / t.unit()) as f32;
         let at = Float3::new(l.snapped.x, y, l.snapped.z);
         let first = i == 0;
         let handle = if first { "controlOut" } else { "controlIn" };

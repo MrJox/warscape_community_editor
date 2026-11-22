@@ -93,8 +93,10 @@ impl super::TileDocument {
             let w = pts.iter().filter_map(|&p| sc.get(p, "width")?.parse::<f64>().ok()).collect::<Vec<_>>();
             w.iter().sum::<f64>() / w.len().max(1) as f64 * self.tile().river_width_factor(e)
         };
+        // The depth in the editor's metres (the game's units over the tile's unit).
+        let unit = self.tile().unit() as f32;
         let (depth, slope) = (
-            num(BED_DEPTH_ATTR).unwrap_or(BedSettings::default_depth(width) as f32),
+            num(BED_DEPTH_ATTR).unwrap_or(BedSettings::default_depth(width) as f32 / unit),
             num(BANK_SLOPE_ATTR).unwrap_or(BedSettings::DEFAULT_BANK_SLOPE as f32),
         );
         ins.section("River bed");
@@ -117,7 +119,7 @@ impl super::TileDocument {
         }
 
         let mut d = depth;
-        ins.hint("How deep the bed's middle is under the water (metres). The kit's rivers: 5.7 for 45 m wide.");
+        ins.hint("How deep the bed's middle is under the water (metres). The kit's rivers: 2.85 for 45 m wide (5.7 in TEd's and the game's height units).");
         if ins.edit_float(BED_DEPTH_ATTR, "bed depth (m)", &mut d, 0.05, 0.0, 30.0) && (d - depth).abs() > 1e-4 {
             self.set_attribute(e, BED_DEPTH_ATTR, &wce_tile::ted_scene::format_number(f64::from(d)));
         }
@@ -216,6 +218,7 @@ impl Tile {
         let sc = self.tscene();
         let links = self.river_link_points();
         let mut ribbons = self.river_ribbons_by_elem();
+        let unit = self.unit();
         let mut out = vec![];
         for e in sc.find_all("SplineRiverInstance") {
             let Some(id) = sc.get(e, RIVER_ID_ATTR).and_then(|v| v.parse::<u32>().ok()) else { continue };
@@ -252,12 +255,14 @@ impl Tile {
             let channel = (sc.get(e, BED_ATTR).as_deref() == Some("1")).then(|| ribbons.remove(&e)).flatten().map(|(_, samples)| {
                 let width = samples.iter().map(|s| s.width).sum::<f64>() / samples.len().max(1) as f64;
                 let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f64>().ok());
+                // In the game's height units (the ribbons are in the editor's metres; the depth is set in them too).
                 Channel {
                     line: samples.iter().map(|s| [s.x, s.z]).collect(),
-                    water: samples.iter().map(|s| s.y).collect(),
+                    water: samples.iter().map(|s| s.y * unit).collect(),
                     width: samples.iter().map(|s| s.width).collect(),
-                    depth: num(BED_DEPTH_ATTR).unwrap_or_else(|| BedSettings::default_depth(width)).max(0.0),
+                    depth: num(BED_DEPTH_ATTR).map_or_else(|| BedSettings::default_depth(width), |d| d * unit).max(0.0),
                     bank_slope: num(BANK_SLOPE_ATTR).unwrap_or(BedSettings::DEFAULT_BANK_SLOPE).clamp(5.0, 85.0),
+                    vertical: unit,
                 }
             });
             let bed = RiverBed { channel, joins };
@@ -512,13 +517,14 @@ fn river_terrain(i: RiverInput) -> (Stack<Height>, Option<Stack<Blend>>) {
         let mut writes = vec![];
         for y in y0..y1 {
             for x in x0..x1 {
+                // The stack's samples are in the game's units, as the river's bed is.
                 let mut v = [0.0f32];
                 height.below(id, x, y, &mut v);
-                let g = f64::from(v[0]) / unit;
+                let g = f64::from(v[0]);
                 let (wx, wz) = (f64::from(x) * mx - border, f64::from(y) * mz - border);
                 let b = bed.as_ref().map_or(f64::INFINITY, |b| b[(y - y0) as usize * gw + (x - x0) as usize]);
                 if let Some(h) = river.bed.height_with(wx, wz, g, b) {
-                    writes.push((x, y, ((h - g) * unit) as f32));
+                    writes.push((x, y, (h - g) as f32));
                 }
             }
         }

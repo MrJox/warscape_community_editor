@@ -7,7 +7,8 @@
 //! height and width. The tables are the medians of the kit's 123 deep and 46 shallow river ends' `final_heights.dds`, every 8 m across the
 //! cell's centre: the same either side, so one side is kept.
 //!
-//! World metres throughout (the tile's x, z; heights as `TileProject::height_at`).
+//! Across in the tile's metres (x, z: the editor's), heights in the game's units (`TileProject::height_at`, the river files' y, TEd's
+//! scene heights): twice the editor's metres in a battle tile (`Tile::terrain_height` is `height_at` over the unit).
 
 /// A standard river connection: the water and width a river has at the link, and the ground across the link's cell.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -139,7 +140,8 @@ impl BedSettings {
 /// How far the banks climb past the profile before the bed stops (metres): the ground is met before that but on cliffs.
 const BANK_RISE: f64 = 60.0;
 
-/// A river's bed along its line: the centre line's samples (x, z), the water there and the width, and its settings.
+/// A river's bed along its line: the centre line's samples (x, z), the water there (the game's units) and the width, and its settings
+/// (the depth in the game's units); `vertical`: the game's height units a metre across (the tile's unit), for the banks' slope.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Channel {
     pub line: Vec<[f64; 2]>,
@@ -147,6 +149,7 @@ pub struct Channel {
     pub width: Vec<f64>,
     pub depth: f64,
     pub bank_slope: f64,
+    pub vertical: f64,
 }
 
 impl Channel {
@@ -158,7 +161,7 @@ impl Channel {
         let last = KIT_BED.len() - 1;
         if t >= last as f64 {
             let past = r.abs() - last as f64 * PROFILE_STEP * k;
-            return water + KIT_BED[last] * scale + past * self.bank_slope.to_radians().tan().max(0.05);
+            return water + KIT_BED[last] * scale + past * self.rise();
         }
 
         let i = t.floor() as usize;
@@ -169,7 +172,12 @@ impl Channel {
     /// How far from the centre it reaches at a width (metres).
     pub fn reach(&self, width: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.bank_slope.to_radians().tan().max(0.05)
+        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.rise()
+    }
+
+    /// How far the banks climb a metre across (the game's units).
+    fn rise(&self) -> f64 {
+        self.bank_slope.to_radians().tan().max(0.05) * if self.vertical > 0.0 { self.vertical } else { 1.0 }
     }
 
     /// The bounds it touches (x0, z0, x1, z1), none without a line.
@@ -306,6 +314,7 @@ mod tests {
             width: vec![45.0, 45.0],
             depth: 5.7,
             bank_slope: 45.0,
+            vertical: 1.0,
         };
         // The kit's river: its profile.
         assert!((c.across(0.0, -6.2, 45.0) - DEEP.profile[0]).abs() < 0.11);

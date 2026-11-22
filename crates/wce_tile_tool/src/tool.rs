@@ -2784,7 +2784,9 @@ impl TileTool {
                 for q in [pts.first(), pts.last()].into_iter().flatten() {
                     let (u, v) = to_map.apply(q[0], q[2]);
                     let (x, z) = frame.from_map.apply(u, v);
-                    out.push(NeighbourEnd { at: Float3::new(x as f32, q[1] as f32, z as f32), width: q[3] as f32 });
+                    // The file's height is the game's units: the editor's metres are those over the unit.
+                    let y = q[1] / d.project().unit_scale;
+                    out.push(NeighbourEnd { at: Float3::new(x as f32, y as f32, z as f32), width: q[3] as f32 });
                 }
             }
         }
