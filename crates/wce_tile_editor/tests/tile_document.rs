@@ -3285,3 +3285,35 @@ fn rivers_split_join_and_take_a_tributary() {
     let end = *world(&d, t).last().unwrap();
     assert!((end.y - on.y).abs() < 1e-3, "at the main river's water: {end:?} against {on:?}");
 }
+
+#[test]
+fn a_ford_raises_a_rivers_bed_to_a_wading_depth() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    // Level water (the test tile's ground is a steep ramp).
+    let level = y(&d, 130.0, 128.0);
+    let (a, b) = (Float3::new(30.0, level, 128.0), Float3::new(230.0, level, 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.set_attribute(r, "width", "90");
+    d.tile_mut().finish_road_jobs();
+    let deep = y(&d, 130.0, 128.0);
+    let water = d.river_profile(r).unwrap();
+    let mid = water.samples.iter().min_by(|p, q| (p.x - 130.0).abs().total_cmp(&(q.x - 130.0).abs())).unwrap().water as f32;
+
+    // A ford in the middle: the bed there a quarter metre under the water (the kit's), the river's own bed away from it.
+    d.add_river_ford(r, 100.0, 40.0);
+    d.tile_mut().finish_road_jobs();
+    let ford = y(&d, 130.0, 128.0);
+    assert!((ford - (mid - 0.25)).abs() < 0.15, "the ford's bed: {ford} under water {mid}");
+    assert!(ford > deep + 1.0, "raised from the river's bed {deep}");
+    assert!((y(&d, 45.0, 128.0) - y(&d, 45.0, 128.0)).abs() < 1e-6);
+
+    // On a river that cuts no bed: the ford alone (the ground away from it as it was).
+    d.set_attribute(r, "wce_bed", "0");
+    d.tile_mut().finish_road_jobs();
+    let away = y(&d, 45.0, 128.0);
+    let (_d2, d2) = open_with_river_links();
+    assert!((away - d2.tile().terrain_height(45.0, 128.0)).abs() < 1e-3, "away from the ford: {away}");
+    assert!((y(&d, 130.0, 128.0) - (mid - 0.25)).abs() < 0.3, "the ford still: {}", y(&d, 130.0, 128.0));
+}

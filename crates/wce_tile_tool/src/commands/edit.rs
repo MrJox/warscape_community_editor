@@ -794,6 +794,16 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("place_here", "place_here", "place what place_preview shows, where it shows it (as a click would)", |e, _| {
+        with_tile(e, |t, e| {
+            let at = t.place_point().0;
+            match t.place_at(e, at) {
+                Ok(m) => ok(m),
+                Err(err) => fail(err),
+            }
+        })
+    });
+
     c.add(
         "place_preview",
         "place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off",
@@ -819,7 +829,27 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 t.terrain_hit = true;
                 t.preview_forced = true;
                 match crate::create_panel::make_for_script(t, e, &what, &key) {
-                    Ok(()) => ok(""),
+                    Ok(()) => {
+                        // As the mouse there would: a bridge onto a river.
+                        t.snapped_cursor = t.cursor;
+                        if let Some(d) = crate::tool::document(e) {
+                            t.snap_bridge_to_river(d);
+                        }
+
+                        let bounds = crate::tool::document(e)
+                            .and_then(|d| {
+                                d.tile().building_model(&key).map(|m| format!(" (model {:?} .. {:?}, ok {})", m.bmin, m.bmax, m.ok))
+                            })
+                            .unwrap_or_default();
+                        ok(format!(
+                            "at {:.1} {:.1} {:.1}, turned {:.1}{bounds}",
+                            t.snapped_cursor.x,
+                            t.snapped_cursor.y,
+                            t.snapped_cursor.z,
+                            t.draft.as_ref().map_or(0.0, |d| d.yaw)
+                        ))
+                    }
+
                     Err(err) => fail(err),
                 }
             })

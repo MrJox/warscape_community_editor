@@ -216,6 +216,33 @@ impl TileDocument {
         best.map(|(_, q)| q)
     }
 
+    /// Where a bridge goes over a river at `p`: the nearest place on a river's middle line within half its width (at its water), and the
+    /// way the river runs there (radians, from +x towards +z); none away from rivers.
+    pub fn river_crossing(&self, p: Float3) -> Option<(Float3, f64)> {
+        let t = self.tile();
+        let mut best: Option<(f64, Float3, f64)> = None;
+        for (_, (_, s)) in t.river_ribbons_by_elem() {
+            for w in s.windows(2) {
+                let (a, b) = (&w[0], &w[1]);
+                let (dx, dz) = (b.x - a.x, b.z - a.z);
+                let l2 = dx * dx + dz * dz;
+                if l2 < 1e-12 {
+                    continue;
+                }
+
+                let (px, pz) = (f64::from(p.x), f64::from(p.z));
+                let f = (((px - a.x) * dx + (pz - a.z) * dz) / l2).clamp(0.0, 1.0);
+                let (x, z) = (a.x + dx * f, a.z + dz * f);
+                let d = (px - x).hypot(pz - z);
+                if d <= (a.width + (b.width - a.width) * f) * 0.5 && best.is_none_or(|(bd, ..)| d < bd) {
+                    best = Some((d, Float3::new(x as f32, (a.y + (b.y - a.y) * f) as f32, z as f32), dz.atan2(dx)));
+                }
+            }
+        }
+
+        best.map(|(_, q, dir)| (q, dir))
+    }
+
     /// After a river's end was put on another river (`river_join_point`, where the live snap puts it): the end at that river's water.
     /// One undo entry, none when nothing changes; whether it did.
     ///

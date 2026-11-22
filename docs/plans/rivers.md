@@ -16,6 +16,8 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   Step 4 (tributaries snapped onto a river's middle line at its water, Split here, Join rivers) built.
   Units fixed: the connections' heights are the game's (TEd's scene heights, the files' y), twice the editor's metres; the snapped
   rivers and joins had been twice as deep (their files' water at the bed). The file of a snapped river now has the kit's -6.2 / 45.
+  Step 6 (fords: the kit's wading depth over a stretch, eased banks, on rivers with or without a bed; kit bridges snapped across rivers)
+  built. A ford needs no link change (the kit's `river_ford/*` link as deep `river`). The bridge's platform check stays the Problems' button.
 
 ## What there is today
 

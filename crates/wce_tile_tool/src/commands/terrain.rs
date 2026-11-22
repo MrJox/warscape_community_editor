@@ -369,11 +369,21 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         let sel = primary(e);
         let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
         let Some(p) = d.river_profile(r) else { return fail("not a river drawn") };
-        ok(p.points
+        // The shallowest place inside the tile: the water over the ground under its middle (the editor's metres).
+        let (ex, ez) = (d.project().extent_x(), d.project().extent_z());
+        let shallow = p
+            .samples
             .iter()
-            .map(|q| format!("{}: {:.0} m, {:.2}{}", q.index, q.along, q.water, if q.locked { " (link)" } else { "" }))
-            .collect::<Vec<_>>()
-            .join("; "))
+            .filter(|s| s.x >= 0.0 && s.z >= 0.0 && s.x <= ex && s.z <= ez)
+            .map(|s| (s.water - s.ground, s.along))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let points =
+            p.points.iter().map(|q| format!("{}: {:.0} m, {:.2}{}", q.index, q.along, q.water, if q.locked { " (link)" } else { "" }));
+        ok(format!(
+            "{}; shallowest {}",
+            points.collect::<Vec<_>>().join("; "),
+            shallow.map_or("-".to_owned(), |(depth, at)| format!("{depth:.2} m deep at {at:.0} m"))
+        ))
     });
 
     c.add("river_split", "river_split <point>", "split the selected river at a point (not an end) into two (one undo entry)", |e, a| {
@@ -396,6 +406,27 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             Err(why) => fail(why),
         }
     });
+
+    c.add(
+        "river_ford",
+        "river_ford <along m> <length m> | remove <i>",
+        "add a ford to the selected river, or take one away (one undo entry)",
+        |e, a| {
+            let sel = primary(e);
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            if a.first().is_some_and(|w| w == "remove") {
+                let Some(i) = a.get(1).and_then(|v| v.parse::<usize>().ok()) else { return fail("usage: river_ford remove <i>") };
+                d.remove_river_ford(r, i);
+                return ok("");
+            }
+
+            let (Some(at), Some(l)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else {
+                return fail("usage: river_ford <along m> <length m>");
+            };
+            d.add_river_ford(r, f64::from(at), f64::from(l));
+            ok("")
+        },
+    );
 
     c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
