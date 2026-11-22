@@ -123,7 +123,8 @@ static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
     format!(
         "Moves every river end at the tile's edge whose cell the tile offers as a river link: level with the cell's centre along the edge, and \
      {} m past the edge unless it is past it already (as the kit's rivers end, so that the neighbour's river meets it). The ends' handles move \
-     with them; their height stays. An end already within a few metres of its cell's centre is centred too. Ends at cells without a river \
+     with them; their height stays. An end already within a few metres of its cell's centre is centred too, but on a river with its terrain \
+     patch off (the kit's): that one already meets its link and keeps its line, its bed carved for it. Ends at cells without a river \
      link are left alone. One undo step.",
         wce_tile_editor::tile_document::river_links::RIVER_END_OVERSHOOT_M
     )

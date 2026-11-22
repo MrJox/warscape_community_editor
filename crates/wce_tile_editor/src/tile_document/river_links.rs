@@ -347,7 +347,28 @@ impl TileDocument {
     /// The scene could not be edited.
     pub fn snap_river_ends(&mut self) -> Result<usize, String> {
         let rivers = self.tile().tscene().find_all(RIVER);
-        self.snap_rivers_to_links(&rivers, LINK_REACH_M, "Snap river ends to link targets")
+        let keep = self.ends_left_as_made();
+        self.snap_rivers_to_links_but(&rivers, LINK_REACH_M, "Snap river ends to link targets", &keep)
+    }
+
+    /// The ends (river, point index) [`Self::snap_river_ends`] leaves where they are: those of a river with its terrain patch off (the
+    /// kit's, TEd's: its bed was carved for its line as it is) that already meet their link (in a target cell, within
+    /// [`RIVER_END_TOLERANCE_M`] of its centre, as [`Self::river_link_problems`] accepts them). Centring such an end and squaring its handle
+    /// bent the river off its bed (a Rome 2 kit river then floated 0.8 m over its banks for 39 m), for a join the game already makes.
+    fn ends_left_as_made(&self) -> Vec<(usize, usize)> {
+        let targets = self.river_targets();
+        let sc = self.tile().tscene();
+        self.river_ends()
+            .into_iter()
+            .filter(|en| {
+                !super::river_beds::river_patch_on(
+                    sc.get(en.elem, super::river_beds::PATCH_ATTR).as_deref(),
+                    sc.get(en.elem, super::river_beds::BED_ATTR).as_deref(),
+                ) && targets.contains(&en.cell)
+                    && en.off_centre <= RIVER_END_TOLERANCE_M
+            })
+            .map(|en| (en.elem, en.point))
+            .collect()
     }
 
     /// After a river was drawn or one of its ends dragged: its ends left on a link's snapped place ([`Tile::river_link_points`], where
@@ -362,6 +383,11 @@ impl TileDocument {
     }
 
     fn snap_rivers_to_links(&mut self, rivers: &[usize], reach: f32, label: &str) -> Result<usize, String> {
+        self.snap_rivers_to_links_but(rivers, reach, label, &[])
+    }
+
+    /// [`Self::snap_rivers_to_links`] but the ends of `keep` (river, point index), left as they are.
+    fn snap_rivers_to_links_but(&mut self, rivers: &[usize], reach: f32, label: &str, keep: &[(usize, usize)]) -> Result<usize, String> {
         let links = self.tile().river_link_points();
         // What each end becomes: its river, its point, the link, the end's old place and its neighbour's.
         let mut snaps = vec![];
@@ -376,6 +402,10 @@ impl TileDocument {
             }
 
             for i in [0, pts.len() - 1] {
+                if keep.contains(&(e, i)) {
+                    continue;
+                }
+
                 let at = pts[i];
                 let near = links
                     .iter()

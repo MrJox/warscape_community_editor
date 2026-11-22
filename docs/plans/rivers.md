@@ -35,8 +35,8 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   stones, `gaul_rock_02` and `smallrock_01` bank stones (its `rock_0*_small` are 12 m), no mounds (the bank lists may be empty now),
   `mud_rock_0` / `atlantic_mud_3` shore decals and `mud_01/02`, `global_dirt_5/3` bed decals (normal maps in alpha and green; seen
   on and off by pixel diff). Open: Rome 2's kit has no vegetation parameters, so its exports carry the packed tree lists and a
-  tile's `VEGETATION_INSTANCE`s (the reeds and lilies, as any placed vegetation) do not reach the game; Snap river ends squares a
-  kit river's end handles as in Attila (one Rome 2 kit river then floats 0.8 m over 39 m); Thrones of Britannia's table is still
+  tile's `VEGETATION_INSTANCE`s (the reeds and lilies, as any placed vegetation) do not reach the game; Snap river ends now leaves a
+  kit river's ends that already meet their links (centring them bent a Rome 2 kit river off its bed: 0.8 m over 39 m); Thrones of Britannia's table is still
   Attila's (not installed).
 - Step 10 (shores) built: reeds and stones along the rivers' and lakes' water (`wce_tile::shores`), derived and exported as the biome
   areas' contents are, on for the editor's rivers and lakes.
