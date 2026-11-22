@@ -6,15 +6,24 @@ assert_tool weather
 assert_documents 1
 assert_history 0 0
 assert_modified 0
-cam 0.6 0.35 120
 
-# selection by clicking in the viewport
+# selection by clicking in the viewport: the camera framed on the item first (from the fixed camera below another building can stand in
+# front of it; its bounds once the models are in), and the picking reads the last frame drawn, so frames are drawn before the click; then
+# the fixed camera again
+wait_loaded
+select 13
+focus
+frames 3
+select none
 click_item 13
 frames 2
 assert_selected 1
 assert_selected_item 13
 -click 5 5
 assert_selected 0
+cam_look 0 5 0
+cam 0.6 0.35 120
+frames 2
 
 # an edit is one undo entry; undo and redo
 select 3
@@ -44,8 +53,8 @@ frames 2
 camera orbit
 frames 2
 
-# keyboard: tool switch, undo, redo, focus
-key Ctrl+3
+# keyboard: tool switch, undo, redo, focus (Ctrl+<n> is the switcher's n-th tool: in the default build Weather, VFX, Prefab, Tile, ...)
+key Ctrl+4
 frames 4
 assert_tool tile
 key Ctrl+1
@@ -94,7 +103,7 @@ frames 2
 show_panel assets
 frames 4
 shot "%SHOT%"
-frames 2
+frames 5
 diagnostics "%CAPTURE%.txt"
 # offscreen capture, no window involved
 capture 640x360 "%CAPTURE%" 8

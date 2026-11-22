@@ -11,6 +11,8 @@
 #   GAME             the game folder: $WCE_GAME, else the current game's `dir` in settings.toml, else Steam's default library
 #   WCE_GPU          exported only when set, or on Windows, where the reference pixels come from one GPU (docs/baseline.md)
 #   wce_timeout <s>  `timeout <s>` where there is one (macOS has none unless coreutils' gtimeout), else the command as it is
+#   no_mod_packs <settings.toml>  drops the chosen mod packs from a copied settings file: the game's own packs only, so that what the
+#                    scripts see (the weather tool's sample map, the UI files) is the same on every machine
 
 case "${OSTYPE:-}" in
     msys* | cygwin* | win*) WCE_WINDOWS=1 ;;
@@ -61,6 +63,11 @@ if [ -z "${WCE_GAME:-}" ]; then
 else
     GAME="$WCE_GAME"
 fi
+
+no_mod_packs() {
+    [ -f "$1" ] || return 0
+    sed '/^mod_packs = /d' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
 
 wce_timeout() {
     local s="$1"

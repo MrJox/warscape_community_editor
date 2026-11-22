@@ -128,7 +128,7 @@ grep -q '"name":"ui_set_property"' "$C/mcp.log" && grep -q 'settlement_captured'
 echo "== wce"
 D="$OUT/app"; rm -rf "$D"; mkdir -p "$D/settings" "$D/fixtures" "$D/projects/loose/ui/skins/gate_skin"; cp "$SETTINGS_SRC/settings.toml" "$D/settings/" 2>/dev/null
 # the settings of the machine decide which mod packs are chosen: none here, so that nothing but the game's release packs is read
-[ -f "$D/settings/settings.toml" ] && { sed '/^mod_packs = /d' "$D/settings/settings.toml" > "$D/settings/settings.tmp" && mv "$D/settings/settings.tmp" "$D/settings/settings.toml"; }
+no_mod_packs "$D/settings/settings.toml"
 png "$D/fixtures/red.png" 255 0 0
 png "$D/fixtures/blue.png" 0 0 255
 png "$D/projects/loose/ui/skins/gate_skin/gate.png" 0 255 0
