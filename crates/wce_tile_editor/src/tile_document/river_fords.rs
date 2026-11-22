@@ -58,7 +58,22 @@ impl Line {
 
 impl TileDocument {
     fn river_line(&self, river: usize) -> Option<Line> {
-        let (_, samples) = self.tile().river_ribbons_by_elem().remove(&river)?;
+        self.tile().river_line(river)
+    }
+}
+
+/// The layer an export puts the rivers' AI hints in.
+pub const HINTS_LAYER: &str = "WCE rivers";
+
+/// How far apart a river edge hint's points are (metres), and how far a ford's crossing hint reaches past its ends along the river and
+/// past the water's edges across it (metres: vanilla's ford tiles have theirs about 65 to 80 along the river, 100 to 115 across).
+const EDGE_STEP: f64 = 20.0;
+const CROSSING_ALONG: f64 = 10.0;
+const CROSSING_ACROSS: f64 = 30.0;
+
+impl super::Tile {
+    fn river_line(&self, river: usize) -> Option<Line> {
+        let (_, samples) = self.river_ribbons_by_elem().remove(&river)?;
         let mut along = 0.0;
         let mut pts = vec![];
         for (i, s) in samples.iter().enumerate() {
@@ -72,6 +87,94 @@ impl TileDocument {
         (pts.len() >= 2).then_some(Line { pts })
     }
 
+    /// The AI hints of the rivers that shape the terrain (their terrain patch on; the kit's have their own), as vanilla's river tiles have
+    /// them: an `AIH_RIVER_EDGE` line along each bank at the water's edge, and an `AIH_BRIDGE_CROSSING` polygon over each ford (from bank
+    /// to bank and past them, along it and past its ends). Their texts, in the file's units.
+    pub(super) fn river_hints(&self) -> Vec<Vec<u8>> {
+        use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
+        let sc = self.tscene();
+        let unit = self.unit();
+        let mut out = vec![];
+        for e in sc.find_all("SplineRiverInstance") {
+            let on = super::river_beds::river_patch_on(
+                sc.get(e, super::river_beds::PATCH_ATTR).as_deref(),
+                sc.get(e, super::river_beds::BED_ATTR).as_deref(),
+            );
+            if !on || !self.shown(e) || !self.of_tile_variation(e) {
+                continue;
+            }
+
+            let Some(line) = self.river_line(e) else { continue };
+            let length = line.pts.last().map_or(0.0, |p| p.4);
+            let file = |p: Float3| [f64::from(p.x) * unit, f64::from(p.z) * unit];
+
+            // Its banks: an open line each.
+            for side in [-1.0, 1.0] {
+                let n = (length / EDGE_STEP).ceil().max(1.0) as usize;
+                let pts = (0..=n)
+                    .filter_map(|k| {
+                        let along = length * k as f64 / n as f64;
+                        line.at(along, side * line.half(along)).map(file)
+                    })
+                    .collect::<Vec<_>>();
+                if pts.len() < 2 {
+                    continue;
+                }
+
+                let c = pts.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / pts.len() as f64, a[1] + p[1] / pts.len() as f64]);
+                let mut h = NewInstance::new("AI_HINT_POLYGON_INSTANCE")
+                    .position(wce_foundation::math::Double3::new(c[0], 0.0, c[1]))
+                    .attr("name", "River edge")
+                    .attr("hint_type", "AIH_RIVER_EDGE")
+                    .attr("polygon_closed", "0")
+                    .attr("surface_mode", "MSM_LANDSCAPE");
+                h.points = pts.iter().map(|p| NewPoint::at(wce_foundation::math::Double3::new(p[0] - c[0], 0.0, p[1] - c[1]))).collect();
+                if let Ok(text) = element_text(&h) {
+                    out.push(text);
+                }
+            }
+
+            // Its fords: a crossing each, its sides following the river every 4 m.
+            for (at, flen) in river_fords(sc.get(e, FORDS_ATTR).as_deref().unwrap_or_default()) {
+                let f = Ford { at, length: flen, depth: FORD_DEPTH };
+                let (s0, e0) = (f.ends(-1.0).0.min(f.ends(1.0).0), f.ends(-1.0).1.max(f.ends(1.0).1));
+                let (from, to) = ((s0 - CROSSING_ALONG).max(0.0), (e0 + CROSSING_ALONG).min(length));
+                let n = ((to - from) / 4.0).ceil().max(1.0) as usize;
+                let side = |sign: f64| {
+                    (0..=n)
+                        .filter_map(|k| {
+                            let along = from + (to - from) * k as f64 / n as f64;
+                            line.at(along, sign * (line.half(along) + CROSSING_ACROSS)).map(file)
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let mut outline = side(1.0);
+                outline.extend(side(-1.0).into_iter().rev());
+                if let Ok(text) = wce_tile::road_layout::crossing_hint(&outline) {
+                    out.push(text);
+                }
+            }
+        }
+
+        out
+    }
+
+    /// The layer of the rivers' AI hints an export adds ([`Self::river_hints`]).
+    pub(super) fn with_river_hints(&self, text: Vec<u8>) -> Result<Vec<u8>, String> {
+        let hints = self.river_hints();
+        if hints.is_empty() {
+            return Ok(text);
+        }
+
+        let mut scene = wce_tile::ted_scene::TedScene::parse_any(text)?;
+        let layer = scene.add_layer(scene.scene_graph(), HINTS_LAYER)?;
+        scene.insert_elements_text(layer, &hints)?;
+
+        Ok(scene.save())
+    }
+}
+
+impl TileDocument {
     /// Where a place (x, z) is along a river (metres) and how far off its middle line (metres, to the left of its way positive), by the
     /// nearest place of its ribbon; none when it is not drawn.
     pub fn river_along_at(&self, river: usize, x: f32, z: f32) -> Option<(f64, f64)> {

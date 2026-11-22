@@ -1144,18 +1144,16 @@ impl Tile {
 
         let mut scene = TedScene::parse_any(text)?;
         let layer = scene.add_layer(scene.scene_graph(), KIT_LAYER)?;
-        for item in &self.road_items {
-            match &item.export {
-                Some(t) if t.is_empty() => {}
-                Some(t) => {
-                    scene.insert_element_text(layer, t)?;
-                }
-
-                None => {
-                    scene.insert_element_text(layer, &item.text)?;
-                }
-            }
-        }
+        let texts = self
+            .road_items
+            .iter()
+            .filter_map(|item| match &item.export {
+                Some(t) if t.is_empty() => None,
+                Some(t) => Some(t.clone()),
+                None => Some(item.text.clone()),
+            })
+            .collect::<Vec<_>>();
+        scene.insert_elements_text(layer, &texts)?;
 
         Ok(scene.save())
     }

@@ -715,6 +715,39 @@ impl TedScene {
         Ok(self.last_child(layer))
     }
 
+    /// Elements' texts appended to a layer's children in one splice (an export's generated items: one splice each was a reparse each,
+    /// 80 s for a river's few thousand reeds).
+    ///
+    /// # Errors
+    ///
+    /// No such layer, it has no children element, or a text is not one element.
+    pub fn insert_elements_text(&mut self, layer: usize, texts: &[Vec<u8>]) -> Result<()> {
+        if texts.is_empty() {
+            return Ok(());
+        }
+
+        let layer = self.require_element(Some(layer), "layer")?;
+        self.doc.bake_pending().map_err(xml_error)?;
+        let (at, ind) = self.append_point(layer, "layer has no children element")?;
+        let before = self.doc.elements()[self.children_wrapper(layer).ok_or("layer has no children element")?].children.len();
+        let mut body = vec![];
+        for text in texts {
+            reindent(text, b"", &ind, &mut body);
+            if !body.ends_with(b"\n") {
+                body.push(b'\n');
+            }
+        }
+
+        let body = with_newline(&body, self.newline());
+        self.doc.splice(at, 0, &body).map_err(xml_error)?;
+        let w = self.children_wrapper(layer).ok_or("layer has no children element")?;
+        if self.doc.elements()[w].children.len() != before + texts.len() {
+            return Err("a text is not one element".to_owned());
+        }
+
+        Ok(())
+    }
+
     /// An element with an empty `<children>` appended to the layer's children: `open` is its start tag, `close` its end tag.
     fn add_container(&mut self, parent_layer: Option<usize>, open: &[u8], close: &[u8]) -> Result<usize> {
         let parent = self.require_element(parent_layer, "layer")?;

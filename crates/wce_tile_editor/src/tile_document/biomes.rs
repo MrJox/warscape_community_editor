@@ -306,9 +306,8 @@ impl Tile {
 
         let mut scene = TedScene::parse_any(text)?;
         let layer = scene.add_layer(scene.scene_graph(), EXPORT_LAYER)?;
-        for item in &self.biome_items {
-            scene.insert_element_text(layer, &item.text)?;
-        }
+        let texts = self.biome_items.iter().map(|i| i.text.clone()).collect::<Vec<_>>();
+        scene.insert_elements_text(layer, &texts)?;
 
         Ok(scene.save())
     }
