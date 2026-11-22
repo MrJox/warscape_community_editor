@@ -434,7 +434,8 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                     // The bed: mud under the water, by its edge (seen through the shallows).
                     let [e1, e2, e3, e4] = cell_numbers(seed ^ 0x1b87_3593, k, if side < 0.0 { 3 } else { 4 });
                     if s.bed_decals > 0.0 && !near_ford && e1 < s.bed_decals * 1.2 {
-                        let (x, z) = at(waterline() - 2.0 - 5.0 * e2);
+                        // In the first metres of the water, where it is shallow enough to see the bed.
+                        let (x, z) = at(waterline() - 0.5 - 2.5 * e2);
                         if !blocked(x, z) {
                             let key = BED_DECALS[(e3 * BED_DECALS.len() as f32) as usize % BED_DECALS.len()];
                             let size = 6.0 + 4.0 * e4;
@@ -570,7 +571,7 @@ mod tests {
         // The ground meets the water 11 m from the middle (past the ribbon's 10): the shore's decals there, the bed's inside it.
         assert!(shore_d.iter().all(|d| ((d.z - 50.0).abs() - 11.0).abs() < 1.6), "over the waterline");
         assert!(
-            bed_d.iter().all(|d| BED_DECALS.contains(&d.key.as_str()) && (d.z - 50.0).abs() < 9.1 && (d.z - 50.0).abs() > 3.9),
+            bed_d.iter().all(|d| BED_DECALS.contains(&d.key.as_str()) && (d.z - 50.0).abs() < 10.6 && (d.z - 50.0).abs() > 7.9),
             "on the bed"
         );
         assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());

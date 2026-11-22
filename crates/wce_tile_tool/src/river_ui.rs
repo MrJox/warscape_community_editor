@@ -44,6 +44,21 @@ impl RiverUi {
 }
 
 impl TileTool {
+    /// A river's sections below its profile, the document's (its bed, its shores, the other attributes at the bottom), in the
+    /// Inspector's rows.
+    pub(crate) fn inspect_river_tail(&mut self, e: &mut Editor, id: DocumentId) {
+        use wce_editor_core::inspector::Inspector;
+        let Some(river) = primary(e) else { return };
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        if d.tile().tscene().type_of(river) != "SplineRiverInstance" {
+            return;
+        }
+
+        let mut ins = wce_editor::panels::ImGuiInspector::default();
+        ins.begin(id, wce_tile_editor::tile_document::item_of(river));
+        d.inspect_river_tail(river, &mut ins);
+    }
+
     pub(crate) fn inspect_river(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(river) = primary(e) else { return };
         let selection = crate::tool::selected(e);

@@ -303,7 +303,8 @@ impl Tile {
                     .iter()
                     .find_map(|k| text.split(k).nth(1)?.split('"').next().map(str::to_owned))
                     .unwrap_or_default();
-                Some(format!("{kind} {key} at ({x:.1}, {z:.1})"))
+                let (y, ground) = ((i.position[1] / unit) as f32, self.terrain_height(x, z));
+                Some(format!("{kind} {key} at ({x:.1}, {z:.1}) y {y:.2}, ground {ground:.2}"))
             })
             .collect()
     }
