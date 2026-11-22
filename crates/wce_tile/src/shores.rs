@@ -165,10 +165,10 @@ pub const SPLASH: &str = "enviro_vfx_watersplashes";
 /// How far apart a ford's splashes are across the river, and how far its edge's stones reach either side of it (metres).
 const SPLASH_STEP: f32 = 8.0;
 
-/// How far in from the water's edge, and how far past a ford's ends along the river, its banks are kept clear of stones (metres): units
-/// step in and out of it there.
+/// How far in from the water's edge, and how far past a ford's ends along the river at least (half its length when more), its banks are
+/// kept clear of stones (metres): units step in and out of it there, its shallow ramp too.
 const FORD_BANK_CLEAR: f32 = 3.0;
-const FORD_BANK_MARGIN: f32 = 4.0;
+const FORD_BANK_MARGIN: f32 = 6.0;
 const FORD_EDGE: f32 = 1.0;
 
 /// A river's middle line at a distance along it: the place and the direction there.
@@ -272,7 +272,9 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
             let ford_bank = edge > -FORD_BANK_CLEAR
                 && fords.iter().any(|f| {
                     let (s0, s1) = ends(f);
-                    along >= s0 - FORD_BANK_MARGIN && along <= s1 + FORD_BANK_MARGIN
+                    // Past its ends too, where its ramp is still shallow enough to wade: half its length (6 m at least).
+                    let margin = FORD_BANK_MARGIN.max(f.length as f32 * 0.5);
+                    along >= s0 - margin && along <= s1 + margin
                 });
 
             // A ford's ends lined with small stones (gaps here and there), so that it shows where it is: whatever the shore's stones.
@@ -413,7 +415,7 @@ mod tests {
         assert!(shore.stones.iter().all(|s| (s.z - 50.0).abs() < 10.0 - FORD_BANK_CLEAR), "none at its banks, where units step out");
         let stony = place(&w, &ShoreSettings::of(0.0, 0.85), &g, &|_, _| false, 5);
         assert!(
-            stony.stones.iter().all(|s| (s.z - 50.0).abs() < 7.0 || f64::from(s.x) < 87.5 || f64::from(s.x) > 112.5),
+            stony.stones.iter().all(|s| (s.z - 50.0).abs() < 7.0 || f64::from(s.x) < 80.5 || f64::from(s.x) > 119.5),
             "the shore's stones keep off its banks"
         );
         let (mid, side) = (ford.ends(0.0), ford.ends(1.0));
