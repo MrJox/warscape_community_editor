@@ -72,19 +72,22 @@ impl ShoreSettings {
 /// A water a shore runs along.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Water {
-    /// A river: its middle line's samples (x, z), the water's height there and its half width.
-    River { line: Vec<[f32; 2]>, water: Vec<f32>, half: Vec<f32> },
+    /// A river: its middle line's samples (x, z), the water's height there and its half width; its fords' held stretches (where each
+    /// starts and ends along it, metres).
+    River { line: Vec<[f32; 2]>, water: Vec<f32>, half: Vec<f32>, fords: Vec<[f32; 2]> },
 
     /// A lake: its outline (x, z) and its water's height.
     Lake { outline: Vec<[f32; 2]>, water: f32 },
 }
 
 impl Water {
-    /// The water's edge from a place: how far outside it (negative: inside), and the water's height at the nearest place.
-    fn edge(&self, x: f32, z: f32) -> (f32, f32) {
+    /// The water's edge from a place: how far outside it (negative: inside), the water's height at the nearest place, and how far along
+    /// a river that place is (NaN for a lake).
+    fn edge(&self, x: f32, z: f32) -> (f32, f32, f32) {
         match self {
-            Water::River { line, water, half } => {
-                let mut best = (f32::INFINITY, 0.0);
+            Water::River { line, water, half, .. } => {
+                let mut best = (f32::INFINITY, 0.0, f32::NAN);
+                let mut along = 0.0;
                 for i in 0..line.len().saturating_sub(1) {
                     let (a, b) = (line[i], line[i + 1]);
                     let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
@@ -93,8 +96,10 @@ impl Water {
                     let h = half[i] + (half[i + 1] - half[i]) * t;
                     let d = (x - a[0] - dx * t).hypot(z - a[1] - dz * t) - h;
                     if d < best.0 {
-                        best = (d, water[i] + (water[i + 1] - water[i]) * t);
+                        best = (d, water[i] + (water[i + 1] - water[i]) * t, along + l2.sqrt() * t);
                     }
+
+                    along += l2.sqrt();
                 }
 
                 best
@@ -115,7 +120,7 @@ impl Water {
                     near = near.min((x - a[0] - dx * t).hypot(z - a[1] - dz * t));
                 }
 
-                (if inside { -near } else { near }, *water)
+                (if inside { -near } else { near }, *water, f32::NAN)
             }
         }
     }
@@ -147,6 +152,34 @@ pub struct Placed {
 pub struct Shore {
     pub reeds: Vec<Placed>,
     pub stones: Vec<Placed>,
+
+    /// The splashes over a ford's edges ([`SPLASH`], at the water's height).
+    pub splashes: Vec<Placed>,
+}
+
+/// The splash over a ford's edges: Attila's vanilla battle water splash (a looping foam on the water).
+pub const SPLASH: &str = "enviro_vfx_watersplashes";
+
+/// How far apart a ford's splashes are across the river, and how far its edge's stones reach either side of it (metres).
+const SPLASH_STEP: f32 = 8.0;
+const FORD_EDGE: f32 = 1.0;
+
+/// A river's middle line at a distance along it: the place and the direction there.
+fn at_along(line: &[[f32; 2]], half: &[f32], along: f32) -> Option<([f32; 2], [f32; 2], f32)> {
+    let mut walked = 0.0;
+    for i in 0..line.len().saturating_sub(1) {
+        let (a, b) = (line[i], line[i + 1]);
+        let l = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if l > 1e-6 && walked + l >= along {
+            let t = ((along - walked) / l).clamp(0.0, 1.0);
+            let dir = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+            return Some(([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], dir, half[i] + (half[i + 1] - half[i]) * t));
+        }
+
+        walked += l;
+    }
+
+    None
 }
 
 /// Four numbers in [0, 1) of a grid cell and a seed (a hash: the same cell gives the same numbers).
@@ -201,19 +234,38 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
         for i in i0..i1 {
             let [a, b, c, d] = cell_numbers(seed, i, j);
             let (x, z) = ((i as f32 + b) * CELL, (j as f32 + c) * CELL);
-            let (edge, level) = water.edge(x, z);
-            // Inside a river or a lake further than a lily floats from its edge, or out past the bank: nothing.
-            if edge > reach || edge < -12.0 {
+            let (edge, level, along) = water.edge(x, z);
+            // A ford: across its river, the stretch held shallow, and its two edges (where it drops to the deep water).
+            let fords: &[[f32; 2]] = if let Water::River { fords, .. } = water { fords } else { &[] };
+            let in_water = edge <= 0.5;
+            let on_ford = in_water && fords.iter().any(|f| along >= f[0] - FORD_EDGE && along <= f[1] + FORD_EDGE);
+            let ford_edge = in_water && fords.iter().any(|f| (along - f[0]).abs() <= FORD_EDGE || (along - f[1]).abs() <= FORD_EDGE);
+
+            // Inside a river or a lake further than a lily floats from its edge (but on a ford), or out past the bank: nothing.
+            if edge > reach || (edge < -12.0 && !on_ford) {
                 continue;
             }
 
             let g = height(x, z);
             let depth = level - g;
 
+            // A ford's edges lined with stones (gaps here and there), so that it shows where it is: whatever the shore's stones.
+            if ford_edge {
+                let gaps = noise(seed ^ 0x0f0e_d0c1, x, z, 3.0);
+                if gaps > 0.25 && a < 3.0 * area && !blocked(x, z) {
+                    let (list, k): (&[&str], usize) =
+                        if d < 0.15 { (&BANK_STONES, (d * 97.0) as usize) } else { (&STONES, (d * 61.0) as usize) };
+                    out.stones.push(Placed { key: list[k % list.len()].to_owned(), x, y: g - 0.05, z, scale: 1.0, yaw: 360.0 * c });
+                }
+
+                continue;
+            }
+
             // A reed bed: where the bed noise is over the threshold the amount sets, thinning over its edge.
             if s.reeds > 0.0 && depth <= s.shallows && edge <= s.wet_bank && g - level <= 1.0 {
                 let n = noise(seed, x, z, BED_SIZE);
-                let threshold = 1.0 - s.reeds;
+                // On a ford, a few clumps only: its crossing stays open.
+                let threshold = if on_ford && edge < -2.0 { 1.0 - s.reeds * 0.3 } else { 1.0 - s.reeds };
                 let heart = ((n - threshold) / BED_EDGE).clamp(0.0, 1.0);
                 // Thinner up the bank, away from the water.
                 let wet = if edge <= 0.0 { 1.0 } else { 1.0 - edge / s.wet_bank };
@@ -259,6 +311,25 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
         }
     }
 
+    // The splashes: across each ford's two edges, every few metres, on the water.
+    if let Water::River { line, half, fords, .. } = water {
+        for f in fords {
+            for edge in [f[0], f[1]] {
+                let Some((p, dir, h)) = at_along(line, half, edge) else { continue };
+                let (_, level, _) = water.edge(p[0], p[1]);
+                let n = ((2.0 * (h - 2.0)) / SPLASH_STEP).floor().max(0.0) as i32;
+                for k in 0..=n {
+                    let off = -(n as f32) * SPLASH_STEP * 0.5 + k as f32 * SPLASH_STEP;
+                    let (x, z) = (p[0] - dir[1] * off, p[1] + dir[0] * off);
+                    if !blocked(x, z) {
+                        let yaw = dir[1].atan2(dir[0]).to_degrees();
+                        out.splashes.push(Placed { key: SPLASH.to_owned(), x, y: level, z, scale: 1.0, yaw });
+                    }
+                }
+            }
+        }
+    }
+
     out
 }
 
@@ -269,7 +340,7 @@ mod tests {
     /// A straight river along x at z 50, 10 m wide, its water at 0; the ground 2.4 m under it in the middle, rising 0.4 a metre to the
     /// sides (the water's edge at 6 m from the middle).
     fn river() -> (Water, impl Fn(f32, f32) -> f32) {
-        let w = Water::River { line: vec![[0.0, 50.0], [200.0, 50.0]], water: vec![0.0, 0.0], half: vec![5.0, 5.0] };
+        let w = Water::River { line: vec![[0.0, 50.0], [200.0, 50.0]], water: vec![0.0, 0.0], half: vec![5.0, 5.0], fords: vec![] };
         (w, |_: f32, z: f32| ((z - 50.0).abs() - 6.0) * 0.4)
     }
 
@@ -289,6 +360,34 @@ mod tests {
         for st in shore.stones.iter().filter(|s| STONES.contains(&s.key.as_str())) {
             assert!(g(st.x, st.z).abs() <= WATERLINE_HEIGHT + 1e-4, "on the waterline: {} at {}", g(st.x, st.z), st.z);
         }
+    }
+
+    #[test]
+    fn a_fords_edges_are_lined_with_stones_and_splashes() {
+        let w = Water::River {
+            line: vec![[0.0, 50.0], [200.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![10.0, 10.0],
+            fords: vec![[90.0, 110.0]],
+        };
+        // Deep but at the ford, a quarter metre there.
+        let g = |x: f32, _: f32| if (88.0..=112.0).contains(&x) { -0.25 } else { -3.0 };
+        let shore = place(&w, &ShoreSettings::of(0.0, 0.0), &g, &|_, _| false, 5);
+        assert!(shore.stones.len() > 20, "the edges lined whatever the shore's stones: {}", shore.stones.len());
+        assert!(shore.stones.iter().all(|s| (s.x - 90.0).abs() <= 1.01 || (s.x - 110.0).abs() <= 1.01), "on its edges only");
+        assert!(shore.stones.iter().any(|s| (s.z - 50.0).abs() < 3.0), "across the river, its middle too");
+        assert_eq!(
+            shore.splashes.len(),
+            2 * 3,
+            "three across each edge: {:?}",
+            shore.splashes.iter().map(|s| (s.x, s.z)).collect::<Vec<_>>()
+        );
+        assert!(shore.splashes.iter().all(|s| s.key == SPLASH && s.y == 0.0));
+
+        // Reeds may stand on it (its middle, shallow), never on the deep water beside it.
+        let reedy = place(&w, &ShoreSettings::of(0.85, 0.0), &g, &|_, _| false, 5);
+        assert!(reedy.reeds.iter().any(|r| (r.z - 50.0).abs() < 5.0), "on the ford");
+        assert!(reedy.reeds.iter().all(|r| g(r.x, r.z) > -1.0), "not in the deep");
     }
 
     #[test]
