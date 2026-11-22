@@ -1,5 +1,6 @@
-//! Gate for the rigid_model_v2 reader (rpfm_lib's RigidModel): parses every .rigid_model_v2 under the given folders. Port of
-//! `cli/rmv2_check.cpp`; as the C++ reader and the editor's model cache, only version 6 is accepted.
+//! Gate for the rigid_model_v2 reader (rpfm_lib's RigidModel): parses every .rigid_model_v2 under the given folders, of every version
+//! rpfm_lib reads (1, 3, 5, 6, 7, 8), and writes each back: the bytes must be the file's. Counts per version. Port of
+//! `cli/rmv2_check.cpp` (which, as the C++ reader, took version 6 only); the editor's model cache draws versions 5 and 6.
 //!
 //!   cargo run --release -p wce_formats --example rmv2_check -- <dir>...
 
@@ -9,7 +10,7 @@ use std::path::Path;
 
 use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::rigidmodel::materials::MaterialType;
-use rpfm_lib::files::{Decodeable, DecodeableExtraData};
+use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable};
 
 /// The material type of the C++ reader's RS_STANDARD_V5.
 const RS_STANDARD_V5: u16 = 68;
@@ -18,6 +19,9 @@ const RS_STANDARD_V5: u16 = 68;
 struct Stats {
     files: usize,
     failed: usize,
+
+    /// version -> (read, failed, written back to other bytes)
+    by_version: BTreeMap<u32, (usize, usize, usize)>,
 
     /// shader -> (with geometry, without)
     by_shader: BTreeMap<u16, (usize, usize)>,
@@ -65,11 +69,6 @@ fn parse(bytes: &[u8]) -> Result<RigidModel, String> {
         return Err("rmv2: bad signature".to_owned());
     }
 
-    let version = u32::from_le_bytes(bytes.get(4..8).and_then(|b| b.try_into().ok()).ok_or("rmv2: bad signature")?);
-    if version != 6 {
-        return Err(format!("rmv2: version {version} (expected 6)"));
-    }
-
     RigidModel::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())).map_err(|e| format!("rmv2: {e}"))
 }
 
@@ -87,8 +86,20 @@ fn walk(dir: &Path, s: &mut Stats) {
         }
 
         s.files += 1;
-        match std::fs::read(&p).map_err(|e| e.to_string()).and_then(|b| parse(&b)) {
-            Ok(m) => {
+        let bytes = std::fs::read(&p).unwrap_or_default();
+        let version = bytes.get(4..8).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        let v = s.by_version.entry(version).or_default();
+        match parse(&bytes) {
+            Ok(mut m) => {
+                v.0 += 1;
+                let mut back = Vec::new();
+                let same = m.encode(&mut back, &None).is_ok() && back == bytes;
+                if !same {
+                    v.2 += 1;
+                    s.failed += 1;
+                    *s.errors.entry(format!("rmv2 version {version}: written back to other bytes")).or_default() += 1;
+                }
+
                 for lod in m.lods() {
                     for block in lod.mesh_blocks() {
                         let material_type = *block.mesh().material_type();
@@ -115,6 +126,7 @@ fn walk(dir: &Path, s: &mut Stats) {
             }
 
             Err(e) => {
+                v.1 += 1;
                 s.failed += 1;
                 *s.errors.entry(e).or_default() += 1;
             }
@@ -131,6 +143,10 @@ fn main() {
     println!("{} files, {} failed", s.files, s.failed);
     for (e, n) in &s.errors {
         println!("  {n:5}  {e}");
+    }
+
+    for (version, (read, failed, differs)) in &s.by_version {
+        println!("version {version}: {read:6} read ({differs} written back to other bytes), {failed} failed");
     }
 
     for (shader, (with, without)) in &s.by_shader {
