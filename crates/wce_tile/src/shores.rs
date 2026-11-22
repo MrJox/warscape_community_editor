@@ -403,23 +403,26 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
 
                     // The waterline (the seam of water and land, as the ground has it: the bank's profile meets the water short of the
                     // ribbon's edge).
+                    // None where the ground is not under the water first (out from the middle) and over it then: no waterline there.
                     let waterline = || {
                         let (_, level, ..) = water.edge(p[0], p[1]);
-                        (0..=24)
-                            .map(|i| -10.0 + 0.5 * i as f32)
-                            .find(|&o| {
-                                let (x, z) = at(o);
-                                height(x, z) >= level
-                            })
-                            .unwrap_or(0.0)
+                        let mut wet = false;
+                        (0..=24).map(|i| -10.0 + 0.5 * i as f32).find(|&o| {
+                            let (x, z) = at(o);
+                            let dry = height(x, z) >= level;
+                            let found = dry && wet;
+                            wet |= !dry;
+                            found
+                        })
                     };
 
                     // The shore: muddy rocks over the waterline, a little into the water and onto the bank.
-                    if s.decals > 0.0 && !near_ford && a < s.decals * 1.2 {
-                        let (x, z) = at(waterline() - 0.5 + 2.0 * b);
+                    if let (true, Some(wl)) = (s.decals > 0.0 && !near_ford && a < s.decals * 1.2, waterline()) {
+                        // On the land side of the waterline, over its seam.
+                        let size = 3.0 + 2.0 * d;
+                        let (x, z) = at(wl + size * 0.3 + 0.5 * b);
                         if !blocked(x, z) {
                             let key = SHORE_DECALS[(c * SHORE_DECALS.len() as f32) as usize % SHORE_DECALS.len()];
-                            let size = 4.0 + 3.0 * d;
                             out.decals.push(Placed {
                                 key: key.to_owned(),
                                 x,
@@ -433,12 +436,12 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
 
                     // The bed: mud under the water, by its edge (seen through the shallows).
                     let [e1, e2, e3, e4] = cell_numbers(seed ^ 0x1b87_3593, k, if side < 0.0 { 3 } else { 4 });
-                    if s.bed_decals > 0.0 && !near_ford && e1 < s.bed_decals * 1.2 {
-                        // In the first metres of the water, where it is shallow enough to see the bed.
-                        let (x, z) = at(waterline() - 0.5 - 2.5 * e2);
+                    if let (true, Some(wl)) = (s.bed_decals > 0.0 && !near_ford && e1 < s.bed_decals * 1.2, waterline()) {
+                        // In the first metres of the water, where it is shallow enough to see the bed, apart from the shore's.
+                        let size = 3.0 + 2.0 * e4;
+                        let (x, z) = at(wl - size * 0.5 - 1.0 - 1.0 * e2);
                         if !blocked(x, z) {
                             let key = BED_DECALS[(e3 * BED_DECALS.len() as f32) as usize % BED_DECALS.len()];
-                            let size = 6.0 + 4.0 * e4;
                             out.decals.push(Placed { key: key.to_owned(), x, y: height(x, z), z, scale: size, yaw: yaw + 360.0 * e2 });
                         }
                     }
@@ -569,11 +572,9 @@ mod tests {
         let (shore_d, bed_d): (Vec<_>, Vec<_>) = shore.decals.iter().partition(|d| SHORE_DECALS.contains(&d.key.as_str()));
         assert!(shore_d.len() > 100 && bed_d.len() > 100, "{} shore decals, {} bed decals", shore_d.len(), bed_d.len());
         // The ground meets the water 11 m from the middle (past the ribbon's 10): the shore's decals there, the bed's inside it.
-        assert!(shore_d.iter().all(|d| ((d.z - 50.0).abs() - 11.0).abs() < 1.6), "over the waterline");
-        assert!(
-            bed_d.iter().all(|d| BED_DECALS.contains(&d.key.as_str()) && (d.z - 50.0).abs() < 10.6 && (d.z - 50.0).abs() > 7.9),
-            "on the bed"
-        );
+        let off = |d: &&Placed| (d.z - 50.0).abs() - 11.0;
+        assert!(shore_d.iter().all(|d| off(d) > 0.0 && off(d) < 2.6), "on the land side of the waterline");
+        assert!(bed_d.iter().all(|d| BED_DECALS.contains(&d.key.as_str()) && off(d) < -2.0 && off(d) > -5.0), "on the bed");
         assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());
         let at_ford = |x: f32| x > 270.0 && x < 330.0;
         assert!(shore.decals.iter().chain(&shore.bank_pieces).all(|p| !at_ford(p.x)), "none at the ford's banks");

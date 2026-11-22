@@ -270,11 +270,15 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "shores",
-        "shores [x0 z0 x1 z1]",
+        "shores [list] [x0 z0 x1 z1]",
         "make the rivers' and lakes' shores now and log their reeds and stones (in a box: each one)",
         |e, a| {
             let Some(d) = document(e) else { return fail("no tile open") };
-            d.finish_shores();
+            // `list`: as they are now, not made first.
+            if a.first().is_none_or(|w| w != "list") {
+                d.finish_shores();
+            }
+
             let b = a.iter().filter_map(|v| number(v)).collect::<Vec<_>>();
             if b.len() == 4 {
                 let items = d.tile().shore_items_in([b[0], b[1], b[2], b[3]]);
