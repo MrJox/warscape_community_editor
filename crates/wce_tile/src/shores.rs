@@ -45,15 +45,17 @@ pub struct ShoreSettings {
     pub reeds: f32,
     pub stones: f32,
 
-    /// How many decals lie along a river's banks (0 .. 1, [`AMOUNTS`]).
+    /// How many decals lie along a river's shore (muddy rocks over the waterline) and on its bed (mud under the water by its edge)
+    /// (0 .. 1, [`AMOUNTS`]).
     pub decals: f32,
+    pub bed_decals: f32,
     pub shallows: f32,
     pub wet_bank: f32,
 }
 
 impl Default for ShoreSettings {
     fn default() -> Self {
-        Self { reeds: 0.5, stones: 0.25, decals: 0.5, shallows: 0.8, wet_bank: 2.5 }
+        Self { reeds: 0.5, stones: 0.25, decals: 0.5, bed_decals: 0.5, shallows: 0.8, wet_bank: 2.5 }
     }
 }
 
@@ -68,12 +70,12 @@ pub fn amount(name: &str) -> Option<f32> {
 impl ShoreSettings {
     /// The settings of amounts of reeds and stones ([`AMOUNTS`]).
     pub fn of(reeds: f32, stones: f32) -> Self {
-        Self { reeds, stones, decals: 0.0, ..Self::default() }
+        Self { reeds, stones, decals: 0.0, bed_decals: 0.0, ..Self::default() }
     }
 
-    /// With decals along the banks ([`AMOUNTS`]).
-    pub fn with_decals(self, decals: f32) -> Self {
-        Self { decals, ..self }
+    /// With decals along the shore and on the bed ([`AMOUNTS`]).
+    pub fn with_decals(self, decals: f32, bed_decals: f32) -> Self {
+        Self { decals, bed_decals, ..self }
     }
 }
 
@@ -172,14 +174,21 @@ pub struct Shore {
     pub bank_pieces: Vec<Placed>,
 }
 
-/// The decals along a river's banks (the kit's mud, dirt and bank decals; its fords' rocks decal now and then).
-pub const BANK_DECALS: [&str; 6] = [
-    "rigidmodels/decals/battle/global_bank_1.rigid_model_v2",
-    "rigidmodels/decals/battle/global_terrain_mud_01.rigid_model_v2",
-    "rigidmodels/decals/battle/global_terrain_mud_02.rigid_model_v2",
-    "rigidmodels/decals/battle/dirt_1.rigid_model_v2",
-    "rigidmodels/decals/battle/dirt_2.rigid_model_v2",
-    "rigidmodels/decals/battle/global_terrain_rocks_04.rigid_model_v2",
+/// The decals of a river's bed (mud, under the water by its edge) and of its shore (muddy rocks, over the waterline): the kit's, their
+/// keys as its tiles write them.
+pub const BED_DECALS: [&str; 4] = [
+    r"rigidmodels\decals\battle\global_terrain_mud_01.rigid_model_v2",
+    r"rigidmodels\decals\battle\global_terrain_mud_02.rigid_model_v2",
+    r"rigidmodels\decals\battle\mud_01.rigid_model_v2",
+    r"rigidmodels\decals\battle\mud_02.rigid_model_v2",
+];
+pub const SHORE_DECALS: [&str; 6] = [
+    r"rigidmodels\decals\battle\mud_stone01.rigid_model_v2",
+    r"rigidmodels\decals\battle\mud_rock_0.rigid_model_v2",
+    r"rigidmodels\decals\battle\global_terrain_rocks_01.rigid_model_v2",
+    r"rigidmodels\decals\battle\global_terrain_rocks_02.rigid_model_v2",
+    r"rigidmodels\decals\battle\global_terrain_rocks_04.rigid_model_v2",
+    r"rigidmodels\decals\battle\global_terrain_rocks_05.rigid_model_v2",
 ];
 
 /// A long flat rock (10 x 7 m, 2 m high) and a low ground mound (19 x 11 m, 2 m high) laid along a bank, their long side (x) along it.
@@ -392,18 +401,25 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                         (p[0] - dir[1] * r, p[1] + dir[0] * r)
                     };
 
-                    // Over the waterline itself (the seam of water and land, as the ground has it: the bank's profile meets the water
-                    // short of the ribbon's edge), a little into the water and a little onto the bank.
-                    if s.decals > 0.0 && !near_ford && a < s.decals * 1.2 {
+                    // The waterline (the seam of water and land, as the ground has it: the bank's profile meets the water short of the
+                    // ribbon's edge).
+                    let waterline = || {
                         let (_, level, ..) = water.edge(p[0], p[1]);
-                        let waterline = (0..=24).map(|i| -10.0 + 0.5 * i as f32).find(|&o| {
-                            let (x, z) = at(o);
-                            height(x, z) >= level
-                        });
-                        let (x, z) = at(waterline.unwrap_or(0.0) - 1.0 + 2.5 * b);
+                        (0..=24)
+                            .map(|i| -10.0 + 0.5 * i as f32)
+                            .find(|&o| {
+                                let (x, z) = at(o);
+                                height(x, z) >= level
+                            })
+                            .unwrap_or(0.0)
+                    };
+
+                    // The shore: muddy rocks over the waterline, a little into the water and onto the bank.
+                    if s.decals > 0.0 && !near_ford && a < s.decals * 1.2 {
+                        let (x, z) = at(waterline() - 0.5 + 2.0 * b);
                         if !blocked(x, z) {
-                            let key = BANK_DECALS[(c * BANK_DECALS.len() as f32) as usize % BANK_DECALS.len()];
-                            let size = 5.0 + 4.0 * d;
+                            let key = SHORE_DECALS[(c * SHORE_DECALS.len() as f32) as usize % SHORE_DECALS.len()];
+                            let size = 4.0 + 3.0 * d;
                             out.decals.push(Placed {
                                 key: key.to_owned(),
                                 x,
@@ -412,6 +428,17 @@ pub fn place(water: &Water, s: &ShoreSettings, height: &dyn Fn(f32, f32) -> f32,
                                 scale: size,
                                 yaw: yaw + 30.0 * (b - 0.5),
                             });
+                        }
+                    }
+
+                    // The bed: mud under the water, by its edge (seen through the shallows).
+                    let [e1, e2, e3, e4] = cell_numbers(seed ^ 0x1b87_3593, k, if side < 0.0 { 3 } else { 4 });
+                    if s.bed_decals > 0.0 && !near_ford && e1 < s.bed_decals * 1.2 {
+                        let (x, z) = at(waterline() - 2.0 - 5.0 * e2);
+                        if !blocked(x, z) {
+                            let key = BED_DECALS[(e3 * BED_DECALS.len() as f32) as usize % BED_DECALS.len()];
+                            let size = 6.0 + 4.0 * e4;
+                            out.decals.push(Placed { key: key.to_owned(), x, y: height(x, z), z, scale: size, yaw: yaw + 360.0 * e2 });
                         }
                     }
 
@@ -537,11 +564,15 @@ mod tests {
         let ford = crate::river_bed::Ford { at: 300.0, length: 30.0, depth: 0.5 };
         let w = Water::River { line: vec![[0.0, 50.0], [600.0, 50.0]], water: vec![0.0, 0.0], half: vec![10.0, 10.0], fords: vec![ford] };
         let g = |_: f32, z: f32| ((z - 50.0).abs() - 11.0) * 0.5;
-        let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85), &g, &|_, _| false, 9);
-        assert!(shore.decals.len() > 100, "{} decals", shore.decals.len());
-        // The ground meets the water 11 m from the middle (past the ribbon's 10): the decals there.
-        assert!(shore.decals.iter().all(|d| ((d.z - 50.0).abs() - 11.0).abs() < 1.6), "over the waterline");
-        assert!(shore.decals.iter().all(|d| d.scale >= 5.0 && d.scale <= 9.0 && BANK_DECALS.contains(&d.key.as_str())));
+        let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85, 0.85), &g, &|_, _| false, 9);
+        let (shore_d, bed_d): (Vec<_>, Vec<_>) = shore.decals.iter().partition(|d| SHORE_DECALS.contains(&d.key.as_str()));
+        assert!(shore_d.len() > 100 && bed_d.len() > 100, "{} shore decals, {} bed decals", shore_d.len(), bed_d.len());
+        // The ground meets the water 11 m from the middle (past the ribbon's 10): the shore's decals there, the bed's inside it.
+        assert!(shore_d.iter().all(|d| ((d.z - 50.0).abs() - 11.0).abs() < 1.6), "over the waterline");
+        assert!(
+            bed_d.iter().all(|d| BED_DECALS.contains(&d.key.as_str()) && (d.z - 50.0).abs() < 9.1 && (d.z - 50.0).abs() > 3.9),
+            "on the bed"
+        );
         assert!(!shore.bank_pieces.is_empty() && shore.bank_pieces.len() < 40, "now and then: {}", shore.bank_pieces.len());
         let at_ford = |x: f32| x > 270.0 && x < 330.0;
         assert!(shore.decals.iter().chain(&shore.bank_pieces).all(|p| !at_ford(p.x)), "none at the ford's banks");

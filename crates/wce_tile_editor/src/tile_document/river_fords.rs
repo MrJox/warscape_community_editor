@@ -71,6 +71,11 @@ const EDGE_STEP: f64 = 20.0;
 const CROSSING_ALONG: f64 = 10.0;
 const CROSSING_ACROSS: f64 = 30.0;
 
+/// A ford's go region: how far inside its ends along the river, and how far past the water's edges onto the banks (metres), so that the
+/// game's own no-go regions (its steep ground, its water) leave the crossing open.
+const GO_INSIDE: f64 = 2.0;
+const GO_PAST_BANK: f64 = 8.0;
+
 impl super::Tile {
     fn river_line(&self, river: usize) -> Option<Line> {
         let (_, samples) = self.river_ribbons_by_elem().remove(&river)?;
@@ -152,6 +157,19 @@ impl super::Tile {
                 if outline.len() >= 3 {
                     out.push(("AIH_BRIDGE_CROSSING", true, outline));
                 }
+
+                // Its go region: from bank to bank and onto them, its ends following the ford's, a little inside them.
+                let reach = line.half(at) + GO_PAST_BANK;
+                let end = |which: usize, v: f64| {
+                    let (s, e) = f.ends(v * reach / line.half(at).max(1e-6));
+                    let along = if which == 0 { s + GO_INSIDE } else { e - GO_INSIDE };
+                    line.at(along.clamp(0.0, length), v * reach)
+                };
+                let mut go = (0..=16).filter_map(|k| end(0, -1.0 + f64::from(k) / 8.0)).collect::<Vec<_>>();
+                go.extend((0..=16).filter_map(|k| end(1, 1.0 - f64::from(k) / 8.0)));
+                if go.len() >= 3 {
+                    out.push(("GO_REGION", true, go));
+                }
             }
         }
 
@@ -167,6 +185,23 @@ impl super::Tile {
         // Made now (the cache follows the frames' versions: an export right after an edit would read the old ones).
         for (kind, closed, pts) in self.make_river_hint_shapes() {
             let pts = pts.iter().map(file).collect::<Vec<_>>();
+            if kind == "GO_REGION" {
+                let c = pts.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / pts.len() as f64, a[1] + p[1] / pts.len() as f64]);
+                let local = pts.iter().map(|p| wce_foundation::math::Double3::new(p[0] - c[0], 0.0, p[1] - c[1])).collect::<Vec<_>>();
+                let mut g = NewInstance::new("GO_REGION_POLYGON_INSTANCE")
+                    .position(wce_foundation::math::Double3::new(c[0], 0.0, c[1]))
+                    .attr("name", "Ford go region")
+                    .attr("polygon_closed", "1")
+                    .attr("surface_mode", "MSM_LANDSCAPE")
+                    .attr("area", wce_tile::ted_scene::format_number(wce_tile::new_instances::polygon_area(&local)));
+                g.points = local.into_iter().map(NewPoint::at).collect();
+                if let Ok(text) = element_text(&g) {
+                    out.push(text);
+                }
+
+                continue;
+            }
+
             if closed {
                 if let Ok(text) = wce_tile::road_layout::crossing_hint(&pts) {
                     out.push(text);
