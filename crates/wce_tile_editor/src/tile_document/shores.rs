@@ -198,7 +198,8 @@ impl Tile {
                     let n = wce_tile::new_instances::NewInstance::new("ProjectedDecalInstance")
                         .position(at)
                         .attr("key", &p.key)
-                        .attr("scale", wce_tile::new_instances::vector(Double3::new(size, 6.0, -size)))
+                        // 10 m tall, centred on the ground: it lands on the bank even if the ground under it moved a little since.
+                        .attr("scale", wce_tile::new_instances::vector(Double3::new(size, 10.0 * unit, -size)))
                         .attr("surface_mode", "MSM_FREEFORM");
                     let Ok(text) = wce_tile::new_instances::element_text(&n) else { continue };
                     let text = super::draft::turned(&text, p.yaw);
