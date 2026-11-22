@@ -131,6 +131,8 @@ impl Tile {
         }
 
         (self.history_version, self.structure_version).hash(&mut h);
+        // What they are made of (a mod's table over the app's).
+        format!("{:?}", wce_tile::shores::keys()).hash(&mut h);
         h.finish()
     }
 
@@ -185,12 +187,14 @@ impl Tile {
         let fields = p.height.as_ref().map(|hf| wce_tile::texture_rules::Fields::from_height_field(hf, (mx, mz), unit));
         let border = p.border_m();
         let keep_off = self.keep_off();
+        // What they are made of: the tables' (`tables/<game>/shores.toml`).
+        let keys = wce_tile::shores::keys().clone();
         let job = super::jobs::Job::spawn("shores", move || {
             wce_foundation::wce_prof!("tile.shores");
             let height = |x: f32, z: f32| fields.as_ref().map_or(0.0, |f| f.height(f64::from(x) + border, f64::from(z) + border) as f32);
             let mut out = vec![];
             for w in &waters {
-                let shore = wce_tile::shores::place(&w.water, &w.settings, &height, &|x, z| keep_off.blocked(x, z), w.seed);
+                let shore = wce_tile::shores::place(&w.water, &w.settings, &keys, &height, &|x, z| keep_off.blocked(x, z), w.seed);
                 // The bank's decals: projected on the ground, at their size (the kit's ford decals are freeform, as these).
                 for p in &shore.decals {
                     let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
@@ -217,7 +221,7 @@ impl Tile {
                         let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
                         let Some(mut text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
                         // A lily and a splash float: at the water's height, not on the bed.
-                        if kind == "VFXInstance" || wce_tile::shores::LILIES.contains(&p.key.as_str()) {
+                        if kind == "VFXInstance" || keys.lilies.contains(&p.key) {
                             text = super::draft::with_root_attr(&text, "surface_mode", "MSM_FREEFORM");
                         }
 
@@ -305,7 +309,8 @@ impl Tile {
                     .find_map(|k| text.split(k).nth(1)?.split('"').next().map(str::to_owned))
                     .unwrap_or_default();
                 let (y, ground) = ((i.position[1] / unit) as f32, self.terrain_height(x, z));
-                Some(format!("{kind} {key} at ({x:.1}, {z:.1}) y {y:.2}, ground {ground:.2}"))
+                let extra = if std::env::var_os("WCE_SHORE_TEXT").is_some() { format!("\n    {text}") } else { String::new() };
+                Some(format!("{kind} {key} at ({x:.1}, {z:.1}) y {y:.2}, ground {ground:.2}{extra}"))
             })
             .collect()
     }
