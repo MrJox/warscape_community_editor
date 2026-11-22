@@ -172,6 +172,21 @@ pub struct Ford {
     pub depth: f64,
 }
 
+/// How steep a ford's ends slope down to the river's bed (degrees): gentle, so the shallows run into the deep water as a slope.
+pub const FORD_RAMP_SLOPE: f64 = 8.0;
+
+impl Ford {
+    /// Where its held stretch starts and ends along the river at a place across it (`u`: -1 at one edge of the water, 1 at the other):
+    /// not straight across, but bowed out in its middle, skewed and waving a little, by its place (each ford its own shape).
+    pub fn ends(&self, u: f64) -> (f64, f64) {
+        let u = u.clamp(-1.2, 1.2);
+        let amp = (self.length * 0.2).clamp(2.0, 8.0);
+        let phase = self.at * 0.137;
+        let shape = |side: f64| amp * (0.6 * (1.0 - u * u) - 0.3 + 0.35 * u * side * phase.sin() + 0.15 * (2.3 * u + phase * side).sin());
+        (self.at - self.length * 0.5 - shape(-1.0), self.at + self.length * 0.5 + shape(1.0))
+    }
+}
+
 /// The kit's fords' water over their bed (the game's height units; `river_ford/*`: 0.36 .. 0.5).
 pub const FORD_DEPTH: f64 = 0.5;
 
@@ -244,24 +259,35 @@ impl Channel {
         self.across_at(r, water, width, f64::NAN)
     }
 
-    /// How much of a ford is at a place along the river (0 .. 1: held over its length, fading over half of it more each side), and its
-    /// depth.
-    pub fn ford_at(&self, along: f64) -> (f64, f64) {
+    /// How much of a ford is at a place along the river and across it (`u`, [`Ford::ends`]): 0 .. 1, held over its stretch, fading
+    /// down to the river's bed at [`FORD_RAMP_SLOPE`] (over half its length at least); and its depth.
+    pub fn ford_at(&self, along: f64, u: f64) -> (f64, f64) {
+        let v = if self.vertical > 0.0 { self.vertical } else { 1.0 };
         self.fords
             .iter()
             .map(|f| {
-                let d = (along - f.at).abs() - f.length * 0.5;
-                let ramp = (f.length * 0.5).max(10.0);
+                let (s, e) = f.ends(u);
+                let d = if along < s {
+                    s - along
+                } else if along > e {
+                    along - e
+                } else {
+                    0.0
+                };
+                let drop = (self.depth - f.depth).max(0.0) / v;
+                let ramp = (f.length * 0.5).max(10.0).max(drop / FORD_RAMP_SLOPE.to_radians().tan());
                 let t = (1.0 - d / ramp).clamp(0.0, 1.0);
                 (if d <= 0.0 { 1.0 } else { t * t * (3.0 - 2.0 * t) }, f.depth)
             })
             .fold((0.0, self.depth), |a, b| if b.0 > a.0 { b } else { a })
     }
 
-    /// [`Self::across`] at a place along the river (metres; NaN: no fords counted).
+    /// [`Self::across`] at a place along the river (metres; NaN: no fords counted). `r` is signed: which side of the line (a ford's
+    /// ends curve across it).
     pub fn across_at(&self, r: f64, water: f64, width: f64, along: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        let (w, ford_depth) = if along.is_nan() { (0.0, self.depth) } else { self.ford_at(along) };
+        let u = r / (width * 0.5).max(1e-6);
+        let (w, ford_depth) = if along.is_nan() { (0.0, self.depth) } else { self.ford_at(along, u) };
         let depth = self.depth + (ford_depth - self.depth) * w;
         let rise = self.rise() + (Self::rise_of(FORD_BANK_SLOPE, self.vertical) - self.rise()) * w;
         let scale = depth / KIT_DEPTH;
@@ -336,6 +362,8 @@ impl Channel {
                     let p = [origin[0] + k as f64 * step[0], origin[1] + j as f64 * step[1]];
                     let t = if len2 > 1e-12 { (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
                     let r = (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t);
+                    // Which side of the line: a ford's ends curve across the river.
+                    let side = if ab[0] * (p[1] - a[1]) - ab[1] * (p[0] - a[0]) < 0.0 { -1.0 } else { 1.0 };
                     let width = self.width[i] + (self.width[i + 1] - self.width[i]) * t;
                     if r > self.reach(width) {
                         continue;
@@ -343,7 +371,7 @@ impl Channel {
 
                     let at = along[i] + (along[i + 1] - along[i]) * t;
                     let water = self.water[i] + (self.water[i + 1] - self.water[i]) * t;
-                    let v = self.across_at(r, water, width, at);
+                    let v = self.across_at(r * side, water, width, at);
                     let c = &mut out[j * w + k];
                     if v < c.bed {
                         c.bed = v;
@@ -352,7 +380,7 @@ impl Channel {
                     // The ford and the water of the nearest place of the line.
                     if r < c.near {
                         c.near = r;
-                        c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at).0 };
+                        c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at, r * side / (width * 0.5).max(1e-6)).0 };
                         c.wet = r <= width * 0.5;
                         c.half = width * 0.5;
                     }
