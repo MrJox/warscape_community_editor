@@ -35,9 +35,16 @@ proposing; the user's answers of 2026-11-22 are in Decisions and Order. Nothing 
   stones, `gaul_rock_02` and `smallrock_01` bank stones (its `rock_0*_small` are 12 m), no mounds (the bank lists may be empty now),
   `mud_rock_0` / `atlantic_mud_3` shore decals and `mud_01/02`, `global_dirt_5/3` bed decals (normal maps in alpha and green; seen
   on and off by pixel diff). Open: Rome 2's kit has no vegetation parameters, so its exports carry the packed tree lists and a
-  tile's `VEGETATION_INSTANCE`s (the reeds and lilies, as any placed vegetation) do not reach the game; Snap river ends now leaves a
-  kit river's ends that already meet their links (centring them bent a Rome 2 kit river off its bed: 0.8 m over 39 m); Thrones of Britannia's table is still
-  Attila's (not installed).
+  tile's `VEGETATION_INSTANCE`s (the reeds and lilies, as any placed vegetation) do not reach the game (user 2026-11-22: a separate
+  development, later). Snap river ends now leaves a kit river's ends that already meet their links (centring them bent a Rome 2
+  kit river off its bed: 0.8 m over 39 m).
+- **To do, Thrones of Britannia** (user 2026-11-22: tested later, once installed; not on this machine): its shores table
+  (`tables/thrones_of_britannia/shores.toml`) is still Attila's keys, marked UNCHECKED. Check it as Rome 2's was: each key in its
+  packs (`vfs_ls` listing; vegetation keys in its tree/vegetation tables); the models' textures in its packs (a missing one draws
+  white, as Rome 2's `boulder_small_*`) and sizes (`wce_terrain_io` example `model_bounds`, against Attila's: stones 1..3, bank
+  stones 1.4..7); the decals' normal maps in alpha and green (R ~255, G ~127, A ~127 averages of `_normal`/`_parallax`); then in the
+  editor on one of its plain tiles: a river with a ford, decals on and off by pixel diff, a save to a mod pack decompiled back.
+  Also measure its river tiles (`tile_decompile_check --filter river`, `river_link_profile`) for its links and heights.
 - Step 10 (shores) built: reeds and stones along the rivers' and lakes' water (`wce_tile::shores`), derived and exported as the biome
   areas' contents are, on for the editor's rivers and lakes.
 
