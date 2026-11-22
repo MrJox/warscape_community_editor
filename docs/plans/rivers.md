@@ -41,8 +41,15 @@ river tiles (`river/*`, `river_ford/*`, `river_mouth/*`, the river settlements s
 - **R4. Neighbours that disagree**: on the kit's battle maps, do two river tiles that meet have ends that agree (height, width, place) to
   within what tolerance? That gives the check's thresholds and says whether "match the neighbour" is ever needed over "match the profile".
 
-Each answer goes in docs/re/tile_links.md (R1, R2, R4) and docs/re/battle_maps.md (R3), with the numbers. A short BOB run on a scratch copy
-settles R2 if the kit's exports are stale (osgiliath minor with its bed raised at one link, exported, compared).
+**Settled 2026-11-22** (docs/re/tile_links.md, "Rivers at their links"; `examples/river_link_profile.rs`):
+- R1: two standard connections. `river`: bed -12 m, water -6.2 m in the files (-7.0 in the settlements), width 45. `river_shallow`: bed
+  -1 m, water +0.42 m, width 45. The end goes through the cell's middle, square to the edge, about 6 m past it.
+- R2: the export **forces** the linking tile's cross-section (`river/1x1_blend`, `river_shallow/1x1_blend`) along the link's cell,
+  whatever the tile has there, and fades back to the tile's heights over about 64 m. So a bed that already has that cross-section over
+  the link's cell comes out unchanged; one that does not gets a step where the export's blend meets it.
+- R3: not settled. The kit's point order follows `is_entry` in the deep rivers and runs the other way in every shallow one: an in-game
+  look comes before any flow check (step 3).
+- R4: kit neighbours always meet in the bed (the export sees to it); their water may step 0.8 m. Tolerance for the check: 1 m.
 
 ## 1. River link snap (the user's request)
 
@@ -50,7 +57,7 @@ settles R2 if the kit's exports are stale (osgiliath minor with its bed raised a
 goes onto it; the river targets show as rings while a river is drawn or selected; the snap chip gets *snap rivers to river links* (on by
 default); `snap rivers on|off`. The existing *Snap river ends* button stays for rivers already there, and does the full snap below.
 
-**What a snapped end gets** (the profile from R1, or the neighbour's end when the map context has one):
+**What a snapped end gets** (the standard connection of the link's set, R1; or the neighbour's end when the map context has one):
 - its place: the cell's centre along the edge, the overshoot past it (today's `RiverEnd::snapped`);
 - its **height**: the link's water height, written in the river's own frame (a river with `wce_river_height` in metres; an old kit river by
   its file's factor, so that saving does not shift its other points);
@@ -59,9 +66,10 @@ default); `snap rivers on|off`. The existing *Snap river ends* button stays for 
   river's own over the last segment rather than jumping at the end point.
 
 **The terrain at the join.** A river owns a height layer, as a road does (not listed, not editable by hand, made again when the river or
-the ground under it changes, after the user's layers). For this step it holds only the **joins**: over each snapped end's cell, the bed's
-cross-section from R2 (depth under the water, bank slope, width), blended into the user's ground over a run-in (64 m by default, the
-export's fade zone), so that the edge matches what the neighbour's edge has whatever the user sculpted next to it. A snapped end is marked
+the ground under it changes, after the user's layers). For this step it holds only the **joins**: over each snapped end's cell, the linking tile's
+cross-section (R2: the export writes it there anyway), at full strength for the first 64 m in (the export's blend zone, so the export
+changes nothing there) and blended into the user's ground over the next 64 m along the river. The cross-sections are tables taken from
+the kit's measures (deep and shallow), not read from the kit at run time. A snapped end is marked
 on its point (`wce_link="x,y"`), so the join follows if the river is moved and goes if it is unsnapped (dragged off the ring).
 Step 2 grows the same layer into the whole bed.
 
