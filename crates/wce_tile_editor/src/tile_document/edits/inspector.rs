@@ -48,6 +48,7 @@ impl TileDocument {
 
         self.variation_rows(e, ins);
         self.road_role_row(e, ins);
+        self.river_bed_rows(e, ins);
         let t = self.tile();
         let sc = t.tscene();
         if let Some(k) = sc.get(e, "key").filter(|_| sc.type_of(e) == "BUILDING_INSTANCE") {
@@ -92,6 +93,9 @@ impl TileDocument {
 
         // A stage's group: the Prefab tool's rows (its ground's settings), below.
         shown.extend([wce_tile::prefab_stage::STAGE_ATTR, wce_tile::prefab_stage::NORMALIZE_ATTR, wce_tile::prefab_stage::FEATHER_ATTR]);
+
+        // A river's bed has its own rows, above; its id is the editor's.
+        shown.extend(super::super::river_beds::RIVER_ROW_ATTRS);
 
         // A reference's own are the tool's rows, below.
         if matches!(tag.as_str(), super::super::REF_HUMAN | super::super::REF_UNIT | super::super::REF_SHIP) {

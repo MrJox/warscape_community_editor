@@ -673,12 +673,26 @@ impl Tile {
             return 1.0;
         }
 
+        self.river_factors(elem).height
+    }
+
+    /// What a river's point widths are multiplied by in its file, which is the width the game draws it (`river_files::Factors`: today's
+    /// TEd 0.5; the kit's standard 45 m connection is a point width of 90). 1 in a campaign tile.
+    pub(crate) fn river_width_factor(&self, elem: usize) -> f64 {
+        if !self.rivers_keep_heights() {
+            return 1.0;
+        }
+
+        self.river_factors(elem).width
+    }
+
+    fn river_factors(&self, elem: usize) -> wce_tile::river_files::Factors {
         let sc = self.tscene();
         let file = wce_tile::river_files::rivers(sc)
             .iter()
             .position(|&r| r == elem)
             .and_then(|n| std::fs::read(self.project.dir.join(format!("river_spline{n}.xml"))).ok());
-        wce_tile::river_files::Factors::of(sc, elem, file.as_deref()).height
+        wce_tile::river_files::Factors::of(sc, elem, file.as_deref())
     }
 
     /// Each river's points and its samples along it (world metres), as its water is drawn (`rebuild_water`) and as a road crossing it finds it.
@@ -689,8 +703,8 @@ impl Tile {
         // drawn from its file when it has one (and is not edited since), as the game has it: many of the kit's campaign tile.ted rivers were edited after their file
         // was written (4x2_varient1's: 9 straight points 37 m up, its file 32 points along the carved bed, 1.48 m down), and the file's
         // width is the full width of BOB's ribbon (the packs' river block has 70 for a file's 70), TEd's times 5 or times 1 by the TEd that
-        // wrote it (`river_files::Factors`). Without a file: TEd's points, the width times 5. A battle river's are TEd's, its width the full
-        // width in metres (docs/re/water.md).
+        // wrote it (`river_files::Factors`). Without a file: TEd's points, the width times 5. A battle river's are TEd's, its width its
+        // file's (the point's times the file's factor, 0.5 today: docs/re/water.md).
         let across = wce_tile::tile_project::height_unit(&self.project.dir);
         let campaign = wce_tile::tile_project::is_campaign_tile(&self.project.dir);
         let mut river_index = 0;
@@ -711,7 +725,9 @@ impl Tile {
             let text = (campaign && unedited).then(|| std::fs::read(&file).ok()).flatten();
             let from_file =
                 text.as_deref().and_then(|t| file_river_points(t, wce_tile::river_files::Factors::of(sc, e, Some(t)).height, u));
-            let wide = if campaign { 1.0 / across } else { 1.0 };
+            // A battle river's ribbon is its file's width (the game's: BOB's river block has the file's widths), the point's times the
+            // file's factor (today's TEd 0.5: the kit's points are 90 for the game's 45).
+            let wide = if campaign { 1.0 / across } else { self.river_width_factor(e) };
             let w = world_transform(sc, e);
             let mut pts = from_file.unwrap_or_default();
             let ted = pts.is_empty();

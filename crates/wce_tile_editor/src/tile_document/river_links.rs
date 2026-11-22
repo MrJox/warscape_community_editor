@@ -226,7 +226,8 @@ impl TileDocument {
                 .polygon_points(en.elem)
                 .get(en.point)
                 .and_then(|&p| t.tscene().get(p, "width"))
-                .and_then(|v| v.parse::<f32>().ok());
+                .and_then(|v| v.parse::<f32>().ok())
+                .map(|w| w * t.river_width_factor(en.elem) as f32);
             let my_y = en.at.y / t.river_height_factor(en.elem) as f32;
             let (d_along, step) = ((along(n.at) - along(en.at)).abs(), (n.at.y - my_y).abs());
             let d_width = width.map_or(0.0, |w| (w - n.width).abs());
@@ -287,8 +288,8 @@ impl TileDocument {
         self.set_links("Add river link", targets, links, g)
     }
 
-    /// Moves a river's end to `at` (world metres, its height the file's) with a width: the neighbour's, as `RiverFix::MatchNeighbour`
-    /// says. Its handle keeps its offset. One undo entry.
+    /// Moves a river's end to `at` (world metres, its height the file's) with a width (the file's): the neighbour's, as
+    /// `RiverFix::MatchNeighbour` says. Its handle keeps its offset. One undo entry.
     ///
     /// # Errors
     ///
@@ -300,6 +301,7 @@ impl TileDocument {
         let sc = t.tscene();
         let Some(&p) = sc.polygon_points(river).get(point) else { return Err("no such point".to_owned()) };
         let at = Float3::new(at.x, at.y * t.river_height_factor(river) as f32, at.z);
+        let width = f64::from(width) / t.river_width_factor(river);
         let (old, new) = (sc.point_position(p).unwrap_or_default(), t.to_local(river, at));
         let d = new - old;
         let handles = ["controlIn", "controlOut"].map(|h| (h, sc.get(p, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
@@ -313,7 +315,7 @@ impl TileDocument {
             }
         }
 
-        sc.set_attr(p, "width", &wce_tile::ted_scene::format_number(f64::from(width)));
+        sc.set_attr(p, "width", &wce_tile::ted_scene::format_number(width));
         let items = vec![item_of(river)];
         self.push_splice_touching("Match the neighbour's river".to_owned(), mark, items.clone(), items, vec![river]);
         Ok(())
@@ -456,7 +458,8 @@ impl TileDocument {
         vec![
             ("position", point_text(t.to_local(e, at))),
             (handle, point_text(t.to_local(e, h))),
-            ("width", wce_tile::ted_scene::format_number(l.connection.width)),
+            // The connection's width is the file's (the game's): the point's is that over the file's factor.
+            ("width", wce_tile::ted_scene::format_number(l.connection.width / t.river_width_factor(e))),
             (LINK_ATTR, format!("{},{}", l.cell.0, l.cell.1)),
         ]
     }

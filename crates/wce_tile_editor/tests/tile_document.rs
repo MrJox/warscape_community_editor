@@ -2981,6 +2981,8 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     let line =
         vec![Float3::new(-6.0, y(&d, 0.0, 192.0), 192.0), Float3::new(100.0, 0.0, 120.0), Float3::new(192.0, y(&d, 192.0, 0.0), -6.0)];
     let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    // The joins alone (its own bed is another test's).
+    d.set_attribute(r, "wce_bed", "0");
     let away = (y(&d, 160.0, 160.0), y(&d, 10.0, 40.0));
     assert_eq!(d.snap_river_to_links(r).unwrap(), 2);
     let world = d.tile().polygon_world_points(r);
@@ -2991,7 +2993,8 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     let points = sc.polygon_points(r);
     let attr = |p: usize, n: &str| sc.get(p, n).unwrap_or_default();
     assert_eq!((attr(points[0], "wce_link"), attr(points[2], "wce_link")), ("0,0".to_owned(), "1,1".to_owned()));
-    assert_eq!((attr(points[0], "width"), attr(points[2], "width")), ("45".to_owned(), "45".to_owned()));
+    // The file's width 45 (the kit's), the point's 90 (today's TEd writes half of it).
+    assert_eq!((attr(points[0], "width"), attr(points[2], "width")), ("90".to_owned(), "90".to_owned()));
     assert_eq!(sc.get(r, "wce_river_id").as_deref(), Some("1"));
 
     // The first end's handle goes square into the tile.
@@ -3012,7 +3015,8 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     // Undone, the river is as drawn and its layer goes.
     d.history_mut().undo();
     d.tile_mut().finish_road_jobs();
-    assert_eq!(d.tile().tscene().get(r, "wce_river_id"), None);
+    let sc = d.tile().tscene();
+    assert_eq!(sc.get(sc.polygon_points(r)[0], "wce_link"), None);
     assert!((y(&d, 4.0, 192.0) + 11.9).abs() > 1.0, "the ground back: {}", y(&d, 4.0, 192.0));
     d.history_mut().redo();
 
@@ -3051,6 +3055,10 @@ fn river_link_problems_come_with_their_fixes_and_the_seams_are_checked_against_t
 
     // The seams: a neighbour's river 20 m along the edge, 2 m higher and 15 m narrower than the west end.
     let n = NeighbourEnd { at: Float3::new(6.0, -4.2, 212.0), width: 30.0 };
+    let point_width = |d: &TileDocument| {
+        let sc = d.tile().tscene();
+        sc.get(sc.polygon_points(r)[0], "width").unwrap_or_default()
+    };
     let seams = d.river_seam_problems(&[n]);
     let west = seams.iter().find(|p| p.message.contains("(0, 0)")).expect("the west seam");
     let Some(RiverFix::MatchNeighbour { river, point, at, width }) = west.fix.clone() else { panic!("{west:?}") };
@@ -3058,7 +3066,43 @@ fn river_link_problems_come_with_their_fixes_and_the_seams_are_checked_against_t
     d.match_river_end(river, point, at, width).unwrap();
     let first = d.tile().polygon_world_points(r)[0];
     assert!((first.x + 6.0).abs() < 1e-3 && (first.z - 212.0).abs() < 1e-3 && (first.y + 4.2).abs() < 1e-3, "{first:?}");
+    assert_eq!(point_width(&d), "60", "the file's 30");
     let seams = d.river_seam_problems(&[n]);
     assert!(seams.iter().all(|p| !p.message.contains("(0, 0)")), "{seams:?}");
     assert!(seams.iter().any(|p| p.message.contains("(1, 0)") && p.message.contains("no river")), "the east link has no neighbour");
+}
+
+#[test]
+fn a_drawn_river_cuts_its_bed_under_its_water_and_the_kits_do_not() {
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    // Across the middle, away from the links.
+    let (a, b) = (Float3::new(60.0, y(&d, 60.0, 128.0), 128.0), Float3::new(200.0, y(&d, 200.0, 128.0), 128.0));
+    let ground = y(&d, 130.0, 128.0);
+    let far = y(&d, 130.0, 240.0);
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!((sc.get(r, "wce_bed").as_deref(), sc.get(r, "wce_river_id").is_some()), (Some("1"), true));
+    let water = d.tile().polygon_world_points(r)[0].y;
+    assert!((water - (a.y - 2.0)).abs() < 1e-3, "drawn 2 m under the ground: {water} against {}", a.y);
+
+    d.tile_mut().finish_road_jobs();
+    let bed = y(&d, 130.0, 128.0);
+    let width = 45.0f64; // the template's 90, its file's 45
+    let depth = wce_tile::river_bed::BedSettings::default_depth(width) as f32;
+    let water_mid = (a.y + b.y) * 0.5 - 2.0;
+    assert!(
+        bed < ground - 2.0 && (bed - (water_mid - depth)).abs() < 0.6,
+        "the bed: {bed}, ground {ground}, water {water_mid}, depth {depth}"
+    );
+    assert_eq!(y(&d, 130.0, 240.0), far, "far from it");
+
+    // Off: the ground comes back (the layer goes, nothing joins).
+    d.set_attribute(r, "wce_bed", "0");
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 130.0, 128.0) - ground).abs() < 1e-3);
+    d.history_mut().undo();
+    d.tile_mut().finish_road_jobs();
+    assert!((y(&d, 130.0, 128.0) - bed).abs() < 1e-3, "undo cuts it again");
 }
