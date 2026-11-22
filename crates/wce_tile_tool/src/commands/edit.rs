@@ -595,9 +595,16 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 let Some(d) = document(e) else { return fail("no tile open") };
                 // A procedural road's or a river's point snaps to a link as a click's does.
                 let p = Float3::new(x, d.tile().terrain_height(x, z), z);
-                let p = if t.road_link_snapping(None, d) { t.road_link_near(d, None, p).unwrap_or(p) } else { p };
-                t.draw_pts.push(p);
-                ok(format!("{} points", t.draw_pts.len()))
+                let hit = if t.road_link_snapping(None, d) { t.link_hit(d, None, p) } else { None };
+                t.draw_pts.push(hit.map_or(p, |h| h.0));
+                let n = t.draw_pts.len();
+                // A road or a river ends at a tile link it is drawn onto, as a click there does.
+                if t.ends_at_link(hit.is_some_and(|h| h.1)) {
+                    t.finish_drawing(e);
+                    return ok(format!("{n} points, finished at a link"));
+                }
+
+                ok(format!("{n} points"))
             })
         },
     );

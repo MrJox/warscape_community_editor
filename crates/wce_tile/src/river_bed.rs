@@ -107,6 +107,29 @@ impl Join {
         (w > 0.0).then(|| (self.connection.ground_across(along), w))
     }
 
+    /// How much of its bed's texture goes at a place: within the join, the river's width and a bank ([`paint_band`]). The rest of the
+    /// join only levels the ground to the connection's.
+    pub fn paint(&self, x: f64, z: f64) -> f64 {
+        let (dx, dz) = (x - self.at[0], z - self.at[1]);
+        let d = dx * self.inward[0] + dz * self.inward[1];
+        let along = dx * -self.inward[1] + dz * self.inward[0];
+        if d > JOIN_HELD + JOIN_FADE {
+            return 0.0;
+        }
+
+        paint_band(along.abs() - self.connection.width * 0.5, PAINT_BANK)
+    }
+
+    /// The ground type under its water at a place: the connection's (deep for the deep river), within its width.
+    pub fn water_ground(&self, x: f64, z: f64) -> Option<WaterGround> {
+        let (dx, dz) = (x - self.at[0], z - self.at[1]);
+        let d = dx * self.inward[0] + dz * self.inward[1];
+        let along = dx * -self.inward[1] + dz * self.inward[0];
+        (d <= JOIN_HELD + JOIN_FADE && along.abs() <= self.connection.width * 0.5).then_some(
+            if self.connection.water - self.connection.profile[0] >= DEEP_GROUND_DEPTH { WaterGround::Deep } else { WaterGround::Shallow },
+        )
+    }
+
     /// The bounds it touches (x0, z0, x1, z1).
     pub fn bounds(&self) -> [f64; 4] {
         let r = (JOIN_HELD + JOIN_FADE).hypot(JOIN_HALF + JOIN_SIDE_FADE);
@@ -173,19 +196,46 @@ pub struct Channel {
 
 /// A place of a bed's grid ([`Channel::fill_cells`]): the lowest bed over it (infinite where none reaches), how much of a ford is there
 /// (at the nearest place of the line) and whether it is under the river's water (within half its width of its line), and how far the
-/// line is.
+/// line is and the river's half width there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BedCell {
     pub bed: f64,
     pub ford: f64,
     pub wet: bool,
     pub near: f64,
+    pub half: f64,
 }
 
 impl Default for BedCell {
     fn default() -> Self {
-        Self { bed: f64::INFINITY, ford: 0.0, wet: false, near: f64::INFINITY }
+        Self { bed: f64::INFINITY, ford: 0.0, wet: false, near: f64::INFINITY, half: 0.0 }
     }
+}
+
+/// How far past a river's edge (or a lake's outline) its bed's texture goes whole, and how far it then fades out (metres).
+pub const PAINT_BANK: f64 = 4.0;
+pub const PAINT_FADE: f64 = 4.0;
+
+/// The bed's texture `past` metres past the water's edge: whole up to [`PAINT_BANK`], fading out over [`PAINT_FADE`].
+fn paint_band(past: f64, bank: f64) -> f64 {
+    if past <= bank {
+        1.0
+    } else if past >= bank + PAINT_FADE {
+        0.0
+    } else {
+        1.0 - smooth((past - bank) / PAINT_FADE)
+    }
+}
+
+/// How deep a bed (the game's height units, under the water) is for its ground to be *deep water* rather than *shallow water* (the kit's
+/// `river` tiles: deep water under a bed 5.7 deep; `river_shallow`: shallow water under one 1.4 deep).
+pub const DEEP_GROUND_DEPTH: f64 = 3.0;
+
+/// The ground type a river's water gives the ground under it, as the kit's river tiles have it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaterGround {
+    Deep,
+    Shallow,
 }
 
 impl Channel {
@@ -304,6 +354,7 @@ impl Channel {
                         c.near = r;
                         c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at).0 };
                         c.wet = r <= width * 0.5;
+                        c.half = width * 0.5;
                     }
                 }
             }
@@ -313,20 +364,26 @@ impl Channel {
     }
 }
 
-/// A lake's basin: dug inside its outline (x, z) to `depth` under its `water` (the game's units), its sides climbing `rise` a metre in
-/// from the outline (the game's units).
+/// A lake's ground: its basin dug inside its outline (x, z) to `depth` under its `water` (the game's units; 0: none), its sides
+/// climbing `rise` a metre in from the outline (the game's units); and its shore, the ground outside the outline lower than `rim` over
+/// the water raised to it within `shore` metres of the outline, fading out (0: none), so that the water stays inside it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Basin {
     pub outline: Vec<[f64; 2]>,
     pub water: f64,
     pub depth: f64,
     pub rise: f64,
+    pub shore: f64,
+    pub rim: f64,
+
+    /// The water plane's rectangle (x0, z0, x1, z1; empty: none): the shore holds over all of it outside the outline (water shows
+    /// wherever the ground is under it), then fades over `shore` metres past it.
+    pub plane: [f64; 4],
 }
 
 impl Basin {
-    /// The basin's floor at a place: inside the outline, the water less the depth, or less the distance from the outline times the rise
-    /// nearer its edge; none outside.
-    pub fn floor(&self, x: f64, z: f64) -> Option<f64> {
+    /// Whether a place is inside the outline, and how far the outline is.
+    fn place(&self, x: f64, z: f64) -> Option<(bool, f64)> {
         let n = self.outline.len();
         if n < 3 {
             return None;
@@ -346,13 +403,66 @@ impl Basin {
             near = near.min((x - a[0] - dx * t).hypot(z - a[1] - dz * t));
         }
 
-        inside.then(|| self.water - self.depth.min(near * self.rise))
+        Some((inside, near))
+    }
+
+    /// The basin's floor at a place: inside the outline, the water less the depth, or less the distance from the outline times the rise
+    /// nearer its edge; none outside, or without a basin.
+    pub fn floor(&self, x: f64, z: f64) -> Option<f64> {
+        let (inside, near) = self.place(x, z)?;
+        (inside && self.depth > 0.0).then(|| self.water - self.depth.min(near * self.rise))
+    }
+
+    /// The lake's ground at a place over `below` (what lies under it): dug to the floor inside, raised to the rim on the shore; none
+    /// where it leaves the ground as it is.
+    pub fn shape(&self, x: f64, z: f64, below: f64) -> Option<f64> {
+        let (inside, near) = self.place(x, z)?;
+        if inside {
+            let f = (self.depth > 0.0).then(|| self.water - self.depth.min(near * self.rise))?;
+            return (f < below).then_some(f);
+        }
+
+        let top = self.water + self.rim;
+        let w = self.shore_weight(x, z, near);
+        if w <= 0.0 || below >= top {
+            return None;
+        }
+
+        Some(below + (top - below) * w)
+    }
+
+    /// How much of the shore holds at a place outside the outline `near` metres from it: all of it over the plane, fading over `shore`
+    /// metres past the plane and the outline.
+    fn shore_weight(&self, x: f64, z: f64, near: f64) -> f64 {
+        if self.shore <= 0.0 {
+            return 0.0;
+        }
+
+        let [x0, z0, x1, z1] = self.plane;
+        let from_plane = if x1 > x0 && z1 > z0 {
+            let (dx, dz) = ((x0 - x).max(x - x1).max(0.0), (z0 - z).max(z - z1).max(0.0));
+            dx.hypot(dz)
+        } else {
+            f64::INFINITY
+        };
+
+        let d = near.min(from_plane);
+        if d >= self.shore { 0.0 } else { 1.0 - smooth(d / self.shore) }
+    }
+
+    /// Whether it changes the ground at a place: inside its outline (with a basin) or on its shore.
+    pub fn reaches(&self, x: f64, z: f64) -> bool {
+        self.place(x, z).is_some_and(|(inside, near)| (inside && self.depth > 0.0) || (!inside && self.shore_weight(x, z, near) > 0.0))
     }
 
     fn bounds(&self) -> Option<[f64; 4]> {
+        let m = self.shore.max(0.0);
+        let [x0, z0, x1, z1] = self.plane;
+        let plane = (x1 > x0 && z1 > z0).then_some([x0 - m, z0 - m, x1 + m, z1 + m]);
         self.outline
             .iter()
-            .map(|p| [p[0], p[1], p[0], p[1]])
+            .map(|p| [p[0] - m, p[1] - m, p[0] + m, p[1] + m])
+            .chain(plane)
             .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
     }
 }
@@ -385,11 +495,11 @@ impl RiverBed {
             out = Some(base + (target - base) * cell.ford);
         }
 
-        // A lake's basin only digs.
-        if let Some(f) = self.basin.as_ref().and_then(|b| b.floor(x, z)) {
+        // A lake's basin digs; its shore is raised to keep the water in.
+        if let Some(b) = self.basin.as_ref() {
             let base = out.unwrap_or(below);
-            if f < base {
-                out = Some(f);
+            if let Some(h) = b.shape(x, z, base) {
+                out = Some(h);
             }
         }
 
@@ -401,6 +511,40 @@ impl RiverBed {
         }
 
         out
+    }
+
+    /// How much of the bed's texture goes at a place (0 .. 1): along a river that cuts its bed (or at its fords), its width and a bank
+    /// past it, fading out ([`paint_band`]) however far its banks cut into a hill; in a join, its river's ([`Join::paint`]); in a lake's
+    /// basin and a bank round it.
+    pub fn paint(&self, x: f64, z: f64, cell: BedCell) -> f64 {
+        let mut w = 0.0f64;
+        if let Some(c) = &self.channel
+            && cell.near.is_finite()
+            && (c.cuts || cell.ford > 0.0)
+        {
+            w = w.max(paint_band(cell.near - cell.half, PAINT_BANK));
+        }
+
+        if let Some(b) = &self.basin
+            && let Some((inside, near)) = b.place(x, z)
+        {
+            w = w.max(if inside { 1.0 } else { paint_band(near, PAINT_BANK * 0.5) });
+        }
+
+        self.joins.iter().fold(w, |w, j| w.max(j.paint(x, z)))
+    }
+
+    /// The ground type under the water at a place, as the kit's river tiles have it: *deep water* under a river's water where its bed
+    /// is deep ([`DEEP_GROUND_DEPTH`]), *shallow water* where it is not or at a ford; a join's connection's. None for a lake (the kit's
+    /// lakes have none) or dry ground.
+    pub fn water_ground(&self, x: f64, z: f64, cell: BedCell) -> Option<WaterGround> {
+        let from_joins = self.joins.iter().find_map(|j| j.water_ground(x, z));
+        let Some(c) = &self.channel else { return from_joins };
+        if !cell.wet || !(c.cuts || cell.ford > 0.0) {
+            return from_joins;
+        }
+
+        Some(if cell.ford >= 0.5 || c.depth < DEEP_GROUND_DEPTH { WaterGround::Shallow } else { WaterGround::Deep })
     }
 
     /// [`Self::height_with`] without a bed (the joins alone).
@@ -438,6 +582,43 @@ mod tests {
         assert!((DEEP.ground_across(12.0) - (-11.6 + (-6.8 + 11.6) * 0.5)).abs() < 1e-9);
         assert_eq!(DEEP.ground_across(200.0), 0.0);
         assert_eq!(SHALLOW.ground_across(4.0), -1.0);
+    }
+
+    #[test]
+    fn a_join_paints_its_river_not_all_the_ground_it_levels() {
+        let j = Join { at: [0.0, 192.0], inward: [1.0, 0.0], connection: DEEP };
+        let bed = RiverBed { joins: vec![j], ..Default::default() };
+        let none = BedCell::default();
+        assert_eq!(bed.paint(10.0, 192.0, none), 1.0, "the river");
+        assert_eq!(bed.paint(10.0, 192.0 + 25.0, none), 1.0, "its bank");
+        assert!(bed.paint(10.0, 192.0 + 28.0, none) > 0.0 && bed.paint(10.0, 192.0 + 28.0, none) < 1.0, "fading");
+        assert_eq!(bed.paint(10.0, 192.0 + 60.0, none), 0.0, "levelled, not painted");
+        assert!(bed.height_at(10.0, 192.0 + 60.0, 5.0).is_some(), "but levelled there");
+        assert_eq!(bed.paint(100.0, 192.0, none), 0.0, "past the join");
+        assert_eq!(bed.water_ground(10.0, 192.0, none), Some(WaterGround::Deep));
+        assert_eq!(bed.water_ground(10.0, 192.0 + 30.0, none), None);
+    }
+
+    #[test]
+    fn a_lakes_basin_digs_inside_and_raises_its_shore() {
+        let b = Basin {
+            outline: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+            water: -2.0,
+            depth: 4.0,
+            rise: 1.0,
+            shore: 12.0,
+            rim: 0.5,
+            plane: [-8.0, -8.0, 108.0, 108.0],
+        };
+        assert_eq!(b.shape(50.0, 50.0, 3.0), Some(-6.0), "dug to its depth");
+        assert_eq!(b.shape(50.0, 50.0, -10.0), None, "lower ground stays");
+        assert_eq!(b.shape(2.0, 50.0, 3.0), Some(-4.0), "its side climbs to the outline");
+        assert_eq!(b.shape(100.0001, 50.0, -5.0).map(|h| (h * 1e3).round() / 1e3), Some(-1.5), "the shore at the rim");
+        assert!(b.shape(112.0, 50.0, -5.0).is_some_and(|h| h > -5.0 && h < -1.5), "fading out past the plane");
+        assert_eq!(b.shape(125.0, 50.0, -5.0), None, "past the shore");
+        assert_eq!(b.shape(107.0, 107.0, -5.0).map(|h| (h * 1e3).round() / 1e3), Some(-1.5), "over the plane's corner, held");
+        assert_eq!(b.shape(104.0, 50.0, 0.0), None, "ground over the rim stays");
+        assert!(b.reaches(50.0, 50.0) && b.reaches(105.0, 50.0) && !b.reaches(125.0, 50.0));
     }
 
     #[test]

@@ -42,8 +42,29 @@ pub const RAMPS: [(&str, &str); 4] =
     [("width", "width (m)"), ("flow_speed", "flow speed"), ("foam_amount", "foam"), ("terrain_offset", "terrain offset (m)")];
 
 impl TileDocument {
-    /// A river's profile, none when it is not drawn (fewer than 2 points, another variation's).
+    /// A river's profile, none when it is not drawn (fewer than 2 points, another variation's). The last one asked for is kept until
+    /// the next edit or change of the ground.
     pub fn river_profile(&self, river: usize) -> Option<RiverProfile> {
+        use std::hash::{Hash, Hasher};
+        use wce_editor_core::document::Document;
+        let t = self.tile();
+        let key = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (river, self.history().version(), t.structure_version, t.project.height.as_ref().map(|f| f.version())).hash(&mut h);
+            h.finish()
+        };
+        if let Some((k, p)) = self.profile_cache.borrow().as_ref()
+            && *k == key
+        {
+            return Some(p.clone());
+        }
+
+        let p = self.make_river_profile(river)?;
+        *self.profile_cache.borrow_mut() = Some((key, p.clone()));
+        Some(p)
+    }
+
+    fn make_river_profile(&self, river: usize) -> Option<RiverProfile> {
         let t = self.tile();
         let (_, samples) = t.river_ribbons_by_elem().remove(&river)?;
         let mut along = 0.0;

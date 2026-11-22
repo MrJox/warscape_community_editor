@@ -285,6 +285,8 @@ impl Tile {
         let unit = self.unit() as f32;
         let extent = self.project.extent_z() as f32;
         let mut added = 0;
+        let water = self.water_mask();
+        let mut wet = 0usize;
         for (key, patches) in list.iter() {
             // The game skips a key whose model it can't find too (settlement_2 has none in any climate).
             let Some(model) = self.grass_model(key) else {
@@ -303,6 +305,11 @@ impl Tile {
 
                 // Not through a road: a tile's packed list was made before it, and the blend map alone need not rule a texture out.
                 if self.road_at(f64::from(x), f64::from(z)) {
+                    continue;
+                }
+
+                if water.under(x, z) {
+                    wet += 1;
                     continue;
                 }
 
@@ -332,6 +339,10 @@ impl Tile {
             }
 
             added += 1;
+        }
+
+        if wet > 0 {
+            log::info(format!("grass: {wet} patches under water left out"));
         }
 
         added

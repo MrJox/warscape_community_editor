@@ -371,6 +371,9 @@ pub struct TileTool {
     /// The road link the cursor is snapped to now (drawing a procedural road or dragging its point), on the ground.
     pub(crate) road_link_hit: Option<Float3>,
 
+    /// The hit is a tile link (not a river's middle line).
+    pub(crate) road_link_is_link: bool,
+
     /// Headings snap to whole rotate steps (north-aligned) when this close (degrees); 0: off.
     pub(crate) angle_tolerance: f32,
 
@@ -428,6 +431,10 @@ pub struct TileTool {
 
     /// While drawing a closed shape: the mouse is on its first point, where a click closes and finishes it (`closes_drawing`).
     pub(crate) close_hover: bool,
+
+    /// The mouse is on a point of the selected polygon or line: a press there drags the point, not the selection by the gizmo's
+    /// centre (a river's instance is at its first point, TEd's layout: its first point could not be dragged).
+    pub(crate) over_point: bool,
     pub(crate) cursor: Float3,
 
     /// The blend channel the paint brush lays (4 * group + variation), and whether the stroke going on erases (Ctrl: paints channel 0).
@@ -927,6 +934,7 @@ impl Default for TileTool {
             snap_river_links: true,
             bridge_over: None,
             road_link_hit: None,
+            road_link_is_link: false,
             snap_heights: false,
             angle_tolerance: 0.0,
             snapped_cursor: Float3::default(),
@@ -1008,6 +1016,7 @@ impl Default for TileTool {
             tech_chip_width: 0.0,
             draw_pts: vec![],
             close_hover: false,
+            over_point: false,
             placing: None,
             draft: None,
             making: None,
@@ -2487,6 +2496,10 @@ impl TileTool {
         let Some((o, dir)) = e.viewport.ray(ev.x, ev.y) else { return };
         let sel = primary(e);
         let Some(d) = document(e) else { return };
+        self.over_point = self.gesture.is_none()
+            && sel
+                .filter(|&s| d.tile().is_polygon(s))
+                .is_some_and(|s| nearest_handle(d.tile().polygon_display_points(s), o, dir).is_some());
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
@@ -2496,11 +2509,13 @@ impl TileTool {
 
         // A procedural road's point onto the edge a road leaves the tile by, before any other snapping.
         self.road_link_hit = None;
+        self.road_link_is_link = false;
         if self.terrain_hit
             && self.road_link_snapping(sel, d)
-            && let Some(q) = self.road_link_near(d, sel, self.cursor)
+            && let Some((q, link)) = self.link_hit(d, sel, self.cursor)
         {
             self.road_link_hit = Some(q);
+            self.road_link_is_link = link;
             self.snapped_cursor = q;
         }
 
@@ -2699,30 +2714,47 @@ impl TileTool {
         self.link_kind(sel, d).is_some()
     }
 
-    /// The links a point of the line being drawn or dragged goes onto: where it goes, and the place it is measured from (a road's link
-    /// on the edge; a river's past it, measured from the edge or from there).
-    fn link_targets(&self, sel: Option<usize>, d: &TileDocument) -> Vec<(Float3, Vec<Float3>)> {
+    /// The links a point of the line being drawn or dragged goes onto, with how far a point is from each: a road's link on the edge,
+    /// measured from it; a river's past the edge, measured across the edge from anywhere along its cell's side (an end dropped at the
+    /// edge of a river's target cell goes onto its link, as *Snap river ends* takes it).
+    fn link_targets(&self, sel: Option<usize>, d: &TileDocument, p: Float3) -> Vec<(f32, Float3)> {
         match self.link_kind(sel, d) {
-            Some(RIVER) => d.tile().river_link_points().into_iter().map(|l| (l.snapped, vec![l.snapped, l.on_edge])).collect(),
-            Some(_) => d.tile().road_link_points().into_iter().map(|q| (q, vec![q])).collect(),
+            Some(RIVER) => d
+                .tile()
+                .river_link_points()
+                .into_iter()
+                .map(|l| {
+                    let (dx, dz) = (p.x - l.on_edge.x, p.z - l.on_edge.z);
+                    let along = (dx * -l.inward[1] + dz * l.inward[0]).abs();
+                    let across = (dx * l.inward[0] + dz * l.inward[1]).abs();
+                    let snapped = (p.x - l.snapped.x).hypot(p.z - l.snapped.z);
+                    let dist = if along <= RIVER_LINK_ALONG { (across * 0.5).min(snapped) } else { snapped };
+                    (dist, l.snapped)
+                })
+                .collect(),
+            Some(_) => d.tile().road_link_points().into_iter().map(|q| ((q.x - p.x).hypot(q.z - p.z), q)).collect(),
             None => vec![],
         }
     }
 
     /// The link (a road's or a river's, [`Self::link_targets`]) nearest a point, within [`ROAD_LINK_REACH`] or the snap tolerance when
     /// more.
-    pub(crate) fn road_link_near(&self, d: &TileDocument, sel: Option<usize>, p: Float3) -> Option<Float3> {
+    /// Also whether it is a tile link (else a river's middle line, a tributary's end).
+    pub(crate) fn link_hit(&self, d: &TileDocument, sel: Option<usize>, p: Float3) -> Option<(Float3, bool)> {
         let reach = self.snap_tolerance.max(ROAD_LINK_REACH);
-        let near = self
-            .link_targets(sel, d)
-            .into_iter()
-            .map(|(q, from)| (from.iter().map(|f| (f.x - p.x).hypot(f.z - p.z)).fold(f32::INFINITY, f32::min), q));
-        let link = near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q);
+        let near = self.link_targets(sel, d, p).into_iter();
+        let link = near.filter(|(dist, _)| *dist <= reach).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| (q, true));
 
         // A river's point onto another river's middle line (a tributary), when no link is near.
         let river = self.link_kind(sel, d) == Some(RIVER);
         let skip = if self.drawing { None } else { sel };
-        link.or_else(|| river.then(|| d.river_join_point(p, skip)).flatten())
+        link.or_else(|| river.then(|| d.river_join_point(p, skip)).flatten().map(|q| (q, false)))
+    }
+
+    /// While a procedural road or a river is drawn: a point after the first put on a tile link ends it there, as Enter would.
+    pub(crate) fn ends_at_link(&self, on_link: bool) -> bool {
+        use wce_tile_editor::tile_document::ROAD_SPLINE;
+        on_link && self.drawing && self.draw_pts.len() >= 2 && self.draft.as_ref().is_some_and(|d| d.kind == ROAD_SPLINE || d.kind == RIVER)
     }
 
     /// A river link problem's fix (`RiverFix`): a link added, a river started from a link, an end moved to the neighbour's.
@@ -4751,6 +4783,9 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
 /// Metres within which a procedural road's point snaps to a road link (or the snap tolerance, when more).
 pub(crate) const ROAD_LINK_REACH: f32 = 12.0;
 
+/// How far along the edge from a river link's middle a river's end still goes onto it, metres: half a cell, its target cell's side.
+const RIVER_LINK_ALONG: f32 = 64.0;
+
 /// How far over a river's water a kit bridge snapped onto it is placed (metres; the kit's river crossings' `bridge_wood_complete`).
 const BRIDGE_OVER_WATER_M: f32 = 1.0;
 
@@ -4781,6 +4816,12 @@ impl TileTool {
                 self.finish_drawing(e);
             } else if self.terrain_hit {
                 self.draw_pts.push(self.road_link_hit.unwrap_or(self.cursor));
+
+                // A road or a river ends at a tile link it is drawn onto (not its first point: it may start there).
+                if self.ends_at_link(self.road_link_hit.is_some() && self.road_link_is_link) {
+                    self.finish_drawing(e);
+                    return true;
+                }
 
                 // An angle finder is done at its third point.
                 if self.draw_pts.len() == 3 && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER) {
@@ -5560,6 +5601,8 @@ impl Tool for TileTool {
         let now = e.clock.time();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_fire(&mut e.scene, now);
+        // A drag under way (in the viewport or the river's profile): the rivers' terrain waits for its end.
+        d.set_drag_open(self.gesture.is_some() || self.river_ui.dragging());
         d.update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at, yaw, normal);
         let hot = if matches!(self.gesture, Some(Gesture::LightRadius { .. })) {
@@ -6127,6 +6170,7 @@ impl Tool for TileTool {
     fn can_centre_drag(&self, e: &Editor) -> bool {
         self.mode == TileMode::Select
             && self.gesture.is_none()
+            && !self.over_point
             && !self.drawing
             && self.placing.is_none()
             && self.flip.is_none()
@@ -6316,6 +6360,10 @@ impl Tool for TileTool {
             || self.grabbing()
             || self.placing.is_some()
             || self.box_select.armed
+            // On a point of the selected line or polygon (or dragging one): the press is the point's, not the gizmo's, whose centre
+            // may be on it (a river's first point).
+            || self.over_point
+            || matches!(self.gesture, Some(Gesture::Point { .. }))
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {

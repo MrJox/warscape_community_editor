@@ -23,6 +23,7 @@ pub fn paintable_kind(kind: &str, name: Option<&str>, shape: Option<&str>) -> bo
     match kind {
         "SIEGE_AI_POLYGON_INSTANCE" => name == Some("Boundary"),
         "CaptureLocationPolygonInstance" => shape.is_none_or(|s| s == "PS_POLYGON"),
+        super::LAKE => true,
         k => FILLED_TYPES.contains(&k),
     }
 }
@@ -37,6 +38,10 @@ impl Tile {
     /// Whether a polygon of the scene can be painted ([`paintable_kind`]).
     #[must_use]
     pub fn paintable(&self, elem: usize) -> bool {
+        if self.is_lake(elem) {
+            return true;
+        }
+
         let sc = self.tscene();
         paintable_kind(sc.type_of(elem), sc.get(elem, "name").as_deref(), sc.get(elem, "polygon_shape").as_deref())
     }
@@ -47,6 +52,16 @@ impl Tile {
     #[must_use]
     pub fn paint_targets(&self, kind: &str, biome: bool, within: Option<usize>) -> Vec<(usize, Vec<(f32, f32)>)> {
         let sc = self.tscene();
+        // The lakes: their water planes, painted by their outlines (`lakes.rs`).
+        if kind == super::LAKE {
+            return sc
+                .find_all("SIMPLE_MESH_INSTANCE")
+                .into_iter()
+                .filter(|&e| self.is_lake(e) && self.shown(e))
+                .map(|e| (e, self.area_outline(e)))
+                .collect();
+        }
+
         sc.find_all(kind)
             .into_iter()
             .filter(|&e| self.shown(e) && self.paintable(e))
@@ -84,7 +99,15 @@ impl TileDocument {
             let outline = wce_tile::biomes::stroke_outline(&[], dabs, radius, false, cell).into_iter().next();
             let outline = outline.filter(|o| o.len() >= 3).ok_or("the stroke makes no area")?;
             let t = self.tile();
-            let points = outline.iter().map(|&(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect();
+            // A lake: its water plane over the painted outline (rounded off), its water at its shore.
+            if new.kind == super::LAKE {
+                let round = super::lakes::smooth_outline(&outline);
+                let points = round.iter().map(|&(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect::<Vec<_>>();
+                return self.create_lake(new.into, &points, None).map(|e| vec![e]);
+            }
+
+            let points = outline.iter().map(|&(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect::<Vec<_>>();
+
             return self.create_with(new.kind, new.into, &Create::Line(points), new.key, new.attrs).map(|e| vec![e]);
         };
 
@@ -93,8 +116,13 @@ impl TileDocument {
             return Err(format!("a {} of this shape can't be painted", t.tscene().type_of(e)));
         }
 
-        let existing = t.polygon_world_points(e).into_iter().map(|p| (p.x, p.z)).collect::<Vec<_>>();
-        let outlines = wce_tile::biomes::stroke_outline(&existing, dabs, radius, erase, cell);
+        let lake = t.is_lake(e);
+        let existing = t.area_outline(e);
+        let mut outlines = wce_tile::biomes::stroke_outline(&existing, dabs, radius, erase, cell);
+        if lake {
+            outlines = outlines.iter().map(|o| super::lakes::smooth_outline(o)).collect();
+        }
+
         let worlds = outlines
             .iter()
             .map(|o| o.iter().map(|&(x, z)| Float3::new(x, t.terrain_height(x, z), z)).collect::<Vec<_>>())
@@ -110,13 +138,25 @@ impl TileDocument {
                 return Ok(());
             };
 
-            self.set_area_points(e, first)?;
+            if lake {
+                self.set_lake_outline(e, first)?;
+            } else {
+                self.set_area_points(e, first)?;
+            }
+
             out.push(e);
 
-            // The other pieces: copies of it, each with its own seeds.
+            // The other pieces: copies of it, each with its own seeds (a lake: its own id, for its ground's layer).
             for (k, world) in pieces.enumerate() {
                 let n = self.tscene_mut().duplicate(e)?;
-                self.set_area_points(n, world)?;
+                if lake {
+                    self.set_lake_outline(n, world)?;
+                    let id = self.tile().next_river_id();
+                    self.tscene_mut().set_attr(n, super::river_links::RIVER_ID_ATTR, &id.to_string());
+                } else {
+                    self.set_area_points(n, world)?;
+                }
+
                 let sc = self.tscene_mut();
                 let seeds = sc.doc().elements()[n]
                     .attrs

@@ -28,6 +28,26 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
+        "tile_drag_ground",
+        "tile_drag_ground <x0 m> <z0 m> <x1 m> <z1 m> [steps]",
+        "drag the mouse from one ground point to another (a selected line's point there is dragged), each step a frame",
+        |e, a| {
+            let n = |i: usize| a.get(i).and_then(|v| number(v));
+            let (Some(d), Some(x0), Some(z0), Some(x1), Some(z1)) = (document(e), n(0), n(1), n(2), n(3)) else {
+                return fail("usage: tile_drag_ground <x0 m> <z0 m> <x1 m> <z1 m> [steps]");
+            };
+            let steps = a.get(4).cloned().unwrap_or_else(|| "20".to_owned());
+            let (p0, p1) = (Float3::new(x0, d.tile().terrain_height(x0, z0), z0), Float3::new(x1, d.tile().terrain_height(x1, z1), z1));
+            let (Some(a0), Some(a1)) = (e.viewport.project(p0), e.viewport.project(p1)) else {
+                return fail("the points are not in view");
+            };
+            let args = [a0.0, a0.1, a1.0, a1.1].map(|v| format!("{v:.1}"));
+            let message = format!("pixels {} {} -> {} {}", args[0], args[1], args[2], args[3]);
+            mouse(e, &["drag".to_owned(), args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone(), steps], message)
+        },
+    );
+
+    c.add(
         "tile_drag_point",
         "tile_drag_point <index> <x m> <z m>",
         "drag a point handle of the selected polygon to a ground point with the mouse",
@@ -40,6 +60,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let Some(&from) = usize::try_from(idx as i64).ok().and_then(|i| pts.get(i)) else { return fail("no such point") };
             let to = Float3::new(x, d.tile().terrain_height(x, z), z);
             let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            // On the point first, as a mouse is before it presses (the hover tells the gizmo's centre the point is under it).
+            let _ = CommandRegistry::run_args(e, "mouse", &["move".to_owned(), format!("{x0:.1}"), format!("{y0:.1}")]);
             let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
             mouse(e, &args, "")
         },
@@ -58,6 +80,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let c = d.tile().world_position(el.expect("selected"));
             let to = Float3::new(c.x + r, c.y, c.z);
             let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            // On the point first, as a mouse is before it presses (the hover tells the gizmo's centre the point is under it).
+            let _ = CommandRegistry::run_args(e, "mouse", &["move".to_owned(), format!("{x0:.1}"), format!("{y0:.1}")]);
             let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
             mouse(e, &args, "")
         },
@@ -75,6 +99,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             let from = Float3::new(from.x, from.y + 0.3, from.z);
             let to = Float3::new(x, d.tile().terrain_height(x, z), z);
             let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            // On the point first, as a mouse is before it presses (the hover tells the gizmo's centre the point is under it).
+            let _ = CommandRegistry::run_args(e, "mouse", &["move".to_owned(), format!("{x0:.1}"), format!("{y0:.1}")]);
             let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
             mouse(e, &args, "")
         },

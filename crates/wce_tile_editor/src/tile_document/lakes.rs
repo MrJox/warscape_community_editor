@@ -20,9 +20,26 @@ pub const WATER_PLANE_Z: [f64; 2] = [-0.631_774_3, 1.485_413_2];
 pub const OUTLINE_ATTR: &str = "wce_lake_outline";
 pub const BASIN_ATTR: &str = "wce_lake_basin";
 
+/// A lake shapes its ground (`1`: the height patch of its layer, its basin dug and its shore raised to keep the water in; `0`: the
+/// ground as it is; missing: as its basin's depth says, the lakes made before it).
+pub const GROUND_ATTR: &str = "wce_lake_ground";
+
+/// What a new lake's height patch is: its basin's depth (metres) and how far past its outline its shore is raised (metres).
+pub const DEFAULT_BASIN_M: f64 = 2.0;
+pub const LAKE_SHORE_M: f64 = 12.0;
+
+/// Whether a lake shapes its ground ([`GROUND_ATTR`]).
+pub fn shapes_ground(ground: Option<&str>, basin: f64) -> bool {
+    match ground.map(str::trim) {
+        Some("1") => true,
+        Some("0") => false,
+        _ => basin > 0.0,
+    }
+}
+
 /// How far under the outline's lowest ground a lake's water is put (metres), and how far past the outline its plane reaches.
 pub const LAKE_FREEBOARD_M: f32 = 0.25;
-const PLANE_MARGIN_M: f64 = 8.0;
+pub(super) const PLANE_MARGIN_M: f64 = 8.0;
 
 /// A lake's outline read.
 pub fn lake_outline(text: &str) -> Vec<[f64; 2]> {
@@ -32,6 +49,29 @@ pub fn lake_outline(text: &str) -> Vec<[f64; 2]> {
             Some([x.trim().parse().ok()?, z.trim().parse().ok()?])
         })
         .collect()
+}
+
+/// A closed outline rounded off (two passes of Chaikin's corner cutting: each edge's quarter and three-quarter points): an area brush's
+/// outline follows its grid in steps, which a lake's shore would show.
+pub fn smooth_outline(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut pts = points.to_vec();
+    for _ in 0..2 {
+        let n = pts.len();
+        if n < 3 {
+            break;
+        }
+
+        let mut out = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            out.push((a.0 * 0.75 + b.0 * 0.25, a.1 * 0.75 + b.1 * 0.25));
+            out.push((a.0 * 0.25 + b.0 * 0.75, a.1 * 0.25 + b.1 * 0.75));
+        }
+
+        pts = out;
+    }
+
+    pts
 }
 
 /// Whether a point is inside a polygon (even-odd).
@@ -46,6 +86,49 @@ pub fn inside(poly: &[[f64; 2]], x: f64, z: f64) -> bool {
     }
 
     c
+}
+
+/// The plane over an outline's rectangle (with a margin) at a water height: where its origin goes (world metres) and its scale in x and
+/// z (scene units), its lowest corner on the rectangle's (the model is not centred on its origin).
+fn plane_for(outline: &[Float3], level: f32, u: f64) -> (Float3, f64, f64) {
+    let xs = outline.iter().map(|p| f64::from(p.x));
+    let zs = outline.iter().map(|p| f64::from(p.z));
+    let (x0, x1) = (xs.clone().fold(f64::INFINITY, f64::min) - PLANE_MARGIN_M, xs.fold(f64::NEG_INFINITY, f64::max) + PLANE_MARGIN_M);
+    let (z0, z1) = (zs.clone().fold(f64::INFINITY, f64::min) - PLANE_MARGIN_M, zs.fold(f64::NEG_INFINITY, f64::max) + PLANE_MARGIN_M);
+    let sx = (x1 - x0) * u / (WATER_PLANE_X[1] - WATER_PLANE_X[0]);
+    let sz = (z1 - z0) * u / (WATER_PLANE_Z[1] - WATER_PLANE_Z[0]);
+    let origin = Float3::new((x0 - WATER_PLANE_X[0] * sx / u) as f32, level, (z0 - WATER_PLANE_Z[0] * sz / u) as f32);
+    (origin, sx, sz)
+}
+
+fn scale_text(sx: f64, sz: f64) -> String {
+    use wce_tile::ted_scene::format_number;
+    format!("vector({},1,{})", format_number(sx), format_number(sz))
+}
+
+fn outline_text(outline: &[Float3]) -> String {
+    use wce_tile::ted_scene::format_number;
+    outline.iter().map(|p| format!("{},{}", format_number(f64::from(p.x)), format_number(f64::from(p.z)))).collect::<Vec<_>>().join(";")
+}
+
+impl super::Tile {
+    /// Whether an element is a lake: a water plane with an outline.
+    pub fn is_lake(&self, e: usize) -> bool {
+        let sc = self.tscene();
+        sc.type_of(e) == "SIMPLE_MESH_INSTANCE" && sc.get(e, OUTLINE_ATTR).is_some()
+    }
+
+    /// A paintable area's outline (world metres, x and z): a lake's, else the polygon's points.
+    pub fn area_outline(&self, e: usize) -> Vec<(f32, f32)> {
+        if self.is_lake(e) {
+            return lake_outline(&self.tscene().get(e, OUTLINE_ATTR).unwrap_or_default())
+                .into_iter()
+                .map(|p| (p[0] as f32, p[1] as f32))
+                .collect();
+        }
+
+        self.polygon_world_points(e).into_iter().map(|p| (p.x, p.z)).collect()
+    }
 }
 
 impl TileDocument {
@@ -86,24 +169,17 @@ impl TileDocument {
         self.check_structure(&[], Some(into))?;
         let t = self.tile();
         let u = t.unit();
-        let xs = outline.iter().map(|p| f64::from(p.x));
-        let zs = outline.iter().map(|p| f64::from(p.z));
-        let (x0, x1) = (xs.clone().fold(f64::INFINITY, f64::min) - PLANE_MARGIN_M, xs.fold(f64::NEG_INFINITY, f64::max) + PLANE_MARGIN_M);
-        let (z0, z1) = (zs.clone().fold(f64::INFINITY, f64::min) - PLANE_MARGIN_M, zs.fold(f64::NEG_INFINITY, f64::max) + PLANE_MARGIN_M);
-
-        // The model's x and z over the rectangle: its scale (scene units), its origin where its lowest corner lands on the rectangle's.
-        let sx = (x1 - x0) * u / (WATER_PLANE_X[1] - WATER_PLANE_X[0]);
-        let sz = (z1 - z0) * u / (WATER_PLANE_Z[1] - WATER_PLANE_Z[0]);
-        let origin = Float3::new((x0 - WATER_PLANE_X[0] * sx / u) as f32, level, (z0 - WATER_PLANE_Z[0] * sz / u) as f32);
+        let (origin, sx, sz) = plane_for(outline, level, u);
         let local = t.to_local(into, origin);
         let mut element = super::edits::point_instance("SIMPLE_MESH_INSTANCE", local, WATER_PLANE_KEY, u)?;
-        let text_of = |p: &Float3| format!("{},{}", format_number(f64::from(p.x)), format_number(f64::from(p.z)));
         let id = t.next_river_id();
         for (k, v) in [
-            ("scale", format!("vector({},1,{})", format_number(sx), format_number(sz))),
+            ("scale", scale_text(sx, sz)),
             ("surface_mode", "MSM_FREEFORM".to_owned()),
             ("name", "Lake".to_owned()),
-            (OUTLINE_ATTR, outline.iter().map(text_of).collect::<Vec<_>>().join(";")),
+            (OUTLINE_ATTR, outline_text(outline)),
+            (GROUND_ATTR, "1".to_owned()),
+            (BASIN_ATTR, format_number(DEFAULT_BASIN_M)),
             (RIVER_ID_ATTR, id.to_string()),
         ] {
             element.attrs.insert(k.to_owned(), v);
@@ -120,6 +196,31 @@ impl TileDocument {
 
             Err(err) => self.rolled_back(mark, err),
         }
+    }
+
+    /// A lake's outline and its plane set to `outline` (world metres), its water where it is: inside an edit begun (`begin`), as the
+    /// area brush makes them.
+    ///
+    /// # Errors
+    ///
+    /// Fewer than 3 points, or the scene could not be edited.
+    pub(super) fn set_lake_outline(&mut self, lake: usize, outline: &[Float3]) -> Result<(), String> {
+        use wce_tile::new_instances::vector;
+        if outline.len() < 3 {
+            return Err("a lake's outline needs 3 points or more".to_owned());
+        }
+
+        let t = self.tile();
+        let u = t.unit();
+        let (origin, sx, sz) = plane_for(outline, self.lake_water(lake), u);
+        // The plane's own place, in its parent's frame.
+        let pw = super::edits::parent_transform(t.tscene(), lake);
+        let local = pw.rotation.transpose() * (super::edits::scene_point(origin, u) - pw.position);
+        let sc = self.tscene_mut();
+        sc.set_attr(lake, "position", &vector(local));
+        sc.set_attr(lake, "scale", &scale_text(sx, sz));
+        sc.set_attr(lake, OUTLINE_ATTR, &outline_text(outline));
+        Ok(())
     }
 
     /// A lake's water height (the editor's metres): its plane's.
@@ -158,7 +259,7 @@ impl TileDocument {
         }
 
         let water = self.lake_water(lake);
-        let (ex, ez) = (t.extent_x() as f64, t.extent_z() as f64);
+        let (ex, ez) = (t.extent_x(), t.extent_z());
         let x0 = poly.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min) - PLANE_MARGIN_M;
         let x1 = poly.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max) + PLANE_MARGIN_M;
         let z0 = poly.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min) - PLANE_MARGIN_M;
@@ -191,6 +292,16 @@ impl TileDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_brushed_outline_is_rounded_off() {
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let round = smooth_outline(&square);
+        assert_eq!(round.len(), 16);
+        // No corner left: every point inside the square, none on its corners.
+        assert!(round.iter().all(|p| p.0 > 0.0 && p.0 < 10.0 || p.1 > 0.0 && p.1 < 10.0));
+        assert!(!round.contains(&(0.0, 0.0)));
+    }
 
     #[test]
     fn an_outline_reads_back_and_holds_its_inside() {

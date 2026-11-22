@@ -32,6 +32,13 @@ impl Default for RiverUi {
     }
 }
 
+impl RiverUi {
+    /// A point of the profile is being dragged.
+    pub(crate) fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+}
+
 impl TileTool {
     pub(crate) fn inspect_river(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(river) = primary(e) else { return };
@@ -151,13 +158,13 @@ impl TileTool {
         let point = self.poly_point.filter(|&i| i > 0 && i + 1 < p.points.len());
         gui::same_line();
         gui::begin_disabled(point.is_none());
-        if gui::button("Split here") {
-            if let Some(i) = point {
-                self.status = match d.split_river(river, i) {
-                    Ok(_) => format!("split at point {i}: two rivers"),
-                    Err(why) => why,
-                };
-            }
+        if gui::button("Split here")
+            && let Some(i) = point
+        {
+            self.status = match d.split_river(river, i) {
+                Ok(_) => format!("split at point {i}: two rivers"),
+                Err(why) => why,
+            };
         }
 
         gui::end_disabled();
@@ -188,10 +195,11 @@ impl TileTool {
             self.river_ui.ford[0] = p.points[i].along as f32;
         }
 
-        gui::set_next_item_width(140.0);
-        gui::drag_float2("at, length (m)##river_ford", &mut self.river_ui.ford, 1.0, "%.0f");
-        gui::same_line();
-        if gui::button("Add ford") {
+        gui::row_tip("at, length (m)", "Where along the river the ford's middle is, and how long it is (metres).");
+        gui::set_next_item_width(-1.0);
+        gui::drag_float2("##river_ford", &mut self.river_ui.ford, 1.0, "%.0f");
+        gui::row("");
+        if gui::button_sized("Add ford", v2(-1.0, 0.0)) {
             let [a, l] = self.river_ui.ford;
             d.add_river_ford(river, f64::from(a.clamp(0.0, p.length as f32)), f64::from(l.max(5.0)));
             self.status = "ford added: the bed rises to a wading depth there".to_owned();
@@ -206,12 +214,16 @@ impl TileTool {
 
         let mut remove = None;
         for (k, &(a, l)) in p.fords.iter().enumerate() {
+            gui::row(&format!("ford {}", k + 1));
+            gui::text(&format!("at {a:.0} m, {l:.0} m long"));
+            gui::same_line();
             if gui::small_button(&format!("{}##ford{k}", wce_editor::icons::X)) {
                 remove = Some(k);
             }
 
-            gui::same_line();
-            gui::text(&format!("ford at {a:.0} m, {l:.0} m long"));
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Take the ford away");
+            }
         }
 
         if let Some(k) = remove {
@@ -227,15 +239,20 @@ impl TileTool {
         self.river_ui.from = self.river_ui.from.clamp(0, n - 1);
         gui::separator_text("Ramp");
         let labels = RAMPS.iter().map(|r| r.1).collect::<Vec<_>>();
-        gui::set_next_item_width(140.0);
-        gui::combo("value##river_ramp", &mut self.river_ui.ramp, &labels);
-        gui::set_next_item_width(140.0);
-        gui::slider_int("from point##river_ramp", &mut self.river_ui.from, 0, n - 1);
-        gui::set_next_item_width(140.0);
-        gui::slider_int("to point##river_ramp", &mut self.river_ui.to, 0, n - 1);
-        gui::set_next_item_width(140.0);
-        gui::drag_float2("from .. to##river_ramp", &mut self.river_ui.values, 0.1, "%.2f");
-        if gui::button("Ramp") {
+        gui::row_tip("value", "The points' value the ramp sets.");
+        gui::set_next_item_width(-1.0);
+        gui::combo("##river_ramp_value", &mut self.river_ui.ramp, &labels);
+        gui::row_tip("from point", "The point the ramp starts at (its first value).");
+        gui::set_next_item_width(-1.0);
+        gui::slider_int("##river_ramp_from", &mut self.river_ui.from, 0, n - 1);
+        gui::row_tip("to point", "The point the ramp ends at (its second value).");
+        gui::set_next_item_width(-1.0);
+        gui::slider_int("##river_ramp_to", &mut self.river_ui.to, 0, n - 1);
+        gui::row_tip("from .. to", "The value at the first point and at the last; those between take it by their distance along.");
+        gui::set_next_item_width(-1.0);
+        gui::drag_float2("##river_ramp_values", &mut self.river_ui.values, 0.1, "%.2f");
+        gui::row("");
+        if gui::button_sized("Ramp", v2(-1.0, 0.0)) {
             let (attr, _) = RAMPS[self.river_ui.ramp.clamp(0, RAMPS.len() as i32 - 1) as usize];
             let [a, b] = self.river_ui.values;
             self.status =

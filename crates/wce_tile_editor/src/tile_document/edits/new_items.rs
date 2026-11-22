@@ -180,7 +180,8 @@ impl TileDocument {
                     n = n
                         .attr(wce_tile::river_files::RIVER_HEIGHT_ATTR, "game")
                         .attr(super::super::river_beds::BED_ATTR, "1")
-                        .attr(super::super::river_links::RIVER_ID_ATTR, &self.tile().next_river_id().to_string());
+                        .attr(super::super::river_beds::PATCH_ATTR, "1")
+                        .attr(super::super::river_links::RIVER_ID_ATTR, self.tile().next_river_id().to_string());
                 }
 
                 n.points = wce_tile::splines::new_points(&positions)
