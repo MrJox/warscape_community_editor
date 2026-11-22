@@ -1,6 +1,6 @@
 # Image encoders: what reproduces the kit's bytes
 
-Goal: when the editor changes pixels, the saved file must be what TEd/BOB would have written. Findings (2026-10-08), scripts in `scripts/proto/`.
+Goal: when the editor changes pixels, the saved file must be what TEd/BOB would have written. Findings (2026-10-08), the prototype scripts were in `scripts/proto/` (removed 2026-11-22, in git history).
 
 ## PNG (`height_map_0.png`, `ground_type_map.png`, `nogo.png`, `lf_influence_map.png`)
 
@@ -8,7 +8,7 @@ Goal: when the editor changes pixels, the saved file must be what TEd/BOB would 
 - Colour: `height_map_0.png` 16-bit grey (type 0); `nogo.png`, `lf_influence_map.png` 16-bit grey; `ground_type_map.png` 8-bit RGBA (type 6).
 - **Result (`wce_formats::png_file`, classic zlib through libz-sys' bundled copy, not zlib-ng; full corpus 2026-10-09): every PNG without ancillary chunks is reproduced byte for byte: 6,122 of 6,122.** The other 2,432 files carry ancillary chunks (Photoshop / World Machine: iCCP, pHYs, XMP...) or are not PNGs and are passed through untouched. The strategy is **Z_FILTERED** (libpng's default when row filters are used); with the default strategy only small files matched.
 - **zlib**: inflating the IDAT stream and recompressing it with zlib level 6, memLevel 8, windowBits 15, Z_FILTERED, then splitting into IDAT chunks of the original size, reproduces the file byte-for-byte for 240 of 240 sampled files (60 per type; the one miss is the Photoshop-saved variant).
-- **Row filters**: libpng's default heuristic (try None, Sub, Up, Average, Paeth; keep the filter with the smallest sum of absolute signed byte values; ties keep the earlier one) selects the original filter on 100% of rows in 9 of 9 sampled files (`png_filters.py`).
+- **Row filters**: libpng's default heuristic (try None, Sub, Up, Average, Paeth; keep the filter with the smallest sum of absolute signed byte values; ties keep the earlier one) selects the original filter on 100% of rows in 9 of 9 sampled files (`png_filters.py`; the encoder: `wce_formats::png_file`).
 - So a PNG writer = unfiltered pixels, heuristic filter per row, zlib 6/8/default, IDAT chunk size as in the original (one chunk for small files, 8192-byte chunks for the large ones: take it from the file being replaced, default 8192 for new files; to confirm on a freshly written large file).
 - Other encoders (WIC, zlib-ng) pick other settings; only the writer above gives the kit's bytes.
 

@@ -8,9 +8,10 @@
 #
 # Inputs are fixed so runs are comparable. Override with environment variables:
 #   WCE_GAME   game folder (contains data/ and the kit: assembly_kit_battle_tilemap + assembly_kit_campaign_tilemap, or one assembly_kit)
-#   WCE_CACHE  extracted-file cache of the VFS (holds the weather/lighting/vfx files the XML gates walk)
+#   WCE_CACHE  a folder of files extracted from the packs for the XML and model gates (default <out dir>/extract, filled from the game's
+#              vanilla packs at each run: weather/ and vfx/, and the version 6 models of two rigidmodels/ folders; about 75 MB)
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
-#   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
+#   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when not set)
 #   WCE_ROME2  Rome 2's folder: its gates run too (skipped when not set)
 #   WCE_ROME2_DB  Rome 2's tile database in the kit's format (the Terrain tool's packs tree: <cache>/neighbours/rome_2_*/raw_data/terrain/tiles/battle/_tile_database)
 #   WCE_BOB_KIT  a scratch Assembly Kit BOB_Terrain ran in: the Heights & Normals and Tilemap gates compare with its outputs (skipped when not set)
@@ -21,8 +22,7 @@ OUT="${1:-$ROOT/build/gates}"; shift || true
 CORPUS=0; RENDER=0
 for a in "$@"; do case "$a" in --corpus) CORPUS=1;; --render) RENDER=1;; esac; done
 
-CACHE="${WCE_CACHE:-${LOCALAPPDATA:-${XDG_CACHE_HOME:-$HOME/.cache}}/awe/x}"
-CBS="${WCE_CBS:-${TEMP:-${TMPDIR:-/tmp}}/claude/cbs.txt}"
+CBS="${WCE_CBS:-}"
 WB="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 MANIFEST="$ROOT/manifest/corpus.tsv"
 BKIT="$GAME/assembly_kit_battle_tilemap"
@@ -62,6 +62,20 @@ ex_rome2() { # ex_rome2 <crate> <example> [args...]: the same for Rome 2 (WCE_GA
 run tests             cargo test --release -q --manifest-path "$ROOT/Cargo.toml" --workspace
 
 # ---- weather gates
+# The XML and model gates walk files extracted from the game's packs: WCE_CACHE, or a fresh extract of the vanilla packs.
+if [ -n "${WCE_CACHE:-}" ]; then
+    CACHE="$WCE_CACHE"
+else
+    CACHE="$OUT/extract"
+    rm -rf "$CACHE"
+    for p in weather/ vfx/; do
+        ex wce_vfs vfs_ls "$GAME" "$p" --vanilla --extract-all "$CACHE" > /dev/null || echo "extract $p FAILED"
+    done
+    # rmv2_check takes version 6 only (170 of the vanilla 3,788 models are another version): two folders of version 6 models.
+    for p in rigidmodels/campaign/prop/ rigidmodels/campaign/vegetation/; do
+        ex wce_vfs vfs_ls "$GAME" "$p" --vanilla --ext rigid_model_v2 --extract-all "$CACHE" > /dev/null || echo "extract $p FAILED"
+    done
+fi
 run xml_roundtrip     ex wce_formats xml_roundtrip "$CACHE"
 run format_check      ex wce_formats format_check "$CACHE"
 run variation_check   ex wce_weather variation_check
@@ -82,7 +96,7 @@ run movie_edit        ex wce_cinematic movie_edit_check "$GAME" "$OUT/movie_edit
 run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)
 run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
 run unit_db           ex wce_unit_tool unit_db_check "$OUT/unit_db"   # the Unit tool's DB files: game rows read back, files written again to the same bytes
-[ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
+[ -n "$CBS" ] && [ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
 
 # ---- tile gates
 run perf_check        ex wce_tile_tool perf_check "$BKIT/raw_data/terrain/tiles/battle/assembly_kit/khazad_wall_test/battlefield" "$TILE"
