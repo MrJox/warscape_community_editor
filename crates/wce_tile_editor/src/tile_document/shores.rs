@@ -15,7 +15,7 @@ use super::{Tile, TileDocument};
 /// A river or a lake has a shore (`1`), or not (`0`, missing).
 pub const SHORES_ATTR: &str = "wce_shores";
 
-/// How thick its reeds and its stones are: an amount's name (`wce_tile::shores::AMOUNTS`); missing: `some` reeds, `few` stones.
+/// How thick its reeds and its stones are: an amount's name (`wce_tile::shores::AMOUNTS`); missing: `some` of each.
 pub const REEDS_ATTR: &str = "wce_shore_reeds";
 pub const STONES_ATTR: &str = "wce_shore_stones";
 
@@ -26,7 +26,7 @@ pub(crate) const SHORE_ROW_ATTRS: [&str; 3] = [SHORES_ATTR, REEDS_ATTR, STONES_A
 pub const EXPORT_LAYER: &str = "WCE shores";
 
 const DEFAULT_REEDS: &str = "some";
-const DEFAULT_STONES: &str = "few";
+const DEFAULT_STONES: &str = "some";
 
 /// The shores being made off the editor's thread, and the signature of what they are made from.
 pub(crate) struct ShoreJob {
@@ -164,7 +164,12 @@ impl Tile {
                 for (kind, list) in [("VEGETATION_INSTANCE", &shore.reeds), ("BUILDING_INSTANCE", &shore.stones)] {
                     for p in list {
                         let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
-                        let Some(text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
+                        let Some(mut text) = item_text(kind, &p.key, at, p.scale, p.yaw, unit) else { continue };
+                        // A lily floats: at the water's height, not on the bed.
+                        if wce_tile::shores::LILIES.contains(&p.key.as_str()) {
+                            text = super::draft::with_root_attr(&text, "surface_mode", "MSM_FREEFORM");
+                        }
+
                         out.push(BiomeItem { area: w.elem, text, position: [at.x, at.y, at.z] });
                     }
                 }
@@ -244,8 +249,8 @@ impl TileDocument {
         ins.section("Shores");
         let mut shores = on;
         ins.hint(
-            "Reeds in the shallows and at the water's edge, stones along the bank, made again as the water or the ground changes and \
-             written in their own layer at export. On for the rivers and lakes the editor makes.",
+            "Reed beds in the shallows and on the wet bank, water lilies, small stones along the waterline; made again as the water or \
+             the ground changes and written in their own layer at export. On for the rivers and lakes the editor makes.",
         );
         if ins.edit_bool(SHORES_ATTR, "shores", &mut shores) && shores != on {
             self.set_attribute(e, SHORES_ATTR, if shores { "1" } else { "0" });
@@ -257,8 +262,19 @@ impl TileDocument {
 
         let names = AMOUNTS.iter().map(|a| a.0.to_owned()).collect::<Vec<_>>();
         for (attr, label, default, hint) in [
-            (REEDS_ATTR, "reeds", DEFAULT_REEDS, "How thick the reeds stand in the shallows (half as thick at the water's edge)."),
-            (STONES_ATTR, "stones", DEFAULT_STONES, "How many stones lie along the bank (a quarter as many in the shallows)."),
+            (
+                REEDS_ATTR,
+                "reeds",
+                DEFAULT_REEDS,
+                "How much of the shore its reed beds take (bulrush, calamus, marsh plants; in the shallows and on the wet bank), with a \
+                 few water lilies further out.",
+            ),
+            (
+                STONES_ATTR,
+                "stones",
+                DEFAULT_STONES,
+                "How much of the waterline small stones line, with a small boulder on the bank now and then.",
+            ),
         ] {
             let sc = self.tile().tscene();
             let current = sc.get(e, attr).unwrap_or_else(|| default.to_owned());
