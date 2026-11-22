@@ -2958,6 +2958,7 @@ fn open_with_river_links() -> (tempfile::TempDir, TileDocument) {
     );
     p.entry = Some(wce_formats::tile_entry::TileEntry::parse(entry.into_bytes()).unwrap());
     (p.info.cells_x, p.info.cells_y) = (2, 2);
+    p.info.found = true;
     (dir, TileDocument::new(p, None))
 }
 
@@ -3023,4 +3024,41 @@ fn a_river_snaps_to_its_links_whole_and_the_ground_there_takes_the_connection() 
     d.tile_mut().finish_road_jobs();
     assert!((y(&d, 4.0, 192.0) + 11.9).abs() > 1.0, "the west join gone: {}", y(&d, 4.0, 192.0));
     assert!((y(&d, 192.0, 4.0) + 1.0).abs() < 0.15, "the shallow join stays: {}", y(&d, 192.0, 4.0));
+}
+
+#[test]
+fn river_link_problems_come_with_their_fixes_and_the_seams_are_checked_against_the_neighbours() {
+    use wce_tile_editor::tile_document::river_links::{NeighbourEnd, RiverFix};
+
+    let (_dir, mut d) = open_with_river_links();
+    // No river yet: both targets want one, drawn from their links.
+    let p = d.river_link_problems();
+    assert_eq!(p.len(), 2);
+    assert!(matches!(p[0].fix, Some(RiverFix::DrawFrom { at }) if (at.x + 6.0).abs() < 1e-3 && (at.z - 192.0).abs() < 1e-3));
+
+    // A river from the west link out of the east edge's upper row (no link there): the fix adds one.
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let line = vec![Float3::new(-6.0, 0.0, 192.0), Float3::new(262.0, -6.2, 192.0)];
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    d.snap_river_to_links(r).unwrap();
+    let p = d.river_link_problems();
+    let fix = p.iter().find_map(|p| p.fix.clone().filter(|f| matches!(f, RiverFix::AddLink { .. }))).expect("an add-link fix");
+    assert_eq!(fix, RiverFix::AddLink { cell: (1, 0), past: (2, 0), set: "river" });
+    let RiverFix::AddLink { cell, past, set } = fix else { unreachable!() };
+    d.add_river_link(cell, past, set).unwrap();
+    assert!(d.river_link_problems().iter().all(|p| !matches!(p.fix, Some(RiverFix::AddLink { .. }))));
+    assert!(d.tile().river_link_points().iter().any(|l| l.cell == (1, 0) && l.inward == [-1.0, 0.0]));
+
+    // The seams: a neighbour's river 20 m along the edge, 2 m higher and 15 m narrower than the west end.
+    let n = NeighbourEnd { at: Float3::new(6.0, -4.2, 212.0), width: 30.0 };
+    let seams = d.river_seam_problems(&[n]);
+    let west = seams.iter().find(|p| p.message.contains("(0, 0)")).expect("the west seam");
+    let Some(RiverFix::MatchNeighbour { river, point, at, width }) = west.fix.clone() else { panic!("{west:?}") };
+    assert_eq!((river, point, width), (r, 0, 30.0));
+    d.match_river_end(river, point, at, width).unwrap();
+    let first = d.tile().polygon_world_points(r)[0];
+    assert!((first.x + 6.0).abs() < 1e-3 && (first.z - 212.0).abs() < 1e-3 && (first.y + 4.2).abs() < 1e-3, "{first:?}");
+    let seams = d.river_seam_problems(&[n]);
+    assert!(seams.iter().all(|p| !p.message.contains("(0, 0)")), "{seams:?}");
+    assert!(seams.iter().any(|p| p.message.contains("(1, 0)") && p.message.contains("no river")), "the east link has no neighbour");
 }

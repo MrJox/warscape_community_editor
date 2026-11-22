@@ -32,7 +32,44 @@ pub struct RiverEnd {
 
     /// How far it is from the cell's centre along the edge.
     pub off_centre: f32,
+
+    /// The cell just past the edge it leaves by (where a link's rule names the neighbour).
+    pub past: (i32, i32),
 }
+
+/// What fixes a river link problem.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RiverFix {
+    /// Add a river link at a cell (a target, and the rule on the cell past the edge), of a set (`river`, `river_shallow`).
+    AddLink { cell: (i32, i32), past: (i32, i32), set: &'static str },
+
+    /// Draw a river from a link's place (where its end goes, `RiverLinkPoint::snapped`).
+    DrawFrom { at: Float3 },
+
+    /// Move a river's end (its point) to meet the neighbour's river: along the edge to it, at its height and width.
+    MatchNeighbour { river: usize, point: usize, at: Float3, width: f32 },
+}
+
+/// A river link problem: the river it is about (if any), what is wrong, what fixes it (if anything does in one go).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RiverProblem {
+    pub elem: Option<usize>,
+    pub message: String,
+    pub fix: Option<RiverFix>,
+}
+
+/// A river's end in a neighbour tile of the map context, in the open tile's frame (metres; its height its file's).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NeighbourEnd {
+    pub at: Float3,
+    pub width: f32,
+}
+
+/// How far two rivers' ends meeting at an edge may be apart along it, step in their water and differ in width before the seam check
+/// reports them (docs/re/tile_links.md, R4: the kit lives with a 0.8 m step).
+pub const SEAM_ALONG_M: f32 = 8.0;
+pub const SEAM_STEP_M: f32 = 1.0;
+pub const SEAM_WIDTH_M: f32 = 10.0;
 
 impl TileDocument {
     fn river_targets(&self) -> Vec<(i32, i32)> {
@@ -51,7 +88,7 @@ impl TileDocument {
         let (cw, ch) = (p.info.cells_x as i32, p.info.cells_y as i32);
         let (w, h) = (t.extent_x() as f32, t.extent_z() as f32);
         let mut out = vec![];
-        for &e in t.instances.iter().filter(|&&e| t.tscene().type_of(e) == "SplineRiverInstance") {
+        for e in t.tscene().find_all(RIVER) {
             let pts = t.polygon_world_points(e);
             if pts.len() < 2 {
                 continue;
@@ -86,47 +123,200 @@ impl TileDocument {
                     }
                 };
 
-                out.push(RiverEnd { elem: e, point, at, cell, snapped, off_centre });
+                let past = match edge {
+                    0 => (-1, cell.1),
+                    1 => (cw, cell.1),
+                    2 => (cell.0, -1),
+                    _ => (cell.0, ch),
+                };
+                out.push(RiverEnd { elem: e, point, at, cell, snapped, off_centre, past });
             }
         }
 
         out
     }
 
-    /// What does not join (the check of Phase 4c): a river target cell without a river end at it, a river end at an edge cell that is not
-    /// a target, an end more than `RIVER_END_TOLERANCE_M` off its cell's centre along the edge. Each with the river's element, if any.
-    pub fn river_link_problems(&self) -> Vec<(Option<usize>, String)> {
+    /// What does not join (the check of Phase 4c): a river target cell without a river end at it (fix: draw a river from there), a river
+    /// end at an edge cell that is not a target (fix: add a river link there), an end more than `RIVER_END_TOLERANCE_M` off its cell's
+    /// centre along the edge (*Snap river ends* fixes those). Each with the river's element, if any.
+    pub fn river_link_problems(&self) -> Vec<RiverProblem> {
         let targets = self.river_targets();
         let ends = self.river_ends();
+        let links = self.tile().river_link_points();
         let mut out = vec![];
         for &(x, y) in &targets {
             if !ends.iter().any(|en| en.cell == (x, y)) {
-                out.push((
-                    None,
-                    format!("river target cell ({x}, {y}) has no river end at its edge: a neighbour's river would stop there"),
-                ));
+                out.push(RiverProblem {
+                    elem: None,
+                    message: format!("river target cell ({x}, {y}) has no river end at its edge: a neighbour's river would stop there"),
+                    fix: links.iter().find(|l| l.cell == (x, y)).map(|l| RiverFix::DrawFrom { at: l.snapped }),
+                });
             }
         }
 
         for en in &ends {
             let name = self.tile().tscene().name(en.elem);
             if !targets.contains(&en.cell) {
-                out.push((
-                    Some(en.elem),
-                    format!("'{name}' ends at the edge in cell ({}, {}), which the tile offers no river link at", en.cell.0, en.cell.1),
-                ));
+                // Deep unless the river is as shallow as the shallow connection's water.
+                let set = if en.at.y as f64 > (wce_tile::river_bed::SHALLOW.water + wce_tile::river_bed::DEEP.water) * 0.5 {
+                    wce_tile::river_bed::SHALLOW.name
+                } else {
+                    wce_tile::river_bed::DEEP.name
+                };
+                out.push(RiverProblem {
+                    elem: Some(en.elem),
+                    message: format!(
+                        "'{name}' ends at the edge in cell ({}, {}), which the tile offers no river link at",
+                        en.cell.0, en.cell.1
+                    ),
+                    fix: Some(RiverFix::AddLink { cell: en.cell, past: en.past, set }),
+                });
             } else if en.off_centre > RIVER_END_TOLERANCE_M {
-                out.push((
-                    Some(en.elem),
-                    format!(
+                out.push(RiverProblem {
+                    elem: Some(en.elem),
+                    message: format!(
                         "'{name}' ends {:.1} m off the centre of its target cell ({}, {}): a neighbour's river would not meet it",
                         en.off_centre, en.cell.0, en.cell.1
                     ),
-                ));
+                    fix: None,
+                });
             }
         }
 
         out
+    }
+
+    /// The rivers' ends at the tile's links against the neighbours' rivers in a map context (`neighbours`: their ends in this tile's
+    /// frame): a link no neighbour's river comes to, and an end whose neighbour's is further along the edge than [`SEAM_ALONG_M`], a
+    /// water step over [`SEAM_STEP_M`] or a width off by over [`SEAM_WIDTH_M`] (fix: match the neighbour's).
+    pub fn river_seam_problems(&self, neighbours: &[NeighbourEnd]) -> Vec<RiverProblem> {
+        let t = self.tile();
+        let links = t.river_link_points();
+        let mut out = vec![];
+        for en in self.river_ends() {
+            let Some(l) = links.iter().filter(|l| l.cell == en.cell).min_by(|a, b| {
+                let d = |q: Float3| (q.x - en.at.x).hypot(q.z - en.at.z);
+                d(a.on_edge).total_cmp(&d(b.on_edge))
+            }) else {
+                continue;
+            };
+
+            let name = t.tscene().name(en.elem);
+            let along = |p: Float3| (p.x - l.on_edge.x) * -l.inward[1] + (p.z - l.on_edge.z) * l.inward[0];
+            let across = |p: Float3| (p.x - l.on_edge.x) * l.inward[0] + (p.z - l.on_edge.z) * l.inward[1];
+            // A neighbour's end at this edge: just past it on our side, within the cell's side.
+            let theirs = neighbours
+                .iter()
+                .filter(|n| across(n.at).abs() <= 32.0 && along(n.at).abs() <= 64.0 + SEAM_ALONG_M)
+                .min_by(|a, b| (along(a.at) - along(en.at)).abs().total_cmp(&(along(b.at) - along(en.at)).abs()));
+            let Some(n) = theirs else {
+                out.push(RiverProblem {
+                    elem: Some(en.elem),
+                    message: format!(
+                        "'{name}' leaves by its link at cell ({}, {}), but the neighbour there has no river at that edge",
+                        en.cell.0, en.cell.1
+                    ),
+                    fix: None,
+                });
+                continue;
+            };
+
+            let width = t
+                .tscene()
+                .polygon_points(en.elem)
+                .get(en.point)
+                .and_then(|&p| t.tscene().get(p, "width"))
+                .and_then(|v| v.parse::<f32>().ok());
+            let my_y = en.at.y / t.river_height_factor(en.elem) as f32;
+            let (d_along, step) = ((along(n.at) - along(en.at)).abs(), (n.at.y - my_y).abs());
+            let d_width = width.map_or(0.0, |w| (w - n.width).abs());
+            if d_along > SEAM_ALONG_M || step > SEAM_STEP_M || d_width > SEAM_WIDTH_M {
+                // Where its end goes: level with the neighbour's along the edge, as far past it as a snapped end.
+                let a = along(n.at);
+                let base = Float3::new(l.on_edge.x + -l.inward[1] * a, 0.0, l.on_edge.z + l.inward[0] * a);
+                let at = Float3::new(base.x - l.inward[0] * RIVER_END_OVERSHOOT_M, n.at.y, base.z - l.inward[1] * RIVER_END_OVERSHOOT_M);
+                out.push(RiverProblem {
+                    elem: Some(en.elem),
+                    message: format!(
+                        "'{name}' meets the neighbour's river at cell ({}, {}) {d_along:.1} m apart along the edge, its water {step:.1} m off and \
+                         its width {d_width:.0} m off",
+                        en.cell.0, en.cell.1
+                    ),
+                    fix: Some(RiverFix::MatchNeighbour { river: en.elem, point: en.point, at, width: n.width }),
+                });
+            }
+        }
+
+        out
+    }
+
+    /// Adds a river link: a target of `set` at `cell` and a rule that the cell past the edge (`past`) is one too (as the kit's: base
+    /// (1, 0), 64 px blend, a blend quad). One undo entry.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no database entry.
+    pub fn add_river_link(&mut self, cell: (i32, i32), past: (i32, i32), set: &str) -> Result<bool, String> {
+        use wce_formats::tile_entry::{TileLink, TileLinkTarget};
+
+        let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
+        let mut targets = entry.link_targets();
+        let mut links = entry.links();
+        if !targets.iter().any(|t| (t.x, t.y) == cell && t.tile_set == set) {
+            targets.push(TileLinkTarget { elem: 0, serialise_version: 1, tile_set: set.to_owned(), x: cell.0, y: cell.1 });
+        }
+
+        if !links.iter().any(|l| (l.x, l.y) == past && l.link_set == set) {
+            links.push(TileLink {
+                elem: 0,
+                serialise_version: 1,
+                link_set: set.to_owned(),
+                x: past.0,
+                y: past.1,
+                base_x: 1,
+                base_y: 0,
+                is_entry: false,
+                blend_size: 64,
+                no_offline_blend: false,
+                test: "TLT_EQUALS".to_owned(),
+                has_blend_quad: true,
+            });
+        }
+
+        let g = self.next_gesture();
+        self.set_links("Add river link", targets, links, g)
+    }
+
+    /// Moves a river's end to `at` (world metres, its height the file's) with a width: the neighbour's, as `RiverFix::MatchNeighbour`
+    /// says. Its handle keeps its offset. One undo entry.
+    ///
+    /// # Errors
+    ///
+    /// The scene could not be edited.
+    pub fn match_river_end(&mut self, river: usize, point: usize, at: Float3, width: f32) -> Result<(), String> {
+        use wce_tile::new_instances::point_text;
+
+        let t = self.tile();
+        let sc = t.tscene();
+        let Some(&p) = sc.polygon_points(river).get(point) else { return Err("no such point".to_owned()) };
+        let at = Float3::new(at.x, at.y * t.river_height_factor(river) as f32, at.z);
+        let (old, new) = (sc.point_position(p).unwrap_or_default(), t.to_local(river, at));
+        let d = new - old;
+        let handles = ["controlIn", "controlOut"].map(|h| (h, sc.get(p, h).and_then(|v| wce_tile::ted_scene::parse_vec3(&v, ""))));
+        self.end_stroke();
+        let mark = self.begin()?;
+        let sc = self.tscene_mut();
+        sc.set_attr(p, "position", &point_text(new));
+        for (h, v) in handles {
+            if let Some(v) = v.filter(|v| *v != Double3::ZERO) {
+                sc.set_attr(p, h, &point_text(v + d));
+            }
+        }
+
+        sc.set_attr(p, "width", &wce_tile::ted_scene::format_number(f64::from(width)));
+        let items = vec![item_of(river)];
+        self.push_splice_touching("Match the neighbour's river".to_owned(), mark, items.clone(), items, vec![river]);
+        Ok(())
     }
 
     /// The problems of the tile's links themselves (`wce_tile::link_checks`), against the kit's tile sets.
@@ -357,4 +547,18 @@ impl Tile {
         let sc = self.tscene();
         sc.find_all(RIVER).into_iter().filter_map(|e| sc.get(e, RIVER_ID_ATTR)?.parse::<u32>().ok()).max().unwrap_or(0) + 1
     }
+}
+
+/// A `river_spline<n>.xml`'s points: (x, y, z, width) of every `POINT0` .. `POINT3`, in order (each segment's four; the river's ends are
+/// the first and the last).
+pub fn file_points(text: &str) -> Vec<[f64; 4]> {
+    let attr = |tag: &str, name: &str| -> f64 {
+        let key = format!(" {name}=\"");
+        tag.find(&key).and_then(|i| tag[i + key.len()..].split('"').next()).and_then(|v| v.parse().ok()).unwrap_or(f64::NAN)
+    };
+    text.split("<POINT")
+        .skip(1)
+        .filter_map(|s| s.split("/>").next())
+        .map(|tag| [attr(tag, "x"), attr(tag, "y"), attr(tag, "z"), attr(tag, "width")])
+        .collect()
 }
