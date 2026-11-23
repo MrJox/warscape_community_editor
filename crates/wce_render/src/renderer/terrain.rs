@@ -732,8 +732,12 @@ pub(crate) struct TerrainGpuState {
     precs: Vec<PlacedPatch>,
     rec_of: IdMap<EntityId, u32>,
 
-    /// The views' plans made ahead this frame (`prepare_terrain_views`): key, LF groups, their custom records, the plan.
-    prepared: Vec<(PlanKey, Vec<u64>, Vec<Vec<u32>>, CpuPlan)>,
+    /// Each record's cluster (`clusters`): a view walks the records in the list's order, taking those of the clusters in it.
+    cluster_of: Vec<u32>,
+
+    /// The views' plans made ahead this frame (`prepare_terrain_views`), and the surface's blend boxes made with its plan.
+    prepared: Vec<PreparedView>,
+    surface_boxes: Option<(PlanKey, Vec<BoxGroup>)>,
 
     /// The blend boxes' instance rows (every material's in one upload), grown to fit.
     box_inst_vb: Option<ID3D11Buffer>,
@@ -2140,54 +2144,29 @@ impl Renderer {
         let campaign = all.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.material.as_ref().is_some_and(|m| m.campaign)));
 
         // The boxes in view by material and LF map (a context's placements of one tile share their material): one bind, the boxes as instances.
+        // Made with the surface's plan (`prepare_terrain_views`), else here; each group's material and LF from its first terrain.
         let gather =
             wce_foundation::profile::Scope::new(BLEND_GATHER.get_or_init(|| wce_foundation::profile::slot("terrain.blend.gather")));
+        let surface_key = self.plan_key(&self.camera.main_view_proj, 0.0, TerrainView::Surface.tag(), false);
+        let groups = match self.terrain.surface_boxes.take() {
+            Some((key, groups)) if key == surface_key => groups,
+            _ => {
+                let frustum = Frustum::new(&self.camera.main_view_proj);
+                let t = &self.terrain;
+                let order = view_order(&t.recs, &t.clusters, &t.cluster_of, TerrainView::Surface, &frustum);
+                let params = BoxParams { origin: self.camera.origin, units: self.camera.units, snow };
+                gather_boxes(&t.recs, &order, &frustum, &params)
+            }
+        };
         let mut by_material: Vec<MaterialBoxes> = vec![];
-        let mut slot: IdMap<(u64, u64, bool), usize> = IdMap::default();
-        let (u, frustum) = (self.camera.units, Frustum::new(&self.camera.main_view_proj));
-        for e in &ents {
-            let Payload::Terrain(t) = &e.payload else { continue };
-            let (Some(m), Some((_, b, rot))) = (t.material.as_ref(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else {
-                continue;
-            };
-            if !frustum.contains([b[0], b[1], b[2]], [b[3], b[4], b[5]]) {
-                continue;
-            }
-
-            // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max, game units), the rotation index of the material's
-            // maps and the layer base 0 (T3).
-            let o = self.camera.origin;
-            let inst = [
-                0.0,
-                1.0,
-                2.0,
-                3.0,
-                (b[0] - o.x) * u,
-                (b[1] - o.y) * u,
-                (b[2] - o.z) * u,
-                0.0,
-                (b[3] - o.x) * u,
-                (b[4] - o.y) * u,
-                (b[5] - o.z) * u,
-                0.0,
-                rot,
-                0.0,
-                0.0,
-                0.0,
-            ];
-            // In snow regions: whether the tile's cell (its box's centre) has snow.
-            let snowy = snow.is_some_and(|s| s.at(0.5 * (b[0] + b[3]), 0.5 * (b[2] + b[5])));
-            let key = (m.id, t.lf.as_ref().map_or(0, |lf| lf.id), snowy);
-            match slot.get(&key) {
-                Some(&k) => by_material[k].2.extend(inst),
-                None => {
-                    slot.insert(key, by_material.len());
-                    by_material.push((m.clone(), t.lf.clone(), inst.to_vec(), snowy));
-                }
-            }
+        for g in groups {
+            let Some(Payload::Terrain(t)) = list.get(g.rec as usize).map(|e| &e.payload) else { continue };
+            let Some(m) = &t.material else { continue };
+            by_material.push((m.clone(), t.lf.clone(), g.rows, g.snowy));
         }
 
         drop(gather);
+        let u = self.camera.units;
         // The baked materials last: they change the shader once.
         by_material.sort_by_key(|(m, _, _, _)| m.baked);
         let baked_ps = if by_material.iter().any(|(m, _, _, _)| m.baked) {
@@ -2638,6 +2617,16 @@ impl Renderer {
     pub(crate) fn begin_terrain_frame(&mut self) {
         self.terrain.frame += 1;
         self.terrain.prepared.clear();
+        self.terrain.surface_boxes = None;
+    }
+
+    /// How many terrains the frame's list holds (made if it isn't yet: `terrain_surface_entities`), without the list of references a pass
+    /// that draws no custom mesh doesn't need (made from the ids, 0.07 ms a time).
+    fn terrain_list(&mut self, scene: &RenderScene) -> usize {
+        match &self.terrain.surface {
+            Some((frame, ids)) if *frame == self.terrain.frame => ids.len(),
+            _ => self.terrain_surface_entities(scene).len(),
+        }
     }
 
     /// The terrain entities the material pass draws, with their geometry built and placed (once a frame; the other passes take the list).
@@ -2692,9 +2681,21 @@ impl Renderer {
         let (mut recs, mut precs) = (Vec::with_capacity(ents.len()), vec![]);
         self.terrain.rec_of.clear();
         for e in &ents {
-            let (Payload::Terrain(t), Some(p)) = (&e.payload, self.terrain.placed.get(&e.id)) else { continue };
             self.terrain.rec_of.insert(e.id, recs.len() as u32);
+            // One a list entry (the views read them by its index): an entry without a placement (none: the list is of the placed) has none.
+            let (Payload::Terrain(t), Some(p)) = (&e.payload, self.terrain.placed.get(&e.id)) else {
+                recs.push(TerrainRec { custom: true, ..Default::default() });
+                continue;
+            };
+            let (has_blend, mat, blend, rot) = match (&t.material, p.blend_box) {
+                (Some(m), Some((_, b, rot))) => (true, m.id, b, rot),
+                _ => (false, 0, [0.0; 6], 0.0),
+            };
             recs.push(TerrainRec {
+                has_blend,
+                mat,
+                blend,
+                rot,
                 lf: t.lf.as_ref().map_or(0, |lf| lf.id),
                 key: p.key,
                 step: p.step,
@@ -2711,6 +2712,12 @@ impl Renderer {
         }
 
         (self.terrain.recs, self.terrain.precs) = (recs, precs);
+        self.terrain.cluster_of = vec![u32::MAX; ents.len()];
+        for (c, cluster) in self.terrain.clusters.iter().enumerate() {
+            for &k in &cluster.ents {
+                self.terrain.cluster_of[k] = c as u32;
+            }
+        }
         self.terrain.surface_lfs = lfs;
         self.terrain.surface_from = Some(self.surface_from(scene));
         ents
@@ -2840,20 +2847,21 @@ impl Renderer {
             return 0;
         };
 
-        let list = self.terrain_surface_entities(scene);
+        let count = self.terrain_list(scene);
         let il = if rome2 {
             self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout())
         } else {
             self.layout(&vs, "terrain_shadow", &geom_layout())
         };
         let Some(il) = il else { return 0 };
-        if list.is_empty() {
+        if count == 0 {
             return 0;
         }
 
         self.ctx.set_input_layout(Some(&il));
         let clip = game_clip(relative, self.camera.units);
-        let triangles = self.draw_view_patches(&list, TerrainView::Shadow, &vs, &ps, view_proj, &clip, texel, CustomDraw::None);
+        // No list: the cascades draw no custom mesh.
+        let triangles = self.draw_view_patches(&[], TerrainView::Shadow, &vs, &ps, view_proj, &clip, texel, CustomDraw::None);
 
         // The cascade's matrix back for the objects after (in the scene's game units: the tile content's may differ).
         self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(relative, self.camera.units).data());
@@ -2943,23 +2951,20 @@ impl Renderer {
     ) -> u64 {
         let key = self.plan_key(cull, texel, view.tag(), false);
         if !self.plan_current(&key) {
-            let at = self.terrain.prepared.iter().position(|p| p.0 == key);
-            let (lfs, customs, cpu) = match at {
-                Some(at) => {
-                    let (_, lfs, customs, cpu) = self.terrain.prepared.swap_remove(at);
-                    (lfs, customs, cpu)
-                }
+            let at = self.terrain.prepared.iter().position(|p| p.key == key);
+            let v = match at {
+                Some(at) => self.terrain.prepared.swap_remove(at),
                 None => {
-                    let (lfs, recs, customs) = self.view_groups(view, cull);
-                    let shifts: Vec<[f32; 2]> = lfs.iter().map(|&lf| self.lf_draw_of(lf).shift).collect();
+                    let shifts = self.lf_shifts();
                     let params = self.plan_params(cull, texel, false);
                     let _batching = wce_foundation::profile::Scope::new(
                         BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")),
                     );
-                    (lfs, customs, plan_cpu(&self.terrain.recs, &self.terrain.precs, &recs, &shifts, &params))
+                    let t = &self.terrain;
+                    plan_view(&t.recs, &t.precs, &t.clusters, &t.cluster_of, key, view, &shifts, &params, None)
                 }
             };
-            self.finish_plan(key, cpu, lfs, customs);
+            self.finish_plan(key, v.cpu, v.lfs, v.customs);
         }
 
         let Some(plan) = &self.terrain.patch_plan else { return 0 };
@@ -2974,86 +2979,49 @@ impl Renderer {
     /// strides and rows read only the frame's records (`TerrainRec`), and the surface's and the four cascades' each walked the frame's
     /// terrains (a fifth of the CPU's frame, one after another). Their draws take them (`draw_view_patches`).
     pub(crate) fn prepare_terrain_views(&mut self, scene: &RenderScene, views: &[(TerrainView, Float4x4, f32)]) {
-        let _ = self.terrain_surface_entities(scene);
-        struct Job {
-            key: PlanKey,
-            lfs: Vec<u64>,
-            recs: Vec<Vec<u32>>,
-            customs: Vec<Vec<u32>>,
-            shifts: Vec<[f32; 2]>,
-            params: PlanParams,
+        if self.terrain_list(scene) == 0 {
+            return;
         }
 
-        let mut jobs: Vec<Job> = vec![];
-        for (view, cull, texel) in views {
-            let key = self.plan_key(cull, *texel, view.tag(), false);
-            if self.terrain.prepared.iter().any(|p| p.0 == key) || jobs.iter().any(|j| j.key == key) {
-                continue;
-            }
-
-            let (lfs, recs, customs) = self.view_groups(*view, cull);
-            let shifts: Vec<[f32; 2]> = lfs.iter().map(|&lf| self.lf_draw_of(lf).shift).collect();
-            let params = self.plan_params(cull, *texel, false);
-            jobs.push(Job { key, lfs, recs, customs, shifts, params });
-        }
-
+        let jobs: Vec<(PlanKey, TerrainView, PlanParams)> = views
+            .iter()
+            .map(|(view, cull, texel)| (self.plan_key(cull, *texel, view.tag(), false), *view, self.plan_params(cull, *texel, false)))
+            .filter(|(key, _, _)| !self.terrain.prepared.iter().any(|p| p.key == *key))
+            .collect();
         if jobs.is_empty() {
             return;
         }
 
+        // The LF groups' shifts (here: `lf_draw` makes the windows), the rest on the pool, the surface's blend boxes with its plan.
+        let shifts = self.lf_shifts();
+        let snow = scene.snow();
+        let boxes = BoxParams { origin: self.camera.origin, units: self.camera.units, snow };
         let _batching =
             wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
-        let (recs, precs) = (&self.terrain.recs, &self.terrain.precs);
-        let plans: Vec<CpuPlan> = std::thread::scope(|s| {
-            let handles: Vec<_> = jobs[1..].iter().map(|j| s.spawn(move || plan_cpu(recs, precs, &j.recs, &j.shifts, &j.params))).collect();
-            let first = plan_cpu(recs, precs, &jobs[0].recs, &jobs[0].shifts, &jobs[0].params);
-            std::iter::once(first).chain(handles.into_iter().map(|h| h.join().unwrap_or_default())).collect()
-        });
+        let (recs, precs, clusters, cluster_of) =
+            (&self.terrain.recs, &self.terrain.precs, &self.terrain.clusters, &self.terrain.cluster_of);
+        let views: Vec<PreparedView> = {
+            use rayon::prelude::*;
+            jobs.par_iter()
+                .map(|(key, view, params)| {
+                    let boxes = (*view == TerrainView::Surface).then_some(&boxes);
+                    plan_view(recs, precs, clusters, cluster_of, *key, *view, &shifts, params, boxes)
+                })
+                .collect()
+        };
 
-        for (j, cpu) in jobs.into_iter().zip(plans) {
-            self.terrain.prepared.push((j.key, j.lfs, j.customs, cpu));
+        for mut v in views {
+            if let Some(b) = v.boxes.take() {
+                self.terrain.surface_boxes = Some((v.key, b));
+            }
+            self.terrain.prepared.push(v);
         }
     }
 
-    /// A view's terrains (`draw_view_patches`) from the frame's clusters within `cull`, in the list's order, grouped by LF map: the groups'
-    /// LF ids, their records, and the records among them with a custom mesh.
-    fn view_groups(&self, view: TerrainView, cull: &Float4x4) -> (Vec<u64>, Vec<Vec<u32>>, Vec<Vec<u32>>) {
-        let frustum = Frustum::new(cull);
-        let mut pick: Vec<u32> = self
-            .terrain
-            .clusters
-            .iter()
-            .filter(|c| c.always || frustum.contains(c.bmin, c.bmax))
-            .flat_map(|c| c.ents.iter().map(|&k| k as u32))
-            .collect();
-        pick.sort_unstable();
-        let (mut lfs, mut recs, mut customs): (Vec<u64>, Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![], vec![], vec![]);
-        for k in pick {
-            let Some(r) = self.terrain.recs.get(k as usize) else { continue };
-            let skip = match view {
-                TerrainView::Surface => r.sea_floor,
-                TerrainView::Shadow => r.no_shadow,
-            };
-            if skip {
-                continue;
-            }
-
-            let g = match lfs.iter().position(|&l| l == r.lf) {
-                Some(g) => g,
-                None => {
-                    lfs.push(r.lf);
-                    recs.push(vec![]);
-                    customs.push(vec![]);
-                    lfs.len() - 1
-                }
-            };
-            recs[g].push(k);
-            if r.custom {
-                customs[g].push(k);
-            }
-        }
-
-        (lfs, recs, customs)
+    /// Every LF group's frame shift this frame (`lf_draw`, which makes the windows: the main thread's), by the LF's id (0: none).
+    fn lf_shifts(&mut self) -> Vec<(u64, [f32; 2])> {
+        let ids: Vec<u64> = std::iter::once(0).chain(self.terrain.surface_lfs.iter().map(|l| l.id)).collect();
+        ids.into_iter().map(|id| (id, self.lf_draw_of(id).shift)).collect()
     }
 
     /// An LF group's draw (`lf_draw`) by the LF's id (0: none, the render origin's frame).
@@ -3278,6 +3246,133 @@ impl Renderer {
     }
 }
 
+/// A view's plan made ahead (`Renderer::prepare_terrain_views`): its key, LF groups and their records with a custom mesh, the plan,
+/// and the surface's blend boxes.
+pub(crate) struct PreparedView {
+    key: PlanKey,
+    lfs: Vec<u64>,
+    customs: Vec<Vec<u32>>,
+    cpu: CpuPlan,
+    boxes: Option<Vec<BoxGroup>>,
+}
+
+/// What the blend boxes' instances are made with: the render origin, the camera's units, the snow regions.
+pub(crate) struct BoxParams<'a> {
+    origin: Float3,
+    units: f32,
+    snow: Option<&'a wce_scene::render_scene::SnowRegions>,
+}
+
+/// The blend boxes in view of a material on an LF map, snowy or not (`gather_boxes`): the first terrain's record (its material and LF
+/// the group's), the instances.
+pub(crate) struct BoxGroup {
+    rec: u32,
+    snowy: bool,
+    rows: Vec<f32>,
+}
+
+/// A view's terrains (records, in the list's order): those of the clusters within `frustum`, but the sea tiles (the surface's) or those
+/// that cast no shadow (a cascade's).
+fn view_order(recs: &[TerrainRec], clusters: &[TerrainCluster], cluster_of: &[u32], view: TerrainView, frustum: &Frustum) -> Vec<u32> {
+    let seen: Vec<bool> = clusters.iter().map(|c| c.always || frustum.contains(c.bmin, c.bmax)).collect();
+    (0..recs.len() as u32)
+        .filter(|&k| {
+            let r = &recs[k as usize];
+            let skip = match view {
+                TerrainView::Surface => r.sea_floor,
+                TerrainView::Shadow => r.no_shadow,
+            };
+            !skip && cluster_of.get(k as usize).and_then(|&c| seen.get(c as usize)).copied().unwrap_or(true)
+        })
+        .collect()
+}
+
+/// A view's plan (`plan_cpu` over its terrains grouped by LF map, in the order they come), and with `boxes` its blend boxes
+/// (`gather_boxes`). Reads only its arguments: made on the pool for several views at once.
+#[allow(clippy::too_many_arguments)]
+fn plan_view(
+    recs: &[TerrainRec],
+    precs: &[PlacedPatch],
+    clusters: &[TerrainCluster],
+    cluster_of: &[u32],
+    key: PlanKey,
+    view: TerrainView,
+    shifts: &[(u64, [f32; 2])],
+    params: &PlanParams,
+    boxes: Option<&BoxParams>,
+) -> PreparedView {
+    let order = view_order(recs, clusters, cluster_of, view, &params.frustum);
+    let (mut lfs, mut groups, mut customs): (Vec<u64>, Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![], vec![], vec![]);
+    for &k in &order {
+        let r = &recs[k as usize];
+        let g = match lfs.iter().position(|&l| l == r.lf) {
+            Some(g) => g,
+            None => {
+                lfs.push(r.lf);
+                groups.push(vec![]);
+                customs.push(vec![]);
+                lfs.len() - 1
+            }
+        };
+        groups[g].push(k);
+        if r.custom {
+            customs[g].push(k);
+        }
+    }
+
+    let group_shifts: Vec<[f32; 2]> = lfs.iter().map(|lf| shifts.iter().find(|(id, _)| id == lf).map_or([0.0, 0.0], |(_, s)| *s)).collect();
+    let cpu = plan_cpu(recs, precs, &groups, &group_shifts, params);
+    let boxes = boxes.map(|b| gather_boxes(recs, &order, &params.frustum, b));
+    PreparedView { key, lfs, customs, cpu, boxes }
+}
+
+/// The blend boxes in view of the terrains `order` (records, in the list's order) by material, LF map and snow (a context's placements of
+/// one tile share their material): one bind each, the boxes as instances. An instance: the layer mapping indices (T0), the box corners
+/// (T1 min, T2 max, game units), the rotation index of the material's maps and the layer base 0 (T3).
+fn gather_boxes(recs: &[TerrainRec], order: &[u32], frustum: &Frustum, p: &BoxParams) -> Vec<BoxGroup> {
+    let (o, u) = (p.origin, p.units);
+    let mut out: Vec<BoxGroup> = vec![];
+    let mut slot: IdMap<(u64, u64, bool), usize> = IdMap::default();
+    for &k in order {
+        let r = &recs[k as usize];
+        let b = r.blend;
+        if !r.has_blend || !frustum.contains([b[0], b[1], b[2]], [b[3], b[4], b[5]]) {
+            continue;
+        }
+
+        let inst = [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            (b[0] - o.x) * u,
+            (b[1] - o.y) * u,
+            (b[2] - o.z) * u,
+            0.0,
+            (b[3] - o.x) * u,
+            (b[4] - o.y) * u,
+            (b[5] - o.z) * u,
+            0.0,
+            r.rot,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        // In snow regions: whether the tile's cell (its box's centre) has snow.
+        let snowy = p.snow.is_some_and(|s| s.at(0.5 * (b[0] + b[3]), 0.5 * (b[2] + b[5])));
+        let key = (r.mat, r.lf, snowy);
+        match slot.get(&key) {
+            Some(&g) => out[g].rows.extend(inst),
+            None => {
+                slot.insert(key, out.len());
+                out.push(BoxGroup { rec: k, snowy, rows: inst.to_vec() });
+            }
+        }
+    }
+
+    out
+}
+
 /// Which of the frame's terrains a view draws (`Renderer::draw_view_patches`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TerrainView {
@@ -3306,6 +3401,12 @@ type PlanKey = (u64, [u32; 16], [u32; 4], u64, bool);
 /// looked every terrain up in a map and then its patches, scattered over the heap.)
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TerrainRec {
+    /// Whether it has a material and a blend box, the material's id, the box (world, scene units: min x y z, max x y z) and its rotation
+    /// index (`Placed::blend_box`).
+    has_blend: bool,
+    mat: u64,
+    blend: [f32; 6],
+    rot: f32,
     lf: u64,
     key: usize,
     step: f32,

@@ -706,6 +706,7 @@ impl Renderer {
     pub(crate) fn pass_shadows(&mut self, scene: &RenderScene, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
         // The main camera's (the material pass's surface culls with the same: `prepare_terrain_views`).
         let main_cull = self.camera.view_proj;
+        let setup = wce_foundation::profile::Scope::new(SHADOW_SETUP.get_or_init(|| wce_foundation::profile::slot("shadow.setup")));
         // In game units, as the rows (the depth analysis is in scene units); the slices go back to scene units below. Mixed, every
         // cascade came out twice the game's length (coast dump: 9.9, 41, 134, 352, 819 against the editor's 9.8, 73, 261, 700, 1640).
         // Rome 2's cascades by its shadow level (`rome2_cascades`): none at 0, two to four of them; the atlas twice the tile's side.
@@ -842,6 +843,7 @@ impl Renderer {
             matrices[c * 16..c * 16 + 16].copy_from_slice(game_clip(&(to_uv * light_rel[c]), self.camera.units).data());
         }
 
+        drop(setup);
         // Render the casters into the four quadrants.
         let vs = self.shader(SHADOW_VS);
         let ps = self.shader(SHADOW_PS);
@@ -952,6 +954,8 @@ impl Renderer {
                 let rigid =
                     |m: &GpuMesh| !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope | MeshKind::CampaignVegetation);
                 let alpha_tested = |m: &GpuMesh| alpha_ps.is_some() && m.alpha_mode == 1;
+                let rigid_scope =
+                    wce_foundation::profile::Scope::new(SHADOW_RIGID.get_or_init(|| wce_foundation::profile::slot("shadow.rigid")));
                 let (instances, triangles) =
                     self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| rigid(m) && !alpha_tested(m));
                 self.draw_stats.shadow_instances += instances;
@@ -973,8 +977,12 @@ impl Renderer {
                     self.draw_stats.shadow_triangles += triangles;
                     self.bind(&ps);
                 }
-                self.draw_skinned_shadow();
-                self.draw_ropes_shadow();
+                drop(rigid_scope);
+                {
+                    wce_prof!("shadow.skinned_ropes");
+                    self.draw_skinned_shadow();
+                    self.draw_ropes_shadow();
+                }
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 // The campaign's terrain casts only at the top shadow quality (fn 0x118debf0 skips the shadow pass unless
                 // `terrain_enable_shadows`, set for the campaign at the shadow view's quality index 2: gfx_shadow_quality 3).
@@ -993,6 +1001,8 @@ impl Renderer {
                 }
 
                 // The trees, with their own vertex format and shaders, alpha-tested on their diffuse map.
+                let _trees =
+                    wce_foundation::profile::Scope::new(SHADOW_TREES.get_or_init(|| wce_foundation::profile::slot("shadow.trees")));
                 for (kind, pair) in &tree_shaders {
                     let Some((tvs, tps)) = pair else { continue };
                     let kind_layout = match kind {
@@ -1102,3 +1112,7 @@ impl Renderer {
         null_ps_srvs(&self.ctx, 8);
     }
 }
+
+static SHADOW_SETUP: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+static SHADOW_RIGID: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+static SHADOW_TREES: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
