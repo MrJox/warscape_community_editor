@@ -28,6 +28,8 @@ pub enum SceneItem {
         track: u32,
         index: usize,
     },
+    /// A camera (its Camera track): the object, where it is at the playhead.
+    Camera(u32),
 }
 
 impl SceneItem {
@@ -40,6 +42,7 @@ impl SceneItem {
             SceneItem::Vfx { track, index } => k(4, (u64::from(track) << 24) | (index as u64 & 0xFF_FFFF)),
             SceneItem::CameraKey { track, index } => k(5, (u64::from(track) << 24) | (index as u64 & 0xFF_FFFF)),
             SceneItem::CameraTarget { track, index } => k(6, (u64::from(track) << 24) | (index as u64 & 0xFF_FFFF)),
+            SceneItem::Camera(track) => k(7, u64::from(track)),
         }
     }
 
@@ -52,6 +55,7 @@ impl SceneItem {
             4 => SceneItem::Vfx { track: (v >> 24) as u32, index: (v & 0xFF_FFFF) as usize },
             5 => SceneItem::CameraKey { track: (v >> 24) as u32, index: (v & 0xFF_FFFF) as usize },
             6 => SceneItem::CameraTarget { track: (v >> 24) as u32, index: (v & 0xFF_FFFF) as usize },
+            7 => SceneItem::Camera(v as u32),
             _ => return None,
         })
     }
@@ -77,6 +81,7 @@ impl SceneItem {
             }
             SceneItem::CameraTarget { track, index } => camera_key_of(p, track, index)
                 .map_or_else(|| "Camera target".into(), |k| format!("Camera target of the key at {:.2} s", k.t)),
+            SceneItem::Camera(track) => camera_track_of(p, track).map_or_else(|| "Camera".into(), |t| t.name.clone()),
         }
     }
 
@@ -87,8 +92,22 @@ impl SceneItem {
             SceneItem::Unit(id) => p.unit(id).is_some(),
             SceneItem::Vfx { track, index } => vfx_of(p, track, index).is_some(),
             SceneItem::CameraKey { track, index } | SceneItem::CameraTarget { track, index } => camera_key_of(p, track, index).is_some(),
+            SceneItem::Camera(track) => camera_track_of(p, track).is_some(),
         }
     }
+
+    /// The camera (its track) an item belongs to: a camera, or one of its keys or their targets.
+    pub fn camera(self) -> Option<u32> {
+        match self {
+            SceneItem::Camera(t) | SceneItem::CameraKey { track: t, .. } | SceneItem::CameraTarget { track: t, .. } => Some(t),
+            _ => None,
+        }
+    }
+}
+
+/// A camera's track, in whichever clip has it.
+pub fn camera_track_of(p: &Project, track: u32) -> Option<&wce_cinematic::scene::Track> {
+    p.clips.iter().flat_map(|c| &c.tracks).find(|t| t.id == track && matches!(t.content, TrackContent::Camera { .. }))
 }
 
 /// A camera key by its track and index.
@@ -155,7 +174,13 @@ mod tests {
 
     #[test]
     fn items_survive_their_encoding() {
-        for i in [SceneItem::Battle, SceneItem::Army(3), SceneItem::Unit(4_000_000), SceneItem::Vfx { track: 77, index: 12 }] {
+        for i in [
+            SceneItem::Battle,
+            SceneItem::Army(3),
+            SceneItem::Unit(4_000_000),
+            SceneItem::Vfx { track: 77, index: 12 },
+            SceneItem::Camera(9),
+        ] {
             assert_eq!(SceneItem::decode(i.encode()), Some(i));
         }
         assert_eq!(SceneItem::decode(0), None, "the ground's item is none of them");

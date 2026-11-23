@@ -92,7 +92,11 @@ pub struct VfxState {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SceneFrame {
     pub t: f64,
+    /// The live camera's view (the Camera Cuts' camera at `t`).
     pub camera: Option<CameraState>,
+    /// The live camera's track, and every camera's view at `t` (by track id, in the clip's order).
+    pub live_camera: Option<u32>,
+    pub cameras: Vec<(u32, CameraState)>,
     pub units: Vec<UnitState>,
     /// Sound events started so far (the player decides whether they are still heard).
     pub sounds: Vec<ActiveSound>,
@@ -114,21 +118,11 @@ pub fn evaluate(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f64) -> 
     for track in clip.tracks.iter().filter(|tr| !tr.muted) {
         match &track.content {
             TrackContent::Camera { keys } => {
-                let times: Vec<f64> = keys.iter().map(|k| k.t).collect();
-                if let Some((i, j, u)) = around(&times, t) {
-                    let positions: Vec<[f32; 3]> = keys.iter().map(|k| k.position).collect();
-                    let targets: Vec<[f32; 3]> = keys.iter().map(|k| k.target).collect();
-                    let interp = keys[i].interp;
-                    // The field of view on the same curve as the place (smoothstep between each pair of keys stopped the zoom at
-                    // every key: a jolt there in game).
-                    let fovs: Vec<[f32; 1]> = keys.iter().map(|k| [k.fov]).collect();
-                    f.camera = Some(CameraState {
-                        position: point(&positions, &times, i, j, u, interp),
-                        target: point(&targets, &times, i, j, u, interp),
-                        fov: point(&fovs, &times, i, j, u, interp)[0],
-                    });
+                if let Some(c) = camera_at(keys, t) {
+                    f.cameras.push((track.id, c));
                 }
             }
+            TrackContent::Cuts { .. } => {}
             TrackContent::Unit { unit, path, actions, men, visible } => {
                 let Some(su) = project.unit(*unit) else { continue };
                 let sp = speeds.get(&su.unit).copied().unwrap_or_default();
@@ -218,7 +212,83 @@ pub fn evaluate(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f64) -> 
         });
     }
     f.units.sort_by_key(|u| u.unit);
+    f.live_camera = live_camera(clip, t).filter(|id| f.cameras.iter().any(|(c, _)| c == id));
+    f.camera = f.live_camera.and_then(|id| f.cameras.iter().find(|(c, _)| *c == id)).map(|(_, c)| c.clone());
     f
+}
+
+/// A camera's view at `t` from its keys (none without keys).
+pub fn camera_at(keys: &[crate::scene::CameraKey], t: f64) -> Option<CameraState> {
+    let times: Vec<f64> = keys.iter().map(|k| k.t).collect();
+    let (i, j, u) = around(&times, t)?;
+    let positions: Vec<[f32; 3]> = keys.iter().map(|k| k.position).collect();
+    let targets: Vec<[f32; 3]> = keys.iter().map(|k| k.target).collect();
+    let interp = keys[i].interp;
+    // The field of view on the same curve as the place (smoothstep between each pair of keys stopped the zoom at every key: a jolt
+    // there in game).
+    let fovs: Vec<[f32; 1]> = keys.iter().map(|k| [k.fov]).collect();
+    Some(CameraState {
+        position: point(&positions, &times, i, j, u, interp),
+        target: point(&targets, &times, i, j, u, interp),
+        fov: point(&fovs, &times, i, j, u, interp)[0],
+    })
+}
+
+/// The cameras of a clip that can be live: its Camera tracks that are on and have keys, in order.
+pub fn clip_cameras(clip: &Clip) -> Vec<u32> {
+    clip.tracks
+        .iter()
+        .filter(|tr| !tr.muted && matches!(&tr.content, TrackContent::Camera { keys } if !keys.is_empty()))
+        .map(|tr| tr.id)
+        .collect()
+}
+
+/// The clip's cuts (its Camera Cuts track's, on), by time; only cuts to cameras that can be live.
+pub fn clip_cuts(clip: &Clip) -> Vec<crate::scene::CutKey> {
+    let cams = clip_cameras(clip);
+    let mut cuts: Vec<crate::scene::CutKey> = clip
+        .tracks
+        .iter()
+        .filter(|tr| !tr.muted)
+        .find_map(|tr| match &tr.content {
+            TrackContent::Cuts { cuts } => Some(cuts.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    cuts.retain(|c| cams.contains(&c.camera));
+    cuts.sort_by(|a, b| a.t.total_cmp(&b.t));
+    cuts
+}
+
+/// The live camera at `t`: the last cut's at or before it (before the first cut, the first cut's), else the first camera.
+pub fn live_camera(clip: &Clip, t: f64) -> Option<u32> {
+    let cuts = clip_cuts(clip);
+    if let Some(first) = cuts.first() {
+        return Some(cuts.iter().rev().find(|c| c.t <= t + 1e-9).unwrap_or(first).camera);
+    }
+    clip_cameras(clip).first().copied()
+}
+
+/// The clip's shots: (from, to, camera) spans where one camera is live, in order, covering the clip.
+pub fn shots(clip: &Clip) -> Vec<(f64, f64, u32)> {
+    let cuts = clip_cuts(clip);
+    let end = clip.length.max(0.0);
+    if cuts.is_empty() {
+        return clip_cameras(clip).first().map(|&c| vec![(0.0, end, c)]).unwrap_or_default();
+    }
+    let mut out: Vec<(f64, f64, u32)> = vec![];
+    for (k, c) in cuts.iter().enumerate() {
+        let from = if k == 0 { 0.0 } else { c.t.clamp(0.0, end) };
+        let to = cuts.get(k + 1).map_or(end, |n| n.t.clamp(0.0, end));
+        if to <= from + 1e-9 {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last.2 == c.camera => last.1 = to,
+            _ => out.push((from, to, c.camera)),
+        }
+    }
+    out
 }
 
 fn scalar_track(keys: impl Iterator<Item = (f64, f32, Interp)>, t: f64) -> Option<f32> {
@@ -377,7 +447,7 @@ pub fn evaluate_battle(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f
         state.slot_start = ordered.since;
         state.slot_distance = ordered.covered;
         if let Some(k) = actions.iter().rev().find(|k| k.t <= t)
-            && k.slot == "TAUNT"
+            && crate::scene::slot_family(&k.slot) == "TAUNT"
         {
             state.slot = "TAUNT".into();
             state.slot_start = k.t;
@@ -481,6 +551,51 @@ mod tests {
             general: false,
         });
         (p, id)
+    }
+
+    /// A clip of two cameras (ids 1 and 2, each still at its own place) and cuts.
+    fn two_cameras(cuts: Vec<crate::scene::CutKey>) -> Clip {
+        let cam = |id: u32, x: f32| Track {
+            id,
+            name: format!("Camera {id}"),
+            muted: false,
+            content: TrackContent::Camera {
+                keys: vec![CameraKey { t: 0.0, position: [x, 10.0, 0.0], target: [x, 0.0, 10.0], fov: 35.0, interp: Interp::Smooth }],
+            },
+        };
+        let mut tracks = vec![cam(1, 0.0), cam(2, 100.0)];
+        if !cuts.is_empty() {
+            tracks.push(Track { id: 3, name: "Camera Cuts".into(), muted: false, content: TrackContent::Cuts { cuts } });
+        }
+        Clip { id: 9, name: "c".into(), length: 10.0, fps: 30, tracks, skippable: true, motion_blur: false }
+    }
+
+    #[test]
+    fn the_cuts_choose_the_live_camera() {
+        use crate::scene::CutKey;
+        let p = Project::new("Test", "attila");
+        // No cuts: the first camera all along.
+        let clip = two_cameras(vec![]);
+        assert_eq!(evaluate(&p, &clip, &SpeedTable::new(), 5.0).live_camera, Some(1));
+        assert_eq!(shots(&clip), [(0.0, 10.0, 1)]);
+        // Cut to 2 at 4 s, back to 1 at 7 s; a cut to a camera that isn't there is left out.
+        let clip = two_cameras(vec![
+            CutKey { t: 7.0, camera: 1 },
+            CutKey { t: 4.0, camera: 2 },
+            CutKey { t: 8.0, camera: 99 },
+            CutKey { t: 0.0, camera: 1 },
+        ]);
+        let f = evaluate(&p, &clip, &SpeedTable::new(), 5.0);
+        assert_eq!(f.live_camera, Some(2));
+        assert_eq!(f.camera.map(|c| c.position[0]), Some(100.0));
+        assert_eq!(f.cameras.len(), 2);
+        assert_eq!(evaluate(&p, &clip, &SpeedTable::new(), 3.9).live_camera, Some(1));
+        assert_eq!(evaluate(&p, &clip, &SpeedTable::new(), 7.0).live_camera, Some(1));
+        assert_eq!(shots(&clip), [(0.0, 4.0, 1), (4.0, 7.0, 2), (7.0, 10.0, 1)]);
+        // Before the first cut: the first cut's camera.
+        let clip = two_cameras(vec![CutKey { t: 2.0, camera: 2 }]);
+        assert_eq!(evaluate(&p, &clip, &SpeedTable::new(), 1.0).live_camera, Some(2));
+        assert_eq!(shots(&clip), [(0.0, 10.0, 2)]);
     }
 
     #[test]

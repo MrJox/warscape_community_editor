@@ -10,6 +10,7 @@ use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
 use wce_audio::library::SoundLibrary;
 use wce_audio::sound_db::table_rows;
+use wce_cinematic::scene::AUTO_SLOT;
 use wce_editor::gui;
 use wce_vfs::files::Files;
 
@@ -41,6 +42,81 @@ pub struct GameLists {
     pub music_events: Vec<Item>,
     /// The game's music moods (`music_set_*` events), by group.
     pub moods: Vec<wce_cinematic::music::Mood>,
+}
+
+/// A unit's animation slots as picker items, grouped (idle, movement, combat, death, morale and gestures, other) and named for
+/// reading, `AUTO` first. Without the unit's own (its men not loaded yet): the common ones.
+pub fn slot_items(own: Option<&[String]>) -> Vec<Item> {
+    let slots: Vec<String> = match own {
+        Some(s) if !s.is_empty() => s.to_vec(),
+        _ => SLOTS.iter().map(|s| (*s).to_owned()).collect(),
+    };
+    // By family: a numbered set of variants is one entry (its variants spread over the men; the key can name one).
+    let mut families: BTreeMap<String, usize> = BTreeMap::new();
+    for s in slots.iter().filter(|s| *s != AUTO_SLOT && !s.starts_with("HAND_POSE")) {
+        *families.entry(wce_cinematic::scene::slot_family(s).to_owned()).or_default() += 1;
+    }
+    let mut list: Vec<(String, usize)> = families.into_iter().collect();
+    list.sort_by(|a, b| slot_group(&a.0).0.cmp(&slot_group(&b.0).0).then_with(|| a.0.cmp(&b.0)));
+    let mut out = vec![Item { key: AUTO_SLOT.to_owned(), name: "Back to moving / standing".to_owned() }];
+    out.extend(list.into_iter().map(|(f, n)| {
+        let more = if n > 1 { format!(", {n} variants") } else { String::new() };
+        Item { name: format!("{}: {}{more}", slot_group(&f).1, slot_label(&f)), key: f }
+    }));
+    out
+}
+
+/// The group a slot is listed under (its order, its name).
+fn slot_group(slot: &str) -> (u8, &'static str) {
+    let s = slot.strip_prefix("RIDER_").unwrap_or(slot);
+    let has = |words: &[&str]| words.iter().any(|w| s.contains(w));
+    if has(&["STAND", "IDLE"]) {
+        (0, "Idle")
+    } else if has(&["WALK", "RUN", "CHARGE", "TURN", "MOVE", "JOG", "SPRINT", "STRAFE"]) {
+        (1, "Movement")
+    } else if has(&["ATTACK", "COMBAT", "DEFEND", "BLOCK", "PARRY", "FIRE", "SHOOT", "RELOAD", "AIM", "THROW", "HIT", "SPEAR", "SWORD"]) {
+        (2, "Combat")
+    } else if has(&["DIE", "DEATH", "DEAD", "DYING", "KNOCKED", "FALL"]) {
+        (3, "Death")
+    } else if has(&["TAUNT", "CELEBRATE", "CHEER", "SALUTE", "PANIC", "ROUT", "KNEEL", "PRAY", "CHANT", "SHOUT", "FLEE", "MORALE", "WAVE"])
+    {
+        (4, "Morale and gestures")
+    } else {
+        (5, "Other")
+    }
+}
+
+/// A slot for reading: `RIDER_ATTACK_1` -> "Attack 1 (riding)".
+fn slot_label(slot: &str) -> String {
+    let (s, riding) = match slot.strip_prefix("RIDER_") {
+        Some(s) => (s, true),
+        None => (slot, false),
+    };
+    let mut words = s.to_lowercase().replace('_', " ");
+    if let Some(c) = words.get(..1) {
+        words = c.to_uppercase() + &words[1..];
+    }
+    if riding { format!("{words} (riding)") } else { words }
+}
+
+/// Where an action key's animation plays, for its tooltip.
+pub fn slot_tip(slot: &str) -> &'static str {
+    if wce_cinematic::scene::slot_family(slot) == "TAUNT" || slot == AUTO_SLOT || slot == "STAND" {
+        "The animation the whole unit plays from here; plays in the editor, exported clips and the battle"
+    } else {
+        "The animation the whole unit plays from here; plays in the editor and exported clips (a battle's Lua can't)"
+    }
+}
+
+/// A key's slot the unit hasn't (its men loaded; `AUTO` always has a meaning).
+pub fn slot_missing(slot: &str, own: Option<&[String]>) -> bool {
+    !slot.is_empty()
+        && slot != AUTO_SLOT
+        && own.is_some_and(|s| {
+            // A rider's list is his `RIDER_` slots alone.
+            let mounted = s.iter().all(|x| x.starts_with("RIDER_"));
+            !s.is_empty() && wce_cinematic::scene::resolve_slot(slot, s, mounted).is_empty()
+        })
 }
 
 /// Every slot a unit's animation fragments commonly have, for the action keys.
@@ -291,11 +367,6 @@ pub fn picker_audible(
         gui::end_combo();
     }
     picked
-}
-
-/// The labels of a short fixed list, as items.
-pub fn items_of(list: &[&str]) -> Vec<Item> {
-    list.iter().map(|s| Item { key: (*s).to_owned(), name: (*s).to_owned() }).collect()
 }
 
 /// The game's pictures of units (their cards), read from the packs on a worker as the panels ask for them and kept as images.

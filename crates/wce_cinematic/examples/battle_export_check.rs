@@ -253,9 +253,19 @@ fn main() {
             .filter(|l| l.contains("cam:move_to("))
             .filter_map(|l| l.rsplit(',').next().and_then(|s| s.trim().trim_end_matches(");").trim().parse().ok()))
             .collect();
+        // Through its keys, shot by shot: a cut (to its camera at once, 5.5 s and 8.5 s) may fall between two beats.
         let step = wce_cinematic::battle_export::CAMERA_STEP_MS;
-        if times.len() < 10 || times.windows(2).skip(1).any(|w| w[1] - w[0] != step) {
+        let cuts = [5500u64, 8500];
+        if times.len() < 10
+            || times.windows(2).any(|w| w[1] - w[0] != step && w[1] != w[0] && !cuts.contains(&w[0]) && !cuts.contains(&w[1]))
+        {
             failed.push(format!("the sample's camera steps are not an even {step} ms beat: {times:?}"));
+        }
+        for cut in cuts {
+            if !lua.lines().any(|l| l.contains("cam:move_to(") && l.contains(", 0, true,") && l.trim_end().ends_with(&format!(", {cut});")))
+            {
+                failed.push(format!("the sample's cut at {cut} ms: no instant move_to"));
+            }
         }
     }
     for needle in [

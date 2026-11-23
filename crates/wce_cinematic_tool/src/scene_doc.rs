@@ -160,9 +160,23 @@ impl SceneDocument {
                 let k = camera_key_of(p, track, index)?;
                 (k.target[0], k.target[1], k.target[2], 0.0)
             }
+            SceneItem::Camera(track) => {
+                // Where it is at the playhead, looking along its aim (the gizmo turns it every way).
+                let c = self.camera_now(track)?;
+                return Some(look_matrix(c.position.map(|v| v / units), c.target.map(|v| v / units)));
+            }
             SceneItem::Battle => return None,
         };
         Some(translation(Float3::new(x / units, y / units, z / units)) * rotation_y(yaw))
+    }
+
+    /// A camera's view at the playhead (metres).
+    pub fn camera_now(&self, track: u32) -> Option<wce_cinematic::eval::CameraState> {
+        let keys = match &crate::items::camera_track_of(self.project(), track)?.content {
+            TrackContent::Camera { keys } => keys,
+            _ => return None,
+        };
+        wce_cinematic::eval::camera_at(keys, self.view.time)
     }
 
     /// Moves and turns items by `delta` (scene units). A unit with a path in the clip shown is keyed there at the playhead (its
@@ -233,11 +247,53 @@ impl SceneDocument {
                         k.target = at;
                     }
                 }
+                SceneItem::Camera(track) => {
+                    // Keyed at the playhead (a key there takes it; else a new one), its aim along the moved matrix's forward, as far
+                    // ahead as it was.
+                    let Some(now) = self.camera_now(track) else { continue };
+                    let reach = (0..3).map(|i| (now.target[i] - now.position[i]).powi(2)).sum::<f32>().sqrt().max(1.0);
+                    let f = [m.m[0][2], m.m[1][2], m.m[2][2]];
+                    let len = (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt().max(1e-6);
+                    let target = [at[0] + f[0] / len * reach, at[1] + f[1] / len * reach, at[2] + f[2] / len * reach];
+                    if let Some(tr) = p.clips.iter_mut().flat_map(|c| &mut c.tracks).find(|tr| tr.id == track)
+                        && let TrackContent::Camera { keys } = &mut tr.content
+                    {
+                        match keys.iter_mut().find(|k| (k.t - t).abs() < 1e-3) {
+                            Some(k) => {
+                                k.position = at;
+                                k.target = target;
+                            }
+                            None => {
+                                keys.push(wce_cinematic::scene::CameraKey {
+                                    t,
+                                    position: at,
+                                    target,
+                                    fov: now.fov,
+                                    interp: Interp::Smooth,
+                                });
+                                keys.sort_by(|a, b| a.t.total_cmp(&b.t));
+                            }
+                        }
+                    }
+                }
                 SceneItem::Battle => {}
             }
         }
         self.push_merged("move", p, gesture.max(1));
     }
+}
+
+/// The matrix of something at `pos` looking at `target`: its z axis forward, y up, x to its right (as `rotation_y` turns +z).
+pub fn look_matrix(pos: [f32; 3], target: [f32; 3]) -> Float4x4 {
+    let norm = |v: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if l < 1e-6 { None } else { Some([v[0] / l, v[1] / l, v[2] / l]) }
+    };
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let f = norm([target[0] - pos[0], target[1] - pos[1], target[2] - pos[2]]).unwrap_or([0.0, 0.0, 1.0]);
+    let r = norm(cross([0.0, 1.0, 0.0], f)).unwrap_or([1.0, 0.0, 0.0]);
+    let u = cross(f, r);
+    Float4x4 { m: [[r[0], u[0], f[0], pos[0]], [r[1], u[1], f[1], pos[1]], [r[2], u[2], f[2], pos[2]], [0.0, 0.0, 0.0, 1.0]] }
 }
 
 /// An angle in (-pi, pi].

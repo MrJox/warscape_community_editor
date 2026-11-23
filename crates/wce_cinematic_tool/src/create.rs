@@ -63,7 +63,8 @@ impl Default for Draft {
 #[derive(Clone, Debug)]
 pub enum CreateRequest {
     Placed(crate::items::SceneItem),
-    /// The Camera tab's: a key of the view at the playhead, recording the camera.
+    /// The Camera tab's: a new camera where the viewport looks from, a key of the view at the playhead, recording the camera.
+    NewCamera,
     KeyView,
     Record,
 }
@@ -369,6 +370,12 @@ impl Create {
 
     /// The camera's ways: a new path by clicks, recording, a key of the view.
     fn camera_list(&mut self) {
+        if gui::selectable(&format!("{}  New camera from this view", icons::PLUS), false, 0) {
+            self.requests.push(CreateRequest::NewCamera);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A camera object where the viewport looks from, keyed at the playhead (cut to it to show it)");
+        }
         let on = self.making == Some(Making::CameraPath);
         if gui::selectable(&format!("{}  Camera path: click its points", icons::ROUTE), on, 0) {
             self.making = if on { None } else { Some(Making::CameraPath) };
@@ -400,16 +407,14 @@ impl Create {
         time: f64,
         at: [f32; 3],
         ahead: [f32; 2],
+        camera: Option<u32>,
     ) -> Option<crate::items::SceneItem> {
         let clip = clip?;
         let d = self.draft.clone();
         let pos = [at[0], at[1] + d.cam_height, at[2]];
         let mut made = None;
         edit(e, "camera path point", |p| {
-            let track = p
-                .clip(clip)
-                .and_then(|c| c.tracks.iter().find(|t| matches!(t.content, TrackContent::Camera { .. })).map(|t| t.id))
-                .or_else(|| add_track(p, clip, "Camera", None, ""));
+            let track = camera.or_else(|| add_track(p, clip, "Camera", None, ""));
             let Some(track) = track else { return };
             crate::scene_ui::for_track(p, clip, track, |t| {
                 if let TrackContent::Camera { keys } = &mut t.content {

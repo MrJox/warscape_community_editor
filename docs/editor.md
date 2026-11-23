@@ -423,12 +423,16 @@ subtitles; the Movie panel's Edit subtitles, Subtitles pack..., Replace sound...
 (`<projects>/cinematics/<key>/project.json`) filled the Tile tool's way: the **Create** panel (search, Units as the game's cards with the
 chosen army's faction's first, Effects, Armies by faction; click an entry, then click the viewport's ground or the Layout for each copy,
 R / Shift+R turn, Esc or a right click stops, Space over the viewport for the quick-add popup; the Inspector shows what every copy
-takes), the **Scene** panel (the battle, the armies with their units, the clip's camera keys and effects; eyes, drag a unit onto an
-army, right-click menus), the shared **Inspector** (the selected item's rows; a key clicked on the Timeline), the editor's gizmo (units,
-effects, camera keys, deployment zones; a unit with a path in the clip is keyed at the playhead; one undo entry a drag), clicks and box
+takes), the **Scene** panel (the battle, the armies with their units, the clip's cameras with their keys and its effects; eyes, drag a
+unit onto an army, right-click menus), the shared **Inspector** (the selected item's rows; a key clicked on the Timeline), the editor's gizmo (units,
+effects, cameras, camera keys, deployment zones; a unit with a path in the clip, and a camera, are keyed at the playhead; one undo
+entry a drag), clicks and box
 select in the viewport, the viewport's chips (play, free camera, key this view, battle preview), the **Timeline** (clips, tracks, keys;
-a double-click adds a key), the **Layout** (the field from above), **Logic** (the battle's node graph). File > Export > Historical
-battle pack, Movie pack. **Cinematic > Launch in game** (as Tile > Launch in game; also the viewport's launch chip: the battle's pack as the launch pack, the game
+a double-click adds a key; the Camera Cuts track says which camera is live when: the clip's shots), the **Layout** (the field from above), **Logic** (the battle's node graph). **Cameras** are objects (Camera
+tracks: drawn with the frame they see, moved and turned by the gizmo, an Inspector with the focal length, Look through it, Key this
+view into it, Cut to it here). A unit's animation keys offer its own animations (by family; red when it has not the one keyed).
+File > Export > Historical battle pack, Movie (the game's movie pack, a PNG sequence and WAV, MP4 or ProRes through the user's
+ffmpeg; whole or a file a shot, with handles). **Cinematic > Launch in game** (as Tile > Launch in game; also the viewport's launch chip: the battle's pack as the launch pack, the game
 started from the battle's own XML with the editor's mods, the pack removed when the game exits). Keys: Delete, Ctrl+D, Space, R / Shift+R, Escape (Settings > Shortcuts). Gate: `scripts/cinematic_check.sh`.
 
 ## Cross-tool composition (Phase 7)

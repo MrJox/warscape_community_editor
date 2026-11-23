@@ -79,6 +79,20 @@ for f in range(10):
     rc=$?
     echo "ux run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/ux_run$run.log" | tail -5; }
+    # Cameras and shots: the sample's cuts, a new camera and a cut to it, the clip a PNG folder a shot.
+    proj="$OUT/projects_cams$run"; clips="$OUT/clips$run"; rm -rf "$proj" "$clips"; mkdir -p "$proj" "$clips"
+    sed -e "s|%CLIPS%|$(cygpath -m "$clips")|" "$ROOT/scripts/cinematic_cameras.txt" > "$OUT/cams$run.txt"
+    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/cams$run.txt")" > "$OUT/cams_run$run.log" 2>&1
+    rc=$?
+    echo "cameras run $run: exit $rc"
+    [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/cams_run$run.log" | tail -5; }
+    # 12 s at 30 fps in shots of 0-5.5, 5.5-8.5, 8.5-10.5 and 10.5-12 s, 3 frames more each side within the clip.
+    got=""; for d in sample_010_camera_1 sample_020_camera_2 sample_030_camera_1 sample_040_camera_3; do got="$got $(ls "$clips/$d" 2>/dev/null | wc -l)"; done
+    [ "$got" = " 168 96 66 48" ] || { echo "cameras run $run: shot frames$got, not 168 96 66 48"; bad=1; }
+done
+for f in sample_010_camera_1/sample_010_camera_1_00100.png sample_040_camera_3/sample_040_camera_3_00047.png; do
+    if cmp -s "$OUT/clips1/$f" "$OUT/clips2/$f" && [ -s "$OUT/clips1/$f" ]; then echo "shot frame $(basename "$f") identical between runs"
+    else echo "shot frame $(basename "$f") DIFFERS between runs (or missing)"; bad=1; fi
 done
 if cmp -s "$OUT/projects_ux1/cinematics/wce_ux_test/project.json" "$OUT/projects_ux2/cinematics/wce_ux_test/project.json" && [ -s "$OUT/projects_ux1/cinematics/wce_ux_test/project.json" ]; then
     echo "ux project.json identical between runs"
@@ -91,17 +105,20 @@ if cmp -s "$OUT/movie1.pack" "$OUT/movie2.pack"; then echo "movie pack identical
 if cmp -s "$OUT/projects1/cinematics/wce_scene_test/project.json" "$OUT/projects2/cinematics/wce_scene_test/project.json"; then echo "project.json identical between runs"
 else echo "project.json DIFFERS between runs"; bad=1; fi
 if cmp -s "$OUT/scene1.pack" "$OUT/scene2.pack"; then echo "battle pack identical between runs"; else echo "battle pack DIFFERS between runs"; bad=1; fi
-for shot in intro event scene logic; do
+for shot in intro event logic; do
     if cmp -s "$OUT/${shot}1.png" "$OUT/${shot}2.png" && [ -s "$OUT/${shot}1.png" ]; then echo "$shot shot identical between runs"
     else echo "$shot shot DIFFERS between runs (or missing)"; bad=1; fi
 done
-# The live 3D viewport: within 2 levels, as app_check.sh allows its live shots (exposure noise); the movie above is exact.
-if cmp -s "$OUT/preview1.png" "$OUT/preview2.png" && [ -s "$OUT/preview1.png" ]; then echo "preview shot identical between runs"
-elif [ -s "$OUT/preview1.png" ] && [ -s "$OUT/preview2.png" ] && "$PY" -c "
+# The live 3D viewport's shots (the preview's; the scene's, over the real ground and its trees since 2026-11-21): within 2 levels,
+# as app_check.sh allows its live shots (exposure noise, the live view's texture streaming); the movies and clips above are exact.
+for shot in preview scene; do
+    if cmp -s "$OUT/${shot}1.png" "$OUT/${shot}2.png" && [ -s "$OUT/${shot}1.png" ]; then echo "$shot shot identical between runs"
+    elif [ -s "$OUT/${shot}1.png" ] && [ -s "$OUT/${shot}2.png" ] && "$PY" -c "
 import sys
 import numpy as np
 from PIL import Image
 a = np.asarray(Image.open(sys.argv[1]).convert('RGB'), dtype=int); b = np.asarray(Image.open(sys.argv[2]).convert('RGB'), dtype=int)
-sys.exit(0 if a.shape == b.shape and np.abs(a - b).max() <= 2 else 1)" "$OUT/preview1.png" "$OUT/preview2.png"; then echo "preview shot within 2 levels between runs (live exposure noise)"
-else echo "preview shot DIFFERS between runs (or missing)"; bad=1; fi
+sys.exit(0 if a.shape == b.shape and np.abs(a - b).max() <= 2 else 1)" "$OUT/${shot}1.png" "$OUT/${shot}2.png"; then echo "$shot shot within 2 levels between runs (live exposure noise)"
+    else echo "$shot shot DIFFERS between runs (or missing)"; bad=1; fi
+done
 [ $bad = 0 ] && echo OK || { echo FAILED; exit 1; }

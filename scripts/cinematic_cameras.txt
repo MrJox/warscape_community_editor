@@ -1,0 +1,31 @@
+# The Cinematic tool's cameras, shots and clip export (docs/plans/cinematic.md, user round 17), run by scripts/cinematic_check.sh
+# twice in throw-away settings and projects folders: the sample's units' own animations, its two cameras and the Camera Cuts
+# between them, a new camera from the view and a cut to it, and the clip exported a PNG folder a shot with handles.
+tool cinematic
+layout reset
+frames 2
+scene_sample
+frames 3
+cinematic_show Viewport
+scene_time 6
+frames 30
+wait_loaded
+frames 10
+# A cohort's men have their table's slots (the old fixed list named slots no unit has); a rider his own.
+unit_slots 3 500
+unit_slots 10 50
+# The sample's shots: Camera 1 (track 13), Camera 2 (14) from 5.5 s, Camera 1 again from 8.5 s.
+assert_live_camera 4 13
+assert_live_camera 6 14
+assert_live_camera 9 13
+# A camera from the view (track 23), cut to at 10.5 s.
+scene_free_camera 1
+camera_new
+frames 2
+camera_cut 23 10.5
+assert_live_camera 11 23
+assert_live_camera 10 13
+# The clip a PNG folder a shot (4 shots), 3 handle frames each side.
+scene_export_clip png "%CLIPS%/sample.png" 160 90 shots 3
+frames 5
+quit

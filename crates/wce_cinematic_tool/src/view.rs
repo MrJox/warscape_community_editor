@@ -47,10 +47,14 @@ pub fn ground_point(e: &mut Editor, x: i32, y: i32) -> Option<[f32; 2]> {
     (t > 0.0).then_some([(o.x + d.x * t) * units, (o.z + d.z * t) * units])
 }
 
+/// How deep `men` stand in a line `width` wide (metres; ranks 1.4 m apart, files 1.1 m, as the preview lays them out).
+pub fn formation_depth(men: u32, width: f32) -> f32 {
+    (wce_render::unit_catalog::ranks_for_width(men, width, 1.1) as f32 * 1.4).max(3.0)
+}
+
 /// A unit's formation on the ground: its four corners (metres) from its men and width (ranks 1.4 m apart, files 1.1 m).
 pub fn footprint(u: &SceneUnit, at: [f32; 2], facing: f32) -> [[f32; 2]; 4] {
-    let files = (u.width / 1.1).max(1.0);
-    let depth = ((u.men as f32 / files).ceil() * 1.4).max(3.0);
+    let depth = formation_depth(u.men, u.width);
     let (sin, cos) = facing.sin_cos();
     let (hw, hd) = (u.width * 0.5, depth * 0.5);
     let c = |x: f32, z: f32| [at[0] + x * cos + z * sin, at[1] - x * sin + z * cos];
@@ -105,13 +109,48 @@ fn effects(p: &Project, ui: &SceneUi, g: &Ground) -> Vec<(SceneItem, [f32; 3], S
 }
 
 /// The camera keys of the clip shown (drawn while the viewport's camera is free): their items, places and targets.
-fn camera_keys(p: &Project, ui: &SceneUi) -> Vec<(SceneItem, [f32; 3], [f32; 3], f64)> {
+/// The camera whose keys and path the viewport shows: the one selected (or one of its keys), else the one looked through, else the
+/// live one.
+fn focus_camera(e: &Editor, p: &Project, ui: &SceneUi) -> Option<u32> {
+    let clip = ui.clip.and_then(|c| p.clip(c))?;
+    crate::items::selected(e)
+        .into_iter()
+        .find_map(SceneItem::camera)
+        .or(ui.pilot)
+        .or_else(|| wce_cinematic::eval::live_camera(clip, ui.time))
+}
+
+/// Every camera at the playhead: its track, name, view and whether it is live (not the one the viewport looks through).
+fn camera_bodies(p: &Project, ui: &SceneUi) -> Vec<(u32, String, wce_cinematic::eval::CameraState, bool)> {
+    let Some(clip) = ui.clip.and_then(|c| p.clip(c)) else { return vec![] };
+    let live = wce_cinematic::eval::live_camera(clip, ui.time);
+    let viewed = if ui.pilot.is_some() && !ui.playing {
+        ui.pilot
+    } else if ui.follows_keys() {
+        live
+    } else {
+        None
+    };
+    clip.tracks
+        .iter()
+        .filter(|t| !t.muted && Some(t.id) != viewed)
+        .filter_map(|t| match &t.content {
+            TrackContent::Camera { keys } => {
+                wce_cinematic::eval::camera_at(keys, ui.time).map(|c| (t.id, t.name.clone(), c, live == Some(t.id)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn camera_keys(p: &Project, ui: &SceneUi, focus: Option<u32>) -> Vec<(SceneItem, [f32; 3], [f32; 3], f64)> {
     if ui.follows_keys() {
         return vec![];
     }
     let Some(clip) = ui.clip.and_then(|c| p.clip(c)) else { return vec![] };
     clip.tracks
         .iter()
+        .filter(|t| Some(t.id) == focus)
         .flat_map(|t| match &t.content {
             TrackContent::Camera { keys } => keys
                 .iter()
@@ -128,7 +167,8 @@ fn pick(e: &mut Editor, p: &Project, ui: &SceneUi, view: &DocView, g: &Ground, x
     let near = effects(p, ui, g)
         .into_iter()
         .map(|(i, at, _)| (i, at))
-        .chain(camera_keys(p, ui).into_iter().flat_map(|(i, at, target, _)| {
+        .chain(camera_bodies(p, ui).into_iter().map(|(track, _, c, _)| (SceneItem::Camera(track), c.position)))
+        .chain(camera_keys(p, ui, focus_camera(e, p, ui)).into_iter().flat_map(|(i, at, target, _)| {
             let SceneItem::CameraKey { track, index } = i else { return vec![(i, at)] };
             vec![(i, at), (SceneItem::CameraTarget { track, index }, target)]
         }))
@@ -225,7 +265,15 @@ impl SceneView {
                         let (dx, dz) = (cam.target.x - cam.eye.x, cam.target.z - cam.eye.z);
                         let len = dx.hypot(dz).max(1e-6);
                         let h = ground.height(at[0], at[1]);
-                        if let Some(item) = create.path_point(e, &p, ui.clip, ui.time, [at[0], h, at[1]], [dx / len, dz / len]) {
+                        if let Some(item) = create.path_point(
+                            e,
+                            &p,
+                            ui.clip,
+                            ui.time,
+                            [at[0], h, at[1]],
+                            [dx / len, dz / len],
+                            ui.clip.and_then(|c| p.clip(c)).and_then(|c| ui.keyed_camera(e, c)),
+                        ) {
                             create.requests.push(CreateRequest::Placed(item));
                         }
                     }
@@ -393,12 +441,57 @@ impl SceneView {
                 dl.text(v2(c.x + 9.0, c.y - 8.0), 0xFFFF_FFFF, &name);
             }
         }
-        // The camera keys (the camera free): where each is, what it looks at, the path between them.
-        let cams = camera_keys(&p, ui);
-        // The path the camera takes (the keys' curve, sampled).
-        if cams.len() > 1
-            && let Some(clip) = ui.clip.and_then(|c| p.clip(c))
-        {
+        // The cameras at the playhead: each a body and the frame it sees (16:9), named; the live one green, the selected one yellow.
+        let selected_cams: Vec<u32> = selected.iter().filter_map(|i| if let SceneItem::Camera(t) = i { Some(*t) } else { None }).collect();
+        for (track, name, c, live) in camera_bodies(&p, ui) {
+            let m = crate::scene_doc::look_matrix(c.position, c.target);
+            let (r, u, f) = ([m.m[0][0], m.m[1][0], m.m[2][0]], [m.m[0][1], m.m[1][1], m.m[2][1]], [m.m[0][2], m.m[1][2], m.m[2][2]]);
+            let d = 6.0;
+            let h = d * (c.fov.to_radians() * 0.5).tan();
+            let w = h * 16.0 / 9.0;
+            let corner = |sx: f32, sy: f32| [0, 1, 2].map(|k| c.position[k] + f[k] * d + r[k] * w * sx + u[k] * h * sy);
+            let sel = selected_cams.contains(&track);
+            let hot = self.hovered == Some(SceneItem::Camera(track));
+            let col = if sel {
+                gui::col32(255, 230, 120, 255)
+            } else if live {
+                gui::col32(110, 230, 140, 240)
+            } else {
+                gui::col32(170, 200, 230, 220)
+            };
+            let (Some(o), Some(a), Some(b), Some(cc), Some(dd)) = (
+                scr(e, c.position),
+                scr(e, corner(-1.0, 1.0)),
+                scr(e, corner(1.0, 1.0)),
+                scr(e, corner(1.0, -1.0)),
+                scr(e, corner(-1.0, -1.0)),
+            ) else {
+                continue;
+            };
+            let thick = if sel || hot { 2.0 } else { 1.2 };
+            for q in [a, b, cc, dd] {
+                dl.line(o, q, col & 0xB0FF_FFFF, 1.0);
+            }
+            dl.polyline(&[a, b, cc, dd], col, true, thick);
+            // Up: a small triangle over the frame's top edge.
+            if let Some(top) = scr(e, [0, 1, 2].map(|k| c.position[k] + f[k] * d + u[k] * h * 1.35)) {
+                let at = |k: f32| v2(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+                dl.triangle_filled(at(0.4), at(0.6), top, col);
+            }
+            dl.rect_filled(v2(o.x - 7.0, o.y - 5.0), v2(o.x + 7.0, o.y + 5.0), col, 2.0);
+            dl.text(v2(o.x + 10.0, o.y - 8.0), 0xFFFF_FFFF, &if live { format!("{name}  (live)") } else { name });
+        }
+        // The keys of the camera in focus (the camera free): where each is, what it looks at, the path between them.
+        let focus = focus_camera(e, &p, ui);
+        let cams = camera_keys(&p, ui, focus);
+        let focus_keys: Vec<wce_cinematic::scene::CameraKey> = ui
+            .clip
+            .and_then(|c| p.clip(c))
+            .and_then(|c| c.tracks.iter().find(|t| Some(t.id) == focus))
+            .and_then(|t| if let TrackContent::Camera { keys } = &t.content { Some(keys.clone()) } else { None })
+            .unwrap_or_default();
+        // The path it takes (the keys' curve, sampled).
+        if cams.len() > 1 {
             let (t0, t1) = (cams.first().map_or(0.0, |c| c.3), cams.last().map_or(0.0, |c| c.3));
             let n = 96;
             // Red where the battle camera can't go (outside 2 to 90 m over the ground: the game holds it at the limit).
@@ -406,8 +499,7 @@ impl SceneView {
             let pts: Vec<(gui::Vec2, bool)> = (0..=n)
                 .filter_map(|i| {
                     let t = t0 + (t1 - t0) * f64::from(i) / f64::from(n);
-                    let f = wce_cinematic::eval::evaluate(&p, clip, &wce_cinematic::eval::SpeedTable::default(), t);
-                    f.camera.and_then(|c| {
+                    wce_cinematic::eval::camera_at(&focus_keys, t).and_then(|c| {
                         // Not where the ground is still on its way (its height there is not known yet).
                         let over = ground.height_known(c.position[0], c.position[2]).map(|g| c.position[1] - g);
                         scr(e, c.position).map(|q| (q, over.is_some_and(|o| o < lo - 0.01 || o > hi + 0.01)))

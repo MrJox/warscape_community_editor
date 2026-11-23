@@ -236,27 +236,69 @@ pub fn panel(e: &mut Editor, ui: &mut SceneUi, create: &mut Create) {
         }
     }
 
-    // The camera keys of the clip shown.
+    // The cameras of the clip shown: each an object (select it: the gizmo moves and turns it; double-click: look through it), its
+    // keys under it; the live one at the playhead marked.
+    let mut new_camera = false;
     if let Some(clip) = ui.current_clip(&p) {
-        let keys: Vec<(u32, usize, f64)> = clip
+        let live = wce_cinematic::eval::live_camera(clip, ui.time);
+        let cams: Vec<(u32, String, Vec<f64>)> = clip
             .tracks
             .iter()
-            .flat_map(|t| match &t.content {
-                TrackContent::Camera { keys } => keys.iter().enumerate().map(|(k, c)| (t.id, k, c.t)).collect::<Vec<_>>(),
-                _ => vec![],
+            .filter_map(|t| match &t.content {
+                TrackContent::Camera { keys } => Some((t.id, t.name.clone(), keys.iter().map(|k| k.t).collect())),
+                _ => None,
             })
             .collect();
         if gui::tree_node_ex_id(
-            "camera",
-            gui::TREE_SPAN_AVAIL_WIDTH,
-            &format!("{}  Camera in {} ({})", icons::CAMERA, clip.name, keys.len()),
+            "cameras",
+            gui::TREE_SPAN_AVAIL_WIDTH | gui::TREE_DEFAULT_OPEN,
+            &format!("{}  Cameras in {} ({})", icons::CAMERA, clip.name, cams.len()),
         ) {
-            for (track, index, t) in keys {
-                let item = SceneItem::CameraKey { track, index };
-                if gui::selectable(&format!("{}  at {t:.2} s##c{track}_{index}", icons::CAMERA), is_sel(item), 0) {
+            for (track, name, times) in cams {
+                let item = SceneItem::Camera(track);
+                let open = gui::tree_node_ex_id(
+                    &format!("cam{track}"),
+                    gui::TREE_SPAN_AVAIL_WIDTH | gui::TREE_OPEN_ON_ARROW | if is_sel(item) { gui::TREE_SELECTED } else { 0 },
+                    &format!("{}  {name}{}", icons::CAMERA, if live == Some(track) { "  (live)" } else { "" }),
+                );
+                if gui::is_item_clicked() && !gui::is_item_toggled_open() {
                     select = Some((item, how()));
-                    ui.time = t;
+                    if gui::is_mouse_double_clicked(0) {
+                        ui.pilot = Some(track);
+                    }
                 }
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Click: select (the gizmo moves and turns it)  ·  double-click: look through it");
+                }
+                if gui::begin_popup_context_item(&format!("cammenu{track}")) {
+                    if gui::menu_item(&format!("{}  Look through it", icons::EYE), None, ui.pilot == Some(track), true) {
+                        ui.pilot = if ui.pilot == Some(track) { None } else { Some(track) };
+                    }
+                    if gui::menu_item(&format!("{}  Cut to it here", icons::SCISSORS), None, false, live != Some(track)) {
+                        ui.request_cut = Some(track);
+                    }
+                    if gui::menu_item(&format!("{}  Delete camera", icons::TRASH_2), None, false, true) {
+                        select = Some((item, How::Set));
+                        ui.request_delete = true;
+                    }
+                    gui::end_popup();
+                }
+                if open {
+                    for (index, t) in times.into_iter().enumerate() {
+                        let key = SceneItem::CameraKey { track, index };
+                        if gui::selectable(&format!("key at {t:.2} s##c{track}_{index}"), is_sel(key), 0) {
+                            select = Some((key, how()));
+                            ui.time = t;
+                        }
+                    }
+                    gui::tree_pop();
+                }
+            }
+            if gui::small_button(&format!("{}  New camera from this view", icons::PLUS)) {
+                new_camera = true;
+            }
+            if gui::is_item_hovered() {
+                gui::set_tooltip("A camera where the viewport looks from, keyed at the playhead");
             }
             gui::tree_pop();
         }
@@ -294,6 +336,9 @@ pub fn panel(e: &mut Editor, ui: &mut SceneUi, create: &mut Create) {
     }
     gui::end_child();
     gui::end();
+    if new_camera {
+        ui.new_camera(e);
+    }
 
     if let Some((item, how)) = select {
         items::select(e, item, how);
