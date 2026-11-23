@@ -179,6 +179,68 @@ pub(crate) struct HfPatch {
     /// Its vertices in a shared buffer (`PatchPool`): `vb` is let go once they are copied there, so the draws of every patch of a size
     /// bind one buffer and differ only by their first vertex.
     pooled: Option<Arc<PoolSlot>>,
+
+    /// The largest height error (grid units) of the patch drawn at stride 2^l, by l (`stride_error`): what the main view's stride goes
+    /// by besides the distance (`plan_patches`).
+    err: [f32; STRIDE_LEVELS],
+}
+
+/// Strides 1, 2, 4 ... 256: a campaign tile's patch.
+const STRIDE_LEVELS: usize = 9;
+
+/// The most pixels a coarser stride may move the ground by on the screen (`plan_patches`).
+const STRIDE_ERROR_PX: f32 = 1.0;
+
+/// The lines of a patch of `n` cells drawn at stride `k`: every k-th vertex (and the last), or with a rim (`Terrain::rim`) every vertex
+/// of the rim and every k-th inside it.
+fn stride_lines(n: i32, k: i32, rim: i32) -> Vec<i32> {
+    if rim == 0 {
+        let mut l: Vec<i32> = (0..n).step_by(k.max(1) as usize).collect();
+        l.push(n);
+        return l;
+    }
+
+    let mut l: Vec<i32> = (0..=rim.min(n)).collect();
+    let mut x = rim + k;
+    while x < n - rim {
+        l.push(x);
+        x += k;
+    }
+
+    l.extend((n - rim).max(rim + 1)..=n);
+    l.dedup();
+    l
+}
+
+/// The largest height error of a patch (`cx` x `cz` cells, `h(x, z)` its heights) drawn on the lines of each stride (`stride_lines`): its
+/// vertices against the corners' bilinear blend over their block.
+fn stride_error(cx: i32, cz: i32, rim: i32, h: &dyn Fn(i32, i32) -> f32) -> [f32; STRIDE_LEVELS] {
+    let mut err = [0.0f32; STRIDE_LEVELS];
+    for (l, e) in err.iter_mut().enumerate().skip(1) {
+        let k = 1 << l;
+        if k > cx.max(cz) {
+            *e = f32::MAX;
+            continue;
+        }
+
+        let (xs, zs) = (stride_lines(cx, k, rim), stride_lines(cz, k, rim));
+        for zw in zs.windows(2) {
+            for xw in xs.windows(2) {
+                let (h00, h10, h01, h11) = (h(xw[0], zw[0]), h(xw[1], zw[0]), h(xw[0], zw[1]), h(xw[1], zw[1]));
+                let (w, d) = ((xw[1] - xw[0]) as f32, (zw[1] - zw[0]) as f32);
+                for z in zw[0]..=zw[1] {
+                    let v = (z - zw[0]) as f32 / d;
+                    for x in xw[0]..=xw[1] {
+                        let u = (x - xw[0]) as f32 / w;
+                        let b = (h00 * (1.0 - u) + h10 * u) * (1.0 - v) + (h01 * (1.0 - u) + h11 * u) * v;
+                        *e = e.max((h(x, z) - b).abs());
+                    }
+                }
+            }
+        }
+    }
+
+    err
 }
 
 impl HfPatch {
@@ -250,6 +312,13 @@ struct PlacedPatch {
 
     /// Cells a side of its buffer's patches.
     cells: i32,
+
+    /// The terrain's rim (`Terrain::rim`) when the patch is its whole grid, else 0: the main view's strides go by it
+    /// (`terrain_grid_ib`).
+    rim: i32,
+
+    /// Its `HfPatch::err` in scene units (the world's vertical scale).
+    err: [f32; STRIDE_LEVELS],
 
     /// Its vertices' key (`HfPatch::vertices_key`): the patches of one buffer, and every flat patch (they share one), draw as one batch.
     vb: usize,
@@ -403,6 +472,9 @@ fn fill_hf(dev: &ID3D11Device, flat_vbs: &FlatPatches, mut g: HfGeo, t: &Terrain
                 }
 
                 (p.lo, p.hi) = (lo, hi);
+                let rim = if px * pz == 1 { t.rim } else { 0 };
+                let (i0, j0) = (p.pi * cells, p.pj * cells);
+                p.err = stride_error(p.cx, p.cz, rim, &|x, z| t.height_at(i0 + x, j0 + z));
                 (p.vb, p.level) = hf_patch_vb(dev, flat_vbs, t, p.pi, p.pj, cells);
                 // Its old slot goes back to the pool; the main thread pools the new vertices (`pool_patches`).
                 p.pooled = None;
@@ -707,7 +779,7 @@ pub(crate) struct TerrainGpuState {
     /// bookkeeping (texture paths joined per terrain) cost 3 ms a frame with a map context's 192 tiles.
     materials_key: (usize, u64, u64),
     /// Index buffers of a patch of cx x cz cells at a stride, and their index counts.
-    grid_ib: BTreeMap<(i32, i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
+    grid_ib: BTreeMap<(i32, i32, i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
     entities: Vec<EntityId>,
 
     /// The frame's number (`begin_terrain_frame`) and the terrain entities made ready in it (`terrain_surface_entities`): the material pass
@@ -1087,7 +1159,9 @@ impl Renderer {
             }
 
             let vb = p.vertices_key();
-            placed.patches.push(PlacedPatch { bmin, bmax, cx: p.cx, cz: p.cz, patch: k, row, vb, cells: g.cells });
+            let rim = if g.patches.len() == 1 { t.rim } else { 0 };
+            let err = p.err.map(|e| e * w[1][1].abs());
+            placed.patches.push(PlacedPatch { bmin, bmax, cx: p.cx, cz: p.cz, patch: k, row, vb, cells: g.cells, rim, err });
         }
 
         // The blend box: the material's rectangle turned and moved with the entity (not scaled: the tile tool's z scale is in the rectangle),
@@ -1469,17 +1543,31 @@ impl Renderer {
 
     /// The index buffer of a patch of `cx` x `cz` cells joining every `k`-th vertex: blocks of k x k cells (the last row and column of them
     /// narrower where k doesn't divide the patch), two triangles each, but the blocks along the patch's edges keep every edge vertex (a fan
-    /// from the block's centre), so patches at any two strides meet without cracks. (The main view's k divides the patch: the campaign's
-    /// tiles, 66, 74 or 138 cells a side, stay at a stride of 2 there; a shadow cascade's go coarser, the last blocks narrower.)
-    fn terrain_grid_ib(&mut self, cells: i32, cx: i32, cz: i32, k: i32) -> (Option<ID3D11Buffer>, u32) {
-        if let Some(ib) = self.terrain.grid_ib.get(&(cells, cx, cz, k)) {
+    /// from the block's centre), so patches at any two strides meet without cracks. (The main view's k divides the patch but on a tile
+    /// with a rim, below; a shadow cascade's need not, the last blocks narrower.)
+    ///
+    /// With a rim (`Terrain::rim`, the patch its terrain's whole grid): the rim's cells at full resolution across the edges and every
+    /// k-th vertex along them, the inside every k-th both ways; one grid of those lines (no T-junction inside; the skirt covers the
+    /// outer edge's cracks).
+    fn terrain_grid_ib(&mut self, cells: i32, cx: i32, cz: i32, k: i32, rim: i32) -> (Option<ID3D11Buffer>, u32) {
+        if let Some(ib) = self.terrain.grid_ib.get(&(cells, cx, cz, k, rim)) {
             return ib.clone();
         }
 
         let row = cells + 1;
         let v = |x: i32, z: i32| (z * row + x) as u32;
         let mut idx = Vec::<u32>::with_capacity((cx * cz * 6) as usize);
-        let mut z0 = 0;
+        if rim > 0 && k > 1 {
+            let (xs, zs) = (stride_lines(cx, k, rim), stride_lines(cz, k, rim));
+            for zw in zs.windows(2) {
+                for xw in xs.windows(2) {
+                    let (a, b, c, d) = (v(xw[0], zw[0]), v(xw[1], zw[0]), v(xw[0], zw[1]), v(xw[1], zw[1]));
+                    idx.extend([a, c, b, b, c, d]);
+                }
+            }
+        }
+
+        let mut z0 = if rim > 0 && k > 1 { cz } else { 0 };
         while z0 < cz {
             let mut x0 = 0;
             while x0 < cx {
@@ -1528,7 +1616,7 @@ impl Renderer {
 
         let ib = immutable_buffer(&self.dev, &bytes, D3D11_BIND_INDEX_BUFFER);
         let out = (ib, idx.len() as u32);
-        self.terrain.grid_ib.insert((cells, cx, cz, k), out.clone());
+        self.terrain.grid_ib.insert((cells, cx, cz, k, rim), out.clone());
         out
     }
 
@@ -2935,6 +3023,7 @@ impl Renderer {
         let (units, origin) = (self.camera.units, self.camera.origin);
         let mut stats = [0u64; 3];
         let frustum = Frustum::new(cull);
+        let px_ratio = self.camera.px_ratio;
         let (mut at, mut items, mut rows) = (
             std::mem::take(&mut self.terrain.batch_at),
             std::mem::take(&mut self.terrain.patch_items),
@@ -2945,7 +3034,7 @@ impl Renderer {
         for ((_, group), &[sx, sz]) in groups.iter().zip(shifts) {
             // The batches: (heights buffer, patch, size, stride, patches), by vertices, patch size and stride (the flat patches of every
             // buffer share one vertex buffer, `hf_patch_vb`); each patch drawn with its batch and its instance row.
-            let mut batches: Vec<(usize, usize, [i32; 3], i32, u32)> = vec![];
+            let mut batches: Vec<(usize, usize, [i32; 4], i32, u32)> = vec![];
             at.clear();
             items.clear();
             let mut last: Option<((usize, u32), u32)> = None;
@@ -2976,29 +3065,38 @@ impl Renderer {
                         let (lo, hi) = (pp.bmin, pp.bmax);
                         let (dx, dy, dz) =
                             (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
-                        let d = (dx * dx + dy * dy + dz * dz).sqrt() / (LOD_STEPS * p.step);
+                        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                        let d = dist / (LOD_STEPS * p.step);
+                        // The main view's: no coarser than moves the ground by STRIDE_ERROR_PX on the screen (a coarse grid fills the
+                        // little hollows, and a marsh's ponds went under the ground).
+                        let tol = STRIDE_ERROR_PX * dist * px_ratio;
                         // A shadow cascade's stride goes by its texel alone (`patch_shadow_texel`): the longest whose cells are at most two
                         // texels (finer cells cast nothing more). By distance too, one tile's placements split into more batches: more
                         // draws than the triangles saved, the frame CPU-bound.
                         let coarse = 2.0 * shadow_texel / p.step;
-                        // The main view's strides divide the patch: a campaign tile overlaps its neighbours (74 cells on a 64-cell
-                        // spacing), and a coarser grid inside one against the other's edge left seams of the ground below all over the
-                        // map. A cascade's go up to the patch's side whatever it is (`terrain_grid_ib` narrows the last blocks); its
-                        // edges keep every vertex as the main view's (plain, as the game's cascades are, they cast thin seams of shadow).
+                        // The main view's strides divide the patch, but on a map context's tile (its rim: `Terrain::rim`): any stride
+                        // inside the rim, the rim whole across the edges, the stride bounded by the error too. (Coarse over the rim, a
+                        // block spread the skirt's 20-unit drop inward: seams of the ground below along every tile's edge.) A cascade's go
+                        // up to the patch's side whatever it is (`terrain_grid_ib` narrows the last blocks); its edges keep every vertex
+                        // as the main view's (plain, as the game's cascades are, they cast thin seams of shadow).
                         let shadow = shadow_texel > 0.0;
+                        let rim = if shadow { 0 } else { pp.rim };
                         let mut k = 1;
                         while k < pp.cells
                             && 2 * k <= pp.cx.max(pp.cz)
                             && (if shadow { (2 * k) as f32 <= coarse } else { d >= (2 * k) as f32 })
-                            && (shadow || (pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0))
+                            && (shadow || rim > 0 || (pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0))
+                            && (rim == 0 || 2 * k <= pp.cx.max(pp.cz) - 2 * rim)
+                            && (rim == 0 || pp.err.get((2 * k).trailing_zeros() as usize).is_some_and(|&e| e <= tol))
                         {
                             k *= 2;
                         }
 
-                        k
+                        (k, rim)
                     } else {
-                        1
+                        (1, 0)
                     };
+                    let (k, rim) = k;
 
                     // The key: the vertices, then the patch's size (cx, cz < 4096) and the stride (< 256) packed; neighbours mostly share
                     // the last one.
@@ -3007,7 +3105,7 @@ impl Renderer {
                         Some((lk, b)) if lk == key => b,
                         _ => {
                             let b = *at.entry(key).or_insert_with(|| {
-                                batches.push((p.key, pp.patch, [pp.cells, pp.cx, pp.cz], k, 0));
+                                batches.push((p.key, pp.patch, [pp.cells, pp.cx, pp.cz, rim], k, 0));
                                 (batches.len() - 1) as u32
                             });
                             last = Some((key, b));
@@ -3042,11 +3140,11 @@ impl Renderer {
             }
 
             let mut out = Vec::with_capacity(batches.len());
-            for ((key, patch, [cells, cx, cz], stride, count), first) in batches.into_iter().zip(firsts) {
+            for ((key, patch, [cells, cx, cz, rim], stride, count), first) in batches.into_iter().zip(firsts) {
                 let Some((vb, base)) = self.terrain.hf.get(&key).and_then(|g| g.patches.get(patch)).and_then(HfPatch::vertices) else {
                     continue;
                 };
-                let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, stride);
+                let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, stride, rim);
                 let Some(ib) = ib else { continue };
                 out.push(PatchBatch { vb, base, ib, format: patch_index_format(cells), index_count, first, count });
             }

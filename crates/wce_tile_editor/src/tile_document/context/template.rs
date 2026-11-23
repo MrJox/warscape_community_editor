@@ -192,6 +192,11 @@ pub struct Template {
     pub near: Grid,
     pub coarse: Grid,
 
+    /// The cells along each edge of `near` and `coarse` that a coarser stride keeps whole across the edge (`Terrain::rim`): their skirt,
+    /// and the near grid's overlap.
+    pub near_rim: i32,
+    pub coarse_rim: i32,
+
     /// Its ground material over the tile with its border (its alpha map fades the border out a little past the tile's edge, where the
     /// neighbour's fades in), the same at a quarter of the resolution, and at a quarter of that for the ground ring, baked by
     /// [`Template::bake_far`] where the renderer can draw that.
@@ -369,6 +374,8 @@ impl Template {
         let k = coarse_factor((self.own.nx - 1 - 2 * m).max(self.own.nz - 1 - 2 * m));
         self.near = self.own.skirted();
         self.coarse = if k > 1 { self.own.every(m, k).skirted() } else { self.near.clone() };
+        self.near_rim = m + 1;
+        self.coarse_rim = if k > 1 { 1 } else { self.near_rim };
 
         // The blend box reaches down past the skirt (pixels of it outside every box were drawn black).
         let (mut lo, mut hi) = self.own.range();
