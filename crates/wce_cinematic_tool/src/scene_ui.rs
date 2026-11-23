@@ -138,7 +138,7 @@ impl SceneUi {
             self.new_scene_name.clear();
         }
         let items: Vec<crate::pickers::Item> =
-            self.scenes.iter().map(|s| crate::pickers::Item { key: s.clone(), name: s.clone() }).collect();
+            self.scenes.iter().map(|s| crate::pickers::Item { key: s.clone(), name: crate::tool::scene_label(s) }).collect();
         if let Some(k) =
             picker(&mut self.filters, "openscene", if items.is_empty() { "No saved scenes" } else { "Open a scene..." }, &items, -1.0)
         {
