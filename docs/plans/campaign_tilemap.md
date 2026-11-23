@@ -196,4 +196,9 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   rebels from the campaign scripts (`characters::scripted_rebels`). The game's side of each: docs/re/terry.md, "The campaign's start",
   and docs/re/renderer.md, "The campaign map", "Lighting and weather".
 - **Performance (relative numbers, loaded machine unless noted):** at capture A the frame 7.4 ms before the far ring, 10.1 ms with the
-  quadtree; the far bake 29 s on main_attila (1.1 s from the cache); idle default rings 5.8 ms (p95 7.5).
+  quadtree; the far bake 29 s on main_attila (1.1 s from the cache); idle default rings 5.8 ms (p95 7.5). The terrain patches' draws
+  (2026-11-23, TDD's map, two views): 44 -> 22 ms and 43 -> 21 ms a frame, the patch draws 2.3 -> 0.1 ms a pass. The frames were
+  CPU-bound on the draws (three calls a batch; a pass with more rows than the 256 KB instance buffer held mapped it again for each
+  batch; which of the changes below gained most was not measured apart). Now a pass's rows are one
+  upload into a buffer grown to fit (`plan_patches`), the surface's second pass draws the first's plan again, and the patches' vertices
+  sit in shared buffers (`PatchPool`), the draws sorted by index and vertex buffer.
