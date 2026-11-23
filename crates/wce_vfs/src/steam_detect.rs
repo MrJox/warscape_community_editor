@@ -107,6 +107,11 @@ pub fn dialog_start(initial: &Path) -> (Option<PathBuf>, String) {
     (dir, name)
 }
 
+/// The Windows dialogs' owner: a topmost window (never shown), so that the dialog opens in front of the editor. Started from the editor, a
+/// PowerShell window may not take the foreground and open behind it, while the editor waits for its answer and looks hung ("Not
+/// responding").
+const OWNER: &str = "$o = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }; ";
+
 /// A PowerShell single-quoted string's text.
 fn ps_quote(s: &str) -> String {
     s.replace('\'', "''")
@@ -121,7 +126,7 @@ pub fn file_dialog(save: bool, initial: &Path, filters: &[(String, String)]) -> 
         let filter = filters.iter().map(|(n, p)| format!("{n}|{}", p.replace(' ', ";"))).collect::<Vec<_>>().join("|");
         let dir = dir.map(|d| format!("$d.InitialDirectory = '{}'; ", ps_quote(&d.display().to_string()))).unwrap_or_default();
         let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.{kind}; $d.Filter = '{}'; {dir}$d.FileName = '{}'; if ($d.ShowDialog() -eq 'OK') {{ $d.FileName }}",
+            "Add-Type -AssemblyName System.Windows.Forms; {OWNER}$d = New-Object System.Windows.Forms.{kind}; $d.Filter = '{}'; {dir}$d.FileName = '{}'; if ($d.ShowDialog($o) -eq 'OK') {{ $d.FileName }}",
             ps_quote(&filter),
             ps_quote(&name)
         );
@@ -166,7 +171,7 @@ pub fn pick_folder_at(title: &str, start: &Path) -> Option<PathBuf> {
     if cfg!(windows) {
         let at = if start.is_empty() { String::new() } else { format!("$d.SelectedPath = '{}'; ", ps_quote(&start)) };
         let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{title}'; {at}if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}"
+            "Add-Type -AssemblyName System.Windows.Forms; {OWNER}$d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{title}'; {at}if ($d.ShowDialog($o) -eq 'OK') {{ $d.SelectedPath }}"
         );
 
         return run_dialog(Some(PathBuf::from("powershell")), &["-NoProfile".to_owned(), "-Command".to_owned(), script]);
