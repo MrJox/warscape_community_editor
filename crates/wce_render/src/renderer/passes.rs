@@ -704,6 +704,8 @@ impl Renderer {
     /// - s0 = start, s_i = start + scale * (cumulative row)_i; cascade i covers [s_i - 0.1 (s_i - s_(i-1)), s_(i+1)] (shadow_split_blend_fraction
     ///   0.1); g_fFadeRange = (0.1, (s4 - (far - 0.2 (s4 - s3))) / (0.2 (s4 - s3)) * 0.2) (final_shadow_split_blend_fraction 0.2).
     pub(crate) fn pass_shadows(&mut self, scene: &RenderScene, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
+        // The main camera's (the material pass's surface culls with the same: `prepare_terrain_views`).
+        let main_cull = self.camera.view_proj;
         // In game units, as the rows (the depth analysis is in scene units); the slices go back to scene units below. Mixed, every
         // cascade came out twice the game's length (coast dump: 9.9, 41, 134, 352, 819 against the editor's 9.8, 73, 261, 700, 1640).
         // Rome 2's cascades by its shadow level (`rome2_cascades`): none at 0, two to four of them; the atlas twice the tile's side.
@@ -880,6 +882,21 @@ impl Renderer {
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             let terrain_material = self.terrain.active && !self.env.active;
+            // The terrain's views planned at once, on threads (`prepare_terrain_views`): the cascades' (as `draw_terrain_shadow` takes
+            // them below) and the material pass's surface (the main camera's, set before this pass), each a walk of the frame's terrains.
+            if terrain_material {
+                let mut views: Vec<(super::terrain::TerrainView, Float4x4, f32)> = vec![];
+                if !rome2 {
+                    views.push((super::terrain::TerrainView::Surface, main_cull, 0.0));
+                }
+                if !scene.campaign || self.settings.shadow_quality >= 3 {
+                    for c in 0..count {
+                        let texel = if scene.campaign { texel_c[c] } else { 0.0 };
+                        views.push((super::terrain::TerrainView::Shadow, light_vp[c], texel));
+                    }
+                }
+                self.prepare_terrain_views(scene, &views);
+            }
             for c in 0..count {
                 self.ctx.set_input_layout(Some(&layout));
                 let half = self.shadow_map.size as f32 / 2.0;
