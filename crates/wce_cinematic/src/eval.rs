@@ -46,6 +46,34 @@ pub struct UnitState {
     pub slot_distance: f32,
     pub men: u32,
     pub visible: bool,
+    /// The run of action keys playing now (from `slot_start`): each key's animation for its time, one after the other, blending.
+    pub run: Vec<RunClip>,
+}
+
+/// An action key in its run: its animation, how long it plays (to the next key, or the run's end), where it goes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunClip {
+    pub slot: String,
+    pub length: f64,
+    pub place: Option<[f32; 3]>,
+}
+
+/// The run of action keys `t` is in: its start and clips (keys back to the last `AUTO`, on to the next one or `end`); none when the unit
+/// is moving or standing on its own.
+pub fn action_run(actions: &[crate::scene::ActionKey], t: f64, end: f64) -> Option<(f64, Vec<RunClip>)> {
+    let now = actions.iter().rposition(|k| k.t <= t)?;
+    if actions[now].slot == AUTO_SLOT {
+        return None;
+    }
+    let first = (0..=now).rev().take_while(|&i| actions[i].slot != AUTO_SLOT).last()?;
+    let last = (now..actions.len()).take_while(|&i| actions[i].slot != AUTO_SLOT).last()?;
+    let run = (first..=last)
+        .map(|i| {
+            let next = actions.get(i + 1).map_or(end, |k| k.t);
+            RunClip { slot: actions[i].slot.clone(), length: (next - actions[i].t).max(1e-3), place: actions[i].place }
+        })
+        .collect();
+    Some((actions[first].t, run))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -133,6 +161,11 @@ pub fn evaluate(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f64) -> 
                     state.slot = k.slot.clone();
                     state.slot_start = k.t;
                     state.slot_distance = 0.0;
+                    // The run of keys it is in: played as one sequence from its first key.
+                    if let Some((start, run)) = action_run(actions, t, clip.length) {
+                        state.slot_start = start;
+                        state.run = run;
+                    }
                 }
                 state.men = men.iter().rev().find(|k| k.t <= t).map_or(su.men, |k| k.men);
                 state.visible = visible.iter().rev().find(|k| k.t <= t).is_none_or(|k| k.visible);
@@ -209,6 +242,7 @@ pub fn evaluate(project: &Project, clip: &Clip, speeds: &SpeedTable, t: f64) -> 
             slot_distance: 0.0,
             men: su.men,
             visible: true,
+            run: vec![],
         });
     }
     f.units.sort_by_key(|u| u.unit);
@@ -348,6 +382,7 @@ fn unit_on_path(id: u32, start: [f32; 2], start_facing: f32, path: &[PathKey], s
         slot_distance: 0.0,
         men: 0,
         visible: true,
+        run: vec![],
     };
     if path.is_empty() {
         return state;
@@ -568,6 +603,24 @@ mod tests {
             tracks.push(Track { id: 3, name: "Camera Cuts".into(), muted: false, content: TrackContent::Cuts { cuts } });
         }
         Clip { id: 9, name: "c".into(), length: 10.0, fps: 30, tracks, skippable: true, motion_blur: false }
+    }
+
+    #[test]
+    fn a_run_of_keys_plays_as_one() {
+        use crate::scene::ActionKey;
+        let k = |t: f64, slot: &str| ActionKey { t, slot: slot.into(), place: None };
+        let keys = vec![k(1.0, "COMBAT_READY"), k(2.0, "file:a.anim"), k(2.8, "file:b.anim"), k(4.0, AUTO_SLOT), k(5.0, "TAUNT")];
+        // Within the first run: from its first key, each clip to the next key, the last to the AUTO.
+        let (start, run) = action_run(&keys, 2.5, 10.0).unwrap();
+        assert_eq!(start, 1.0);
+        assert_eq!(
+            run.iter().map(|c| (c.slot.as_str(), (c.length * 10.0).round())).collect::<Vec<_>>(),
+            [("COMBAT_READY", 10.0), ("file:a.anim", 8.0), ("file:b.anim", 12.0)]
+        );
+        // AUTO: none; the last run goes on to the clip's end.
+        assert!(action_run(&keys, 4.5, 10.0).is_none());
+        assert_eq!(action_run(&keys, 6.0, 10.0).unwrap().1[0].length, 5.0);
+        assert!(action_run(&keys, 0.5, 10.0).is_none());
     }
 
     #[test]

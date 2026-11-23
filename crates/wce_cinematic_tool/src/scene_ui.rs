@@ -956,6 +956,16 @@ impl SceneUi {
                                 &format!("{}  The unit has no {}: it stands", icons::TRIANGLE_ALERT, c.slot),
                             );
                         }
+                        // Where the animation's root goes in the unit's frame (a matched combat's clips are placed so).
+                        let mut place = c.place.unwrap_or([0.0; 3]);
+                        gui::row("Place");
+                        if gui::drag_float3("##place", &mut place, 0.01, "%.2f") {
+                            c.place = (place != [0.0; 3]).then_some(place);
+                            changed = true;
+                        }
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Where the animation stands in the unit's frame: x and z (metres), a turn (degrees)");
+                        }
                     }
                 }
                 "men" => {

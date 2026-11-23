@@ -388,6 +388,22 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
     `imgui_draw.cpp:2260`: the scene opened inside the menu); every open from a menu or a panel now waits for the next frame. The
     scene lists show the samples shipped beside the program (`samples/cinematic` there or above it), marked; one opened is copied
     into the projects folder first. **done**
+20. Matched combat and no hard switches between animations (user, 2026-11-23). **done** (editor and movies; a battle plays none of it)
+    - A unit's run of action keys (back to the last `AUTO`, on to the next) plays as one sequence (`UnitModel::play_sequence`): each
+      key's animation for its time exactly, blending in from the one before over its fragment's `blend_in_time` or at least 0.15 s,
+      its last frame held after its end. Before, each key loaded a looping model of its own and the men swapped to it at once.
+    - A key may name an animation file of the packs (`file:<path>.anim`: a matched combat's clip, its `.meta` beside it), and place it
+      (`ActionKey::place`: x, z metres and a turn, in the unit's frame; the key's Inspector row *Place*). A file's clip keeps its travel
+      (the root moves as authored); a slot's stays on the spot as before.
+    - The game's matched combat: `animations/matched_combat/attila_generated.txt` pairs an attacker's clip (alliance 0) with a
+      defender's (alliance 1), each with a start and an end state (`combat_ready`, `attack_a`..`f`, `defend_1`..`6`, `dead`). Both clips
+      of a pair are authored in one space (the defender's hips 1.3 to 1.5 m before the attacker's, turned to him), each pair about its
+      own origin: chained, a pair is turned and moved so both men carry on where they ended.
+    - The duel sample (`samples/cinematic/wce_sample_duel`) is such a chain: both men ready, eight matched pairs of sword and shield
+      (the Roman attacks, the Hun counters, they trade, the Hun kills him), each man's end state the next pair's start, the pairs placed
+      so neither man moves more than 6 mm or 25 degrees at a change of pair; the camera frames the whole fight from the side. Made
+      offline from the game's data (a script outside the editor), as data.
+    - Not done: a picker of the matched pairs in the editor (a pair's two keys are set by hand, the second on the other unit).
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

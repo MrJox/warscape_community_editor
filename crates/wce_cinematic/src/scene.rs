@@ -239,8 +239,16 @@ pub enum Gait {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActionKey {
     pub t: f64,
+    /// A slot of the unit's animations (or its family), or `file:<a .anim of the packs>` (a matched combat's clip).
     pub slot: String,
+    /// Where the animation's root goes in the unit's frame: x and z (metres) and a turn (degrees). A matched combat's two clips share
+    /// one space; their keys place each pair where the fighters are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<[f32; 3]>,
 }
+
+/// The prefix of an action key's slot naming an animation file of the packs.
+pub const FILE_SLOT: &str = "file:";
 
 pub const AUTO_SLOT: &str = "AUTO";
 

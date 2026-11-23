@@ -66,7 +66,10 @@ pub fn sample() -> Project {
                 PathKey { t: 0.0, position: [20.0, -340.0], interp: Interp::Linear, gait: None },
                 PathKey { t: 8.0, position: [20.0, -300.0], interp: Interp::Linear, gait: None },
             ],
-            actions: vec![ActionKey { t: 8.5, slot: "TAUNT".into() }, ActionKey { t: 10.0, slot: "CELEBRATE".into() }],
+            actions: vec![
+                ActionKey { t: 8.5, slot: "TAUNT".into(), place: None },
+                ActionKey { t: 10.0, slot: "CELEBRATE".into(), place: None },
+            ],
             men: vec![MenKey { t: 0.0, men: 120 }],
             visible: vec![VisibleKey { t: 0.0, visible: true }],
         },
