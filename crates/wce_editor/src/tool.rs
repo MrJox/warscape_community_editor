@@ -184,6 +184,20 @@ pub trait Tool: Any {
         None
     }
 
+    /// File > Reload for a tool that opens its document its own way (a tile by its entry, a prefab by its key, a map by its name): it
+    /// closes the document and opens what it was opened from again. The editor asked about unsaved changes first. `None`: the editor
+    /// reopens it by the path it was opened from (`Editor::open_path`).
+    fn reload(&mut self, editor: &mut Editor) -> Option<Result<String, String>> {
+        let _ = editor;
+        None
+    }
+
+    /// Whether `reload` reloads the tool's open document (File > Reload is enabled for it).
+    fn reloads(&self, editor: &Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
     /// Items of the tool at the end of the Edit menu.
     fn edit_menu(&mut self, editor: &mut Editor) {
         let _ = editor;

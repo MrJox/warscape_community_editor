@@ -1,5 +1,9 @@
 //! File > Share project and File > Import shared project (`wce_tile::share`): the open tile's project in a zip for another user, and such a
-//! zip into the projects folder, asking before it replaces anything; the imported tile then opens.
+//! zip into the projects folder; the imported tile then opens. The Prefab tool's File > Share prefab and File > Import shared prefab do the
+//! same for a prefab (`prefab_tool.rs`), through its Tile tool.
+//!
+//! An import asks first when it would replace files, or when the shared scenes use what the receiver's setup lacks (prefabs of another kit,
+//! buildings, props, trees, decals or effects their game files do not have): nothing is written until they answer.
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +12,7 @@ use wce_editor::gui;
 use wce_editor::steam_detect::file_dialog;
 use wce_editor_core::document::Document;
 use wce_foundation::log;
-use wce_tile::share::{self, ImportPlan};
+use wce_tile::share::{self, ImportPlan, Share, ShareKind};
 
 use crate::tool::{TileTool, document};
 
@@ -17,12 +21,18 @@ const SHARE_TIP: &str = "Writes the open tile's project into one zip to give to 
      prefabs of your projects it uses (with those they use, and the road pieces of its roads). Prefabs of the Assembly Kit are not copied: the zip names them. \
      Save the tile first.";
 const IMPORT_TIP: &str = "Puts a project shared with Share project into your projects folder and opens its tile. When the tile or one of its prefabs is \
-     there already and differs, it asks first; what it replaces is kept as .bak.";
+     there already and differs, or when it uses prefabs, buildings, props, trees, decals or effects you do not have, it asks first; what it replaces is \
+     kept as .bak.";
+pub(crate) const SHARE_PREFAB_TIP: &str = "Writes the prefab on the stage into one zip to give to someone else: its file (with its ground), and the prefabs \
+     of your projects it uses (with those they use). Prefabs of the Assembly Kit are not copied: the zip names them. Save the prefab first.";
+pub(crate) const IMPORT_PREFAB_TIP: &str = "Puts a prefab shared with Share prefab into your projects' prefabs and opens it on the stage. When it or one of \
+     the prefabs it uses is there already and differs, or when it uses prefabs, buildings, props, trees, decals or effects you do not have, it asks \
+     first; what it replaces is kept as .bak.";
 
 /// The most file names a list in the prompt shows.
 const LISTED: usize = 12;
 
-/// An import that would replace files, waiting for the user's answer.
+/// An import that would replace files or lacks something, waiting for the user's answer.
 #[derive(Clone, Debug)]
 pub(crate) struct ImportPrompt {
     zip: PathBuf,
@@ -30,7 +40,7 @@ pub(crate) struct ImportPrompt {
 }
 
 /// What a share or an import has to tell, in a dialog (docs/plans/editor_todo.md, "Share / Import shared project: visible errors"): why it
-/// failed and what to do about it, or the prefabs it left out or lacks.
+/// failed and what to do about it, or the prefabs it left out.
 #[derive(Clone, Debug)]
 pub(crate) struct ShareNotice {
     title: String,
@@ -45,16 +55,24 @@ fn hint(why: &str) -> &'static str {
     let has = |s: &str| why.contains(s);
     if has("save the tile first") {
         "Save the tile (Ctrl + S), then share it again."
+    } else if has("save the prefab first") {
+        "Save the prefab (Ctrl + S), then share it again."
+    } else if has("an Assembly Kit's prefab") {
+        "Save the prefab on the stage (Ctrl + S): a save makes your projects' copy of it, which is what is shared."
     } else if has("no database entry") {
         "Open the tile through the Tiles panel (from a kit or your projects), so that it has its tile database entry, then share it."
     } else if has("not in a kit's layout") {
         "Save it as a project (Save as project, in the Tile panel), so that it is in your projects folder, then share that."
     } else if has("is not there") || has("is not in") {
         "The tile's files have moved or are gone: open it again from the Tiles panel."
+    } else if has("is a shared") {
+        "Import a shared tile in the Tile tool (File > Import shared project), a shared prefab in the Prefab tool (File > Import shared prefab)."
     } else if has("is not a zip") || has("is not a shared project") || has("manifest") || has("outside its folder") {
-        "Pick a zip made with File > Share project (as it was given to you, not unpacked and packed again)."
+        "Pick a zip made with File > Share project or File > Share prefab (as it was given to you, not unpacked and packed again)."
     } else if has("the one open here") {
         "Close the tile (File > Close), then import the project again."
+    } else if has("on the stage") {
+        "Save or revert the prefab on the stage (File > Save, File > Revert), then import it again."
     } else if has("newer editor") || has("switch the game") {
         ""
     } else if has("cannot create") || has("cannot move") || has("os error") {
@@ -65,17 +83,34 @@ fn hint(why: &str) -> &'static str {
 }
 
 /// The projects' `raw_data`.
-fn projects_raw(e: &mut Editor) -> PathBuf {
+pub(crate) fn projects_raw(e: &mut Editor) -> PathBuf {
     TileTool::workspace_dir(e).join("raw_data")
 }
 
 /// What an import plan lacks, as a sentence, or nothing.
 fn lacking(plan: &ImportPlan) -> String {
-    if plan.lacking_prefabs.is_empty() {
+    let mut parts = vec![];
+    if !plan.lacking_prefabs.is_empty() {
+        parts.push(format!("prefabs {}", plan.lacking_prefabs.join(", ")));
+    }
+
+    for (kind, keys) in plan.lacking_by_kind() {
+        parts.push(format!("{} {}", kind.label().to_lowercase(), keys.join(", ")));
+    }
+
+    if parts.is_empty() {
         return String::new();
     }
 
-    format!(" Prefabs it uses that you do not have (from another Assembly Kit or mod): {}.", plan.lacking_prefabs.join(", "))
+    format!(" It uses what you do not have (from another Assembly Kit or a mod): {}.", parts.join("; "))
+}
+
+/// The titles of a kind's share and import.
+fn titles(kind: ShareKind) -> (&'static str, &'static str) {
+    match kind {
+        ShareKind::Tile => ("Share project", "Import shared project"),
+        ShareKind::Prefab => ("Share prefab", "Import shared prefab"),
+    }
 }
 
 impl TileTool {
@@ -96,11 +131,26 @@ impl TileTool {
         let lib = self.prefab_library(e);
         let projects = projects_raw(e);
         let share = share::collect(&raw_root, &entry_file, &location, &variation, &projects, &lib, e.game().key)?;
+        self.write_share(e, &share, &name, out)
+    }
+
+    /// Writes a prefab of the projects into a zip (`share::collect_prefab`): `out`, or one the user picks. The caller checks it is saved.
+    pub(crate) fn share_prefab(&mut self, e: &mut Editor, key: &str, out: Option<&Path>) -> Result<String, String> {
+        let lib = self.prefab_library(e);
+        let projects = projects_raw(e);
+        let share = share::collect_prefab(key, &projects, &lib, e.game().key)?;
+        self.write_share(e, &share, key, out)
+    }
+
+    /// Writes a share into `out` or a zip the user picks (`name`.zip to start with), and says what it left out.
+    fn write_share(&mut self, e: &mut Editor, share: &Share, name: &str, out: Option<&Path>) -> Result<String, String> {
+        let m = &share.manifest;
         let out = match out {
             Some(out) => out.to_path_buf(),
             None => {
                 let start = dirs_start(e).join(format!("{name}.zip"));
-                let Some(out) = file_dialog(true, &start, &[("Shared project".to_owned(), "*.zip".to_owned())]) else {
+                let filter = format!("Shared {}", m.kind.noun());
+                let Some(out) = file_dialog(true, &start, &[(filter, "*.zip".to_owned())]) else {
                     return Ok("share cancelled".to_owned());
                 };
                 out
@@ -108,17 +158,17 @@ impl TileTool {
         };
 
         let out = if out.extension().is_none() { out.with_extension("zip") } else { out };
-        share::write_zip(&share, &out)?;
-        let m = &share.manifest;
+        share::write_zip(share, &out)?;
         let mut msg = format!("shared {} file(s) into {}", share.files.len(), out.display());
         if !m.kit_prefabs.is_empty() {
             msg += &format!("; it uses prefabs of the Assembly Kit, not in the zip: {}", m.kit_prefabs.join(", "));
         }
 
         if !m.missing_prefabs.is_empty() {
+            let noun = m.kind.noun();
             msg += &format!("; prefabs found nowhere: {}", m.missing_prefabs.join(", "));
             log::warn(format!(
-                "share: {} prefab(s) the tile uses were found nowhere and are not in the zip: {}",
+                "share: {} prefab(s) the {noun} uses were found nowhere and are not in the zip: {}",
                 m.missing_prefabs.len(),
                 m.missing_prefabs.join(", ")
             ));
@@ -128,11 +178,12 @@ impl TileTool {
             }
 
             self.share_notice(ShareNotice {
-                title: "Share project".to_owned(),
+                title: titles(m.kind).0.to_owned(),
                 error: None,
-                hint: "The tile uses prefabs that are neither in your projects nor in an Assembly Kit (deleted or renamed since): their references \
+                hint: format!(
+                    "The {noun} uses prefabs that are neither in your projects nor in an Assembly Kit (deleted or renamed since): their references \
                     will show nothing for the other user. Place them again or remove those references, then share again."
-                    .to_owned(),
+                ),
                 text: format!("Shared into {}, without some of its prefabs.", out.display()),
                 lists,
             });
@@ -141,29 +192,57 @@ impl TileTool {
         Ok(msg)
     }
 
-    /// Asks for a shared zip and imports it (`share::plan_import`): straight away when it replaces nothing, else after the prompt.
+    /// Asks for a shared zip of this kind and imports it: the Tile tool's tile, the Prefab tool's prefab (`prefab_tool.rs` checks its stage
+    /// and opens what came in).
+    pub(crate) fn pick_shared(&mut self, e: &mut Editor, kind: ShareKind) -> Option<PathBuf> {
+        let filters = [(format!("Shared {}", kind.noun()), "*.zip".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
+        file_dialog(false, &dirs_start(e), &filters)
+    }
+
+    /// Asks for a shared project and imports it.
     pub(crate) fn import_shared(&mut self, e: &mut Editor) -> Result<String, String> {
-        let filters = [("Shared project".to_owned(), "*.zip".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
-        let Some(zip) = file_dialog(false, &dirs_start(e), &filters) else { return Ok("import cancelled".to_owned()) };
+        let Some(zip) = self.pick_shared(e, ShareKind::Tile) else { return Ok("import cancelled".to_owned()) };
         self.import_shared_from(e, &zip, false)
     }
 
-    /// Imports a shared zip; `overwrite`: replace what differs without asking (the console's).
-    pub(crate) fn import_shared_from(&mut self, e: &mut Editor, zip: &Path, overwrite: bool) -> Result<String, String> {
+    /// What importing a shared zip would do (`share::plan_import`, the assets checked against the game's files); one of another kind than
+    /// `kind` is refused.
+    pub(crate) fn plan_shared(&mut self, e: &mut Editor, zip: &Path, kind: ShareKind) -> Result<ImportPlan, String> {
         let lib = self.prefab_library(e);
         let raw = projects_raw(e);
-        let plan = share::plan_import(zip, &raw, &lib, e.game().key)?;
+        let files = e.files().map(GameFiles);
+        let plan = share::plan_import(zip, &raw, &lib, files.as_ref().map(|f| f as &dyn share::AssetFiles), e.game().key)?;
+        let got = plan.manifest.kind;
+        if got != kind {
+            return Err(format!("{} is a shared {}, not a {}", zip.display(), got.noun(), kind.noun()));
+        }
+
+        Ok(plan)
+    }
+
+    /// Imports a shared project; `overwrite`: replace what differs, and import what lacks something, without asking (the console's).
+    pub(crate) fn import_shared_from(&mut self, e: &mut Editor, zip: &Path, overwrite: bool) -> Result<String, String> {
+        let plan = self.plan_shared(e, zip, ShareKind::Tile)?;
 
         // The tile open in the editor is not replaced under it.
-        let location = raw.join(&plan.manifest.location);
+        let location = projects_raw(e).join(&plan.manifest.location);
         if plan.overwrites() && document(e).is_some_and(|d| d.project().dir.starts_with(&location)) {
             return Err("the shared tile is the one open here: close it first".to_owned());
         }
 
-        if plan.overwrites() && !overwrite {
+        self.import_or_ask(e, zip, plan, overwrite)
+    }
+
+    /// Imports a planned zip at once, or asks first when it replaces files or lacks something (a script is asked only about what it replaces:
+    /// what it lacks is in its message and the log).
+    pub(crate) fn import_or_ask(&mut self, e: &mut Editor, zip: &Path, plan: ImportPlan, overwrite: bool) -> Result<String, String> {
+        let ask = !overwrite && (plan.overwrites() || (plan.lacks() && !e.in_script()));
+        if ask {
+            let why = if plan.overwrites() { "replaces files" } else { "uses what you do not have" };
+            let msg = format!("the shared {} {why}: answer the prompt", plan.manifest.kind.noun());
             self.import_prompt = Some(ImportPrompt { zip: zip.to_path_buf(), plan });
             self.import_prompt_open = true;
-            return Ok("the shared project replaces files: answer the prompt".to_owned());
+            return Ok(msg);
         }
 
         self.finish_import(e, zip, &plan)
@@ -172,10 +251,15 @@ impl TileTool {
     fn finish_import(&mut self, e: &mut Editor, zip: &Path, plan: &ImportPlan) -> Result<String, String> {
         let raw = projects_raw(e);
         let report = share::import(zip, &raw, plan, true)?;
-        self.prefabs = None;
+
+        // Every library reads the prefabs again (one of them lent out, this tool's Prefab tool, does it when it opens what came in).
+        self.rescan_prefabs(e);
+        e.with_tool::<TileTool, _>(|t, e| t.rescan_prefabs(e));
+        e.with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| p.tile.rescan_prefabs(e));
+        let m = &plan.manifest;
         let mut msg = format!(
             "imported {}: {} new, {} replaced, {} the same, {} moved aside.{}",
-            plan.manifest.location,
+            m.name(),
             report.written,
             report.replaced,
             report.skipped,
@@ -183,27 +267,23 @@ impl TileTool {
             lacking(plan)
         );
 
-        if !plan.lacking_prefabs.is_empty() {
-            log::warn(format!(
-                "import: {} prefab(s) the shared tile uses are not here: {}",
-                plan.lacking_prefabs.len(),
-                plan.lacking_prefabs.join(", ")
-            ));
-            self.share_notice(ShareNotice {
-                title: "Import shared project".to_owned(),
-                error: None,
-                hint: "The tile uses prefabs you do not have (from another Assembly Kit or a mod, or missing where it was shared): their references \
-                    show nothing. Get them from whoever shared it, or replace them."
-                    .to_owned(),
-                text: format!("Imported {}, without some of the prefabs it uses.", plan.manifest.location),
-                lists: vec![("Not found here".to_owned(), plan.lacking_prefabs.clone())],
-            });
+        if plan.lacks() {
+            log::warn(format!("import of {}:{}", m.name(), lacking(plan)));
         }
 
-        let open = raw.join(plan.open_path());
-        match self.open_tile(e, &open.display().to_string(), "") {
-            Ok(_) => {}
-            Err(why) => msg += &format!(" It did not open: {why}"),
+        if !plan.assets_checked {
+            msg += " The game's files are not mounted: its buildings, props, trees, decals and effects were not checked.";
+        }
+
+        match m.kind {
+            ShareKind::Tile => {
+                let open = raw.join(plan.open_path());
+                if let Err(why) = self.open_tile(e, &open.display().to_string(), "") {
+                    msg += &format!(" It did not open: {why}");
+                }
+            }
+
+            ShareKind::Prefab => self.imported_prefab = Some(m.prefab.clone()),
         }
 
         Ok(msg)
@@ -253,14 +333,15 @@ impl TileTool {
         }
     }
 
-    /// The question before an import replaces files.
+    /// The question before an import replaces files or brings in what uses things the user lacks.
     pub(crate) fn draw_import_prompt(&mut self, e: &mut Editor) {
-        const TITLE: &str = "Import shared project";
+        const ID: &str = "##import_shared";
         if std::mem::take(&mut self.import_prompt_open) {
-            gui::open_popup(TITLE);
+            gui::open_popup(ID);
         }
 
-        if !gui::begin_popup_modal(TITLE, None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+        gui::set_next_window_size_max(gui::v2(760.0, 680.0));
+        if !gui::begin_popup_modal(ID, None, gui::WINDOW_ALWAYS_AUTO_RESIZE | gui::WINDOW_NO_TITLE_BAR) {
             return;
         }
 
@@ -270,7 +351,11 @@ impl TileTool {
             return;
         };
 
-        gui::text(&format!("{} is in your projects already, and differs.", p.plan.manifest.location));
+        let (kind, name) = (p.plan.manifest.kind, p.plan.manifest.name().to_owned());
+        let title = titles(kind).1;
+        gui::text(title);
+        gui::separator();
+        gui::push_text_wrap_pos(720.0);
         let list = |title: &str, names: &[String]| {
             if names.is_empty() {
                 return;
@@ -286,33 +371,61 @@ impl TileTool {
             }
         };
 
-        list("Replaced by the shared ones", &p.plan.differs);
-        list("Not in the shared project (moved aside)", &p.plan.stale);
-        if !p.plan.new.is_empty() {
-            gui::text_disabled(&format!("{} new file(s), {} the same", p.plan.new.len(), p.plan.same.len()));
+        if p.plan.overwrites() {
+            gui::text(&format!("{name} is in your projects already, and differs."));
+            list("Replaced by the shared ones", &p.plan.differs);
+            list("Not in the shared project (moved aside)", &p.plan.stale);
+            if !p.plan.new.is_empty() {
+                gui::text_disabled(&format!("{} new file(s), {} the same", p.plan.new.len(), p.plan.same.len()));
+            }
         }
 
-        if !p.plan.lacking_prefabs.is_empty() {
-            gui::text_wrapped(&lacking(&p.plan));
+        if p.plan.lacks() {
+            gui::spacing();
+            gui::text_colored(
+                wce_editor::theme::error(),
+                &format!(
+                    "The shared {} uses what your setup does not have (your projects, Assembly Kits and game files): it shows nothing, or a \
+                    stand-in, where those are. Get them from whoever shared it (the mod or the kit they come from), or replace them after.",
+                    kind.noun()
+                ),
+            );
+            list("Prefabs", &p.plan.lacking_prefabs);
+            for (k, keys) in p.plan.lacking_by_kind() {
+                list(k.label(), &keys);
+            }
         }
 
+        if !p.plan.assets_checked {
+            gui::spacing();
+            gui::text_disabled("The game's files are not mounted: its buildings, props, trees, decals and effects were not checked.");
+        }
+
+        gui::pop_text_wrap_pos();
         gui::spacing();
-        gui::text_disabled("Each file replaced or moved aside is kept as <name>.bak.");
+        if p.plan.overwrites() {
+            gui::text_disabled("Each file replaced or moved aside is kept as <name>.bak.");
+        }
+
         gui::separator();
-        let overwrite = gui::button("Overwrite");
+        let go = gui::button(if p.plan.overwrites() { "Overwrite" } else { "Import anyway" });
         if gui::is_item_hovered() {
-            gui::set_tooltip("Imports the shared project over yours; each file replaced or moved aside is kept as <name>.bak.");
+            gui::set_tooltip(if p.plan.overwrites() {
+                "Imports the shared files over yours; each file replaced or moved aside is kept as <name>.bak."
+            } else {
+                "Imports it as it is: what you lack shows nothing until you have it."
+            });
         }
 
         gui::same_line();
         let cancelled = gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true);
-        if overwrite || cancelled {
+        if go || cancelled {
             self.import_prompt = None;
             gui::close_current_popup();
-            if overwrite {
+            if go {
                 match self.finish_import(e, &p.zip, &p.plan) {
                     Ok(msg) => e.status(&msg, false),
-                    Err(why) => self.share_failed(e, "Import shared project", &why),
+                    Err(why) => self.share_failed(e, title, &why),
                 }
             } else {
                 e.status("import cancelled: nothing was written", false);
@@ -377,6 +490,19 @@ impl TileTool {
         }
 
         gui::end_popup();
+    }
+}
+
+/// The game's mounted files, as an import's asset check reads them.
+struct GameFiles(std::sync::Arc<dyn wce_vfs::files::Files>);
+
+impl share::AssetFiles for GameFiles {
+    fn exists(&self, path: &str) -> bool {
+        self.0.exists(path)
+    }
+
+    fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
+        self.0.list(prefix, extension)
     }
 }
 

@@ -914,6 +914,24 @@ impl Tool for CinematicTool {
         "cinematic"
     }
 
+    fn reloads(&self, e: &Editor) -> bool {
+        e.docs.of_tool("cinematic").is_some_and(|id| e.docs.find_as::<SceneDocument>(id).is_some())
+    }
+
+    /// File > Reload: the scene closed and read again from its project.json (the editor asked about unsaved changes first).
+    fn reload(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        let id = e.docs.of_tool("cinematic")?;
+        let path = wce_editor_core::document::Document::file_path(e.docs.find_as::<SceneDocument>(id)?)?;
+        if !path.is_file() {
+            return Some(Err(format!("{} is not saved yet: there is nothing to read again", path.display())));
+        }
+
+        e.close_document(id);
+        self.open_scene(e, &path.display().to_string());
+        let opened = e.docs.of_tool("cinematic").is_some();
+        Some(if opened { Ok(format!("reloaded {}", path.display())) } else { Err(e.status_text().to_owned()) })
+    }
+
     fn title(&self) -> &str {
         "Cinematic"
     }

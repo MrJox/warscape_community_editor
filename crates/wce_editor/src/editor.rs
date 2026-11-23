@@ -2,7 +2,7 @@
 //! switches tools (with a layout file per tool), and runs commands and scripts. The app creates one editor, registers the tools and calls
 //! `pre_frame` / `inject_input` before Dear ImGui's frame and `frame` inside it.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -177,6 +177,9 @@ pub struct Editor {
     /// once the new one is open. Cleared every frame.
     replace_granted: Option<DocumentId>,
 
+    /// What each document opened by `open_path` was opened from (the path, from the packs or not): File > Reload opens it again.
+    opened_paths: HashMap<DocumentId, (String, bool)>,
+
     /// A script line is running (`ScriptRunner::step`): what would ask fails instead.
     pub(crate) in_script: bool,
     pub(crate) mouse_queue: VecDeque<MouseState>,
@@ -306,6 +309,7 @@ impl Editor {
             prompt_open: None,
             replace_answer: None,
             replace_granted: None,
+            opened_paths: HashMap::new(),
             in_script: false,
             mouse_queue: VecDeque::new(),
             mouse_cur: MouseState::default(),
@@ -1453,7 +1457,8 @@ impl Editor {
         };
 
         let doc = opened.unwrap_or_else(|| Err(format!("{title} is busy"))).map_err(|e| format!("cannot open {path}: {e}"))?;
-        self.replace_document(&tid, doc)?;
+        let id = self.replace_document(&tid, doc)?;
+        self.opened_paths.insert(id, (path.to_owned(), from_packs));
         if switch_tool && tool != self.active_tool {
             self.set_tool(&tid);
         }
@@ -1606,6 +1611,7 @@ impl Editor {
     /// Closes a document without asking (the selection drops its items too).
     pub fn close_document(&mut self, id: DocumentId) {
         self.selection.remove_document(id);
+        self.opened_paths.remove(&id);
 
         self.docs.close(&mut self.scene, id);
     }
@@ -2364,6 +2370,91 @@ impl Editor {
         }
     }
 
+    /// What File > Reload would open the document from again, when the editor reopens it (`Tool::reload` does not): the path `open_path`
+    /// opened it from, else its file on disk, else its file in the packs.
+    fn reopen_path(&self, id: DocumentId) -> Option<(String, bool)> {
+        if let Some(p) = self.opened_paths.get(&id) {
+            return Some(p.clone());
+        }
+
+        let d = self.docs.find(id)?;
+        if let Some(path) = d.file_path() {
+            return Some((path.display().to_string(), false));
+        }
+
+        let key = d.source_key();
+        (!key.is_empty() && self.can_open(&key)).then_some((key, true))
+    }
+
+    /// The index of a tool by its id.
+    fn tool_index(&self, id: &str) -> Option<usize> {
+        self.tool_info.iter().position(|t| t.id == id)
+    }
+
+    /// Whether File > Reload can reload the active document.
+    fn can_reload_active(&mut self) -> bool {
+        let id = self.docs.active_id();
+        if self.docs.find(id).is_none_or(|d| d.stand_in()) {
+            return false;
+        }
+
+        let tool = self.docs.tool_of(id);
+        let by_tool = self.tool_index(&tool).and_then(|i| self.with_tool_at(i, |t, e| t.reloads(e))).unwrap_or(false);
+        by_tool || self.reopen_path(id).is_some()
+    }
+
+    /// File > Reload: the active document closed and opened again from where it was opened (by its tool, `Tool::reload`, or by its path);
+    /// asked about first when it has unsaved changes (Save, Discard or Cancel, as an open over it). The outcome in the status line.
+    pub fn reload_active(&mut self) {
+        match self.reload_document(self.docs.active_id()) {
+            Ok(m) => self.status(&m, false),
+            Err(m) => self.status(&format!("reload failed: {m}"), true),
+        }
+    }
+
+    /// Closes a document and opens it again (`reload_active`).
+    ///
+    /// # Errors
+    ///
+    /// No such document, nothing to open it from again, a script gave no answer about its unsaved changes, or the open failed (the document
+    /// is closed then).
+    pub fn reload_document(&mut self, id: DocumentId) -> Result<String, String> {
+        let d = self.docs.find(id).ok_or("no document")?;
+        if d.stand_in() {
+            return Err(format!("{} is not opened from a file", d.title()));
+        }
+
+        let title = d.title();
+        let tool = self.docs.tool_of(id);
+        let index = self.tool_index(&tool).ok_or_else(|| format!("{title} belongs to no tool"))?;
+        let by_tool = self.with_tool_at(index, |t, e| t.reloads(e)).unwrap_or(false);
+        let path = self.reopen_path(id);
+        if !by_tool && path.is_none() {
+            return Err(format!("{title} is not opened from a file: there is nothing to read again"));
+        }
+
+        // Unsaved changes: Save, Discard or Cancel first (the reload goes on after the prompt's Save or Discard).
+        if self.docs.of_tool(&tool) == Some(id) {
+            let retry = Box::new(move |e: &mut Editor| e.reload_document(id));
+            if !self.clear_to_replace(&tool, retry)? {
+                return Ok(format!("asking about {title}'s unsaved changes before reloading it"));
+            }
+        } else if self.docs.find(id).is_some_and(|d| d.modified()) {
+            return Err(format!("{title} has unsaved changes: save or revert it first"));
+        }
+
+        if by_tool {
+            let r = self.with_tool_at(index, |t, e| t.reload(e)).flatten();
+            self.replace_granted = None;
+            return r.unwrap_or_else(|| Err(format!("{title}: its tool is busy")));
+        }
+
+        let (path, from_packs) = path.ok_or("nothing to open again")?;
+        self.close_document(id);
+        self.replace_granted = None;
+        self.open_path(&path, from_packs, false).map(|_| format!("reloaded {path}")).map_err(|e| format!("{e} ({title} was closed)"))
+    }
+
     /// "Files this editor opens" and "All files" for the file dialogs.
     fn open_filters(&self) -> Vec<(String, String)> {
         let mut exts: Vec<String> = vec![];
@@ -2456,6 +2547,19 @@ impl Editor {
 
                 self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Revert));
                 gui::end_menu();
+            }
+
+            let can_reload = has_doc && self.can_reload_active();
+            if gui::menu_item(&format!("{}  Reload", icons::REFRESH_CW), None, false, can_reload) {
+                self.reload_active();
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(if can_reload || !has_doc {
+                    "Closes the document and opens it again from where it was opened, reading its files anew (what changed on disk since shows). With unsaved changes it asks first: save them, discard them, or cancel."
+                } else {
+                    "This document is not opened from a file: there is nothing to read again."
+                });
             }
 
             if gui::menu_item("Recover autosaves...", None, false, true) {

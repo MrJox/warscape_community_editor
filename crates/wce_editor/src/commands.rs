@@ -1541,6 +1541,24 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         if e.status_is_error() { fail(msg) } else { ok(msg) }
     });
 
+    c.add(
+        "reload",
+        "reload [save|discard]",
+        "File > Reload: the active document closed and opened again from where it was opened (with unsaved changes: save or discard them)",
+        |e, a| {
+            e.replace_answer = match a.first().map(String::as_str) {
+                Some("save") => Some(crate::editor::Answer::Save),
+                Some("discard") => Some(crate::editor::Answer::Discard),
+                Some(other) => return fail(format!("usage: reload [save|discard] (not {other})")),
+                None => None,
+            };
+            e.reload_active();
+            e.replace_answer = None;
+            let msg = e.status_text().to_owned();
+            if e.status_is_error() { fail(msg) } else { ok(msg) }
+        },
+    );
+
     c.add("remount", "remount", "read the packs again (after the team edited one) and rebuild the renderer", |e, _| {
         if !e.start() {
             return fail("mount failed");
