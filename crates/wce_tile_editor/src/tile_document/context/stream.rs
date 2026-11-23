@@ -662,6 +662,11 @@ pub struct Streamer {
     started: std::time::Instant,
     frame_s: f64,
     first_s: Option<f64>,
+
+    /// The focus (its bits), frame generation and rings of the last update when it changed nothing: the next with the same only takes
+    /// what the workers finished (working the levels out again for a still camera was 0.8 ms a frame). Anything that changes what is
+    /// wanted or shown clears it.
+    settled: Option<(u64, u64, u64, [i32; 4])>,
 }
 
 impl Streamer {
@@ -797,7 +802,18 @@ impl Streamer {
             })
             .collect();
 
-        Self { shared, results, workers, shown: HashMap::new(), wanted: HashMap::new(), rings, started, frame_s, first_s: None }
+        Self {
+            shared,
+            results,
+            workers,
+            shown: HashMap::new(),
+            wanted: HashMap::new(),
+            rings,
+            started,
+            frame_s,
+            first_s: None,
+            settled: None,
+        }
     }
 
     /// A campaign map's far material, once made (`Frame::far_map`).
@@ -823,6 +839,7 @@ impl Streamer {
     /// New rings (cells): the next update moves the chunks to their levels.
     pub fn set_rings(&mut self, near: i32, mid: i32, ground: i32, far: i32) {
         self.rings = [near, mid, ground, far];
+        self.settled = None;
     }
 
     pub fn frame(&self) -> Arc<Frame> {
@@ -884,6 +901,7 @@ impl Streamer {
             .collect();
         let shown = &self.shown;
         self.wanted.retain(|k, l| shown.get(k) == Some(l) && !changed.contains(k));
+        self.settled = None;
         lock(&self.shared.queue).clear();
 
         // The far material over the changed chunks' tiles (by their origins: up to the largest tile past them).
@@ -928,6 +946,17 @@ impl Streamer {
     /// Works out the levels around the focus (a point of the frame), queues what changes and returns what the workers finished.
     pub fn update(&mut self, focus: (f64, f64)) -> Vec<ChunkChange> {
         let (f, generation) = self.shared.frame();
+        let key = (focus.0.to_bits(), focus.1.to_bits(), generation, self.rings);
+        if self.settled == Some(key) {
+            let out = self.take_results(generation);
+            if !out.is_empty() {
+                self.settled = None;
+            }
+
+            return out;
+        }
+
+        let mut changed = false;
         let (fx, fy) = f.cell_of(focus.0, focus.1);
         let reach = f64::from(self.rings.into_iter().max().unwrap_or(0)) + SLACK;
         let (cw, ch) = f.chunks();
@@ -1034,6 +1063,7 @@ impl Streamer {
         {
             let mut now = lock(&self.shared.zone);
             if *now != zone {
+                changed = true;
                 let moved: Vec<ChunkKey> = now.symmetric_difference(&zone).copied().collect();
                 let near = (f.reach() + CHUNK - 1) / CHUNK + 1;
                 self.wanted.retain(|&(cx, cy), l| {
@@ -1051,6 +1081,7 @@ impl Streamer {
         // The chunks that go: off the queue, off the scene.
         let gone: std::collections::HashSet<ChunkKey> =
             self.wanted.keys().chain(self.shown.keys()).filter(|k| !want.contains_key(k)).copied().collect();
+        changed |= !gone.is_empty();
         for k in gone {
             self.wanted.remove(&k);
             if self.shown.remove(&k).is_some() {
@@ -1073,6 +1104,7 @@ impl Streamer {
                 }
 
                 self.wanted.insert(k, l);
+                changed = true;
                 q.retain(|j| j.key != k);
                 q.push(Job { key: k, lod: l, order });
             }
@@ -1080,7 +1112,16 @@ impl Streamer {
 
         self.shared.work.notify_all();
 
-        // What the workers finished, if still wanted at that level.
+        let finished = self.take_results(generation);
+        changed |= !finished.is_empty();
+        out.extend(finished);
+        self.settled = (!changed).then_some(key);
+        out
+    }
+
+    /// What the workers finished, if still wanted at that level (and when everything first is, the time it took).
+    fn take_results(&mut self, generation: u64) -> Vec<ChunkChange> {
+        let mut out = vec![];
         while let Ok((k, l, entities, built_with)) = self.results.try_recv() {
             if built_with == generation && self.wanted.get(&k) == Some(&l) {
                 self.shown.insert(k, l);
@@ -1099,6 +1140,7 @@ impl Streamer {
     /// (the Terrain tool's brushes), and their objects stand on it. A chunk owns the placements whose origin it holds, so the chunks up to
     /// the largest tile's size before the rectangle too. What they show stays until the new version is built.
     pub fn rebuild(&mut self, cells: [i32; 4]) {
+        self.settled = None;
         self.refresh_far(cells);
         let reach = self.frame().reach();
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
@@ -1112,6 +1154,7 @@ impl Streamer {
     /// The blocks and the far chunks over a rectangle of map cells made again at the next update: the far material was baked again
     /// there (their relief). Not `rebuild`: that asks for another bake.
     pub fn rebuild_blocks_over(&mut self, cells: [i32; 4]) {
+        self.settled = None;
         let reach = self.frame().reach();
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
@@ -1123,6 +1166,7 @@ impl Streamer {
 
     /// The blocks and the far chunks made again at the next update (their relief once the far material is made).
     pub fn rebuild_far(&mut self) {
+        self.settled = None;
         self.wanted.retain(|_, l| !l.is_block() && *l != Lod::Far);
     }
 
@@ -1133,6 +1177,7 @@ impl Streamer {
 
     /// Updates until every chunk around the focus is built (for scripts and checks): everything that changed.
     pub fn run_to_idle(&mut self, focus: (f64, f64)) -> Vec<ChunkChange> {
+        self.settled = None;
         let mut out = self.update(focus);
         while self.busy() > 0 {
             match self.results.recv_timeout(std::time::Duration::from_millis(50)) {
