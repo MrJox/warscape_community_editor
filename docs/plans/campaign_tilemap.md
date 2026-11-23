@@ -211,3 +211,6 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   inside its rim (`Terrain::rim`: its skirt and overlap, whole across the edges, every k-th vertex along them; coarse over the rim, a
   block spread the skirt's 20-unit drop inward, seams of the ground below along every tile), and no coarser than moves its ground by a
   pixel (`HfPatch::err`, each stride's largest height error, made with the patch: by distance alone the marshes' ponds went under).
+  The patch planning (2026-11-23): 16.0 -> 12.3 ms at view A, 15.5 -> 12.6 at B (medians, idle machine). The surface's and the four
+  cascades' plans are made at once on threads when the shadow pass starts (`prepare_terrain_views`, `plan_cpu`), from flat records of
+  the frame's list (`TerrainRec`) instead of a map lookup a terrain a pass: the batching 5.1 -> 1.4 ms a frame.

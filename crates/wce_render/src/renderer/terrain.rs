@@ -726,19 +726,18 @@ pub(crate) struct TerrainGpuState {
     patch_uploads: u64,
     patch_plan: Option<PatchPlan>,
 
-    /// `plan_patches`' working storage, kept between passes (made per pass, the allocations were a part of its cost): the batches by
-    /// key, each patch drawn with its batch and instance row, the rows in batch order.
-    batch_at: IdMap<(usize, u32), u32>,
-    patch_items: Vec<(u32, [f32; 12])>,
-    patch_rows: Vec<f32>,
+    /// The frame's terrain list as the patch planning reads it (`TerrainRec`, made with the list), the patches of all of them in a row,
+    /// and each entity's record.
+    recs: Vec<TerrainRec>,
+    precs: Vec<PlacedPatch>,
+    rec_of: IdMap<EntityId, u32>,
+
+    /// The views' plans made ahead this frame (`prepare_terrain_views`): key, LF groups, their custom records, the plan.
+    prepared: Vec<(PlanKey, Vec<u64>, Vec<Vec<u32>>, CpuPlan)>,
 
     /// The blend boxes' instance rows (every material's in one upload), grown to fit.
     box_inst_vb: Option<ID3D11Buffer>,
     box_inst_bytes: usize,
-
-    /// A campaign shadow cascade's texel (scene units) while `draw_terrain_shadow` draws, else 0: the patches' stride then goes by it
-    /// (`plan_patches`).
-    patch_shadow_texel: f32,
 
     /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
     /// while for its chunk, which goes on the scene after).
@@ -2056,7 +2055,7 @@ impl Renderer {
     /// The material terrain's passes (surface, blend boxes, resolve) over its entities.
     fn draw_terrain_material(
         &mut self,
-        ents: &[&wce_scene::render_scene::Entity],
+        list: &[&wce_scene::render_scene::Entity],
         snow: Option<&wce_scene::render_scene::SnowRegions>,
         campaign_snow: Option<&wce_scene::render_scene::CampaignSnow>,
         campaign_far: Option<&wce_scene::render_scene::CampaignFar>,
@@ -2064,11 +2063,11 @@ impl Renderer {
     ) {
         // A campaign map's sea tiles are the sea pass's (`draw_sea_floor`).
         let land = |e: &&wce_scene::render_scene::Entity| !matches!(&e.payload, Payload::Terrain(t) if t.sea_floor);
-        let all: Vec<_> = ents.iter().copied().filter(land).collect();
+        let all: Vec<_> = list.iter().copied().filter(land).collect();
         if all.is_empty() {
             return;
         }
-        let ents: Vec<_> = self.terrain_in_view(ents, &self.camera.main_view_proj).into_iter().filter(land).collect();
+        let ents: Vec<_> = self.terrain_in_view(list, &self.camera.main_view_proj).into_iter().filter(land).collect();
         let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
@@ -2083,12 +2082,12 @@ impl Renderer {
         let how = custom_vs.as_deref().map_or(CustomDraw::None, CustomDraw::Depth);
         {
             wce_prof!("terrain.surface_1");
-            self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
+            self.draw_surface_view(list, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
         }
         self.gpu_timer.mark("terrain surface 2");
         {
             wce_prof!("terrain.surface_2");
-            self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0, how);
+            self.draw_surface_view(list, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0, how);
         }
         self.gpu_timer.mark("terrain blend meshes");
         self.ctx.set_input_layout(Some(&geom_il));
@@ -2616,9 +2615,29 @@ impl Renderer {
         self.draw_stats.triangles += triangles;
     }
 
+    /// [`Self::draw_terrain_surface`] for the frame's surface (`TerrainView::Surface`): its plan, made ahead (`prepare_terrain_views`).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_surface_view(
+        &mut self,
+        list: &[&wce_scene::render_scene::Entity],
+        vs: &GameShader,
+        ps: &GameShader,
+        rtv: &Option<ID3D11RenderTargetView>,
+        ds: &Option<ID3D11DepthStencilState>,
+        stencil_ref: u32,
+        how: CustomDraw,
+    ) {
+        self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
+        let (cull, clip) = (self.camera.main_view_proj, self.camera.cb_view_proj);
+        let triangles = self.draw_view_patches(list, TerrainView::Surface, vs, ps, &cull, &clip, 0.0, how);
+        self.draw_stats.triangles += triangles;
+    }
+
     /// A new frame: the terrain entities are made ready again the first time a pass asks.
     pub(crate) fn begin_terrain_frame(&mut self) {
         self.terrain.frame += 1;
+        self.terrain.prepared.clear();
     }
 
     /// The terrain entities the material pass draws, with their geometry built and placed (once a frame; the other passes take the list).
@@ -2669,6 +2688,29 @@ impl Renderer {
 
         self.terrain.surface = Some((self.terrain.frame, ents.iter().map(|e| e.id).collect()));
         self.terrain.clusters = self.terrain_clusters(&ents);
+        // The records the patch planning reads, in the list's order.
+        let (mut recs, mut precs) = (Vec::with_capacity(ents.len()), vec![]);
+        self.terrain.rec_of.clear();
+        for e in &ents {
+            let (Payload::Terrain(t), Some(p)) = (&e.payload, self.terrain.placed.get(&e.id)) else { continue };
+            self.terrain.rec_of.insert(e.id, recs.len() as u32);
+            recs.push(TerrainRec {
+                lf: t.lf.as_ref().map_or(0, |lf| lf.id),
+                key: p.key,
+                step: p.step,
+                bmin: p.bmin,
+                bmax: p.bmax,
+                first: precs.len() as u32,
+                len: p.patches.len() as u32,
+                lod: p.lod,
+                custom: t.custom.is_some(),
+                sea_floor: t.sea_floor,
+                no_shadow: t.no_shadow,
+            });
+            precs.extend_from_slice(&p.patches);
+        }
+
+        (self.terrain.recs, self.terrain.precs) = (recs, precs);
         self.terrain.surface_lfs = lfs;
         self.terrain.surface_from = Some(self.surface_from(scene));
         ents
@@ -2798,24 +2840,20 @@ impl Renderer {
             return 0;
         };
 
-        let mut ents = self.terrain_surface_entities(scene);
-        ents.retain(|e| !matches!(&e.payload, wce_scene::render_scene::Payload::Terrain(t) if t.no_shadow));
-        let ents = self.terrain_in_view(&ents, view_proj);
+        let list = self.terrain_surface_entities(scene);
         let il = if rome2 {
             self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout())
         } else {
             self.layout(&vs, "terrain_shadow", &geom_layout())
         };
         let Some(il) = il else { return 0 };
-        if ents.is_empty() {
+        if list.is_empty() {
             return 0;
         }
 
         self.ctx.set_input_layout(Some(&il));
         let clip = game_clip(relative, self.camera.units);
-        self.terrain.patch_shadow_texel = texel;
-        let triangles = self.draw_terrain_patches(&ents, &vs, &ps, view_proj, &clip);
-        self.terrain.patch_shadow_texel = 0.0;
+        let triangles = self.draw_view_patches(&list, TerrainView::Shadow, &vs, &ps, view_proj, &clip, texel, CustomDraw::None);
 
         // The cascade's matrix back for the objects after (in the scene's game units: the tile content's may differ).
         self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(relative, self.camera.units).data());
@@ -2838,7 +2876,9 @@ impl Renderer {
     }
 
     /// [`Self::draw_terrain_patches`], and the custom meshes of each LF group (`how`): a terrain with a custom mesh has no patches drawn (the
-    /// game's tile has none: its mesh is all its geometry), and the material pass draws the meshes alone.
+    /// game's tile has none: its mesh is all its geometry), and the material pass draws the meshes alone. For any list of the frame's
+    /// terrains (the sea floor's, Rome 2's surface, the custom material); the surface and the cascades go by their view
+    /// ([`Self::draw_view_patches`]).
     pub(crate) fn draw_terrain_patches_with(
         &mut self,
         ents: &[&wce_scene::render_scene::Entity],
@@ -2849,35 +2889,184 @@ impl Renderer {
         how: CustomDraw,
     ) -> u64 {
         let material_only = matches!(how, CustomDraw::Material);
-        // The patches' input layout as the caller bound it, put back after each group's custom meshes (which bind their own). Not made
-        // here: Rome 2's surface shader takes another vertex (`terrain_rome2::geom_layout`), and Attila's elements fail on it.
-        let geom_il = match how {
-            CustomDraw::Depth(_) => self.ctx.input_layout(),
-            _ => None,
-        };
-
         // Groups by LF map, in the entities' order.
-        let mut groups: Vec<(Option<Arc<LfMap>>, Vec<&wce_scene::render_scene::Entity>)> = vec![];
+        let mut groups: Vec<(u64, Vec<&wce_scene::render_scene::Entity>)> = vec![];
         for e in ents {
             let Payload::Terrain(t) = &e.payload else { continue };
             let id = t.lf.as_ref().map_or(0, |lf| lf.id);
-            match groups.iter_mut().find(|(lf, _)| lf.as_ref().map_or(0, |lf| lf.id) == id) {
+            match groups.iter_mut().find(|(lf, _)| *lf == id) {
                 Some((_, v)) => v.push(*e),
-                None => groups.push((t.lf.clone(), vec![*e])),
+                None => groups.push((id, vec![*e])),
             }
         }
 
-        let (eye, units, origin) = (self.terrain.lod_eye, self.camera.units, self.camera.origin);
-        let (view, eye_cb) = (self.camera.cb_view, self.camera.cb_eye);
-        let draws: Vec<LfDraw> = groups
+        let lfs: Vec<u64> = groups.iter().map(|g| g.0).collect();
+        let draws: Vec<LfDraw> = lfs.iter().map(|&lf| self.lf_draw_of(lf)).collect();
+        let ents_hash = groups
             .iter()
-            .map(|(lf, _)| match lf {
-                Some(lf) => {
-                    wce_prof!("terrain.patches.lf_draw");
-                    self.lf_draw(lf, eye)
+            .flat_map(|(_, g)| g.iter())
+            .fold(0xCBF2_9CE4_8422_2325u64, |h, e| (h ^ u64::from(e.id)).wrapping_mul(0x0100_0000_01B3));
+        let key = self.plan_key(cull, 0.0, ents_hash, material_only);
+        if !self.plan_current(&key) {
+            // The frame's records of the entities (`terrain_surface_entities`); one not in the list is left out.
+            let recs: Vec<Vec<u32>> =
+                groups.iter().map(|(_, g)| g.iter().filter_map(|e| self.terrain.rec_of.get(&e.id).copied()).collect()).collect();
+            let params = self.plan_params(cull, 0.0, material_only);
+            let shifts: Vec<[f32; 2]> = draws.iter().map(|d| d.shift).collect();
+            let cpu = {
+                let _batching =
+                    wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+                plan_cpu(&self.terrain.recs, &self.terrain.precs, &recs, &shifts, &params)
+            };
+            self.finish_plan(key, cpu, lfs, vec![]);
+        }
+
+        let customs: Vec<Vec<&wce_scene::render_scene::Entity>> = groups.into_iter().map(|(_, g)| g).collect();
+        self.draw_planned(&draws, &customs, vs, ps, cull, clip, how)
+    }
+
+    /// The patches of the frame's terrains a view sees (`view`: the surface's, without the sea tiles, or a shadow cascade's, without the
+    /// terrains that cast none), drawn as [`Self::draw_terrain_patches_with`] draws its list. The view's plan was usually made with the
+    /// others' on the loading of the shadow pass (`prepare_terrain_views`); else here. `list`: the frame's terrain list (for the custom
+    /// meshes).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn draw_view_patches(
+        &mut self,
+        list: &[&wce_scene::render_scene::Entity],
+        view: TerrainView,
+        vs: &GameShader,
+        ps: &GameShader,
+        cull: &Float4x4,
+        clip: &Float4x4,
+        texel: f32,
+        how: CustomDraw,
+    ) -> u64 {
+        let key = self.plan_key(cull, texel, view.tag(), false);
+        if !self.plan_current(&key) {
+            let at = self.terrain.prepared.iter().position(|p| p.0 == key);
+            let (lfs, customs, cpu) = match at {
+                Some(at) => {
+                    let (_, lfs, customs, cpu) = self.terrain.prepared.swap_remove(at);
+                    (lfs, customs, cpu)
                 }
-                // No LF: the frame of the render origin.
-                None => LfDraw {
+                None => {
+                    let (lfs, recs, customs) = self.view_groups(view, cull);
+                    let shifts: Vec<[f32; 2]> = lfs.iter().map(|&lf| self.lf_draw_of(lf).shift).collect();
+                    let params = self.plan_params(cull, texel, false);
+                    let _batching = wce_foundation::profile::Scope::new(
+                        BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")),
+                    );
+                    (lfs, customs, plan_cpu(&self.terrain.recs, &self.terrain.precs, &recs, &shifts, &params))
+                }
+            };
+            self.finish_plan(key, cpu, lfs, customs);
+        }
+
+        let Some(plan) = &self.terrain.patch_plan else { return 0 };
+        let (lfs, customs) = (plan.lfs.clone(), plan.customs.clone());
+        let draws: Vec<LfDraw> = lfs.iter().map(|&lf| self.lf_draw_of(lf)).collect();
+        let customs: Vec<Vec<&wce_scene::render_scene::Entity>> =
+            customs.iter().map(|c| c.iter().filter_map(|&k| list.get(k as usize).copied()).collect()).collect();
+        self.draw_planned(&draws, &customs, vs, ps, cull, clip, how)
+    }
+
+    /// The plans of these views (each a cull and a cascade's texel, 0 for the surface) made at once, on threads: the patches' culling,
+    /// strides and rows read only the frame's records (`TerrainRec`), and the surface's and the four cascades' each walked the frame's
+    /// terrains (a fifth of the CPU's frame, one after another). Their draws take them (`draw_view_patches`).
+    pub(crate) fn prepare_terrain_views(&mut self, scene: &RenderScene, views: &[(TerrainView, Float4x4, f32)]) {
+        let _ = self.terrain_surface_entities(scene);
+        struct Job {
+            key: PlanKey,
+            lfs: Vec<u64>,
+            recs: Vec<Vec<u32>>,
+            customs: Vec<Vec<u32>>,
+            shifts: Vec<[f32; 2]>,
+            params: PlanParams,
+        }
+
+        let mut jobs: Vec<Job> = vec![];
+        for (view, cull, texel) in views {
+            let key = self.plan_key(cull, *texel, view.tag(), false);
+            if self.terrain.prepared.iter().any(|p| p.0 == key) || jobs.iter().any(|j| j.key == key) {
+                continue;
+            }
+
+            let (lfs, recs, customs) = self.view_groups(*view, cull);
+            let shifts: Vec<[f32; 2]> = lfs.iter().map(|&lf| self.lf_draw_of(lf).shift).collect();
+            let params = self.plan_params(cull, *texel, false);
+            jobs.push(Job { key, lfs, recs, customs, shifts, params });
+        }
+
+        if jobs.is_empty() {
+            return;
+        }
+
+        let _batching =
+            wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+        let (recs, precs) = (&self.terrain.recs, &self.terrain.precs);
+        let plans: Vec<CpuPlan> = std::thread::scope(|s| {
+            let handles: Vec<_> = jobs[1..].iter().map(|j| s.spawn(move || plan_cpu(recs, precs, &j.recs, &j.shifts, &j.params))).collect();
+            let first = plan_cpu(recs, precs, &jobs[0].recs, &jobs[0].shifts, &jobs[0].params);
+            std::iter::once(first).chain(handles.into_iter().map(|h| h.join().unwrap_or_default())).collect()
+        });
+
+        for (j, cpu) in jobs.into_iter().zip(plans) {
+            self.terrain.prepared.push((j.key, j.lfs, j.customs, cpu));
+        }
+    }
+
+    /// A view's terrains (`draw_view_patches`) from the frame's clusters within `cull`, in the list's order, grouped by LF map: the groups'
+    /// LF ids, their records, and the records among them with a custom mesh.
+    fn view_groups(&self, view: TerrainView, cull: &Float4x4) -> (Vec<u64>, Vec<Vec<u32>>, Vec<Vec<u32>>) {
+        let frustum = Frustum::new(cull);
+        let mut pick: Vec<u32> = self
+            .terrain
+            .clusters
+            .iter()
+            .filter(|c| c.always || frustum.contains(c.bmin, c.bmax))
+            .flat_map(|c| c.ents.iter().map(|&k| k as u32))
+            .collect();
+        pick.sort_unstable();
+        let (mut lfs, mut recs, mut customs): (Vec<u64>, Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![], vec![], vec![]);
+        for k in pick {
+            let Some(r) = self.terrain.recs.get(k as usize) else { continue };
+            let skip = match view {
+                TerrainView::Surface => r.sea_floor,
+                TerrainView::Shadow => r.no_shadow,
+            };
+            if skip {
+                continue;
+            }
+
+            let g = match lfs.iter().position(|&l| l == r.lf) {
+                Some(g) => g,
+                None => {
+                    lfs.push(r.lf);
+                    recs.push(vec![]);
+                    customs.push(vec![]);
+                    lfs.len() - 1
+                }
+            };
+            recs[g].push(k);
+            if r.custom {
+                customs[g].push(k);
+            }
+        }
+
+        (lfs, recs, customs)
+    }
+
+    /// An LF group's draw (`lf_draw`) by the LF's id (0: none, the render origin's frame).
+    fn lf_draw_of(&mut self, lf: u64) -> LfDraw {
+        let eye = self.terrain.lod_eye;
+        match self.terrain.surface_lfs.iter().find(|l| l.id == lf).cloned() {
+            Some(map) => {
+                wce_prof!("terrain.patches.lf_draw");
+                self.lf_draw(&map, eye)
+            }
+            None => {
+                let origin = self.camera.origin;
+                LfDraw {
                     srv: self.lf_zero(),
                     n: 2.0,
                     width: 1.0e6,
@@ -2886,16 +3075,119 @@ impl Renderer {
                     offset: 0.0,
                     uv_offset: 0.0,
                     shift: [origin.x, origin.z],
-                },
-            })
-            .collect();
+                }
+            }
+        }
+    }
 
-        let shifts: Vec<[f32; 2]> = draws.iter().map(|d| d.shift).collect();
-        self.plan_patches(&groups, &shifts, cull, material_only);
+    /// What a plan is made for: the frame, the cull matrix, the LOD eye and the cascade's texel, the entities (a list's hash, or a view's
+    /// tag), material only.
+    fn plan_key(&self, cull: &Float4x4, texel: f32, ents: u64, material_only: bool) -> PlanKey {
+        let eye = self.terrain.lod_eye;
+        let cull_bits: [u32; 16] = std::array::from_fn(|k| cull.m[k / 4][k % 4].to_bits());
+        (self.terrain.frame, cull_bits, [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits(), texel.to_bits()], ents, material_only)
+    }
+
+    /// Whether the last plan is this key's and its rows are still the uploaded ones (the surface's second pass draws the first's again);
+    /// its stats counted again then.
+    fn plan_current(&mut self, key: &PlanKey) -> bool {
+        let Some(p) = &self.terrain.patch_plan else { return false };
+        if p.key != *key || p.upload != self.terrain.patch_uploads {
+            return false;
+        }
+
+        self.draw_stats.terrain_entities += p.stats[0];
+        self.draw_stats.terrain_tested += p.stats[1];
+        self.draw_stats.terrain_drawn += p.stats[2];
+        true
+    }
+
+    fn plan_params(&self, cull: &Float4x4, texel: f32, material_only: bool) -> PlanParams {
+        PlanParams {
+            frustum: Frustum::new(cull),
+            eye: self.terrain.lod_eye,
+            px_ratio: self.camera.px_ratio,
+            shadow_texel: texel,
+            units: self.camera.units,
+            origin_y: self.camera.origin.y,
+            material_only,
+        }
+    }
+
+    /// A plan's GPU side, into `terrain.patch_plan`: each batch's vertices and index buffer, the batches by index buffer, then vertex
+    /// buffer (the draws bind each once; the surface's depth pass draws the same plan, its equal test meeting the depth the first pass
+    /// wrote in the same order), every row of every group uploaded at once (`patch_inst_vb`, grown to fit).
+    fn finish_plan(&mut self, key: PlanKey, cpu: CpuPlan, lfs: Vec<u64>, customs: Vec<Vec<u32>>) {
+        let mut planned = Vec::with_capacity(cpu.groups.len());
+        for group in &cpu.groups {
+            let mut out = Vec::with_capacity(group.len());
+            for b in group {
+                let Some((vb, base)) = self.terrain.hf.get(&b.key).and_then(|g| g.patches.get(b.patch)).and_then(HfPatch::vertices) else {
+                    continue;
+                };
+                let [cells, cx, cz, rim] = b.dims;
+                let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, b.k, rim);
+                let Some(ib) = ib else { continue };
+                out.push(PatchBatch { vb, base, ib, format: patch_index_format(cells), index_count, first: b.first, count: b.count });
+            }
+
+            out.sort_by_key(|b| (b.ib.as_raw() as usize, b.vb.as_raw() as usize, b.base));
+            planned.push(out);
+        }
+
+        self.draw_stats.terrain_entities += cpu.stats[0];
+        self.draw_stats.terrain_tested += cpu.stats[1];
+        self.draw_stats.terrain_drawn += cpu.stats[2];
+
+        // The rows of every group at once, the buffer grown (by powers of two) when they don't fit.
+        let bytes = cpu.rows.len() * 4;
+        if bytes > self.terrain.patch_inst_bytes {
+            let size = bytes.next_power_of_two().max(INSTANCE_BYTES);
+            self.terrain.patch_inst_vb = dynamic_buffer(&self.dev, size, D3D11_BIND_VERTEX_BUFFER);
+            self.terrain.patch_inst_bytes = if self.terrain.patch_inst_vb.is_some() { size } else { 0 };
+        }
+
+        let uploaded = cpu.rows.is_empty()
+            || self
+                .terrain
+                .patch_inst_vb
+                .as_ref()
+                .is_some_and(|vb| self.ctx.map(vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &cpu.rows)));
+        if !uploaded {
+            planned.iter_mut().for_each(Vec::clear);
+        }
+
+        self.terrain.patch_uploads += 1;
+        self.terrain.patch_plan =
+            Some(PatchPlan { key, upload: self.terrain.patch_uploads, groups: planned, stats: cpu.stats, lfs, customs });
+    }
+
+    /// The current plan's draws (`terrain.patch_plan`), group by group in its LF's frame (`draws`), and each group's custom meshes
+    /// (`customs`, as `how` asks). Returns the triangles drawn.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_planned(
+        &mut self,
+        draws: &[LfDraw],
+        customs: &[Vec<&wce_scene::render_scene::Entity>],
+        vs: &GameShader,
+        ps: &GameShader,
+        cull: &Float4x4,
+        clip: &Float4x4,
+        how: CustomDraw,
+    ) -> u64 {
+        // The patches' input layout as the caller bound it, put back after each group's custom meshes (which bind their own). Not made
+        // here: Rome 2's surface shader takes another vertex (`terrain_rome2::geom_layout`), and Attila's elements fail on it.
+        let geom_il = match how {
+            CustomDraw::Depth(_) => self.ctx.input_layout(),
+            _ => None,
+        };
+
+        let (units, origin) = (self.camera.units, self.camera.origin);
+        let (view, eye_cb) = (self.camera.cb_view, self.camera.cb_eye);
         let plan = self.terrain.patch_plan.take();
         let inst_vb = self.terrain.patch_inst_vb.clone();
         let mut triangles = 0;
-        for (k, ((_, group), d)) in groups.iter().zip(draws).enumerate() {
+        for (k, d) in draws.iter().enumerate() {
             // vs_height_map_cb: the LF window (unorm 0..1 times the map's scale, less its offset, in game units), its size and the world's,
             // the offset that puts it where it is; the high-frequency height comes from the vertices (the instance rows are in game units).
             let [sx, sz] = d.shift;
@@ -2959,7 +3251,9 @@ impl Renderer {
                 }
             }
 
-            if !matches!(how, CustomDraw::None) {
+            if !matches!(how, CustomDraw::None)
+                && let Some(group) = customs.get(k).filter(|g| !g.is_empty())
+            {
                 wce_prof!("terrain.patches.custom");
                 triangles += self.draw_custom_meshes(group, how, cull, [sx, sz]);
                 if let Some(il) = &geom_il {
@@ -2982,206 +3276,206 @@ impl Renderer {
         self.upload();
         triangles
     }
+}
 
-    /// The patch draws of `groups` (by LF map, each drawn in the frame moved by its shift) inside `cull`: by group, a batch for each patch
-    /// at a stride with its placements' instance rows; every row of every group uploaded at once (`patch_inst_vb`, grown to fit), into
-    /// `terrain.patch_plan`. Taken as it is when the last plan was made for the same patches in the same frame and its rows are still
-    /// the uploaded ones: the surface's two passes draw the same patches (made per pass, the batching and the upload were paid twice).
-    fn plan_patches(
-        &mut self,
-        groups: &[(Option<Arc<LfMap>>, Vec<&wce_scene::render_scene::Entity>)],
-        shifts: &[[f32; 2]],
-        cull: &Float4x4,
-        material_only: bool,
-    ) {
-        let eye = self.terrain.lod_eye;
-        let ents = groups
-            .iter()
-            .flat_map(|(_, g)| g.iter())
-            .fold(0xCBF2_9CE4_8422_2325u64, |h, e| (h ^ u64::from(e.id)).wrapping_mul(0x0100_0000_01B3));
-        let cull_bits: [u32; 16] = std::array::from_fn(|k| cull.m[k / 4][k % 4].to_bits());
-        let shadow_texel = self.terrain.patch_shadow_texel;
-        let key = (
-            self.terrain.frame,
-            cull_bits,
-            [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits(), shadow_texel.to_bits()],
-            ents,
-            material_only,
-        );
-        if let Some(p) = &self.terrain.patch_plan
-            && p.key == key
-            && p.upload == self.terrain.patch_uploads
-        {
-            self.draw_stats.terrain_entities += p.stats[0];
-            self.draw_stats.terrain_tested += p.stats[1];
-            self.draw_stats.terrain_drawn += p.stats[2];
-            return;
+/// Which of the frame's terrains a view draws (`Renderer::draw_view_patches`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerrainView {
+    /// The material pass's surface: all but the sea tiles (`Terrain::sea_floor`, the sea pass's).
+    Surface,
+
+    /// A shadow cascade's: all but those that cast none (`Terrain::no_shadow`).
+    Shadow,
+}
+
+impl TerrainView {
+    /// The plan key's entities for the view (a list's are its ids hashed).
+    fn tag(self) -> u64 {
+        match self {
+            Self::Surface => u64::MAX - 1,
+            Self::Shadow => u64::MAX - 2,
         }
+    }
+}
 
-        let batching =
-            wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
-        let (units, origin) = (self.camera.units, self.camera.origin);
-        let mut stats = [0u64; 3];
-        let frustum = Frustum::new(cull);
-        let px_ratio = self.camera.px_ratio;
-        let (mut at, mut items, mut rows) = (
-            std::mem::take(&mut self.terrain.batch_at),
-            std::mem::take(&mut self.terrain.patch_items),
-            std::mem::take(&mut self.terrain.patch_rows),
-        );
-        rows.clear();
-        let mut planned = Vec::with_capacity(groups.len());
-        for ((_, group), &[sx, sz]) in groups.iter().zip(shifts) {
-            // The batches: (heights buffer, patch, size, stride, patches), by vertices, patch size and stride (the flat patches of every
-            // buffer share one vertex buffer, `hf_patch_vb`); each patch drawn with its batch and its instance row.
-            let mut batches: Vec<(usize, usize, [i32; 4], i32, u32)> = vec![];
-            at.clear();
-            items.clear();
-            let mut last: Option<((usize, u32), u32)> = None;
-            for e in group {
-                let custom = matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some());
-                if material_only || custom {
+/// A plan's key (`Renderer::plan_key`).
+type PlanKey = (u64, [u32; 16], [u32; 4], u64, bool);
+
+/// A terrain of the frame's list as the patch planning reads it, flat and in the list's order (`terrain_surface_entities`): its LF's id,
+/// heights buffer, grid step, box, patches (`TerrainGpuState::precs`) and flags. (Read through `placed`, each planning pass of the frame
+/// looked every terrain up in a map and then its patches, scattered over the heap.)
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TerrainRec {
+    lf: u64,
+    key: usize,
+    step: f32,
+    bmin: [f32; 3],
+    bmax: [f32; 3],
+    first: u32,
+    len: u32,
+    lod: bool,
+    custom: bool,
+    sea_floor: bool,
+    no_shadow: bool,
+}
+
+/// What a plan is made with (`plan_cpu`): the view, the LOD eye and the pixel's angle, the cascade's texel (0: the main view), the camera's
+/// units and render origin's height, material only.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlanParams {
+    frustum: Frustum,
+    eye: Float3,
+    px_ratio: f32,
+    shadow_texel: f32,
+    units: f32,
+    origin_y: f32,
+    material_only: bool,
+}
+
+/// A plan's CPU side (`plan_cpu`): by group, the batches; the instance rows of all of them; the terrains walked, the patches tested and
+/// drawn.
+#[derive(Default)]
+pub(crate) struct CpuPlan {
+    groups: Vec<Vec<CpuBatch>>,
+    rows: Vec<f32>,
+    stats: [u64; 3],
+}
+
+/// A batch of a plan's CPU side: the heights buffer and patch, the patch's (cells, cx, cz, rim) and stride, its rows (first, count).
+#[derive(Clone, Copy, Debug)]
+struct CpuBatch {
+    key: usize,
+    patch: usize,
+    dims: [i32; 4],
+    k: i32,
+    first: u32,
+    count: u32,
+}
+
+/// The patch draws of `groups` (records of `recs`, by LF map, each group drawn in the frame moved by its shift): the patches in the view, a
+/// batch for each patch at a stride with its placements' instance rows. Reads only its arguments: the views' plans are made on threads
+/// (`Renderer::prepare_terrain_views`).
+fn plan_cpu(recs: &[TerrainRec], precs: &[PlacedPatch], groups: &[Vec<u32>], shifts: &[[f32; 2]], p: &PlanParams) -> CpuPlan {
+    let PlanParams { frustum, eye, px_ratio, shadow_texel, units, origin_y, material_only } = *p;
+    let mut out = CpuPlan::default();
+    let mut at: IdMap<(usize, u32), u32> = IdMap::default();
+    let mut items: Vec<(u32, [f32; 12])> = vec![];
+    for (group, &[sx, sz]) in groups.iter().zip(shifts) {
+        // The batches: (heights buffer, patch, size, stride, patches), by vertices, patch size and stride (the flat patches of every buffer
+        // share one vertex buffer, `hf_patch_vb`); each patch drawn with its batch and its instance row.
+        let mut batches: Vec<(usize, usize, [i32; 4], i32, u32)> = vec![];
+        at.clear();
+        items.clear();
+        let mut last: Option<((usize, u32), u32)> = None;
+        for &r in group {
+            let Some(t) = recs.get(r as usize) else { continue };
+            if material_only || t.custom {
+                continue;
+            }
+
+            out.stats[0] += 1;
+            // A terrain of one patch (a campaign tile) is boxed by it: tested once, below.
+            if t.len > 1 && !frustum.contains(t.bmin, t.bmax) {
+                continue;
+            }
+
+            out.stats[1] += u64::from(t.len);
+            for pp in &precs[t.first as usize..(t.first + t.len) as usize] {
+                if !frustum.contains(pp.bmin, pp.bmax) {
                     continue;
                 }
 
-                let Some(p) = self.terrain.placed.get(&e.id) else { continue };
-                stats[0] += 1;
-                // A terrain of one patch (a campaign tile) is boxed by it: tested once, below.
-                if p.patches.len() > 1 && !frustum.contains(p.bmin, p.bmax) {
-                    continue;
-                }
+                out.stats[2] += 1;
 
-                stats[1] += p.patches.len() as u64;
-                for pp in &p.patches {
-                    if !frustum.contains(pp.bmin, pp.bmax) {
-                        continue;
+                // The stride by distance: one more halving of the vertices per doubling past LOD_STEPS grid steps (2 m steps: every 2nd
+                // vertex from 512 m, every 4th from 1 km ...), a power of two.
+                let (k, rim) = if t.lod {
+                    let (lo, hi) = (pp.bmin, pp.bmax);
+                    let (dx, dy, dz) =
+                        (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
+                    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                    let d = dist / (LOD_STEPS * t.step);
+                    // The main view's: no coarser than moves the ground by STRIDE_ERROR_PX on the screen (a coarse grid fills the little
+                    // hollows, and a marsh's ponds went under the ground).
+                    let tol = STRIDE_ERROR_PX * dist * px_ratio;
+                    // A shadow cascade's stride goes by its texel alone (`PlanParams::shadow_texel`): the longest whose cells are at most two
+                    // texels (finer cells cast nothing more). By distance too, one tile's placements split into more batches: more draws
+                    // than the triangles saved, the frame CPU-bound.
+                    let coarse = 2.0 * shadow_texel / t.step;
+                    // The main view's strides divide the patch, but on a map context's tile (its rim: `Terrain::rim`): any stride inside
+                    // the rim, the rim whole across the edges, the stride bounded by the error too. (Coarse over the rim, a block spread
+                    // the skirt's 20-unit drop inward: seams of the ground below along every tile's edge.) A cascade's go up to the
+                    // patch's side whatever it is (`terrain_grid_ib` narrows the last blocks); its edges keep every vertex as the main
+                    // view's (plain, as the game's cascades are, they cast thin seams of shadow).
+                    let shadow = shadow_texel > 0.0;
+                    let rim = if shadow { 0 } else { pp.rim };
+                    let mut k = 1;
+                    while k < pp.cells
+                        && 2 * k <= pp.cx.max(pp.cz)
+                        && (if shadow { (2 * k) as f32 <= coarse } else { d >= (2 * k) as f32 })
+                        && (shadow || rim > 0 || (pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0))
+                        && (rim == 0 || 2 * k <= pp.cx.max(pp.cz) - 2 * rim)
+                        && (rim == 0 || pp.err.get((2 * k).trailing_zeros() as usize).is_some_and(|&e| e <= tol))
+                    {
+                        k *= 2;
                     }
 
-                    stats[2] += 1;
-
-                    // The stride by distance: one more halving of the vertices per doubling past LOD_STEPS grid steps (2 m steps: every 2nd
-                    // vertex from 512 m, every 4th from 1 km ...), a power of two.
-                    let k = if p.lod {
-                        let (lo, hi) = (pp.bmin, pp.bmax);
-                        let (dx, dy, dz) =
-                            (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
-                        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                        let d = dist / (LOD_STEPS * p.step);
-                        // The main view's: no coarser than moves the ground by STRIDE_ERROR_PX on the screen (a coarse grid fills the
-                        // little hollows, and a marsh's ponds went under the ground).
-                        let tol = STRIDE_ERROR_PX * dist * px_ratio;
-                        // A shadow cascade's stride goes by its texel alone (`patch_shadow_texel`): the longest whose cells are at most two
-                        // texels (finer cells cast nothing more). By distance too, one tile's placements split into more batches: more
-                        // draws than the triangles saved, the frame CPU-bound.
-                        let coarse = 2.0 * shadow_texel / p.step;
-                        // The main view's strides divide the patch, but on a map context's tile (its rim: `Terrain::rim`): any stride
-                        // inside the rim, the rim whole across the edges, the stride bounded by the error too. (Coarse over the rim, a
-                        // block spread the skirt's 20-unit drop inward: seams of the ground below along every tile's edge.) A cascade's go
-                        // up to the patch's side whatever it is (`terrain_grid_ib` narrows the last blocks); its edges keep every vertex
-                        // as the main view's (plain, as the game's cascades are, they cast thin seams of shadow).
-                        let shadow = shadow_texel > 0.0;
-                        let rim = if shadow { 0 } else { pp.rim };
-                        let mut k = 1;
-                        while k < pp.cells
-                            && 2 * k <= pp.cx.max(pp.cz)
-                            && (if shadow { (2 * k) as f32 <= coarse } else { d >= (2 * k) as f32 })
-                            && (shadow || rim > 0 || (pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0))
-                            && (rim == 0 || 2 * k <= pp.cx.max(pp.cz) - 2 * rim)
-                            && (rim == 0 || pp.err.get((2 * k).trailing_zeros() as usize).is_some_and(|&e| e <= tol))
-                        {
-                            k *= 2;
-                        }
-
-                        (k, rim)
-                    } else {
-                        (1, 0)
-                    };
-                    let (k, rim) = k;
-
-                    // The key: the vertices, then the patch's size (cx, cz < 4096) and the stride (< 256) packed; neighbours mostly share
-                    // the last one.
-                    let key = (pp.vb, (((pp.cx * 4096 + pp.cz) as u32) << 8) | k as u32);
-                    let b = match last {
-                        Some((lk, b)) if lk == key => b,
-                        _ => {
-                            let b = *at.entry(key).or_insert_with(|| {
-                                batches.push((p.key, pp.patch, [pp.cells, pp.cx, pp.cz, rim], k, 0));
-                                (batches.len() - 1) as u32
-                            });
-                            last = Some((key, b));
-                            b
-                        }
-                    };
-
-                    batches[b as usize].4 += 1;
-
-                    // Into the group's frame.
-                    let mut row = pp.row;
-                    (row[3], row[7], row[11]) = (row[3] - sx * units, row[7] - origin.y * units, row[11] - sz * units);
-                    items.push((b, row));
-                }
-            }
-
-            // The rows in batch order (each batch's from its first), each placed once.
-            let start = rows.len() / 12;
-            let mut fill: Vec<u32> = Vec::with_capacity(batches.len());
-            let mut n = start as u32;
-            for b in &batches {
-                fill.push(n);
-                n += b.4;
-            }
-
-            let firsts = fill.clone();
-            rows.resize(rows.len() + items.len() * 12, 0.0);
-            for (b, row) in &items {
-                let r = &mut fill[*b as usize];
-                rows[*r as usize * 12..*r as usize * 12 + 12].copy_from_slice(row);
-                *r += 1;
-            }
-
-            let mut out = Vec::with_capacity(batches.len());
-            for ((key, patch, [cells, cx, cz, rim], stride, count), first) in batches.into_iter().zip(firsts) {
-                let Some((vb, base)) = self.terrain.hf.get(&key).and_then(|g| g.patches.get(patch)).and_then(HfPatch::vertices) else {
-                    continue;
+                    (k, rim)
+                } else {
+                    (1, 0)
                 };
-                let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, stride, rim);
-                let Some(ib) = ib else { continue };
-                out.push(PatchBatch { vb, base, ib, format: patch_index_format(cells), index_count, first, count });
+
+                // The key: the vertices, then the patch's size (cx, cz < 4096) and the stride (< 256) packed; neighbours mostly share the
+                // last one.
+                let key = (pp.vb, (((pp.cx * 4096 + pp.cz) as u32) << 8) | k as u32);
+                let b = match last {
+                    Some((lk, b)) if lk == key => b,
+                    _ => {
+                        let b = *at.entry(key).or_insert_with(|| {
+                            batches.push((t.key, pp.patch, [pp.cells, pp.cx, pp.cz, rim], k, 0));
+                            (batches.len() - 1) as u32
+                        });
+                        last = Some((key, b));
+                        b
+                    }
+                };
+
+                batches[b as usize].4 += 1;
+
+                // Into the group's frame.
+                let mut row = pp.row;
+                (row[3], row[7], row[11]) = (row[3] - sx * units, row[7] - origin_y * units, row[11] - sz * units);
+                items.push((b, row));
             }
-
-            // By index buffer, then vertex buffer: the draws bind each once. (The surface's depth pass draws the same plan: its equal test
-            // meets the depth the first pass wrote in the same order.)
-            out.sort_by_key(|b| (b.ib.as_raw() as usize, b.vb.as_raw() as usize, b.base));
-            planned.push(out);
         }
 
-        drop(batching);
-        self.draw_stats.terrain_entities += stats[0];
-        self.draw_stats.terrain_tested += stats[1];
-        self.draw_stats.terrain_drawn += stats[2];
-
-        // The rows of every group at once, the buffer grown (by powers of two) when they don't fit.
-        let bytes = rows.len() * 4;
-        if bytes > self.terrain.patch_inst_bytes {
-            let size = bytes.next_power_of_two().max(INSTANCE_BYTES);
-            self.terrain.patch_inst_vb = dynamic_buffer(&self.dev, size, D3D11_BIND_VERTEX_BUFFER);
-            self.terrain.patch_inst_bytes = if self.terrain.patch_inst_vb.is_some() { size } else { 0 };
+        // The rows in batch order (each batch's from its first), each placed once.
+        let start = (out.rows.len() / 12) as u32;
+        let mut fill: Vec<u32> = Vec::with_capacity(batches.len());
+        let mut n = start;
+        for b in &batches {
+            fill.push(n);
+            n += b.4;
         }
 
-        let uploaded = rows.is_empty()
-            || self
-                .terrain
-                .patch_inst_vb
-                .as_ref()
-                .is_some_and(|vb| self.ctx.map(vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &rows)));
-        if !uploaded {
-            planned.iter_mut().for_each(Vec::clear);
+        let firsts = fill.clone();
+        out.rows.resize(out.rows.len() + items.len() * 12, 0.0);
+        for (b, row) in &items {
+            let r = &mut fill[*b as usize];
+            out.rows[*r as usize * 12..*r as usize * 12 + 12].copy_from_slice(row);
+            *r += 1;
         }
 
-        (self.terrain.batch_at, self.terrain.patch_items, self.terrain.patch_rows) = (at, items, rows);
-        self.terrain.patch_uploads += 1;
-        self.terrain.patch_plan = Some(PatchPlan { key, upload: self.terrain.patch_uploads, groups: planned, stats });
+        out.groups.push(
+            batches
+                .into_iter()
+                .zip(firsts)
+                .map(|((key, patch, dims, k, count), first)| CpuBatch { key, patch, dims, k, first, count })
+                .collect(),
+        );
     }
+
+    out
 }
 
 /// What a frame's terrain list was made from (`surface_from`).
@@ -3318,10 +3612,10 @@ impl Drop for PoolSlot {
     }
 }
 
-/// A pass's patch draws (`Renderer::plan_patches`): by LF group, the batches with their rows' place in the instance buffer.
+/// A pass's patch draws (`Renderer::finish_plan`): by LF group, the batches with their rows' place in the instance buffer.
 pub(crate) struct PatchPlan {
-    /// What it was made for: the frame, the cull matrix, the LOD eye, the entities (hashed), material only; and the upload it made.
-    key: (u64, [u32; 16], [u32; 4], u64, bool),
+    /// What it was made for (`Renderer::plan_key`), and the upload it made.
+    key: PlanKey,
     upload: u64,
 
     /// Its LF groups' batches, in the order of the pass's groups.
@@ -3329,6 +3623,10 @@ pub(crate) struct PatchPlan {
 
     /// The terrains walked, the patches tested and drawn (the frame's stats, counted again when it is drawn again).
     stats: [u64; 3],
+
+    /// A view's (`draw_view_patches`): its groups' LF ids and the records among them with a custom mesh.
+    lfs: Vec<u64>,
+    customs: Vec<Vec<u32>>,
 }
 
 /// A patch at a stride: its vertices (the buffer, the first), its index buffer, and its placements' rows in the instance buffer.
