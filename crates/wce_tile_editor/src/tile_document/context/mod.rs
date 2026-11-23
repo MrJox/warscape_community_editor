@@ -1226,10 +1226,10 @@ impl Frame {
     fn place(&self, i: usize, t: &Template, lod: Lod, out: &mut Vec<(Float4x4, Payload)>) {
         let a = self.from_map.then_after(&self.map.placements[i].to_map());
         let frame = matrix(&a, 0.0);
-        let (grid, material) = match lod {
-            Lod::Near => (&t.near, &t.material),
-            Lod::Ground => (&t.coarse, &t.material_far),
-            _ => (&t.coarse, &t.material_low),
+        let (grid, material, rim) = match lod {
+            Lod::Near => (&t.near, &t.material, t.near_rim),
+            Lod::Ground => (&t.coarse, &t.material_far, t.coarse_rim),
+            _ => (&t.coarse, &t.material_low, t.coarse_rim),
         };
 
         let terrain = Terrain {
@@ -1240,6 +1240,7 @@ impl Frame {
             step: grid.step,
             heights: grid.heights.clone(),
             lod: true,
+            rim,
             material: material.clone(),
             lf: self.lf.clone(),
             legacy: false,

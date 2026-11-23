@@ -413,6 +413,10 @@ pub struct Terrain {
     /// Patches of 64 x 64 cells switch to coarser index buffers with distance.
     pub lod: bool,
 
+    /// Cells along each edge of the grid that a coarser stride keeps at full resolution across the edge (a map context's tile: its
+    /// skirt and the border it overlaps its neighbours with), 0 for none. Coarse over them, a block spread the skirt's drop inward.
+    pub rim: i32,
+
     /// When set, each patch gets its piece of this image instead of the tiled diffuse (the debug views of the tile maps).
     pub skin: Option<Arc<TerrainSkin>>,
 
@@ -507,6 +511,7 @@ impl Default for Terrain {
             casts_shadow: false,
             no_shadow: false,
             lod: false,
+            rim: 0,
             skin: None,
             material: None,
             lf: None,

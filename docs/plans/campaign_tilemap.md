@@ -131,11 +131,6 @@ Characters and armies:
   for battles.
 
 Environment and performance:
-- **The main view's terrain detail on a campaign map:** a stride must divide the patch, and the campaign's tiles are 66, 74 or 138
-  cells a side, so every tile draws at a stride of 2 whatever its distance (63.5 M triangles at TDD's view A, the game's main depth
-  pass 1.6 M at F). Freed (`terrain_grid_ib` narrows the last blocks) it left seams of the ground below at the tiles' overlaps (74 cells
-  on a 64-cell spacing) all over the map: the overlapping tiles want strides that agree. The frame is CPU-bound, so it costs GPU
-  headroom, not fps, on this machine.
 - **The weather fold:** the sphere-order rule rests on V2 alone (Attila's Londinium agrees either way).
 - **`g_rain_specular_*` / `g_rain_terrain_*`:** 1 in V2's constants, 0 in the editor's (the campaign's rain constants).
 - **The forests to 240 world units around the target:** their GPU cost not measured (wants an idle window: `perf` at captures A and F
@@ -211,4 +206,8 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   boxes had the same overflow (their own buffer now, grown to fit: 4.2 -> 0.4 ms), the batching with a frustum made once a pass, the
   id hash and no list a batch (1.2 -> 0.75 ms a call), a tile material's eight maps bound in one call. The shadow cascades' terrain
   (2026-11-23): 136.5 -> 19.4 M triangles at view A, the frame as it was (CPU-bound): a cascade's stride by its texel (cells up to two
-  texels), past the patch's divisors.
+  texels), past the patch's divisors. The main view's (2026-11-23): 63.5 -> 6.2 M triangles at view A, 43.7 -> 7.3 M at B, the frame as
+  it was. Every tile drew at a stride of 2 (a stride had to divide its 66, 74 or 138 cells). A map context's tile now takes any stride
+  inside its rim (`Terrain::rim`: its skirt and overlap, whole across the edges, every k-th vertex along them; coarse over the rim, a
+  block spread the skirt's 20-unit drop inward, seams of the ground below along every tile), and no coarser than moves its ground by a
+  pixel (`HfPatch::err`, each stride's largest height error, made with the patch: by distance alone the marshes' ponds went under).
