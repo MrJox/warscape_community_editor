@@ -173,6 +173,91 @@ pub fn sample_project(game: &str) -> Project {
     p
 }
 
+/// The duel's fight: (seconds, the Roman's animation, the Hun's), each held until the next. One strikes, the other blocks; a shield
+/// bash knocks the Hun back; families (`ATTACK` ...) would spread variants over men, so each key names one.
+const DUEL: &[(f64, &str, &str)] = &[
+    (0.0, "COMBAT_READY", "COMBAT_READY"),
+    (1.0, "ATTACK_1", "DEFEND_2"),
+    (2.3, "COMBAT_READY", "COMBAT_READY"),
+    (2.8, "DEFEND_1", "ATTACK_2"),
+    (4.1, "ATTACK_3", "DEFEND_1"),
+    (5.4, "BASH_SHIELD_1", "KNOCKBACK_1"),
+    (6.6, "COMBAT_READY", "COMBAT_READY"),
+    (7.0, "DEFEND_3", "ATTACK_4"),
+    (8.3, "ATTACK_2", "DEFEND_4"),
+    (9.6, "ATTACK_5", "DEFEND_2"),
+    (11.0, "COMBAT_READY", "COMBAT_READY"),
+];
+
+/// A second sample: two men fighting, a Roman soldier (a cohort's man) and a Hun warrior (a dismounted warband's), sword and shield
+/// both, face to face on a flat plains tile; one camera fixed on them from the side; the bars and a fade in.
+pub fn duel_project(game: &str) -> Project {
+    let mut p = Project::new("WCE Sample Duel", game);
+    p.battle.key = "wce_sample_duel".into();
+    // A flat battle tile (its ground about 0.4 m): the camera's heights below are over it.
+    p.map.tile = "terrain/tiles/battle/plains/8x8/8x8_aa".into();
+    p.map.whole_map = false;
+    p.texts.insert("battle_title".into(), BTreeMap::from([("en".into(), "The Sample Duel".to_owned())]));
+    p.texts.insert("battle_description".into(), BTreeMap::from([("en".into(), "A Roman soldier and a Hun warrior fight.".to_owned())]));
+    for a in &mut p.armies {
+        a.deployment_size = [120.0, 60.0];
+    }
+    p.armies[0].deployment_centre = [0.0, -40.0];
+    p.armies[1].deployment_centre = [0.0, 40.0];
+    let man = |p: &mut Project, army: usize, key: &str, name: &str, z: f32, facing: f32| {
+        let id = p.new_id();
+        p.units.push(SceneUnit {
+            id,
+            name: name.into(),
+            unit: key.into(),
+            army,
+            start: [0.0, z],
+            facing,
+            width: 1.0,
+            men: 1,
+            seed: id,
+            general: false,
+        });
+        id
+    };
+    let roman = man(&mut p, 0, "att_rom_cohors", "Roman soldier", -0.85, 0.0);
+    let hun = man(&mut p, 1, "att_nom_hunnic_dismounted_warband", "Hun warrior", 0.85, std::f32::consts::PI);
+    let clip = p.clips[0].id;
+    let mut tracks = vec![];
+    let mut track = |p: &mut Project, name: &str, content: TrackContent| {
+        let id = p.new_id();
+        tracks.push(Track { id, name: name.into(), muted: false, content });
+    };
+    // The camera: fixed, from the side at chest height, both men in the frame.
+    track(
+        &mut p,
+        "Camera 1",
+        TrackContent::Camera {
+            keys: vec![CameraKey { t: 0.0, position: [5.0, 2.5, 0.0], target: [0.0, 1.3, 0.0], fov: 32.0, interp: Interp::Smooth }],
+        },
+    );
+    let keys = |hun_side: bool| -> Vec<ActionKey> {
+        DUEL.iter().map(|&(t, r, h)| ActionKey { t, slot: (if hun_side { h } else { r }).into() }).collect()
+    };
+    for (unit, name, hun_side) in [(roman, "Roman soldier", false), (hun, "Hun warrior", true)] {
+        track(&mut p, name, TrackContent::Unit { unit, path: vec![], actions: keys(hun_side), men: vec![], visible: vec![] });
+    }
+    track(
+        &mut p,
+        "Fade",
+        TrackContent::Fade {
+            keys: vec![ScalarKey { t: 0.0, value: 1.0, interp: Interp::Linear }, ScalarKey { t: 1.0, value: 0.0, interp: Interp::Linear }],
+        },
+    );
+    track(&mut p, "Letterbox", TrackContent::Letterbox { keys: vec![ScalarKey { t: 0.0, value: 1.0, interp: Interp::Step }] });
+    if let Some(c) = p.clip_mut(clip) {
+        c.tracks = tracks;
+        c.length = 12.0;
+    }
+    p.normalize();
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +276,19 @@ mod tests {
         let ids: std::collections::BTreeSet<u32> =
             p.units.iter().map(|u| u.id).chain(p.clips.iter().flat_map(|c| c.tracks.iter().map(|t| t.id))).collect();
         assert_eq!(ids.len(), p.units.len() + clip.tracks.len(), "ids unique");
+    }
+
+    #[test]
+    fn the_duel_fights_under_a_fixed_camera() {
+        let p = duel_project("attila");
+        assert_eq!(Project::from_json(&p.to_json()).unwrap(), p);
+        let clip = &p.clips[0];
+        let at = |t: f64| crate::eval::evaluate(&p, clip, &crate::eval::SpeedTable::default(), t);
+        let (a, b) = (at(1.5), at(10.0));
+        assert_eq!(a.camera, b.camera, "the camera doesn't move");
+        let slots = |f: &crate::eval::SceneFrame| f.units.iter().map(|u| u.slot.clone()).collect::<Vec<_>>();
+        assert_eq!(slots(&a), ["ATTACK_1", "DEFEND_2"]);
+        assert_eq!(slots(&at(5.5)), ["BASH_SHIELD_1", "KNOCKBACK_1"]);
+        assert!(a.units.iter().all(|u| u.men == 1));
     }
 }

@@ -375,6 +375,9 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
       a shot (`<name>_010_<camera>`...) with handle frames seen through the shot's own camera; the fade and the bars on or off.
       Gate: `scripts/cinematic_cameras.txt`. **done** (MP4 and ProRes: the ffmpeg command tested, not run here: no ffmpeg on this
       machine)
+18. A second sample (user, 2026-11-23): two men fighting, the camera fixed on them (`sample::duel_project`, File > Open the duel
+    sample scene, `scene_sample duel`): a Roman soldier and a Hun warrior, sword and shield both, face to face on the flat plains
+    tile, trading attacks, blocks and a shield bash (each key a slot both men have), one camera from the side. **done**
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

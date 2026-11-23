@@ -38,6 +38,7 @@ enum Pending {
     SceneNew(String),
     SceneOpen(String),
     Sample,
+    SampleDuel,
     SceneTime(f64),
     ScenePlay(bool),
     UnitAdd(String, usize, f32, f32),
@@ -230,7 +231,8 @@ impl CinematicTool {
             }
             Pending::SceneNew(name) => self.new_scene_project(e, &name),
             Pending::SceneOpen(what) => self.open_scene(e, &what),
-            Pending::Sample => self.sample_scene(e),
+            Pending::Sample => self.sample_scene(e, false),
+            Pending::SampleDuel => self.sample_scene(e, true),
             Pending::SceneTime(t) => {
                 self.scene.time = t.max(0.0);
                 self.scene.playing = false;
@@ -375,10 +377,10 @@ impl CinematicTool {
         }
     }
 
-    /// The sample scene: opened from the projects folder, made and saved there the first time.
-    fn sample_scene(&mut self, e: &mut Editor) {
+    /// A sample scene (the battle, or `duel`: two men fighting): opened from the projects folder, made and saved there the first time.
+    fn sample_scene(&mut self, e: &mut Editor, duel: bool) {
         let game = self.files.as_ref().and_then(|f| f.game().map(|g| g.key.to_owned())).unwrap_or_else(|| "attila".into());
-        let p = wce_cinematic::sample::sample_project(&game);
+        let p = if duel { wce_cinematic::sample::duel_project(&game) } else { wce_cinematic::sample::sample_project(&game) };
         let path = Self::scenes_dir(e).join(&p.battle.key).join("project.json");
         if path.exists() {
             self.open_scene(e, &path.display().to_string());
@@ -1225,7 +1227,13 @@ impl Tool for CinematicTool {
             self.new_scene = Some(String::new());
         }
         if gui::menu_item("Open the sample cinematic scene", None, false, true) {
-            self.sample_scene(e);
+            self.sample_scene(e, false);
+        }
+        if gui::menu_item("Open the duel sample scene", None, false, true) {
+            self.sample_scene(e, true);
+        }
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Two men fighting, sword and shield, under one fixed camera");
         }
         if gui::begin_menu("Open cinematic scene") {
             let dir = Self::scenes_dir(e);
@@ -1457,9 +1465,12 @@ impl Tool for CinematicTool {
                 }
             },
         );
-        c.add("scene_sample", "scene_sample", "Opens the sample scene (made in <projects>/cinematics the first time)", |e, _| {
-            queue(e, Pending::Sample)
-        });
+        c.add(
+            "scene_sample",
+            "scene_sample [duel]",
+            "Opens the sample scene, or the duel sample (made in <projects>/cinematics the first time)",
+            |e, a| queue(e, if a.first().is_some_and(|x| x == "duel") { Pending::SampleDuel } else { Pending::Sample }),
+        );
         c.add("scene_open", "scene_open <folder | project.json>", "Opens a cinematic scene", |e, a| {
             if a.is_empty() {
                 return CommandResult::fail("usage: scene_open <folder | path>");
@@ -2120,7 +2131,7 @@ impl Tool for CinematicTool {
         match self.scene.request.take() {
             Some(crate::scene_ui::SceneRequest::New(name)) => self.new_scene_project(e, &name),
             Some(crate::scene_ui::SceneRequest::Open(name)) => self.open_scene(e, &name),
-            Some(crate::scene_ui::SceneRequest::Sample) => self.sample_scene(e),
+            Some(crate::scene_ui::SceneRequest::Sample) => self.sample_scene(e, false),
             None => {}
         }
         self.movie_tools.poll(e);
