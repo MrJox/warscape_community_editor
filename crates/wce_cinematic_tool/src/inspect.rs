@@ -12,7 +12,7 @@ use wce_editor_core::inspector::Inspector;
 
 use crate::create::{Create, Making};
 use crate::items::{self, SceneItem, vfx_of_mut};
-use crate::pickers::{SLOTS, items_of, picker};
+use crate::pickers::picker;
 use crate::scene_ui::{LANGUAGES, SceneUi, add_track, for_track, scene_doc};
 
 /// What the rows changed: the field last changed (a drag's edits merge by it), a picked value (an entry of its own), a drag ended.
@@ -88,6 +88,7 @@ pub fn inspect(e: &mut Editor, ins: &mut dyn Inspector, ui: &mut SceneUi, create
         SceneItem::Battle => battle(&mut r, ui, &mut q),
         SceneItem::Vfx { track, index } => vfx(e, &mut r, ui, &mut q, track, index),
         SceneItem::CameraKey { track, index } | SceneItem::CameraTarget { track, index } => camera_key(e, &mut r, ui, &mut q, track, index),
+        SceneItem::Camera(track) => camera(e, &mut r, ui, create, &mut q, track),
     }
     commit(e, item, q, &r);
     true
@@ -196,8 +197,8 @@ fn unit(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: 
             "Animate",
             "animhere",
             "Play an animation here...",
-            &items_of(SLOTS),
-            "The whole unit plays it from the playhead (AUTO: back to walking / standing)",
+            &crate::pickers::slot_items(ui.slots.get(&q.units[ix].unit).map(|s| s.as_slice())),
+            "The whole unit plays it from the playhead (AUTO: back to walking / standing); in a battle only a taunt plays",
         ) {
             let tid = track.or_else(|| add_track(q, c.id, "Unit", Some(id), ""));
             if let Some(tid) = tid {
@@ -446,6 +447,81 @@ fn vfx(_e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, q: &mut Project, track: 
         ui.request_duplicate = true;
     }
     if r.ins.button("del", &format!("{}  Delete", icons::TRASH_2), true) {
+        ui.request_delete = true;
+    }
+}
+
+/// Focal length (mm) of a vertical field of view (degrees), on a full-frame sensor (24 mm high), as Unreal's cine cameras give it.
+pub fn focal_length(fov: f32) -> f32 {
+    12.0 / (fov.to_radians() * 0.5).tan().max(1e-4)
+}
+
+pub fn fov_of_focal_length(mm: f32) -> f32 {
+    (2.0 * (12.0 / mm.max(1.0)).atan()).to_degrees()
+}
+
+/// A camera: its name, its lens and where it is at the playhead (edits key it there), whether it is live, and what to do with it.
+fn camera(_e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: &mut Project, track: u32) {
+    let t = ui.time;
+    let Some(clip) = q.clips.iter().find(|c| c.tracks.iter().any(|tr| tr.id == track)).cloned() else { return };
+    let live = wce_cinematic::eval::live_camera(&clip, t) == Some(track);
+    let Some(tr) = q.clips.iter_mut().flat_map(|c| &mut c.tracks).find(|tr| tr.id == track) else { return };
+    r.ins.hint("What the Scene panel and the Camera Cuts call it");
+    let c = r.ins.edit_string("name", "Name", &mut tr.name);
+    r.note("name", c);
+    let TrackContent::Camera { keys } = &mut tr.content else { return };
+    r.ins.text("live", "Shown", if live { "Live at the playhead" } else { "Not live at the playhead: cut to it to show it" });
+    r.ins.hint("Moving or turning it with the gizmo keys it at the playhead");
+    r.ins.text("keys", "Keys", &keys.len().to_string());
+    let Some(now) = wce_cinematic::eval::camera_at(keys, t) else { return };
+    // Edits at the playhead: into the key there, else a new key.
+    let (mut pos, mut target, mut fov) = (now.position, now.target, now.fov);
+    let mut mm = focal_length(fov);
+    r.ins.section("At the playhead");
+    r.ins.hint("Focal length, mm (a full-frame camera's: 24 mm wide angle, 50 mm normal, 135 mm telephoto)");
+    let c_mm = r.ins.edit_float("mm", "Focal length", &mut mm, 0.5, 8.0, 600.0);
+    r.note("mm", c_mm);
+    if c_mm {
+        fov = fov_of_focal_length(mm);
+    }
+    r.ins.hint("Vertical field of view, degrees (the battle's move_to takes it)");
+    let c_fov = r.ins.edit_slider("fov", "Field of view", &mut fov, 2.0, 120.0);
+    r.note("fov", c_fov);
+    r.ins.hint("Where it is, metres (or move it with the gizmo)");
+    let c_pos = r.ins.edit_float3("pos", "Position", &mut pos, 0.5);
+    r.note("pos", c_pos);
+    r.ins.hint("The point it looks at, metres (or turn it with the gizmo)");
+    let c_tg = r.ins.edit_float3("target", "Aim", &mut target, 0.5);
+    r.note("target", c_tg);
+    if c_mm || c_fov || c_pos || c_tg {
+        match keys.iter_mut().find(|k| (k.t - t).abs() < 1e-3) {
+            Some(k) => {
+                k.position = pos;
+                k.target = target;
+                k.fov = fov;
+            }
+            None => {
+                keys.push(wce_cinematic::scene::CameraKey { t, position: pos, target, fov, interp: Interp::Smooth });
+                keys.sort_by(|a, b| a.t.total_cmp(&b.t));
+            }
+        }
+    }
+    r.ins.section("");
+    let piloting = ui.pilot == Some(track);
+    let look = if piloting { format!("{}  Stop looking through it", icons::EYE_OFF) } else { format!("{}  Look through it", icons::EYE) };
+    r.ins.hint("The viewport shows what this camera sees at the playhead (live or not)");
+    if r.ins.button("look", &look, true) {
+        ui.pilot = if piloting { None } else { Some(track) };
+    }
+    r.ins.hint("Keys the viewport's view into this camera at the playhead");
+    if r.ins.button("keyview", &format!("{}  Key this view into it", icons::CAMERA), true) {
+        create.requests.push(crate::create::CreateRequest::KeyView);
+    }
+    r.ins.hint("From the playhead on the clip shows this camera (a Camera Cuts key)");
+    if r.ins.button("cut", &format!("{}  Cut to it here", icons::SCISSORS), !live) {
+        ui.request_cut = Some(track);
+    }
+    if r.ins.button("del", &format!("{}  Delete camera", icons::TRASH_2), true) {
         ui.request_delete = true;
     }
 }

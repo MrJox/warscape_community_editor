@@ -153,8 +153,15 @@ pub enum Interp {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum TrackContent {
+    /// A camera: an object of the scene (its place, aim and lens keyed). A clip may have several; the Camera Cuts say which one is
+    /// live when.
     Camera {
         keys: Vec<CameraKey>,
+    },
+    /// The Camera Cuts (Unreal's): from each cut on, the camera it names (a Camera track's id) is the one the clip shows. Without
+    /// cuts: the first camera.
+    Cuts {
+        cuts: Vec<CutKey>,
     },
     Unit {
         unit: u32,
@@ -189,6 +196,13 @@ pub enum TrackContent {
     Weather {
         keys: Vec<WeatherKey>,
     },
+}
+
+/// A cut to a camera (a Camera track's id) at `t`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CutKey {
+    pub t: f64,
+    pub camera: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -229,6 +243,80 @@ pub struct ActionKey {
 }
 
 pub const AUTO_SLOT: &str = "AUTO";
+
+/// A slot's family: its name without a trailing variant number (`CELEBRATE_3` -> `CELEBRATE`, `STAND` -> `STAND`). An action key may
+/// name a family (its variants spread over the men) or one slot.
+pub fn slot_family(slot: &str) -> &str {
+    match slot.rsplit_once('_') {
+        Some((head, n)) if !head.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => slot,
+    }
+}
+
+/// The slots an action key's slot plays among a unit's: itself when the unit has it, else its family's variants in order (none: the
+/// unit has neither).
+pub fn slot_variants<'a>(slot: &str, own: &'a [String]) -> Vec<&'a str> {
+    if let Some(s) = own.iter().find(|s| *s == slot) {
+        return vec![s.as_str()];
+    }
+    let mut v: Vec<&str> = own.iter().map(String::as_str).filter(|s| slot_family(s) == slot && *s != slot).collect();
+    v.sort_by_key(|s| s.rsplit_once('_').and_then(|(_, n)| n.parse::<u32>().ok()).unwrap_or(0));
+    v
+}
+
+/// The slots a mounted man plays for a key's slot, in order of preference: his `RIDER_` ones (the movement's gaits as the horse's:
+/// walk, canter, gallop), then the slot itself.
+pub fn rider_slots(slot: &str) -> Vec<String> {
+    if slot.starts_with("RIDER_") {
+        return vec![slot.to_owned()];
+    }
+    let gait: &[&str] = match slot_family(slot) {
+        "STAND" => &["RIDER_STAND"],
+        "WALK" => &["RIDER_WALK"],
+        "RUN" => &["RIDER_CANTER", "RIDER_TROT"],
+        "CHARGE" => &["RIDER_CHARGE", "RIDER_GALLOP"],
+        _ => &[],
+    };
+    let mut out: Vec<String> = gait.iter().map(|s| (*s).to_owned()).collect();
+    out.push(format!("RIDER_{slot}"));
+    out.push(slot.to_owned());
+    out
+}
+
+/// What a key's slot plays among a man's slots: [`slot_variants`] of the slot, or for a rider of the first of [`rider_slots`] he has.
+pub fn resolve_slot<'a>(slot: &str, own: &'a [String], mounted: bool) -> Vec<&'a str> {
+    if !mounted {
+        return slot_variants(slot, own);
+    }
+    rider_slots(slot).iter().map(|s| slot_variants(s, own)).find(|v| !v.is_empty()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::{resolve_slot, slot_family, slot_variants};
+
+    #[test]
+    fn a_rider_plays_his_own() {
+        let own: Vec<String> =
+            ["RUN_1", "RIDER_CANTER", "RIDER_CELEBRATE_1", "RIDER_CELEBRATE_2", "CELEBRATE_1"].map(str::to_owned).to_vec();
+        assert_eq!(resolve_slot("RUN", &own, true), ["RIDER_CANTER"]);
+        assert_eq!(resolve_slot("CELEBRATE", &own, true), ["RIDER_CELEBRATE_1", "RIDER_CELEBRATE_2"]);
+        assert_eq!(resolve_slot("RUN", &own, false), ["RUN_1"]);
+        assert!(resolve_slot("CHARGE", &own, true).is_empty());
+    }
+
+    #[test]
+    fn families_and_variants() {
+        assert_eq!(slot_family("CELEBRATE_10"), "CELEBRATE");
+        assert_eq!(slot_family("STAND"), "STAND");
+        assert_eq!(slot_family("RAMP_JUMP_TAKEOFF3"), "RAMP_JUMP_TAKEOFF3");
+        let own: Vec<String> = ["CELEBRATE_10", "CELEBRATE_2", "CELEBRATE_1", "STAND", "TAUNT_1"].map(str::to_owned).to_vec();
+        assert_eq!(slot_variants("CELEBRATE", &own), ["CELEBRATE_1", "CELEBRATE_2", "CELEBRATE_10"]);
+        assert_eq!(slot_variants("CELEBRATE_2", &own), ["CELEBRATE_2"]);
+        assert_eq!(slot_variants("TAUNT", &own), ["TAUNT_1"]);
+        assert!(slot_variants("CHEER", &own).is_empty());
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MenKey {
@@ -491,6 +579,7 @@ impl TrackContent {
     pub fn kind_name(&self) -> &'static str {
         match self {
             TrackContent::Camera { .. } => "Camera",
+            TrackContent::Cuts { .. } => "Camera Cuts",
             TrackContent::Unit { .. } => "Unit",
             TrackContent::Sound { .. } => "Sound",
             TrackContent::Music { .. } => "Music",
@@ -507,6 +596,7 @@ impl TrackContent {
     pub fn times(&self) -> Vec<f64> {
         let mut out: Vec<f64> = match self {
             TrackContent::Camera { keys } => keys.iter().map(|k| k.t).collect(),
+            TrackContent::Cuts { cuts } => cuts.iter().map(|k| k.t).collect(),
             TrackContent::Unit { path, actions, men, visible, .. } => path
                 .iter()
                 .map(|k| k.t)
@@ -532,6 +622,7 @@ impl TrackContent {
         }
         match self {
             TrackContent::Camera { keys } => by(keys, |k| k.t),
+            TrackContent::Cuts { cuts } => by(cuts, |k| k.t),
             TrackContent::Unit { path, actions, men, visible, .. } => {
                 by(path, |k| k.t);
                 by(actions, |k| k.t);

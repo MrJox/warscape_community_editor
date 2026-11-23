@@ -64,12 +64,23 @@ pub fn sample_project(game: &str) -> Project {
     // about 460 to 480 m here), as the battle's `cam:move_to` takes them.
     track(
         &mut p,
-        "Camera",
+        "Camera 1",
         TrackContent::Camera {
             keys: vec![
                 CameraKey { t: 0.0, position: [-60.0, 474.0, -420.0], target: [0.0, 470.0, -300.0], fov: 35.0, interp: Interp::Smooth },
-                CameraKey { t: 5.0, position: [40.0, 484.0, -330.0], target: [0.0, 470.0, -280.0], fov: 40.0, interp: Interp::Smooth },
-                CameraKey { t: 12.0, position: [45.0, 490.0, 130.0], target: [0.0, 479.0, 230.0], fov: 38.0, interp: Interp::Smooth },
+                CameraKey { t: 5.0, position: [40.0, 490.0, -330.0], target: [0.0, 470.0, -280.0], fov: 40.0, interp: Interp::Smooth },
+                CameraKey { t: 12.0, position: [45.0, 505.0, 130.0], target: [0.0, 479.0, 230.0], fov: 38.0, interp: Interp::Smooth },
+            ],
+        },
+    );
+    // Camera 2: close on the centre cohort as it celebrates, turning slowly round its front.
+    track(
+        &mut p,
+        "Camera 2",
+        TrackContent::Camera {
+            keys: vec![
+                CameraKey { t: 5.5, position: [-14.0, 475.0, -281.0], target: [0.0, 471.5, -300.0], fov: 30.0, interp: Interp::Smooth },
+                CameraKey { t: 8.5, position: [12.0, 474.5, -282.0], target: [0.0, 471.5, -300.0], fov: 28.0, interp: Interp::Smooth },
             ],
         },
     );
@@ -109,7 +120,7 @@ pub fn sample_project(game: &str) -> Project {
         TrackContent::Unit {
             unit: centre,
             path: vec![],
-            actions: vec![ActionKey { t: 6.0, slot: "CHEER".into() }, ActionKey { t: 9.0, slot: "AUTO".into() }],
+            actions: vec![ActionKey { t: 6.0, slot: "CELEBRATE".into() }, ActionKey { t: 9.0, slot: "AUTO".into() }],
             men: vec![],
             visible: vec![],
         },
@@ -148,6 +159,11 @@ pub fn sample_project(game: &str) -> Project {
         },
     );
     track(&mut p, "Letterbox", TrackContent::Letterbox { keys: vec![ScalarKey { t: 0.0, value: 1.0, interp: Interp::Step }] });
+    // The cuts: the wide shot, close on the cohort from 5.5 s, back to the wide one at 8.5 s.
+    let cams: Vec<u32> = tracks.iter().filter(|t| matches!(t.content, TrackContent::Camera { .. })).map(|t| t.id).collect();
+    let cuts = vec![CutKey { t: 0.0, camera: cams[0] }, CutKey { t: 5.5, camera: cams[1] }, CutKey { t: 8.5, camera: cams[0] }];
+    let id = p.new_id();
+    tracks.push(Track { id, name: "Camera Cuts".into(), muted: false, content: TrackContent::Cuts { cuts } });
     if let Some(c) = p.clip_mut(clip) {
         // The new project's empty camera track gives way to the keyed one.
         c.tracks = tracks;

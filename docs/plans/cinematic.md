@@ -348,11 +348,33 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 15. The enemy in game (user, 2026-11-21: line of sight hid it). Each clip shows the other side's armies through the fog of war while it
     plays, as vanilla's intros do (`ga:set_visible_to_all(true)` at 0, `false` in the clip's end callback and its skip). **done**, in
     game: **todo**.
-16. Edited movies (user, 2026-11-21: vanilla's movies are shots cut together, as a trailer). **open**, not started. Today a clip cuts
-    within one scene (a Step camera key is a cut) and exports alone. An *Edit*: a list of shots, each a clip's range (of any scene
-    project, so another map, weather or time) or an imported video / PNG sequence, joined by cuts, cross-fades or fades through black,
-    with title cards, one music and subtitle track over the whole, rendered shot by shot (each scene's ground read in turn) into one
-    `.ca_vp8`.
+16. Edited movies (user, 2026-11-21: vanilla's movies are shots cut together, as a trailer). **dropped** (user, 2026-11-23): WCE
+    exports clips (item 17's files, a file a shot); the cutting is done in a video editor, as the community's trailers are made.
+17. A tester's first impressions (user, 2026-11-23), after Unreal's Sequencer:
+    - Formation width: the preview laid the men out with the unit's rank depth and never its Width (1000 men in ranks 250 wide).
+      The men stand as wide as Width (`unit_catalog::ranks_for_width`), the Layout's box as deep as they stand. **done**
+    - Animations: the action keys offered a fixed list of 24 slots, most of which no unit has (`TAUNT` is `TAUNT_1` to `_4`,
+      `CELEBRATE` `_1` to `_10`; `CHEER`, `SALUTE`, `DIE`, `PANIC`, `PRAY` none): the men stood, silently (the sample's cohort
+      too). The keys offer the unit's own slots (its animation tables', read as its men load: a cohort's 1297), by family and
+      group (Idle, Movement, Combat, Death, Morale and gestures, Other), searchable; a family's variants spread over the men
+      (not in step) or one picked (the key's Variant). A key whose animation the unit hasn't is red on the Timeline and says
+      so. A rider plays his own (`RIDER_`) slots (the movement's gaits the horse's: walk, canter, gallop); his list is those.
+      In a battle only a taunt plays (no Lua call plays a slot; `start_celebrating` exists in the engine, not used: untried);
+      the key's tooltip says so. **done**
+    - Cameras: a camera is an object (a Camera track): drawn at the playhead with the frame it sees (16:9; the live one
+      green), selected in the viewport or the Scene panel's Cameras, moved and turned by the gizmo (keyed at the playhead), its
+      Inspector the name, focal length (mm, full frame) and field of view, place and aim at the playhead, Look through it,
+      Key this view into it, Cut to it here, Delete. New cameras from the view (Scene panel, Create > Camera, Add track). Key,
+      Record and the click-a-path tool write into the camera in focus (selected, else the Timeline's, else the live one).
+      **done**
+    - Shots: the Camera Cuts track (Unreal's): from each cut the camera it names is live; the Timeline shows the shots in
+      their cameras' colours; the preview, the movie and the battle follow it (a cut an instant `move_to`, each shot's path
+      baked as before). The sample has two cameras and three shots. **done**, in game: **todo**
+    - Export for editing: Export > Movie's format: the game's movie, a PNG sequence with a WAV, MP4 (H.264) or ProRes 422 HQ
+      (MP4 and ProRes through the user's own ffmpeg: on the PATH or `WCE_FFMPEG`; greyed without it); the clip whole or a file
+      a shot (`<name>_010_<camera>`...) with handle frames seen through the shot's own camera; the fade and the bars on or off.
+      Gate: `scripts/cinematic_cameras.txt`. **done** (MP4 and ProRes: the ffmpeg command tested, not run here: no ffmpeg on this
+      machine)
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

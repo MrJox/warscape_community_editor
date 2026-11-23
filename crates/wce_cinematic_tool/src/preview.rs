@@ -13,7 +13,7 @@ use wce_cinematic::scene::Project;
 use wce_editor::editor::Editor;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 use wce_render::unit_animation::{UnitInstance, UnitModel};
-use wce_render::unit_catalog::{UnitCatalog, formation};
+use wce_render::unit_catalog::{UnitCatalog, formation, ranks_for_width};
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, blend_environments, read_environment};
 use wce_scene::render_scene::DocumentId;
@@ -34,6 +34,8 @@ pub struct Preview {
     models: HashMap<ModelKey, Arc<Vec<UnitModel>>>,
     loading: Option<(ModelKey, Receiver<Result<Vec<UnitModel>, String>>)>,
     failed: HashSet<ModelKey>,
+    /// The animation slots each unit's men have (`main_units` key -> sorted slots), as its soldiers load: the action keys' choices.
+    pub slots: HashMap<String, Arc<Vec<String>>>,
     layer: Option<(DocumentId, LayerId)>,
     ground: Option<(EntityId, u32)>,
     men: Vec<EntityId>,
@@ -100,6 +102,11 @@ impl Preview {
                 self.loading = None;
                 match r {
                     Ok(m) if !m.is_empty() => {
+                        // A rider's: his own (`RIDER_`) slots alone.
+                        let mounted = m[0].mount.is_some();
+                        self.slots.entry(key.0.clone()).or_insert_with(|| {
+                            Arc::new(m[0].slots().into_iter().filter(|s| !mounted || s.starts_with("RIDER_")).map(str::to_owned).collect())
+                        });
                         self.models.insert(key, Arc::new(m));
                     }
                     Ok(_) => {
@@ -124,8 +131,15 @@ impl Preview {
                 .map(|v| {
                     let mut m = UnitModel::load(&read, &catalog, &k.0, &k.1, seed.wrapping_add(v))?;
                     if k.2 != "STAND" {
-                        // A slot the unit's animations don't have keeps its standing pose.
-                        let _ = m.play(&read, &k.2);
+                        // The key's slot, or one of its family's variants a soldier (the men take the soldiers in turn: not in step);
+                        // a slot the unit's animations don't have keeps its standing pose.
+                        // A rider plays his own (`RIDER_`) slots; the horse follows.
+                        let own: Vec<String> = m.slots().into_iter().map(str::to_owned).collect();
+                        let variants = wce_cinematic::scene::resolve_slot(&k.2, &own, m.mount.is_some());
+                        if let Some(s) = variants.get(v as usize % variants.len().max(1)) {
+                            let s = (*s).to_owned();
+                            let _ = m.play(&read, &s);
+                        }
                     }
                     Ok(m)
                 })
@@ -254,7 +268,8 @@ impl Preview {
                     _ => (frame.t - s.slot_start).max(0.0) as f32,
                 };
                 let place = translation(Float3::new(s.position[0] / units, 0.0, s.position[1] / units)) * rotation_y(s.facing);
-                for (k, [x, z]) in formation(s.men, land.rank_depth, land.spacing).into_iter().enumerate() {
+                for (k, [x, z]) in formation(s.men, ranks_for_width(s.men, u.width, land.spacing[0]), land.spacing).into_iter().enumerate()
+                {
                     let variation = (k * 7) % models.len();
                     let pose = poses.entry((used.clone(), variation)).or_insert_with(|| models[variation].instances(anim_t, true));
                     let mut man = place * translation(Float3::new(x / units, 0.0, z / units));

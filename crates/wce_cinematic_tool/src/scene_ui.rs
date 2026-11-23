@@ -58,6 +58,8 @@ pub struct SceneUi {
     last_tick: Option<std::time::Instant>,
     /// The game's units, factions, weather files... for the pickers (kept across scenes).
     pub lists: std::sync::Arc<GameLists>,
+    /// Each unit's animation slots (`main_units` key -> sorted), as the preview reads them: the action keys' choices.
+    pub slots: std::collections::HashMap<String, std::sync::Arc<Vec<String>>>,
     pub filters: Filters,
     /// The Inspector shows the selected key (it was clicked after the selection last changed).
     pub key_focus: bool,
@@ -67,6 +69,10 @@ pub struct SceneUi {
     pub look_at: Option<u32>,
     pub request_delete: bool,
     pub request_duplicate: bool,
+    /// A cut to this camera at the playhead, asked for (the Inspector's Cut to it here).
+    pub request_cut: Option<u32>,
+    /// The camera the viewport looks through (the Inspector's Look through it), live or not.
+    pub pilot: Option<u32>,
     pub outliner_filter: String,
     pub outliner_hovered: bool,
     /// The viewport's launch chip was clicked.
@@ -157,11 +163,20 @@ impl SceneUi {
 
     pub fn frame(&mut self, p: &Project) -> Option<SceneFrame> {
         let clip = self.current_clip(p)?.clone();
-        Some(if self.battle_preview {
+        let mut f = if self.battle_preview {
             evaluate_battle(p, &clip, &self.speeds, self.time)
         } else {
             evaluate(p, &clip, &self.speeds, self.time)
-        })
+        };
+        // Looking through one camera (while not playing, which shows the cuts): its view, live or not.
+        if let Some(cam) = self.pilot {
+            match f.cameras.iter().find(|(c, _)| *c == cam) {
+                Some((_, c)) if !self.playing => f.camera = Some(c.clone()),
+                Some(_) => {}
+                None => self.pilot = None,
+            }
+        }
+        Some(f)
     }
 
     /// The playhead: advances while playing (the fixed step in scripted runs, else the wall clock), stops at the clip's end.
@@ -271,10 +286,21 @@ impl SceneUi {
         gui::set_next_item_width(120.0);
         if gui::begin_combo("##addtrack", "Add track") {
             let mut add: Option<(&str, Option<u32>)> = None;
-            for kind in ["Camera", "Sound", "Music", "Subtitles", "Fade", "Letterbox", "Depth of field", "Weather", "VFX"] {
+            let mut new_camera = false;
+            if gui::selectable(&format!("{}  Camera (from this view)", icons::CAMERA), false, 0) {
+                new_camera = true;
+            }
+            if gui::selectable(&format!("{}  Camera Cuts", icons::SCISSORS), false, 0) {
+                add = Some(("Camera Cuts", None));
+            }
+            gui::separator();
+            for kind in ["Sound", "Music", "Subtitles", "Fade", "Letterbox", "Depth of field", "Weather", "VFX"] {
                 if gui::selectable(kind, false, 0) {
                     add = Some((kind, None));
                 }
+            }
+            if new_camera {
+                self.new_camera(e);
             }
             // A unit's track: the units without one in this clip, by name.
             let tracked: Vec<u32> = clip
@@ -455,12 +481,41 @@ impl SceneUi {
                 if selected { gui::col32(52, 58, 72, 255) } else { gui::col32(34, 34, 40, 255) },
                 2.0,
             );
+            // The Camera Cuts: each shot a span in its camera's colour, named.
+            if matches!(track.content, TrackContent::Cuts { .. }) {
+                let cams = wce_cinematic::eval::clip_cameras(&clip);
+                for (from, to, cam) in wce_cinematic::eval::shots(&clip) {
+                    let k = cams.iter().position(|c| *c == cam).unwrap_or(0) as u32;
+                    let hue = [(90, 170, 230), (230, 170, 80), (120, 200, 120), (200, 120, 200), (220, 110, 100), (150, 150, 220)];
+                    let (r, g, b) = hue[k as usize % hue.len()];
+                    let (x0, x1) = (to_x(from), to_x(to));
+                    draw.rect_filled(v2(x0 + 1.0, y + 3.0), v2(x1 - 1.0, y + row_h - 5.0), gui::col32(r, g, b, 90), 3.0);
+                    let name = clip.tracks.iter().find(|t| t.id == cam).map_or(String::new(), |t| t.name.clone());
+                    if x1 - x0 > gui::calc_text_width(&name) + 16.0 {
+                        draw.text(v2(x0 + 10.0, y + row_h * 0.5 - 8.0), gui::col32(235, 235, 240, 255), &name);
+                    }
+                }
+            }
+            // An animation key the unit has no such animation for: red (it stands there).
+            let missing = |list: &str, i: usize| match &track.content {
+                TrackContent::Unit { unit, actions, .. } if list == "actions" => {
+                    let own = p.unit(*unit).and_then(|u| self.slots.get(&u.unit));
+                    actions.get(i).is_some_and(|a| crate::pickers::slot_missing(&a.slot, own.map(|s| s.as_slice())))
+                }
+                _ => false,
+            };
             for (list, i, t) in key_times(&track.content) {
                 let k = KeyRef { track: track.id, list, index: i };
                 let x = to_x(t);
                 let cy = y + row_h * 0.5;
                 let sel = self.key.as_ref() == Some(&k);
-                let c = if sel { gui::col32(255, 210, 80, 255) } else { gui::col32(200, 200, 215, 255) };
+                let c = if sel {
+                    gui::col32(255, 210, 80, 255)
+                } else if missing(list, i) {
+                    gui::col32(240, 90, 80, 255)
+                } else {
+                    gui::col32(200, 200, 215, 255)
+                };
                 draw.triangle_filled(v2(x, cy - 6.0), v2(x + 6.0, cy), v2(x, cy + 6.0), c);
                 draw.triangle_filled(v2(x, cy - 6.0), v2(x - 6.0, cy), v2(x, cy + 6.0), c);
             }
@@ -530,7 +585,7 @@ impl SceneUi {
 
     /// The viewport follows the camera keys: while the clip plays (not while recording), or when looking through them.
     pub fn follows_keys(&self) -> bool {
-        (self.playing && !self.recording) || self.look_through
+        (self.playing && !self.recording) || self.look_through || self.pilot.is_some()
     }
 
     /// Play / pause; at the clip's end, play starts it over.
@@ -582,10 +637,7 @@ impl SceneUi {
         let from = if self.recorded_at.is_finite() { self.recorded_at } else { self.time - 1e-6 };
         let t = self.time;
         let mut q = p.clone();
-        let track = q
-            .clip(clip)
-            .and_then(|c| c.tracks.iter().find(|tr| matches!(tr.content, TrackContent::Camera { .. })).map(|tr| tr.id))
-            .or_else(|| add_track(&mut q, clip, "Camera", None, ""));
+        let track = q.clip(clip).and_then(|c| self.keyed_camera(e, c)).or_else(|| add_track(&mut q, clip, "Camera", None, ""));
         if let Some(track) = track {
             for_track(&mut q, clip, track, |tr| {
                 if let TrackContent::Camera { keys } = &mut tr.content {
@@ -609,7 +661,7 @@ impl SceneUi {
     pub fn key_camera_view(&mut self, e: &mut Editor) {
         let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
         let Some(clip) = self.current_clip(&p).map(|c| c.id) else { return };
-        let track = p.clip(clip).and_then(|c| c.tracks.iter().find(|t| matches!(t.content, TrackContent::Camera { .. })).map(|t| t.id));
+        let track = p.clip(clip).and_then(|c| self.keyed_camera(e, c));
         let track = match track {
             Some(t) => Some(t),
             None => {
@@ -625,6 +677,76 @@ impl SceneUi {
         {
             self.add_key(e, &p, &c);
         }
+    }
+
+    /// The camera Key and Record write into: the camera selected (or the one of a selected key), else the Camera track selected
+    /// on the Timeline, else the live one at the playhead, else the first.
+    pub fn keyed_camera(&self, e: &Editor, clip: &Clip) -> Option<u32> {
+        let is_cam = |id: u32| clip.tracks.iter().any(|t| t.id == id && matches!(t.content, TrackContent::Camera { .. }));
+        crate::items::selected(e)
+            .into_iter()
+            .find_map(crate::items::SceneItem::camera)
+            .filter(|&id| is_cam(id))
+            .or(self.track.filter(|&id| is_cam(id)))
+            .or_else(|| wce_cinematic::eval::live_camera(clip, self.time))
+            .or_else(|| clip.tracks.iter().find(|t| matches!(t.content, TrackContent::Camera { .. })).map(|t| t.id))
+    }
+
+    /// A new camera where the viewport looks from (keyed at the playhead), selected. Returns its track.
+    pub fn new_camera(&mut self, e: &mut Editor) -> Option<u32> {
+        let p = scene_doc(e).map(|d| d.project().clone())?;
+        let clip = self.current_clip(&p)?.id;
+        let units = e.scene.game_units.max(1e-3);
+        let vc = e.viewport.camera();
+        let key = CameraKey {
+            t: self.time,
+            position: [vc.eye.x * units, vc.eye.y * units, vc.eye.z * units],
+            target: [vc.target.x * units, vc.target.y * units, vc.target.z * units],
+            fov: vc.fov_y.to_degrees(),
+            interp: Interp::Smooth,
+        };
+        let mut made = None;
+        edit(e, "new camera", |p| {
+            made = add_track(p, clip, "Camera", None, "");
+            if let Some(id) = made {
+                for_track(p, clip, id, |tr| {
+                    if let TrackContent::Camera { keys } = &mut tr.content {
+                        keys.push(key);
+                    }
+                });
+            }
+        });
+        if let Some(id) = made {
+            self.track = Some(id);
+            crate::items::select(e, crate::items::SceneItem::Camera(id), crate::items::How::Set);
+        }
+        made
+    }
+
+    /// A cut to `camera` at the playhead (the Camera Cuts made when the clip has none; its first cut, at 0, to the camera live
+    /// until now).
+    pub fn cut_to(&mut self, e: &mut Editor, camera: u32) {
+        let Some(p) = scene_doc(e).map(|d| d.project().clone()) else { return };
+        let Some(clip) = self.current_clip(&p).cloned() else { return };
+        let t = self.time;
+        let before = wce_cinematic::eval::live_camera(&clip, t);
+        let had = clip.tracks.iter().find(|tr| matches!(tr.content, TrackContent::Cuts { .. })).map(|tr| tr.id);
+        edit(e, "cut to camera", |p| {
+            let Some(cuts) = had.or_else(|| add_track(p, clip.id, "Camera Cuts", None, "")) else { return };
+            for_track(p, clip.id, cuts, |tr| {
+                if let TrackContent::Cuts { cuts } = &mut tr.content {
+                    if cuts.is_empty()
+                        && t > 1e-6
+                        && let Some(b) = before
+                    {
+                        cuts.push(CutKey { t: 0.0, camera: b });
+                    }
+                    cuts.retain(|c| (c.t - t).abs() > 1e-6);
+                    cuts.push(CutKey { t, camera });
+                    cuts.sort_by(|a, b| a.t.total_cmp(&b.t));
+                }
+            });
+        });
     }
 
     fn add_key(&mut self, e: &mut Editor, p: &Project, clip: &Clip) {
@@ -648,8 +770,25 @@ impl SceneUi {
         let next_text =
             (1..).map(|n| format!("{}_{}", sanitize_key(&clip.name), n)).find(|id| !p.texts.contains_key(id)).unwrap_or_default();
         let mut made_text = None;
+        let cams = wce_cinematic::eval::clip_cameras(clip);
+        let cut_camera = crate::items::selected(e)
+            .into_iter()
+            .find_map(crate::items::SceneItem::camera)
+            .filter(|c| cams.contains(c))
+            .or_else(|| {
+                let live = wce_cinematic::eval::live_camera(clip, t)?;
+                let at = cams.iter().position(|c| *c == live)?;
+                cams.get((at + 1) % cams.len()).copied()
+            })
+            .or_else(|| cams.first().copied());
         edit(e, "add key", |p| {
             for_track(p, clip.id, track_id, |tr| match &mut tr.content {
+                TrackContent::Cuts { cuts } => {
+                    if let Some(camera) = cut_camera {
+                        cuts.retain(|c| (c.t - t).abs() > 1e-6);
+                        cuts.push(CutKey { t, camera });
+                    }
+                }
                 TrackContent::Camera { keys } => {
                     let c = cam.clone().unwrap_or(wce_cinematic::eval::CameraState {
                         position: [0.0, 60.0, -200.0],
@@ -732,6 +871,27 @@ impl SceneUi {
             }};
         }
         match &mut content {
+            TrackContent::Cuts { cuts } => {
+                if let Some(c) = cuts.get_mut(k.index) {
+                    time_row!(c.t);
+                    let cams: Vec<(u32, String)> = clip
+                        .tracks
+                        .iter()
+                        .filter(|t| matches!(t.content, TrackContent::Camera { .. }))
+                        .map(|t| (t.id, t.name.clone()))
+                        .collect();
+                    let names: Vec<&str> = cams.iter().map(|(_, n)| n.as_str()).collect();
+                    let mut at = cams.iter().position(|(id, _)| *id == c.camera).map_or(-1, |i| i as i32);
+                    gui::row("Cut to");
+                    if gui::combo("##cutcam", &mut at, &names) && at >= 0 {
+                        c.camera = cams[at as usize].0;
+                        changed = true;
+                    }
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("The camera the clip shows from this cut to the next");
+                    }
+                }
+            }
             TrackContent::Camera { keys } => {
                 if let Some(c) = keys.get_mut(k.index) {
                     time_row!(c.t);
@@ -743,7 +903,7 @@ impl SceneUi {
                     changed |= interp_row(&mut c.interp);
                 }
             }
-            TrackContent::Unit { path, actions, men, visible, .. } => match k.list {
+            TrackContent::Unit { unit, path, actions, men, visible } => match k.list {
                 "path" => {
                     if let Some(c) = path.get_mut(k.index) {
                         time_row!(c.t);
@@ -767,18 +927,42 @@ impl SceneUi {
                     if let Some(c) = actions.get_mut(k.index) {
                         time_row!(c.t);
                         gui::row("Animation");
+                        let own = p.unit(*unit).and_then(|u| self.slots.get(&u.unit)).cloned();
                         if let Some(k) = picker(
                             &mut self.filters,
                             "slot",
                             if c.slot.is_empty() { "Pick..." } else { &c.slot },
-                            &crate::pickers::items_of(crate::pickers::SLOTS),
+                            &crate::pickers::slot_items(own.as_deref().map(Vec::as_slice)),
                             -1.0,
                         ) {
                             c.slot = k;
                             changed = true;
                         }
                         if gui::is_item_hovered() {
-                            gui::set_tooltip("The animation the whole unit plays from here; AUTO: back to walking / standing as it moves");
+                            gui::set_tooltip(crate::pickers::slot_tip(&c.slot));
+                        }
+                        // A family of variants: any (spread over the men) or one.
+                        let family = wce_cinematic::scene::slot_family(&c.slot).to_owned();
+                        let variants: Vec<String> = own
+                            .as_deref()
+                            .map(|s| wce_cinematic::scene::slot_variants(&family, s).into_iter().map(str::to_owned).collect())
+                            .unwrap_or_default();
+                        if variants.len() > 1 {
+                            let mut names = vec!["Any (spread over the men)".to_owned()];
+                            names.extend(variants.iter().map(|v| v.rsplit_once('_').map_or(v.clone(), |(_, n)| n.to_owned())));
+                            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                            let mut at = variants.iter().position(|v| *v == c.slot).map_or(0, |i| i as i32 + 1);
+                            gui::row("Variant");
+                            if gui::combo("##variant", &mut at, &refs) {
+                                c.slot = if at == 0 { family.clone() } else { variants[at as usize - 1].clone() };
+                                changed = true;
+                            }
+                        }
+                        if crate::pickers::slot_missing(&c.slot, own.as_deref().map(Vec::as_slice)) {
+                            gui::text_colored(
+                                [1.0, 0.45, 0.4, 1.0],
+                                &format!("{}  The unit has no {}: it stands", icons::TRIANGLE_ALERT, c.slot),
+                            );
                         }
                     }
                 }
@@ -1124,7 +1308,7 @@ impl SceneUi {
             for s in &f.units {
                 let Some(u) = p.unit(s.unit) else { continue };
                 let (sin, cos) = s.facing.sin_cos();
-                let (hw, hd) = (u.width * 0.5, 6.0);
+                let (hw, hd) = (u.width * 0.5, crate::view::formation_depth(s.men, u.width) * 0.5);
                 let corner = |x: f32, z: f32| to_s([s.position[0] + x * cos + z * sin, s.position[1] - x * sin + z * cos]);
                 let pts = [corner(-hw, -hd), corner(hw, -hd), corner(hw, hd), corner(-hw, hd)];
                 let col = army_col(u.army);
@@ -1209,7 +1393,7 @@ impl SceneUi {
                 let army = create.draft.army.min(p.armies.len().saturating_sub(1));
                 let facing = p.armies.get(army).map_or(0.0, |a| a.deployment_orientation) + create.draft.turn.to_radians();
                 let (sin, cos) = facing.sin_cos();
-                let (hw, hd) = (create.draft.width * 0.5, 6.0);
+                let (hw, hd) = (create.draft.width * 0.5, crate::view::formation_depth(create.draft.men, create.draft.width) * 0.5);
                 let corner = |x: f32, z: f32| to_s([w[0] + x * cos + z * sin, w[1] - x * sin + z * cos]);
                 let pts = [corner(-hw, -hd), corner(hw, -hd), corner(hw, hd), corner(-hw, hd)];
                 let draw = gui::window_draw_list();
@@ -1308,8 +1492,14 @@ pub fn add_clip(p: &mut Project, name: &str) {
 
 /// Adds a track of a kind to a clip; a unit track needs a unit. Returns its id.
 pub fn add_track(p: &mut Project, clip: u32, kind: &str, unit: Option<u32>, environment: &str) -> Option<u32> {
+    if kind == "Camera Cuts"
+        && let Some(id) = p.clip(clip)?.tracks.iter().find(|t| matches!(t.content, TrackContent::Cuts { .. })).map(|t| t.id)
+    {
+        return Some(id);
+    }
     let content = match kind {
         "Camera" => TrackContent::Camera { keys: vec![] },
+        "Camera Cuts" => TrackContent::Cuts { cuts: vec![] },
         "Unit" => TrackContent::Unit { unit: unit?, path: vec![], actions: vec![], men: vec![], visible: vec![] },
         "Sound" => TrackContent::Sound { events: vec![] },
         "Music" => TrackContent::Music { cues: vec![] },
@@ -1325,6 +1515,11 @@ pub fn add_track(p: &mut Project, clip: u32, kind: &str, unit: Option<u32>, envi
     };
     let name = match (&content, unit.and_then(|u| p.unit(u))) {
         (TrackContent::Unit { .. }, Some(u)) => u.name.clone(),
+        // Cameras numbered: the first name no camera of the clip has.
+        (TrackContent::Camera { .. }, _) => {
+            let taken: Vec<String> = p.clip(clip)?.tracks.iter().map(|t| t.name.clone()).collect();
+            (1..).map(|n| format!("Camera {n}")).find(|n| !taken.contains(n)).unwrap_or_default()
+        }
         _ => kind.to_owned(),
     };
     let id = p.new_id();
@@ -1343,6 +1538,7 @@ pub fn key_times(c: &TrackContent) -> Vec<(&'static str, usize, f64)> {
     let list = |name: &'static str, ts: Vec<f64>| ts.into_iter().enumerate().map(move |(i, t)| (name, i, t));
     match c {
         TrackContent::Camera { keys } => list("keys", keys.iter().map(|k| k.t).collect()).collect(),
+        TrackContent::Cuts { cuts } => list("cuts", cuts.iter().map(|k| k.t).collect()).collect(),
         TrackContent::Unit { path, actions, men, visible, .. } => list("path", path.iter().map(|k| k.t).collect())
             .chain(list("actions", actions.iter().map(|k| k.t).collect()))
             .chain(list("men", men.iter().map(|k| k.t).collect()))
@@ -1361,6 +1557,7 @@ pub fn key_times(c: &TrackContent) -> Vec<(&'static str, usize, f64)> {
 fn set_key_time(p: &mut Project, clip: u32, k: &KeyRef, t: f64) {
     for_track(p, clip, k.track, |tr| match (&mut tr.content, k.list) {
         (TrackContent::Camera { keys }, _) => keys.get_mut(k.index).iter_mut().for_each(|x| x.t = t),
+        (TrackContent::Cuts { cuts }, _) => cuts.get_mut(k.index).iter_mut().for_each(|x| x.t = t),
         (TrackContent::Unit { path, .. }, "path") => path.get_mut(k.index).iter_mut().for_each(|x| x.t = t),
         (TrackContent::Unit { actions, .. }, "actions") => actions.get_mut(k.index).iter_mut().for_each(|x| x.t = t),
         (TrackContent::Unit { men, .. }, "men") => men.get_mut(k.index).iter_mut().for_each(|x| x.t = t),
@@ -1391,6 +1588,7 @@ fn remove_key(c: &mut TrackContent, list: &str, i: usize) {
     }
     match (c, list) {
         (TrackContent::Camera { keys }, _) => rm(keys, i),
+        (TrackContent::Cuts { cuts }, _) => rm(cuts, i),
         (TrackContent::Unit { path, .. }, "path") => rm(path, i),
         (TrackContent::Unit { actions, .. }, "actions") => rm(actions, i),
         (TrackContent::Unit { men, .. }, "men") => rm(men, i),

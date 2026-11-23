@@ -28,8 +28,9 @@ impl Support {
 pub fn track_support(content: &TrackContent) -> (Support, &'static str) {
     match content {
         TrackContent::Camera { .. } => (Support::Exact, "baked into cam:move_to segments on the battle's 100 ms ticks"),
+        TrackContent::Cuts { .. } => (Support::Exact, "each cut an instant cam:move_to to the camera cut to"),
         TrackContent::Unit { actions, .. } => {
-            if actions.iter().any(|a| !matches!(a.slot.as_str(), "AUTO" | "STAND" | "CELEBRATE" | "TAUNT")) {
+            if actions.iter().any(|a| !matches!(a.slot.as_str(), "AUTO" | "STAND") && crate::scene::slot_family(&a.slot) != "TAUNT") {
                 (Support::Approximate, "moves become orders (the game paths them); other animation slots than taunt are movie only")
             } else {
                 (Support::Approximate, "moves become orders and teleports: the game paths and animates the men")

@@ -298,6 +298,21 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
     let mut bars = false;
     let mut skip_camera = None;
 
+    // The camera: shot by shot (the Camera Cuts; without cuts the first camera all along), each a cut to its camera at the shot's
+    // start and its path baked into steps until the next cut.
+    for (from, to, cam) in crate::eval::shots(clip) {
+        let Some(keys) = clip.tracks.iter().find(|t| t.id == cam).and_then(|t| match &t.content {
+            TrackContent::Camera { keys } if !keys.is_empty() => Some(keys),
+            _ => None,
+        }) else {
+            continue;
+        };
+        actions.extend(camera_moves(keys, ms(from), ms(to).min(length)));
+        if let Some(c) = crate::eval::camera_at(keys, clip.length) {
+            skip_camera = Some((c.position, c.target));
+        }
+    }
+
     for track in clip.tracks.iter().filter(|t| !t.muted) {
         let (support, why) = track_support(&track.content);
         if support == Support::MovieOnly {
@@ -305,65 +320,7 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
             continue;
         }
         match &track.content {
-            TrackContent::Camera { keys } if !keys.is_empty() => {
-                let times: Vec<f64> = keys.iter().map(|k| k.t).collect();
-                let positions: Vec<[f32; 3]> = keys.iter().map(|k| k.position).collect();
-                let targets: Vec<[f32; 3]> = keys.iter().map(|k| k.target).collect();
-                let fovs: Vec<[f32; 1]> = keys.iter().map(|k| [k.fov]).collect();
-                let at = |t: f64| {
-                    let (i, j, u) = around(&times, t).expect("keys");
-                    let m = keys[i].interp;
-                    (point(&positions, &times, i, j, u, m), point(&targets, &times, i, j, u, m), point(&fovs, &times, i, j, u, m)[0])
-                };
-                // Snap to the first key at 0, then move from sample to sample.
-                let (p, tg, fov) = at(0.0);
-                actions.push((0, format!("cam:move_to({}, {}, 0, {MOVE_FLAG}, {})", v3(p), v3(tg), f(fov))));
-                // Through a run of smooth keys the steps keep one even beat (every CAMERA_STEP_MS of the clip), the samples passing
-                // through the keys: steps started again at every key left a short one before it, the chase ahead changed pace there,
-                // and the camera jolted at each key in game. A key is a stop of its own where the run begins or ends (a cut, a
-                // straight move, the first and last keys).
-                let mut stops: Vec<u64> = vec![];
-                for (k, key) in keys.iter().enumerate() {
-                    let smooth_in = k > 0 && keys[k - 1].interp == Interp::Smooth;
-                    let smooth_out = k + 1 < keys.len() && key.interp == Interp::Smooth;
-                    if !(smooth_in && smooth_out) {
-                        stops.push(ms(key.t));
-                    }
-                    if smooth_out {
-                        let (a, b) = (ms(key.t), ms(keys[k + 1].t));
-                        let mut s = a.div_ceil(CAMERA_STEP_MS) * CAMERA_STEP_MS;
-                        while s < b {
-                            stops.push(s);
-                            s += CAMERA_STEP_MS;
-                        }
-                    }
-                }
-                stops.retain(|s| *s <= length);
-                stops.sort_unstable();
-                stops.dedup();
-                for (n, w) in stops.windows(2).enumerate() {
-                    let (from, mut to) = (w[0], w[1]);
-                    let (i, _, _) = around(&times, from as f64 / 1000.0).expect("keys");
-                    // A moving step aims a step further on (and takes as long again): the camera chases a point just ahead on the
-                    // path and its speed never drops to a stop at a step's end (short straight moves met with a jolt every step).
-                    // Not across a cut (a Step key next).
-                    if keys[i].interp != Interp::Step
-                        && let Some(&further) = stops.get(n + 2)
-                    {
-                        let (j, _, _) = around(&times, to as f64 / 1000.0).expect("keys");
-                        if keys[j].interp != Interp::Step {
-                            to = further;
-                        }
-                    }
-                    let (p, tg, fov) = at(to as f64 / 1000.0);
-                    let dur = if keys[i].interp == Interp::Step { 0.0 } else { (to - from) as f32 / 1000.0 };
-                    let when = if keys[i].interp == Interp::Step { w[1] } else { from };
-                    actions.push((when, format!("cam:move_to({}, {}, {}, {MOVE_FLAG}, {})", v3(p), v3(tg), f(dur), f(fov))));
-                }
-                let (p, tg, _) = at(clip.length);
-                skip_camera = Some((p, tg));
-            }
-            TrackContent::Camera { .. } => {}
+            TrackContent::Camera { .. } | TrackContent::Cuts { .. } => {}
             TrackContent::Unit { unit, path, actions: slots, men, visible } => {
                 let Some(su) = project.unit(*unit) else { continue };
                 let su_var = format!("SU_{}", su.id);
@@ -415,7 +372,9 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
                 }
                 for s in slots {
                     match s.slot.as_str() {
-                        "TAUNT" => actions.push((ms(s.t), format!("{su_var}.uc:start_taunting()"))),
+                        _ if crate::scene::slot_family(&s.slot) == "TAUNT" => {
+                            actions.push((ms(s.t), format!("{su_var}.uc:start_taunting()")))
+                        }
                         "AUTO" | "STAND" => {}
                         other => out.warnings.push(format!("{}: {} plays {other} in movies only", clip.name, su.name)),
                     }
@@ -551,6 +510,69 @@ fn cutscene_lua(project: &Project, clip: &Clip, player: usize, speeds: &crate::e
     s
 }
 
+/// A camera's moves over a shot (`from` to `to`, ms): a cut to its view at `from`, then its path baked into steps.
+fn camera_moves(keys: &[crate::scene::CameraKey], from: u64, to_ms: u64) -> Vec<(u64, String)> {
+    let mut actions: Vec<(u64, String)> = vec![];
+    let times: Vec<f64> = keys.iter().map(|k| k.t).collect();
+    let positions: Vec<[f32; 3]> = keys.iter().map(|k| k.position).collect();
+    let targets: Vec<[f32; 3]> = keys.iter().map(|k| k.target).collect();
+    let fovs: Vec<[f32; 1]> = keys.iter().map(|k| [k.fov]).collect();
+    let at = |t: f64| {
+        let (i, j, u) = around(&times, t).expect("keys");
+        let m = keys[i].interp;
+        (point(&positions, &times, i, j, u, m), point(&targets, &times, i, j, u, m), point(&fovs, &times, i, j, u, m)[0])
+    };
+    // The cut: its view at the shot's start at once.
+    let (p, tg, fov) = at(from as f64 / 1000.0);
+    actions.push((from, format!("cam:move_to({}, {}, 0, {MOVE_FLAG}, {})", v3(p), v3(tg), f(fov))));
+    // Through a run of smooth keys the steps keep one even beat (every CAMERA_STEP_MS of the clip), the samples passing through the
+    // keys: steps started again at every key left a short one before it, the chase ahead changed pace there, and the camera jolted at
+    // each key in game. A key is a stop of its own where the run begins or ends (a Step key, a straight move, the first and last
+    // keys); the shot's ends are stops.
+    let mut stops: Vec<u64> = vec![from, to_ms];
+    for (k, key) in keys.iter().enumerate() {
+        let smooth_in = k > 0 && keys[k - 1].interp == Interp::Smooth;
+        let smooth_out = k + 1 < keys.len() && key.interp == Interp::Smooth;
+        if !(smooth_in && smooth_out) {
+            stops.push(ms(key.t));
+        }
+        if smooth_out {
+            let (a, b) = (ms(key.t), ms(keys[k + 1].t));
+            let mut s = a.div_ceil(CAMERA_STEP_MS) * CAMERA_STEP_MS;
+            while s < b {
+                stops.push(s);
+                s += CAMERA_STEP_MS;
+            }
+        }
+    }
+    // Before the first key and after the last the camera holds: no steps there.
+    let (first, last) = (keys.first().map_or(0, |k| ms(k.t)), keys.last().map_or(0, |k| ms(k.t)));
+    stops.retain(|s| *s >= from && *s <= to_ms && (*s == from || *s == to_ms || (*s >= first && *s <= last)));
+    stops.sort_unstable();
+    stops.dedup();
+    for (n, w) in stops.windows(2).enumerate() {
+        let (start, mut to) = (w[0], w[1]);
+        let (i, _, _) = around(&times, start as f64 / 1000.0).expect("keys");
+        // A moving step aims a step further on (and takes as long again): the camera chases a point just ahead on the path and its
+        // speed never drops to a stop at a step's end (short straight moves met with a jolt every step). Not across a Step key, nor
+        // past the shot.
+        if keys[i].interp != Interp::Step
+            && start >= first
+            && let Some(&further) = stops.get(n + 2)
+        {
+            let (j, _, _) = around(&times, to as f64 / 1000.0).expect("keys");
+            if keys[j].interp != Interp::Step {
+                to = further;
+            }
+        }
+        let (p, tg, fov) = at(to as f64 / 1000.0);
+        let dur = if keys[i].interp == Interp::Step { 0.0 } else { (to - start) as f32 / 1000.0 };
+        let when = if keys[i].interp == Interp::Step { w[1] } else { start };
+        actions.push((when, format!("cam:move_to({}, {}, {}, {MOVE_FLAG}, {})", v3(p), v3(tg), f(dur), f(fov))));
+    }
+    actions
+}
+
 fn v3(p: [f32; 3]) -> String {
     format!("v({}, {}, {})", f(p[0]), f(p[1]), f(p[2]))
 }
@@ -560,4 +582,55 @@ fn path_facing(path: &[crate::scene::PathKey], k: usize) -> Option<f32> {
     let (a, b) = (path.get(k)?, path.get(k + 1)?);
     let (dx, dz) = (b.position[0] - a.position[0], b.position[1] - a.position[1]);
     if dx * dx + dz * dz < 1e-6 { None } else { Some(dx.atan2(dz)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::{CameraKey, Clip, CutKey, Track};
+
+    #[test]
+    fn a_cut_snaps_to_its_camera() {
+        let mut p = Project::new("Test", "attila");
+        let cam = |id: u32, x: f32| Track {
+            id,
+            name: format!("Camera {id}"),
+            muted: false,
+            content: TrackContent::Camera {
+                keys: vec![
+                    CameraKey { t: 0.0, position: [x, 10.0, 0.0], target: [x, 0.0, 10.0], fov: 35.0, interp: Interp::Smooth },
+                    CameraKey { t: 10.0, position: [x, 10.0, 50.0], target: [x, 0.0, 60.0], fov: 35.0, interp: Interp::Smooth },
+                ],
+            },
+        };
+        let cuts = Track {
+            id: 3,
+            name: "Camera Cuts".into(),
+            muted: false,
+            content: TrackContent::Cuts { cuts: vec![CutKey { t: 4.0, camera: 2 }, CutKey { t: 0.0, camera: 1 }] },
+        };
+        p.clips = vec![Clip {
+            id: 9,
+            name: "c".into(),
+            length: 10.0,
+            fps: 30,
+            tracks: vec![cam(1, 0.0), cam(2, 100.0), cuts],
+            skippable: true,
+            motion_blur: false,
+        }];
+        let lua: String = battle_scripts(&p).files.values().cloned().collect();
+        let moves: Vec<(u64, String)> = lua
+            .lines()
+            .filter(|l| l.contains("cam:move_to("))
+            .filter_map(|l| Some((l.rsplit(',').next()?.trim().trim_end_matches(");").trim().parse().ok()?, l.to_owned())))
+            .collect();
+        // The cut: camera 2's view (x 100) at once at 4 s.
+        assert!(
+            moves.iter().any(|(t, l)| *t == 4000 && l.contains("cam:move_to(v(100.00, 10.00, 18.80), v(100.00, 0.00, 28.80), 0, true")),
+            "{moves:#?}"
+        );
+        // Camera 1 until then, camera 2 after.
+        assert!(moves.iter().filter(|(t, _)| *t < 4000).all(|(_, l)| l.contains("cam:move_to(v(0.00")), "{moves:#?}");
+        assert!(moves.iter().filter(|(t, _)| *t >= 4000).all(|(_, l)| l.contains("cam:move_to(v(100.00")), "{moves:#?}");
+    }
 }

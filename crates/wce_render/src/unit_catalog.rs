@@ -378,6 +378,14 @@ pub fn men_at_size(unit: &LandUnit, size: u32) -> u32 {
 
 /// Where the men of a unit stand: `(x, z)` in metres, about its middle, the front rank towards +z, where it faces. `ranks` ranks of equal files, the
 /// last short and centred. The close formation of the tables; **ASSUMPTION**: the game's deployment isn't traced.
+/// The ranks of `men` stood in a line `width` wide (metres; files `file_spacing` apart): as many men a rank as the width holds, the
+/// rest in ranks behind (a battle's `goto_location_angle_width`).
+pub fn ranks_for_width(men: u32, width: f32, file_spacing: f32) -> u32 {
+    let spacing = if file_spacing > 0.01 { file_spacing } else { 1.1 };
+    let files = ((width.max(0.0) / spacing).floor() as u32 + 1).clamp(1, men.max(1));
+    men.max(1).div_ceil(files)
+}
+
 pub fn formation(men: u32, ranks: u32, spacing: [f32; 2]) -> Vec<[f32; 2]> {
     let ranks = ranks.clamp(1, men.max(1));
     let files = men.div_ceil(ranks);
@@ -433,6 +441,19 @@ mod tests {
         assert_eq!(f, [[-1.0, 1.0], [0.0, 1.0], [1.0, 1.0], [-0.5, -1.0], [0.5, -1.0]]);
         assert_eq!(formation(1, 4, [1.0, 1.0]), [[0.0, 0.0]]);
         assert_eq!(formation(160, 4, [1.0, 1.0]).len(), 160);
+    }
+
+    #[test]
+    fn a_width_sets_the_ranks() {
+        // 1000 men in 30 m, a man every 1.1 m: 28 a rank, 36 ranks; 1100 m: one rank.
+        assert_eq!(super::ranks_for_width(1000, 30.0, 1.1), 36);
+        assert_eq!(super::ranks_for_width(1000, 1100.0, 1.1), 1);
+        assert_eq!(super::ranks_for_width(10, 0.0, 1.1), 10);
+        // No spacing in the data: 1.1 m.
+        assert_eq!(super::ranks_for_width(100, 10.0, 0.0), 10);
+        let f = formation(1000, super::ranks_for_width(1000, 30.0, 1.1), [1.1, 1.4]);
+        let span = f.iter().map(|p| p[0]).fold(f32::MIN, f32::max) - f.iter().map(|p| p[0]).fold(f32::MAX, f32::min);
+        assert!(span <= 30.0 + 1e-3, "{span}");
     }
 
     #[test]
