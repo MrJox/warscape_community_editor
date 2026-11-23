@@ -110,8 +110,8 @@ assert_count camera_keys 10
 mouse off
 save
 frames 2
-# The sample scene: made in the projects folder, ten units, its clip's tracks.
-scene_sample
+# The sample scene (samples/cinematic, copied into the projects folder by the gate): ten units, its clip's tracks.
+scene_open wce_sample_battle
 frames 4
 assert_count units 10
 assert_count effects 2

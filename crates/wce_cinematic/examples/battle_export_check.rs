@@ -240,7 +240,9 @@ fn main() {
     }
     // The sample: a fade track from black lifts it after its first instant, never black at the end of tick 0.
     {
-        let sample = wce_cinematic::sample::sample_project("attila");
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/cinematic/wce_sample_battle/project.json");
+        let sample = wce_cinematic::scene::Project::from_json(&std::fs::read_to_string(&file).expect("the sample battle's project.json"))
+            .expect("the sample battle reads");
         let lua: String = battle_scripts(&sample).files.values().cloned().collect();
         let first_fade = lua.find("cam:fade(true, 0)");
         let lift = lua.find("cam:fade(false, 1.50)");

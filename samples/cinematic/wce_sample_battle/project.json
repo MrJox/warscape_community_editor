@@ -1,0 +1,541 @@
+{
+  "format": 1,
+  "name": "WCE Sample Battle",
+  "game": "attila",
+  "map": {
+    "campaign_map": "catalaunian_plains",
+    "position": [
+      0.5,
+      0.5
+    ],
+    "playable_area": 1924.0,
+    "tile": "",
+    "whole_map": true
+  },
+  "battle": {
+    "key": "wce_sample_battle",
+    "title_text": "battle_title",
+    "description_text": "battle_description",
+    "year": 451,
+    "season": "Summer",
+    "time_of_day": "day",
+    "precipitation": "dry",
+    "battle_type": "land_normal",
+    "duration_s": 3600.0,
+    "environment": "Weather\\default\\default\\land\\day\\dry\\evening_north_3.environment",
+    "wind": [
+      0.0,
+      9.0
+    ],
+    "menu_position": [
+      300,
+      300
+    ]
+  },
+  "armies": [
+    {
+      "alliance": 0,
+      "faction": "att_fact_western_roman_empire",
+      "deployment_centre": [
+        0.0,
+        -368.0
+      ],
+      "deployment_size": [
+        832.0,
+        352.0
+      ],
+      "deployment_orientation": 0.0,
+      "player": true
+    },
+    {
+      "alliance": 1,
+      "faction": "att_fact_hunni",
+      "deployment_centre": [
+        0.0,
+        368.0
+      ],
+      "deployment_size": [
+        832.0,
+        352.0
+      ],
+      "deployment_orientation": 3.1415927,
+      "player": false
+    }
+  ],
+  "units": [
+    {
+      "id": 3,
+      "name": "Cohors (left)",
+      "unit": "att_rom_cohors",
+      "army": 0,
+      "start": [
+        -70.0,
+        -300.0
+      ],
+      "facing": 0.0,
+      "width": 34.0,
+      "men": 120,
+      "seed": 3,
+      "general": false
+    },
+    {
+      "id": 4,
+      "name": "Cohors (centre)",
+      "unit": "att_rom_cohors",
+      "army": 0,
+      "start": [
+        0.0,
+        -300.0
+      ],
+      "facing": 0.0,
+      "width": 34.0,
+      "men": 120,
+      "seed": 4,
+      "general": false
+    },
+    {
+      "id": 5,
+      "name": "Cohors (right)",
+      "unit": "att_rom_cohors",
+      "army": 0,
+      "start": [
+        70.0,
+        -300.0
+      ],
+      "facing": 0.0,
+      "width": 34.0,
+      "men": 120,
+      "seed": 5,
+      "general": false
+    },
+    {
+      "id": 6,
+      "name": "Sagittarii",
+      "unit": "att_rom_sagittarii",
+      "army": 0,
+      "start": [
+        0.0,
+        -340.0
+      ],
+      "facing": 0.0,
+      "width": 34.0,
+      "men": 120,
+      "seed": 6,
+      "general": false
+    },
+    {
+      "id": 7,
+      "name": "Equites promoti",
+      "unit": "att_rom_equites_promoti",
+      "army": 0,
+      "start": [
+        160.0,
+        -310.0
+      ],
+      "facing": 0.0,
+      "width": 34.0,
+      "men": 120,
+      "seed": 7,
+      "general": false
+    },
+    {
+      "id": 8,
+      "name": "Comes",
+      "unit": "att_rom_comes",
+      "army": 0,
+      "start": [
+        0.0,
+        -380.0
+      ],
+      "facing": 0.0,
+      "width": 16.0,
+      "men": 32,
+      "seed": 8,
+      "general": true
+    },
+    {
+      "id": 9,
+      "name": "Horse archers (left)",
+      "unit": "att_nom_hunnic_horse_archers",
+      "army": 1,
+      "start": [
+        -90.0,
+        300.0
+      ],
+      "facing": 3.1415927,
+      "width": 34.0,
+      "men": 120,
+      "seed": 9,
+      "general": false
+    },
+    {
+      "id": 10,
+      "name": "Hunnic lancers",
+      "unit": "att_nom_hunnic_lancers",
+      "army": 1,
+      "start": [
+        0.0,
+        320.0
+      ],
+      "facing": 3.1415927,
+      "width": 34.0,
+      "men": 120,
+      "seed": 10,
+      "general": false
+    },
+    {
+      "id": 11,
+      "name": "Horse archers (right)",
+      "unit": "att_nom_hunnic_horse_archers",
+      "army": 1,
+      "start": [
+        90.0,
+        300.0
+      ],
+      "facing": 3.1415927,
+      "width": 34.0,
+      "men": 120,
+      "seed": 11,
+      "general": false
+    },
+    {
+      "id": 12,
+      "name": "Steppe warlord",
+      "unit": "att_nom_steppe_warlord",
+      "army": 1,
+      "start": [
+        0.0,
+        370.0
+      ],
+      "facing": 3.1415927,
+      "width": 16.0,
+      "men": 32,
+      "seed": 12,
+      "general": true
+    }
+  ],
+  "clips": [
+    {
+      "id": 2,
+      "name": "Intro",
+      "length": 12.0,
+      "fps": 30,
+      "tracks": [
+        {
+          "id": 13,
+          "name": "Camera 1",
+          "muted": false,
+          "content": {
+            "kind": "Camera",
+            "keys": [
+              {
+                "t": 0.0,
+                "position": [
+                  -60.0,
+                  474.0,
+                  -420.0
+                ],
+                "target": [
+                  0.0,
+                  470.0,
+                  -300.0
+                ],
+                "fov": 35.0,
+                "interp": "Smooth"
+              },
+              {
+                "t": 5.0,
+                "position": [
+                  40.0,
+                  490.0,
+                  -330.0
+                ],
+                "target": [
+                  0.0,
+                  470.0,
+                  -280.0
+                ],
+                "fov": 40.0,
+                "interp": "Smooth"
+              },
+              {
+                "t": 12.0,
+                "position": [
+                  45.0,
+                  505.0,
+                  130.0
+                ],
+                "target": [
+                  0.0,
+                  479.0,
+                  230.0
+                ],
+                "fov": 38.0,
+                "interp": "Smooth"
+              }
+            ]
+          }
+        },
+        {
+          "id": 14,
+          "name": "Camera 2",
+          "muted": false,
+          "content": {
+            "kind": "Camera",
+            "keys": [
+              {
+                "t": 5.5,
+                "position": [
+                  -14.0,
+                  475.0,
+                  -281.0
+                ],
+                "target": [
+                  0.0,
+                  471.5,
+                  -300.0
+                ],
+                "fov": 30.0,
+                "interp": "Smooth"
+              },
+              {
+                "t": 8.5,
+                "position": [
+                  12.0,
+                  474.5,
+                  -282.0
+                ],
+                "target": [
+                  0.0,
+                  471.5,
+                  -300.0
+                ],
+                "fov": 28.0,
+                "interp": "Smooth"
+              }
+            ]
+          }
+        },
+        {
+          "id": 15,
+          "name": "Hunnic lancers",
+          "muted": false,
+          "content": {
+            "kind": "Unit",
+            "unit": 10,
+            "path": [
+              {
+                "t": 0.0,
+                "position": [
+                  0.0,
+                  320.0
+                ],
+                "interp": "Linear",
+                "gait": null
+              },
+              {
+                "t": 3.0,
+                "position": [
+                  0.0,
+                  300.0
+                ],
+                "interp": "Linear",
+                "gait": null
+              },
+              {
+                "t": 12.0,
+                "position": [
+                  0.0,
+                  200.0
+                ],
+                "interp": "Linear",
+                "gait": null
+              }
+            ],
+            "actions": [],
+            "men": [],
+            "visible": []
+          }
+        },
+        {
+          "id": 16,
+          "name": "Horse archers (left)",
+          "muted": false,
+          "content": {
+            "kind": "Unit",
+            "unit": 9,
+            "path": [
+              {
+                "t": 2.0,
+                "position": [
+                  -90.0,
+                  300.0
+                ],
+                "interp": "Linear",
+                "gait": null
+              },
+              {
+                "t": 12.0,
+                "position": [
+                  -110.0,
+                  270.0
+                ],
+                "interp": "Linear",
+                "gait": null
+              }
+            ],
+            "actions": [],
+            "men": [],
+            "visible": []
+          }
+        },
+        {
+          "id": 17,
+          "name": "Cohors (centre)",
+          "muted": false,
+          "content": {
+            "kind": "Unit",
+            "unit": 4,
+            "path": [],
+            "actions": [
+              {
+                "t": 6.0,
+                "slot": "CELEBRATE"
+              },
+              {
+                "t": 9.0,
+                "slot": "AUTO"
+              }
+            ],
+            "men": [],
+            "visible": []
+          }
+        },
+        {
+          "id": 18,
+          "name": "Fires",
+          "muted": false,
+          "content": {
+            "kind": "Vfx",
+            "instances": [
+              {
+                "start": 0.0,
+                "end": 12.0,
+                "vfx": "cine_vfx_fire_smoke_loop",
+                "position": [
+                  -200.0,
+                  0.0,
+                  -180.0
+                ],
+                "rotation_y": 0.0,
+                "scale": 1.0
+              },
+              {
+                "start": 0.0,
+                "end": 12.0,
+                "vfx": "enviro_vfx_fire_smoke_heavy_loop",
+                "position": [
+                  150.0,
+                  0.0,
+                  40.0
+                ],
+                "rotation_y": 0.0,
+                "scale": 1.5
+              }
+            ]
+          }
+        },
+        {
+          "id": 19,
+          "name": "Subtitles",
+          "muted": false,
+          "content": {
+            "kind": "Subtitles",
+            "lines": [
+              {
+                "t": 2.0,
+                "end": 6.0,
+                "text": "sample_line_1"
+              }
+            ]
+          }
+        },
+        {
+          "id": 20,
+          "name": "Fade",
+          "muted": false,
+          "content": {
+            "kind": "Fade",
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 1.0,
+                "interp": "Linear"
+              },
+              {
+                "t": 1.5,
+                "value": 0.0,
+                "interp": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "id": 21,
+          "name": "Letterbox",
+          "muted": false,
+          "content": {
+            "kind": "Letterbox",
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 1.0,
+                "interp": "Step"
+              }
+            ]
+          }
+        },
+        {
+          "id": 22,
+          "name": "Camera Cuts",
+          "muted": false,
+          "content": {
+            "kind": "Cuts",
+            "cuts": [
+              {
+                "t": 0.0,
+                "camera": 13
+              },
+              {
+                "t": 5.5,
+                "camera": 14
+              },
+              {
+                "t": 8.5,
+                "camera": 13
+              }
+            ]
+          }
+        }
+      ],
+      "skippable": true,
+      "motion_blur": false
+    }
+  ],
+  "texts": {
+    "battle_description": {
+      "en": "The Roman line waits as the Huns ride in from the east."
+    },
+    "battle_title": {
+      "en": "The Sample Battle"
+    },
+    "sample_line_1": {
+      "en": "They are coming. Hold the line!"
+    }
+  },
+  "logic": {
+    "nodes": [],
+    "links": []
+  },
+  "next_id": 23
+}

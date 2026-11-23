@@ -4,7 +4,7 @@
 tool cinematic
 layout reset
 frames 2
-scene_sample
+scene_open wce_sample_battle
 frames 3
 cinematic_show Viewport
 scene_time 6

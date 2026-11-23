@@ -276,8 +276,8 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
 7. Placing on the press, not the click (the tool owns the left button while placing); the gate drives the real mouse (`click_ground`).
 8. Battle > Fought on: a place on a campaign map, one battle tile (`map.tile`, named alone in the battle XML as Launch in game does), or
    a whole battle map (`map.whole_map`, as vanilla's historical battles); in game: **todo**.
-9. A sample scene (`wce_cinematic::sample`, `examples/sample_scene.rs`): ten vanilla units in two armies, a camera move, fires, a
-   subtitle, the bars and a fade in; Open the sample scene in the empty panels and the File menu.
+9. A sample scene: ten vanilla units in two armies, a camera move, fires, a subtitle, the bars and a fade in; since 2026-11-23 a
+   data file, not code (see 19).
 
 ## The user's second round (2026-11-21)
 
@@ -375,9 +375,15 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
       a shot (`<name>_010_<camera>`...) with handle frames seen through the shot's own camera; the fade and the bars on or off.
       Gate: `scripts/cinematic_cameras.txt`. **done** (MP4 and ProRes: the ffmpeg command tested, not run here: no ffmpeg on this
       machine)
-18. A second sample (user, 2026-11-23): two men fighting, the camera fixed on them (`sample::duel_project`, File > Open the duel
-    sample scene, `scene_sample duel`): a Roman soldier and a Hun warrior, sword and shield both, face to face on the flat plains
+18. A second sample (user, 2026-11-23): two men fighting, the camera fixed on them: a Roman soldier and a Hun warrior, sword and shield both, face to face on the flat plains
     tile, trading attacks, blocks and a shield bash (each key a slot both men have), one camera from the side. **done**
+19. The editor and its data apart (user, 2026-11-23: no menu entries or buttons for particular example scenes). The samples are
+    scene files of the repository, `samples/cinematic/wce_sample_battle` and `wce_sample_duel` (`project.json` each), opened as any
+    scene: File > Open scene file... (a scene's `project.json` anywhere), or copied into `<projects>/cinematics` to be listed. The
+    code that built them (`wce_cinematic::sample`, `examples/sample_scene.rs`), the File menu's and the empty Scene panel's sample
+    entries and `scene_sample` are gone; the gate copies the samples into its throw-away projects folders and opens them by name
+    (`scene_open wce_sample_battle`), and `battle_export_check` reads the battle sample's file. **done** (not run since: the user
+    asked for no verification run after this change)
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

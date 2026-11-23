@@ -1,0 +1,298 @@
+{
+  "format": 1,
+  "name": "WCE Sample Duel",
+  "game": "attila",
+  "map": {
+    "campaign_map": "catalaunian_plains",
+    "position": [
+      0.5,
+      0.5
+    ],
+    "playable_area": 1924.0,
+    "tile": "terrain/tiles/battle/plains/8x8/8x8_aa",
+    "whole_map": false
+  },
+  "battle": {
+    "key": "wce_sample_duel",
+    "title_text": "battle_title",
+    "description_text": "battle_description",
+    "year": 451,
+    "season": "Summer",
+    "time_of_day": "day",
+    "precipitation": "dry",
+    "battle_type": "land_normal",
+    "duration_s": 3600.0,
+    "environment": "Weather\\default\\default\\land\\day\\dry\\evening_north_3.environment",
+    "wind": [
+      0.0,
+      9.0
+    ],
+    "menu_position": [
+      300,
+      300
+    ]
+  },
+  "armies": [
+    {
+      "alliance": 0,
+      "faction": "att_fact_western_roman_empire",
+      "deployment_centre": [
+        0.0,
+        -40.0
+      ],
+      "deployment_size": [
+        120.0,
+        60.0
+      ],
+      "deployment_orientation": 0.0,
+      "player": true
+    },
+    {
+      "alliance": 1,
+      "faction": "att_fact_hunni",
+      "deployment_centre": [
+        0.0,
+        40.0
+      ],
+      "deployment_size": [
+        120.0,
+        60.0
+      ],
+      "deployment_orientation": 3.1415927,
+      "player": false
+    }
+  ],
+  "units": [
+    {
+      "id": 3,
+      "name": "Roman soldier",
+      "unit": "att_rom_cohors",
+      "army": 0,
+      "start": [
+        0.0,
+        -0.85
+      ],
+      "facing": 0.0,
+      "width": 1.0,
+      "men": 1,
+      "seed": 3,
+      "general": false
+    },
+    {
+      "id": 4,
+      "name": "Hun warrior",
+      "unit": "att_nom_hunnic_dismounted_warband",
+      "army": 1,
+      "start": [
+        0.0,
+        0.85
+      ],
+      "facing": 3.1415927,
+      "width": 1.0,
+      "men": 1,
+      "seed": 4,
+      "general": false
+    }
+  ],
+  "clips": [
+    {
+      "id": 2,
+      "name": "Intro",
+      "length": 12.0,
+      "fps": 30,
+      "tracks": [
+        {
+          "id": 5,
+          "name": "Camera 1",
+          "muted": false,
+          "content": {
+            "kind": "Camera",
+            "keys": [
+              {
+                "t": 0.0,
+                "position": [
+                  5.0,
+                  2.5,
+                  0.0
+                ],
+                "target": [
+                  0.0,
+                  1.3,
+                  0.0
+                ],
+                "fov": 32.0,
+                "interp": "Smooth"
+              }
+            ]
+          }
+        },
+        {
+          "id": 6,
+          "name": "Roman soldier",
+          "muted": false,
+          "content": {
+            "kind": "Unit",
+            "unit": 3,
+            "path": [],
+            "actions": [
+              {
+                "t": 0.0,
+                "slot": "COMBAT_READY"
+              },
+              {
+                "t": 1.0,
+                "slot": "ATTACK_1"
+              },
+              {
+                "t": 2.3,
+                "slot": "COMBAT_READY"
+              },
+              {
+                "t": 2.8,
+                "slot": "DEFEND_1"
+              },
+              {
+                "t": 4.1,
+                "slot": "ATTACK_3"
+              },
+              {
+                "t": 5.4,
+                "slot": "BASH_SHIELD_1"
+              },
+              {
+                "t": 6.6,
+                "slot": "COMBAT_READY"
+              },
+              {
+                "t": 7.0,
+                "slot": "DEFEND_3"
+              },
+              {
+                "t": 8.3,
+                "slot": "ATTACK_2"
+              },
+              {
+                "t": 9.6,
+                "slot": "ATTACK_5"
+              },
+              {
+                "t": 11.0,
+                "slot": "COMBAT_READY"
+              }
+            ],
+            "men": [],
+            "visible": []
+          }
+        },
+        {
+          "id": 7,
+          "name": "Hun warrior",
+          "muted": false,
+          "content": {
+            "kind": "Unit",
+            "unit": 4,
+            "path": [],
+            "actions": [
+              {
+                "t": 0.0,
+                "slot": "COMBAT_READY"
+              },
+              {
+                "t": 1.0,
+                "slot": "DEFEND_2"
+              },
+              {
+                "t": 2.3,
+                "slot": "COMBAT_READY"
+              },
+              {
+                "t": 2.8,
+                "slot": "ATTACK_2"
+              },
+              {
+                "t": 4.1,
+                "slot": "DEFEND_1"
+              },
+              {
+                "t": 5.4,
+                "slot": "KNOCKBACK_1"
+              },
+              {
+                "t": 6.6,
+                "slot": "COMBAT_READY"
+              },
+              {
+                "t": 7.0,
+                "slot": "ATTACK_4"
+              },
+              {
+                "t": 8.3,
+                "slot": "DEFEND_4"
+              },
+              {
+                "t": 9.6,
+                "slot": "DEFEND_2"
+              },
+              {
+                "t": 11.0,
+                "slot": "COMBAT_READY"
+              }
+            ],
+            "men": [],
+            "visible": []
+          }
+        },
+        {
+          "id": 8,
+          "name": "Fade",
+          "muted": false,
+          "content": {
+            "kind": "Fade",
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 1.0,
+                "interp": "Linear"
+              },
+              {
+                "t": 1.0,
+                "value": 0.0,
+                "interp": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "id": 9,
+          "name": "Letterbox",
+          "muted": false,
+          "content": {
+            "kind": "Letterbox",
+            "keys": [
+              {
+                "t": 0.0,
+                "value": 1.0,
+                "interp": "Step"
+              }
+            ]
+          }
+        }
+      ],
+      "skippable": true,
+      "motion_blur": false
+    }
+  ],
+  "texts": {
+    "battle_description": {
+      "en": "A Roman soldier and a Hun warrior fight."
+    },
+    "battle_title": {
+      "en": "The Sample Duel"
+    }
+  },
+  "logic": {
+    "nodes": [],
+    "links": []
+  },
+  "next_id": 10
+}
