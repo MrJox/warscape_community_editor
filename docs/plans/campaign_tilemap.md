@@ -213,4 +213,6 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   pixel (`HfPatch::err`, each stride's largest height error, made with the patch: by distance alone the marshes' ponds went under).
   The patch planning (2026-11-23): 16.0 -> 12.3 ms at view A, 15.5 -> 12.6 at B (medians, idle machine). The surface's and the four
   cascades' plans are made at once on threads when the shadow pass starts (`prepare_terrain_views`, `plan_cpu`), from flat records of
-  the frame's list (`TerrainRec`) instead of a map lookup a terrain a pass: the batching 5.1 -> 1.4 ms a frame.
+  the frame's list (`TerrainRec`) instead of a map lookup a terrain a pass: the batching 5.1 -> 1.4 ms a frame. Then 12.3 -> 10.5 ms
+  and 12.6 -> 10.8: the views' terrains taken on the pool too (`view_order`, by a cluster index in the list's order, no sort), the
+  surface's blend boxes gathered with its plan (`gather_boxes`: 1.5 -> 0.6 ms), the cascades without the list of references.
