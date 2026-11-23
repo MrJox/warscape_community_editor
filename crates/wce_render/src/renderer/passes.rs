@@ -704,7 +704,7 @@ impl Renderer {
     /// - s0 = start, s_i = start + scale * (cumulative row)_i; cascade i covers [s_i - 0.1 (s_i - s_(i-1)), s_(i+1)] (shadow_split_blend_fraction
     ///   0.1); g_fFadeRange = (0.1, (s4 - (far - 0.2 (s4 - s3))) / (0.2 (s4 - s3)) * 0.2) (final_shadow_split_blend_fraction 0.2).
     pub(crate) fn pass_shadows(&mut self, scene: &RenderScene, cam: &Camera, aspect: f32, light_dir: Float3, _time_s: f32) {
-        // The main camera's (the material pass's surface culls with the same: `prepare_terrain_views`).
+        // The main camera's (the material pass's surface culls with the same: `terrain_view_jobs`).
         let main_cull = self.camera.view_proj;
         let setup = wce_foundation::profile::Scope::new(SHADOW_SETUP.get_or_init(|| wce_foundation::profile::slot("shadow.setup")));
         // In game units, as the rows (the depth analysis is in scene units); the slices go back to scene units below. Mixed, every
@@ -884,9 +884,9 @@ impl Renderer {
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (mut vis_terrain, mut vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             let terrain_material = self.terrain.active && !self.env.active;
-            // The terrain's views planned at once, on threads (`prepare_terrain_views`): the cascades' (as `draw_terrain_shadow` takes
+            // The terrain's views planned at once, on threads (`terrain_view_jobs`): the cascades' (as `draw_terrain_shadow` takes
             // them below) and the material pass's surface (the main camera's, set before this pass), each a walk of the frame's terrains.
-            if terrain_material {
+            let view_jobs = if terrain_material {
                 let mut views: Vec<(super::terrain::TerrainView, Float4x4, f32)> = vec![];
                 if !rome2 {
                     views.push((super::terrain::TerrainView::Surface, main_cull, 0.0));
@@ -897,8 +897,48 @@ impl Renderer {
                         views.push((super::terrain::TerrainView::Shadow, light_vp[c], texel));
                     }
                 }
-                self.prepare_terrain_views(scene, &views);
-            }
+                self.terrain_view_jobs(scene, &views)
+            } else {
+                None
+            };
+            // Every cascade's view, and the models in each culled at once on the pool (one after another, four small culls left most of
+            // it idle); the terrain's own draw set only without the material terrain, which casts with its own shaders
+            // (`draw_terrain_shadow`), its cull thrown away.
+            let cascade_views: Vec<DrawView> = (0..count)
+                .map(|c| DrawView {
+                    frustum: Frustum::from_view_projection(&light_vp[c]),
+                    eye: cam.eye,
+                    shadow: true,
+
+                    // Farther cascades need less detail; a caster smaller than a couple of shadow texels leaves no shadow.
+                    coarser: c as i32,
+                    lod_scale: self.settings.lod_scale,
+                    min_radius: texel_c[c] * self.settings.shadow_min_texels,
+                    quality: self.lod_quality(),
+                    ..Default::default()
+                })
+                .collect();
+            // Beside the terrain's plans (`TerrainPlanner::run`): both on the pool, each leaving it partly idle alone.
+            let (planned, mut culled): (Vec<super::terrain::PreparedView>, Vec<Visible>) = {
+                use rayon::prelude::*;
+                let draws = &draws;
+                let planner = self.terrain_planner();
+                rayon::join(
+                    || view_jobs.as_ref().map(|j| planner.run(j)).unwrap_or_default(),
+                    || {
+                        cascade_views
+                            .par_iter()
+                            .map(|view| {
+                                let mut v = Visible::default();
+                                draws.cull(view, &mut v);
+                                v
+                            })
+                            .collect()
+                    },
+                )
+            };
+            self.keep_terrain_views(planned);
+
             for c in 0..count {
                 self.ctx.set_input_layout(Some(&layout));
                 let half = self.shadow_map.size as f32 / 2.0;
@@ -916,26 +956,13 @@ impl Renderer {
                     self.ctx.vs_set_shader_resources(slot, std::slice::from_ref(&self.res.instance_ids_srv));
                 }
 
-                let view = DrawView {
-                    frustum: Frustum::from_view_projection(&light_vp[c]),
-                    eye: cam.eye,
-                    shadow: true,
-
-                    // Farther cascades need less detail; a caster smaller than a couple of shadow texels leaves no shadow.
-                    coarser: c as i32,
-                    lod_scale: self.settings.lod_scale,
-                    min_radius: texel_c[c] * self.settings.shadow_min_texels,
-                    quality: self.lod_quality(),
-                    ..Default::default()
-                };
-
-                terrain_draws.cull(&view, &mut vis_terrain);
-                draws.cull(&view, &mut vis);
-
                 // The material terrain casts with the game's terrain shadow shaders below, not as legacy patches.
                 if terrain_material {
                     vis_terrain = Visible::default();
+                } else {
+                    terrain_draws.cull(&cascade_views[c], &mut vis_terrain);
                 }
+                vis = std::mem::take(&mut culled[c]);
 
                 let firsts = self.upload_instances([&terrain_draws, &draws], [&vis_terrain, &vis]);
                 for v in [&vis_terrain, &vis] {

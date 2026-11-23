@@ -735,7 +735,7 @@ pub(crate) struct TerrainGpuState {
     /// Each record's cluster (`clusters`): a view walks the records in the list's order, taking those of the clusters in it.
     cluster_of: Vec<u32>,
 
-    /// The views' plans made ahead this frame (`prepare_terrain_views`), and the surface's blend boxes made with its plan.
+    /// The views' plans made ahead this frame (`terrain_view_jobs`), and the surface's blend boxes made with its plan.
     prepared: Vec<PreparedView>,
     surface_boxes: Option<(PlanKey, Vec<BoxGroup>)>,
 
@@ -2144,7 +2144,7 @@ impl Renderer {
         let campaign = all.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.material.as_ref().is_some_and(|m| m.campaign)));
 
         // The boxes in view by material and LF map (a context's placements of one tile share their material): one bind, the boxes as instances.
-        // Made with the surface's plan (`prepare_terrain_views`), else here; each group's material and LF from its first terrain.
+        // Made with the surface's plan (`terrain_view_jobs`), else here; each group's material and LF from its first terrain.
         let gather =
             wce_foundation::profile::Scope::new(BLEND_GATHER.get_or_init(|| wce_foundation::profile::slot("terrain.blend.gather")));
         let surface_key = self.plan_key(&self.camera.main_view_proj, 0.0, TerrainView::Surface.tag(), false);
@@ -2594,7 +2594,7 @@ impl Renderer {
         self.draw_stats.triangles += triangles;
     }
 
-    /// [`Self::draw_terrain_surface`] for the frame's surface (`TerrainView::Surface`): its plan, made ahead (`prepare_terrain_views`).
+    /// [`Self::draw_terrain_surface`] for the frame's surface (`TerrainView::Surface`): its plan, made ahead (`terrain_view_jobs`).
     #[allow(clippy::too_many_arguments)]
     fn draw_surface_view(
         &mut self,
@@ -2935,7 +2935,7 @@ impl Renderer {
 
     /// The patches of the frame's terrains a view sees (`view`: the surface's, without the sea tiles, or a shadow cascade's, without the
     /// terrains that cast none), drawn as [`Self::draw_terrain_patches_with`] draws its list. The view's plan was usually made with the
-    /// others' on the loading of the shadow pass (`prepare_terrain_views`); else here. `list`: the frame's terrain list (for the custom
+    /// others' on the loading of the shadow pass (`terrain_view_jobs`); else here. `list`: the frame's terrain list (for the custom
     /// meshes).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_view_patches(
@@ -2975,12 +2975,15 @@ impl Renderer {
         self.draw_planned(&draws, &customs, vs, ps, cull, clip, how)
     }
 
-    /// The plans of these views (each a cull and a cascade's texel, 0 for the surface) made at once, on threads: the patches' culling,
+    /// The plans of these views (each a cull and a cascade's texel, 0 for the surface) are made at once, on threads: the patches' culling,
     /// strides and rows read only the frame's records (`TerrainRec`), and the surface's and the four cascades' each walked the frame's
-    /// terrains (a fifth of the CPU's frame, one after another). Their draws take them (`draw_view_patches`).
-    pub(crate) fn prepare_terrain_views(&mut self, scene: &RenderScene, views: &[(TerrainView, Float4x4, f32)]) {
+    /// terrains (a fifth of the CPU's frame, one after another). Their draws take them (`draw_view_patches`). In three steps, so that the
+    /// shadow pass runs the middle one beside its own culls: these jobs (the main thread's part: the views not planned yet, with the LF
+    /// groups' shifts, `lf_draw` making the windows, and what the surface's blend boxes take), the plans (`TerrainPlanner::run`, on the
+    /// pool), keeping them (`keep_terrain_views`). None without terrains or views to plan.
+    pub(crate) fn terrain_view_jobs<'s>(&mut self, scene: &'s RenderScene, views: &[(TerrainView, Float4x4, f32)]) -> Option<ViewJobs<'s>> {
         if self.terrain_list(scene) == 0 {
-            return;
+            return None;
         }
 
         let jobs: Vec<(PlanKey, TerrainView, PlanParams)> = views
@@ -2989,27 +2992,22 @@ impl Renderer {
             .filter(|(key, _, _)| !self.terrain.prepared.iter().any(|p| p.key == *key))
             .collect();
         if jobs.is_empty() {
-            return;
+            return None;
         }
 
-        // The LF groups' shifts (here: `lf_draw` makes the windows), the rest on the pool, the surface's blend boxes with its plan.
         let shifts = self.lf_shifts();
-        let snow = scene.snow();
-        let boxes = BoxParams { origin: self.camera.origin, units: self.camera.units, snow };
-        let _batching =
-            wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
-        let (recs, precs, clusters, cluster_of) =
-            (&self.terrain.recs, &self.terrain.precs, &self.terrain.clusters, &self.terrain.cluster_of);
-        let views: Vec<PreparedView> = {
-            use rayon::prelude::*;
-            jobs.par_iter()
-                .map(|(key, view, params)| {
-                    let boxes = (*view == TerrainView::Surface).then_some(&boxes);
-                    plan_view(recs, precs, clusters, cluster_of, *key, *view, &shifts, params, boxes)
-                })
-                .collect()
-        };
+        let boxes = BoxParams { origin: self.camera.origin, units: self.camera.units, snow: scene.snow() };
+        Some(ViewJobs { jobs, shifts, boxes })
+    }
 
+    /// What the plans are made from: the frame's records and clusters (`TerrainPlanner::run`).
+    pub(crate) fn terrain_planner(&self) -> TerrainPlanner<'_> {
+        let t = &self.terrain;
+        TerrainPlanner { recs: &t.recs, precs: &t.precs, clusters: &t.clusters, cluster_of: &t.cluster_of }
+    }
+
+    /// The plans made (`TerrainPlanner::run`) kept for their draws, the surface's blend boxes for the material pass.
+    pub(crate) fn keep_terrain_views(&mut self, views: Vec<PreparedView>) {
         for mut v in views {
             if let Some(b) = v.boxes.take() {
                 self.terrain.surface_boxes = Some((v.key, b));
@@ -3246,7 +3244,38 @@ impl Renderer {
     }
 }
 
-/// A view's plan made ahead (`Renderer::prepare_terrain_views`): its key, LF groups and their records with a custom mesh, the plan,
+/// The views to plan (`Renderer::terrain_view_jobs`): key, view and parameters each, the LF groups' shifts, the blend boxes' parameters.
+pub(crate) struct ViewJobs<'s> {
+    jobs: Vec<(PlanKey, TerrainView, PlanParams)>,
+    shifts: Vec<(u64, [f32; 2])>,
+    boxes: BoxParams<'s>,
+}
+
+/// The frame's records and clusters the plans read (`Renderer::terrain_planner`): plain data, shared with the pool's threads.
+pub(crate) struct TerrainPlanner<'a> {
+    recs: &'a [TerrainRec],
+    precs: &'a [PlacedPatch],
+    clusters: &'a [TerrainCluster],
+    cluster_of: &'a [u32],
+}
+
+impl TerrainPlanner<'_> {
+    /// The jobs' plans, on the pool (`plan_view`; the surface's with its blend boxes).
+    pub(crate) fn run(&self, j: &ViewJobs) -> Vec<PreparedView> {
+        use rayon::prelude::*;
+        let _batching =
+            wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+        j.jobs
+            .par_iter()
+            .map(|(key, view, params)| {
+                let boxes = (*view == TerrainView::Surface).then_some(&j.boxes);
+                plan_view(self.recs, self.precs, self.clusters, self.cluster_of, *key, *view, &j.shifts, params, boxes)
+            })
+            .collect()
+    }
+}
+
+/// A view's plan made ahead (`Renderer::terrain_view_jobs`): its key, LF groups and their records with a custom mesh, the plan,
 /// and the surface's blend boxes.
 pub(crate) struct PreparedView {
     key: PlanKey,
@@ -3455,7 +3484,7 @@ struct CpuBatch {
 
 /// The patch draws of `groups` (records of `recs`, by LF map, each group drawn in the frame moved by its shift): the patches in the view, a
 /// batch for each patch at a stride with its placements' instance rows. Reads only its arguments: the views' plans are made on threads
-/// (`Renderer::prepare_terrain_views`).
+/// (`Renderer::terrain_view_jobs`).
 fn plan_cpu(recs: &[TerrainRec], precs: &[PlacedPatch], groups: &[Vec<u32>], shifts: &[[f32; 2]], p: &PlanParams) -> CpuPlan {
     let PlanParams { frustum, eye, px_ratio, shadow_texel, units, origin_y, material_only } = *p;
     let mut out = CpuPlan::default();
