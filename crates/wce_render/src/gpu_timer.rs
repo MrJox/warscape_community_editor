@@ -189,6 +189,8 @@ impl GpuTimer {
 
     pub fn reset(&mut self) {
         self.sum.clear();
+        // The total too: kept, the report divided the total since the start by the frames since the reset (45 ms for a 22 ms frame).
+        self.sum_total = 0.0;
         self.frames = 0;
     }
 
@@ -201,7 +203,9 @@ impl GpuTimer {
         let frames = f64::from(self.frames);
         let mut v = self.sum.iter().collect::<Vec<_>>();
         v.sort_by(|a, b| b.1.total_cmp(a.1));
-        let mut out = format!("  GPU frame (mean of {}): {:.2} ms\n", self.frames, self.sum_total / frames);
+        // From the frame's first timestamp to its last. The sections follow one another, so a section's time (and this) includes the
+        // GPU waiting for the CPU's commands: on a CPU-bound frame they follow the CPU's scopes.
+        let mut out = format!("  GPU frame (mean of {}): {:.2} ms first to last timestamp\n", self.frames, self.sum_total / frames);
         for (name, ms) in v {
             out.push_str(&format!("    {name:<30} {:8.3} ms\n", ms / frames));
         }
