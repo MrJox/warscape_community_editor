@@ -1,22 +1,30 @@
-//! Shared projects: a tile project in one zip, for another user to import into their projects folder (File > Share project, File > Import
-//! shared project).
+//! Shared projects: a tile project or a prefab in one zip, for another user to import into their projects folder (File > Share project,
+//! File > Import shared project in the Tile tool; File > Share prefab, File > Import shared prefab in the Prefab tool).
 //!
-//! The zip holds a manifest ([`MANIFEST`]) and, under `raw_data/`, the files as they lie in a kit's `raw_data` (the projects' kit layout):
+//! The zip holds a manifest ([`MANIFEST`]) and, under `raw_data/`, the files as they lie in a kit's `raw_data` (the projects' kit layout).
+//! A tile's:
 //! - the tile's location folder (every variation, and whatever else is in it: rivers, terrain layers), without `.bak` files and dot files;
 //! - its tile database entry (`_tile_database/TILES/<name>.xml`);
 //! - the projects' prefabs (`.wce`, `art/prefabs`) its references use (`project_files::PREFAB_ATTR`), followed into the prefabs they use,
 //!   and the road pieces (`road_pieces::FOLDER/<type>`) of the road types its procedural roads are laid with.
 //!
-//! A prefab that is not the projects' (the Assembly Kit's) is not copied: the manifest names it, and the import says which of them the
-//! receiver lacks. Paths in the zip are `/`-separated and relative; an entry that would land outside the projects folder is refused.
+//! A prefab's: its file (with its ground), and the projects' prefabs and road pieces it uses, followed as a tile's are.
 //!
-//! The manifest is lines of `<key> <value>`: `wce_share 1`, `game <key>`, `location <raw_data path>`, `entry <raw_data path>`,
-//! `variation <folder>` (the one to open), `kit_prefab <key>` and `missing_prefab <key>` (found nowhere when it was shared).
+//! A prefab that is not the projects' (the Assembly Kit's) is not copied: the manifest names it, and the import says which of them the
+//! receiver lacks. So are the game's assets the shared scenes place (buildings, props, trees, decals, effects: [`AssetKind`]): the import
+//! checks them against the receiver's game files ([`lacking_assets`]). Paths in the zip are `/`-separated and relative; an entry that would
+//! land outside the projects folder is refused.
+//!
+//! The manifest is lines of `<key> <value>`: `wce_share <format>`, `game <key>`, `kind tile|prefab` (none: a tile); a tile's `location <raw_data
+//! path>`, `entry <raw_data path>` and `variation <folder>` (the one to open); a prefab's `prefab <key>`; `kit_prefab <key>` and
+//! `missing_prefab <key>` (found nowhere when it was shared). A tile's is written as format 1 (as before prefabs were shared), a prefab's as 2.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+use wce_formats::xml_doc::XmlDoc;
 
 use crate::new_instances::ROAD_SPLINE;
 use crate::prefabs::PrefabLibrary;
@@ -28,7 +36,134 @@ pub const MANIFEST: &str = "wce_share.txt";
 /// The folder the kit-layout files are under in the zip.
 const RAW: &str = "raw_data/";
 
-const VERSION: u32 = 1;
+/// The newest format this editor reads; a tile's share is written as format 1 (older editors read it), a prefab's as 2.
+const VERSION: u32 = 2;
+const TILE_VERSION: u32 = 1;
+const PREFAB_VERSION: u32 = 2;
+
+/// What a shared zip holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShareKind {
+    #[default]
+    Tile,
+    Prefab,
+}
+
+impl ShareKind {
+    /// The word for it in messages.
+    #[must_use]
+    pub fn noun(self) -> &'static str {
+        match self {
+            Self::Tile => "tile",
+            Self::Prefab => "prefab",
+        }
+    }
+}
+
+/// A kind of game asset a tile or a prefab places, which the receiver of a share needs in their game files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AssetKind {
+    /// A `BUILDING_INSTANCE`'s key: its models in `rigidmodels/buildings/<key>/`.
+    Building,
+
+    /// A `SIMPLE_MESH_INSTANCE`'s key: a model's path.
+    Model,
+
+    /// A `VEGETATION_INSTANCE`'s key (`<species>.<variant>`): its model in `battleterrain/vegetation/{shrubs,trees}/`.
+    Tree,
+
+    /// A `ProjectedDecalInstance`'s key: its model's path.
+    Decal,
+
+    /// A `VFXInstance`'s effect: `vfx/<effect>.xml`.
+    Vfx,
+}
+
+impl AssetKind {
+    /// What a list of them is called.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Building => "Buildings",
+            Self::Model => "Props (models)",
+            Self::Tree => "Trees and shrubs",
+            Self::Decal => "Decals",
+            Self::Vfx => "Effects (VFX)",
+        }
+    }
+
+    /// The kind an instance element places, and the attribute that names it.
+    fn of(element: &str) -> Option<(Self, &'static str)> {
+        Some(match element {
+            "BUILDING_INSTANCE" => (Self::Building, "key"),
+            "SIMPLE_MESH_INSTANCE" => (Self::Model, "key"),
+            "VEGETATION_INSTANCE" => (Self::Tree, "key"),
+            "ProjectedDecalInstance" => (Self::Decal, "key"),
+            "VFXInstance" => (Self::Vfx, "vfx"),
+            _ => return None,
+        })
+    }
+}
+
+/// The game assets a tile's or a prefab's file places (its instances' keys), without the prefabs it references (those are followed as
+/// prefabs). A file that does not read as XML places nothing.
+#[must_use]
+pub fn asset_references(text: Vec<u8>) -> BTreeSet<(AssetKind, String)> {
+    let mut out = BTreeSet::new();
+    let Ok(doc) = XmlDoc::parse(text) else { return out };
+    for (i, el) in doc.elements().iter().enumerate() {
+        let Some((kind, attr)) = AssetKind::of(&el.name) else { continue };
+        if let Some(key) = doc.get(i, attr).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()) {
+            out.insert((kind, key));
+        }
+    }
+
+    out
+}
+
+/// The game's files as the asset check reads them (the editor's mounted packs and loose folders): normalized paths, `/`-separated and
+/// lowercase.
+pub trait AssetFiles {
+    /// If the file exists.
+    fn exists(&self, path: &str) -> bool;
+
+    /// The paths starting with `prefix` and ending with `extension`.
+    fn list(&self, prefix: &str, extension: &str) -> Vec<String>;
+}
+
+/// The assets of `refs` that `files` (the game's packs and loose folders) lacks, found as the editor draws them: a building by the models
+/// in its folder, a tree by `battleterrain/vegetation/shrubs` then `trees`, a prop or a decal by its model's path, an effect by its file.
+#[must_use]
+pub fn lacking_assets(refs: &BTreeSet<(AssetKind, String)>, files: &dyn AssetFiles) -> Vec<(AssetKind, String)> {
+    const BUILDINGS: &str = "rigidmodels/buildings/";
+    let buildings = if refs.iter().any(|r| r.0 == AssetKind::Building) {
+        files
+            .list(BUILDINGS, ".rigid_model_v2")
+            .into_iter()
+            .filter_map(|p| Some(p.get(BUILDINGS.len()..p.rfind('/')?)?.to_owned()))
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+
+    let model = |key: &str| key.replace('\\', "/").to_lowercase();
+    refs.iter()
+        .filter(|(kind, key)| {
+            let found = match kind {
+                AssetKind::Building => buildings.contains(&key.to_lowercase()),
+                AssetKind::Model | AssetKind::Decal => files.exists(&model(key)),
+                AssetKind::Tree => key.split_once('.').is_some_and(|(species, variant)| {
+                    ["shrubs", "trees"].iter().any(|dir| {
+                        files.exists(&format!("battleterrain/vegetation/{dir}/{species}/{variant}.rigid_model_v2").to_lowercase())
+                    })
+                }),
+                AssetKind::Vfx => files.exists(&format!("vfx/{}.xml", key.to_lowercase())),
+            };
+            !found
+        })
+        .cloned()
+        .collect()
+}
 
 /// The road type a road without one is laid with (`roads::road_type`'s default).
 const DEFAULT_ROAD_TYPE: &str = "dirt";
@@ -38,13 +173,17 @@ const DEFAULT_ROAD_TYPE: &str = "dirt";
 pub struct Manifest {
     pub version: u32,
     pub game: String,
+    pub kind: ShareKind,
 
-    /// The tile's location folder and its entry, relative to `raw_data` (`/`).
+    /// A tile's location folder and its entry, relative to `raw_data` (`/`).
     pub location: String,
     pub entry: String,
 
     /// The variation to open (its folder name), empty: the first.
     pub variation: String,
+
+    /// A prefab's key.
+    pub prefab: String,
 
     /// The prefabs it uses that are not in it: the Assembly Kit's, and those found nowhere when it was shared.
     pub kit_prefabs: Vec<String>,
@@ -52,11 +191,22 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// What it shares, for messages: the tile's location or the prefab's key.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self.kind {
+            ShareKind::Tile => &self.location,
+            ShareKind::Prefab => &self.prefab,
+        }
+    }
+
     fn to_text(&self) -> String {
-        let mut s = format!(
-            "wce_share {}\ngame {}\nlocation {}\nentry {}\nvariation {}\n",
-            self.version, self.game, self.location, self.entry, self.variation
-        );
+        let mut s = format!("wce_share {}\ngame {}\n", self.version, self.game);
+        match self.kind {
+            ShareKind::Tile => s += &format!("location {}\nentry {}\nvariation {}\n", self.location, self.entry, self.variation),
+            ShareKind::Prefab => s += &format!("kind prefab\nprefab {}\n", self.prefab),
+        }
+
         for k in &self.kit_prefabs {
             s += &format!("kit_prefab {k}\n");
         }
@@ -76,16 +226,24 @@ impl Manifest {
             match key {
                 "wce_share" => m.version = value.parse().map_err(|_| format!("{MANIFEST}: a version that does not read: {value}"))?,
                 "game" => m.game = value,
+                "kind" => {
+                    m.kind = match value.as_str() {
+                        "tile" => ShareKind::Tile,
+                        "prefab" => ShareKind::Prefab,
+                        _ => return Err(format!("{MANIFEST}: a kind of share this editor does not know: {value} (update the editor)")),
+                    }
+                }
                 "location" => m.location = value,
                 "entry" => m.entry = value,
                 "variation" => m.variation = value,
+                "prefab" => m.prefab = value,
                 "kit_prefab" => m.kit_prefabs.push(value),
                 "missing_prefab" => m.missing_prefabs.push(value),
                 _ => {}
             }
         }
 
-        if m.version == 0 || m.location.is_empty() || m.entry.is_empty() {
+        if m.version == 0 {
             return Err(format!("{MANIFEST} is not a shared project's manifest"));
         }
 
@@ -94,6 +252,14 @@ impl Manifest {
                 "the project was shared by a newer editor (format {}, this one reads {VERSION}): update the editor",
                 m.version
             ));
+        }
+
+        let whole = match m.kind {
+            ShareKind::Tile => !m.location.is_empty() && !m.entry.is_empty(),
+            ShareKind::Prefab => !m.prefab.is_empty(),
+        };
+        if !whole {
+            return Err(format!("{MANIFEST} is not a shared project's manifest"));
         }
 
         Ok(m)
@@ -215,9 +381,62 @@ pub fn collect(
         files.insert(rel, f);
     }
 
-    // The prefabs, followed into those they use; the road types' pieces.
+    let (kit, missing) = follow_prefabs(&texts, BTreeSet::new(), projects_raw, prefabs, &mut files)?;
+    let manifest = Manifest {
+        version: TILE_VERSION,
+        game: game.to_owned(),
+        kind: ShareKind::Tile,
+        location,
+        entry,
+        variation: variation.to_owned(),
+        prefab: String::new(),
+        kit_prefabs: kit.into_iter().collect(),
+        missing_prefabs: missing.into_iter().collect(),
+    };
+
+    Ok(Share { files: files.into_iter().collect(), manifest })
+}
+
+/// What a prefab of the projects shares (`key`): its file, and the projects' prefabs and road pieces it uses (as [`collect`]'s). A prefab of
+/// an Assembly Kit is not shared: the receiver has it when they have that kit.
+///
+/// # Errors
+///
+/// No such prefab, it is not the projects', or a file that does not read.
+pub fn collect_prefab(key: &str, projects_raw: &Path, prefabs: &PrefabLibrary, game: &str) -> Result<Share, String> {
+    let p = prefabs.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+    let rel = relative(&p.path, projects_raw)
+        .filter(|_| p.path.starts_with(crate::prefabs::prefab_root(projects_raw)))
+        .ok_or_else(|| format!("{} is an Assembly Kit's prefab, not one of your projects': save it into your projects first", p.key))?;
+    let text = std::fs::read(&p.path).map_err(|e| format!("{}: {e}", p.path.display()))?;
+    let mut files = BTreeMap::from([(rel, p.path.clone())]);
+    let seen = BTreeSet::from([p.key.to_lowercase()]);
+    let (kit, missing) = follow_prefabs(&[String::from_utf8_lossy(&text).into_owned()], seen, projects_raw, prefabs, &mut files)?;
+    let manifest = Manifest {
+        version: PREFAB_VERSION,
+        game: game.to_owned(),
+        kind: ShareKind::Prefab,
+        prefab: p.key.clone(),
+        kit_prefabs: kit.into_iter().collect(),
+        missing_prefabs: missing.into_iter().collect(),
+        ..Default::default()
+    };
+
+    Ok(Share { files: files.into_iter().collect(), manifest })
+}
+
+/// The prefabs `texts` reference, followed into those they use: the projects' are added to `files` (path in the zip, path on disk), the
+/// others returned (the Assembly Kits', and those found nowhere); then the pieces of the road types their roads are laid with. `seen`: the
+/// keys (lowercase) not to follow (the prefab shared).
+fn follow_prefabs(
+    texts: &[String],
+    mut seen: BTreeSet<String>,
+    projects_raw: &Path,
+    prefabs: &PrefabLibrary,
+    files: &mut BTreeMap<String, PathBuf>,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
     let projects_prefabs = crate::prefabs::prefab_root(projects_raw);
-    let (mut kit, mut missing, mut seen, mut road_types) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let (mut kit, mut missing, mut road_types) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut queue = texts.iter().map(|t| references(t)).collect::<Vec<_>>();
     while let Some((keys, roads)) = queue.pop() {
         road_types.extend(roads);
@@ -258,17 +477,7 @@ pub fn collect(
         }
     }
 
-    let manifest = Manifest {
-        version: VERSION,
-        game: game.to_owned(),
-        location,
-        entry,
-        variation: variation.to_owned(),
-        kit_prefabs: kit.into_iter().collect(),
-        missing_prefabs: missing.into_iter().collect(),
-    };
-
-    Ok(Share { files: files.into_iter().collect(), manifest })
+    Ok((kit, missing))
 }
 
 /// Writes a share into a zip (deflated; the large maps as zip64).
@@ -312,6 +521,12 @@ pub struct ImportPlan {
 
     /// The kit prefabs it needs that `prefabs` lacks (and those it lacked when shared).
     pub lacking_prefabs: Vec<String>,
+
+    /// The game assets its tiles and prefabs place that the receiver's game files lack ([`lacking_assets`]).
+    pub lacking_assets: Vec<(AssetKind, String)>,
+
+    /// Whether the assets were checked (no game files mounted: they were not).
+    pub assets_checked: bool,
 }
 
 impl ImportPlan {
@@ -319,6 +534,23 @@ impl ImportPlan {
     #[must_use]
     pub fn overwrites(&self) -> bool {
         !self.differs.is_empty() || !self.stale.is_empty()
+    }
+
+    /// Whether it uses something the receiver does not have (a prefab or a game asset).
+    #[must_use]
+    pub fn lacks(&self) -> bool {
+        !self.lacking_prefabs.is_empty() || !self.lacking_assets.is_empty()
+    }
+
+    /// The lacking assets by kind, for lists.
+    #[must_use]
+    pub fn lacking_by_kind(&self) -> Vec<(AssetKind, Vec<String>)> {
+        let mut by = BTreeMap::<AssetKind, Vec<String>>::new();
+        for (kind, key) in &self.lacking_assets {
+            by.entry(*kind).or_default().push(key.clone());
+        }
+
+        by.into_iter().collect()
     }
 
     /// The variation folder to open after it, relative to `raw_data`.
@@ -365,13 +597,26 @@ fn open_zip(path: &Path) -> Result<zip::ZipArchive<std::io::BufReader<File>>, St
     zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("{} is not a zip: {e}", path.display()))
 }
 
+/// Whether a file of a share (relative to `raw_data`) is a scene that places assets: a tile (`.wce`, `.ted`) or a prefab (`art/prefabs`).
+fn is_scene(rel: &str) -> bool {
+    let lower = rel.to_ascii_lowercase();
+    lower.ends_with(".wce") || lower.ends_with(".ted") || (lower.starts_with("art/prefabs/") && lower.ends_with(".xml"))
+}
+
 /// Reads a shared zip and compares it with the projects' `raw_data` (`projects_raw`). `prefabs`: the library the editor resolves prefab keys
-/// with, which says which of the kit prefabs it needs are missing; `game`: the game it is for (another game's zip is refused).
+/// with, which says which of the kit prefabs it needs are missing; `files`: the game's files, which say which of the assets its scenes place
+/// are missing (none: not checked); `game`: the game it is for (another game's zip is refused).
 ///
 /// # Errors
 ///
 /// Not a shared project, another game's, or a file in it that would land outside the projects folder.
-pub fn plan_import(zip_path: &Path, projects_raw: &Path, prefabs: &PrefabLibrary, game: &str) -> Result<ImportPlan, String> {
+pub fn plan_import(
+    zip_path: &Path,
+    projects_raw: &Path,
+    prefabs: &PrefabLibrary,
+    files: Option<&dyn AssetFiles>,
+    game: &str,
+) -> Result<ImportPlan, String> {
     let mut zip = open_zip(zip_path)?;
     let mut text = String::new();
     zip.by_name(MANIFEST)
@@ -385,8 +630,9 @@ pub fn plan_import(zip_path: &Path, projects_raw: &Path, prefabs: &PrefabLibrary
 
     let mut plan = ImportPlan { manifest, ..Default::default() };
     let mut names = BTreeSet::new();
+    let mut assets = BTreeSet::new();
     for i in 0..zip.len() {
-        let entry = zip.by_index(i).map_err(|e| e.to_string())?;
+        let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         let name = entry.name().map_err(|e| e.to_string())?.into_owned();
         if entry.is_dir() || name == MANIFEST {
             continue;
@@ -395,9 +641,20 @@ pub fn plan_import(zip_path: &Path, projects_raw: &Path, prefabs: &PrefabLibrary
         let rel = raw_path(&name).ok_or_else(|| format!("{} has a file outside its folder: {name}", zip_path.display()))?;
         let target = projects_raw.join(&rel);
         let size = entry.size();
+        let same = if is_scene(&rel) && files.is_some() {
+            // A scene is read whole: what it places is checked too.
+            let mut bytes = vec![];
+            entry.read_to_end(&mut bytes).map_err(|e| format!("{name}: {e}"))?;
+            let same = target.exists() && same_bytes(&target, size, bytes.as_slice());
+            assets.extend(asset_references(bytes));
+            same
+        } else {
+            target.exists() && same_bytes(&target, size, entry)
+        };
+
         if !target.exists() {
             plan.new.push(rel.clone());
-        } else if same_bytes(&target, size, entry) {
+        } else if same {
             plan.same.push(rel.clone());
         } else {
             plan.differs.push(rel.clone());
@@ -406,10 +663,19 @@ pub fn plan_import(zip_path: &Path, projects_raw: &Path, prefabs: &PrefabLibrary
         names.insert(rel);
     }
 
-    let location = projects_raw.join(&plan.manifest.location);
-    plan.stale = files_below(&location).iter().filter_map(|f| relative(f, projects_raw)).filter(|r| !names.contains(r)).collect();
+    // A tile's folder is replaced whole: what is there that the zip lacks is moved aside. A prefab is one file.
+    if plan.manifest.kind == ShareKind::Tile {
+        let location = projects_raw.join(&plan.manifest.location);
+        plan.stale = files_below(&location).iter().filter_map(|f| relative(f, projects_raw)).filter(|r| !names.contains(r)).collect();
+    }
+
     plan.lacking_prefabs =
         plan.manifest.kit_prefabs.iter().filter(|k| prefabs.get(k).is_none()).chain(&plan.manifest.missing_prefabs).cloned().collect();
+    if let Some(files) = files {
+        plan.lacking_assets = lacking_assets(&assets, files);
+        plan.assets_checked = true;
+    }
+
     Ok(plan)
 }
 
@@ -535,7 +801,7 @@ mod tests {
         // Into empty projects: all new, the kit prefab missing there.
         let other = dir.path().join("other/raw_data");
         let empty = PrefabLibrary::scan(&[other.clone()]);
-        let plan = plan_import(&zip, &other, &empty, "attila").unwrap();
+        let plan = plan_import(&zip, &other, &empty, None, "attila").unwrap();
         assert_eq!(plan.new.len(), 7);
         assert!(!plan.overwrites());
         assert_eq!(plan.lacking_prefabs, ["kit_rock", "gone"]);
@@ -548,14 +814,14 @@ mod tests {
         );
 
         // Again: all the same, nothing to ask.
-        let plan = plan_import(&zip, &other, &empty, "attila").unwrap();
+        let plan = plan_import(&zip, &other, &empty, None, "attila").unwrap();
         assert_eq!((plan.new.len(), plan.same.len()), (0, 7));
         assert!(!plan.overwrites());
 
         // Changed there, and a file the zip lacks: overwriting asks, and keeps both aside.
         write(&other.join("terrain/tiles/battle/my_set/my_tile/a/tile.wce"), "<project mine='1'/>");
         write(&other.join("terrain/tiles/battle/my_set/my_tile/a/terrain_layers.wcl"), "x");
-        let plan = plan_import(&zip, &other, &empty, "attila").unwrap();
+        let plan = plan_import(&zip, &other, &empty, None, "attila").unwrap();
         assert_eq!(plan.differs, ["terrain/tiles/battle/my_set/my_tile/a/tile.wce"]);
         assert_eq!(plan.stale, ["terrain/tiles/battle/my_set/my_tile/a/terrain_layers.wcl"]);
         assert!(import(&zip, &other, &plan, false).is_err());
@@ -565,7 +831,7 @@ mod tests {
         assert!(!other.join("terrain/tiles/battle/my_set/my_tile/a/terrain_layers.wcl").exists());
 
         // Another game's is refused.
-        assert!(plan_import(&zip, &other, &empty, "rome2").is_err());
+        assert!(plan_import(&zip, &other, &empty, None, "rome2").is_err());
     }
 
     #[test]
@@ -587,8 +853,89 @@ mod tests {
             variation: "v".into(),
             kit_prefabs: vec!["k".into()],
             missing_prefabs: vec!["m".into()],
+            ..Default::default()
         };
         assert_eq!(Manifest::parse(&m.to_text()).unwrap(), m);
         assert!(Manifest::parse("wce_share 99\nlocation a\nentry b\n").is_err(), "a newer format");
+
+        let p = Manifest { version: 2, game: "attila".into(), kind: ShareKind::Prefab, prefab: "house".into(), ..Default::default() };
+        assert_eq!(Manifest::parse(&p.to_text()).unwrap(), p);
+        assert!(Manifest::parse("wce_share 2\nkind prefab\n").is_err(), "a prefab share names its prefab");
+        assert!(Manifest::parse("wce_share 2\nkind map\nprefab x\n").is_err(), "an unknown kind");
+    }
+
+    #[test]
+    fn a_prefab_share_has_the_prefab_and_the_projects_prefabs_it_uses() {
+        let (dir, raw, _, lib) = projects();
+        let share = collect_prefab("house_block", &raw, &lib, "attila").unwrap();
+        let names = share.files.iter().map(|f| f.0.as_str()).collect::<Vec<_>>();
+        assert_eq!(names, ["art/prefabs/chimney.wce", "art/prefabs/town/house_block.wce"]);
+        assert_eq!(share.manifest.kind, ShareKind::Prefab);
+        assert_eq!(share.manifest.prefab, "house_block");
+        assert!(collect_prefab("kit_rock", &raw, &lib, "attila").is_err(), "the kit's prefab is not shared");
+
+        let zip = dir.path().join("prefab.zip");
+        write_zip(&share, &zip).unwrap();
+        let other = dir.path().join("other/raw_data");
+        let empty = PrefabLibrary::scan(&[other.clone()]);
+        let plan = plan_import(&zip, &other, &empty, None, "attila").unwrap();
+        assert_eq!((plan.manifest.kind, plan.new.len(), plan.stale.len()), (ShareKind::Prefab, 2, 0));
+        assert!(!plan.assets_checked);
+        import(&zip, &other, &plan, false).unwrap();
+        assert!(other.join("art/prefabs/town/house_block.wce").is_file());
+    }
+
+    /// A folder of game files.
+    struct Folder(wce_vfs::files::FolderFiles);
+
+    impl AssetFiles for Folder {
+        fn exists(&self, path: &str) -> bool {
+            wce_vfs::files::Files::exists(&self.0, path)
+        }
+
+        fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
+            wce_vfs::files::Files::list(&self.0, prefix, extension)
+        }
+    }
+
+    #[test]
+    fn the_assets_a_share_places_are_checked_against_the_game_files() {
+        let (dir, raw, loc, lib) = projects();
+        write(
+            &raw.join("art/prefabs/chimney.wce"),
+            r#"<INSTANCE_SELECTION><BUILDING_INSTANCE key="Hut"/><VFXInstance vfx="smoke"/><VFXInstance vfx="gone_fx"/></INSTANCE_SELECTION>"#,
+        );
+        write(
+            &loc.join("b/tile.wce"),
+            r#"<project><VEGETATION_INSTANCE key="beech.beech_e"/><VEGETATION_INSTANCE key="oak.oak_a"/><SIMPLE_MESH_INSTANCE key="RigidModels\Props\Barrel.rigid_model_v2"/><ProjectedDecalInstance key="rigidmodels/decals/mud.rigid_model_v2"/><BUILDING_INSTANCE key="tower"/></project>"#,
+        );
+        let game = dir.path().join("game");
+        for f in [
+            "rigidmodels/buildings/hut/hut_piece01.rigid_model_v2",
+            "vfx/smoke.xml",
+            "battleterrain/vegetation/trees/beech/beech_e.rigid_model_v2",
+            "rigidmodels/props/barrel.rigid_model_v2",
+        ] {
+            write(&game.join(f), "x");
+        }
+
+        let entry = raw.join("terrain/tiles/battle/_tile_database/TILES/my_set_my_tile.xml");
+        let share = collect(&raw, &entry, "terrain/tiles/battle/my_set/my_tile", "a", &raw, &lib, "attila").unwrap();
+        let zip = dir.path().join("shared.zip");
+        write_zip(&share, &zip).unwrap();
+        let other = dir.path().join("other/raw_data");
+        let files = Folder(wce_vfs::files::FolderFiles(game));
+        let plan = plan_import(&zip, &other, &PrefabLibrary::scan(&[other.clone()]), Some(&files), "attila").unwrap();
+        assert!(plan.assets_checked);
+        assert_eq!(
+            plan.lacking_assets,
+            [
+                (AssetKind::Building, "tower".to_owned()),
+                (AssetKind::Tree, "oak.oak_a".to_owned()),
+                (AssetKind::Decal, "rigidmodels/decals/mud.rigid_model_v2".to_owned()),
+                (AssetKind::Vfx, "gone_fx".to_owned()),
+            ]
+        );
+        assert!(plan.lacks());
     }
 }

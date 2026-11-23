@@ -614,9 +614,12 @@ pub struct TileTool {
     pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
     pub(crate) kit_prompt_open: bool,
 
-    /// An import of a shared project that replaces files, asked about (`share_prompt.rs`).
+    /// An import of a shared project or prefab that replaces files or lacks something, asked about (`share_prompt.rs`).
     pub(crate) import_prompt: Option<crate::share_prompt::ImportPrompt>,
     pub(crate) import_prompt_open: bool,
+
+    /// A shared prefab just imported: the Prefab tool opens it on its stage (`prefab_tool.rs`).
+    pub(crate) imported_prefab: Option<String>,
 
     /// What a share or an import has to tell (its failure, or the prefabs it left out or lacks), in a dialog; whether it has to open.
     pub(crate) share_notice: Option<crate::share_prompt::ShareNotice>,
@@ -1041,6 +1044,7 @@ impl Default for TileTool {
             kit_prompt_open: false,
             import_prompt: None,
             import_prompt_open: false,
+            imported_prefab: None,
             share_notice: None,
             share_notice_open: false,
             scratch_set: None,
@@ -6344,6 +6348,36 @@ impl Tool for TileTool {
     fn share_menu(&mut self, e: &mut Editor) -> bool {
         self.share_menu_items(e);
         true
+    }
+
+    fn reloads(&self, e: &Editor) -> bool {
+        document_id(e).is_some()
+    }
+
+    /// The tile closed and opened again: by its database entry and variation when it has one (else its folder), the same copy (a kit's
+    /// tile that has a project too opens as the kit's again).
+    fn reload(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        let id = document_id(e)?;
+        let p = e.docs.find_as::<TileDocument>(id)?.project();
+        let dir = p.dir.clone();
+        let (target, variation) = match (&p.entry, &p.raw_root) {
+            (Some(entry), Some(root)) => {
+                let v = (0..entry.variations().len())
+                    .find(|&i| crate::kit_copy_prompt::same_folder(&entry.variation_folder(root, i), &dir))
+                    .map(|i| i.to_string())
+                    .unwrap_or_default();
+                (entry.file().display().to_string(), v)
+            }
+
+            _ => (dir.display().to_string(), String::new()),
+        };
+
+        e.close_document(id);
+        if !dir.starts_with(Self::workspace_dir(e)) {
+            self.kit_choice = Some(dir);
+        }
+
+        Some(self.open_tile(e, &target, &variation).map(|m| format!("reloaded: {m}")))
     }
 
     fn export_menu(&mut self, e: &mut Editor) -> bool {

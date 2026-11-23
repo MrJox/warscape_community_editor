@@ -2289,6 +2289,24 @@ impl Tool for TerrainTool {
         "assembly_kit/raw_data/terrain/battles"
     }
 
+    fn reloads(&self, e: &Editor) -> bool {
+        self.rx.is_none() && e.docs.of_tool(TERRAIN_TOOL_ID).is_some_and(|id| e.docs.find_as::<MapDocument>(id).is_some())
+    }
+
+    /// File > Reload: the map closed and read again by its name, on a worker as its Open does (the editor asked about unsaved changes first).
+    fn reload(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        if self.rx.is_some() {
+            return Some(Err("the Terrain tool is reading a map: wait for it".to_owned()));
+        }
+
+        let id = e.docs.of_tool(TERRAIN_TOOL_ID)?;
+        let name = e.docs.find_as::<MapDocument>(id)?.name.clone();
+        e.close_document(id);
+        self.refresh_maps(e);
+        self.start_open(e, &name);
+        Some(Ok(format!("reloading {name}")))
+    }
+
     fn export_menu(&mut self, e: &mut Editor) -> bool {
         let can = e.docs.find_as::<MapDocument>(self.shown).is_some_and(|d| d.model().is_some());
         if gui::menu_item("Built files...", None, false, can && self.export.is_none()) {

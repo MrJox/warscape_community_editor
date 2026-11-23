@@ -9,7 +9,7 @@
 //! Tile tool, activated, puts them back.
 
 use std::any::Any;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -22,6 +22,7 @@ use wce_scene::render_scene::{DocumentId, SourceRef};
 use wce_tile::prefab_stage::{FEATHER_ATTR, NORMALIZE_ATTR, STAGE_ATTR, StageSettings};
 use wce_tile::prefab_terrain::DEFAULT_FEATHER;
 use wce_tile::prefabs::{self, PrefabLibrary};
+use wce_tile::share::ShareKind;
 use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
@@ -436,6 +437,87 @@ impl PrefabTool {
         }
 
         self.tile.save_prefab_for_kit(e, &key, None)
+    }
+
+    /// Writes the stage's prefab into a zip to share (`share::collect_prefab`): `out`, or one the user picks. It has to be saved: its file
+    /// is what is shared.
+    ///
+    /// # Errors
+    ///
+    /// None open, unsaved changes, an Assembly Kit's prefab, or the zip can't be written.
+    pub fn share(&mut self, e: &mut Editor, out: Option<&Path>) -> Result<String, String> {
+        let key = self.open_key().ok_or("no prefab on the stage")?.to_owned();
+        if self.stage(e).is_some_and(|d| d.modified()) {
+            return Err(format!("save the prefab first: {key}'s file is what is shared"));
+        }
+
+        self.tile.share_prefab(e, &key, out)
+    }
+
+    /// Asks for a shared prefab and imports it.
+    fn import_shared(&mut self, e: &mut Editor) -> Result<String, String> {
+        let Some(zip) = self.tile.pick_shared(e, ShareKind::Prefab) else { return Ok("import cancelled".to_owned()) };
+        self.import_shared_from(e, &zip, false)
+    }
+
+    /// Imports a shared prefab into the projects' prefabs and opens it on the stage (after the prompt, when it replaces files or uses what
+    /// is not here); `overwrite`: without asking (the console's).
+    ///
+    /// # Errors
+    ///
+    /// Not a shared prefab, another game's, it replaces the stage's prefab while that has unsaved changes, or a file can't be written.
+    pub fn import_shared_from(&mut self, e: &mut Editor, zip: &Path, overwrite: bool) -> Result<String, String> {
+        let plan = self.tile.plan_shared(e, zip, ShareKind::Prefab)?;
+
+        // The stage's prefab is not replaced under its unsaved changes (the stage opens the imported prefab after).
+        if let Some(key) = self.open_key().map(str::to_owned)
+            && self.stage(e).is_some_and(|d| d.modified())
+        {
+            let raw = crate::share_prompt::projects_raw(e);
+            let file =
+                self.library(e).get(&key).and_then(|p| p.path.strip_prefix(&raw).ok().map(|r| r.to_string_lossy().replace('\\', "/")));
+            if file.is_some_and(|f| plan.differs.contains(&f)) {
+                return Err(format!("the shared prefab replaces {key}, on the stage with unsaved changes"));
+            }
+        }
+
+        let msg = self.tile.import_or_ask(e, zip, plan, overwrite)?;
+        Ok(match self.open_imported(e) {
+            Some(Err(why)) => format!("{msg} It did not open: {why}"),
+            _ => msg,
+        })
+    }
+
+    /// A prefab the Tile tool imported (`TileTool::imported_prefab`): the libraries read again, and it opens on the stage.
+    fn open_imported(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        let key = self.tile.imported_prefab.take()?;
+        self.rescan(e);
+        Some(self.open_prefab(e, &key))
+    }
+
+    /// File > Share prefab and File > Import shared prefab.
+    fn share_menu_items(&mut self, e: &mut Editor) {
+        if gui::menu_item("Share prefab...", None, false, self.open.is_some()) {
+            match self.share(e, None) {
+                Ok(msg) => e.status(&msg, false),
+                Err(why) => self.tile.share_failed(e, "Share prefab", &why),
+            }
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(crate::share_prompt::SHARE_PREFAB_TIP);
+        }
+
+        if gui::menu_item("Import shared prefab...", None, false, true) {
+            match self.import_shared(e) {
+                Ok(msg) => e.status(&msg, false),
+                Err(why) => self.tile.share_failed(e, "Import shared prefab", &why),
+            }
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(crate::share_prompt::IMPORT_PREFAB_TIP);
+        }
     }
 
     /// The libraries (this tool's and the Tile tool's) read again, so that the tiles' references follow a save.
@@ -1051,6 +1133,29 @@ fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "prefab_tool_share",
+        "prefab_tool_share <zip>",
+        "write the stage's prefab (and the projects' prefabs it uses) into a zip to share",
+        |e, a| {
+            let Some(out) = a.first().map(PathBuf::from) else { return CommandResult::fail("usage: prefab_tool_share <zip>") };
+            with_prefab(e, |p, e| p.share(e, Some(&out)))
+        },
+    );
+
+    c.add(
+        "prefab_tool_import_shared",
+        "prefab_tool_import_shared <zip> [overwrite]",
+        "import a shared prefab into the projects and open it on the stage; without overwrite, one that replaces files asks first",
+        |e, a| {
+            let Some(zip) = a.first().map(PathBuf::from) else {
+                return CommandResult::fail("usage: prefab_tool_import_shared <zip> [overwrite]");
+            };
+            let overwrite = a.get(1).is_some_and(|w| w == "overwrite");
+            with_prefab(e, |p, e| p.import_shared_from(e, &zip, overwrite))
+        },
+    );
+
     c.add("prefab_tool_close", "prefab_tool_close [discard]", "close the stage", |e, a| {
         let discard = a.first().is_some_and(|v| v == "discard");
         with_prefab(e, |p, e| p.close_stage(e, discard).map(|()| "stage closed".to_owned()))
@@ -1098,6 +1203,17 @@ impl Tool for PrefabTool {
         self.open.is_some().then(|| self.revert(e))
     }
 
+    fn reloads(&self, _: &Editor) -> bool {
+        self.open.is_some()
+    }
+
+    /// File > Reload: the stage made again with the prefab read from its file (the editor asked about unsaved changes first).
+    fn reload(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        let key = self.open_key()?.to_owned();
+        self.rescan(e);
+        Some(self.revert(e).map(|_| format!("{key} reloaded")))
+    }
+
     fn viewport_modes(&mut self, e: &mut Editor) -> bool {
         self.tile.viewport_modes(e)
     }
@@ -1116,6 +1232,11 @@ impl Tool for PrefabTool {
 
     fn edit_menu(&mut self, e: &mut Editor) {
         self.tile.edit_menu(e);
+    }
+
+    fn share_menu(&mut self, e: &mut Editor) -> bool {
+        self.share_menu_items(e);
+        true
     }
 
     fn export_menu(&mut self, e: &mut Editor) -> bool {
@@ -1243,6 +1364,14 @@ impl Tool for PrefabTool {
         }
 
         self.after_save(e);
+
+        // A shared prefab imported after the prompt's answer opens on the stage.
+        match self.open_imported(e) {
+            Some(Ok(msg)) => e.status(&msg, false),
+            Some(Err(why)) => e.status(&format!("the imported prefab did not open: {why}"), true),
+            None => {}
+        }
+
         self.tile.update(e);
         self.update_outline(e);
     }
