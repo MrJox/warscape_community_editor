@@ -164,6 +164,13 @@ impl ObstacleProbe {
             return;
         }
 
+        // A campaign's tree clumps: the camera flies over the forests, as the game's (and a box a clump, tens of thousands of them coming
+        // and going with each rebuild of the forests ahead, had every box read again every second or so while the camera turned: 60 - 90
+        // ms a time).
+        if m.meshes.iter().all(|g| matches!(g.kind, wce_render::model_cache::MeshKind::CampaignVegetation)) {
+            return;
+        }
+
         let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
         for k in 0..8 {
             let c = Float3::new(

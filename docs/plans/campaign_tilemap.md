@@ -138,8 +138,9 @@ Environment and performance:
   headroom, not fps, on this machine.
 - **The weather fold:** the sphere-order rule rests on V2 alone (Attila's Londinium agrees either way).
 - **`g_rain_specular_*` / `g_rain_terrain_*`:** 1 in V2's constants, 0 in the editor's (the campaign's rain constants).
-- **The forests ahead to 240 world units:** their CPU and GPU cost not measured (wants an idle window: `perf` at captures A and F
-  against `TREE_REACH` 0).
+- **The forests to 240 world units around the target:** their GPU cost not measured (wants an idle window: `perf` at captures A and F
+  against `TREE_REACH` 0). The whole circle (2026-11-23; it was the half ahead, by the view's eighth): the same steady frame at TDD's
+  views A and B, 96 000 draw items against 76 000, and no rebuild as the camera turns.
 - **The far ground's colour** varying between runs (olive or pink where no tile data; parked 2026-11-07).
 - **`enviro_vfx_lake_fog`** draws a cloud over Rauros where the game's T1 frame has none (a visibility rule not traced).
 - **Not traced:** where the engine names the campaign cliff texture (fn 0x117ca6f0); the storm clouds' VFX wind source; why the lowest
@@ -176,7 +177,7 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   (`Terrain::no_blend_box` on the floor); a bare floor point is land only away from the faces in a land region of 16 points or more. Cliff
   meshes upload all their rows at once.
 - **Forests:** `MeshKind::CampaignVegetation` through `rigidcampaignvegetation.hlsl` (the game's: docs/re/terry.md, "Forests"), the view's
-  season's diffuse and `commontextures/dissolve.dds`; drawn 240 world units ahead of the view (`prop_models::TREE_REACH`; the game's
+  season's diffuse and `commontextures/dissolve.dds`; drawn 240 world units around the target (`prop_models::TREE_REACH`; the game's
   reach: docs/re/renderer.md, "The campaign map", "The ground's inputs"). Props follow their seasons (`ECSeasonMask` / the markers'
   `seasons`). No grass pass.
 - **Shadows:** the cascades' near was taken in scene units (every split 383 off): fixed; the game's depth analysis ported, its mask
