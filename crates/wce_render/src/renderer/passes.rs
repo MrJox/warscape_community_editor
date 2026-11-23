@@ -921,6 +921,7 @@ impl Renderer {
             // Beside the terrain's plans (`TerrainPlanner::run`): both on the pool, each leaving it partly idle alone.
             let (planned, mut culled): (Vec<super::terrain::PreparedView>, Vec<Visible>) = {
                 use rayon::prelude::*;
+                wce_prof!("shadow.join");
                 let draws = &draws;
                 let planner = self.terrain_planner();
                 rayon::join(
