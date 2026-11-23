@@ -384,6 +384,10 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
     entries and `scene_sample` are gone; the gate copies the samples into its throw-away projects folders and opens them by name
     (`scene_open wce_sample_battle`), and `battle_export_check` reads the battle sample's file. **done** (not run since: the user
     asked for no verification run after this change)
+    Then (user, 2026-11-23): opening the duel's file from File > Open scene file... crashed (ImGui's draw list splitter assert,
+    `imgui_draw.cpp:2260`: the scene opened inside the menu); every open from a menu or a panel now waits for the next frame. The
+    scene lists show the samples shipped beside the program (`samples/cinematic` there or above it), marked; one opened is copied
+    into the projects folder first. **done**
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

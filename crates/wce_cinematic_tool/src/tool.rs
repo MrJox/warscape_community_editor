@@ -354,6 +354,33 @@ impl CinematicTool {
         e.projects_dir().join("cinematics")
     }
 
+    /// The sample scenes shipped with the editor: a `samples/cinematic` folder beside the program or above it (a source checkout's
+    /// `target/release` finds the repository's). None when there is none.
+    fn samples_dir() -> Option<std::path::PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        exe.ancestors().skip(1).take(5).map(|d| d.join("samples").join("cinematic")).find(|d| d.is_dir())
+    }
+
+    /// The scenes to open: the projects folder's (by folder name), then the samples not copied there yet (`sample:<name>`).
+    fn listed_scenes(e: &Editor) -> Vec<String> {
+        let names = |dir: &std::path::Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(dir)
+                .map(|r| {
+                    r.flatten()
+                        .filter(|d| d.path().join("project.json").is_file())
+                        .map(|d| d.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            v.sort();
+            v
+        };
+        let mine = names(&Self::scenes_dir(e));
+        let samples = Self::samples_dir().map(|d| names(&d)).unwrap_or_default();
+        let more: Vec<String> = samples.into_iter().filter(|s| !mine.contains(s)).map(|s| format!("{SAMPLE_PREFIX}{s}")).collect();
+        mine.into_iter().chain(more).collect()
+    }
+
     /// A new scene in `<projects>/cinematics/<key>/project.json` (written when saved).
     fn new_scene_project(&mut self, e: &mut Editor, name: &str) {
         let game = self.files.as_ref().and_then(|f| f.game().map(|g| g.key.to_owned())).unwrap_or_else(|| "attila".into());
@@ -401,6 +428,23 @@ impl CinematicTool {
 
     /// Opens a scene by its project.json path or its folder name under `<projects>/cinematics`.
     fn open_scene(&mut self, e: &mut Editor, what: &str) {
+        let what = match what.strip_prefix(SAMPLE_PREFIX) {
+            Some(name) => {
+                let (Some(from), to) = (Self::samples_dir().map(|d| d.join(name)), Self::scenes_dir(e).join(name)) else {
+                    e.status(&format!("Cinematic: no sample {name}"), true);
+                    return;
+                };
+                if !to.join("project.json").is_file()
+                    && let Err(err) = copy_folder(&from, &to)
+                {
+                    e.status(&format!("Cinematic: copying the sample {name}: {err}"), true);
+                    return;
+                }
+                to.display().to_string()
+            }
+            None => what.to_owned(),
+        };
+        let what = what.as_str();
         let mut path = std::path::PathBuf::from(what);
         if !path.is_absolute() {
             path = Self::scenes_dir(e).join(what);
@@ -1202,29 +1246,20 @@ impl Tool for CinematicTool {
         if gui::menu_item("Open scene file...", None, false, true) {
             let filters = [("Cinematic scene".to_owned(), "project.json".to_owned())];
             if let Some(path) = wce_editor::steam_detect::file_dialog(false, &Self::scenes_dir(e).join("project.json"), &filters) {
-                self.open_scene(e, &path.display().to_string());
+                self.pending.push(Pending::SceneOpen(path.display().to_string()));
             }
         }
         if gui::is_item_hovered() {
             gui::set_tooltip("A scene's project.json anywhere (one of the repository's samples, a scene someone sent)");
         }
         if gui::begin_menu("Open cinematic scene") {
-            let dir = Self::scenes_dir(e);
-            let mut scenes: Vec<String> = std::fs::read_dir(&dir)
-                .map(|r| {
-                    r.flatten()
-                        .filter(|d| d.path().join("project.json").is_file())
-                        .map(|d| d.file_name().to_string_lossy().into_owned())
-                        .collect()
-                })
-                .unwrap_or_default();
-            scenes.sort();
+            let scenes = Self::listed_scenes(e);
             if scenes.is_empty() {
                 gui::text_disabled("No scenes yet");
             }
             for s in scenes {
-                if gui::menu_item(&s, None, false, true) {
-                    self.open_scene(e, &s);
+                if gui::menu_item(&scene_label(&s), None, false, true) {
+                    self.pending.push(Pending::SceneOpen(s));
                 }
             }
             gui::end_menu();
@@ -2074,16 +2109,7 @@ impl Tool for CinematicTool {
         // No scene: the start buttons offer the projects folder's scenes; what they ask for is done here.
         if e.docs.of_tool("cinematic").is_none() && gui::time() as u64 != self.scene_list_at {
             self.scene_list_at = gui::time() as u64;
-            let mut scenes: Vec<String> = std::fs::read_dir(Self::scenes_dir(e))
-                .map(|r| {
-                    r.flatten()
-                        .filter(|d| d.path().join("project.json").is_file())
-                        .map(|d| d.file_name().to_string_lossy().into_owned())
-                        .collect()
-                })
-                .unwrap_or_default();
-            scenes.sort();
-            self.scene.scenes = scenes;
+            self.scene.scenes = Self::listed_scenes(e);
         }
         // Opening the tool without a scene: the panels with the start buttons in front, once.
         if e.docs.of_tool("cinematic").is_none() {
@@ -2097,7 +2123,7 @@ impl Tool for CinematicTool {
         }
         match self.scene.request.take() {
             Some(crate::scene_ui::SceneRequest::New(name)) => self.new_scene_project(e, &name),
-            Some(crate::scene_ui::SceneRequest::Open(name)) => self.open_scene(e, &name),
+            Some(crate::scene_ui::SceneRequest::Open(name)) => self.pending.push(Pending::SceneOpen(name)),
             None => {}
         }
         self.movie_tools.poll(e);
@@ -2244,4 +2270,29 @@ impl Tool for CinematicTool {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// A listed scene's key naming a shipped sample (not yet copied into the projects folder).
+pub const SAMPLE_PREFIX: &str = "sample:";
+
+/// How a listed scene reads: its folder's name, a sample's marked.
+pub fn scene_label(key: &str) -> String {
+    match key.strip_prefix(SAMPLE_PREFIX) {
+        Some(name) => format!("{name}  (sample)"),
+        None => key.to_owned(),
+    }
+}
+
+/// A folder copied, with its subfolders.
+fn copy_folder(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    for entry in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?.flatten() {
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        if src.is_dir() {
+            copy_folder(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
+        }
+    }
+    Ok(())
 }
