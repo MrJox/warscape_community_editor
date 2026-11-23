@@ -201,4 +201,6 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   CPU-bound on the draws (three calls a batch; a pass with more rows than the 256 KB instance buffer held mapped it again for each
   batch; which of the changes below gained most was not measured apart). Now a pass's rows are one
   upload into a buffer grown to fit (`plan_patches`), the surface's second pass draws the first's plan again, and the patches' vertices
-  sit in shared buffers (`PatchPool`), the draws sorted by index and vertex buffer.
+  sit in shared buffers (`PatchPool`), the draws sorted by index and vertex buffer. Then 22 -> 15.3 ms and 21 -> 15.1 ms: the blend
+  boxes had the same overflow (their own buffer now, grown to fit: 4.2 -> 0.4 ms), the batching with a frustum made once a pass, the
+  id hash and no list a batch (1.2 -> 0.75 ms a call), a tile material's eight maps bound in one call.

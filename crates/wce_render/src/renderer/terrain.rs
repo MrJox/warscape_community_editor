@@ -654,6 +654,16 @@ pub(crate) struct TerrainGpuState {
     patch_uploads: u64,
     patch_plan: Option<PatchPlan>,
 
+    /// `plan_patches`' working storage, kept between passes (made per pass, the allocations were a part of its cost): the batches by
+    /// key, each patch drawn with its batch and instance row, the rows in batch order.
+    batch_at: IdMap<(usize, u32), u32>,
+    patch_items: Vec<(u32, [f32; 12])>,
+    patch_rows: Vec<f32>,
+
+    /// The blend boxes' instance rows (every material's in one upload), grown to fit.
+    box_inst_vb: Option<ID3D11Buffer>,
+    box_inst_bytes: usize,
+
     /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
     /// while for its chunk, which goes on the scene after).
     jobs: Arc<std::sync::Mutex<TerrainJobs>>,
@@ -757,26 +767,42 @@ pub(crate) struct TerrainGpuState {
 
 /// The frustum test of an axis-aligned box against a view-projection matrix (D3D clip volume: -w <= x, y <= w, 0 <= z <= w).
 pub(crate) fn box_in_frustum(vp: &Float4x4, bmin: [f32; 3], bmax: [f32; 3]) -> bool {
-    (0..6).all(|plane| {
-        let p: [f32; 4] = std::array::from_fn(|c| {
-            let w = vp.m[3][c];
-            match plane {
-                0 => w + vp.m[0][c],
-                1 => w - vp.m[0][c],
-                2 => w + vp.m[1][c],
-                3 => w - vp.m[1][c],
-                4 => vp.m[2][c],
-                _ => w - vp.m[2][c],
-            }
-        });
+    Frustum::new(vp).contains(bmin, bmax)
+}
 
-        let (x, y, z) = (
-            if p[0] >= 0.0 { bmax[0] } else { bmin[0] },
-            if p[1] >= 0.0 { bmax[1] } else { bmin[1] },
-            if p[2] >= 0.0 { bmax[2] } else { bmin[2] },
-        );
-        p[0] * x + p[1] * y + p[2] * z + p[3] >= 0.0
-    })
+/// A view-projection's six clip planes, made once for the many boxes a pass tests ([`box_in_frustum`] makes them for each box).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Frustum([[f32; 4]; 6]);
+
+impl Frustum {
+    pub(crate) fn new(vp: &Float4x4) -> Self {
+        Self(std::array::from_fn(|plane| {
+            std::array::from_fn(|c| {
+                let w = vp.m[3][c];
+                match plane {
+                    0 => w + vp.m[0][c],
+                    1 => w - vp.m[0][c],
+                    2 => w + vp.m[1][c],
+                    3 => w - vp.m[1][c],
+                    4 => vp.m[2][c],
+                    _ => w - vp.m[2][c],
+                }
+            })
+        }))
+    }
+
+    /// Whether an axis-aligned box is at least partly inside (each plane against the box's corner farthest along its normal).
+    #[inline]
+    pub(crate) fn contains(&self, bmin: [f32; 3], bmax: [f32; 3]) -> bool {
+        self.0.iter().all(|p| {
+            let (x, y, z) = (
+                if p[0] >= 0.0 { bmax[0] } else { bmin[0] },
+                if p[1] >= 0.0 { bmax[1] } else { bmin[1] },
+                if p[2] >= 0.0 { bmax[2] } else { bmin[2] },
+            );
+            p[0] * x + p[1] * y + p[2] * z + p[3] >= 0.0
+        })
+    }
 }
 
 /// The entity transforms the material terrain takes: a turn about y (the context's placements, in steps of 90 degrees for the blend boxes),
@@ -2022,14 +2048,14 @@ impl Renderer {
         let gather =
             wce_foundation::profile::Scope::new(BLEND_GATHER.get_or_init(|| wce_foundation::profile::slot("terrain.blend.gather")));
         let mut by_material: Vec<MaterialBoxes> = vec![];
-        let mut slot: HashMap<(u64, u64, bool), usize> = HashMap::new();
-        let (u, view_proj) = (self.camera.units, self.camera.main_view_proj);
+        let mut slot: IdMap<(u64, u64, bool), usize> = IdMap::default();
+        let (u, frustum) = (self.camera.units, Frustum::new(&self.camera.main_view_proj));
         for e in &ents {
             let Payload::Terrain(t) = &e.payload else { continue };
-            let (Some(m), Some((_, b, rot))) = (t.material.clone(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else {
+            let (Some(m), Some((_, b, rot))) = (t.material.as_ref(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else {
                 continue;
             };
-            if !box_in_frustum(&view_proj, [b[0], b[1], b[2]], [b[3], b[4], b[5]]) {
+            if !frustum.contains([b[0], b[1], b[2]], [b[3], b[4], b[5]]) {
                 continue;
             }
 
@@ -2061,7 +2087,7 @@ impl Renderer {
                 Some(&k) => by_material[k].2.extend(inst),
                 None => {
                     slot.insert(key, by_material.len());
-                    by_material.push((m, t.lf.clone(), inst.to_vec(), snowy));
+                    by_material.push((m.clone(), t.lf.clone(), inst.to_vec(), snowy));
                 }
             }
         }
@@ -2121,13 +2147,10 @@ impl Renderer {
         cbs.set_f("ps_texture_array_cb", "g_layer_exempt_groups", &[1.0e6; 4]);
         cbs.set_f("ps_texture_array_cb", "g_sea_texture_index", &[0.0, 0.0]);
 
-        // g_array_mapping[i] = i (a float per 16-byte element).
-        let mut map = vec![0.0f32; 2048 * 4];
-        for i in 0..2048 {
-            map[i * 4] = i as f32;
-        }
-
-        cbs.set_f("ps_mapping_array", "g_array_mapping", &map);
+        // g_array_mapping[i] = i (a float per 16-byte element), made once.
+        static MAPPING: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+        let map = MAPPING.get_or_init(|| (0..2048).flat_map(|i| [i as f32, 0.0, 0.0, 0.0]).collect());
+        cbs.set_f("ps_mapping_array", "g_array_mapping", map);
         cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &[0.0f32; 400 * 4]);
         // What every material shares, bound once: the shaders, the depth map and the samplers as the blend shader declares them (fn
         // 0x116fd320; filter / address are D3D11 enums): the texture-quality class (vtable 0x11c8bab8, the filter from the texture filtering
@@ -2146,10 +2169,21 @@ impl Renderer {
         bind_sampler(ctx, &blend_ps, "s_normal_array", self.states.s_wrap_linear.as_ref());
 
         // Every material's boxes in the instance buffer at once (a map context blends hundreds of materials: mapping the buffer per
-        // material cost 8 us each), each drawn from its first instance; more than it holds, a buffer's worth at a time.
-        let Some(inst_vb) = self.terrain.inst_vb.clone() else { return };
-        let capacity = INSTANCE_BYTES / 4 / 16;
+        // material cost 8 us each), each drawn from its first instance. Their own buffer, grown to fit: a campaign view's boxes outgrew
+        // the shared 256 KB one, and each material mapped it again for its own (4 ms a frame, two hundred materials). Should it fail to
+        // grow, the shared one a buffer's worth at a time.
         let total = by_material.iter().map(|(_, _, b, _)| b.len() / 16).sum::<usize>();
+        if total * 64 > self.terrain.box_inst_bytes {
+            let size = (total * 64).next_power_of_two().max(INSTANCE_BYTES);
+            self.terrain.box_inst_vb = dynamic_buffer(&self.dev, size, D3D11_BIND_VERTEX_BUFFER);
+            self.terrain.box_inst_bytes = if self.terrain.box_inst_vb.is_some() { size } else { 0 };
+        }
+
+        let (inst_vb, capacity) = match (&self.terrain.box_inst_vb, &self.terrain.inst_vb) {
+            (Some(vb), _) => (vb.clone(), self.terrain.box_inst_bytes / 64),
+            (None, Some(vb)) => (vb.clone(), INSTANCE_BYTES / 64),
+            (None, None) => return,
+        };
         let mut box_first = vec![None; by_material.len()];
         if total <= capacity {
             let all = by_material.iter().flat_map(|(_, _, b, _)| b.iter().copied()).collect::<Vec<f32>>();
@@ -2182,28 +2216,48 @@ impl Renderer {
         // uploading the 6 KB texture-array cbuffer for each of two thousand tiles cost 30 ms a frame on a campaign map's far view.
         let mut uploaded: Option<([f32; 2], [f32; 16])> = None;
         let _draws = wce_foundation::profile::Scope::new(BLEND_DRAWS.get_or_init(|| wce_foundation::profile::slot("terrain.blend.draws")));
+        // A tile material's maps go to their slots in one call over the range they span (eight calls a material, each slot found by its
+        // name, were most of the loop's cost); a slot of that range that is no map of theirs keeps what is bound to it now (the depth
+        // map, else nothing: every slot was cleared above).
+        let tile_slots = TILE_MAPS.map(|name| blend_ps.textures.get(name).copied());
+        let tile_first = tile_slots.iter().flatten().min().copied().unwrap_or(0);
+        let tile_end = tile_slots.iter().flatten().max().map_or(0, |s| s + 1);
+        let mut tile_views: Vec<Option<ID3D11ShaderResourceView>> = vec![None; tile_end.saturating_sub(tile_first) as usize];
+        if let Some(&s) = blend_ps.textures.get("s_depth_map")
+            && (tile_first..tile_end).contains(&s)
+        {
+            tile_views[(s - tile_first) as usize] = self.gbuffer.channels[3].srv.clone();
+        }
+
+        let tile_scale = self.tile_scale();
+        let mut stencil_snow: Option<bool> = None;
         for (k, (m, lf, boxes, snow)) in by_material.into_iter().enumerate() {
             if m.baked && baked_ps.is_none() {
                 break;
             }
 
-            let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
-            if snow {
-                self.ctx.set_depth_stencil_state(self.terrain.ds_stencil_snow.as_ref(), 3);
-            } else {
-                self.ctx.set_depth_stencil_state(self.terrain.ds_stencil.as_ref(), 2);
+            // The stencil state when it changes (the snowy tiles' boxes mark theirs).
+            if stencil_snow != Some(snow) {
+                if snow {
+                    self.ctx.set_depth_stencil_state(self.terrain.ds_stencil_snow.as_ref(), 3);
+                } else {
+                    self.ctx.set_depth_stencil_state(self.terrain.ds_stencil.as_ref(), 2);
+                }
+                stencil_snow = Some(snow);
             }
 
             // The LF map's normals, at uv = (x, -z) / g_world_dimensions (wrapping); a flat normal without one.
+            let g = self.terrain.mat.get(&m.id);
             let lf_normal = lf
                 .as_ref()
                 .and_then(|lf| self.terrain.lf.get(&lf.id))
                 .and_then(|l| l.normal.srv.clone())
-                .or_else(|| g.lf_normal.srv.clone());
+                .or_else(|| g.and_then(|g| g.lf_normal.srv.clone()));
             let world =
                 lf.as_ref().filter(|lf| lf.normal.w > 0).map_or([1.0e6, 1.0e6], |lf| [lf.normal_world[0] * u, lf.normal_world[1] * u]);
             match baked_ps.as_ref().filter(|_| m.baked) {
                 Some(ps) => {
+                    let g = g.cloned().unwrap_or_default();
                     // The first of them: the shader and what they share. They read no scales, and their LF rarely changes.
                     if baked_world != Some(world) {
                         if baked_world.is_none() {
@@ -2230,9 +2284,26 @@ impl Renderer {
                 }
 
                 None => {
+                    // The maps in TILE_MAPS' order, into their slots of the bound range: one call for all of them.
+                    let maps = [
+                        g.and_then(|g| g.alpha.srv.clone()),
+                        g.and_then(|g| g.blend.srv.clone()),
+                        g.and_then(|g| g.index.srv.clone()),
+                        g.and_then(|g| g.normal.srv.clone()),
+                        lf_normal,
+                        g.and_then(|g| g.light_params.clone()),
+                        g.and_then(|g| g.diffuse.srv.clone()),
+                        g.and_then(|g| g.normals.srv.clone()),
+                    ];
+                    for (slot, srv) in tile_slots.iter().zip(maps) {
+                        if let Some(s) = slot {
+                            tile_views[(s - tile_first) as usize] = srv;
+                        }
+                    }
+
                     let mut arr = [0.0f32; 16];
                     for l in 0..4 {
-                        arr[l * 4] = super::tiling(m.pixel_scale[l] * self.tile_scale(), super::ORIGIN_REACH * u);
+                        arr[l * 4] = super::tiling(m.pixel_scale[l] * tile_scale, super::ORIGIN_REACH * u);
                         arr[l * 4 + 1] = m.outfield_scale[l];
                         arr[l * 4 + 2] = m.mid_strength[l];
                     }
@@ -2244,15 +2315,10 @@ impl Renderer {
                         self.upload();
                         uploaded = Some((world, arr));
                     }
-                    let ctx = &self.ctx;
-                    bind_srv(ctx, &blend_ps, "s_alpha_map", g.alpha.srv.as_ref());
-                    bind_srv(ctx, &blend_ps, "s_blend_map", g.blend.srv.as_ref());
-                    bind_srv(ctx, &blend_ps, "s_index_map", g.index.srv.as_ref());
-                    bind_srv(ctx, &blend_ps, "s_normal_map", g.normal.srv.as_ref());
-                    bind_srv(ctx, &blend_ps, "s_lf_normal_map", lf_normal.as_ref());
-                    bind_srv(ctx, &blend_ps, "s_light_params", g.light_params.as_ref());
-                    bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
-                    bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
+
+                    if !tile_views.is_empty() {
+                        self.ctx.ps_set_shader_resources(tile_first, &tile_views);
+                    }
                 }
             }
 
@@ -2849,13 +2915,21 @@ impl Renderer {
             wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
         let (units, origin) = (self.camera.units, self.camera.origin);
         let mut stats = [0u64; 3];
-        let mut rows: Vec<f32> = vec![];
+        let frustum = Frustum::new(cull);
+        let (mut at, mut items, mut rows) = (
+            std::mem::take(&mut self.terrain.batch_at),
+            std::mem::take(&mut self.terrain.patch_items),
+            std::mem::take(&mut self.terrain.patch_rows),
+        );
+        rows.clear();
         let mut planned = Vec::with_capacity(groups.len());
         for ((_, group), &[sx, sz]) in groups.iter().zip(shifts) {
-            // The batches: (heights buffer, patch, size, stride) -> instance rows, by vertices, patch size and stride (the flat patches of
-            // every buffer share one vertex buffer, `hf_patch_vb`).
-            let mut batches: Vec<(usize, usize, [i32; 3], i32, Vec<f32>)> = vec![];
-            let mut at: HashMap<(usize, i32, i32), usize> = HashMap::new();
+            // The batches: (heights buffer, patch, size, stride, patches), by vertices, patch size and stride (the flat patches of every
+            // buffer share one vertex buffer, `hf_patch_vb`); each patch drawn with its batch and its instance row.
+            let mut batches: Vec<(usize, usize, [i32; 3], i32, u32)> = vec![];
+            at.clear();
+            items.clear();
+            let mut last: Option<((usize, u32), u32)> = None;
             for e in group {
                 let custom = matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some());
                 if material_only || custom {
@@ -2864,13 +2938,14 @@ impl Renderer {
 
                 let Some(p) = self.terrain.placed.get(&e.id) else { continue };
                 stats[0] += 1;
-                if !box_in_frustum(cull, p.bmin, p.bmax) {
+                // A terrain of one patch (a campaign tile) is boxed by it: tested once, below.
+                if p.patches.len() > 1 && !frustum.contains(p.bmin, p.bmax) {
                     continue;
                 }
 
                 stats[1] += p.patches.len() as u64;
                 for pp in &p.patches {
-                    if !box_in_frustum(cull, pp.bmin, pp.bmax) {
+                    if !frustum.contains(pp.bmin, pp.bmax) {
                         continue;
                     }
 
@@ -2893,27 +2968,54 @@ impl Renderer {
                         1
                     };
 
-                    let slot = *at.entry((pp.vb, pp.cx * 4096 + pp.cz, k)).or_insert_with(|| {
-                        batches.push((p.key, pp.patch, [pp.cells, pp.cx, pp.cz], k, vec![]));
-                        batches.len() - 1
-                    });
+                    // The key: the vertices, then the patch's size (cx, cz < 4096) and the stride (< 256) packed; neighbours mostly share
+                    // the last one.
+                    let key = (pp.vb, (((pp.cx * 4096 + pp.cz) as u32) << 8) | k as u32);
+                    let b = match last {
+                        Some((lk, b)) if lk == key => b,
+                        _ => {
+                            let b = *at.entry(key).or_insert_with(|| {
+                                batches.push((p.key, pp.patch, [pp.cells, pp.cx, pp.cz], k, 0));
+                                (batches.len() - 1) as u32
+                            });
+                            last = Some((key, b));
+                            b
+                        }
+                    };
+
+                    batches[b as usize].4 += 1;
 
                     // Into the group's frame.
                     let mut row = pp.row;
                     (row[3], row[7], row[11]) = (row[3] - sx * units, row[7] - origin.y * units, row[11] - sz * units);
-                    batches[slot].4.extend(row);
+                    items.push((b, row));
                 }
             }
 
+            // The rows in batch order (each batch's from its first), each placed once.
+            let start = rows.len() / 12;
+            let mut fill: Vec<u32> = Vec::with_capacity(batches.len());
+            let mut n = start as u32;
+            for b in &batches {
+                fill.push(n);
+                n += b.4;
+            }
+
+            let firsts = fill.clone();
+            rows.resize(rows.len() + items.len() * 12, 0.0);
+            for (b, row) in &items {
+                let r = &mut fill[*b as usize];
+                rows[*r as usize * 12..*r as usize * 12 + 12].copy_from_slice(row);
+                *r += 1;
+            }
+
             let mut out = Vec::with_capacity(batches.len());
-            for (key, patch, [cells, cx, cz], stride, batch_rows) in batches {
+            for ((key, patch, [cells, cx, cz], stride, count), first) in batches.into_iter().zip(firsts) {
                 let Some((vb, base)) = self.terrain.hf.get(&key).and_then(|g| g.patches.get(patch)).and_then(HfPatch::vertices) else {
                     continue;
                 };
                 let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, stride);
                 let Some(ib) = ib else { continue };
-                let (first, count) = ((rows.len() / 12) as u32, (batch_rows.len() / 12) as u32);
-                rows.extend_from_slice(&batch_rows);
                 out.push(PatchBatch { vb, base, ib, format: patch_index_format(cells), index_count, first, count });
             }
 
@@ -2946,6 +3048,7 @@ impl Renderer {
             planned.iter_mut().for_each(Vec::clear);
         }
 
+        (self.terrain.batch_at, self.terrain.patch_items, self.terrain.patch_rows) = (at, items, rows);
         self.terrain.patch_uploads += 1;
         self.terrain.patch_plan = Some(PatchPlan { key, upload: self.terrain.patch_uploads, groups: planned, stats });
     }
@@ -3108,6 +3211,10 @@ struct PatchBatch {
     first: u32,
     count: u32,
 }
+
+/// A tile material's maps as the blend shader names them, in the order the blend pass binds them.
+const TILE_MAPS: [&str; 8] =
+    ["s_alpha_map", "s_blend_map", "s_index_map", "s_normal_map", "s_lf_normal_map", "s_light_params", "t_diffuse_array", "t_normal_array"];
 
 /// The patch batching's profile slot (a scope ended before the function's end).
 static BATCH_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
