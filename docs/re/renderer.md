@@ -778,6 +778,10 @@ The resolve (`ps30_terrain_to_gbuffer_ss`) blends from the tiles' ground to a ma
   texel, read two frames later. Its `gbuffer_channel_3_sampler` holds `commontextures/no_texture.dds` (the snow normals' slot left
   bound) through a top-mip-only sampler (`States::s_clamp_point_top`), whose alpha bit 2 leaves only a few edge columns (capture F).
 - Alpha-tested materials cast through `rigidcommon`'s `ps30_shadow_alpha_test`.
+- The terrain in the cascades is coarser than in the main view (capture F, `events.csv`): 0.36, 0.36, 0.38, 0.55 M triangles a
+  cascade against 1.62 M in the depth pass, its patches plain k x k grids (6, 24, 96, 384 indices) where the main view's have
+  stitched edges (30, 72, 192, 576). The editor's cascades take a stride by the cascade's texel, edges stitched (plain, its
+  overlapping 74-cell tiles cast thin seams).
 
 ### Campaign-only constants and tweakables (V)
 
