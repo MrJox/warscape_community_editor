@@ -131,6 +131,11 @@ Characters and armies:
   for battles.
 
 Environment and performance:
+- **The main view's terrain detail on a campaign map:** a stride must divide the patch, and the campaign's tiles are 66, 74 or 138
+  cells a side, so every tile draws at a stride of 2 whatever its distance (63.5 M triangles at TDD's view A, the game's main depth
+  pass 1.6 M at F). Freed (`terrain_grid_ib` narrows the last blocks) it left seams of the ground below at the tiles' overlaps (74 cells
+  on a 64-cell spacing) all over the map: the overlapping tiles want strides that agree. The frame is CPU-bound, so it costs GPU
+  headroom, not fps, on this machine.
 - **The weather fold:** the sphere-order rule rests on V2 alone (Attila's Londinium agrees either way).
 - **`g_rain_specular_*` / `g_rain_terrain_*`:** 1 in V2's constants, 0 in the editor's (the campaign's rain constants).
 - **The forests ahead to 240 world units:** their CPU and GPU cost not measured (wants an idle window: `perf` at captures A and F
@@ -203,4 +208,6 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   upload into a buffer grown to fit (`plan_patches`), the surface's second pass draws the first's plan again, and the patches' vertices
   sit in shared buffers (`PatchPool`), the draws sorted by index and vertex buffer. Then 22 -> 15.3 ms and 21 -> 15.1 ms: the blend
   boxes had the same overflow (their own buffer now, grown to fit: 4.2 -> 0.4 ms), the batching with a frustum made once a pass, the
-  id hash and no list a batch (1.2 -> 0.75 ms a call), a tile material's eight maps bound in one call.
+  id hash and no list a batch (1.2 -> 0.75 ms a call), a tile material's eight maps bound in one call. The shadow cascades' terrain
+  (2026-11-23): 136.5 -> 19.4 M triangles at view A, the frame as it was (CPU-bound): a cascade's stride by its texel (cells up to two
+  texels), past the patch's divisors.

@@ -963,7 +963,9 @@ impl Renderer {
                 // `terrain_enable_shadows`, set for the campaign at the shadow view's quality index 2: gfx_shadow_quality 3).
                 if terrain_material && (!scene.campaign || self.settings.shadow_quality >= 3) {
                     self.ctx.set_rasterizer_state(rs_shadow_terrain.as_ref());
-                    self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c], &light_rel[c]);
+                    // On a campaign map, the patches' stride by the cascade's texel (`draw_terrain_shadow`).
+                    let texel = if scene.campaign { texel_c[c] } else { 0.0 };
+                    self.draw_stats.shadow_triangles += self.draw_terrain_shadow(scene, &light_vp[c], &light_rel[c], texel);
                     self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                     self.ctx.set_vertex_buffers(
                         1,

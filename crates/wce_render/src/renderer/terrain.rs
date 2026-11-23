@@ -664,6 +664,10 @@ pub(crate) struct TerrainGpuState {
     box_inst_vb: Option<ID3D11Buffer>,
     box_inst_bytes: usize,
 
+    /// A campaign shadow cascade's texel (scene units) while `draw_terrain_shadow` draws, else 0: the patches' stride then goes by it
+    /// (`plan_patches`).
+    patch_shadow_texel: f32,
+
     /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
     /// while for its chunk, which goes on the scene after).
     jobs: Arc<std::sync::Mutex<TerrainJobs>>,
@@ -1463,9 +1467,10 @@ impl Renderer {
         self.terrain.lf_zero.clone()
     }
 
-    /// The index buffer of a patch of `cx` x `cz` cells joining every `k`-th vertex (`k` divides both): blocks of k x k cells, two triangles
-    /// each, but the blocks along the patch's edges keep every edge vertex (a fan from the block's centre), so patches at any two strides
-    /// meet without cracks.
+    /// The index buffer of a patch of `cx` x `cz` cells joining every `k`-th vertex: blocks of k x k cells (the last row and column of them
+    /// narrower where k doesn't divide the patch), two triangles each, but the blocks along the patch's edges keep every edge vertex (a fan
+    /// from the block's centre), so patches at any two strides meet without cracks. (The main view's k divides the patch: the campaign's
+    /// tiles, 66, 74 or 138 cells a side, stay at a stride of 2 there; a shadow cascade's go coarser, the last blocks narrower.)
     fn terrain_grid_ib(&mut self, cells: i32, cx: i32, cz: i32, k: i32) -> (Option<ID3D11Buffer>, u32) {
         if let Some(ib) = self.terrain.grid_ib.get(&(cells, cx, cz, k)) {
             return ib.clone();
@@ -1478,7 +1483,7 @@ impl Renderer {
         while z0 < cz {
             let mut x0 = 0;
             while x0 < cx {
-                let (x1, z1) = (x0 + k, z0 + k);
+                let (x1, z1) = ((x0 + k).min(cx), (z0 + k).min(cz));
                 let (a, b, c, d) = (v(x0, z0), v(x1, z0), v(x0, z1), v(x1, z1));
                 let (left, right, bottom, top) = (x0 == 0, x1 == cx, z0 == 0, z1 == cz);
                 if k == 1 || !(left || right || bottom || top) {
@@ -1488,19 +1493,22 @@ impl Renderer {
                     // The perimeter clockwise (up the left side, along the top, down the right, back along the bottom), every vertex on a patch
                     // edge, the corners only elsewhere; a fan from the centre (clockwise too).
                     let mut ring = vec![];
-                    let side = |ring: &mut Vec<u32>, fine: bool, from: (i32, i32), dir: (i32, i32)| {
-                        let n = if fine { k } else { 1 };
-                        let st = k / n;
+                    let side = |ring: &mut Vec<u32>, fine: bool, from: (i32, i32), dir: (i32, i32), len: i32| {
+                        let n = if fine { len } else { 1 };
+                        let st = len / n;
                         for i in 0..n {
                             ring.push(v(from.0 + dir.0 * i * st, from.1 + dir.1 * i * st));
                         }
                     };
 
-                    side(&mut ring, left, (x0, z0), (0, 1));
-                    side(&mut ring, top, (x0, z1), (1, 0));
-                    side(&mut ring, right, (x1, z1), (0, -1));
-                    side(&mut ring, bottom, (x1, z0), (-1, 0));
-                    let centre = v(x0 + k / 2, z0 + k / 2);
+                    let (w, h) = (x1 - x0, z1 - z0);
+                    side(&mut ring, left, (x0, z0), (0, 1), h);
+                    side(&mut ring, top, (x0, z1), (1, 0), w);
+                    side(&mut ring, right, (x1, z1), (0, -1), h);
+                    side(&mut ring, bottom, (x1, z0), (-1, 0), w);
+                    // The centre, or the vertex left of / below it in a block one cell wide (a fan from a point of its side: a few
+                    // triangles of no area).
+                    let centre = v(x0 + w / 2, z0 + h / 2);
                     for i in 0..ring.len() {
                         idx.extend([centre, ring[i], ring[(i + 1) % ring.len()]]);
                     }
@@ -1509,7 +1517,7 @@ impl Renderer {
                 x0 = x1;
             }
 
-            z0 += k;
+            z0 = (z0 + k).min(cz);
         }
 
         let bytes: Vec<u8> = if patch_index_format(cells) == DXGI_FORMAT_R16_UINT {
@@ -2690,8 +2698,10 @@ impl Renderer {
 
     /// The terrain into the bound shadow cascade, as the game casts it: the patches with rigidterrain's `vs30_shadow_new` (geom_new's
     /// placement plus a 9 cm lift past 20 m from the camera) and `ps30_shadow` (clip z / w). `view_proj` (the cascade's, scene units) culls the
-    /// patches, `relative` (the same of positions relative to the render origin) draws them. Returns the triangles drawn.
-    pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4, relative: &Float4x4) -> u64 {
+    /// patches, `relative` (the same of positions relative to the render origin) draws them. `texel` (scene units, 0 for none): the
+    /// cascade's texel, the patches' stride the longest whose cells are at most two of them (the game's campaign cascades take coarser
+    /// patches than its main view: capture F, 0.36 - 0.55 M terrain triangles a cascade against 1.62 M). Returns the triangles drawn.
+    pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4, relative: &Float4x4, texel: f32) -> u64 {
         // Rome 2's shadow vertex shader is its surface one (the LF window through lf_block_cb, two inputs it never reads).
         let rome2 = self.game == super::game::RenderGame::Rome2;
         let (Some(vs), Some(ps)) =
@@ -2715,7 +2725,9 @@ impl Renderer {
 
         self.ctx.set_input_layout(Some(&il));
         let clip = game_clip(relative, self.camera.units);
+        self.terrain.patch_shadow_texel = texel;
         let triangles = self.draw_terrain_patches(&ents, &vs, &ps, view_proj, &clip);
+        self.terrain.patch_shadow_texel = 0.0;
 
         // The cascade's matrix back for the objects after (in the scene's game units: the tile content's may differ).
         self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(relative, self.camera.units).data());
@@ -2900,7 +2912,14 @@ impl Renderer {
             .flat_map(|(_, g)| g.iter())
             .fold(0xCBF2_9CE4_8422_2325u64, |h, e| (h ^ u64::from(e.id)).wrapping_mul(0x0100_0000_01B3));
         let cull_bits: [u32; 16] = std::array::from_fn(|k| cull.m[k / 4][k % 4].to_bits());
-        let key = (self.terrain.frame, cull_bits, [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()], ents, material_only);
+        let shadow_texel = self.terrain.patch_shadow_texel;
+        let key = (
+            self.terrain.frame,
+            cull_bits,
+            [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits(), shadow_texel.to_bits()],
+            ents,
+            material_only,
+        );
         if let Some(p) = &self.terrain.patch_plan
             && p.key == key
             && p.upload == self.terrain.patch_uploads
@@ -2952,14 +2971,27 @@ impl Renderer {
                     stats[2] += 1;
 
                     // The stride by distance: one more halving of the vertices per doubling past LOD_STEPS grid steps (2 m steps: every 2nd
-                    // vertex from 512 m, every 4th from 1 km ...), a power of two that divides the patch.
+                    // vertex from 512 m, every 4th from 1 km ...), a power of two.
                     let k = if p.lod {
                         let (lo, hi) = (pp.bmin, pp.bmax);
                         let (dx, dy, dz) =
                             (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
                         let d = (dx * dx + dy * dy + dz * dz).sqrt() / (LOD_STEPS * p.step);
+                        // A shadow cascade's stride goes by its texel alone (`patch_shadow_texel`): the longest whose cells are at most two
+                        // texels (finer cells cast nothing more). By distance too, one tile's placements split into more batches: more
+                        // draws than the triangles saved, the frame CPU-bound.
+                        let coarse = 2.0 * shadow_texel / p.step;
+                        // The main view's strides divide the patch: a campaign tile overlaps its neighbours (74 cells on a 64-cell
+                        // spacing), and a coarser grid inside one against the other's edge left seams of the ground below all over the
+                        // map. A cascade's go up to the patch's side whatever it is (`terrain_grid_ib` narrows the last blocks); its
+                        // edges keep every vertex as the main view's (plain, as the game's cascades are, they cast thin seams of shadow).
+                        let shadow = shadow_texel > 0.0;
                         let mut k = 1;
-                        while k < pp.cells && d >= (2 * k) as f32 && pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0 {
+                        while k < pp.cells
+                            && 2 * k <= pp.cx.max(pp.cz)
+                            && (if shadow { (2 * k) as f32 <= coarse } else { d >= (2 * k) as f32 })
+                            && (shadow || (pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0))
+                        {
                             k *= 2;
                         }
 
@@ -3191,7 +3223,7 @@ impl Drop for PoolSlot {
 /// A pass's patch draws (`Renderer::plan_patches`): by LF group, the batches with their rows' place in the instance buffer.
 pub(crate) struct PatchPlan {
     /// What it was made for: the frame, the cull matrix, the LOD eye, the entities (hashed), material only; and the upload it made.
-    key: (u64, [u32; 16], [u32; 3], u64, bool),
+    key: (u64, [u32; 16], [u32; 4], u64, bool),
     upload: u64,
 
     /// Its LF groups' batches, in the order of the pass's groups.
