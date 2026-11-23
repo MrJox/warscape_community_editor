@@ -175,6 +175,33 @@ pub(crate) struct HfPatch {
 
     /// A flat patch's height: its vertex buffer is the shared flat one (heights 0), its instances raised by it.
     level: Option<f32>,
+
+    /// Its vertices in a shared buffer (`PatchPool`): `vb` is let go once they are copied there, so the draws of every patch of a size
+    /// bind one buffer and differ only by their first vertex.
+    pooled: Option<Arc<PoolSlot>>,
+}
+
+impl HfPatch {
+    /// Whether it has vertices to draw (its own buffer, the shared flat one or a pool's slot).
+    fn has_geometry(&self) -> bool {
+        self.vb.is_some() || self.pooled.is_some()
+    }
+
+    /// The buffer its vertices are in, and the first of them.
+    fn vertices(&self) -> Option<(ID3D11Buffer, i32)> {
+        match &self.pooled {
+            Some(s) => Some((s.buffer.clone(), s.base)),
+            None => self.vb.clone().map(|vb| (vb, 0)),
+        }
+    }
+
+    /// What tells its vertices apart from other patches' (the batching key): the slot, else the buffer.
+    fn vertices_key(&self) -> usize {
+        match &self.pooled {
+            Some(s) => Arc::as_ptr(s) as usize,
+            None => self.vb.as_ref().map_or(0, |b| b.as_raw() as usize),
+        }
+    }
 }
 
 /// The patches of one heights buffer: every placement of a tile draws the same ones with its own instance rows.
@@ -224,7 +251,7 @@ struct PlacedPatch {
     /// Cells a side of its buffer's patches.
     cells: i32,
 
-    /// Its vertex buffer's address: the patches of one buffer, and every flat patch (they share one), draw as one batch.
+    /// Its vertices' key (`HfPatch::vertices_key`): the patches of one buffer, and every flat patch (they share one), draw as one batch.
     vb: usize,
 }
 
@@ -357,7 +384,7 @@ fn fill_hf(dev: &ID3D11Device, flat_vbs: &FlatPatches, mut g: HfGeo, t: &Terrain
             let (i0, i1) = ((p.pi * cells) as usize, (p.pi * cells + p.cx) as usize);
             let (j0, j1) = ((p.pj * cells) as usize, (p.pj * cells + p.cz) as usize);
             let dirty = !reuse
-                || p.vb.is_none()
+                || !p.has_geometry()
                 || t.heights.is_empty()
                 || old_h.len() != t.heights.len()
                 || (j0..=j1).any(|j| {
@@ -377,6 +404,8 @@ fn fill_hf(dev: &ID3D11Device, flat_vbs: &FlatPatches, mut g: HfGeo, t: &Terrain
 
                 (p.lo, p.hi) = (lo, hi);
                 (p.vb, p.level) = hf_patch_vb(dev, flat_vbs, t, p.pi, p.pj, cells);
+                // Its old slot goes back to the pool; the main thread pools the new vertices (`pool_patches`).
+                p.pooled = None;
             }
 
             p
@@ -614,6 +643,16 @@ pub(crate) struct TerrainGpuState {
 
     /// The flat patches' shared vertex buffers.
     flat_vbs: FlatPatches,
+
+    /// The other patches' vertices, packed into shared buffers by patch size.
+    pool: PatchPool,
+
+    /// The patch draws' instance rows (`plan_patches`: every LF group's of a pass in one upload, grown to fit), the uploads so far, and the
+    /// last pass's plan: the next pass over the same patches in the same frame (the surface's second pass) draws it again as it is.
+    patch_inst_vb: Option<ID3D11Buffer>,
+    patch_inst_bytes: usize,
+    patch_uploads: u64,
+    patch_plan: Option<PatchPlan>,
 
     /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
     /// while for its chunk, which goes on the scene after).
@@ -935,7 +974,9 @@ impl Renderer {
             _ => HfGeo::new(t),
         };
 
-        self.terrain.hf.insert(key, fill_hf(&self.dev, &self.terrain.flat_vbs, g, t));
+        let mut g = fill_hf(&self.dev, &self.terrain.flat_vbs, g, t);
+        self.pool_patches(&mut g);
+        self.terrain.hf.insert(key, g);
         self.terrain.made += 1;
 
         // Whoever placed the old buffer places the new one again.
@@ -971,7 +1012,7 @@ impl Renderer {
             blend_box: None,
         };
         for (k, p) in g.patches.iter().enumerate() {
-            if p.vb.is_none() {
+            if !p.has_geometry() {
                 continue;
             }
 
@@ -1015,7 +1056,7 @@ impl Renderer {
                 (placed.bmin[r], placed.bmax[r]) = (placed.bmin[r].min(bmin[r]), placed.bmax[r].max(bmax[r]));
             }
 
-            let vb = p.vb.as_ref().map_or(0, |b| b.as_raw() as usize);
+            let vb = p.vertices_key();
             placed.patches.push(PlacedPatch { bmin, bmax, cx: p.cx, cz: p.cz, patch: k, row, vb, cells: g.cells });
         }
 
@@ -1541,6 +1582,23 @@ impl Renderer {
         self.terrain.mat.insert(built.id, gpu);
     }
 
+    /// A heights buffer's new patches into the pool (`PatchPool`): their vertices copied on the GPU into a slot, their own buffer let go.
+    /// Not the flat ones (they share one buffer already), and kept in their own buffer when the pool has no room.
+    fn pool_patches(&mut self, g: &mut HfGeo) {
+        for p in &mut g.patches {
+            if p.level.is_some() || p.pooled.is_some() {
+                continue;
+            }
+
+            let Some(vb) = p.vb.clone() else { continue };
+            let Some(slot) = self.terrain.pool.take(&self.dev, g.cells) else { continue };
+            // The patch's buffer is exactly a slot's (cells + 1)² vertices (`hf_patch_vb`).
+            self.ctx.copy_subresource_region(&slot.buffer, 0, [slot.base as u32 * 12, 0, 0], &vb, 0, None);
+            p.pooled = Some(Arc::new(slot));
+            p.vb = None;
+        }
+    }
+
     /// Takes in what the loading threads finished.
     fn poll_terrain_jobs(&mut self) {
         let done = std::mem::take(&mut *self.terrain.jobs.lock().unwrap_or_else(|p| p.into_inner()));
@@ -1549,7 +1607,8 @@ impl Renderer {
         }
 
         let frame = self.clock.frame;
-        for (key, g) in done.hf {
+        for (key, mut g) in done.hf {
+            self.pool_patches(&mut g);
             self.terrain.hf_pending.remove(&key);
             self.terrain.hf_made.insert(key, frame);
             self.terrain.hf.insert(key, g);
@@ -2644,11 +2703,9 @@ impl Renderer {
 
         let (eye, units, origin) = (self.terrain.lod_eye, self.camera.units, self.camera.origin);
         let (view, eye_cb) = (self.camera.cb_view, self.camera.cb_eye);
-        let mut triangles = 0;
-        for (lf, group) in groups {
-            // vs_height_map_cb: the LF window (unorm 0..1 times the map's scale, less its offset, in game units), its size and the world's,
-            // the offset that puts it where it is; the high-frequency height comes from the vertices (the instance rows are in game units).
-            let d = match &lf {
+        let draws: Vec<LfDraw> = groups
+            .iter()
+            .map(|(lf, _)| match lf {
                 Some(lf) => {
                     wce_prof!("terrain.patches.lf_draw");
                     self.lf_draw(lf, eye)
@@ -2664,8 +2721,17 @@ impl Renderer {
                     uv_offset: 0.0,
                     shift: [origin.x, origin.z],
                 },
-            };
+            })
+            .collect();
 
+        let shifts: Vec<[f32; 2]> = draws.iter().map(|d| d.shift).collect();
+        self.plan_patches(&groups, &shifts, cull, material_only);
+        let plan = self.terrain.patch_plan.take();
+        let inst_vb = self.terrain.patch_inst_vb.clone();
+        let mut triangles = 0;
+        for (k, ((_, group), d)) in groups.iter().zip(draws).enumerate() {
+            // vs_height_map_cb: the LF window (unorm 0..1 times the map's scale, less its offset, in game units), its size and the world's,
+            // the offset that puts it where it is; the high-frequency height comes from the vertices (the instance rows are in game units).
             let [sx, sz] = d.shift;
             let cbs = &mut self.cbs;
             cbs.set_f("vs_height_map_cb", "g_height_map_lf_scale", &[d.scale * units]);
@@ -2702,31 +2768,113 @@ impl Renderer {
             // Rome 2's shader filters the LF itself (four samples, its own weights): point samples, else every texel edge is a step.
             bind_sampler(&self.ctx, vs, "s_low_res_height_map", self.states.s_clamp_point.as_ref());
 
-            // The batches: (buffer, patch, stride) -> instance rows.
-            let batching =
-                wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+            // The batches, sorted by index and vertex buffer: each buffer bound when it changes, a draw a batch.
+            let batches = plan.as_ref().and_then(|p| p.groups.get(k)).map_or(&[][..], Vec::as_slice);
+            if let Some(inst_vb) = inst_vb.as_ref().filter(|_| !batches.is_empty()) {
+                wce_prof!("terrain.patches.draw");
+                self.ctx.set_vertex_buffers(1, &[Some(inst_vb.clone())], &[48], &[0]);
+                let (mut vb_at, mut ib_at) = (0usize, 0usize);
+                for b in batches {
+                    let vb_raw = b.vb.as_raw() as usize;
+                    if vb_raw != vb_at {
+                        self.ctx.set_vertex_buffers(0, &[Some(b.vb.clone())], &[12], &[0]);
+                        vb_at = vb_raw;
+                    }
+
+                    let ib_raw = b.ib.as_raw() as usize;
+                    if ib_raw != ib_at {
+                        self.ctx.set_index_buffer(Some(&b.ib), b.format, 0);
+                        ib_at = ib_raw;
+                    }
+
+                    self.ctx.draw_indexed_instanced(b.index_count, b.count, 0, b.base, b.first);
+                    self.draw_stats.draw_calls += 1;
+                    triangles += u64::from(b.index_count / 3) * u64::from(b.count);
+                }
+            }
+
+            if !matches!(how, CustomDraw::None) {
+                wce_prof!("terrain.patches.custom");
+                triangles += self.draw_custom_meshes(group, how, cull, [sx, sz]);
+                if let Some(il) = &geom_il {
+                    self.ctx.set_input_layout(Some(il));
+                    self.bind(vs);
+                }
+            }
+        }
+
+        self.terrain.patch_plan = plan;
+
+        // The camera as it was, and the fog of war's bounds.
+        let cbs = &mut self.cbs;
+        cbs.set_m("camera_VS_PS", "view_projection", clip.data());
+        cbs.set_m("camera_VS_PS", "view", view.data());
+        cbs.set_f("camera_VS_PS", "camera_position", &[eye_cb.x, eye_cb.y, eye_cb.z]);
+        if let Some(w) = self.shroud.world {
+            cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, w[0], w[1]]);
+        }
+        self.upload();
+        triangles
+    }
+
+    /// The patch draws of `groups` (by LF map, each drawn in the frame moved by its shift) inside `cull`: by group, a batch for each patch
+    /// at a stride with its placements' instance rows; every row of every group uploaded at once (`patch_inst_vb`, grown to fit), into
+    /// `terrain.patch_plan`. Taken as it is when the last plan was made for the same patches in the same frame and its rows are still
+    /// the uploaded ones: the surface's two passes draw the same patches (made per pass, the batching and the upload were paid twice).
+    fn plan_patches(
+        &mut self,
+        groups: &[(Option<Arc<LfMap>>, Vec<&wce_scene::render_scene::Entity>)],
+        shifts: &[[f32; 2]],
+        cull: &Float4x4,
+        material_only: bool,
+    ) {
+        let eye = self.terrain.lod_eye;
+        let ents = groups
+            .iter()
+            .flat_map(|(_, g)| g.iter())
+            .fold(0xCBF2_9CE4_8422_2325u64, |h, e| (h ^ u64::from(e.id)).wrapping_mul(0x0100_0000_01B3));
+        let cull_bits: [u32; 16] = std::array::from_fn(|k| cull.m[k / 4][k % 4].to_bits());
+        let key = (self.terrain.frame, cull_bits, [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()], ents, material_only);
+        if let Some(p) = &self.terrain.patch_plan
+            && p.key == key
+            && p.upload == self.terrain.patch_uploads
+        {
+            self.draw_stats.terrain_entities += p.stats[0];
+            self.draw_stats.terrain_tested += p.stats[1];
+            self.draw_stats.terrain_drawn += p.stats[2];
+            return;
+        }
+
+        let batching =
+            wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+        let (units, origin) = (self.camera.units, self.camera.origin);
+        let mut stats = [0u64; 3];
+        let mut rows: Vec<f32> = vec![];
+        let mut planned = Vec::with_capacity(groups.len());
+        for ((_, group), &[sx, sz]) in groups.iter().zip(shifts) {
+            // The batches: (heights buffer, patch, size, stride) -> instance rows, by vertices, patch size and stride (the flat patches of
+            // every buffer share one vertex buffer, `hf_patch_vb`).
             let mut batches: Vec<(usize, usize, [i32; 3], i32, Vec<f32>)> = vec![];
-            // By vertex buffer, patch size and stride: the flat patches of every buffer share one vertex buffer (`hf_patch_vb`).
             let mut at: HashMap<(usize, i32, i32), usize> = HashMap::new();
-            for e in &group {
+            for e in group {
                 let custom = matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some());
                 if material_only || custom {
                     continue;
                 }
 
                 let Some(p) = self.terrain.placed.get(&e.id) else { continue };
-                self.draw_stats.terrain_entities += 1;
+                stats[0] += 1;
                 if !box_in_frustum(cull, p.bmin, p.bmax) {
                     continue;
                 }
 
-                self.draw_stats.terrain_tested += p.patches.len() as u64;
+                stats[1] += p.patches.len() as u64;
                 for pp in &p.patches {
                     if !box_in_frustum(cull, pp.bmin, pp.bmax) {
                         continue;
                     }
 
-                    self.draw_stats.terrain_drawn += 1;
+                    stats[2] += 1;
 
                     // The stride by distance: one more halving of the vertices per doubling past LOD_STEPS grid steps (2 m steps: every 2nd
                     // vertex from 512 m, every 4th from 1 km ...), a power of two that divides the patch.
@@ -2757,67 +2905,49 @@ impl Renderer {
                 }
             }
 
-            drop(batching);
-            wce_prof!("terrain.patches.draw");
-            // Every batch's rows in the instance buffer at once, each drawn from its first; more than it holds, a buffer's worth at a time.
-            let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
-            let capacity = INSTANCE_BYTES / 48;
-            let total = batches.iter().map(|b| b.4.len() / 12).sum::<usize>();
-            let mut first = vec![None; batches.len()];
-            if total <= capacity {
-                let all = batches.iter().flat_map(|b| b.4.iter().copied()).collect::<Vec<f32>>();
-                if self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &all)) {
-                    let mut n = 0u32;
-                    for (k, b) in batches.iter().enumerate() {
-                        first[k] = Some(n);
-                        n += (b.4.len() / 12) as u32;
-                    }
-                }
-            }
-
-            for (k, (key, patch, [cells, cx, cz], stride, rows)) in batches.into_iter().enumerate() {
-                let Some(vb) = self.terrain.hf.get(&key).and_then(|g| g.patches.get(patch)).and_then(|p| p.vb.clone()) else { continue };
+            let mut out = Vec::with_capacity(batches.len());
+            for (key, patch, [cells, cx, cz], stride, batch_rows) in batches {
+                let Some((vb, base)) = self.terrain.hf.get(&key).and_then(|g| g.patches.get(patch)).and_then(HfPatch::vertices) else {
+                    continue;
+                };
                 let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, stride);
-                self.ctx.set_vertex_buffers(0, &[Some(vb), Some(inst_vb.clone())], &[12, 48], &[0, 0]);
-                self.ctx.set_index_buffer(ib.as_ref(), patch_index_format(cells), 0);
-                let count = (rows.len() / 12) as u32;
-                if let Some(first) = first[k] {
-                    self.ctx.draw_indexed_instanced(index_count, count, 0, 0, first);
-                    self.draw_stats.draw_calls += 1;
-                } else {
-                    for chunk in rows.chunks(capacity * 12) {
-                        if !self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, chunk)) {
-                            continue;
-                        }
-
-                        self.ctx.draw_indexed_instanced(index_count, (chunk.len() / 12) as u32, 0, 0, 0);
-                        self.draw_stats.draw_calls += 1;
-                    }
-                }
-
-                triangles += u64::from(index_count / 3) * u64::from(count);
+                let Some(ib) = ib else { continue };
+                let (first, count) = ((rows.len() / 12) as u32, (batch_rows.len() / 12) as u32);
+                rows.extend_from_slice(&batch_rows);
+                out.push(PatchBatch { vb, base, ib, format: patch_index_format(cells), index_count, first, count });
             }
 
-            if !matches!(how, CustomDraw::None) {
-                wce_prof!("terrain.patches.custom");
-                triangles += self.draw_custom_meshes(&group, how, cull, [sx, sz]);
-                if let Some(il) = &geom_il {
-                    self.ctx.set_input_layout(Some(il));
-                    self.bind(vs);
-                }
-            }
+            // By index buffer, then vertex buffer: the draws bind each once. (The surface's depth pass draws the same plan: its equal test
+            // meets the depth the first pass wrote in the same order.)
+            out.sort_by_key(|b| (b.ib.as_raw() as usize, b.vb.as_raw() as usize, b.base));
+            planned.push(out);
         }
 
-        // The camera as it was, and the fog of war's bounds.
-        let cbs = &mut self.cbs;
-        cbs.set_m("camera_VS_PS", "view_projection", clip.data());
-        cbs.set_m("camera_VS_PS", "view", view.data());
-        cbs.set_f("camera_VS_PS", "camera_position", &[eye_cb.x, eye_cb.y, eye_cb.z]);
-        if let Some(w) = self.shroud.world {
-            cbs.set_f("shroud_PS", "g_campaign_world_bounds", &[0.0, 0.0, w[0], w[1]]);
+        drop(batching);
+        self.draw_stats.terrain_entities += stats[0];
+        self.draw_stats.terrain_tested += stats[1];
+        self.draw_stats.terrain_drawn += stats[2];
+
+        // The rows of every group at once, the buffer grown (by powers of two) when they don't fit.
+        let bytes = rows.len() * 4;
+        if bytes > self.terrain.patch_inst_bytes {
+            let size = bytes.next_power_of_two().max(INSTANCE_BYTES);
+            self.terrain.patch_inst_vb = dynamic_buffer(&self.dev, size, D3D11_BIND_VERTEX_BUFFER);
+            self.terrain.patch_inst_bytes = if self.terrain.patch_inst_vb.is_some() { size } else { 0 };
         }
-        self.upload();
-        triangles
+
+        let uploaded = rows.is_empty()
+            || self
+                .terrain
+                .patch_inst_vb
+                .as_ref()
+                .is_some_and(|vb| self.ctx.map(vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &rows)));
+        if !uploaded {
+            planned.iter_mut().for_each(Vec::clear);
+        }
+
+        self.terrain.patch_uploads += 1;
+        self.terrain.patch_plan = Some(PatchPlan { key, upload: self.terrain.patch_uploads, groups: planned, stats });
     }
 }
 
@@ -2862,6 +2992,122 @@ pub(crate) struct FlatPatches(Arc<std::sync::Mutex<Vec<(i32, ID3D11Buffer)>>>);
 unsafe impl Send for FlatPatches {}
 // SAFETY: as above.
 unsafe impl Sync for FlatPatches {}
+
+/// The bytes of one of the pool's buffers (fewer slots a buffer for bigger patches: a campaign tile's 257² vertices take 0.8 MB).
+const POOL_BYTES: usize = 64 << 20;
+
+/// The patches' vertices packed into shared vertex buffers, a buffer a patch size holding a fixed number of slots: the draws of a pass
+/// bind a buffer once and pick a patch by its first vertex, where a buffer a patch made each draw bind its own (a campaign view's
+/// thousands of tiles, CPU-bound on the draws). A slot goes back when its `PoolSlot` is dropped; a buffer with no slot taken goes.
+#[derive(Clone, Default)]
+pub(crate) struct PatchPool(Arc<std::sync::Mutex<Vec<PoolBuf>>>);
+
+struct PoolBuf {
+    cells: i32,
+    slots: u32,
+    free: Vec<u32>,
+    buffer: Option<ID3D11Buffer>,
+}
+
+/// A slot of the pool: its buffer and its first vertex.
+pub(crate) struct PoolSlot {
+    pool: PatchPool,
+    at: usize,
+    slot: u32,
+    buffer: ID3D11Buffer,
+    base: i32,
+}
+
+impl std::fmt::Debug for PoolSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoolSlot").field("at", &self.at).field("slot", &self.slot).field("base", &self.base).finish()
+    }
+}
+
+// SAFETY: as FlatPatches': free-threaded buffers, the mutex guards the list.
+unsafe impl Send for PatchPool {}
+// SAFETY: as above.
+unsafe impl Sync for PatchPool {}
+// SAFETY: as above (a slot holds its buffer and the pool).
+unsafe impl Send for PoolSlot {}
+// SAFETY: as above.
+unsafe impl Sync for PoolSlot {}
+
+impl PatchPool {
+    /// A free slot for a patch of `cells` a side (a new buffer when the others are full), None when no buffer could be made.
+    fn take(&self, dev: &ID3D11Device, cells: i32) -> Option<PoolSlot> {
+        let verts = ((cells + 1) * (cells + 1)) as usize;
+        let mut bufs = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = match bufs.iter().position(|b| b.cells == cells && b.buffer.is_some() && !b.free.is_empty()) {
+            Some(at) => at,
+            None => {
+                let slots = (POOL_BYTES / (verts * 12)).max(1) as u32;
+                let desc = D3D11_BUFFER_DESC {
+                    ByteWidth: slots * (verts * 12) as u32,
+                    Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: D3D11_BIND_VERTEX_BUFFER as u32,
+                    CPUAccessFlags: 0,
+                    MiscFlags: 0,
+                    StructureByteStride: 0,
+                };
+                let buffer = Some(dev.create_buffer(&desc, None).ok()?);
+                // Slot 0 taken first (popped from the end).
+                let b = PoolBuf { cells, slots, free: (0..slots).rev().collect(), buffer };
+                match bufs.iter().position(|b| b.buffer.is_none()) {
+                    Some(at) => {
+                        bufs[at] = b;
+                        at
+                    }
+                    None => {
+                        bufs.push(b);
+                        bufs.len() - 1
+                    }
+                }
+            }
+        };
+
+        let b = &mut bufs[at];
+        let slot = b.free.pop()?;
+        Some(PoolSlot { pool: self.clone(), at, slot, buffer: b.buffer.clone()?, base: (slot as usize * verts) as i32 })
+    }
+}
+
+impl Drop for PoolSlot {
+    fn drop(&mut self) {
+        let mut bufs = self.pool.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(b) = bufs.get_mut(self.at) else { return };
+        b.free.push(self.slot);
+        // An empty buffer goes, unless it is its size's last (a tile coming and going at a ring's edge would make it again and again).
+        let (cells, empty) = (b.cells, b.free.len() == b.slots as usize);
+        if empty && bufs.iter().enumerate().any(|(k, o)| k != self.at && o.cells == cells && o.buffer.is_some()) {
+            bufs[self.at].buffer = None;
+        }
+    }
+}
+
+/// A pass's patch draws (`Renderer::plan_patches`): by LF group, the batches with their rows' place in the instance buffer.
+pub(crate) struct PatchPlan {
+    /// What it was made for: the frame, the cull matrix, the LOD eye, the entities (hashed), material only; and the upload it made.
+    key: (u64, [u32; 16], [u32; 3], u64, bool),
+    upload: u64,
+
+    /// Its LF groups' batches, in the order of the pass's groups.
+    groups: Vec<Vec<PatchBatch>>,
+
+    /// The terrains walked, the patches tested and drawn (the frame's stats, counted again when it is drawn again).
+    stats: [u64; 3],
+}
+
+/// A patch at a stride: its vertices (the buffer, the first), its index buffer, and its placements' rows in the instance buffer.
+struct PatchBatch {
+    vb: ID3D11Buffer,
+    base: i32,
+    ib: ID3D11Buffer,
+    format: DXGI_FORMAT,
+    index_count: u32,
+    first: u32,
+    count: u32,
+}
 
 /// The patch batching's profile slot (a scope ended before the function's end).
 static BATCH_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
