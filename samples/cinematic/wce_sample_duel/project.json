@@ -70,7 +70,7 @@
       "army": 0,
       "start": [
         0.0,
-        -0.85
+        0.0
       ],
       "facing": 0.0,
       "width": 1.0,
@@ -85,9 +85,9 @@
       "army": 1,
       "start": [
         0.0,
-        0.85
+        0.0
       ],
-      "facing": 3.1415927,
+      "facing": 0.0,
       "width": 1.0,
       "men": 1,
       "seed": 4,
@@ -98,7 +98,7 @@
     {
       "id": 2,
       "name": "Intro",
-      "length": 12.0,
+      "length": 12.1,
       "fps": 30,
       "tracks": [
         {
@@ -111,16 +111,16 @@
               {
                 "t": 0.0,
                 "position": [
-                  5.0,
+                  8.192,
                   2.5,
-                  0.0
+                  1.073
                 ],
                 "target": [
-                  0.0,
+                  -0.06,
                   1.3,
-                  0.0
+                  1.073
                 ],
-                "fov": 32.0,
+                "fov": 26.0,
                 "interp": "Smooth"
               }
             ]
@@ -137,47 +137,79 @@
             "actions": [
               {
                 "t": 0.0,
-                "slot": "COMBAT_READY"
+                "slot": "COMBAT_READY",
+                "place": [
+                  -0.1551,
+                  -0.6922,
+                  0.02
+                ]
               },
               {
                 "t": 1.0,
-                "slot": "ATTACK_1"
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/into/cr_to_atk_b_001.anim"
               },
               {
                 "t": 2.3,
-                "slot": "COMBAT_READY"
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/attack/atk_b_to_atk_e_001.anim",
+                "place": [
+                  0.0202,
+                  -0.3285,
+                  0.0
+                ]
               },
               {
-                "t": 2.8,
-                "slot": "DEFEND_1"
+                "t": 3.3,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/attack/atk_e_to_atk_d_001.anim",
+                "place": [
+                  0.0202,
+                  -0.3285,
+                  0.0
+                ]
               },
               {
-                "t": 4.1,
-                "slot": "ATTACK_3"
+                "t": 4.3,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/attack/atk_d_to_atk_b_001.anim",
+                "place": [
+                  0.0499,
+                  1.0959,
+                  0.0
+                ]
               },
               {
-                "t": 5.4,
-                "slot": "BASH_SHIELD_1"
+                "t": 5.1,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/counter/atk_b_to_def_5_001.anim",
+                "place": [
+                  -0.2853,
+                  2.0259,
+                  0.0
+                ]
               },
               {
-                "t": 6.6,
-                "slot": "COMBAT_READY"
+                "t": 5.8,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/counter/def_5_to_atk_d_001.anim",
+                "place": [
+                  -0.0179,
+                  1.6941,
+                  -170.117
+                ]
               },
               {
-                "t": 7.0,
-                "slot": "DEFEND_3"
+                "t": 6.5,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/counter/atk_d_to_def_3_001.anim",
+                "place": [
+                  0.0523,
+                  1.9674,
+                  -344.324
+                ]
               },
               {
-                "t": 8.3,
-                "slot": "ATTACK_2"
-              },
-              {
-                "t": 9.6,
-                "slot": "ATTACK_5"
-              },
-              {
-                "t": 11.0,
-                "slot": "COMBAT_READY"
+                "t": 7.4,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/death/def_3_death_001.anim",
+                "place": [
+                  -0.3944,
+                  0.8643,
+                  -164.324
+                ]
               }
             ],
             "men": [],
@@ -195,47 +227,88 @@
             "actions": [
               {
                 "t": 0.0,
-                "slot": "COMBAT_READY"
+                "slot": "COMBAT_READY",
+                "place": [
+                  -0.0111,
+                  0.9393,
+                  -179.98
+                ]
               },
               {
                 "t": 1.0,
-                "slot": "DEFEND_2"
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/into/cr_to_def_2_001.anim"
               },
               {
                 "t": 2.3,
-                "slot": "COMBAT_READY"
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/defend/def_2_to_def_5_001.anim",
+                "place": [
+                  0.0202,
+                  -0.3285,
+                  0.0
+                ]
               },
               {
-                "t": 2.8,
-                "slot": "ATTACK_2"
+                "t": 3.3,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/defend/def_5_to_def_4_001.anim",
+                "place": [
+                  0.0202,
+                  -0.3285,
+                  0.0
+                ]
               },
               {
-                "t": 4.1,
-                "slot": "DEFEND_1"
+                "t": 4.3,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/defend/def_4_to_def_2_001.anim",
+                "place": [
+                  0.0499,
+                  1.0959,
+                  0.0
+                ]
               },
               {
-                "t": 5.4,
-                "slot": "KNOCKBACK_1"
+                "t": 5.1,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/counter/def_2_to_atk_e_001.anim",
+                "place": [
+                  -0.2853,
+                  2.0259,
+                  0.0
+                ]
               },
               {
-                "t": 6.6,
-                "slot": "COMBAT_READY"
+                "t": 5.8,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/counter/atk_e_to_def_4_001.anim",
+                "place": [
+                  -0.0179,
+                  1.6941,
+                  -170.117
+                ]
               },
               {
-                "t": 7.0,
-                "slot": "ATTACK_4"
+                "t": 6.5,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/counter/def_4_to_atk_c_001.anim",
+                "place": [
+                  0.0523,
+                  1.9674,
+                  -344.324
+                ]
               },
               {
-                "t": 8.3,
-                "slot": "DEFEND_4"
+                "t": 7.4,
+                "slot": "file:animations/rome2/human/battle/sword_and_shield/matched_combat/kill/atk_c_kill_001.anim",
+                "place": [
+                  -0.3944,
+                  0.8643,
+                  -164.324
+                ]
               },
               {
-                "t": 9.6,
-                "slot": "DEFEND_2"
-              },
-              {
-                "t": 11.0,
-                "slot": "COMBAT_READY"
+                "t": 10.1,
+                "slot": "COMBAT_READY",
+                "place": [
+                  -0.0322,
+                  2.2613,
+                  -164.31
+                ]
               }
             ],
             "men": [],
@@ -284,7 +357,7 @@
   ],
   "texts": {
     "battle_description": {
-      "en": "A Roman soldier and a Hun warrior fight."
+      "en": "A Roman soldier and a Hun warrior fight to the death, in the game's matched combat animations."
     },
     "battle_title": {
       "en": "The Sample Duel"

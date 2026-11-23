@@ -12,12 +12,44 @@ use wce_cinematic::eval::SceneFrame;
 use wce_cinematic::scene::Project;
 use wce_editor::editor::Editor;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
+use wce_render::unit_animation::SequenceClip;
 use wce_render::unit_animation::{UnitInstance, UnitModel};
 use wce_render::unit_catalog::{UnitCatalog, formation, ranks_for_width};
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, blend_environments, read_environment};
 use wce_scene::render_scene::DocumentId;
 use wce_scene::render_scene::{EntityId, LayerId, Payload, SourceRef, Terrain, VfxEmitter};
+
+/// The least blend between two keys of a run (seconds): the keys' animations go into each other, never at once.
+const RUN_BLEND: f32 = 0.15;
+
+/// A run of action keys as a model's key (the slot's place): its clips' slots, lengths and places.
+fn encode_run(run: &[wce_cinematic::eval::RunClip]) -> String {
+    let mut s = String::from(RUN_KEY);
+    for c in run {
+        let [x, z, turn] = c.place.unwrap_or([0.0; 3]);
+        s.push_str(&format!("\u{1f}{}\u{1e}{}\u{1e}{}\u{1e}{}\u{1e}{}", c.slot, c.length, x, z, turn));
+    }
+    s
+}
+
+/// The clips of a run's key: (slot, length, place); None for a slot.
+fn decode_run(key: &str) -> Option<Vec<(String, f64, Option<[f32; 3]>)>> {
+    let rest = key.strip_prefix(RUN_KEY)?;
+    Some(
+        rest.split('\u{1f}')
+            .filter(|c| !c.is_empty())
+            .filter_map(|c| {
+                let f: Vec<&str> = c.split('\u{1e}').collect();
+                let n = |i: usize| f.get(i).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                let place = [n(2), n(3), n(4)];
+                Some((f.first()?.to_string(), f.get(1)?.parse().ok()?, (place != [0.0; 3]).then_some(place)))
+            })
+            .collect(),
+    )
+}
+
+const RUN_KEY: &str = "RUN";
 
 /// Soldiers made per unit, slot: the men take them in turn.
 const VARIATIONS: u64 = 6;
@@ -130,16 +162,34 @@ impl Preview {
             let models: Result<Vec<UnitModel>, String> = (0..VARIATIONS)
                 .map(|v| {
                     let mut m = UnitModel::load(&read, &catalog, &k.0, &k.1, seed.wrapping_add(v))?;
-                    if k.2 != "STAND" {
-                        // The key's slot, or one of its family's variants a soldier (the men take the soldiers in turn: not in step);
-                        // a slot the unit's animations don't have keeps its standing pose.
-                        // A rider plays his own (`RIDER_`) slots; the horse follows.
-                        let own: Vec<String> = m.slots().into_iter().map(str::to_owned).collect();
-                        let variants = wce_cinematic::scene::resolve_slot(&k.2, &own, m.mount.is_some());
-                        if let Some(s) = variants.get(v as usize % variants.len().max(1)) {
-                            let s = (*s).to_owned();
-                            let _ = m.play(&read, &s);
+                    // The key's slot, or one of its family's variants a soldier (the men take the soldiers in turn: not in step); a slot
+                    // the unit's animations don't have keeps its standing pose. A rider plays his own (`RIDER_`) slots; the horse follows.
+                    let own: Vec<String> = m.slots().into_iter().map(str::to_owned).collect();
+                    let mounted = m.mount.is_some();
+                    let pick = |slot: &str| -> String {
+                        if slot.starts_with(wce_cinematic::scene::FILE_SLOT) {
+                            return slot.to_owned();
                         }
+                        let variants = wce_cinematic::scene::resolve_slot(slot, &own, mounted);
+                        variants.get(v as usize % variants.len().max(1)).map_or_else(|| slot.to_owned(), |s| (*s).to_owned())
+                    };
+                    if let Some(run) = decode_run(&k.2) {
+                        // A run of keys: one sequence, each clip for its key's time, blending from the one before.
+                        let clips: Vec<SequenceClip> = run
+                            .iter()
+                            .map(|(slot, length, place)| SequenceClip {
+                                slot: pick(slot),
+                                length: *length as f32,
+                                root: place.map_or([0.0; 3], |[x, z, turn]| [x, z, turn.to_radians()]),
+                                // A clip of the packs (a matched combat's) moves as it was made; a slot's stays on the spot.
+                                travel: slot.starts_with(wce_cinematic::scene::FILE_SLOT),
+                                blend_in: RUN_BLEND,
+                            })
+                            .collect();
+                        let _ = m.play_sequence(&read, &clips);
+                    } else if k.2 != "STAND" {
+                        let s = pick(&k.2);
+                        let _ = m.play(&read, &s);
                     }
                     Ok(m)
                 })
@@ -245,7 +295,8 @@ impl Preview {
             for s in frame.units.iter().filter(|s| s.visible && s.men > 0) {
                 let Some(u) = project.unit(s.unit) else { continue };
                 let faction = project.armies.get(u.army).map_or(String::new(), |a| a.faction.clone());
-                let key: ModelKey = (u.unit.clone(), faction.clone(), s.slot.clone());
+                // A run of action keys: one model playing the run (its key the run's clips), timed from the run's first key.
+                let key: ModelKey = (u.unit.clone(), faction.clone(), if s.run.is_empty() { s.slot.clone() } else { encode_run(&s.run) });
                 let stand: ModelKey = (u.unit.clone(), faction, "STAND".into());
                 let models = match self.models.get(&key).or_else(|| self.models.get(&stand)) {
                     Some(m) => m.clone(),

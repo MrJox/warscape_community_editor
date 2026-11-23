@@ -205,7 +205,7 @@ fn unit(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: 
                 for_track(q, c.id, tid, |tr| {
                     if let TrackContent::Unit { actions, .. } = &mut tr.content {
                         actions.retain(|k| (k.t - t).abs() > 1e-6);
-                        actions.push(wce_cinematic::scene::ActionKey { t, slot });
+                        actions.push(wce_cinematic::scene::ActionKey { t, slot, place: None });
                     }
                 });
             }

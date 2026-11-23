@@ -112,6 +112,7 @@ pub fn slot_tip(slot: &str) -> &'static str {
 pub fn slot_missing(slot: &str, own: Option<&[String]>) -> bool {
     !slot.is_empty()
         && slot != AUTO_SLOT
+        && !slot.starts_with(wce_cinematic::scene::FILE_SLOT)
         && own.is_some_and(|s| {
             // A rider's list is his `RIDER_` slots alone.
             let mounted = s.iter().all(|x| x.starts_with("RIDER_"));

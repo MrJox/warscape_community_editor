@@ -133,7 +133,28 @@ pub struct Segment {
     /// How long it plays: the clip's duration, or the rider's segment's on a mount.
     pub length: f32,
     pub blend_in: f32,
+
+    /// Where its root goes in the figure's frame: x, z (scene units of the clip, metres) and a turn about y (radians), applied after the
+    /// travel is taken out (or kept). A sequence's key places a clip so; a schedule's segments have none.
+    pub root: [f32; 3],
+
+    /// Its travel kept: the root moves as the clip has it (a matched combat's clips, authored in one space for both men). Else taken out.
+    pub travel: bool,
 }
+
+/// One clip of a sequence ([`UnitModel::play_sequence`]): a slot (or `file:<path of a .anim>`), how long it plays, where its root goes,
+/// whether it keeps its travel, the least blend from the clip before.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SequenceClip {
+    pub slot: String,
+    pub length: f32,
+    pub root: [f32; 3],
+    pub travel: bool,
+    pub blend_in: f32,
+}
+
+/// The prefix of a slot naming an animation file of the packs instead of a slot of the table.
+pub const FILE_SLOT: &str = "file:";
 
 /// What the scene draws of a unit at a moment.
 #[derive(Clone, Debug)]
@@ -357,6 +378,9 @@ pub struct Figure {
     pub rig: Rig,
     pub set: AnimationSet,
     pub segments: Vec<Segment>,
+
+    /// A sequence played once ([`UnitModel::play_sequence`]): its last frame holds after its end. Else the segments loop.
+    pub held: bool,
 }
 
 /// How long a schedule is, in clips, for a slot with idles.
@@ -398,12 +422,20 @@ impl Figure {
         let set = AnimationSet::load(read, table);
         let rig = Rig::load(read, &set).ok_or_else(|| format!("skeleton '{}' does not load", set.skeleton))?;
         let parts = assemble(read, &variant_path(variant), seed).ok_or_else(|| format!("variant '{variant}' does not load"))?;
-        Ok(Self { parts, rig, set, segments: vec![] })
+        Ok(Self { parts, rig, set, segments: vec![], held: false })
     }
 
     /// A segment of a slot; `length` 0: the clip's. A clip's own skeleton wins over the table's: a mod's rider is on one of its own.
     fn segment(&mut self, read: &Reader, slot: &str, rng: &mut Rng, length: f32) -> Option<Segment> {
-        let entry = pick(self.set.slots.get(slot)?, rng)?.clone();
+        // An animation file of the packs (a matched combat's clip): its metadata beside it, as the fragments name them.
+        let entry = match slot.strip_prefix(FILE_SLOT) {
+            Some(file) => {
+                let meta = file.strip_suffix(".anim").map(|stem| format!("{stem}.meta")).unwrap_or_default();
+                let meta = if read(&wce_vfs::normalize(&meta)).is_some() { meta } else { String::new() };
+                FragmentEntry { slot: slot.to_owned(), filename: file.to_owned(), metadata: meta, ..FragmentEntry::default() }
+            }
+            None => pick(self.set.slots.get(slot)?, rng)?.clone(),
+        };
         let mut clip = self.rig.clip(read, &entry)?;
         let own = clip.anim.skeleton.clone();
         if own != self.rig.skeleton.skeleton
@@ -415,7 +447,7 @@ impl Figure {
 
         let blend_in = entry.flag("blend_in_time").and_then(|b| b.parse().ok()).unwrap_or(0.0);
         let length = if length > 0.0 { length } else { clip.anim.duration().max(1e-3) };
-        Some(Segment { clip: Arc::new(clip), slot: slot.to_owned(), length, blend_in })
+        Some(Segment { clip: Arc::new(clip), slot: slot.to_owned(), length, blend_in, ..Segment::default() })
     }
 
     /// The slots of a schedule for `slot`: the slot alone, or mixed with its idles.
@@ -450,7 +482,8 @@ impl Figure {
 
     /// The segment at `t`, its index and the time inside it.
     fn at(&self, t: f32) -> Option<(usize, f32)> {
-        let mut left = t.rem_euclid(self.duration());
+        // A sequence holds its last frame after its end (and its first before its start); a schedule loops.
+        let mut left = if self.held { t.clamp(0.0, self.duration() - 1e-4) } else { t.rem_euclid(self.duration()) };
         for (k, s) in self.segments.iter().enumerate() {
             if left < s.length {
                 return Some((k, left));
@@ -465,20 +498,28 @@ impl Figure {
     /// The pose at `t`: the segment's clip, coming in from the one before over its blend.
     fn locals_at(&self, k: usize, inside: f32) -> Vec<BoneLocal> {
         let s = &self.segments[k];
-        let in_place = |clip: &Clip, t: f32| {
+        let in_place = |seg: &Segment, t: f32| {
+            let clip = &seg.clip;
             let mut locals = self.rig.locals(clip, t);
-            let [x, z] = clip.travel(t);
+            let [x, z] = if seg.travel { [0.0; 2] } else { clip.travel(t) };
+            let [ox, oz, turn] = seg.root;
+            let (sin, cos) = turn.sin_cos();
+            let q_turn = [0.0, (turn * 0.5).sin(), 0.0, (turn * 0.5).cos()];
             for (l, _) in locals.iter_mut().zip(&clip.anim.parents).filter(|(_, p)| **p < 0) {
-                (l.0[0], l.0[2]) = (l.0[0] - x, l.0[2] - z);
+                let (px, pz) = (l.0[0] - x, l.0[2] - z);
+                (l.0[0], l.0[2]) = (px * cos + pz * sin + ox, -px * sin + pz * cos + oz);
+                if turn != 0.0 {
+                    l.1 = normalised(qmul(q_turn, l.1));
+                }
             }
 
             locals
         };
 
-        let mut locals = in_place(&s.clip, inside);
-        if s.blend_in > 0.0 && inside < s.blend_in {
+        let mut locals = in_place(s, inside);
+        if s.blend_in > 0.0 && inside < s.blend_in && !(self.held && k == 0) {
             let before = &self.segments[(k + self.segments.len() - 1) % self.segments.len()];
-            let from = in_place(&before.clip, (before.length + inside).min(before.clip.anim.duration()));
+            let from = in_place(before, (before.length + inside).min(before.clip.anim.duration()));
             let w = inside / s.blend_in;
             let w = w * w * (3.0 - 2.0 * w);
             for (l, f) in locals.iter_mut().zip(from) {
@@ -551,7 +592,7 @@ impl Figure {
             };
 
             // A clip of its own is authored in the figure's space, as the figure's are: the bone only says what it replaces.
-            let [x, z] = clip.travel(inside);
+            let [x, z] = if self.segments[k].travel { [0.0; 2] } else { clip.travel(inside) };
             let carrier = if prop.anim.is_some() {
                 translation(Float3::new(-x, 0.0, -z))
             } else {
@@ -656,6 +697,58 @@ impl UnitModel {
         }
 
         self.phase = rng.unit() * self.man.duration();
+        true
+    }
+
+    /// Plays `clips` once, one after the other (a timeline's keys): each for its length, placed and turned by its root, blending in from
+    /// the one before over its fragment's blend or the clip's least one; after the last, its last frame holds. A slot the man hasn't plays
+    /// his standing slot for its length, so the clips after it keep their time. A mount follows clip by clip. False when none plays.
+    pub fn play_sequence(&mut self, read: &Reader, clips: &[SequenceClip]) -> bool {
+        let mut rng = Rng(self.seed ^ 0x5851_F42D_4C95_7F2D);
+        let stand = if self.mount.is_some() { "RIDER_STAND" } else { "STAND" };
+        let mut segments = vec![];
+        for (k, c) in clips.iter().enumerate() {
+            let Some(mut s) = self
+                .man
+                .segment(read, &c.slot, &mut rng, c.length.max(1e-3))
+                .or_else(|| self.man.segment(read, stand, &mut rng, c.length.max(1e-3)))
+            else {
+                continue;
+            };
+            s.root = c.root;
+            s.travel = c.travel;
+            s.blend_in = if k == 0 { 0.0 } else { s.blend_in.max(c.blend_in) };
+            segments.push(s);
+        }
+
+        if segments.is_empty() {
+            return false;
+        }
+
+        let lengths: Vec<f32> = segments.iter().map(|s| s.length).collect();
+        let roots: Vec<([f32; 3], bool, f32)> = segments.iter().map(|s| (s.root, s.travel, s.blend_in)).collect();
+        let slots: Vec<String> = segments.iter().map(|s| s.slot.clone()).collect();
+        self.man.segments = segments;
+        self.man.held = true;
+        if let Some(mount) = &mut self.mount {
+            let of_mount: Vec<String> = slots
+                .iter()
+                .map(|s| {
+                    let own = s.strip_prefix("RIDER_").unwrap_or(s);
+                    [own.to_owned(), format!("{own}_1")]
+                        .into_iter()
+                        .find(|o| mount.set.slots.contains_key(o))
+                        .unwrap_or_else(|| "STAND".to_owned())
+                })
+                .collect();
+            mount.play(read, &of_mount, &lengths, &mut rng);
+            for (s, (root, travel, blend)) in mount.segments.iter_mut().zip(roots) {
+                (s.root, s.travel, s.blend_in) = (root, travel, blend);
+            }
+            mount.held = true;
+        }
+
+        self.phase = 0.0;
         true
     }
 
