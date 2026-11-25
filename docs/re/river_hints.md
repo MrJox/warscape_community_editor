@@ -100,6 +100,15 @@ After building them, `FUN_105be570` (and `FUN_102cfba0` for the Views ones) hand
 being the object at `+0xc4` of the game's root) starts at 0 and has no other writer. No debug menu strings, commands or key actions are
 in the dll. Showing the overlay would take writing those bytes in the running process (master +0x242c, *River or Limes* +0x24b4).
 
+**Tried 2026-11-25, and the drawing itself is compiled out too.** A `dinput8.dll` proxy (`~/wce_re/scratch/ai_overlay`, clang +
+lld-link, loaded with `WINEDLLOVERRIDES="dinput8=n,b"`) patched the river flag's initial store (RVA 0x5beb83, `c6 45 00 00` -> `01`)
+and the master check (RVA 0x304be0, `je` -> NOPs); Wine loaded it as native before `Empire.Retail.dll` and it logged "patched". A battle
+on `river_crossing/2x2_riv_bl_lt_road_lb_rt` showed nothing. The chain runs: the drawer (0x10c bytes, `FUN_102c9ea0`) is always made by
+`FUN_102d0060`, filled each frame by `FUN_10304a00`, rendered by `FUN_102f44e0` through the debug line primitives (`FUN_1015ba30` ->
+`FUN_1015ba90`, the debug renderer `DAT_11f30dbc` made at start-up by `FUN_10399900`); but the primitive's last step, the submit
+`FUN_100ca510`, is `ret 8`: one folded empty body shared by 58 call sites. So the developer debug drawing (lines, labels, the
+`Views/...` displays) does not exist in retail; showing it would need our own renderer hooked into the game's frame.
+
 ## Shallow against deep water (2026-11-25)
 
 - **The ground type map is the only thing that tells them apart.** `GT_DEEP_WATER` 6 and `GT_SHALLOW_WATER` 7 come from the tile's
