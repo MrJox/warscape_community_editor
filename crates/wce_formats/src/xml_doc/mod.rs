@@ -293,6 +293,7 @@ impl XmlDoc {
     /// attribute, or the attribute is the file's own (not taken away: that is no edit to undo).
     pub fn remove_added(&mut self, elem: usize, name: &str) -> bool {
         let Some(attr) = self.find_attr(elem, name).filter(|&a| self.elems[elem].attrs[a].appended) else { return false };
+
         self.elems[elem].attrs.remove(attr);
         self.appended_values.remove(&(elem, attr));
         // The added ones after it move down one place.
@@ -304,6 +305,23 @@ impl XmlDoc {
         }
 
         true
+    }
+
+    /// Takes away an attribute, an added one ([`Self::remove_added`]) or one of the text: for the undo of an edit that added it, also
+    /// when the addition has been made part of the text since (a structural edit after it bakes the pending edits). The text's own goes
+    /// as an attribute edit (pending edits baked first; not structural, not journaled). False when it has no such attribute.
+    pub fn remove_attr(&mut self, elem: usize, name: &str) -> bool {
+        if self.remove_added(elem, name) {
+            return true;
+        }
+
+        if self.find_attr(elem, name).is_none() || self.bake_pending().is_err() {
+            return false;
+        }
+
+        let Some(attr) = self.find_attr(elem, name) else { return false };
+        let Some((p, end)) = self.attr_text_span(elem, attr) else { return false };
+        self.replace_text(p, end - p, b"", false).is_ok()
     }
 
     /// Drops every attribute edit. Structural edits stay: undoing those needs [`Self::parse`] of [`Self::origin_bytes`].

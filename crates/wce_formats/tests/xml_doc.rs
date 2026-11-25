@@ -220,6 +220,27 @@ fn an_added_attribute_is_taken_away_and_the_others_added_after_it_stay() {
     assert_eq!(doc.save(), text, "the text as it was");
 }
 
+/// An added attribute a structural edit has made part of the text since (its pending edits baked) is still taken away by `remove_attr`,
+/// after the structural edit is undone.
+#[test]
+fn an_added_attribute_baked_by_a_later_splice_is_taken_away() {
+    let text = b"<a x='1'>\n  <b y=\"2\"/>\n</a>\n".to_vec();
+    let mut doc = XmlDoc::parse(text.clone()).unwrap();
+    doc.set(1, "w", "added");
+    doc.bake_pending().unwrap();
+    let mark = doc.journal_mark();
+    let at = doc.save().len() - b"</a>\n".len();
+    doc.splice(at, 0, b"  <c/>\n").unwrap();
+    let record = doc.journal_since(mark);
+    // Undone last first: the splice, then the attribute's addition.
+    doc.unapply_splice(&record[0]).unwrap();
+    assert!(!doc.remove_added(1, "w"), "no longer an added one");
+    assert!(doc.remove_attr(1, "w"));
+    assert_eq!(doc.get(1, "w"), None);
+    assert_eq!(doc.save(), text, "the text as it was");
+    assert!(!doc.remove_attr(1, "w"), "none left");
+}
+
 #[test]
 fn a_text_read_over_its_file_is_modified_and_saves_as_read() {
     let copy = SAMPLE.replace("k='v'", "k='copy'");

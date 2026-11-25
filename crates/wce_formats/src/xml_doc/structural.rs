@@ -346,8 +346,16 @@ impl XmlDoc {
     /// Fails if the element has no such attribute, or if the result can't be read.
     pub fn without_attr(&self, elem: usize, attr: usize) -> Result<Self> {
         let doc = self.baked()?;
-        let Some(a) = doc.elems[elem].attrs.get(attr) else { return edit_error("no such attribute") };
-        let t0 = &doc.text;
+        let Some((p, end)) = doc.attr_text_span(elem, attr) else { return edit_error("no such attribute") };
+        let mut t = doc.text.clone();
+        t.drain(p..end);
+        doc.rebuilt(&t)
+    }
+
+    /// The text of an attribute of the text (not an added one), with the whitespace before it: from, to.
+    pub(super) fn attr_text_span(&self, elem: usize, attr: usize) -> Option<(usize, usize)> {
+        let a = self.elems.get(elem)?.attrs.get(attr).filter(|a| !a.appended)?;
+        let t0 = &self.text;
 
         // From the separator before the name to the closing quote.
         let end = a.value_off + a.value_len + 1;
@@ -369,8 +377,6 @@ impl XmlDoc {
             p -= 1;
         }
 
-        let mut t = t0.clone();
-        t.drain(p..end);
-        doc.rebuilt(&t)
+        Some((p, end))
     }
 }
