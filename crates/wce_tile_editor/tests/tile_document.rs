@@ -3391,6 +3391,53 @@ fn a_lake_is_a_water_plane_over_its_outline_with_a_basin() {
     assert!(matches!(spill.fix, Some(wce_tile_editor::tile_document::river_links::RiverFix::LakeLevel { .. })));
 }
 
+/// A lake's ground types go only where its water covers the ground: deep over its dug basin, shallow at its edge, none on the dry ground
+/// its plane spans past the outline nor anywhere off its plane.
+#[test]
+fn a_lakes_water_ground_types_lie_only_where_the_ground_is_under_its_water() {
+    let (_dir, mut d) = open_with_river_links_and(true);
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let outline = [(60.0, 60.0), (160.0, 60.0), (160.0, 140.0), (60.0, 140.0)].map(|(x, z)| Float3::new(x, y(&d, x, z), z));
+    let lake = d.create_lake(graph, &outline, None).unwrap();
+    d.set_attribute(lake, "wce_lake_basin", "3");
+    d.tile_mut().finish_road_jobs();
+    let water = d.lake_water(lake);
+    let colour = |name: &str| wce_tile::ground_types::GROUND_TYPES.iter().find(|t| t.0 == name).unwrap().1;
+    let (deep, shallow) = (colour("deep water"), colour("shallow water"));
+    let p = d.project();
+    let g = p.ground.as_ref().unwrap();
+    let border = p.border_m();
+    let (ppx, ppz) = (f64::from(g.width()) / (p.extent_x() + 2.0 * border), f64::from(g.height()) / (p.extent_z() + 2.0 * border));
+    let (hx, hz) = ((0.5 / ppx) as f32, (0.5 / ppz) as f32);
+    let mut counts = (0, 0);
+    for py in 0..g.height() {
+        for px in 0..g.width() {
+            let (x, z) = (((f64::from(px) + 0.5) / ppx - border) as f32, ((f64::from(py) + 0.5) / ppz - border) as f32);
+            let c = g.rgb(px, py);
+            if c != deep && c != shallow {
+                continue;
+            }
+
+            let lowest = [(0.0, 0.0), (-hx, -hz), (hx, -hz), (-hx, hz), (hx, hz)]
+                .iter()
+                .map(|(ox, oz)| y(&d, x + ox, z + oz))
+                .fold(f32::INFINITY, f32::min);
+            assert!(water > lowest - 0.05, "{c:?} at ({x}, {z}): all the ground ({lowest} up) over the water {water}");
+            assert!((52.0 - hx..=168.0 + hx).contains(&x) && (52.0 - hz..=148.0 + hz).contains(&z), "{c:?} off the plane at ({x}, {z})");
+            if c == deep {
+                counts.0 += 1;
+            } else {
+                counts.1 += 1;
+            }
+        }
+    }
+
+    assert!(counts.0 > 0, "deep over its basin: {counts:?}");
+    let mid = g.rgb(((110.0 + border) * ppx) as u32, ((100.0 + border) * ppz) as u32);
+    assert_eq!(mid, deep, "its middle, 3 m under");
+}
+
 /// A lake painted with the area brush: a water plane over the stroke's outline; a second stroke grows it (the plane follows), its water
 /// where it was; a stroke taking away cuts it.
 #[test]
@@ -3564,6 +3611,57 @@ fn a_road_bridge_over_a_river_clears_the_shore_under_its_deck() {
     d.tile_mut().finish_road_jobs();
     d.finish_shores();
     assert!(!solid(&d, under).is_empty(), "back without the bridge");
+}
+
+/// A river's ground types go only where its water covers the ground: deep or shallow by the depth there, nothing on the dry banks under
+/// the edges of its (wider) ribbon.
+#[test]
+fn a_rivers_water_ground_types_lie_only_where_the_ground_is_under_its_water() {
+    let (_dir, mut d) = open_with_river_links_and(true);
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.tile_mut().finish_road_jobs();
+    let colour = |name: &str| wce_tile::ground_types::GROUND_TYPES.iter().find(|t| t.0 == name).unwrap().1;
+    let (deep, shallow) = (colour("deep water"), colour("shallow water"));
+    let p = d.project();
+    let g = p.ground.as_ref().unwrap();
+    let border = p.border_m();
+    let (ppx, ppz) = (f64::from(g.width()) / (p.extent_x() + 2.0 * border), f64::from(g.height()) / (p.extent_z() + 2.0 * border));
+    let (mut wet, mut dry_under_ribbon) = ((0, 0), 0);
+    for py in 0..g.height() {
+        for px in 0..g.width() {
+            let (x, z) = (((f64::from(px) + 0.5) / ppx - border) as f32, ((f64::from(py) + 0.5) / ppz - border) as f32);
+            if !(30.0..230.0).contains(&x) {
+                continue;
+            }
+
+            let c = g.rgb(px, py);
+            let water = d.tile().water_level(x, z);
+            let ground = d.tile().terrain_height(x, z);
+            // A pixel is some 4 m across, on a bank of 30 degrees: some of it under the water is enough.
+            let (hx, hz) = ((0.5 / ppx) as f32, (0.5 / ppz) as f32);
+            let lowest = [(0.0, 0.0), (-hx, -hz), (hx, -hz), (-hx, hz), (hx, hz)]
+                .iter()
+                .map(|(ox, oz)| d.tile().terrain_height(x + ox, z + oz))
+                .fold(f32::INFINITY, f32::min);
+            if c == deep || c == shallow {
+                let w = water.unwrap_or(f32::NEG_INFINITY);
+                assert!(w > lowest - 0.05, "{c:?} at ({x}, {z}): all the ground ({lowest} up) over the water {w}");
+                if c == deep {
+                    wet.0 += 1;
+                } else {
+                    wet.1 += 1;
+                }
+            } else if (z - 128.0).abs() < 22.0 && water.is_some_and(|w| w < ground) {
+                dry_under_ribbon += 1;
+            }
+        }
+    }
+
+    assert!(wet.0 > 0 && wet.1 > 0, "deep in its middle, shallow at its edges: {wet:?}");
+    assert!(dry_under_ribbon > 0, "dry banks under its ribbon, left as they were");
 }
 
 /// A ford's edges are lined with stones and splash, whether or not its river has a shore.
