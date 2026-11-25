@@ -224,7 +224,7 @@ impl TileDocument {
         for q in &p.points[lo..=hi] {
             let t = if (end - start).abs() > 1e-9 { ((q.along - start) / (end - start)).clamp(0.0, 1.0) } else { 0.0 };
             let v = format_number((a + (b - a) * t) * scale);
-            let old = sc.get(points[q.index], attr).unwrap_or_default();
+            let old = sc.get(points[q.index], attr).unwrap_or_else(|| super::commands::ABSENT.to_owned());
             if old != v {
                 steps.push((q.index, attr.to_owned(), old, v));
             }

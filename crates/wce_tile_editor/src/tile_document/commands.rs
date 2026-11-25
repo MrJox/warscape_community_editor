@@ -271,6 +271,10 @@ impl Command<Tile> for TedPointCommand {
     }
 }
 
+/// A [`TedPointAttrsCommand`] step's text for an attribute the point does not have: put back, the attribute an edit added is taken away
+/// (written empty, the point's text came out longer than it was, and the undo entries before it misplaced their text).
+pub(crate) const ABSENT: &str = "\u{1}absent";
+
 /// Attributes of points of one polygon or spline (a spline point's position and handles, its width ...); the steps of one gesture merge.
 pub(crate) struct TedPointAttrsCommand {
     pub name: String,
@@ -287,7 +291,12 @@ impl TedPointAttrsCommand {
         let points = sc.polygon_points(self.elem);
         for (i, attr, old, new) in &self.steps {
             if let Some(&p) = points.get(*i) {
-                sc.set_attr(p, attr, if after { new } else { old });
+                let value = if after { new } else { old };
+                if value == ABSENT {
+                    sc.remove_added_attr(p, attr);
+                } else {
+                    sc.set_attr(p, attr, value);
+                }
             }
         }
     }
