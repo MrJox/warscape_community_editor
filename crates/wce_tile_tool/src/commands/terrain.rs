@@ -392,6 +392,52 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "set_attr",
+        "set_attr <attribute> <value|->",
+        "set an attribute of the selected element as the Inspector does (-: empty); one undo entry",
+        |e, a| {
+            let sel = primary(e);
+            let (Some(attr), Some(value)) = (a.first(), a.get(1)) else { return fail("usage: set_attr <attribute> <value|->") };
+            let value = if value == "-" { "" } else { value.as_str() };
+            let (Some(d), Some(el)) = (document(e), sel) else { return fail("select an element") };
+            if d.set_attribute(el, attr, value) { ok("") } else { fail("not set") }
+        },
+    );
+
+    c.add(
+        "water_at",
+        "water_at <x m> <z m>",
+        "log the water the tile has over a place (rivers, water planes, the sea) and the ground there",
+        |e, a| {
+            let n = |i: usize| a.get(i).and_then(|v| number(v));
+            let (Some(x), Some(z)) = (n(0), n(1)) else { return fail("usage: water_at <x> <z>") };
+            let Some(d) = document(e) else { return fail("no tile open") };
+            let t = d.tile();
+            ok(format!(
+                "water {:?}, ground {:.2}, {} river(s)",
+                t.water_level(x, z),
+                t.terrain_height(x, z),
+                t.tscene().find_all("SplineRiverInstance").len()
+            ))
+        },
+    );
+
+    c.add(
+        "river_tile_gen",
+        "river_tile_gen <seed> [clear]",
+        "make the open tile's relief and its river from link to link by a seed (clear: its instances taken away first; one undo entry)",
+        |e, a| {
+            let Some(seed) = a.first().and_then(|v| v.parse::<u64>().ok()) else { return fail("usage: river_tile_gen <seed> [clear]") };
+            let clear = a.get(1).is_some_and(|v| v == "clear");
+            let Some(d) = document(e) else { return fail("no tile open") };
+            match d.generate_river_tile(seed, clear) {
+                Ok(made) => ok(made),
+                Err(why) => fail(why),
+            }
+        },
+    );
+
+    c.add(
         "river_width",
         "river_width <point> <metres>",
         "set the selected river's point width to that much water as drawn (a width handle's drag; one undo entry)",

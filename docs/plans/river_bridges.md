@@ -40,6 +40,14 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    (noise, faded to 0 over the land edges' 64 m and held under the links' cells); the river's line from its entry link to its exit link
    through random control points (meanders, no loops, square to the edges at the links), its widths randomized, its bed carved, its shore
    on; checked by script on a kit crossing and a ford tile.
+   **Built 2026-11-25** (`generate_river_tile`, script `river_tile_gen <seed> [clear]`): `clear` takes the tile's rivers, roads,
+   buildings, plants, hints, decals and water planes away and resets its paint (the grass group, the ground types cleared); the relief is
+   fBm noise (14 m), faded over the edges' 64 m, with the river's **valley** in it (the ground within 70 m of its smoothed line going to a
+   floor 1 m over the links' water); the river follows `river_line` (square to the edges for 30 m, meanders up to 22 % of its length to the
+   side, never back on itself), is snapped to its links, its water set from one link's height to the other's along it (drawn on the
+   ground, it climbed over hills and flooded the dips), its widths varied -30 .. +40 %. One undo entry; its undo gives back the scene text,
+   the heights and the ground types exactly. Found on the way: `TedPointAttrsCommand` put back an attribute a point had not had as an empty
+   one, the text longer than before, and the undo entries before it misplaced theirs (a crash); it now takes it away (`commands::ABSENT`).
 4. **Dressing**: forest and undergrowth as biome areas away from the water and the road; an island where the river is wide enough (the
    river parted round raised ground); a cliff bank on one side of a stretch (a steeper bank and rocks).
 5. **The road router**: a grid search over the tile from road link to road link, its cost the grade (steep ground avoided), the turns,

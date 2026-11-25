@@ -137,7 +137,7 @@ impl TileDocument {
 
         let Some(&p) = sc.polygon_points(river).get(point) else { return false };
         let width = format_number(metres.max(MIN_WIDTH_M) / t.river_width_scale(river));
-        let mut steps = vec![(point, "width".to_owned(), sc.get(p, "width").unwrap_or_default(), width)];
+        let mut steps = vec![(point, "width".to_owned(), sc.get(p, "width").unwrap_or_else(|| super::commands::ABSENT.to_owned()), width)];
         if let Some(base) = sc.get(p, WIDTH_BASE_ATTR) {
             steps.push((point, WIDTH_BASE_ATTR.to_owned(), base, String::new()));
         }
@@ -180,7 +180,7 @@ impl TileDocument {
                 continue;
             }
 
-            let width = sc.get(p, "width").unwrap_or_default();
+            let width = sc.get(p, "width").unwrap_or_else(|| super::commands::ABSENT.to_owned());
             let base_text = sc.get(p, WIDTH_BASE_ATTR).filter(|v| !v.trim().is_empty());
             let Some(base) = base_text.as_deref().or(Some(width.as_str())).and_then(|v| v.trim().parse::<f64>().ok()) else { continue };
             let (new_width, new_base) = match random {
@@ -192,8 +192,9 @@ impl TileDocument {
                 steps.push((i, "width".to_owned(), width, new_width));
             }
 
-            let old_base = sc.get(p, WIDTH_BASE_ATTR).unwrap_or_default();
-            if old_base != new_base {
+            // A point without a base: put back, it has none again (not an empty one).
+            let old_base = sc.get(p, WIDTH_BASE_ATTR).unwrap_or_else(|| super::commands::ABSENT.to_owned());
+            if old_base != new_base && !(old_base == super::commands::ABSENT && new_base.is_empty()) {
                 steps.push((i, WIDTH_BASE_ATTR.to_owned(), old_base, new_base));
             }
         }

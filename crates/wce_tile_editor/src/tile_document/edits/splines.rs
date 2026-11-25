@@ -267,7 +267,7 @@ impl TileDocument {
         let mut steps = points
             .iter()
             .filter_map(|&i| {
-                let before = sc.get(*elems.get(i)?, attr).unwrap_or_default();
+                let before = sc.get(*elems.get(i)?, attr).unwrap_or_else(|| crate::tile_document::commands::ABSENT.to_owned());
                 Some((i, attr.to_owned(), before, value.to_owned()))
             })
             .collect::<Vec<_>>();
