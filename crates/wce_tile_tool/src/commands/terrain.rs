@@ -391,6 +391,77 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "river_width",
+        "river_width <point> <metres>",
+        "set the selected river's point width to that much water as drawn (a width handle's drag; one undo entry)",
+        |e, a| {
+            let sel = primary(e);
+            let (Some(pt), Some(m)) = (a.first().and_then(|v| v.parse::<usize>().ok()), a.get(1).and_then(|v| number(v))) else {
+                return fail("usage: river_width <point> <metres>");
+            };
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            let g = d.next_gesture();
+            if d.set_river_point_width(r, pt, f64::from(m), g) { ok("") } else { fail("not a point of a river") }
+        },
+    );
+
+    c.add(
+        "river_widths_random",
+        "river_widths_random <min %> <max %> <seed>",
+        "randomize the selected river's point widths within the deviation by the seed (one undo entry)",
+        |e, a| {
+            let sel = primary(e);
+            let n = |i: usize| a.get(i).and_then(|v| number(v));
+            let (Some(lo), Some(hi), Some(seed)) = (n(0), n(1), a.get(2).and_then(|v| v.parse::<u64>().ok())) else {
+                return fail("usage: river_widths_random <min %> <max %> <seed>");
+            };
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            match d.randomize_river_widths(r, f64::from(lo), f64::from(hi), seed) {
+                Ok(n) => ok(format!("{n} point width(s) randomized")),
+                Err(why) => fail(why),
+            }
+        },
+    );
+
+    c.add("river_widths_reset", "river_widths_reset", "put the selected river's randomized widths back (one undo entry)", |e, _| {
+        let sel = primary(e);
+        let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+        match d.reset_river_widths(r) {
+            Ok(n) => ok(format!("{n} point width(s) put back")),
+            Err(why) => fail(why),
+        }
+    });
+
+    c.add(
+        "river_width_handles",
+        "river_width_handles",
+        "log the selected river's width handles: each point and its water's edges",
+        |e, _| {
+            let sel = primary(e);
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            let lines = d
+                .tile()
+                .river_width_handles(r)
+                .iter()
+                .enumerate()
+                .map(|(i, (q, a, b))| {
+                    format!(
+                        "{i}: ({:.1}, {:.1}) edges ({:.1}, {:.1}) ({:.1}, {:.1}), {:.1} m",
+                        q.x,
+                        q.z,
+                        a.x,
+                        a.z,
+                        b.x,
+                        b.z,
+                        (a.x - b.x).hypot(a.z - b.z)
+                    )
+                })
+                .collect::<Vec<_>>();
+            ok(lines.join("\n"))
+        },
+    );
+
     c.add("river_profile", "river_profile", "log the selected river's points along it: how far, the water, joined to a link", |e, _| {
         let sel = primary(e);
         let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };

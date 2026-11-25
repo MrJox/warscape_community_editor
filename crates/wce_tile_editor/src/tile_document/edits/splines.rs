@@ -264,13 +264,23 @@ impl TileDocument {
 
         let sc = self.tile().tscene();
         let elems = sc.polygon_points(elem);
-        let steps = points
+        let mut steps = points
             .iter()
             .filter_map(|&i| {
                 let before = sc.get(*elems.get(i)?, attr).unwrap_or_default();
                 Some((i, attr.to_owned(), before, value.to_owned()))
             })
             .collect::<Vec<_>>();
+        // A river's width set by hand: the width its randomizing starts from from now on (`river_widths.rs`).
+        if attr == "width" {
+            let base = super::super::river_widths::WIDTH_BASE_ATTR;
+            for &i in points {
+                if let Some(b) = elems.get(i).and_then(|&p| sc.get(p, base)) {
+                    steps.push((i, base.to_owned(), b, String::new()));
+                }
+            }
+        }
+
         if steps.is_empty() {
             return false;
         }

@@ -1,12 +1,13 @@
 //! The selected river in the Inspector, below its properties (docs/plans/rivers.md, step 3): its long profile (the water and the ground
 //! under its middle along it; its points dragged up and down there, those joined to a link fixed), *Make downhill*, *Reverse river*, and a
-//! ramp of its points' values between two of them.
+//! ramp of its points' values between two of them, and its widths randomized within a deviation by a seed (`river_widths.rs`).
 
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, col32, v2};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::river_profile::RAMPS;
+use wce_tile_editor::tile_document::river_widths::DEFAULT_WIDTH_DEV;
 
 use crate::tool::{TileTool, primary};
 
@@ -28,11 +29,27 @@ pub(crate) struct RiverUi {
     from: i32,
     to: i32,
     values: [f32; 2],
+
+    /// The width variation's settings shown (the deviation from and to, percent; the seed), and the river they were read from.
+    width_for: Option<usize>,
+    width_dev: [f32; 2],
+    width_seed: i32,
 }
 
 impl Default for RiverUi {
     fn default() -> Self {
-        Self { drag: None, drawing_ford: false, band_drag: None, ramp: 0, from: 0, to: -1, values: [45.0, 30.0] }
+        Self {
+            drag: None,
+            drawing_ford: false,
+            band_drag: None,
+            ramp: 0,
+            from: 0,
+            to: -1,
+            values: [45.0, 30.0],
+            width_for: None,
+            width_dev: [DEFAULT_WIDTH_DEV.0 as f32, DEFAULT_WIDTH_DEV.1 as f32],
+            width_seed: 0,
+        }
     }
 }
 
@@ -336,6 +353,73 @@ impl TileTool {
                 "Sets the value on the points from one to the other, from the first number to the second by their distance along the \
                  river (a river widening towards its mouth). The width is the game's (the river file's), half the point's for today's TEd.",
             );
+        }
+
+        // The widths randomized: each point's within a deviation, drawn by a seed (the river's own settings, read when it is picked).
+        if self.river_ui.width_for != Some(river) {
+            let s = d.tile().river_width_settings(river);
+            self.river_ui.width_for = Some(river);
+            self.river_ui.width_dev = [s.min as f32, s.max as f32];
+            self.river_ui.width_seed = (s.seed % 1_000_000) as i32;
+        }
+
+        gui::separator_text("Width variation");
+        gui::push_text_wrap_pos(0.0);
+        gui::text_disabled(
+            "Each point's width changed by a deviation drawn between the two percentages by the seed: the same seed, the same river. \
+             Randomizing again starts from the widths it had before (no piling up); the points joined to a river link keep theirs. Its \
+             points' widths are also dragged in the viewport, by the squares on the edges of its water.",
+        );
+        gui::pop_text_wrap_pos();
+        gui::row_tip(
+            "deviation (%)",
+            "How much narrower (the first, negative) to how much wider (the second) a point may get, in percent.",
+        );
+        gui::set_next_item_width(-1.0);
+        if gui::drag_float2("##river_width_dev", &mut self.river_ui.width_dev, 0.5, "%.0f %%") {
+            for v in &mut self.river_ui.width_dev {
+                *v = v.clamp(-90.0, 300.0);
+            }
+        }
+
+        gui::row_tip("seed", "The draw: another seed, another set of widths within the same deviation.");
+        let reroll = gui::frame_height();
+        gui::set_next_item_width(gui::content_region_avail().x - reroll - gui::item_spacing().x);
+        gui::input_int("##river_width_seed", &mut self.river_ui.width_seed);
+        self.river_ui.width_seed = self.river_ui.width_seed.max(0);
+        gui::same_line();
+        let mut apply = false;
+        if crate::styled::icon_button(wce_editor::icons::REFRESH_CW, "river_width_reroll", "Another seed, and randomize with it") {
+            self.river_ui.width_seed = ((self.river_ui.width_seed as u32).wrapping_mul(2_654_435_761).wrapping_add(1) % 1_000_000) as i32;
+            apply = true;
+        }
+
+        gui::row("");
+        let half = (gui::content_region_avail().x - gui::item_spacing().x) * 0.5;
+        apply |= gui::button_sized("Randomize widths", v2(half, 0.0));
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Each point's width (but those joined to a river link) within the deviation, by the seed; one undo entry.");
+        }
+
+        if apply {
+            let [a, b] = self.river_ui.width_dev;
+            self.status = match d.randomize_river_widths(river, f64::from(a), f64::from(b), self.river_ui.width_seed as u64) {
+                Ok(n) => format!("{n} point width(s) randomized"),
+                Err(why) => why,
+            };
+        }
+
+        gui::same_line();
+        if gui::button_sized("Reset widths", v2(half, 0.0)) {
+            self.status = match d.reset_river_widths(river) {
+                Ok(0) => "no randomized width to put back".to_owned(),
+                Ok(n) => format!("{n} point width(s) put back"),
+                Err(why) => why,
+            };
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts back the widths the points had before they were randomized (not those set by hand since).");
         }
     }
 }
