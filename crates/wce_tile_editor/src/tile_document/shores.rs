@@ -5,7 +5,7 @@
 
 use wce_foundation::math::Double3;
 use wce_scene::render_scene::RenderScene;
-use wce_tile::shores::{AMOUNTS, ShoreSettings, Water, amount};
+use wce_tile::shores::{AMOUNTS, BRIDGE_MARGIN, Cover, ShoreSettings, Water, amount};
 use wce_tile::ted_scene::TedScene;
 
 use super::biomes::{BiomeItem, item_text};
@@ -113,12 +113,37 @@ impl Tile {
         out
     }
 
-    fn shore_signature(&mut self, waters: &[ShoreWater]) -> u64 {
+    /// The bridges over the tile's waters, seen from above (world metres): the kit's bridges (`bridge` buildings) by their models' bounds
+    /// (none until their models load), the roads' by their decks as their pieces were made. Their shores are cleared under them.
+    fn bridge_covers(&self) -> Vec<Cover> {
+        let mut out = vec![];
+        for e in self.real_building_elems_of(&|c| c == "bridge") {
+            let Some(m) = self.model_of(e).filter(|m| m.ok && m.resolved) else { continue };
+            let w = self.world_matrix(e);
+            let corner = |x: f32, z: f32| {
+                let p = w.transform_point(wce_foundation::math::Float3::new(x, 0.0, z));
+                [p.x, p.z]
+            };
+            let (a, b) = (m.bmin, m.bmax);
+            out.push(Cover::Quad([corner(a.x, a.z), corner(b.x, a.z), corner(b.x, b.z), corner(a.x, b.z)]));
+        }
+
+        for (line, half) in &self.road_bridges {
+            out.push(Cover::Band { line: line.iter().map(|p| [p[0] as f32, p[1] as f32]).collect(), half: *half as f32 });
+        }
+
+        out
+    }
+
+    fn shore_signature(&mut self, waters: &[ShoreWater], covers: &[Cover]) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for w in waters {
             (w.elem, w.seed, w.splashes, format!("{:?}{:?}", w.water, w.settings)).hash(&mut h);
         }
+
+        // The bridges over them: a bridge's model loading, or a road's bridge made, makes them again.
+        format!("{covers:?}").hash(&mut h);
 
         // The ground (as the texture rules hash it) and the buildings and roads they keep off (any edit).
         if let Some(hf) = self.project.height.as_ref() {
@@ -155,7 +180,8 @@ impl Tile {
             return;
         }
 
-        let signature = self.shore_signature(&waters);
+        let covers = self.bridge_covers();
+        let signature = self.shore_signature(&waters, &covers);
         if signature == self.shore_made {
             return;
         }
@@ -174,19 +200,20 @@ impl Tile {
         }
 
         self.shore_seen = signature;
-        self.start_shores(waters, signature);
+        self.start_shores(waters, covers, signature);
         if wait {
             self.take_shores(true);
         }
     }
 
-    fn start_shores(&mut self, waters: Vec<ShoreWater>, signature: u64) {
+    fn start_shores(&mut self, waters: Vec<ShoreWater>, covers: Vec<Cover>, signature: u64) {
         let unit = self.unit();
         let p = &self.project;
         let (mx, mz) = (p.mpp_x(), p.mpp_z());
         let fields = p.height.as_ref().map(|hf| wce_tile::texture_rules::Fields::from_height_field(hf, (mx, mz), unit));
         let border = p.border_m();
-        let keep_off = self.keep_off();
+        // The buildings but the bridges (round, they would clear the banks far up and down the river): their footprints instead, below.
+        let keep_off = self.keep_off_with(false);
         // What they are made of: the tables' (`tables/<game>/shores.toml`).
         let keys = wce_tile::shores::keys().clone();
         let job = super::jobs::Job::spawn("shores", move || {
@@ -194,7 +221,9 @@ impl Tile {
             let height = |x: f32, z: f32| fields.as_ref().map_or(0.0, |f| f.height(f64::from(x) + border, f64::from(z) + border) as f32);
             let mut out = vec![];
             for w in &waters {
-                let shore = wce_tile::shores::place(&w.water, &w.settings, &keys, &height, &|x, z| keep_off.blocked(x, z), w.seed);
+                let mut shore = wce_tile::shores::place(&w.water, &w.settings, &keys, &height, &|x, z| keep_off.blocked(x, z), w.seed);
+                // Nothing of the river's own under a bridge over it: its reeds, stones and rocks would poke through the deck.
+                shore.clear_under(&covers, BRIDGE_MARGIN);
                 // The bank's decals: projected on the ground, at their size (the kit's ford decals are freeform, as these).
                 for p in &shore.decals {
                     let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
@@ -288,6 +317,12 @@ impl Tile {
         let reeds = self.shore_items.iter().filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE")).count();
         let stones = self.shore_items.iter().filter(|i| i.text.starts_with(b"<BUILDING_INSTANCE")).count();
         (reeds, stones)
+    }
+
+    /// The roads' bridges as the shores keep off them: each deck's centre line and half its width (world metres).
+    #[must_use]
+    pub fn road_bridge_lines(&self) -> Vec<(Vec<[f64; 2]>, f64)> {
+        self.road_bridges.clone()
     }
 
     /// The shore items within a box (x0, z0, x1, z1, world metres): each one's element type, key and place (a script's look).

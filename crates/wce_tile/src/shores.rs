@@ -288,6 +288,63 @@ pub struct Shore {
     pub bank_pieces: Vec<Placed>,
 }
 
+/// What stands over a shore, seen from above (world metres): a building's footprint (its model's bounds, turned and scaled: four corners
+/// in order round it) or a road's deck (its centre line and half its width).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cover {
+    Quad([[f32; 2]; 4]),
+    Band { line: Vec<[f32; 2]>, half: f32 },
+}
+
+/// How far round a bridge's footprint its shore's reeds, stones and rocks are taken away (metres): their own size, so that none pokes
+/// through its deck or its ramps.
+pub const BRIDGE_MARGIN: f32 = 2.0;
+
+impl Cover {
+    /// Whether a place is under it, or within `margin` of its edge.
+    #[must_use]
+    pub fn covers(&self, x: f32, z: f32, margin: f32) -> bool {
+        match self {
+            Self::Quad(q) => {
+                // Inside: on the same side of every edge (either winding).
+                let side = |a: [f32; 2], b: [f32; 2]| (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]);
+                let s = [side(q[0], q[1]), side(q[1], q[2]), side(q[2], q[3]), side(q[3], q[0])];
+                let inside = s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0);
+                inside || (0..4).any(|i| segment_distance([x, z], q[i], q[(i + 1) % 4]) <= margin)
+            }
+
+            Self::Band { line, half } => match line.as_slice() {
+                [] => false,
+                [p] => (x - p[0]).hypot(z - p[1]) <= half + margin,
+                _ => line.windows(2).any(|w| segment_distance([x, z], w[0], w[1]) <= half + margin),
+            },
+        }
+    }
+}
+
+/// How far a point is from a segment.
+fn segment_distance(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+    let l2 = dx * dx + dz * dz;
+    let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dz)
+}
+
+impl Shore {
+    /// Takes away its reeds (and lilies), stones and bank rocks and mounds under what covers it (`margin` round each): a bridge over the
+    /// water, which they would poke through. Its decals (flat on the ground) and its fords' splashes (on the water) stay.
+    pub fn clear_under(&mut self, covers: &[Cover], margin: f32) {
+        if covers.is_empty() {
+            return;
+        }
+
+        let clear = |list: &mut Vec<Placed>| list.retain(|p| !covers.iter().any(|c| c.covers(p.x, p.z, margin)));
+        clear(&mut self.reeds);
+        clear(&mut self.stones);
+        clear(&mut self.bank_pieces);
+    }
+}
+
 /// How far apart along a bank its dressing is looked for (metres).
 const BANK_STEP: f32 = 4.0;
 
@@ -793,6 +850,34 @@ mod tests {
         let empty = bins.iter().filter(|&&n| n == 0).count();
         let full = bins.iter().filter(|&&n| n >= 8).count();
         assert!(empty >= 8 && full >= 8, "beds and gaps: {bins:?}");
+    }
+
+    #[test]
+    fn a_bridge_over_the_river_clears_its_shore_under_it_and_nowhere_else() {
+        let (w, g) = river();
+        let s = ShoreSettings::of(1.0, 1.0).with_decals(1.0, 1.0);
+        let full = place(&w, &s, &ShoreKeys::default(), &g, &|_, _| false, 5);
+        // A kit bridge across the river at x 100 (8 m wide, 30 m long, turned), and a road's deck across it at x 160 (6 m wide).
+        let quad = Cover::Quad([[96.0, 35.0], [104.0, 35.0], [104.0, 65.0], [96.0, 65.0]]);
+        let band = Cover::Band { line: vec![[160.0, 30.0], [160.0, 70.0]], half: 3.0 };
+        let mut cleared = full.clone();
+        cleared.clear_under(&[quad.clone(), band.clone()], BRIDGE_MARGIN);
+        let under = |p: &Placed| (p.x - 100.0).abs() <= 4.0 + BRIDGE_MARGIN || (p.x - 160.0).abs() <= 3.0 + BRIDGE_MARGIN;
+        let solid = |sh: &Shore| sh.reeds.iter().chain(&sh.stones).chain(&sh.bank_pieces).cloned().collect::<Vec<_>>();
+        assert!(solid(&full).iter().any(under), "the test river has a shore under both bridges");
+        assert!(!solid(&cleared).iter().any(under), "none left under either");
+        let kept = solid(&full).into_iter().filter(|p| !under(p)).collect::<Vec<_>>();
+        assert_eq!(kept, solid(&cleared), "everything else as it was");
+        assert_eq!(full.decals, cleared.decals, "decals stay");
+        assert_eq!(full.splashes, cleared.splashes, "splashes stay");
+    }
+
+    #[test]
+    fn a_cover_takes_its_margin_and_either_winding() {
+        let q = Cover::Quad([[0.0, 0.0], [0.0, 10.0], [4.0, 10.0], [4.0, 0.0]]);
+        assert!(q.covers(2.0, 5.0, 0.0) && q.covers(5.5, 5.0, 2.0) && !q.covers(6.5, 5.0, 2.0));
+        let b = Cover::Band { line: vec![[0.0, 0.0], [10.0, 0.0]], half: 1.0 };
+        assert!(b.covers(5.0, 2.5, 2.0) && !b.covers(5.0, 3.5, 2.0) && b.covers(11.5, 0.0, 1.0) && !b.covers(12.5, 0.0, 1.0));
     }
 
     #[test]
