@@ -17,22 +17,44 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
 - TDD's `battlefield_buildings` has bridges of its own: `bridge_stone_1`, `bridge_stgon_1`, `gondor_bridge_small`,
   `gondor_bridge_large_*`, `moria_bridge_rough`, `pontoon`, `road_planks`, `bridge_wood_20m`.
 
+## Decisions (user, 2026-11-25)
+
+| Question | Answer |
+|---|---|
+| What first | The 2 x 2 tiles at TDD's campaign crossings: crossings (a road and a bridge) where roads arrive, fords where none do; then the plain river tiles with the same generator |
+| How they reach the game | **New variations** (`bb`, `cc`, ...) of the existing tiles, the same names and links; the map patch picks one per placement by a seed; nothing vanilla replaced. The battle tile database in the pack is the one the game reads (TDD's) with the new variations added |
+| Ground | **Fresh relief by seed** (rolling hills and valleys by noise), faded to the edges' heights where neighbours meet |
+| Bridge | The editor's **generated wooden bridge** (procedural roads); TDD's bridges later |
+| Roads | A dirt road from road link to road link, routed round steep ground (a semi-random way, curving round the terrain); over the river a bridge; with one road link: from it, over the river, ending somewhere on the far side |
+| No road link | A ford |
+| Terrain | The river from link to link along a natural, random path (curves), and the tile dressed: islands, a cliff bank, forest |
+
 ## Steps
 
-1. **The 27 kit crossings into a pack** (done 2026-11-25): `wce_tile_io` example `kit_tiles_pack` exports kit tiles as their folders alone
-   (no tile database: the game's lists them) and checks each one's height range against the database the game reads (all 27 the same) and,
-   with `--compare`, its files against the packs' (the 2 that ship: the export is today's compile, theirs an older one). Output:
-   `~/wce_re/scratch/river_bridges/wce_river_crossings.pack` (27 tiles, 1,084 files, 46 MB). **In game**: a battle on one of them.
-2. **The battle map patched**: a tool reading TDD's campaign and battle tile lists (and `tile_map.tiles` / `.index`: which one the game
-   reads for a campaign battle is to be checked, so both are written alike), replacing each ford placed under a campaign crossing with the
-   battle crossing of the campaign tile's name and rotation, after checking that its river and road links meet the neighbours as the ford's
-   did; the other cases reported, not changed. Written into a pack of its own (after TDD's in load order).
-3. **TDD-styled bridges**: variations of the crossing tiles (the river and road as the kit's, the bridge one of TDD's, its banks dressed);
-   a placement takes a variation by the patch tool (pinned by region, culture or a seed: the user's choice).
-4. The same patch for the variation pilot (rivers' new variations, docs: the TDD river survey) once 2 and 3 work.
+1. **The 27 kit crossings into a pack** (done 2026-11-25, `kit_tiles_pack`; see above). Superseded by the generated variations for
+   TDD, kept as a fallback.
+2. **Where the spots are** (done 2026-11-25, `wce_tile` example `crossing_spots`): of the 116 campaign crossings, 80 have a battle
+   crossing of their name (66 with road tiles at both road ends, 64 of them river at both river ends: all on fords now; 8 one road end;
+   6 none); 36 are other campaign kinds (`2x2_lbl_rb_crossing_*`, `2x2_lb_rt_crossing_*`), 35 on fords.
+3. **The generator, ground and river** (`wce_tile::river_tile_gen`, pure; an editor command over the open tile): fresh relief by seed
+   (noise, faded to 0 over the land edges' 64 m and held under the links' cells); the river's line from its entry link to its exit link
+   through random control points (meanders, no loops, square to the edges at the links), its widths randomized, its bed carved, its shore
+   on; checked by script on a kit crossing and a ford tile.
+4. **Dressing**: forest and undergrowth as biome areas away from the water and the road; an island where the river is wide enough (the
+   river parted round raised ground); a cliff bank on one side of a stretch (a steeper bank and rocks).
+5. **The road router**: a grid search over the tile from road link to road link, its cost the grade (steep ground avoided), the turns,
+   the water (crossed once, square to the river), a seeded noise for a semi-random way; the path simplified into a `WceRoadSpline` (dirt),
+   its ends snapped to the links; bridges on (the river is deep enough for a bridge where it crosses). One road link: from it over the
+   river to a random end on the far side.
+6. **Ford tiles**: the river and dressing as above, a ford across the middle.
+7. **Batch**: every crossing and ford tile the spots use, N variations each (by seed), exported into one pack with the battle tile
+   database (TDD's, the variations added).
+8. **The map patch**: TDD's battle map placements at the spots replaced: a crossing (its variation by seed) where roads arrive at one end
+   or both, a ford variation where none does; the other kinds matched by their river and road edges. Both `terrain.tile_list` and
+   `tile_map.tiles` written alike; in-game check.
+9. Then the plain river tiles (the generator without the road), and TDD's bridges.
 
 ## Open
 
 - Which file a campaign battle reads its tiles from (`terrain.tile_list` or `tile_map.tiles`): an in-game check after step 2.
-- Whether every campaign crossing should become a bridge, or some stay fords (by seed, by region).
 - Where the packs go (a pack of the editor's, or into TDD's).
