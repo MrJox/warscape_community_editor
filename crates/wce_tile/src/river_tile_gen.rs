@@ -74,13 +74,115 @@ pub fn relief(seed: u64, x: f64, z: f64, extent: (f64, f64), s: &ReliefSettings)
     fbm(seed, x, z, s.scale) * s.amplitude * edge_weight(x, z, extent, s.edge_fade)
 }
 
-/// A river's valley in the relief: the ground near its line pulled to `floor` (a little over its water), smoothly out to `half_width`.
+/// A river's valley in the relief: the ground near its line pulled to `floor` (a little over its water), smoothly out to `half_width`;
+/// and maybe a cliff on one bank of a stretch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Valley {
     /// The river's line, smoothed (`smooth_line`).
     pub line: Vec<[f64; 2]>,
     pub floor: f64,
     pub half_width: f64,
+    pub cliff: Option<Cliff>,
+}
+
+/// A cliff on one bank of a river's stretch: from `foot` metres off the river's line the ground climbs `height` over the valley's floor
+/// within `run` metres, on the `side` of the line (1: its left, going along it; -1: its right), between the line's samples `from` and
+/// `to` (tapering over the first and last fifth).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cliff {
+    pub from: usize,
+    pub to: usize,
+    pub side: f64,
+    pub foot: f64,
+    pub run: f64,
+    pub height: f64,
+}
+
+/// The nearest place of a line to a point: its distance, the line's sample index there (with the share along that segment), and the
+/// side of the line it is on (1: left, -1: right, going along the line).
+#[must_use]
+pub fn nearest_on_line(p: [f64; 2], line: &[[f64; 2]]) -> (f64, f64, f64) {
+    let mut best = (f64::INFINITY, 0.0, 1.0);
+    for (i, w) in line.windows(2).enumerate() {
+        let (a, b) = (w[0], w[1]);
+        let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+        let l2 = dx * dx + dz * dz;
+        let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let d = (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dz);
+        if d < best.0 {
+            let cross = dx * (p[1] - a[1]) - dz * (p[0] - a[0]);
+            best = (d, i as f64 + t, if cross >= 0.0 { 1.0 } else { -1.0 });
+        }
+    }
+
+    best
+}
+
+/// The cliff on the outer side of a line's sharpest bend (its middle half only: the ends run square to the tile's edges): `length`
+/// samples long, centred there. None when the line hardly bends.
+#[must_use]
+pub fn outer_bend_cliff(line: &[[f64; 2]], length: usize, foot: f64, run: f64, height: f64) -> Option<Cliff> {
+    let n = line.len();
+    if n < 8 {
+        return None;
+    }
+
+    // The turn at each sample, over a few samples either side (left turns positive).
+    let k = 3;
+    let turn = |i: usize| {
+        let (a, b, c) = (line[i - k], line[i], line[i + k]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+        (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1])
+    };
+    let (lo, hi) = (n / 4, n - n / 4);
+    let (at, angle) = (lo.max(k)..hi.min(n - k)).map(|i| (i, turn(i))).max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))?;
+    if angle.abs() < 0.08 {
+        return None;
+    }
+
+    // The outer side of a left turn is the right.
+    let half = length / 2;
+    Some(Cliff { from: at.saturating_sub(half), to: (at + half).min(n - 1), side: -angle.signum(), foot, run, height })
+}
+
+/// How much of a cliff stands at a place (0 .. 1): on its side of the line, within its stretch (tapered at the ends), and how far past its
+/// foot.
+fn cliff_rise(c: &Cliff, d: f64, at: f64, side: f64) -> f64 {
+    if side != c.side || at < c.from as f64 || at > c.to as f64 || d < c.foot {
+        return 0.0;
+    }
+
+    let span = (c.to - c.from).max(1) as f64;
+    let along = (at - c.from as f64) / span;
+    let taper = (along.min(1.0 - along) / 0.2).clamp(0.0, 1.0);
+    let t = ((d - c.foot) / c.run.max(1e-6)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t) * taper
+}
+
+/// Where a cliff's rocks go: along its stretch on its side, `off` metres past its foot, about `step` metres apart (x, z, and the share
+/// of the cliff standing there).
+#[must_use]
+pub fn cliff_rock_places(line: &[[f64; 2]], c: &Cliff, off: f64, step: f64) -> Vec<([f64; 2], f64)> {
+    let mut out = vec![];
+    let mut since = f64::INFINITY;
+    for i in c.from..c.to.min(line.len() - 1) {
+        let (a, b) = (line[i], line[i + 1]);
+        let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+        let len = dx.hypot(dz).max(1e-6);
+        since += len;
+        if since < step {
+            continue;
+        }
+
+        since = 0.0;
+        // Left of the way along: (-dz, dx).
+        let n = [-dz / len * c.side, dx / len * c.side];
+        let d = c.foot + off;
+        let p = [a[0] + n[0] * d, a[1] + n[1] * d];
+        out.push((p, cliff_rise(c, d, i as f64, c.side)));
+    }
+
+    out
 }
 
 /// The relief with a river's valley in it: within `half_width` of the river's line the ground goes to the valley's floor (all of it on
@@ -89,10 +191,97 @@ pub struct Valley {
 #[must_use]
 pub fn relief_in_valley(seed: u64, x: f64, z: f64, extent: (f64, f64), s: &ReliefSettings, valley: &Valley) -> f64 {
     let hills = fbm(seed, x, z, s.scale) * s.amplitude;
-    let t = (distance_to_line([x, z], &valley.line) / valley.half_width.max(1e-6)).clamp(0.0, 1.0);
+    let (d, at, side) = nearest_on_line([x, z], &valley.line);
+    let t = (d / valley.half_width.max(1e-6)).clamp(0.0, 1.0);
     let w = 1.0 - t * t * (3.0 - 2.0 * t);
-    (hills + (valley.floor - hills) * w) * edge_weight(x, z, extent, s.edge_fade)
+    let mut h = hills + (valley.floor - hills) * w;
+    // A cliff: the bank climbing to its height over the floor, whatever the valley would have there.
+    if let Some(c) = &valley.cliff {
+        let rise = cliff_rise(c, d, at, side);
+        if rise > 0.0 {
+            h = h.max(valley.floor + c.height * rise);
+        }
+    }
+
+    h * edge_weight(x, z, extent, s.edge_fade)
 }
+
+/// The forest areas' settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ForestSettings {
+    /// How far apart the places looked at for a wood are (metres).
+    pub spacing: f64,
+
+    /// How much of the forest noise a place needs for a wood (-1 .. 1: higher, fewer woods).
+    pub threshold: f64,
+
+    /// A wood's radius, from and to (metres).
+    pub radius: (f64, f64),
+
+    /// How close to the tile's edges a wood may come (metres).
+    pub margin: f64,
+}
+
+impl Default for ForestSettings {
+    fn default() -> Self {
+        Self { spacing: 60.0, threshold: -0.15, radius: (22.0, 48.0), margin: 6.0 }
+    }
+}
+
+/// Woods on a tile by a seed: blob-shaped areas (closed outlines, x, z) where a forest noise is high, kept `clearance` metres off each
+/// line to keep clear of (the river with its banks, a road), and off each other.
+#[must_use]
+pub fn forest_areas(seed: u64, extent: (f64, f64), keep_off: &[(&[[f64; 2]], f64)], s: &ForestSettings) -> Vec<Vec<[f64; 2]>> {
+    const POINTS: usize = 14;
+    let seed = seed ^ FOREST_SALT;
+    let clear = |p: [f64; 2]| keep_off.iter().all(|(line, c)| distance_to_line(p, line) >= *c);
+    let mut out: Vec<(Vec<[f64; 2]>, [f64; 2], f64)> = vec![];
+    let (nx, nz) = ((extent.0 / s.spacing).ceil() as i64, (extent.1 / s.spacing).ceil() as i64);
+    for j in 0..nz {
+        for i in 0..nx {
+            // A place in the cell, jittered by the seed.
+            let jx = (corner(seed, i, j) * 0.5 + 0.5) * s.spacing;
+            let jz = (corner(seed ^ 0x77, i, j) * 0.5 + 0.5) * s.spacing;
+            let c = [i as f64 * s.spacing + jx, j as f64 * s.spacing + jz];
+            if fbm(seed, c[0], c[1], 160.0) < s.threshold || !clear(c) {
+                continue;
+            }
+
+            let r = s.radius.0 + (corner(seed ^ 0x99, i, j) * 0.5 + 0.5) * (s.radius.1 - s.radius.0);
+            if out.iter().any(|(_, o, or)| (o[0] - c[0]).hypot(o[1] - c[1]) < (or + r) * 0.8) {
+                continue;
+            }
+
+            // Its outline: round, its radius swelling and shrinking by a noise, each point pulled in until it is clear.
+            let mut outline = vec![];
+            for k in 0..POINTS {
+                let a = std::f64::consts::TAU * k as f64 / POINTS as f64;
+                let (ca, sa) = (a.cos(), a.sin());
+                let mut rk = r * (0.75 + 0.35 * (fbm(seed ^ 0x55, c[0] + ca * 50.0, c[1] + sa * 50.0, 40.0) * 0.5 + 0.5));
+                let at = |rk: f64| {
+                    [(c[0] + ca * rk).clamp(s.margin, extent.0 - s.margin), (c[1] + sa * rk).clamp(s.margin, extent.1 - s.margin)]
+                };
+                while rk > 1.0 && !clear(at(rk)) {
+                    rk *= 0.85;
+                }
+
+                // Pulled in all the way: its centre (clear, inside).
+                outline.push(if clear(at(rk)) { at(rk) } else { at(0.0) });
+            }
+
+            // A wood squeezed to nothing (all its points pulled in) is left out.
+            let area = outline.iter().zip(outline.iter().cycle().skip(1)).map(|(a, b)| a[0] * b[1] - b[0] * a[1]).sum::<f64>().abs() * 0.5;
+            if area > 300.0 {
+                out.push((outline, c, r));
+            }
+        }
+    }
+
+    out.into_iter().map(|(o, _, _)| o).collect()
+}
+
+/// The salt the woods' noises take.
+const FOREST_SALT: u64 = 0xf0e5_7000_0000_0002;
 
 /// A line smoothed through its points (Catmull-Rom, `per_segment` samples between two points), as a spline drawn through them runs.
 #[must_use]
@@ -227,7 +416,7 @@ mod tests {
         let s = ReliefSettings::default();
         let e = (256.0, 256.0);
         let line = smooth_line(&[[0.0, 128.0], [90.0, 120.0], [170.0, 140.0], [256.0, 128.0]], 8);
-        let valley = Valley { line: line.clone(), floor: -2.0, half_width: 60.0 };
+        let valley = Valley { line: line.clone(), floor: -2.0, half_width: 60.0, cliff: None };
         for p in line.iter().filter(|p| p[0] > 80.0 && p[0] < 176.0) {
             assert!((relief_in_valley(5, p[0], p[1], e, &s, &valley) + 2.0).abs() < 1e-9, "at its floor on the river: {p:?}");
         }
@@ -241,6 +430,54 @@ mod tests {
         let smooth = smooth_line(&[[0.0, 0.0], [10.0, 10.0], [20.0, 0.0]], 4);
         assert_eq!((smooth.first(), smooth.last()), (Some(&[0.0, 0.0]), Some(&[20.0, 0.0])));
         assert!(smooth.contains(&[10.0, 10.0]), "through its points");
+    }
+
+    #[test]
+    fn a_cliff_rises_on_the_outer_side_of_the_bend_only() {
+        let s = ReliefSettings { amplitude: 0.0, edge_fade: 0.0, ..ReliefSettings::default() };
+        let e = (256.0, 256.0);
+        // A bend to the left (seen going along): west to east, then turning north (-z) round x 128.
+        let line = smooth_line(&[[0.0, 200.0], [60.0, 200.0], [110.0, 190.0], [140.0, 150.0], [150.0, 90.0], [150.0, 0.0]], 10);
+        let cliff = outer_bend_cliff(&line, 16, 20.0, 10.0, 8.0).expect("it bends");
+        // Going east then turning to -z: the bend's inside towards (60, 100), the cliff on the side away from it.
+        let valley = Valley { line: line.clone(), floor: -2.0, half_width: 70.0, cliff: Some(cliff) };
+        let mid = (cliff.from + cliff.to) / 2;
+        let (a, b) = (line[mid], line[mid + 1]);
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let left = [-(b[1] - a[1]) / len, (b[0] - a[0]) / len];
+        let at = |d: f64| [a[0] + left[0] * d, a[1] + left[1] * d];
+        let h = |p: [f64; 2]| relief_in_valley(1, p[0], p[1], e, &s, &valley);
+        let (out, inn) = (at(35.0 * cliff.side), at(-35.0 * cliff.side));
+        let inside = [60.0, 100.0];
+        let far = |p: [f64; 2]| (p[0] - inside[0]).hypot(p[1] - inside[1]);
+        assert!(far(out) > far(inn), "the cliff on the outside of the bend");
+        assert!((h(out) - (-2.0 + 8.0)).abs() < 0.5, "the cliff's top on the outside: {}", h(out));
+        assert!(h(inn) < -1.0, "the floor on the inside: {}", h(inn));
+        assert!(h(at(10.0 * cliff.side)) < -1.0, "its foot clear of the river: {}", h(at(10.0 * cliff.side)));
+        let rocks = cliff_rock_places(&line, &cliff, 6.0, 9.0);
+        assert!(rocks.iter().filter(|(_, rise)| *rise >= 0.5).count() >= 2, "rocks up its face: {rocks:?}");
+        assert!(!rocks.is_empty() && rocks.iter().all(|(p, _)| nearest_on_line(*p, &line).2 == cliff.side), "on its side: {rocks:?}");
+    }
+
+    #[test]
+    fn woods_grow_away_from_the_river_and_from_each_other() {
+        let river = smooth_line(&[[0.0, 128.0], [100.0, 110.0], [180.0, 150.0], [256.0, 128.0]], 8);
+        let keep: [(&[[f64; 2]], f64); 1] = [(&river, 50.0)];
+        let mut any = 0;
+        for seed in 0..10 {
+            let woods = forest_areas(seed, (256.0, 256.0), &keep, &ForestSettings::default());
+            any += woods.len();
+            for w in &woods {
+                assert!(w.iter().all(|p| distance_to_line(*p, &river) >= 50.0 - 1e-6), "seed {seed}: clear of the river");
+                assert!(w.iter().all(|p| (6.0..=250.0).contains(&p[0]) && (6.0..=250.0).contains(&p[1])), "inside the tile");
+            }
+        }
+
+        assert!(any >= 20, "woods on most seeds: {any}");
+        assert_ne!(
+            forest_areas(1, (256.0, 256.0), &keep, &ForestSettings::default()),
+            forest_areas(2, (256.0, 256.0), &keep, &ForestSettings::default())
+        );
     }
 
     #[test]

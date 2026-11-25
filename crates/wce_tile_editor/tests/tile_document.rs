@@ -3764,8 +3764,10 @@ fn a_generated_river_tile_is_one_undo_entry() {
     let heights = |d: &TileDocument| (0..16).map(|i| d.tile().terrain_height(16.0 * i as f32, 100.0)).collect::<Vec<_>>();
     let ground = heights(&d);
     let before = d.history().position();
-    let made = d.generate_river_tile(5, true).unwrap();
-    assert!(made.contains("a river of"), "{made}");
+    let biomes = d.tile_biomes().to_vec();
+    let made = d.generate_river_tile(4, true).unwrap();
+    assert!(made.contains("a river of") && made.contains("a cliff by") && made.contains("wood(s) of Broadleaf wood"), "{made}");
+    assert!(!d.tile().biome_areas().is_empty(), "woods: {made}");
     assert_eq!(d.history().position(), before + 1, "one undo entry");
     assert_eq!(d.tile().tscene().find_all("SplineRiverInstance").len(), 1);
     let mut scene = wce_scene::render_scene::RenderScene::default();
@@ -3775,6 +3777,7 @@ fn a_generated_river_tile_is_one_undo_entry() {
     wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
     let _ = d.tile().water_level(100.0, 128.0);
     assert_eq!(d.tile().tscene().save(), original, "the scene as it was");
+    assert_eq!(d.tile_biomes(), &biomes[..], "the biomes as they were");
     assert_eq!(heights(&d), ground, "the ground as it was");
     d.tile_mut().finish_road_jobs();
     assert_eq!(grounds(&d), ground_types, "the ground types as they were");
