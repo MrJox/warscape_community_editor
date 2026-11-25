@@ -50,6 +50,15 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    one, the text longer than before, and the undo entries before it misplaced theirs (a crash); it now takes it away (`commands::ABSENT`).
 4. **Dressing**: forest and undergrowth as biome areas away from the water and the road; an island where the river is wide enough (the
    river parted round raised ground); a cliff bank on one side of a stretch (a steeper bank and rocks).
+   **Built 2026-11-25** (cliff and woods; islands not yet): every other seed has a **cliff** on the outer side of the river's sharpest
+   bend (its middle half; 18 samples of the smoothed line, tapered at the ends): its foot 3 m past the river's widest water (measured
+   from its width handles, after its widths are varied; the relief is imported again with it), climbing 9 m over 9 m; kit rocks
+   (`gaul_rock_01/02`) every 9 m along its face where it stands half its height. **Woods**: blob areas of a built-in biome (broadleaf,
+   pine on a third of the seeds) where a forest noise is high, 15 m past the widest water, off each other and the edges. The river is drawn
+   through the smoothed line (2 points a stretch: its spline turned sharply at the line's few points), its widths -20 .. +30 %. Found on
+   the way: an undo of an attribute's addition (`commands::ABSENT`) failed once a later structural edit had baked it into the text, and
+   the splices undone before it then cut the wrong bytes (a crash); `XmlDoc::remove_attr` takes it out of the text.
+   Islands need the river parted round raised ground (its bed layer cuts any mound under its ribbon): left for later.
 5. **The road router**: a grid search over the tile from road link to road link, its cost the grade (steep ground avoided), the turns,
    the water (crossed once, square to the river), a seeded noise for a semi-random way; the path simplified into a `WceRoadSpline` (dirt),
    its ends snapped to the links; bridges on (the river is deep enough for a bridge where it crosses). One road link: from it over the
