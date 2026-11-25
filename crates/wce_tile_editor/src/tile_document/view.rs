@@ -2419,6 +2419,20 @@ impl Tile {
                         }
                     }
                 }
+
+                // A river's width handles: across its water at each point, a square on either edge (dragged across, its width there).
+                let width = overlay_colour(1.0, 0.55, 0.2, 1.0);
+                for (q, a, b) in self.river_width_handles(e) {
+                    let lift = |k: Float3| Float3::new(k.x, q.y + 0.4, k.z);
+                    h.line(lift(a), lift(b), overlay_colour(1.0, 0.55, 0.2, 0.45));
+                    for k in [lift(a), lift(b)] {
+                        let r = handle_size * 0.5;
+                        h.line(Float3::new(k.x - r, k.y, k.z - r), Float3::new(k.x + r, k.y, k.z - r), width);
+                        h.line(Float3::new(k.x + r, k.y, k.z - r), Float3::new(k.x + r, k.y, k.z + r), width);
+                        h.line(Float3::new(k.x + r, k.y, k.z + r), Float3::new(k.x - r, k.y, k.z + r), width);
+                        h.line(Float3::new(k.x - r, k.y, k.z + r), Float3::new(k.x - r, k.y, k.z - r), width);
+                    }
+                }
             }
         }
 

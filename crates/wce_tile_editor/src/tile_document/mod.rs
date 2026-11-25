@@ -55,6 +55,7 @@ pub mod river_fords;
 mod river_joins;
 pub mod river_links;
 pub mod river_profile;
+pub mod river_widths;
 pub mod roads;
 mod shift;
 pub mod shores;

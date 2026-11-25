@@ -63,6 +63,14 @@ pub(crate) enum Gesture {
         grab: Float3,
     },
 
+    /// A river point's width handle (an edge of its water): dragged across the river, the point's width is twice how far the mouse is
+    /// from the point across it (one undo entry).
+    RiverWidth {
+        river: usize,
+        point: usize,
+        gesture: u64,
+    },
+
     /// A point light's radius handle; `grab`: the radius minus where the mouse took the handle (it does not jump to the mouse).
     LightRadius {
         light: usize,
@@ -111,7 +119,9 @@ impl Gesture {
         match self {
             Self::Grab(_) => "the grab",
             Self::TerrainStroke | Self::VegStroke(_) | Self::AreaStroke => "the brush stroke",
-            Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } | Self::Ford { .. } => "the handle drag",
+            Self::Point { .. } | Self::RiverWidth { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } | Self::Ford { .. } => {
+                "the handle drag"
+            }
             Self::AltRotate(_) => "the rotation",
             Self::AltScale(_) => "the scaling",
         }

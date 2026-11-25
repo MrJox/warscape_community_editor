@@ -5110,6 +5110,25 @@ impl TileTool {
         let spline = d.is_spline(sel);
         let near = |c: Float3| handle_under_ray(c, o, dir);
 
+        // A river's width handles (an edge of its water at each point) before its spline's.
+        {
+            let mut best: Option<(usize, f32)> = None;
+            for (i, (q, a, b)) in d.tile().river_width_handles(sel).into_iter().enumerate() {
+                for k in [a, b] {
+                    if let Some(t) = near(Float3::new(k.x, q.y + 0.4, k.z)).filter(|&t| best.is_none_or(|b| t < b.1)) {
+                        best = Some((i, t));
+                    }
+                }
+            }
+
+            if let Some((i, _)) = best {
+                self.poly_point = Some(i);
+                self.poly_point_line = Some(sel);
+                self.gesture = Some(Gesture::RiverWidth { river: sel, point: i, gesture: d.next_gesture() });
+                return true;
+            }
+        }
+
         // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
         if d.has_handles(sel) {
             let mut best = None;
@@ -5248,6 +5267,20 @@ impl TileTool {
                         Some(a) => d.place_ford(river, index, a, along, gesture),
                         None => d.move_ford_part(river, index, part, along, gesture),
                     }
+                }
+            }
+
+            Some(Gesture::RiverWidth { river, point, gesture }) => {
+                self.on_hover(e, ev);
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if self.terrain_hit
+                    && let Some(&(q, a, _)) = d.tile().river_width_handles(river).get(point)
+                {
+                    // Across the river at the point: the mouse's distance from it that way, either side.
+                    let (nx, nz) = (a.x - q.x, a.z - q.z);
+                    let len = nx.hypot(nz).max(1e-6);
+                    let across = ((self.cursor.x - q.x) * nx + (self.cursor.z - q.z) * nz).abs() / len;
+                    d.set_river_point_width(river, point, f64::from(across) * 2.0, gesture);
                 }
             }
 
@@ -6574,7 +6607,10 @@ impl Tool for TileTool {
         self.flip.is_none()
             && self.mode == TileMode::Select
             && !self.drawing
-            && !matches!(self.gesture, Some(Gesture::Grab(_) | Gesture::LightRadius { .. } | Gesture::ShelterTarget { .. }))
+            && !matches!(
+                self.gesture,
+                Some(Gesture::Grab(_) | Gesture::LightRadius { .. } | Gesture::ShelterTarget { .. } | Gesture::RiverWidth { .. })
+            )
             && self.placing.is_none()
             && !self.box_select.armed
     }
@@ -6610,7 +6646,7 @@ impl Tool for TileTool {
             // On a point of the selected line or polygon (or dragging one): the press is the point's, not the gizmo's, whose centre
             // may be on it (a river's first point).
             || self.over_point
-            || matches!(self.gesture, Some(Gesture::Point { .. } | Gesture::Ford { .. }))
+            || matches!(self.gesture, Some(Gesture::Point { .. } | Gesture::Ford { .. } | Gesture::RiverWidth { .. }))
             || (self.river_ui.drawing_ford && self.selected_river(e).is_some())
     }
 

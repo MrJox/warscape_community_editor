@@ -3664,6 +3664,87 @@ fn a_rivers_water_ground_types_lie_only_where_the_ground_is_under_its_water() {
     assert!(dry_under_ribbon > 0, "dry banks under its ribbon, left as they were");
 }
 
+/// A river's width by point: its handles on the edges of its water, a drag of one setting it (one undo entry), and its widths randomized
+/// within a deviation by a seed (one undo entry), from the widths they had (no piling up), a point joined to a link keeping its own.
+#[test]
+fn a_rivers_widths_are_dragged_by_point_and_randomized_by_a_seed() {
+    use wce_tile_editor::tile_document::river_widths::{WIDTH_BASE_ATTR, randomized};
+
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let line = [60.0, 100.0, 140.0, 180.0, 220.0].map(|x| Float3::new(x, y(&d, x, 128.0), 128.0)).to_vec();
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    let width = |d: &TileDocument, i: usize| {
+        let p = d.tile().tscene().polygon_points(r)[i];
+        d.tile().tscene().get(p, "width").unwrap().parse::<f64>().unwrap()
+    };
+    let attr = |d: &TileDocument, i: usize, a: &str| d.tile().tscene().get(d.tile().tscene().polygon_points(r)[i], a);
+
+    // A handle on either edge of its water, across it (the river runs along x).
+    let h = d.tile().river_width_handles(r);
+    assert_eq!(h.len(), 5);
+    let drawn = |d: &TileDocument, i: usize| {
+        let (_, a, b) = d.tile().river_width_handles(r)[i];
+        f64::from((a.x - b.x).hypot(a.z - b.z))
+    };
+    let (q, a, b) = h[2];
+    assert!((a.x - q.x).abs() < 1e-3 && (b.x - q.x).abs() < 1e-3 && (a.z - b.z).abs() > 1.0, "across: {h:?}");
+    let scale = drawn(&d, 2) / width(&d, 2);
+
+    // A drag: its steps one undo entry; the width as drawn where the mouse was.
+    let before = d.history().position();
+    let g = d.next_gesture();
+    assert!(d.set_river_point_width(r, 2, 30.0, g));
+    assert!(d.set_river_point_width(r, 2, 60.0, g));
+    assert_eq!(d.history().position(), before + 1, "one undo entry");
+    assert!((drawn(&d, 2) - 60.0).abs() < 1e-2, "{}", drawn(&d, 2));
+    let g = d.next_gesture();
+    assert!(d.set_river_point_width(r, 2, 0.5, g) && (drawn(&d, 2) - 2.0).abs() < 1e-2, "no narrower than 2 m");
+    d.history_mut().undo();
+    assert!((drawn(&d, 2) - 60.0).abs() < 1e-2);
+
+    // Randomized: within the deviation, the first point (joined to a link) left be, one undo entry.
+    d.set_point_attribute(r, 0, "wce_link", "0,1");
+    let widths = (0..5).map(|i| width(&d, i)).collect::<Vec<_>>();
+    let before = d.history().position();
+    assert_eq!(d.randomize_river_widths(r, -30.0, 20.0, 11).unwrap(), 4);
+    assert_eq!(d.history().position(), before + 1, "one undo entry");
+    assert_eq!(width(&d, 0), widths[0], "a link's point keeps its width");
+    for i in 1..5 {
+        let w = width(&d, i);
+        assert!(w >= widths[i] * 0.7 - 1e-6 && w <= widths[i] * 1.2 + 1e-6, "{i}: {w} from {}", widths[i]);
+        assert!((w - randomized(widths[i], -30.0, 20.0, 11, i)).abs() < 1e-3);
+        assert_eq!(attr(&d, i, WIDTH_BASE_ATTR).and_then(|v| v.parse::<f64>().ok()), Some(widths[i]), "its base kept");
+    }
+
+    let s = d.tile().river_width_settings(r);
+    assert_eq!((s.min, s.max, s.seed), (-30.0, 20.0, 11), "kept on the river");
+
+    // Again, another seed: from the base, not from the last draw.
+    d.randomize_river_widths(r, -30.0, 20.0, 12).unwrap();
+    for i in 1..5 {
+        assert!((width(&d, i) - randomized(widths[i], -30.0, 20.0, 12, i)).abs() < 1e-3, "{i}: no piling up");
+    }
+
+    // Set by hand: that width is its base from now on.
+    let g = d.next_gesture();
+    assert!(d.set_river_point_width(r, 3, 50.0, g));
+    assert_eq!(attr(&d, 3, WIDTH_BASE_ATTR).as_deref(), Some(""), "the base cleared");
+    let hand = width(&d, 3);
+    d.randomize_river_widths(r, -30.0, 20.0, 12).unwrap();
+    assert!((width(&d, 3) - randomized(hand, -30.0, 20.0, 12, 3)).abs() < 1e-3);
+
+    // Reset: the bases back; undone, the draw back.
+    let drawn_widths = (0..5).map(|i| width(&d, i)).collect::<Vec<_>>();
+    d.reset_river_widths(r).unwrap();
+    assert_eq!(width(&d, 1), widths[1]);
+    assert_eq!(width(&d, 3), hand, "the hand-set width");
+    d.history_mut().undo();
+    assert_eq!((0..5).map(|i| width(&d, i)).collect::<Vec<_>>(), drawn_widths);
+    assert!(scale > 0.0);
+}
+
 /// A ford's edges are lined with stones and splash, whether or not its river has a shore.
 #[test]
 fn a_fords_edges_are_marked_with_stones_and_splashes() {

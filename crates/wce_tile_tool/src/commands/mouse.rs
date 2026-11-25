@@ -70,6 +70,28 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "river_width_drag",
+        "river_width_drag <point> <metres>",
+        "drag a width handle (an edge of the water) of the selected river's point with the mouse, until the water is that wide there",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 2).then(|| Some((a[0].parse::<usize>().ok()?, number(&a[1])?))).flatten();
+            let (Some(d), Some((i, metres))) = (document(e), parsed) else { return fail("usage: river_width_drag <point> <metres>") };
+            let Some(el) = el else { return fail("select a river") };
+            let Some(&(q, k, _)) = d.tile().river_width_handles(el).get(i) else { return fail("no such point of a river") };
+            let (nx, nz) = (k.x - q.x, k.z - q.z);
+            let len = nx.hypot(nz).max(1e-6);
+            let (tx, tz) = (q.x + nx / len * metres * 0.5, q.z + nz / len * metres * 0.5);
+            let from = Float3::new(k.x, q.y + 0.4, k.z);
+            let to = Float3::new(tx, d.tile().terrain_height(tx, tz), tz);
+            let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            let _ = CommandRegistry::run_args(e, "mouse", &["move".to_owned(), format!("{x0:.1}"), format!("{y0:.1}")]);
+            let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+            mouse(e, &args, "")
+        },
+    );
+
+    c.add(
         "light_radius_drag",
         "light_radius_drag <radius m>",
         "drag the radius handle of the selected point light with the mouse, to this radius",

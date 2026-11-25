@@ -174,6 +174,8 @@ impl TileDocument {
         // A river's bed and shores have their own rows; its id is the editor's.
         shown.extend(super::super::river_beds::RIVER_ROW_ATTRS);
         shown.extend(super::super::shores::SHORE_ROW_ATTRS);
+        // Its width variation's settings: the Inspector's Width variation (`river_widths.rs`).
+        shown.extend(super::super::river_widths::WIDTH_ROW_ATTRS);
 
         // A reference's own are the tool's rows, below.
         if matches!(tag.as_str(), super::super::REF_HUMAN | super::super::REF_UNIT | super::super::REF_SHIP) {
