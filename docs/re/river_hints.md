@@ -68,6 +68,29 @@ own virtual methods, functions near its constructor and its add method (`FUN_102
   tasks must find their crossings another way (the pathfinder's bridges and shallow water?): **not traced**.
 - `battle_bridge_subculture_jcts` (subculture -> `simple_bridge` / `refined_bridge` building keys) is empty in vanilla Attila and in TDD.
 
+## How the AI finds crossings (2026-11-25, partial)
+
+What is known for sure:
+- **Bridges**: the pathfinder knows a bridge by its building's `battlefield_buildings` category `bridge` (building flag 0x8 at +0xfc,
+  set by `FUN_10632440`): a path step over one of its platforms has its cost capped by `PATH_SEARCH_BRIDGE_MAX_COST_MULTIPLIER` (0.4,
+  `FUN_1033bc90` -> `FUN_1032b7d0`), so paths prefer bridges ([platforms_and_bridges.md](platforms_and_bridges.md)). Other reads of the
+  flag: the ground snap tolerance (`FUN_1065ee50`), movement checks (`FUN_10402b30`, `FUN_10491370`).
+- **Water**: the ground types are `GT_FOREST` 0 .. `GT_DEEP_WATER` 6, `GT_SHALLOW_WATER` 7, `GT_ROAD` 8 ... (0x11d349a8). The tile
+  loader (`FUN_1184eeb0`) reads `ground_types.dds`; where the pathfinder turns 6 / 7 into impassable / wadeable was **not found** (the
+  wading animations' code `FUN_10407e90` has no ground type test). `GROUP_DROWNING_HEIGHT` (tweak 0x122afaf0, default -1.0) is read
+  only by the ship audio (`FUN_104d4440`).
+
+What was looked for and **not found**: any code that creates or tests the crossing tasks (16..21). Searched: compares of a task type
+against 16..21, factory switches allocating per case (none in the AI's range 0x10580000..0x10800000), constructors storing a type
+constant, tiny type getters. The task names table is read only by the task log dump (`FUN_1060ae60` from `FUN_105d2760`). The calls
+`FUN_10594ea0(0x10 / 0x14, ...)` are another enum (a sorted list of up to 51 scored entries), not tasks.
+Correction to a first reading: `FUN_10632440` and `FUN_10253f00` switch on the **building category** (`**(row + 0x10)`: 3 bridge,
+0x14 fort wall, 0x16 ground platform ...), not on the task type.
+
+So: the AI does not find crossings through hints; whether its crossing tasks run at all in Attila, and if so from what (the
+pathfinder's graph over bridges and shallow water is the likely source), is open. Next: an in-game look (a custom *River Crossing
+Battle* on a tile with a bridge and a ford, with the debug overlay), or the pathfinder's ground type reads.
+
 ## What it means for the editor
 
 - `AIH_BRIDGE_CROSSING` and `AIH_COVER_LINE` change nothing in Attila's battles (as read here). Writing them is harmless and keeps the
@@ -77,6 +100,7 @@ own virtual methods, functions near its constructor and its add method (`FUN_102
 
 ## Not traced
 
-- How the crossing tasks find their crossings, and how a `land_bridge` / `river_crossing_battle` picks its map and deployment.
+- Whether the crossing tasks run (above), and how a `land_bridge` / `river_crossing_battle` picks its map and deployment.
+- How deep / shallow water ground types limit movement.
 - What flag 4 against 8 changes in each sound (the four `FUN_104d5800` queries' masks), and the field objects' consumer.
 - Whether Rome 2 and Thrones of Britannia read the crossing and cover lists.
