@@ -214,6 +214,11 @@ impl Tile {
 
     /// What generated contents keep off: the real buildings and the roads' texture.
     pub(super) fn keep_off(&self) -> KeepOff {
+        self.keep_off_with(true)
+    }
+
+    /// [`Self::keep_off`], the bridges' circles left out if not `bridges` (the shores keep off their footprints instead, `shores.rs`).
+    pub(super) fn keep_off_with(&self, bridges: bool) -> KeepOff {
         let p = &self.project;
         let border = p.border_m();
         let roads = p.blend.as_ref().zip(p.layers.as_ref().and_then(|l| l.blend.as_ref())).and_then(|(bf, stack)| {
@@ -224,7 +229,7 @@ impl Tile {
                 (0..bh).flat_map(|y| (0..bw).map(move |x| (x, y))).map(|(x, y)| stack.owned_at("road:", x, y, empty)).collect::<Vec<_>>();
             mask.iter().any(|&m| m).then(|| (wce_tile::texture_rules::Distances::from_mask(bw, bh, ppm, &mask), ppm, border))
         });
-        KeepOff { buildings: self.texture_rules_buildings(), roads }
+        KeepOff { buildings: self.real_buildings(bridges), roads }
     }
 
     fn take_biomes(&mut self, wait: bool) {

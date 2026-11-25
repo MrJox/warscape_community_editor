@@ -829,6 +829,7 @@ impl Tile {
 
         self.road_generated = made.keys;
         self.road_items = made.items;
+        self.road_bridges = made.bridges;
         self.road_items_shown = false;
 
         // The technology overlay draws the bridges' pieces made now.
@@ -1338,6 +1339,9 @@ struct ItemsInput {
 #[derive(Default)]
 pub(crate) struct ItemsMade {
     items: Vec<RoadItem>,
+
+    /// The bridges made: each deck's centre line, rim to rim, and half its width (world metres).
+    bridges: Vec<(Vec<[f64; 2]>, f64)>,
     files: Vec<(String, Vec<u8>)>,
     keys: Vec<String>,
 }
@@ -1440,7 +1444,9 @@ fn road_items(i: ItemsInput) -> ItemsMade {
             // (user 2026-11-08: lying on the road, units stepped onto it anywhere and the game would not path across).
             let path =
                 (a..=b).map(|i| [plan.line[i][0] * unit, (plan.heights[i] + DECK_LIFT) * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
-            decks.push((elem, road.id, road.bridge.clone(), plan.width_at((st.of_sample(a) + st.of_sample(b)) * 0.5) * unit, path));
+            let width = plan.width_at((st.of_sample(a) + st.of_sample(b)) * 0.5);
+            made.bridges.push((plan.line[a..=b].to_vec(), width * 0.5));
+            decks.push((elem, road.id, road.bridge.clone(), width * unit, path));
         }
 
         planned.push((elem, road, plan, spans));

@@ -186,14 +186,38 @@ impl Tile {
 
     /// The real buildings (as the rules' distances take them): x, z, radius, world metres.
     pub(super) fn texture_rules_buildings(&self) -> Vec<[f64; 3]> {
+        self.real_buildings(true)
+    }
+
+    /// The real buildings' elements (`BUILDING_CATEGORIES`, outside the ground coverage's layer); the bridges among them if `bridges`.
+    pub(super) fn real_building_elems(&self, bridges: bool) -> Vec<usize> {
+        self.real_building_elems_of(&|c| bridges || c != "bridge")
+    }
+
+    /// The real buildings' elements whose category `wanted` says.
+    pub(super) fn real_building_elems_of(&self, wanted: &dyn Fn(&str) -> bool) -> Vec<usize> {
         let sc = self.tscene();
         let coverage = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == COVERAGE_LAYER);
-        let kit = self.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project.dir));
+        // The tables every other reader takes (the kits' and the packs'): filled here from the project's folder alone, the shared cell
+        // kept no category for a tile outside a kit, and nothing here (nor the bridges' check after it) found its buildings.
+        let kit = self.building_db();
+        let wanted = |c: &str| BUILDING_CATEGORIES.contains(&c) && wanted(c);
+        let count = sc.doc().elements().len();
+        // The index may be a step behind the scene (an element just removed): those past its end are not there any more.
         self.instances()
             .iter()
             .copied()
-            .filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE" && coverage.is_none_or(|l| !sc.is_descendant(e, l)))
-            .filter(|&e| sc.doc().get(e, "key").is_some_and(|k| kit.category(&k).is_some_and(|c| BUILDING_CATEGORIES.contains(&c))))
+            .filter(|&e| e < count && sc.type_of(e) == "BUILDING_INSTANCE" && coverage.is_none_or(|l| !sc.is_descendant(e, l)))
+            .filter(|&e| sc.doc().get(e, "key").is_some_and(|k| kit.category(&k).is_some_and(wanted)))
+            .collect()
+    }
+
+    /// The real buildings as circles: x, z and the radius of their model across (0 until it loads), world metres; the bridges among them
+    /// if `bridges`.
+    pub(super) fn real_buildings(&self, bridges: bool) -> Vec<[f64; 3]> {
+        let sc = self.tscene();
+        self.real_building_elems(bridges)
+            .into_iter()
             .map(|e| {
                 let p = self.world_position(e);
                 let radius = self.model_of(e).filter(|m| m.ok && m.resolved).map_or(0.0, |m| {

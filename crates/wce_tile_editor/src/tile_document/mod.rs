@@ -608,6 +608,10 @@ pub struct Tile {
     pub(crate) road_items_stale: bool,
     pub(crate) road_items_shown: bool,
 
+    /// The roads' bridges over water as their pieces were made: each deck's centre line, rim to rim, and half its width (world metres).
+    /// The shores keep off them (`shores.rs`).
+    pub(crate) road_bridges: Vec<(Vec<[f64; 2]>, f64)>,
+
     /// The buildings laid along the building splines (`building_splines.rs`).
     pub(crate) building_splines: building_splines::BuildingSplines,
 
@@ -1042,6 +1046,7 @@ impl TileDocument {
             road_entities: vec![],
             road_items_stale: true,
             road_items_shown: false,
+            road_bridges: vec![],
             building_splines: Default::default(),
             road_prefabs: None,
             road_generated: vec![],

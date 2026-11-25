@@ -2940,7 +2940,34 @@ fn any_closed_polygon_is_painted_grown_and_cut_in_pieces() {
 /// `open`'s tile as 2 x 2 cells with a deep river link out of the west edge's upper row (target (0, 0), the rule past it at (-1, 0)) and
 /// a shallow one out of the bottom edge's right column (target (1, 1), the rule at (1, 2)).
 fn open_with_river_links() -> (tempfile::TempDir, TileDocument) {
+    open_with_river_links_and(false)
+}
+
+/// [`open_with_river_links`], with a blend map and a ground type map if `maps` (blank: a road lays its terrain on them).
+fn open_with_river_links_and(maps: bool) -> (tempfile::TempDir, TileDocument) {
     let (dir, _) = open();
+    if maps {
+        let (w, h) = (64u32, 64u32);
+        let mut bytes = wce_formats::image_containers::TiffFile::ted_header(w, h);
+        for _ in 0..w * h {
+            let mut px = [0u16; 16];
+            px[0] = u16::MAX;
+            bytes.extend(px.iter().flat_map(|v| v.to_le_bytes()));
+        }
+
+        std::fs::write(dir.path().join("blend_map.tif"), bytes).unwrap();
+        let png = wce_formats::png_file::PngFile {
+            width: w,
+            height: h,
+            bit_depth: 8,
+            color_type: 2,
+            pixels: vec![0; (w * h * 3) as usize],
+            pixels_edited: true,
+            ..Default::default()
+        };
+        std::fs::write(dir.path().join("ground_type_map.png"), png.write().unwrap()).unwrap();
+    }
+
     let mut p = TileProject::open(dir.path()).unwrap();
     let link = |set: &str, x: i32, y: i32| {
         format!(
@@ -3487,6 +3514,56 @@ fn a_drawn_river_has_reeds_and_stones_along_its_shore() {
     d.set_attribute(r, "wce_shores", "0");
     d.finish_shores();
     assert_eq!(d.tile().shore_counts(), (0, 0), "off");
+}
+
+/// A road bridging a river with a shore: the river's reeds, stones and rocks are taken away under the bridge's deck (they would poke
+/// through it), and stay up and down the river; its decals stay under it.
+#[test]
+fn a_road_bridge_over_a_river_clears_the_shore_under_its_deck() {
+    let (_dir, mut d) = open_with_river_links_and(true);
+    d.set_road_prefabs(std::sync::Arc::new(wce_tile::prefabs::PrefabLibrary::default()));
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    let solid = |d: &TileDocument, b: [f32; 4]| {
+        d.tile().shore_items_in(b).into_iter().filter(|s| !s.starts_with("ProjectedDecalInstance")).collect::<Vec<_>>()
+    };
+    // Across the river at x 130: its banks are about 20 m either side of its middle line (z 128).
+    let near = [118.0, 90.0, 142.0, 166.0];
+    assert!(!solid(&d, near).is_empty(), "the river has a shore where the road will cross");
+    let away = [40.0, 90.0, 80.0, 166.0];
+    let away_before = solid(&d, away);
+    assert!(!away_before.is_empty());
+
+    let road = d
+        .add_polygon(
+            None,
+            wce_tile::new_instances::ROAD_SPLINE,
+            "",
+            &[Float3::new(130.0, 0.0, 40.0), Float3::new(130.0, 0.0, 128.0), Float3::new(130.0, 0.0, 216.0)],
+        )
+        .unwrap();
+    let mut scene = wce_scene::render_scene::RenderScene::default();
+    let scene_layer = scene.add_layer(1, "tile");
+    wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    let bridges = d.tile().road_bridge_lines();
+    assert!(!bridges.is_empty(), "the road bridges the river: {}", d.tile().road_items_report());
+    let half = bridges.iter().map(|b| b.1).fold(0.0f64, f64::max) as f32;
+    let under = [130.0 - half - 1.0, 90.0, 130.0 + half + 1.0, 166.0];
+    assert!(solid(&d, under).is_empty(), "nothing solid under the deck: {:?}", solid(&d, under));
+    assert_eq!(solid(&d, away), away_before, "up the river, as it was");
+
+    // The road gone: the shore under it back.
+    assert!(d.remove(road));
+    wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    assert!(!solid(&d, under).is_empty(), "back without the bridge");
 }
 
 /// A ford's edges are lined with stones and splash, whether or not its river has a shore.
