@@ -198,10 +198,10 @@ impl TedScene {
         &self.doc
     }
 
-    /// Takes away an attribute an edit added to an element (`XmlDoc::remove_added`): its text as before the edit. False when it has
-    /// none, or the attribute is the file's own.
+    /// Takes away an attribute an edit added to an element (`XmlDoc::remove_attr`): its text as before the edit, also when a structural
+    /// edit since has made the addition part of the text. For an undo that knows the element had no such attribute. False when it has none.
     pub fn remove_added_attr(&mut self, elem: usize, name: &str) -> bool {
-        self.doc.remove_added(elem, name)
+        self.doc.remove_attr(elem, name)
     }
 
     /// The document, for the edits of other modules of the crate (`crate::variations::edit`).

@@ -221,7 +221,7 @@ impl XmlDoc {
 
     /// Replaces text and patches the table, reading the whole text again if the change is neither whole elements nor inside one tag.
     /// Returns if the table was patched.
-    fn replace_text(&mut self, pos: usize, remove_len: usize, insert: &[u8], structural: bool) -> Result<bool> {
+    pub(super) fn replace_text(&mut self, pos: usize, remove_len: usize, insert: &[u8], structural: bool) -> Result<bool> {
         if pos > self.text.len() || remove_len > self.text.len() - pos {
             return Err(XmlError::Edit("xml: splice outside the text".to_owned()));
         }
