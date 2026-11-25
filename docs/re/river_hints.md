@@ -91,6 +91,33 @@ So: the AI does not find crossings through hints; whether its crossing tasks run
 pathfinder's graph over bridges and shallow water is the likely source), is open. Next: an in-game look (a custom *River Crossing
 Battle* on a tile with a bridge and a ford, with the debug overlay), or the pathfinder's ground type reads.
 
+## The AI debug overlay cannot be turned on in retail (2026-11-25)
+
+The debug menu items ("Battle AI Debug Display/...", "Views/Battle Debug/Water Heights", ...) are objects of a toggle class (base ctor
+`FUN_100def40`, vtable 0x11b03768; the bool toggle's vtable 0x11afb0cc: flip `100c4120`, get `100c07b0`, the bool's address at +0x3c).
+After building them, `FUN_105be570` (and `FUN_102cfba0` for the Views ones) hands each to `FUN_100e20f0`, the menu's register call:
+**an empty function in retail** (`ret`, 3 bytes). Nothing else sets the flags: the overlay's master flag (`owner + 0x242c`, the owner
+being the object at `+0xc4` of the game's root) starts at 0 and has no other writer. No debug menu strings, commands or key actions are
+in the dll. Showing the overlay would take writing those bytes in the running process (master +0x242c, *River or Limes* +0x24b4).
+
+## Shallow against deep water (2026-11-25)
+
+- **The ground type map is the only thing that tells them apart.** `GT_DEEP_WATER` 6 and `GT_SHALLOW_WATER` 7 come from the tile's
+  `ground_type_map.png` as painted (BOB copies them into `ground_types.dds`; black pixels get the type from the textures). BOB derives
+  nothing from the water: the kit's `river/2x2_lb_rb` has deep water painted over its river (5.5 % of the map raw, 11 % of
+  `ground_types.dds` as 6), `river_shallow/2x2_lb_rb` shallow (7), `river_ford/2x2_lt_rt_ford` deep with a painted shallow strip (the
+  ford, 0.3 % raw); `lakes/10x10` has **no water types at all** (raw all black; compiled grass 1, mud 2, sand 3 under its `water_plane`).
+- **What the types do** (databases): `ground_type_to_stat_effects` speed and charge x0.4 in deep water, x0.5 in shallow;
+  `unit_ground_type_movement_modifiers` speed 0.4 deep, 0.65 shallow, every category. TDD's `rom_*` tables (in its patch pack) make it
+  0.1 deep and 0.4 / 0.45 shallow, and give deep water the `terrain_ocean` cursors. Also the footstep audio materials (`AM_DEEP_WATER`
+  / `AM_SHALLOW_WATER`, a separate list) and the ambient sound's water grid (above).
+- **Water depth** (water height `FUN_103f2870` minus ground `FUN_103bca80`, the `hf_water_map.data` against the terrain): its users
+  read it for the surface height (`max(ground, water)`: floating things, effects, the audio grid, debug drawing). No depth threshold for
+  movement was found, and there is no wading or depth tweak (`GROUP_DROWNING_HEIGHT` is ship audio). So, as read: **deep water is a
+  slow ground type, not an impassable one**, and water over ground typed grass (a lake's plane) is grass to the units.
+  ASSUMPTION to check in game: whether units can walk into a kit deep river at all (nothing found stops them).
+- The kit's deep river tile has an empty `terrain_outlines.xml` and an all-white `nogo.png`: nothing else blocks its water either.
+
 ## What it means for the editor
 
 - `AIH_BRIDGE_CROSSING` and `AIH_COVER_LINE` change nothing in Attila's battles (as read here). Writing them is harmless and keeps the
