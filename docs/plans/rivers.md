@@ -182,7 +182,8 @@ What the kit's river tiles carry (`AI_HINT_POLYGON_INSTANCE`, counted over Attil
 | `river_ford` (12) | the two river edges, running on through the ford (some of their points inside the crossing), one closed `AIH_BRIDGE_CROSSING` over the ford (no `AIH_FORDING_POINT`: none in the kit), four `AIH_COVER_LINE`s (the map's) |
 | `river_crossing` (29) | the same: river edges, one `AIH_BRIDGE_CROSSING` over the bridge, cover lines |
 
-The game's use of them is not traced (docs/re/platforms_and_bridges.md: no code reference to the strings), but every vanilla river has
+What Attila does with them (2026-11-25, docs/re/river_hints.md): crossings and cover lines are read only by the AI debug overlay; river edges
+set the battle ambience's water to river water and feed the ambient wildlife. Every vanilla river has
 its edges and every crossing its hint, so a river the editor makes gets them too: at export, for a river with its terrain patch on (the
 kit's have their own), in a layer `WCE rivers`, a river edge along each bank (a point every 20 m at the water's edge) and over each ford a
 crossing from bank to bank and 30 m past them, 10 m past its ends along the river (vanilla's: 100 to 115 m across, 65 to 80 along). A
