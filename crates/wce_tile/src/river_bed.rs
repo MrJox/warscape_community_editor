@@ -120,14 +120,17 @@ impl Join {
         paint_band(along.abs() - self.connection.width * 0.5, PAINT_BANK)
     }
 
-    /// The ground type under its water at a place: the connection's (deep for the deep river), within its width.
-    pub fn water_ground(&self, x: f64, z: f64) -> Option<WaterGround> {
+    /// The ground type at a place within its width, `ground` there (the game's units): by how deep the connection's water stands over
+    /// it ([`WaterGround::of_depth`]); none where the ground is not under that water.
+    pub fn water_ground(&self, x: f64, z: f64, ground: f64) -> Option<WaterGround> {
         let (dx, dz) = (x - self.at[0], z - self.at[1]);
         let d = dx * self.inward[0] + dz * self.inward[1];
         let along = dx * -self.inward[1] + dz * self.inward[0];
-        (d <= JOIN_HELD + JOIN_FADE && along.abs() <= self.connection.width * 0.5).then_some(
-            if self.connection.water - self.connection.profile[0] >= DEEP_GROUND_DEPTH { WaterGround::Deep } else { WaterGround::Shallow },
-        )
+        if d > JOIN_HELD + JOIN_FADE || along.abs() > self.connection.width * 0.5 {
+            return None;
+        }
+
+        WaterGround::of_depth(self.connection.water - ground, false)
     }
 
     /// The bounds it touches (x0, z0, x1, z1).
@@ -266,6 +269,20 @@ pub const DEEP_GROUND_DEPTH: f64 = 3.0;
 pub enum WaterGround {
     Deep,
     Shallow,
+}
+
+impl WaterGround {
+    /// The ground type under `depth` of water (the game's units): *deep water* from [`DEEP_GROUND_DEPTH`], *shallow water* under it or
+    /// where `shallow` says (a ford); none where the ground is not under the water (it would slow units on dry ground: the game's
+    /// water types are speed only, docs/re/river_hints.md).
+    #[must_use]
+    pub fn of_depth(depth: f64, shallow: bool) -> Option<Self> {
+        if !(depth > 0.0) {
+            return None;
+        }
+
+        Some(if shallow || depth < DEEP_GROUND_DEPTH { Self::Shallow } else { Self::Deep })
+    }
 }
 
 impl Channel {
@@ -622,17 +639,30 @@ impl RiverBed {
         self.joins.iter().fold(w, |w, j| w.max(j.paint(x, z)))
     }
 
-    /// The ground type under the water at a place, as the kit's river tiles have it: *deep water* under a river's water where its bed
-    /// is deep ([`DEEP_GROUND_DEPTH`]), *shallow water* where it is not or at a ford; a join's connection's. None for a lake (the kit's
-    /// lakes have none) or dry ground.
-    pub fn water_ground(&self, x: f64, z: f64, cell: BedCell) -> Option<WaterGround> {
-        let from_joins = self.joins.iter().find_map(|j| j.water_ground(x, z));
-        let Some(c) = &self.channel else { return from_joins };
-        if !cell.wet || !(c.cuts || cell.ford > 0.0) {
-            return from_joins;
+    /// The ground type at a place where the ground (`ground`, the game's units, as the river leaves it) is under its water, by how deep
+    /// ([`WaterGround::of_depth`]): within a river's ribbon (its bed cut or a ford there), its water at the nearest place of its line, a
+    /// ford's shallow whatever its depth; within a join, the connection's water; within a lake's plane, the plane's water. None on dry
+    /// ground, even under a ribbon's edge (the kit's 45 m ribbon is wider than the water it shows).
+    pub fn water_ground(&self, x: f64, z: f64, cell: BedCell, ground: f64) -> Option<WaterGround> {
+        if !ground.is_finite() {
+            return None;
         }
 
-        Some(if cell.ford >= 0.5 || c.depth < DEEP_GROUND_DEPTH { WaterGround::Shallow } else { WaterGround::Deep })
+        if let Some(c) = &self.channel
+            && cell.wet
+            && (c.cuts || cell.ford > 0.0)
+            && let Some(k) = WaterGround::of_depth(cell.water - ground, cell.ford >= 0.5)
+        {
+            return Some(k);
+        }
+
+        if let Some(k) = self.joins.iter().find_map(|j| j.water_ground(x, z, ground)) {
+            return Some(k);
+        }
+
+        let b = self.basin.as_ref()?;
+        let on_plane = x >= b.plane[0] && x <= b.plane[2] && z >= b.plane[1] && z <= b.plane[3];
+        if on_plane { WaterGround::of_depth(b.water - ground, false) } else { None }
     }
 
     /// [`Self::height_with`] without a bed (the joins alone).
@@ -683,8 +713,55 @@ mod tests {
         assert_eq!(bed.paint(10.0, 192.0 + 60.0, none, f64::NAN), 0.0, "levelled, not painted");
         assert!(bed.height_at(10.0, 192.0 + 60.0, 5.0).is_some(), "but levelled there");
         assert_eq!(bed.paint(100.0, 192.0, none, f64::NAN), 0.0, "past the join");
-        assert_eq!(bed.water_ground(10.0, 192.0, none), Some(WaterGround::Deep));
-        assert_eq!(bed.water_ground(10.0, 192.0 + 30.0, none), None);
+        // DEEP's water at -6.2: its middle (bed -11.9) deep, a bank under a metre of it shallow, a bank over it dry.
+        assert_eq!(bed.water_ground(10.0, 192.0, none, -11.9), Some(WaterGround::Deep));
+        assert_eq!(bed.water_ground(10.0, 192.0 + 16.0, none, -6.8), Some(WaterGround::Shallow));
+        assert_eq!(bed.water_ground(10.0, 192.0 + 20.0, none, -3.9), None, "under its ribbon, but dry");
+        assert_eq!(bed.water_ground(10.0, 192.0 + 30.0, none, -11.9), None, "past its width");
+    }
+
+    #[test]
+    fn only_the_ground_under_a_rivers_water_takes_a_water_type_by_its_depth() {
+        let c = Channel {
+            line: vec![[0.0, 0.0], [100.0, 0.0]],
+            water: vec![-6.2, -6.2],
+            width: vec![45.0, 45.0],
+            depth: 5.7,
+            bank_slope: 45.0,
+            vertical: 1.0,
+            fords: vec![],
+            cuts: true,
+        };
+        let bed = RiverBed { channel: Some(c), ..Default::default() };
+        let wet = BedCell { wet: true, water: -6.2, ..BedCell::default() };
+        assert_eq!(bed.water_ground(50.0, 0.0, wet, -11.9), Some(WaterGround::Deep), "its deep middle");
+        assert_eq!(bed.water_ground(50.0, 0.0, wet, -7.0), Some(WaterGround::Shallow), "under 0.8 of water");
+        assert_eq!(bed.water_ground(50.0, 0.0, wet, -3.9), None, "within its ribbon but over its water: dry bank");
+        assert_eq!(bed.water_ground(50.0, 0.0, wet, f64::NAN), None);
+        let ford = BedCell { ford: 1.0, ..wet };
+        assert_eq!(bed.water_ground(50.0, 0.0, ford, -11.9), Some(WaterGround::Shallow), "a ford is shallow");
+        assert_eq!(bed.water_ground(50.0, 0.0, ford, -5.0), None, "but not over its water");
+        assert_eq!(bed.water_ground(50.0, 0.0, BedCell { wet: false, ..wet }, -11.9), None, "off its ribbon");
+    }
+
+    #[test]
+    fn only_the_ground_under_a_lakes_water_takes_a_water_type_by_its_depth() {
+        let b = Basin {
+            outline: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+            water: -2.0,
+            depth: 4.0,
+            rise: 1.0,
+            shore: 12.0,
+            rim: 0.5,
+            plane: [-8.0, -8.0, 108.0, 108.0],
+        };
+        let bed = RiverBed { basin: Some(b), ..Default::default() };
+        let none = BedCell::default();
+        assert_eq!(bed.water_ground(50.0, 50.0, none, -6.0), Some(WaterGround::Deep), "its basin, 4 under");
+        assert_eq!(bed.water_ground(50.0, 50.0, none, -3.0), Some(WaterGround::Shallow), "its shallows");
+        assert_eq!(bed.water_ground(50.0, 50.0, none, -1.5), None, "an island over its water");
+        assert_eq!(bed.water_ground(-5.0, 50.0, none, -3.0), Some(WaterGround::Shallow), "low ground under its plane, past the outline");
+        assert_eq!(bed.water_ground(-20.0, 50.0, none, -6.0), None, "low ground past its plane: no water shows there");
     }
 
     #[test]

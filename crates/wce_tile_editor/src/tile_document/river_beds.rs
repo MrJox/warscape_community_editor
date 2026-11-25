@@ -903,7 +903,8 @@ fn river_terrain(i: RiverInput) -> RiverStacks {
             river_layer(blend, river.id, &variation, &owner, &name, ids[1]);
         }
 
-        // The ground type under the water: deep or shallow water, as the kit's river tiles have it.
+        // The ground type under the water: deep or shallow water by its depth over the ground as the river leaves it, only where that
+        // ground is under the water (not the ribbon's dry edges, nor ground under a lake's plane over its water).
         if let Some(ground) = ground.as_mut() {
             use wce_tile::ground_types::GROUND_TYPES;
             use wce_tile::river_bed::WaterGround;
@@ -916,7 +917,7 @@ fn river_terrain(i: RiverInput) -> RiverStacks {
             for y in gy0..gy1 {
                 for x in gx0..gx1 {
                     let (wx, wz) = ((f64::from(x) + 0.5) / gpx - border, (f64::from(y) + 0.5) / gpz - border);
-                    if let Some(k) = river.bed.water_ground(wx, wz, cell_at(wx, wz)) {
+                    if let Some(k) = river.bed.water_ground(wx, wz, cell_at(wx, wz), final_at(wx, wz)) {
                         let [r, g, b] = colour(k);
                         ground.put(gid, x, y, &[r, g, b, 255]);
                     }
