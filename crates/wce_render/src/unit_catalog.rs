@@ -53,6 +53,38 @@ pub struct LandUnit {
 
     /// Metres between files and between ranks, in close formation.
     pub spacing: [f32; 2],
+
+    /// `land_units_officers` key: its command group.
+    pub officers: String,
+}
+
+/// A `battle_personalities` row: one man of a unit's command group, or a character.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Personality {
+    /// `battle_animations_table` key.
+    pub animation: String,
+
+    /// `officer`, `standard_bearer`, `musician`.
+    pub kind: String,
+    pub variant: String,
+}
+
+/// A `land_units_officers` row: the men who lead a unit, `battle_personalities` keys.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CommandGroup {
+    pub officers: Vec<String>,
+    pub standard_bearers: Vec<String>,
+    pub musicians: Vec<String>,
+
+    /// `personality_location`: they stand before the front rank (else behind the last).
+    pub front: bool,
+}
+
+impl CommandGroup {
+    /// Every man of it, the officers first.
+    pub fn men(&self) -> impl Iterator<Item = &String> {
+        self.officers.iter().chain(&self.standard_bearers).chain(&self.musicians)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -131,6 +163,15 @@ pub struct UnitCatalog {
 
     /// `naval_weapons`: a weapon's model (`models_entity_weapons`: the first piece, intact, LOD 1, in its logic file's folder).
     pub naval_weapons: HashMap<String, String>,
+
+    /// `battle_personalities`, by key.
+    pub personalities: HashMap<String, Personality>,
+
+    /// `land_units_officers`, by key.
+    pub command: HashMap<String, CommandGroup>,
+
+    /// The generals' battle variants (`agent_uniforms.battle_filename`), each once, sorted.
+    pub uniforms: Vec<String>,
 }
 
 /// The rows of a table, every file of it, the columns as text, in `columns`' order. A key that comes twice keeps the first: the packs are read
@@ -202,21 +243,23 @@ impl UnitCatalog {
                 .into_iter()
                 .map(|r| (r[0].clone(), [number(&r[1]), number(&r[2])]))
                 .collect();
-        let land: HashMap<String, LandUnit> = rows(vfs, schema, "land_units", &["key", "man_animation", "mount", "rank_depth", "spacing"])?
-            .into_iter()
-            .map(|r| {
-                (
-                    r[0].clone(),
-                    LandUnit {
-                        man_animation: r[1].clone(),
-                        mount: r[2].clone(),
-                        rank_depth: number(&r[3]) as u32,
-                        spacing: spacings.get(&r[4]).copied().unwrap_or_default(),
-                        ..LandUnit::default()
-                    },
-                )
-            })
-            .collect();
+        let land: HashMap<String, LandUnit> =
+            rows_with(vfs, schema, "land_units", &["key", "man_animation", "mount", "rank_depth", "spacing"], &["officers"])?
+                .into_iter()
+                .map(|r| {
+                    (
+                        r[0].clone(),
+                        LandUnit {
+                            man_animation: r[1].clone(),
+                            mount: r[2].clone(),
+                            rank_depth: number(&r[3]) as u32,
+                            spacing: spacings.get(&r[4]).copied().unwrap_or_default(),
+                            officers: r[5].clone(),
+                            ..LandUnit::default()
+                        },
+                    )
+                })
+                .collect();
         // `naval_units` (key, ship, category, primary and secondary weapon) and `ship_dbs` (key, model).
         let naval: HashMap<String, Vec<String>> =
             rows(vfs, schema, "naval_units", &["key", "ship", "category", "primary_naval_weapon", "secondary_naval_weapon"])?
@@ -320,6 +363,36 @@ impl UnitCatalog {
             }
         }
 
+        // The command groups and the characters: optional, a game or mod without them shows the soldiers alone.
+        if let Ok(rows) = rows(vfs, schema, "battle_personalities", &["key", "man_animations_table", "type", "variant"]) {
+            for r in rows {
+                c.personalities.entry(r[0].clone()).or_insert(Personality {
+                    animation: r[1].clone(),
+                    kind: r[2].clone(),
+                    variant: r[3].clone(),
+                });
+            }
+        }
+
+        let columns = ["key", "officer_1", "officer_2", "standard_bearer_1", "standard_bearer_2", "musician_1", "musician_2"];
+        if let Ok(rows) = rows_with(vfs, schema, "land_units_officers", &columns, &["personality_location"]) {
+            for r in rows {
+                let some = |a: &String, b: &String| [a, b].into_iter().filter(|k| !k.is_empty()).cloned().collect::<Vec<_>>();
+                c.command.entry(r[0].clone()).or_insert(CommandGroup {
+                    officers: some(&r[1], &r[2]),
+                    standard_bearers: some(&r[3], &r[4]),
+                    musicians: some(&r[5], &r[6]),
+                    front: r[7].trim() != "back",
+                });
+            }
+        }
+
+        if let Ok(rows) = rows(vfs, schema, "agent_uniforms", &["battle_filename"]) {
+            c.uniforms = rows.into_iter().map(|r| r[0].trim().to_owned()).filter(|v| !v.is_empty() && v != ".").collect();
+            c.uniforms.sort_unstable();
+            c.uniforms.dedup();
+        }
+
         for path in vfs.list("animations/animation_tables/", ".txt") {
             let text = String::from_utf8_lossy(&vfs.read(path).map_err(|e| e.to_string())?).into_owned();
             for table in parse_tables(&text).ok_or_else(|| format!("{path}: not an animation table"))? {
@@ -338,7 +411,12 @@ impl UnitCatalog {
 
     /// The colours a unit's soldier wears for `faction`: the unit's own (`unit_variants_colours`), else the faction's.
     pub fn colours_of(&self, entry: &UnitEntry, faction: &str) -> Option<[[f32; 3]; 4]> {
-        let own = |f: &str| self.unit_colours.get(&(entry.name.clone(), f.to_owned(), "soldier".to_owned())).copied();
+        self.colours_as(entry, faction, "soldier")
+    }
+
+    /// [`Self::colours_of`] for a kind of man (`soldier`, `officer`, `standard_bearer`, `musician`): the unit's own for him, else the faction's.
+    pub fn colours_as(&self, entry: &UnitEntry, faction: &str, kind: &str) -> Option<[[f32; 3]; 4]> {
+        let own = |f: &str| self.unit_colours.get(&(entry.name.clone(), f.to_owned(), kind.to_owned())).copied();
         own(faction).or_else(|| own(&entry.faction)).or_else(|| self.colours.get(faction).copied())
     }
 
@@ -354,6 +432,11 @@ impl UnitCatalog {
             self.naval_units.iter().filter(|(_, n)| self.ship_entry(&n.naval_unit, "").is_some()).map(|(k, _)| k.as_str()).collect();
         units.sort_unstable();
         units
+    }
+
+    /// A unit's command group (`main_units` key); none when it has none.
+    pub fn command_of(&self, unit: &str) -> Option<&CommandGroup> {
+        self.command.get(&self.land_units.get(unit)?.officers).filter(|g| g.men().next().is_some())
     }
 
     /// The units, each once, sorted.

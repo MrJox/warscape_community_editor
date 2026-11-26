@@ -164,6 +164,46 @@ fn unit(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: 
     let c = r.ins.edit_bool("general", "General", &mut u.general);
     r.note("general", c);
 
+    // Who is drawn: its men and their command group, or one character in its place (a movie's; a battle has the unit).
+    let group = ui.catalog.as_ref().and_then(|c| c.command_of(&u.unit)).map(|g| {
+        g.men()
+            .map(|k| {
+                let kind = ui.catalog.as_ref().and_then(|c| c.personalities.get(k)).map_or("", |p| p.kind.as_str());
+                (format!("{}{k}", wce_cinematic::scene::CHARACTER_PERSONALITY), crate::pickers::personality_kind(kind).to_owned())
+            })
+            .collect::<Vec<_>>()
+    });
+    if u.character.is_empty() {
+        let tip = match &group {
+            Some(men) => {
+                format!("Its {} at their places in a movie", men.iter().map(|(_, k)| k.to_lowercase()).collect::<Vec<_>>().join(", "))
+            }
+            None => "Its officers at their places in a movie (this unit has none)".to_owned(),
+        };
+        r.ins.hint(&tip);
+        let c = r.ins.edit_bool("command", "Command group", &mut u.command);
+        r.note("command", c);
+    }
+    // The unit's own command group first, then everyone.
+    let mut characters: Vec<crate::pickers::Item> = group
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(key, kind)| crate::pickers::Item { name: format!("{kind} of this unit"), key })
+        .collect();
+    characters.extend(ui.characters.iter().cloned());
+    let shown = crate::pickers::character_name(ui.catalog.as_deref(), &u.character);
+    if let Some(k) = pick_row(
+        ui,
+        "Character",
+        "character",
+        &shown,
+        &characters,
+        "One character alone in its place in a movie, on its mount; a battle has the unit",
+    ) {
+        u.character = k;
+        r.picked = Some("unit character".into());
+    }
+
     // Its part in the clip shown: keys at the playhead.
     let (clip, t) = (ui.clip, ui.time);
     if let Some(c) = clip.and_then(|c| q.clip(c)).cloned() {
@@ -197,7 +237,7 @@ fn unit(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: 
             "Animate",
             "animhere",
             "Play an animation here...",
-            &crate::pickers::slot_items(ui.slots.get(&q.units[ix].unit).map(|s| s.as_slice())),
+            &crate::pickers::slot_items(ui.slots.get(q.units[ix].slots_key()).map(|s| s.as_slice())),
             "The whole unit plays it from the playhead (AUTO: back to walking / standing); in a battle only a taunt plays",
         ) {
             let tid = track.or_else(|| add_track(q, c.id, "Unit", Some(id), ""));

@@ -100,6 +100,42 @@ fn slot_label(slot: &str) -> String {
 }
 
 /// Where an action key's animation plays, for its tooltip.
+/// What a kind of `battle_personalities` man is called.
+pub fn personality_kind(kind: &str) -> &str {
+    match kind {
+        "officer" => "Officer",
+        "standard_bearer" => "Standard bearer",
+        "musician" => "Musician",
+        other => other,
+    }
+}
+
+/// The characters a unit can be: its men (empty key), every `battle_personalities` man by kind, then the generals' battle variants.
+pub fn character_items(catalog: &wce_render::unit_catalog::UnitCatalog) -> Vec<Item> {
+    use wce_cinematic::scene::{CHARACTER_PERSONALITY, CHARACTER_UNIFORM};
+    let mut people: Vec<Item> = catalog
+        .personalities
+        .iter()
+        .map(|(k, p)| Item { key: format!("{CHARACTER_PERSONALITY}{k}"), name: format!("{}: {k}", personality_kind(&p.kind)) })
+        .collect();
+    people.sort_by(|a, b| a.name.cmp(&b.name));
+    let generals = catalog.uniforms.iter().map(|v| Item { key: format!("{CHARACTER_UNIFORM}{v}"), name: format!("General: {v}") });
+    std::iter::once(Item { key: String::new(), name: "Its men".into() }).chain(people).chain(generals).collect()
+}
+
+/// A character's name in its picker.
+pub fn character_name(catalog: Option<&wce_render::unit_catalog::UnitCatalog>, character: &str) -> String {
+    use wce_cinematic::scene::{CHARACTER_PERSONALITY, CHARACTER_UNIFORM};
+    if let Some(k) = character.strip_prefix(CHARACTER_PERSONALITY) {
+        let kind = catalog.and_then(|c| c.personalities.get(k)).map_or("Character", |p| personality_kind(&p.kind));
+        format!("{kind}: {k}")
+    } else if let Some(v) = character.strip_prefix(CHARACTER_UNIFORM) {
+        format!("General: {v}")
+    } else {
+        "Its men".into()
+    }
+}
+
 pub fn slot_tip(slot: &str) -> &'static str {
     if wce_cinematic::scene::slot_family(slot) == "TAUNT" || slot == AUTO_SLOT || slot == "STAND" {
         "The animation the whole unit plays from here; plays in the editor, exported clips and the battle"

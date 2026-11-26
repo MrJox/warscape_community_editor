@@ -404,6 +404,18 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
       so neither man moves more than 6 mm or 25 degrees at a change of pair; the camera frames the whole fight from the side. Made
       offline from the game's data (a script outside the editor), as data.
     - Not done: a picker of the matched pairs in the editor (a pair's two keys are set by hand, the second on the other unit).
+21. Men less alike, and characters (tester, 2026-11-26: the variants are pulled too uniformly; no officers or standards, nothing for
+    characters). **done** (editor and movies; a battle has the game's own)
+    - Each man is one of 12 soldiers of his unit (6 before) by a hash of his place, not `k % 6`, which striped the ranks, and a little
+      out of step with the others of his soldier (four time offsets). A mesh's tint varies from soldier to soldier by its
+      `random_range` (**ASSUMPTION**: brighter or darker by up to 30 %, each channel 10 %, times the range; the engine's use isn't
+      traced). The definitions weight an alternative by listing it again, so the pick among them stays even.
+    - A unit's command group (`land_units.officers` -> `land_units_officers`: officers, standard bearers, musicians, each a
+      `battle_personalities` row with its own variant and animations) stands at its place: before the front rank or behind the last
+      (`personality_location`), side by side. *Command group* in the unit's Inspector (on by default; the duel's men have it off).
+    - A unit can be one *Character* alone in its place (`SceneUnit::character`): a `battle_personalities` man (`personality:<key>`,
+      on his own animations) or a general's battle variant (`uniform:<agent_uniforms.battle_filename>`, on the unit's animations);
+      both ride the unit's mount. The picker lists the unit's own command group first. A battle has the unit.
 11. Export > Movie pack...: a window with the clip, the size (4K to 960 x 540, or custom), the frame rate, the quality (5.5 to
     40 Mbit/s), motion blur and the subtitles' language. **done**
 

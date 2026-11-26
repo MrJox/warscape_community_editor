@@ -404,6 +404,8 @@ mod tests {
             men: 10,
             seed: 1,
             general: false,
+            command: true,
+            character: String::new(),
         }
     }
 

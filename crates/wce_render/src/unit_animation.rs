@@ -607,6 +607,20 @@ impl Figure {
     }
 }
 
+/// Who a model shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Who {
+    /// One of the unit's soldiers.
+    #[default]
+    Soldier,
+
+    /// A `battle_personalities` row (an officer, standard bearer or musician), on his own animations.
+    Personality(String),
+
+    /// A general's battle variant (`agent_uniforms.battle_filename`), on the unit's animations.
+    Uniform(String),
+}
+
 /// A soldier of a unit, and his mount if he rides.
 #[derive(Clone, Debug, Default)]
 pub struct UnitModel {
@@ -629,21 +643,38 @@ impl UnitModel {
     ///
     /// Returns which link of the unit's data is missing.
     pub fn load(read: &Reader, catalog: &UnitCatalog, unit: &str, faction: &str, seed: u64) -> Result<Self, String> {
+        Self::load_as(read, catalog, unit, faction, &Who::Soldier, seed)
+    }
+
+    /// [`Self::load`] for `who`: one of the unit's soldiers, or a man of its command group or a general in his place, on the unit's mount.
+    ///
+    /// # Errors
+    ///
+    /// Returns which link of the unit's data is missing.
+    pub fn load_as(read: &Reader, catalog: &UnitCatalog, unit: &str, faction: &str, who: &Who, seed: u64) -> Result<Self, String> {
         let entry = catalog.entry(unit, faction).ok_or_else(|| format!("no unit_variants row for '{unit}'"))?;
         let land = catalog.land_units.get(unit).ok_or_else(|| format!("no land unit for '{unit}'"))?;
         let mount = catalog.mounts.get(&land.mount);
-        let man = Figure::load(read, catalog, &land.man_animation, &entry.variant, seed)?;
+        let (animation, variant, kind) = match who {
+            Who::Soldier => (land.man_animation.as_str(), entry.variant.as_str(), "soldier"),
+            Who::Personality(key) => {
+                let p = catalog.personalities.get(key).ok_or_else(|| format!("no battle_personalities row '{key}'"))?;
+                (p.animation.as_str(), p.variant.as_str(), p.kind.as_str())
+            }
+            Who::Uniform(variant) => (land.man_animation.as_str(), variant.as_str(), "officer"),
+        };
+        let man = Figure::load(read, catalog, animation, variant, seed)?;
         let figure = mount.map(|m| Figure::load(read, catalog, &m.animation, &m.variant, seed.wrapping_add(1))).transpose()?;
 
         // Evenly over the variation, either way. **ASSUMPTION**: the engine's distribution isn't traced.
         let spread = ((seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f32 / (1u64 << 24) as f32).mul_add(2.0, -1.0);
         let scale = entry.height_scale.max(0.01) * (1.0 + entry.height_variation * spread);
         let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
-        let mut model =
-            Self { man, mount: figure, scale, faction_colours: catalog.colours_of(entry, faction).unwrap_or(white), phase: 0.0, seed };
+        let colours = catalog.colours_as(entry, faction, kind).unwrap_or(white);
+        let mut model = Self { man, mount: figure, scale, faction_colours: colours, phase: 0.0, seed };
         let slots: &[&str] = if model.mount.is_some() { &["RIDER_STAND", "STAND", "MISSING_ANIM"] } else { &["STAND", "MISSING_ANIM"] };
         if !slots.iter().any(|s| model.play(read, s)) {
-            return Err(format!("none of the slots {slots:?} in table '{}'", land.man_animation));
+            return Err(format!("none of the slots {slots:?} in table '{animation}'"));
         }
 
         Ok(model)

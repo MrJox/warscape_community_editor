@@ -432,6 +432,9 @@ a double-click adds a key; the Camera Cuts track says which camera is live when:
 tracks: drawn with the frame they see, moved and turned by the gizmo, an Inspector with the focal length, Look through it, Key this
 view into it, Cut to it here). A unit's animation keys offer its own animations (by family; red when it has not the one keyed). A run of keys plays as one sequence, each
 animation blending into the next; a key may name a `.anim` of the packs (`file:`, a matched combat's clip) and place it (x, z, turn).
+Each man is one of 12 soldiers of his unit, picked by his place; a unit's command group (officers, standard bearers, musicians) stands
+before or behind it (*Command group*), and a unit can be one *Character* alone (an officer, standard bearer, musician or a general's
+uniform, on the unit's mount) in movies.
 File > Open scene file... opens a scene's `project.json` from anywhere. The scene lists (the Scene panel's, File > Open cinematic
 scene) show the projects folder's scenes and the sample scenes shipped beside the program (a `samples/cinematic` folder there or
 above it: a checkout's `target/release` finds the repository's), marked; a sample opened is copied into the projects folder

@@ -60,6 +60,10 @@ pub struct SceneUi {
     pub lists: std::sync::Arc<GameLists>,
     /// Each unit's animation slots (`main_units` key -> sorted), as the preview reads them: the action keys' choices.
     pub slots: std::collections::HashMap<String, std::sync::Arc<Vec<String>>>,
+    /// The units' tables, once the preview has read them: the characters and command groups.
+    pub catalog: Option<std::sync::Arc<wce_render::unit_catalog::UnitCatalog>>,
+    /// The characters a unit can be, for its picker (built once the catalog is there).
+    pub characters: std::sync::Arc<Vec<crate::pickers::Item>>,
     pub filters: Filters,
     /// The Inspector shows the selected key (it was clicked after the selection last changed).
     pub key_focus: bool,
@@ -491,7 +495,7 @@ impl SceneUi {
             // An animation key the unit has no such animation for: red (it stands there).
             let missing = |list: &str, i: usize| match &track.content {
                 TrackContent::Unit { unit, actions, .. } if list == "actions" => {
-                    let own = p.unit(*unit).and_then(|u| self.slots.get(&u.unit));
+                    let own = p.unit(*unit).and_then(|u| self.slots.get(u.slots_key()));
                     actions.get(i).is_some_and(|a| crate::pickers::slot_missing(&a.slot, own.map(|s| s.as_slice())))
                 }
                 _ => false,
@@ -919,7 +923,7 @@ impl SceneUi {
                     if let Some(c) = actions.get_mut(k.index) {
                         time_row!(c.t);
                         gui::row("Animation");
-                        let own = p.unit(*unit).and_then(|u| self.slots.get(&u.unit)).cloned();
+                        let own = p.unit(*unit).and_then(|u| self.slots.get(u.slots_key())).cloned();
                         if let Some(k) = picker(
                             &mut self.filters,
                             "slot",
@@ -1625,6 +1629,8 @@ pub fn add_unit(e: &mut Editor, lists: &GameLists, key: &str, army: usize, at: O
             men: 160,
             seed: id,
             general: false,
+            command: true,
+            character: String::new(),
         });
         made = id;
     });
