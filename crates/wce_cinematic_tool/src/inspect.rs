@@ -173,7 +173,7 @@ fn unit(e: &mut Editor, r: &mut Rows, ui: &mut SceneUi, create: &mut Create, q: 
             })
             .collect::<Vec<_>>()
     });
-    if u.character.is_empty() {
+    if u.character.is_empty() && u.men > 1 {
         let tip = match &group {
             Some(men) => {
                 format!("Its {} at their places in a movie", men.iter().map(|(_, k)| k.to_lowercase()).collect::<Vec<_>>().join(", "))

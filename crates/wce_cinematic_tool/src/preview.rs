@@ -349,7 +349,9 @@ impl Preview {
                 if u.character.is_empty() {
                     let ranks = ranks_for_width(s.men, u.width, land.spacing[0]);
                     groups.push((String::new(), formation(s.men, ranks, land.spacing)));
+                    // A man alone has none: he is a character, not a unit.
                     if u.command
+                        && s.men > 1
                         && let Some(g) = catalog.command_of(&u.unit)
                     {
                         let men: Vec<&String> = g.men().collect();
