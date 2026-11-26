@@ -502,11 +502,11 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
 
     tool.prefab_library(e);
     let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-    let Some(graph) = d.tile().tscene().scene_graph() else {
+    if d.tile().tscene().scene_graph().is_none() {
         gui::text_disabled("This tile has no SCENE_GRAPH.");
         gui::end();
         return;
-    };
+    }
 
     // A selection made elsewhere (the viewport): open the tree down to it and scroll it into view. The tree's own clicks mark what they
     // selected as followed already.
@@ -527,100 +527,6 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         || tool.tree.prefab_seen != tool.prefab_version
     {
         tool.rebuild_tree(d);
-    }
-
-    // ---- toolbar
-    {
-        let sel = selected(e);
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-        let sc = d.tile().tscene();
-
-        // Where a new layer goes: inside the selected layer, else next to the selected item, else the scene graph (on a prefab's stage,
-        // the prefab: nothing goes outside it).
-        let target = match sel.first() {
-            Some(&s) if sc.is_layer(s) => s,
-            Some(&s) => parent_layer(sc, s).map_or(graph, |p| p.max(graph)),
-            None => graph,
-        };
-        let target = match tool.stage_group(d) {
-            Some(g) if target != g && !sc.is_descendant(target, g) => g,
-            _ => target,
-        };
-
-        let one_layer = sel.len() == 1 && sc.is_layer(sel[0]) && sc.type_of(sel[0]) != "SCENE_GRAPH";
-        if gui::button("New layer") {
-            match d.add_layer(Some(target), "New layer") {
-                Ok(_) => {
-                    tool.tree.open.insert(tool.tree_key_of(target));
-                    tool.tree.open_version += 1;
-                    tool.tree.begin_rename_next = true;
-                    tool.status = "layer added".to_owned();
-                }
-
-                Err(err) => tool.status = err,
-            }
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Adds a layer inside the selected layer, else next to the selected item, else at the root; then name it.");
-        }
-
-        gui::same_line_or_wrap(gui::button_width("Group"));
-        gui::begin_disabled(sel.is_empty());
-        let into = tool.new_items_layer(d);
-        if gui::button("Group") {
-            tool.status = into
-                .ok_or_else(|| "this tile has no scene graph".to_owned())
-                .and_then(|into| d.group_instances(&sel, into, ""))
-                .map_or_else(|err| err, |_| "grouped".to_owned());
-        }
-
-        if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Put the selected items into a new instance group in the working layer (Ctrl+G)");
-        }
-
-        gui::same_line_or_wrap(gui::button_width("Ungroup"));
-        let sc = d.tile().tscene();
-        let has_group = sel.iter().any(|&s| matches!(sc.type_of(s), "UserInstanceGroup" | "INSTANCE_GROUP"));
-        gui::begin_disabled(!has_group);
-        if gui::button("Ungroup") {
-            tool.status = into
-                .ok_or_else(|| "this tile has no scene graph".to_owned())
-                .and_then(|into| d.ungroup(&sel, into))
-                .map_or_else(|err| err, |freed| format!("ungrouped: {} items", freed.len()));
-        }
-
-        gui::end_disabled();
-        if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Take the selected instance groups apart into the working layer (Ctrl+U)");
-        }
-
-        gui::same_line_or_wrap(gui::button_width("Delete"));
-        let delete = gui::button("Delete");
-        if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Deletes the selected items, with everything in them (Delete); asks first for a big selection.");
-        }
-
-        gui::end_disabled();
-        gui::same_line_or_wrap(gui::button_width("Duplicate"));
-        gui::begin_disabled(!one_layer);
-        if gui::button("Duplicate")
-            && let Err(err) = d.duplicate_layer(sel[0])
-        {
-            tool.status = err;
-        }
-
-        if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Copies the selected layer with everything in it (one layer selected).");
-        }
-
-        gui::end_disabled();
-        let count = format!("{} selected", sel.len());
-        gui::same_line_or_wrap(gui::calc_text_size(&count).x);
-        gui::text_disabled(&count);
-        if delete {
-            tool.request_delete(e);
-        }
     }
 
     // The working layer, where new items go.
