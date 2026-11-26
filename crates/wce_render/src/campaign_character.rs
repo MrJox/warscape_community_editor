@@ -310,7 +310,7 @@ impl CampaignCatalog {
         let anim = &row.animations[k];
         let set = self.animation_set(anim).ok_or_else(|| format!("no idles for the animation set '{anim}'"))?;
         let rig = Rig::load(read, &set).ok_or_else(|| format!("skeleton '{}' does not load", set.skeleton))?;
-        let mut figure = Figure { parts, rig, set, segments: vec![] };
+        let mut figure = Figure { parts, rig, set, segments: vec![], held: false };
         let mut rng = Rng(seed ^ 0x5851_F42D_4C95_7F2D);
         let schedule = vec!["STAND".to_owned(); 8];
         if !figure.play(read, &schedule, &[], &mut rng) {

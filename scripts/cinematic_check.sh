@@ -82,8 +82,8 @@ for f in range(10):
     # Cameras and shots: the sample's cuts, a new camera and a cut to it, the clip a PNG folder a shot.
     proj="$OUT/projects_cams$run"; clips="$OUT/clips$run"; rm -rf "$proj" "$clips"; mkdir -p "$proj/cinematics" "$clips"
     cp -r "$ROOT/samples/cinematic/." "$proj/cinematics/"
-    sed -e "s|%CLIPS%|$(cygpath -m "$clips")|" "$ROOT/scripts/cinematic_cameras.txt" > "$OUT/cams$run.txt"
-    WCE_PROJECTS="$(cygpath -w "$proj")" WCE_SETTINGS_DIR="$(cygpath -w "$dir")" "$BIN/wce.exe" --script "$(cygpath -w "$OUT/cams$run.txt")" > "$OUT/cams_run$run.log" 2>&1
+    sed -e "s|%CLIPS%|$(mixpath "$clips")|" "$ROOT/scripts/cinematic_cameras.txt" > "$OUT/cams$run.txt"
+    WCE_PROJECTS="$(winpath "$proj")" WCE_SETTINGS_DIR="$(winpath "$dir")" "$BIN/wce$EXE" --script "$(winpath "$OUT/cams$run.txt")" > "$OUT/cams_run$run.log" 2>&1
     rc=$?
     echo "cameras run $run: exit $rc"
     [ $rc = 0 ] || { bad=1; grep -i -E "fail|error" "$OUT/cams_run$run.log" | tail -5; }
