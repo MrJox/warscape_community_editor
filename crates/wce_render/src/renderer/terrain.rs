@@ -732,8 +732,23 @@ pub(crate) struct TerrainGpuState {
     precs: Vec<PlacedPatch>,
     rec_of: IdMap<EntityId, u32>,
 
-    /// Each record's cluster (`clusters`): a view walks the records in the list's order, taking those of the clusters in it.
+    /// Each record's cluster (`clusters`): a view walks the records in their slots' order, taking those of the clusters in it.
     cluster_of: Vec<u32>,
+
+    /// The list kept from frame to frame (`terrain_surface_entities`): each slot's entity (records, clusters and the patches' store
+    /// `precs` by slot), the free slots, the patches of freed slots still in the store, each live slot's place in the frame's list, the
+    /// clusters by grid cell (and the one of the terrains without a box) and the cell's size. Made whole again only when the terrains'
+    /// placements may all change; while a streamed map changes, the terrains that come and go (made again every frame, 3.8 ms).
+    slot_ids: Vec<EntityId>,
+    free_slots: Vec<u32>,
+    precs_dead: usize,
+    pos_of_slot: Vec<u32>,
+    cluster_at: IdMap<(i32, i32), u32>,
+    cluster_always: Option<u32>,
+    cluster_cell: f32,
+    seen: Vec<u64>,
+    seen_mark: u64,
+    moved_ids: Vec<EntityId>,
 
     /// The views' plans made ahead this frame (`terrain_view_jobs`), and the surface's blend boxes made with its plan.
     prepared: Vec<PreparedView>,
@@ -2170,7 +2185,7 @@ impl Renderer {
         };
         let mut by_material: Vec<MaterialBoxes> = vec![];
         for g in groups {
-            let Some(Payload::Terrain(t)) = list.get(g.rec as usize).map(|e| &e.payload) else { continue };
+            let Some(Payload::Terrain(t)) = self.list_entity(list, g.rec).map(|e| &e.payload) else { continue };
             let Some(m) = &t.material else { continue };
             by_material.push((m.clone(), t.lf.clone(), g.rows, g.snowy));
         }
@@ -2630,6 +2645,12 @@ impl Renderer {
         self.terrain.surface_boxes = None;
     }
 
+    /// The entity of a slot (`terrain_list_insert`) in the frame's list.
+    fn list_entity<'e>(&self, list: &[&'e wce_scene::render_scene::Entity], slot: u32) -> Option<&'e wce_scene::render_scene::Entity> {
+        let p = *self.terrain.pos_of_slot.get(slot as usize)?;
+        list.get(p as usize).copied()
+    }
+
     /// How many terrains the frame's list holds (made if it isn't yet: `terrain_surface_entities`), without the list of references a pass
     /// that draws no custom mesh doesn't need (made from the ids, 0.07 ms a time).
     fn terrain_list(&mut self, scene: &RenderScene) -> usize {
@@ -2651,8 +2672,17 @@ impl Renderer {
         // A terrain of the list moved: made again (the list goes by the terrains' changes, not by every change of the scene: a streamed
         // map's props and forests changed it every frame while the camera moved, and each time it was made again).
         match scene.moved_since(&mut self.terrain.moved_at) {
-            Some(ids) if !ids.iter().any(|id| self.terrain.rec_of.contains_key(id)) => {}
-            _ => self.terrain.moves += 1,
+            Some(ids) => {
+                let before = self.terrain.moved_ids.len();
+                self.terrain.moved_ids.extend(ids.into_iter().filter(|id| self.terrain.rec_of.contains_key(id)));
+                if self.terrain.moved_ids.len() > before {
+                    self.terrain.moves += 1;
+                }
+            }
+            None => {
+                self.terrain.moves += 1;
+                self.terrain.surface_from = None;
+            }
         }
 
         let from = self.surface_from(scene);
@@ -2664,94 +2694,254 @@ impl Renderer {
         }
 
         wce_prof!("terrain.surface_entities.made");
-        // One pass: each terrain made ready and placed, and what the views read of it (its cluster box, its record and patches), its LF
-        // made ready once a map (three passes, each looking every terrain up again and the LF once a terrain, were 5.7 ms a frame while a
-        // streamed map changed).
-        let mut ents = vec![];
-        let mut lfs: Vec<Arc<LfMap>> = vec![];
-        let mut boxes: Vec<Option<([f32; 3], [f32; 3])>> = vec![];
-        let (mut recs, mut precs) = (std::mem::take(&mut self.terrain.recs), std::mem::take(&mut self.terrain.precs));
-        recs.clear();
-        precs.clear();
-        self.terrain.rec_of.clear();
-        for id in std::mem::take(&mut self.terrain.entities) {
-            self.terrain.entities.push(id);
-            let Some(e) = scene.find(id) else { continue };
-            let Payload::Terrain(t) = &e.payload else { continue };
-            if let Some(lf) = &t.lf
-                && !lfs.iter().any(|l| l.id == lf.id)
-            {
-                lfs.push(lf.clone());
-                self.build_lf(lf);
-            }
-
-            self.build_hf(id, t);
-            if let Some(m) = &t.custom
-                && !self.terrain.custom.contains_key(&m.id)
-            {
-                self.build_custom(m, self.terrain.material_epoch);
-            }
-
-            self.place_terrain(id, &e.world, t);
-            let Some(p) = self.terrain.placed.get(&id).filter(|p| p.key == hf_key(t)) else { continue };
-            ents.push(e);
-
-            // Its cluster box: its patches, blend box and custom mesh.
-            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-            let mut add = |a: [f32; 3], b: [f32; 3]| {
-                for r in 0..3 {
-                    (lo[r], hi[r]) = (lo[r].min(a[r]), hi[r].max(b[r]));
-                }
-            };
-            if !p.patches.is_empty() {
-                add(p.bmin, p.bmax);
-            }
-            if let Some((_, b, _)) = p.blend_box {
-                add([b[0], b[1], b[2]], [b[3], b[4], b[5]]);
-            }
-            if let Some((a, b)) = self.custom_box(e) {
-                add(a, b);
-            }
-            boxes.push((lo[0] <= hi[0] && lo.iter().chain(&hi).all(|v| v.is_finite())).then_some((lo, hi)));
-
-            // Its record, in the list's order.
-            self.terrain.rec_of.insert(id, recs.len() as u32);
-            let (has_blend, mat, blend, rot) = match (&t.material, p.blend_box) {
-                (Some(m), Some((_, b, rot))) => (true, m.id, b, rot),
-                _ => (false, 0, [0.0; 6], 0.0),
-            };
-            recs.push(TerrainRec {
-                has_blend,
-                mat,
-                blend,
-                rot,
-                lf: t.lf.as_ref().map_or(0, |lf| lf.id),
-                key: p.key,
-                step: p.step,
-                bmin: p.bmin,
-                bmax: p.bmax,
-                first: precs.len() as u32,
-                len: p.patches.len() as u32,
-                lod: p.lod,
-                custom: t.custom.is_some(),
-                sea_floor: t.sea_floor,
-                no_shadow: t.no_shadow,
-            });
-            precs.extend_from_slice(&p.patches);
+        // Whole again when every placement may have changed (another scene, terrains' payloads, the LF maps, the units or the render
+        // origin) or the slots have many holes; else only the terrains that came, went or moved.
+        let whole = self.terrain.surface_from.as_ref().is_none_or(|was| {
+            was.scene != from.scene
+                || was.terrain_revision != from.terrain_revision
+                || was.units != from.units
+                || was.origin != from.origin
+                || was.lfs != from.lfs
+        }) || self.terrain.free_slots.len() * 3 > self.terrain.slot_ids.len().max(64)
+            || self.terrain.precs_dead * 2 > self.terrain.precs.len().max(4096);
+        if whole {
+            self.terrain_list_whole(scene);
+        } else {
+            self.terrain_list_changes(scene);
         }
 
-        self.terrain.surface = Some((self.terrain.frame, ents.iter().map(|e| e.id).collect()));
-        self.terrain.clusters = Self::terrain_clusters(&boxes);
-        (self.terrain.recs, self.terrain.precs) = (recs, precs);
-        self.terrain.cluster_of = vec![u32::MAX; ents.len()];
-        for (c, cluster) in self.terrain.clusters.iter().enumerate() {
-            for &k in &cluster.ents {
-                self.terrain.cluster_of[k] = c as u32;
-            }
+        // The live slots in their entities' order: the frame's list, and each slot's place in it.
+        let recs = &self.terrain.recs;
+        let mut live: Vec<u32> = (0..recs.len() as u32).filter(|&s| !recs[s as usize].dead).collect();
+        live.sort_unstable_by_key(|&s| recs[s as usize].id);
+        self.terrain.pos_of_slot = vec![u32::MAX; recs.len()];
+        let mut ids = Vec::with_capacity(live.len());
+        for (pos, &slot) in live.iter().enumerate() {
+            self.terrain.pos_of_slot[slot as usize] = pos as u32;
+            ids.push(self.terrain.slot_ids[slot as usize]);
         }
-        self.terrain.surface_lfs = lfs;
+
+        let ents: Vec<&wce_scene::render_scene::Entity> = ids.iter().filter_map(|&id| scene.find(id)).collect();
+        self.terrain.surface = Some((self.terrain.frame, ids));
         self.terrain.surface_from = Some(self.surface_from(scene));
         ents
+    }
+
+    /// The frame's list made whole (`terrain_surface_entities`): the slots in the terrains' order, the clusters' cell from their extent.
+    fn terrain_list_whole(&mut self, scene: &RenderScene) {
+        let t = &mut self.terrain;
+        t.recs.clear();
+        t.precs.clear();
+        t.slot_ids.clear();
+        t.free_slots.clear();
+        t.cluster_of.clear();
+        t.seen.clear();
+        t.rec_of.clear();
+        t.cluster_at.clear();
+        t.clusters.clear();
+        t.moved_ids.clear();
+        (t.precs_dead, t.cluster_always, t.surface_lfs) = (0, None, vec![]);
+
+        let mut entries = vec![];
+        for id in self.terrain.entities.clone() {
+            if let Some(entry) = self.terrain_list_entry(scene, id) {
+                entries.push((id, entry));
+            }
+        }
+
+        // The cell: a CLUSTER_GRID-th of the boxes' centres' extent.
+        let (mut x0, mut z0, mut x1, mut z1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for (_, (b, _)) in &entries {
+            if let Some((lo, hi)) = b {
+                let (cx, cz) = (0.5 * (lo[0] + hi[0]), 0.5 * (lo[2] + hi[2]));
+                (x0, z0, x1, z1) = (x0.min(cx), z0.min(cz), x1.max(cx), z1.max(cz));
+            }
+        }
+
+        self.terrain.cluster_cell = ((x1 - x0).max(z1 - z0) / CLUSTER_GRID as f32).max(1.0);
+        for (id, (b, rec)) in entries {
+            self.terrain_list_insert(id, b, rec);
+        }
+    }
+
+    /// The frame's list from the last (`terrain_surface_entities`): the terrains gone or moved out, those new or moved in.
+    fn terrain_list_changes(&mut self, scene: &RenderScene) {
+        for id in std::mem::take(&mut self.terrain.moved_ids) {
+            if let Some(&slot) = self.terrain.rec_of.get(&id) {
+                self.terrain_list_remove(slot);
+            }
+        }
+
+        self.terrain.seen_mark += 1;
+        let mark = self.terrain.seen_mark;
+        for id in std::mem::take(&mut self.terrain.entities) {
+            self.terrain.entities.push(id);
+            match self.terrain.rec_of.get(&id) {
+                Some(&slot) => self.terrain.seen[slot as usize] = mark,
+                None => {
+                    if let Some((b, rec)) = self.terrain_list_entry(scene, id) {
+                        let slot = self.terrain_list_insert(id, b, rec);
+                        self.terrain.seen[slot as usize] = mark;
+                    }
+                }
+            }
+        }
+
+        let gone: Vec<u32> = (0..self.terrain.recs.len() as u32)
+            .filter(|&s| !self.terrain.recs[s as usize].dead && self.terrain.seen[s as usize] != mark)
+            .collect();
+        for slot in gone {
+            self.terrain_list_remove(slot);
+        }
+    }
+
+    /// A terrain made ready and placed (its geometry, its LF made ready the first time the list meets it), and what the views read of it:
+    /// its cluster box (its patches, blend box and custom mesh) and its record (`first` set by `terrain_list_insert`). None until placed.
+    fn terrain_list_entry(&mut self, scene: &RenderScene, id: EntityId) -> Option<(Option<([f32; 3], [f32; 3])>, TerrainRec)> {
+        let e = scene.find(id)?;
+        let Payload::Terrain(t) = &e.payload else { return None };
+        if let Some(lf) = &t.lf
+            && !self.terrain.surface_lfs.iter().any(|l| l.id == lf.id)
+        {
+            self.terrain.surface_lfs.push(lf.clone());
+            self.build_lf(lf);
+        }
+
+        self.build_hf(id, t);
+        if let Some(m) = &t.custom
+            && !self.terrain.custom.contains_key(&m.id)
+        {
+            self.build_custom(m, self.terrain.material_epoch);
+        }
+
+        self.place_terrain(id, &e.world, t);
+        let p = self.terrain.placed.get(&id).filter(|p| p.key == hf_key(t))?;
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        let mut add = |a: [f32; 3], b: [f32; 3]| {
+            for r in 0..3 {
+                (lo[r], hi[r]) = (lo[r].min(a[r]), hi[r].max(b[r]));
+            }
+        };
+        if !p.patches.is_empty() {
+            add(p.bmin, p.bmax);
+        }
+        if let Some((_, b, _)) = p.blend_box {
+            add([b[0], b[1], b[2]], [b[3], b[4], b[5]]);
+        }
+        if let Some((a, b)) = self.custom_box(e) {
+            add(a, b);
+        }
+
+        let bbox = (lo[0] <= hi[0] && lo.iter().chain(&hi).all(|v| v.is_finite())).then_some((lo, hi));
+        let (has_blend, mat, blend, rot) = match (&t.material, p.blend_box) {
+            (Some(m), Some((_, b, rot))) => (true, m.id, b, rot),
+            _ => (false, 0, [0.0; 6], 0.0),
+        };
+        let rec = TerrainRec {
+            dead: false,
+            id,
+            has_blend,
+            mat,
+            blend,
+            rot,
+            lf: t.lf.as_ref().map_or(0, |lf| lf.id),
+            key: p.key,
+            step: p.step,
+            bmin: p.bmin,
+            bmax: p.bmax,
+            first: 0,
+            len: p.patches.len() as u32,
+            lod: p.lod,
+            custom: t.custom.is_some(),
+            sea_floor: t.sea_floor,
+            no_shadow: t.no_shadow,
+        };
+        Some((bbox, rec))
+    }
+
+    /// A terrain into a slot (a free one, else a new one): its record, its patches at the store's end, its cluster (by its box's
+    /// centre's cell; the box-less ones' own).
+    fn terrain_list_insert(&mut self, id: EntityId, bbox: Option<([f32; 3], [f32; 3])>, mut rec: TerrainRec) -> u32 {
+        let t = &mut self.terrain;
+        let slot = match t.free_slots.pop() {
+            Some(s) => s,
+            None => {
+                t.recs.push(TerrainRec::default());
+                t.slot_ids.push(id);
+                t.cluster_of.push(u32::MAX);
+                t.seen.push(0);
+                (t.recs.len() - 1) as u32
+            }
+        };
+
+        rec.first = t.precs.len() as u32;
+        if let Some(p) = t.placed.get(&id) {
+            t.precs.extend_from_slice(&p.patches);
+        }
+
+        let s = slot as usize;
+        (t.recs[s], t.slot_ids[s]) = (rec, id);
+        t.rec_of.insert(id, slot);
+        let new_cluster = |clusters: &mut Vec<TerrainCluster>| {
+            clusters.push(TerrainCluster::default());
+            (clusters.len() - 1) as u32
+        };
+        let c = match bbox {
+            Some((lo, hi)) => {
+                let cell = t.cluster_cell.max(1.0);
+                let key = (((lo[0] + hi[0]) * 0.5 / cell).floor() as i32, ((lo[2] + hi[2]) * 0.5 / cell).floor() as i32);
+                let c = match t.cluster_at.get(&key) {
+                    Some(&c) => c,
+                    None => {
+                        let c = new_cluster(&mut t.clusters);
+                        t.cluster_at.insert(key, c);
+                        c
+                    }
+                };
+                let cl = &mut t.clusters[c as usize];
+                for r in 0..3 {
+                    (cl.bmin[r], cl.bmax[r]) = (cl.bmin[r].min(lo[r]), cl.bmax[r].max(hi[r]));
+                }
+                c
+            }
+            None => {
+                let c = match t.cluster_always {
+                    Some(c) => c,
+                    None => {
+                        let c = new_cluster(&mut t.clusters);
+                        t.cluster_always = Some(c);
+                        c
+                    }
+                };
+                t.clusters[c as usize].always = true;
+                c
+            }
+        };
+
+        t.clusters[c as usize].ents.push(s);
+        t.cluster_of[s] = c;
+        slot
+    }
+
+    /// A slot freed: out of its cluster (whose box stays as it was until the list is made whole), its patches left in the store.
+    fn terrain_list_remove(&mut self, slot: u32) {
+        let t = &mut self.terrain;
+        let s = slot as usize;
+        if t.recs[s].dead {
+            return;
+        }
+
+        t.rec_of.remove(&t.slot_ids[s]);
+        t.precs_dead += t.recs[s].len as usize;
+        t.recs[s] = TerrainRec { dead: true, custom: true, ..Default::default() };
+        if let Some(cl) = t.clusters.get_mut(t.cluster_of[s] as usize)
+            && let Some(at) = cl.ents.iter().position(|&k| k == s)
+        {
+            cl.ents.swap_remove(at);
+        }
+
+        t.cluster_of[s] = u32::MAX;
+        t.free_slots.push(slot);
     }
 
     /// What the frame's terrain list depends on (`terrain_surface_entities`): the scene, its terrains (which, their payloads, their moves),
@@ -2772,43 +2962,6 @@ impl Renderer {
         }
     }
 
-    /// The frame's terrain list (`terrain_surface_entities`) in clusters: a grid of CLUSTER_GRID x CLUSTER_GRID over the list's extent, each
-    /// entity in the cell of its box's centre, each cluster boxed around its entities' patches, blend box and custom mesh. An entity
-    /// without a box is in a cluster of its own that every view takes.
-    fn terrain_clusters(boxes: &[Option<([f32; 3], [f32; 3])>]) -> Vec<TerrainCluster> {
-        let (mut x0, mut z0, mut x1, mut z1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for (lo, hi) in boxes.iter().flatten() {
-            let (cx, cz) = (0.5 * (lo[0] + hi[0]), 0.5 * (lo[2] + hi[2]));
-            (x0, z0, x1, z1) = (x0.min(cx), z0.min(cz), x1.max(cx), z1.max(cz));
-        }
-
-        let n = CLUSTER_GRID as f32;
-        let cell = |v: f32, a: f32, b: f32| if b > a { (((v - a) / (b - a) * n) as usize).min(CLUSTER_GRID - 1) } else { 0 };
-        let mut grid: Vec<TerrainCluster> = (0..=CLUSTER_GRID * CLUSTER_GRID).map(|_| TerrainCluster::default()).collect();
-        for (k, b) in boxes.iter().enumerate() {
-            let c = match b {
-                Some((lo, hi)) => {
-                    let c = &mut grid[cell(0.5 * (lo[2] + hi[2]), z0, z1) * CLUSTER_GRID + cell(0.5 * (lo[0] + hi[0]), x0, x1)];
-                    for r in 0..3 {
-                        (c.bmin[r], c.bmax[r]) = (c.bmin[r].min(lo[r]), c.bmax[r].max(hi[r]));
-                    }
-
-                    c
-                }
-                None => {
-                    let c = &mut grid[CLUSTER_GRID * CLUSTER_GRID];
-                    c.always = true;
-                    c
-                }
-            };
-
-            c.ents.push(k);
-        }
-
-        grid.retain(|c| !c.ents.is_empty());
-        grid
-    }
-
     /// The entities of `ents` (the frame's list, `terrain_surface_entities`) in the clusters within `cull` (scene units), in the list's
     /// order; all of them when `ents` is some other list.
     pub(crate) fn terrain_in_view<'e>(
@@ -2816,11 +2969,7 @@ impl Renderer {
         ents: &[&'e wce_scene::render_scene::Entity],
         cull: &Float4x4,
     ) -> Vec<&'e wce_scene::render_scene::Entity> {
-        let same = self.terrain.surface.as_ref().is_some_and(|(frame, ids)| {
-            *frame == self.terrain.frame
-                && ids.len() == ents.len()
-                && self.terrain.clusters.iter().map(|c| c.ents.len()).sum::<usize>() == ents.len()
-        });
+        let same = self.terrain.surface.as_ref().is_some_and(|(frame, ids)| *frame == self.terrain.frame && ids.len() == ents.len());
 
         if !same {
             return ents.to_vec();
@@ -2832,9 +2981,10 @@ impl Renderer {
             .iter()
             .filter(|c| c.always || box_in_frustum(cull, c.bmin, c.bmax))
             .flat_map(|c| c.ents.iter().copied())
+            .filter_map(|slot| self.terrain.pos_of_slot.get(slot).filter(|&&p| p != u32::MAX).map(|&p| p as usize))
             .collect();
         pick.sort_unstable();
-        pick.into_iter().map(|k| ents[k]).collect()
+        pick.into_iter().filter_map(|k| ents.get(k).copied()).collect()
     }
 
     /// The terrain into the bound shadow cascade, as the game casts it: the patches with rigidterrain's `vs30_shadow_new` (geom_new's
@@ -2976,7 +3126,7 @@ impl Renderer {
         let (lfs, customs) = (plan.lfs.clone(), plan.customs.clone());
         let draws: Vec<LfDraw> = lfs.iter().map(|&lf| self.lf_draw_of(lf)).collect();
         let customs: Vec<Vec<&wce_scene::render_scene::Entity>> =
-            customs.iter().map(|c| c.iter().filter_map(|&k| list.get(k as usize).copied()).collect()).collect();
+            customs.iter().map(|c| c.iter().filter_map(|&k| self.list_entity(list, k)).collect()).collect();
         self.draw_planned(&draws, &customs, vs, ps, cull, clip, how)
     }
 
@@ -3309,16 +3459,21 @@ pub(crate) struct BoxGroup {
 /// that cast no shadow (a cascade's).
 fn view_order(recs: &[TerrainRec], clusters: &[TerrainCluster], cluster_of: &[u32], view: TerrainView, frustum: &Frustum) -> Vec<u32> {
     let seen: Vec<bool> = clusters.iter().map(|c| c.always || frustum.contains(c.bmin, c.bmax)).collect();
-    (0..recs.len() as u32)
+    let mut order: Vec<u32> = (0..recs.len() as u32)
         .filter(|&k| {
             let r = &recs[k as usize];
+            if r.dead {
+                return false;
+            }
             let skip = match view {
                 TerrainView::Surface => r.sea_floor,
                 TerrainView::Shadow => r.no_shadow,
             };
             !skip && cluster_of.get(k as usize).and_then(|&c| seen.get(c as usize)).copied().unwrap_or(true)
         })
-        .collect()
+        .collect();
+    order.sort_unstable_by_key(|&k| recs[k as usize].id);
+    order
 }
 
 /// A view's plan (`plan_cpu` over its terrains grouped by LF map, in the order they come), and with `boxes` its blend boxes
@@ -3435,6 +3590,13 @@ type PlanKey = (u64, [u32; 16], [u32; 4], u64, bool);
 /// looked every terrain up in a map and then its patches, scattered over the heap.)
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TerrainRec {
+    /// A freed slot's: in no view.
+    dead: bool,
+
+    /// Its entity: the views take the terrains in their ids' order, the scene's (the slots' would follow the streaming: overlapping tiles
+    /// at one depth drew one over the other by it, a little otherwise each run).
+    id: EntityId,
+
     /// Whether it has a material and a blend box, the material's id, the box (world, scene units: min x y z, max x y z) and its rotation
     /// index (`Placed::blend_box`).
     has_blend: bool,
@@ -3504,7 +3666,7 @@ fn plan_cpu(recs: &[TerrainRec], precs: &[PlacedPatch], groups: &[Vec<u32>], shi
         let mut last: Option<((usize, u32), u32)> = None;
         for &r in group {
             let Some(t) = recs.get(r as usize) else { continue };
-            if material_only || t.custom {
+            if material_only || t.custom || t.dead {
                 continue;
             }
 
@@ -3629,10 +3791,11 @@ struct SurfaceFrom {
 /// Frames between two prunes of the terrain's GPU side while the scene changes (`prepare_terrain_materials`).
 const PRUNE_FRAMES: u64 = 30;
 
-/// Clusters a side of the frame's terrain grid (`terrain_clusters`).
+/// Clusters a side of the extent of the terrains when the list is made whole: the clusters' cell (`terrain_list_whole`).
 const CLUSTER_GRID: usize = 16;
 
-/// Terrain entities near one another (`terrain_clusters`): indices into the frame's list and the box around them (scene units).
+/// Terrain entities near one another (`terrain_list_insert`): their slots and the box around them (scene units; it grows as they come,
+/// and is made again with the list).
 #[derive(Clone, Debug)]
 pub(crate) struct TerrainCluster {
     bmin: [f32; 3],

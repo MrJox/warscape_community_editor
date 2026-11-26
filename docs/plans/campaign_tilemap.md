@@ -217,4 +217,7 @@ As built 2026-11-19 to 2026-11-21 (the step-by-step detail is in the git history
   and 12.6 -> 10.8: the views' terrains taken on the pool too (`view_order`, by a cluster index in the list's order, no sort), the
   surface's blend boxes gathered with its plan (`gather_boxes`: 1.5 -> 0.6 ms), the cascades without the list of references. Then
   10.5 -> 9.8 and 10.8 -> 10.3: the cascades' model culls all at once on the pool, beside the terrain's plans (`rayon::join`), the
-  terrain draw set's cull skipped under the material terrain (thrown away).
+  terrain draw set's cull skipped under the material terrain (thrown away). Panning a streamed map (2026-11-26, a pan of
+  100 units a frame from far): 31 -> 21.7 ms. The terrain list kept from frame to frame (slots, a fixed cluster grid, made whole only
+  when every placement may change: 3.8 -> 0.6 ms), its pruning every 30 frames, the forests by their discs' difference and the props
+  drawn again only for a `.terry` edit (rebuilds 25 - 40 -> 4 - 8 ms).
