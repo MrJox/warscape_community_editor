@@ -6292,6 +6292,7 @@ impl Tool for TileTool {
             top,
         );
         self.draw_measure_labels(e, origin);
+        self.draw_brush_turn(e, origin);
         self.draw_box_select(origin);
         self.draw_context_menu(e);
         self.context.draw_minimap(e, origin, size);
