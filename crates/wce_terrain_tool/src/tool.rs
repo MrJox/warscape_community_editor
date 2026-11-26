@@ -3495,7 +3495,7 @@ impl Tool for TerrainTool {
                 r.sort_by(f32::total_cmp);
                 let rq = |f: f32| r.get(((r.len() as f32 * f) as usize).min(r.len().saturating_sub(1))).copied().unwrap_or(0.0);
                 CommandResult::success(format!(
-                    "prop models {}: {} props ({} moving), {} trees (ahead to 240 world units), {} settlement buildings within {} cells, {} placed effects {:?} (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
+                    "prop models {}: {} props ({} moving), {} trees (to 240 world units around the target), {} settlement buildings within {} cells, {} placed effects {:?} (the nearest: {:?}) (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
                     if t.props.on { "on" } else { "off" }, t.props.count, t.props.animated_count, t.props.tree_count, t.props.city_count, t.props.radius_cells, t.props.effect_count, t.props.effect_names, t.props.effect_near, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
                 ))
             })
