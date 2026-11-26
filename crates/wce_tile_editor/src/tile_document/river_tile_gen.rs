@@ -1,7 +1,8 @@
 //! A river tile made by a seed on the open tile (docs/plans/river_bridges.md, step 3; `wce_tile::river_tile_gen`): fresh relief as its
 //! heights, and a river from its entry link to its exit link along a natural line, snapped to the links (its bed carved and its shore on,
 //! as a drawn river's), its widths varied; then dressed (step 4): a cliff on the outer side of its sharpest bend with rocks on its face, and
-//! woods away from it. One undo entry.
+//! woods away from it; a road (step 5) from road link to road link, or from its one link over the river (bridged where deep). One undo
+//! entry.
 
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
@@ -12,9 +13,11 @@ use wce_tile::river_tile_gen::{
 
 use super::{BrushKind, BrushSettings, Create, TileDocument};
 
-/// What a fresh generated tile clears first: the kit tile's own river, its buildings, plants, hints, decals and water.
-const CLEARED: [&str; 8] = [
+/// What a fresh generated tile clears first: the kit tile's own river, its buildings, plants (and the areas keeping them off or the
+/// biome areas), hints, decals and water.
+const CLEARED: [&str; 9] = [
     "SplineRiverInstance",
+    "VegetationExclusionPolygonInstance",
     "WceRoadSpline",
     "BUILDING_INSTANCE",
     "VEGETATION_INSTANCE",
@@ -47,19 +50,43 @@ const CLIFF_ROCK_STEP_M: f64 = 9.0;
 /// How far past the river's widest water the woods keep (metres).
 const WOODS_PAST_WATER_M: f64 = 15.0;
 
+/// How far the woods keep off the road's line (metres).
+const WOODS_OFF_ROAD_M: f64 = 14.0;
+
+/// How far past the river's water a road from one link ends, at least (metres).
+const ROAD_END_PAST_WATER_M: f64 = 30.0;
+
+/// How far in from the tile's edges a road from one link ends, at least (metres).
+const ROAD_END_FROM_EDGES_M: f64 = 40.0;
+
 /// The river's points per stretch of its line (the line's own points are few, the river's spline would turn sharply at them).
 const RIVER_POINTS_PER_STRETCH: usize = 2;
+
+/// The road a generated river tile has (`TileDocument::generate_river_tile`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RiverTileRoad {
+    /// From its first road link to its second (with one road link: from it over the river).
+    LinkToLink,
+
+    /// From that road link alone (of `Tile::road_link_points`), over the river to a place on the far side: a crossing where only one
+    /// road arrives.
+    FromLink(usize),
+
+    /// No road.
+    None,
+}
 
 impl TileDocument {
     /// Makes the open tile's ground and river by `seed` (one undo entry): `clear` first takes away what the tile has
     /// ([`CLEARED`]); the heights are replaced by fresh relief (rolling, flat at the edges, `wce_tile::river_tile_gen::relief`); a river
-    /// is drawn from the tile's first river link to its second along a meandering line, snapped to the links and its widths varied.
+    /// is drawn from the tile's first river link to its second along a meandering line, snapped to the links and its widths varied; the
+    /// tile dressed (a cliff, woods) and its road made as `road` asks.
     /// Returns what was made.
     ///
     /// # Errors
     ///
     /// The tile has no height map, or not two river links.
-    pub fn generate_river_tile(&mut self, seed: u64, clear: bool) -> Result<String, String> {
+    pub fn generate_river_tile(&mut self, seed: u64, clear: bool, road: RiverTileRoad) -> Result<String, String> {
         let links = self.tile().river_link_points();
         if links.len() != 2 {
             return Err(format!("a river tile with two river links (this one has {})", links.len()));
@@ -67,7 +94,7 @@ impl TileDocument {
 
         self.end_stroke();
         let before = self.history().position();
-        let result = self.generate_river_tile_steps(seed, clear, &links);
+        let result = self.generate_river_tile_steps(seed, clear, &links, road);
         let n = self.history().position() - before;
         if n > 1 {
             self.join_last(n, "Generate river tile");
@@ -81,6 +108,7 @@ impl TileDocument {
         seed: u64,
         clear: bool,
         links: &[super::river_links::RiverLinkPoint],
+        road: RiverTileRoad,
     ) -> Result<String, String> {
         let mut made = vec![];
         if clear {
@@ -175,7 +203,8 @@ impl TileDocument {
             .fold(0.0, f64::max);
 
         // Every other seed has a cliff, on the outer side of the river's sharpest bend: the relief made again with it.
-        valley.cliff = (seed % 2 == 0)
+        valley.cliff = seed
+            .is_multiple_of(2)
             .then(|| outer_bend_cliff(&valley.line, CLIFF_SAMPLES, water_half + CLIFF_FOOT_PAST_WATER_M, CLIFF_RUN_M, CLIFF_HEIGHT_M))
             .flatten();
         if let Some(c) = valley.cliff {
@@ -201,8 +230,24 @@ impl TileDocument {
             made.push(format!("a cliff by {:.0}, {:.0} ({rocks} rock(s))", mid[0], mid[1]));
         }
 
-        // Woods away from the river: broadleaf, or pine on some seeds.
-        let keep: [(&[[f64; 2]], f64); 1] = [(&valley.line, water_half + WOODS_PAST_WATER_M)];
+        // The road: from road link to road link, or from the one over the river to somewhere on the far side.
+        let road = self.generate_river_tile_road(seed, road, &valley.line, water_half, (ex, ez), graph);
+        match &road {
+            Ok(Some((line, ends))) => {
+                let (a, b) = (line[0], line[line.len() - 1]);
+                made.push(format!("a road of {} points ({ends}: {:.0}, {:.0} to {:.0}, {:.0})", line.len(), a[0], a[1], b[0], b[1]));
+            }
+            Ok(None) => {}
+            Err(e) => made.push(format!("no road: {e}")),
+        }
+
+        // Woods away from the river and the road: broadleaf, or pine on some seeds.
+        let road_line = road.ok().flatten().map(|(l, _)| l).unwrap_or_default();
+        let mut keep: Vec<(&[[f64; 2]], f64)> = vec![(&valley.line, water_half + WOODS_PAST_WATER_M)];
+        if road_line.len() >= 2 {
+            keep.push((&road_line, WOODS_OFF_ROAD_M));
+        }
+
         let woods = forest_areas(seed, (ex, ez), &keep, &ForestSettings::default());
         let biome_name = if seed % 3 == 2 { "Pine forest" } else { "Broadleaf wood" };
         if !woods.is_empty()
@@ -231,6 +276,59 @@ impl TileDocument {
         }
 
         Ok(made.join("; "))
+    }
+
+    /// The generated tile's road (`generate_river_tile`): a dirt `WceRoadSpline` routed over the ground (`wce_tile::road_route`) from the
+    /// tile's first road link to its second, or from one link alone (`road`; or the tile's only one) over the river (`river`, its water
+    /// `water_half` from it) to a place by the seed on the far side. Its line and what its ends are; None when it has none.
+    fn generate_river_tile_road(
+        &mut self,
+        seed: u64,
+        road: RiverTileRoad,
+        river: &[[f64; 2]],
+        water_half: f64,
+        extent: (f64, f64),
+        graph: usize,
+    ) -> Result<Option<(Vec<[f64; 2]>, &'static str)>, String> {
+        use wce_tile::road_route::{RouteSettings, far_side_end, route, simplify};
+        let mut links = self.tile().road_link_points();
+        match road {
+            RiverTileRoad::None => return Ok(None),
+            RiverTileRoad::LinkToLink => {}
+            RiverTileRoad::FromLink(k) => {
+                let link = *links.get(k).ok_or_else(|| format!("no road link {k} (the tile has {})", links.len()))?;
+                links = vec![link];
+            }
+        }
+
+        let Some(first) = links.first() else { return Ok(None) };
+        let from = [f64::from(first.x), f64::from(first.z)];
+        // Into the tile from the edge it is on.
+        let edge = [from[0], from[1], extent.0 - from[0], extent.1 - from[1]];
+        let inward = match (0..4).min_by(|&a, &b| edge[a].total_cmp(&edge[b])) {
+            Some(0) => [1.0, 0.0],
+            Some(1) => [0.0, 1.0],
+            Some(2) => [-1.0, 0.0],
+            _ => [0.0, -1.0],
+        };
+        let s = RouteSettings::default();
+        let (to, ends) = match links.get(1) {
+            Some(l) => ([f64::from(l.x), f64::from(l.z)], "link to link"),
+            None => (
+                far_side_end(from, river, water_half, ROAD_END_PAST_WATER_M, extent, ROAD_END_FROM_EDGES_M, seed)
+                    .ok_or("no place on the river's far side")?,
+                "from its link over the river",
+            ),
+        };
+
+        let wet = |x: f64, z: f64| wce_tile::river_tile_gen::distance_to_line([x, z], river) < water_half + 2.0;
+        let t = self.tile();
+        let ground = |x: f64, z: f64| f64::from(t.terrain_height(x as f32, z as f32));
+        let way = route(from, inward, to, extent, &ground, &wet, seed, &s).ok_or("no way between its ends")?;
+        let line = simplify(&way, &wet, s.tolerance);
+        let points = line.iter().map(|q| Float3::new(q[0] as f32, t.terrain_height(q[0] as f32, q[1] as f32), q[1] as f32)).collect();
+        self.create(super::roads::ROAD_SPLINE, graph, &Create::Line(points), "")?;
+        Ok(Some((line, ends)))
     }
 
     /// Clears the whole ground type map (every pixel's type from its texture again): one undo entry; returns the pixels changed.

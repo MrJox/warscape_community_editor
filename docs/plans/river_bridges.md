@@ -63,6 +63,17 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    the water (crossed once, square to the river), a seeded noise for a semi-random way; the path simplified into a `WceRoadSpline` (dirt),
    its ends snapped to the links; bridges on (the river is deep enough for a bridge where it crosses). One road link: from it over the
    river to a random end on the far side.
+   **Built 2026-11-26** (`wce_tile::road_route`; script `river_tile_gen <seed> [clear] [road=all|none|<link>]`): an A* search over a 4 m
+   grid, its state the cell and the way the road came in (turns of 90 degrees at most): a metre costs 1, plus the grade (squared, as a
+   share of 0.22; 60 more over it), a seeded noise (up to 1.2) and near the edges (up to 2 within 48 m, not at its ends: the relief fades flat
+   there and the way ran along them); turns 6 m per 45 degrees squared; the water 6 a metre, 400 to go in and to turn in it (crossed once,
+   straight, square). Simplified within 2.5 m, each stretch in and out of the water on its own. The road (dirt, its bridge by the
+   procedural roads where the river is deep) goes from road link to road link (`road=all`), or from one link (`road=<n>`, or the tile's only
+   one) over the river to a place by the seed on the far side, 30 m past the water, half the tile from the link, 40 m in from the edges.
+   The woods keep 14 m off it. Checked on the kit crossing (links on the north and south edges) with seeds 22 .. 28.
+   Changed on the way: the hills stay 2 m over the valley's floor (dips under the river's water became ponds), the river runs straight
+   from its links for 50 m (it bent sharply inside its own width), and the clear takes the kit tile's exclusion areas too.
+   Open: on some seeds the river's line still bends hard near a link (seed 23).
 6. **Ford tiles**: the river and dressing as above, a ford across the middle.
 7. **Batch**: every crossing and ford tile the spots use, N variations each (by seed), exported into one pack with the battle tile
    database (TDD's, the variations added).
