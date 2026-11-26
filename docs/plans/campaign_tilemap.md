@@ -131,6 +131,17 @@ Characters and armies:
   for battles.
 
 Environment and performance:
+- **Next performance pass (panning, 2026-11-26):** a pan of 100 units a frame from the user's far camera (26128, 15398, -58229 to
+  28988, 1204, -46229; script `%TEMP%\wce_scratch	perf\panperf.txt`) is 21.7 ms a frame against 9.5 still. Left:
+  - model culling (`drawset.cull`) ~3 ms over the still frame's while the chunk workers and loading threads hold the cores; a spatial
+    index in the draw set (cull regions, not 96 000 items a view) is the larger fix;
+  - the streamer's apply (`context.apply`) ~2 ms, half of it the holds' bookkeeping (`context.apply.coming`: the pending chunks
+    gathered and checked every frame);
+  - the streamer's levels worked out again every frame the focus moves (~1.5 ms: `Streamer::update`);
+  - the first pass over unvisited ground about twice the cost (materials, texture arrays and models made: a first run 61 ms a frame,
+    the sea floor's spikes to 1.1 s), repeats 31 ms then.
+  - Testing note: the settled pan's capture lands in one of two states a little apart (at most 24 of 255, in the shadows) from run to
+    run, whatever the build; not traced, it slows the image comparisons.
 - **The weather fold:** the sphere-order rule rests on V2 alone (Attila's Londinium agrees either way).
 - **`g_rain_specular_*` / `g_rain_terrain_*`:** 1 in V2's constants, 0 in the editor's (the campaign's rain constants).
 - **The forests to 240 world units around the target:** their GPU cost not measured (wants an idle window: `perf` at captures A and F
