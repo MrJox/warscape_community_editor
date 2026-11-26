@@ -954,7 +954,9 @@ impl Renderer {
         let env_cube = self.env_srv();
         bind_srv(ctx, &ps, "s_environment", env_cube.as_ref());
         bind_srv(ctx, &ps, "refraction_texture_sampler", self.water.refr.srv.as_ref());
-        bind_srv(ctx, &ps, "colour_overlay_texture_sampler", o.clear.as_ref());
+        // The naval effects' foam (`pass_sea_overlay`), else nothing (alpha 0: the sea's own foam).
+        let overlay = self.particles.sea_overlay().cloned().or_else(|| o.clear.clone());
+        bind_srv(ctx, &ps, "colour_overlay_texture_sampler", overlay.as_ref());
         bind_srv(ctx, &ps, "ui_colour_overlay_texture_sampler", o.clear.as_ref());
         bind_srv(ctx, &ps, "g_foam_anim_texture", whitecaps.as_ref());
         bind_srv(ctx, &ps, "g_static_foam_texture", foam.as_ref());

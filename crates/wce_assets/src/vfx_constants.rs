@@ -29,6 +29,10 @@ pub const VFX_MAIN_VIEW_ID: u32 = 30;
 /// `scene_view_type` 1 (heat haze, lens water drops): drawn with ps_distortion into the distortion buffer.
 pub const VFX_DISTORTION_VIEW_ID: u32 = 12;
 
+/// `scene_view_type` 2 (SeaColourOverlay: foam on the sea, the naval wakes and splashes): drawn with ps_overlay into the sea's colour
+/// overlay, which the ocean shader reads. The game's id (empire.retail.dll fn 0x1189b8c0 maps scene_view_type 0, 1, 2 to 30, 12, 3).
+pub const VFX_SEA_OVERLAY_VIEW_ID: u32 = 3;
+
 /// Width of the emitter-constants texture: 8 rows per emitter (min / max pairs), u = particle age / lifetime.
 /// Rows 0-1 scale (xy), 2-3 colour (rgb), 4-5 unused by the main VS, 6-7 alpha (x).
 /// 256 as the game's scale baker (it writes 256 entries per row as RGBA16F; here f32).

@@ -2084,6 +2084,7 @@ impl Renderer {
         self.pass_directional_light();
         self.pass_point_lights(scene);
         self.gpu_timer.mark("sea");
+        self.pass_sea_overlay(scene, cam.eye, o, view_m, time_s, (width, height));
         self.pass_water(scene, false);
 
         // Attila, as the game: the rivers with the other water, before the environment specular pass that adds their reflection (they are
@@ -2143,12 +2144,18 @@ impl Renderer {
     /// The particles (`gpu_timer`'s "particles"): the weather's precipitation (vfx1 of the WEATHER definition) and the placed effects
     /// (tile VFX instances, gathered again when the scene changes), in game units; Rome 2's as CPU particles. `eye` and `o` (the
     /// render origin) in world units, `view_m` the camera's view from the origin, (`width`, `height`) the scene's size.
-    fn pass_particles(&mut self, scene: &RenderScene, eye: Float3, o: Float3, view_m: Float4x4, time_s: f32, (width, height): (u32, u32)) {
-        self.gpu_timer.mark("particles");
-
-        // The weather precipitation (vfx1 of the WEATHER definition).
-        // The particles live in game units (the effects' sizes, speeds and the weather's volumes are the game's).
-        let frame = Frame {
+    /// The particles' frame: the camera, the clock, the wind and the targets. The particles live in game units (the effects' sizes, speeds
+    /// and the weather's volumes are the game's).
+    fn particle_frame(
+        &self,
+        scene: &RenderScene,
+        eye: Float3,
+        o: Float3,
+        view_m: Float4x4,
+        time_s: f32,
+        (width, height): (u32, u32),
+    ) -> Frame {
+        Frame {
             eye: (eye - o) * self.camera.units,
             view: view_m,
             time: time_s,
@@ -2163,8 +2170,28 @@ impl Renderer {
             sky: self.sky_srv(),
             width,
             height,
-        };
+        }
+    }
 
+    /// The sea's colour overlay (the naval foam effects, `scene_view_type` 2), before the sea that reads it (Attila's ocean only).
+    fn pass_sea_overlay(&mut self, scene: &RenderScene, eye: Float3, o: Float3, view_m: Float4x4, time_s: f32, size: (u32, u32)) {
+        if self.game == game::RenderGame::Rome2 {
+            return;
+        }
+
+        wce_prof!("render.sea_overlay");
+        let frame = self.particle_frame(scene, eye, o, view_m, time_s, size);
+        let files = self.files.clone();
+        let read: &FileReader = &|path: &str| files.read(path);
+        self.particles.campaign = scene.campaign;
+        self.particles.draw_sea_overlay(&frame, &mut self.lib, read, &mut self.cbs);
+    }
+
+    fn pass_particles(&mut self, scene: &RenderScene, eye: Float3, o: Float3, view_m: Float4x4, time_s: f32, (width, height): (u32, u32)) {
+        self.gpu_timer.mark("particles");
+
+        // The weather precipitation (vfx1 of the WEATHER definition).
+        let frame = self.particle_frame(scene, eye, o, view_m, time_s, (width, height));
         self.particles.campaign = scene.campaign;
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.

@@ -520,7 +520,9 @@ pub fn inspect(t: &mut VfxTool, e: &mut Editor, ins: &mut dyn Inspector) {
             if let Some(rp) = s.render_params {
                 let tips = |n: &str| -> String {
                     let m = match n {
-                        "scene_view_type" => "0 the particles pass; 1 the distortion pass (heat haze).",
+                        "scene_view_type" => {
+                            "0 the particles pass; 1 the distortion pass (heat haze); 2 the sea's colour overlay (foam on the battle sea, drawn only there)."
+                        }
                         "cast_shadows" => "The particles cast shadows.",
                         _ => "",
                     };
