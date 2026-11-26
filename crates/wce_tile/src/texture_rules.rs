@@ -711,10 +711,14 @@ pub fn uses_runoff(rules: &[Rule]) -> bool {
     rules.iter().filter(|r| r.enabled && r.strength > 0.0).any(|r| r.flow.is_some())
 }
 
-/// Where water would run on bare heights: each sample's water flows to its lowest neighbour (D8), summed down the slopes; 0 .. 1 (a log
-/// of how many samples drain through it against the average, a quarter at the average, 1 at 16 times it).
+/// Where water would run on bare heights: each sample's water is shared among all its lower neighbours by their drop (Freeman's multiple
+/// flow directions, the drop per metre to the power `FLOW_SPREAD`), summed down the slopes; 0 .. 1 (a log of how many samples drain
+/// through it against the average, a quarter at the average, 1 at 16 times it). Sending it all to the lowest neighbour alone (D8) drew
+/// evenly spaced parallel lines down every slope not along the grid's axes; shared, a plain slope stays even and valleys still gather it.
 #[must_use]
 pub fn flow_of(heights: &[f32], w: usize, h: usize) -> Vec<f32> {
+    /// Freeman's exponent: near 1 spreads like sheet flow, higher keeps more to the steepest way.
+    const FLOW_SPREAD: f32 = 1.1;
     let n = w * h;
     if heights.len() != n || n == 0 {
         return vec![0.0; heights.len()];
@@ -722,9 +726,10 @@ pub fn flow_of(heights: &[f32], w: usize, h: usize) -> Vec<f32> {
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| heights[b].total_cmp(&heights[a]));
     let mut acc = vec![1.0f32; n];
+    let mut lower = Vec::with_capacity(8);
     for &i in &order {
         let (x, y) = (i % w, i / w);
-        let mut best = (0.0f32, usize::MAX);
+        lower.clear();
         for (ddx, ddy) in [(-1i32, -1i32), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
             let (nx, ny) = (x as i32 + ddx, y as i32 + ddy);
             if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
@@ -732,13 +737,17 @@ pub fn flow_of(heights: &[f32], w: usize, h: usize) -> Vec<f32> {
             }
             let j = ny as usize * w + nx as usize;
             let drop = (heights[i] - heights[j]) / if ddx != 0 && ddy != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
-            if drop > best.0 {
-                best = (drop, j);
+            if drop > 0.0 {
+                lower.push((j, drop.powf(FLOW_SPREAD)));
             }
         }
-        if best.1 != usize::MAX {
+
+        let total = lower.iter().map(|l| l.1).sum::<f32>();
+        if total > 0.0 {
             let a = acc[i];
-            acc[best.1] += a;
+            for &(j, share) in &lower {
+                acc[j] += a * share / total;
+            }
         }
     }
     // A drop's flow is the water that passed through, as the drops' visits; the average sample is upstream of a few.
@@ -1280,6 +1289,22 @@ mod tests {
         // Through the text.
         let set = RuleSet { preset: String::new(), rules: vec![rule] };
         assert_eq!(parse(&text(&set)).unwrap(), set);
+    }
+
+    #[test]
+    fn water_spreads_over_a_plain_slope() {
+        // A plane falling at 30 degrees off the grid's axes: no valley, so no line of the slope may gather more water than its
+        // neighbours (one-neighbour routing drew parallel stripes down such slopes).
+        let (w, h) = (64usize, 64usize);
+        let (dx, dz) = (30f32.to_radians().sin(), 30f32.to_radians().cos());
+        let heights = (0..w * h).map(|i| -(((i % w) as f32) * dx + ((i / w) as f32) * dz) * 0.5).collect::<Vec<_>>();
+        let flow = flow_of(&heights, w, h);
+
+        // Across a row far down the slope (away from the sides, whose water leaves the map), the flow is even.
+        let row = 50;
+        let across = (16..48).map(|x| flow[row * w + x]).collect::<Vec<_>>();
+        let (lo, hi) = across.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+        assert!(hi - lo < 0.1, "stripes across the slope: {lo} .. {hi}");
     }
 
     #[test]
