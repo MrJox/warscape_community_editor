@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use wce_formats::xml_doc::XmlDoc;
 use wce_vfs::Vfs;
 
-use crate::vfx_constants::{EmitterConstants, VFX_DISTORTION_VIEW_ID, build_emitter_constants};
+use crate::vfx_constants::{EmitterConstants, VFX_DISTORTION_VIEW_ID, VFX_SEA_OVERLAY_VIEW_ID, build_emitter_constants};
 use crate::vfx_def::{VfxChain, VfxEmitterDef, VfxFile, VfxRef, VfxStack, num, parse_vfx};
 
 /// An emitter that draws.
@@ -329,16 +329,18 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
 
             // Sound and logic-only emitters draw nothing.
             let Some((stack, chain)) = render_chain(lib, &em.id) else { continue };
-            if stack.scene_view_type > 1 {
+            if stack.scene_view_type > 2 {
                 out.notes.push(format!("{}/{}: scene_view_type {} not supported", vfx_ref.inst_name, em.id, stack.scene_view_type));
                 continue;
             }
 
             let mut k = build_emitter_constants(em, Some(chain));
 
-            // Dump: heat haze rows have w = 12.
-            if stack.scene_view_type == 1 {
-                k.behaviour_mask[3] = VFX_DISTORTION_VIEW_ID;
+            // Dump: heat haze rows have w = 12. The sea's colour overlay (2) is drawn before the ocean, which reads it.
+            match stack.scene_view_type {
+                1 => k.behaviour_mask[3] = VFX_DISTORTION_VIEW_ID,
+                2 => k.behaviour_mask[3] = VFX_SEA_OVERLAY_VIEW_ID,
+                _ => {}
             }
 
             out.emitters.push(ActiveEmitter {
@@ -487,7 +489,7 @@ mod tests {
         assert_eq!((d.severity, d.wind_size_min, d.wind_size_max, d.wind_gust_probability), (-1, 0.5, 1.0, 0.0));
 
         let names: Vec<String> = w.emitters.iter().map(|e| format!("{}/{}", e.instance, e.name)).collect();
-        assert_eq!(names, ["i1/drops", "i1/haze", "i2/drops", "i2/off", "i2/haze", "own/self"]);
+        assert_eq!(names, ["i1/drops", "i1/haze", "i1/overlay", "i2/drops", "i2/off", "i2/haze", "i2/overlay", "own/self"]);
         let lights: Vec<&str> = w.lights.iter().map(|l| l.model.as_str()).collect();
         assert_eq!(lights, ["rigidmodels/point_lights/torch.rigid_model_v2"; 2]);
         assert_eq!(
@@ -496,9 +498,7 @@ mod tests {
                 "i1/debris: rigid model 'rigidmodels/rocks/rock.rigid_model_v2' not drawn in weather",
                 "i2/debris: rigid model 'rigidmodels/rocks/rock.rigid_model_v2' not drawn in weather",
                 "i1/burst: emitter type burst_mesh not supported",
-                "i1/overlay: scene_view_type 2 not supported",
                 "i2/burst: emitter type burst_mesh not supported",
-                "i2/overlay: scene_view_type 2 not supported",
             ]
         );
 
@@ -512,8 +512,9 @@ mod tests {
         assert!(drops.camera_following && drops.infinite_life);
         assert_eq!((drops.chain.id.as_str(), drops.k.diffuse.as_str()), ("render", "vfx/textures/drop.dds"));
         assert_eq!((drops.k.behaviour_mask[3], w.emitters[1].k.behaviour_mask[3]), (VFX_MAIN_VIEW_ID, VFX_DISTORTION_VIEW_ID));
-        assert_eq!((w.emitters[2].tint_min, w.emitters[2].infinite_life), ([1.0; 4], false));
-        let own = &w.emitters[5];
+        assert_eq!(w.emitters[2].k.behaviour_mask[3], VFX_SEA_OVERLAY_VIEW_ID);
+        assert_eq!((w.emitters[3].tint_min, w.emitters[3].infinite_life), ([1.0; 4], false));
+        let own = &w.emitters[7];
         assert_eq!((own.library.as_str(), own.scale, own.camera_following, own.infinite_life), ("own", 1.0, false, true));
         assert_eq!(*files.reads.borrow(), ["weather/weather_definitions.xml", "vfx/top.xml", "vfx/lib.xml", "vfx/own.xml"]);
     }
@@ -594,14 +595,14 @@ mod tests {
     fn effects_keep_their_rigids_and_lights() {
         let files = standard();
         let e = load_effect(&|path| files.read(path), "top");
-        assert_eq!((e.lights.len(), e.rigids.len(), e.emitters.len()), (2, 2, 5));
+        assert_eq!((e.lights.len(), e.rigids.len(), e.emitters.len()), (2, 2, 7));
         let light = &e.lights[0];
         assert_eq!(
             (light.instance.as_str(), light.name.as_str(), light.scale_range, light.pos),
             ("i1", "light", [1.0, 3.0], [2.0, 0.0, 0.0])
         );
         assert_eq!(e.rigids[1].model, "rigidmodels/rocks/rock.rigid_model_v2");
-        assert_eq!(e.notes.len(), 4);
+        assert_eq!(e.notes.len(), 2);
 
         // The library cache is shared between calls.
         let mut libs = BTreeMap::new();

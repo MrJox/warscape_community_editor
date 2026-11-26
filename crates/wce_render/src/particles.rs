@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::f32::consts::PI;
 
-use wce_assets::vfx_constants::{VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAIN_VIEW_ID, vfx_bits};
+use wce_assets::vfx_constants::{VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAIN_VIEW_ID, VFX_SEA_OVERLAY_VIEW_ID, vfx_bits};
 use wce_assets::vfx_def::VfxFile;
 use wce_assets::weather_vfx::{Effect, VfxReader, WeatherVfx, load_effect_with, load_weather_vfx};
 use wce_d3d11::*;
@@ -30,6 +30,7 @@ const MAIN_VS: &str = "dx11_sm_4_0_particle_vfx_main.hlsl_vs_vs40_main";
 const MAIN_GS: &str = "dx11_sm_4_0_particle_vfx_main.hlsl_gs_gs_main";
 const MAIN_PS: &str = "dx11_sm_4_0_particle_vfx_main.hlsl_ps_ps_main";
 const DISTORTION_PS: &str = "dx11_sm_4_0_particle_vfx_main.hlsl_ps_ps_distortion";
+const OVERLAY_PS: &str = "dx11_sm_4_0_particle_vfx_main.hlsl_ps_ps_overlay";
 
 /// Particle state and sorted-data textures: WIDTH^2 slots.
 const WIDTH: u32 = 512;
@@ -625,8 +626,9 @@ pub struct ParticleSystem {
     /// The placed effects' definitions (loaded once per name; their emitters' constants rows follow the weather's) and emitter instances.
     world_effects: Vec<Effect>,
 
-    /// A campaign map's effects (the renderer sets it): their `scene_view_type` 2 emitters (SeaColourOverlay) are not reported, as the
-    /// game simulates them there but draws none (RenderDoc, five campaign captures: the storm and rain clouds' `cloud_heavy`).
+    /// A campaign map's effects (the renderer sets it): their `scene_view_type` 2 emitters (SeaColourOverlay) draw nothing, as the game
+    /// simulates them there but draws none (RenderDoc, five campaign captures: the storm and rain clouds' `cloud_heavy`); the campaign's
+    /// sea shader has no colour overlay.
     pub campaign: bool,
 
     /// Per placed effect definition, its first constants row after the weather's (the sum of the earlier definitions' emitters).
@@ -687,6 +689,9 @@ pub struct ParticleSystem {
     vector_field_srv: Option<ID3D11ShaderResourceView>,
     sea_srv: Option<ID3D11ShaderResourceView>,
     has_distortion: bool,
+
+    /// Some emitter draws in the sea's colour overlay (`scene_view_type` 2).
+    has_sea_overlay: bool,
     cb_common: Option<ID3D11Buffer>,
     cb_gs: Option<ID3D11Buffer>,
     cb_vs: Option<ID3D11Buffer>,
@@ -708,6 +713,12 @@ pub struct ParticleSystem {
     dist_w: u32,
     dist_h: u32,
     distortion_active: bool,
+
+    /// The sea's colour overlay (`draw_sea_overlay`): its target, size, and whether this frame's was drawn.
+    overlay_rtv: Option<ID3D11RenderTargetView>,
+    overlay_srv: Option<ID3D11ShaderResourceView>,
+    overlay_size: (u32, u32),
+    sea_overlay_active: bool,
     ds_test: Option<ID3D11DepthStencilState>,
     ds_off: Option<ID3D11DepthStencilState>,
     rs_none: Option<ID3D11RasterizerState>,
@@ -793,6 +804,7 @@ impl ParticleSystem {
             vector_field_srv: None,
             sea_srv: None,
             has_distortion: false,
+            has_sea_overlay: false,
             cb_common: None,
             cb_gs: None,
             cb_vs: None,
@@ -812,6 +824,10 @@ impl ParticleSystem {
             dist_w: 0,
             dist_h: 0,
             distortion_active: false,
+            overlay_rtv: None,
+            overlay_srv: None,
+            overlay_size: (0, 0),
+            sea_overlay_active: false,
             ds_test: None,
             ds_off: None,
             rs_none: None,
@@ -1117,10 +1133,6 @@ impl ParticleSystem {
                 }
 
                 for note in &effect.notes {
-                    if self.campaign && note.contains("scene_view_type 2 ") {
-                        continue;
-                    }
-
                     self.error(format!("{name}: {note}"));
                 }
 
@@ -1209,10 +1221,6 @@ impl ParticleSystem {
                 }
 
                 for note in &effect.notes {
-                    if self.campaign && note.contains("scene_view_type 2 ") {
-                        continue;
-                    }
-
                     self.error(format!("{}: {note}", fx.effect));
                 }
 
@@ -1760,6 +1768,7 @@ impl ParticleSystem {
         let mut normal = TextureArrayBuilder { srgb: false, slices: BTreeMap::new(), textures: vec![] };
         let mut tex_errors = vec![];
         self.has_distortion = false;
+        self.has_sea_overlay = false;
         // The rows: the weather's emitters in their block (`WEATHER_SLOTS`), then each placed effect's.
         let mut sources = (0..WEATHER_SLOTS).map(|e| (e < self.effect.emitters.len()).then_some((usize::MAX, e))).collect::<Vec<_>>();
         for (fx, effect) in self.world_effects.iter().enumerate() {
@@ -1786,6 +1795,10 @@ impl ParticleSystem {
 
             if k.behaviour_mask[3] == VFX_DISTORTION_VIEW_ID {
                 self.has_distortion = true;
+            }
+
+            if k.behaviour_mask[3] == VFX_SEA_OVERLAY_VIEW_ID {
+                self.has_sea_overlay = true;
             }
 
             put(&mut common, 0, e, &u4(&k.behaviour_mask));
@@ -2507,8 +2520,59 @@ impl ParticleSystem {
     }
 
     fn create_distortion_target(&mut self, w: u32, h: u32) {
-        self.dist_rtv = None;
-        self.dist_srv = None;
+        (self.dist_rtv, self.dist_srv) = self.screen_target(w, h);
+        self.dist_w = w;
+        self.dist_h = h;
+    }
+
+    /// The sea's colour overlay (`scene_view_type` 2 emitters, ps_overlay): drawn before the ocean, which reads it at the screen point of
+    /// its water (`ocean.hlsl`: the foam's colour and amount become the overlay's, by its alpha; docs/re/particles.md, "Sea colour
+    /// overlay"). It draws the particles as the last `render` left them, from this frame's camera. False when there is none this frame.
+    pub fn draw_sea_overlay(&mut self, f: &Frame, lib: &mut ShaderLibrary, read: &FileReader, cbs: &mut ConstantBuffers) -> bool {
+        self.sea_overlay_active = false;
+        if !self.enabled || self.campaign || !self.has_sea_overlay || self.alive == 0 {
+            return false;
+        }
+
+        let Some(sh) = self.shaders(lib, read, cbs) else { return false };
+        let ps = match lib.get(read, cbs, OVERLAY_PS) {
+            Ok(ps) => ps,
+            Err(error) => {
+                self.error(error.0);
+                return false;
+            }
+        };
+
+        if self.overlay_size != (f.width, f.height) {
+            (self.overlay_rtv, self.overlay_srv) = self.screen_target(f.width, f.height);
+            self.overlay_size = (f.width, f.height);
+        }
+
+        // As the game's (empire.retail.dll: the view fn 0x116d0e00, its states in fn 0x117d00d0): a screen-sized RGBA8 target cleared to
+        // (0, 0, 0, 0) (alpha 0: the ocean's own foam), the main pass's premultiplied blending, no depth (the ocean's own depth test hides
+        // the foam where the sea is hidden); ps_overlay's second output (a normal) has no target. The rasterizer state is set here: the
+        // passes before leave theirs (a culling one drew nothing).
+        let Some(rtv) = self.overlay_rtv.clone() else { return false };
+        self.ctx.clear_render_target_view(&rtv, [0.0; 4]);
+        cbs.set_f("cb_vfx", "g_camera_aligned_x_axis", &f.view.m[0][..3]);
+        cbs.set_f("cb_vfx", "g_camera_aligned_y_axis", &f.view.m[1][..3]);
+        cbs.set_f("cb_vfx", "g_camera_aligned_z_axis", &f.view.m[2][..3]);
+        cbs.set_f("cb_vfx_shared", "g_num_alive_particles", &[self.alive as f32]);
+        self.ctx.set_rasterizer_state(self.rs_none.as_ref());
+        self.draw(f, &sh, &ps, &rtv, None, VFX_SEA_OVERLAY_VIEW_ID, self.bs_premultiplied.clone(), cbs);
+        cbs.set_i("cb_vfx", "g_view_id", VFX_MAIN_VIEW_ID as i32);
+        self.ctx.set_blend_state(None);
+        self.sea_overlay_active = true;
+        true
+    }
+
+    /// The sea's colour overlay of this frame (`draw_sea_overlay`), if one was drawn.
+    pub fn sea_overlay(&self) -> Option<&ID3D11ShaderResourceView> {
+        self.overlay_srv.as_ref().filter(|_| self.sea_overlay_active)
+    }
+
+    /// An RGBA8 target of the screen's size, and its view.
+    fn screen_target(&self, w: u32, h: u32) -> (Option<ID3D11RenderTargetView>, Option<ID3D11ShaderResourceView>) {
         let td = D3D11_TEXTURE2D_DESC {
             Width: w,
             Height: h,
@@ -2522,13 +2586,10 @@ impl ParticleSystem {
             MiscFlags: 0,
         };
 
-        if let Ok(tex) = self.dev.create_texture_2d(&td, None) {
-            self.dist_rtv = self.dev.create_render_target_view(&tex, None).ok();
-            self.dist_srv = self.dev.create_shader_resource_view(&tex, None).ok();
+        match self.dev.create_texture_2d(&td, None) {
+            Ok(tex) => (self.dev.create_render_target_view(&tex, None).ok(), self.dev.create_shader_resource_view(&tex, None).ok()),
+            Err(_) => (None, None),
         }
-
-        self.dist_w = w;
-        self.dist_h = h;
     }
 
     fn draw_spawn(&mut self, verts: &[SpawnVertex], sh: &Shaders, lib: &mut ShaderLibrary, cbs: &ConstantBuffers) {

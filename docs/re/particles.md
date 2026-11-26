@@ -166,6 +166,31 @@ usually empty, the normal map (behaviour_mask.z, bit 0x40000) drives it. The com
 hdr_to_screen ps30_main_high: uv += (distortion.xy - 0.498039) * 0.02. Verified rows: lens water drops 391/392
 (snow dump). The editor saves the buffer next to `--shot` images as `<shot>.distortion.png`.
 
+## Sea colour overlay (naval foam; 2026-11-26, Ghidra and the shaders' DXBC)
+
+scene_view_type 2 (SeaColourOverlay: `library_vfx_naval_bow_foam`, the foam of `naval_vfx_oar_splashes`) draws into a screen-sized
+texture the battle sea reads; nothing else draws them.
+
+- View id 3 (fn 0x1189b8c0 maps scene_view_type 0, 1, 2 to 30, 12, 3; fn 0x1188fb10 the other way). Two "Sea::Colour Overlay" views
+  are made with the battle's Sea Display (fn 0x1177c1f0, ctor fn 0x116d0e00): id 3 holds the particles, id 4 the battle UI's indicators
+  (the Indicator Node, fn 0x116ddea0: `ps30_main_to_overlay`).
+- Target: RGBA8 UNORM (fn 0x117582b0), the screen's size (the screen texture ctor fn 0x11700a10, scale 1 x 1), cleared to (0, 0, 0, 0),
+  no depth buffer. One target: ps_overlay's second output (normal * 0.5 + 0.5, times alpha) goes nowhere.
+- States (VFX_SHADER_BASE fn 0x117d00d0, variant `_sea_overlay` = ps_overlay, which is ps_main plus that second output): the main
+  pass's blend (one, inverse source alpha, premultiplied) and rasterizer, depth off (no test, no write).
+- The ocean material (fn 0x1177fe10) binds the id-3 view's target as `colour_overlay_texture_sampler` and the id-4 view's as
+  `ui_colour_overlay_texture_sampler` while the view is active, else the device's 1 x 1 (0, 0, 0, 0) texture for both. Only
+  `ocean.hlsl` declares them.
+- ocean.hlsl (DXBC): the vertex shader projects the rest point at water level (`g_vs_sea_info.z`) by view_projection, xy * (0.5, -0.5);
+  the pixel shader samples the overlay at xy / w + 0.5 and fades it out over the screen's bottom tenth (1 - smoothstep of
+  saturate((y / w - 0.4) * 10)). The foam's colour and amount become the overlay's by its alpha: `lerp((0.4, 0.5, 0.6, foam),
+  overlay, overlay.a * fade)`, then lit and blended as the sea's own foam.
+- Not settled: the views' draw order. The editor draws the overlay just before the sea (`ParticleSystem::draw_sea_overlay`), from the
+  particles the last simulation step left and this frame's camera.
+- The campaign map binds both overlays to its sea materials too (fn 0x11922550), but its sea is drawn with waterplane, which has no such
+  sampler: the campaign's scene_view_type 2 emitters (the clouds'
+  `cloud_heavy`) are simulated and drawn nowhere (RenderDoc, docs/re/renderer.md).
+
 ## Emission rate (verified 2026-10-08, Ghidra)
 
 - fn 0x11829530(desc, emitter_life, age, f): t = clamp(age / life, 0, 1) (fmod when EmissionLoopAnim, desc +0x2d0);
