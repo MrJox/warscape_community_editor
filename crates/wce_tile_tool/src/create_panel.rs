@@ -815,9 +815,10 @@ impl TileTool {
             self.set_create_marks(e, favourites, recent);
         }
 
-        // The texture rules or a biome in the Inspector give way to what else is made; so does a brush mode (its chip off).
+        // The texture rules or a biome in the Inspector give way to what else is made; so do a brush mode (its chip off) and Flip.
         if !matches!(&en.make, Make::Biome { .. }) {
             self.close_detail_panels();
+            self.flip = None;
             if self.mode != crate::tool::TileMode::Select {
                 self.mode = crate::tool::TileMode::Select;
             }
