@@ -23,7 +23,7 @@ impl Default for ReliefSettings {
 }
 
 /// A number from -1 to 1 of a seed and a grid corner.
-fn corner(seed: u64, i: i64, j: i64) -> f64 {
+pub(crate) fn corner(seed: u64, i: i64, j: i64) -> f64 {
     let mut z = seed ^ (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (j as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
@@ -187,13 +187,15 @@ pub fn cliff_rock_places(line: &[[f64; 2]], c: &Cliff, off: f64, step: f64) -> V
 
 /// The relief with a river's valley in it: within `half_width` of the river's line the ground goes to the valley's floor (all of it on
 /// the line, smoothly less out to the edge of the valley), so that the river runs between banks over its water, not over hills; still
-/// faded to 0 at the tile's edges.
+/// faded to 0 at the tile's edges; the hills [`HILLS_OVER_FLOOR_M`] or more over the floor.
 #[must_use]
 pub fn relief_in_valley(seed: u64, x: f64, z: f64, extent: (f64, f64), s: &ReliefSettings, valley: &Valley) -> f64 {
     let hills = fbm(seed, x, z, s.scale) * s.amplitude;
     let (d, at, side) = nearest_on_line([x, z], &valley.line);
     let t = (d / valley.half_width.max(1e-6)).clamp(0.0, 1.0);
     let w = 1.0 - t * t * (3.0 - 2.0 * t);
+    // The hills never down to the valley's floor (the river's water would stand in the dips as ponds, its shores round them).
+    let hills = hills.max(valley.floor + HILLS_OVER_FLOOR_M);
     let mut h = hills + (valley.floor - hills) * w;
     // A cliff: the bank climbing to its height over the floor, whatever the valley would have there.
     if let Some(c) = &valley.cliff {
@@ -205,6 +207,9 @@ pub fn relief_in_valley(seed: u64, x: f64, z: f64, extent: (f64, f64), s: &Relie
 
     h * edge_weight(x, z, extent, s.edge_fade)
 }
+
+/// How far over the valley's floor the hills stay at least (metres).
+pub const HILLS_OVER_FLOOR_M: f64 = 2.0;
 
 /// The forest areas' settings.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -248,7 +253,7 @@ pub fn forest_areas(seed: u64, extent: (f64, f64), keep_off: &[(&[[f64; 2]], f64
             }
 
             let r = s.radius.0 + (corner(seed ^ 0x99, i, j) * 0.5 + 0.5) * (s.radius.1 - s.radius.0);
-            if out.iter().any(|(_, o, or)| (o[0] - c[0]).hypot(o[1] - c[1]) < (or + r) * 0.8) {
+            if out.iter().any(|(_, o, or)| (o[0] - c[0]).hypot(o[1] - c[1]) < (or + r) * 1.1) {
                 continue;
             }
 
@@ -352,7 +357,7 @@ pub struct LineSettings {
 
 impl Default for LineSettings {
     fn default() -> Self {
-        Self { straight: 30.0, step: 45.0, meander: 0.22, margin: 40.0 }
+        Self { straight: 50.0, step: 45.0, meander: 0.22, margin: 40.0 }
     }
 }
 
@@ -421,9 +426,11 @@ mod tests {
             assert!((relief_in_valley(5, p[0], p[1], e, &s, &valley) + 2.0).abs() < 1e-9, "at its floor on the river: {p:?}");
         }
 
-        // Past the valley, the hills as they are.
+        // Past the valley, the hills as they are, never down to its floor.
         for x in [100.0, 128.0, 150.0] {
-            assert!((relief_in_valley(5, x, 30.0, e, &s, &valley) - relief(5, x, 30.0, e, &s)).abs() < 1e-9);
+            let (h, hills) = (relief_in_valley(5, x, 30.0, e, &s, &valley), relief(5, x, 30.0, e, &s));
+            let low = (-2.0 + HILLS_OVER_FLOOR_M) * edge_weight(x, 30.0, e, s.edge_fade);
+            assert!((h - hills.max(low)).abs() < 1e-9, "{x}: {h} against {hills}");
         }
 
         assert!((distance_to_line([5.0, 3.0], &[[0.0, 0.0], [10.0, 0.0]]) - 3.0).abs() < 1e-12);
@@ -490,8 +497,8 @@ mod tests {
             let line = river_line(from, to, (256.0, 256.0), seed, &s);
             assert_eq!(line.first(), Some(&from.at));
             assert_eq!(line.last(), Some(&to.at));
-            assert_eq!(line[1], [24.0, 192.0], "straight in from its edge");
-            assert_eq!(line[line.len() - 2], [64.0, 232.0], "straight out to its edge");
+            assert_eq!(line[1], [-6.0 + s.straight, 192.0], "straight in from its edge");
+            assert_eq!(line[line.len() - 2], [64.0, 262.0 - s.straight], "straight out to its edge");
             // Along the line between the straight ends, each point further than the last.
             let (a, b) = (line[1], line[line.len() - 2]);
             let along = |p: [f64; 2]| (p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1]);

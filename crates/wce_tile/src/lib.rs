@@ -38,6 +38,7 @@ pub mod road_dirt;
 pub mod road_fences;
 pub mod road_layout;
 pub mod road_pieces;
+pub mod road_route;
 pub mod roads;
 pub mod share;
 pub mod shores;

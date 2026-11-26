@@ -8,6 +8,7 @@ use wce_editor_core::inspector::{InspectTarget, Inspector};
 use wce_foundation::math::{Double3, Float3};
 use wce_scene::render_scene::SourceRef;
 use wce_tile::tile_project::TileProject;
+use wce_tile_editor::tile_document::river_tile_gen::RiverTileRoad;
 use wce_tile_editor::tile_document::{BrushKind, BrushSettings, Create, TileDocument, item_of};
 
 const TED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3765,7 +3766,7 @@ fn a_generated_river_tile_is_one_undo_entry() {
     let ground = heights(&d);
     let before = d.history().position();
     let biomes = d.tile_biomes().to_vec();
-    let made = d.generate_river_tile(4, true).unwrap();
+    let made = d.generate_river_tile(4, true, RiverTileRoad::LinkToLink).unwrap();
     assert!(made.contains("a river of") && made.contains("a cliff by") && made.contains("wood(s) of Broadleaf wood"), "{made}");
     assert!(!d.tile().biome_areas().is_empty(), "woods: {made}");
     assert_eq!(d.history().position(), before + 1, "one undo entry");
