@@ -225,6 +225,7 @@ impl Renderer {
         }
 
         if n > self.draw_lists.ring.capacity {
+            wce_prof!("render.upload_instances.grow");
             self.draw_lists.ring.capacity = (n * 2).max(1 << 16);
             self.draw_lists.ring.buffer =
                 dynamic_buffer(&self.dev, self.draw_lists.ring.capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);

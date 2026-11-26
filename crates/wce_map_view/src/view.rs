@@ -71,6 +71,8 @@ fn add_range(scene: &mut RenderScene, layer: LayerId, doc: DocumentId, entities:
     first..scene.next_id()
 }
 
+static APPLY_COMING: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+
 /// The longest a change waits for its neighbours (`MapView::apply`): past it, a chunk goes on and a removed one off whatever comes. Long:
 /// a fast move from far away queues hundreds of chunks, and at 3 s the held ones went before their replacements came (the holes again).
 const GONE_HOLD: std::time::Duration = std::time::Duration::from_secs(15);
@@ -95,6 +97,10 @@ pub struct MapView {
     /// replaces it is there). Held by their entities, not their keys: a block's first chunk, or a distant square's first quarter, has
     /// the larger piece's key, and put on, it took the whole piece off (the rest of it a hole until its other parts came).
     waiting: Vec<(ChunkKey, i32, std::time::Instant, Vec<(Float4x4, Payload)>)>,
+
+    /// The waiting chunks whose terrains the renderer has ready (asked once: held for their neighbours, a fast move's hundreds were asked
+    /// every frame, 2 ms of it).
+    terrains_ok: std::collections::HashSet<ChunkKey>,
     gone: Vec<(ChunkKey, i32, std::ops::Range<EntityId>, std::time::Instant)>,
     sea: Option<EntityId>,
     sea_at: (f64, f64),
@@ -176,6 +182,7 @@ impl MapView {
 
         self.chunks.clear();
         self.waiting.clear();
+        self.terrains_ok.clear();
         self.gone.clear();
 
         // The sea is at 0 m: in the frame, below its origin by the LF level it is measured from (the shaders measure from a little above it).
@@ -348,6 +355,7 @@ impl MapView {
             })
             .collect::<std::collections::HashSet<_>>();
         self.waiting.retain(|(w, _, _, _)| !touched.contains(w));
+        self.terrains_ok.retain(|w| !touched.contains(w));
 
         // The batch's own last word per chunk, in its order.
         let mut set: Vec<(ChunkKey, i32, std::time::Instant, Vec<(Float4x4, Payload)>)> = vec![];
@@ -382,6 +390,8 @@ impl MapView {
         // into those right and down of it, and a chunk draws the LF ground under the tiles of its neighbours that a block holds
         // (`Frame::build_chunk`). Put on the scene alone, a chunk built for the new state beside a neighbour still in the old one left
         // the cells of their shared tiles to nobody: tile-shaped holes down to the sea as the camera dived and the blocks gave way.
+        let coming_scope =
+            wce_foundation::profile::Scope::new(APPLY_COMING.get_or_init(|| wce_foundation::profile::slot("context.apply.coming")));
         let band = self.streamer.as_deref().map_or(0, Streamer::reach_chunks);
         let mut coming: std::collections::HashSet<ChunkKey> = std::collections::HashSet::new();
         let mut coming_squares: Vec<(ChunkKey, i32)> = vec![];
@@ -416,15 +426,20 @@ impl MapView {
         waiting.sort_by_key(|(k, _, _, _)| (k.1, k.0));
         for (key, side, since, entities) in waiting {
             let terrains_ready = !spent
-                && e.renderer.as_mut().is_none_or(|r| {
-                    entities.iter().all(|(_, p)| match p {
-                        Payload::Terrain(t) => r.terrain_ready(t),
-                        _ => true,
-                    })
-                });
+                && (self.terrains_ok.contains(&key)
+                    || e.renderer.as_mut().is_none_or(|r| {
+                        entities.iter().all(|(_, p)| match p {
+                            Payload::Terrain(t) => r.terrain_ready(t),
+                            _ => true,
+                        })
+                    }));
+            if terrains_ready {
+                self.terrains_ok.insert(key);
+            }
             let around = [key.0 - band, key.1 - band, key.0 + side, key.1 + side];
             let held = since.elapsed() < GONE_HOLD && any_coming(&coming, &coming_squares, around, key);
             if terrains_ready && !held {
+                self.terrains_ok.remove(&key);
                 coming.remove(&key);
                 coming_squares.retain(|(k, _)| *k != key);
                 // What it replaces: off now when as large (or smaller: it covers it), else held as a removed piece.
@@ -461,6 +476,8 @@ impl MapView {
             return false;
         }
 
+        drop(coming_scope);
+        wce_prof!("context.apply.scene");
         let scene = &mut e.scene;
         scene.remove_ranges(&gone);
         scene.reserve(ready.iter().map(|(_, _, v)| v.len()).sum());
@@ -509,6 +526,7 @@ impl MapView {
         self.snow_key = None;
         self.chunks.clear();
         self.waiting.clear();
+        self.terrains_ok.clear();
         self.gone.clear();
         self.sea = None;
     }
