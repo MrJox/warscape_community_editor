@@ -7,7 +7,7 @@ use std::sync::Arc;
 use wce_editor::editor::Editor;
 use wce_tile::brush_image::BrushImage;
 
-use wce_editor::gui;
+use wce_editor::{gui, theme};
 use wce_foundation::math::Float3;
 
 use crate::create_panel::{ALT_TURN_DEG_PER_PX, alt_scale_factor};
@@ -23,7 +23,14 @@ pub(crate) struct BrushAlt {
     pub angle: f32,
     pub radius: f32,
     pub resize: bool,
+
+    /// The turn so far (degrees, not wrapped): the dial's pie.
+    pub turned: f32,
 }
+
+/// The rotate gizmo's colours while a ring is dragged (ImGuizmo's defaults, which the editor keeps: ROTATION_USING_FILL / _BORDER).
+const DIAL_FILL: [f32; 4] = [1.0, 0.5, 0.062, 0.5];
+const DIAL_BORDER: [f32; 4] = [1.0, 0.5, 0.062, 1.0];
 
 impl TileTool {
     /// The image brush setting, read from the settings the first time.
@@ -91,9 +98,9 @@ impl TileTool {
         let state = match self.brush_alt {
             // Ctrl pressed or let go while Alt is held: the other change starts from here.
             Some(b) if b.resize == resize => b,
-            Some(b) => BrushAlt { mouse_x: x, angle: self.brush.image_angle, radius: self.brush.radius_m, resize, ..b },
+            Some(b) => BrushAlt { mouse_x: x, angle: self.brush.image_angle, radius: self.brush.radius_m, resize, turned: 0.0, ..b },
             None if self.terrain_hit => {
-                BrushAlt { at: self.cursor, mouse_x: x, angle: self.brush.image_angle, radius: self.brush.radius_m, resize }
+                BrushAlt { at: self.cursor, mouse_x: x, angle: self.brush.image_angle, radius: self.brush.radius_m, resize, turned: 0.0 }
             }
 
             None => return,
@@ -113,6 +120,10 @@ impl TileTool {
             }
 
             self.brush.image_angle = turned.rem_euclid(360.0);
+            if let Some(b) = &mut self.brush_alt {
+                b.turned = turned - state.angle;
+            }
+
             if let Some(b) = &mut self.image_brush {
                 b.angle = self.brush.image_angle;
             }
@@ -121,6 +132,38 @@ impl TileTool {
         } else {
             self.status = "Alt + mouse turns an image brush with a fixed turn; Ctrl + Alt + mouse resizes the brush".to_owned();
         }
+    }
+
+    /// While Alt turns the image brush: the rotate gizmo's dial over the ground at the brush, as it shows when a placed item is turned (a
+    /// pie from the turn Alt went down with to the turn now, its border, and the turn in degrees and radians beside it).
+    pub(crate) fn draw_brush_turn(&self, e: &Editor, origin: gui::Vec2) {
+        let Some(b) = self.brush_alt.filter(|b| !b.resize && self.brush.image.is_some()) else { return };
+        let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+        let screen = |p: Float3| e.viewport.project(p).map(|(x, y)| gui::v2(origin.x + x / density, origin.y + y / density));
+        let Some(centre) = screen(b.at) else { return };
+
+        // The image's own axis turns with it (`BrushImage::at`): (cos, sin) of the turn over x, z.
+        const SEGMENTS: usize = 48;
+        let r = self.brush.radius_m * 0.8;
+        let mut pie = vec![centre];
+        for i in 0..=SEGMENTS {
+            let a = (b.angle + b.turned * i as f32 / SEGMENTS as f32).to_radians();
+            match screen(Float3::new(b.at.x + a.cos() * r, b.at.y, b.at.z + a.sin() * r)) {
+                Some(p) => pie.push(p),
+                None => return,
+            }
+        }
+
+        let dl = gui::window_draw_list();
+        if b.turned.abs() > 1e-3 {
+            dl.concave_poly_filled(&pie, theme::u32(DIAL_FILL));
+        }
+
+        dl.polyline(&pie, theme::u32(DIAL_BORDER), true, 2.0);
+        let text = format!("Y : {:5.2} deg {:5.2} rad", b.turned, b.turned.to_radians());
+        let at = pie[1];
+        dl.text(gui::v2(at.x + 15.0, at.y + 15.0), theme::u32([0.0, 0.0, 0.0, 1.0]), &text);
+        dl.text(gui::v2(at.x + 14.0, at.y + 14.0), theme::u32(theme::text()), &text);
     }
 
     /// A step of a stroke with the image brush: a new turn when it turns at random.
