@@ -388,6 +388,9 @@ pub struct TileTool {
     /// While placing with Alt held: what is placed stays where it was when Alt went down and turns with the mouse (`AltTurn`).
     pub(crate) alt_turn: Option<crate::create_panel::AltTurn>,
 
+    /// A terrain brush being turned (Alt) or resized (Ctrl + Alt) with the mouse (`TileTool::alt_adjust_brush`).
+    pub(crate) brush_alt: Option<crate::image_brush::BrushAlt>,
+
     /// What the left button (or G) is doing in the viewport: a grab, a stroke, a handle's drag, a turn (`gesture::Gesture`); one at a
     /// time, ended in one place (`end_gesture_in`).
     pub(crate) gesture: Option<crate::gesture::Gesture>,
@@ -945,6 +948,7 @@ impl Default for TileTool {
             grab_normal_offset: 0.0,
             angle_step: 15.0,
             alt_turn: None,
+            brush_alt: None,
             gesture: None,
             working_layer: None,
             prefabs: None,
@@ -2323,7 +2327,8 @@ impl TileTool {
         const LEVEL: f64 = 0.25;
         let r = f64::from(self.brush.radius_m);
         let angle = f64::from(self.brush.image_angle).to_radians();
-        let (cx, cz) = (self.cursor.x, self.cursor.z);
+        let at = self.brush_centre();
+        let (cx, cz) = (at.x, at.z);
         let on_ground = |dx: f64, dz: f64| {
             let (x, z) = (cx + dx as f32, cz + dz as f32);
             Float3::new(x, t.terrain_height(x, z) + 0.4, z)
@@ -2401,7 +2406,8 @@ impl TileTool {
             let mut prev = Float3::default();
             for i in 0..=n {
                 let a = i as f32 * std::f32::consts::TAU / n as f32;
-                let mut p = Float3::new(self.cursor.x + a.cos() * radius, 0.0, self.cursor.z + a.sin() * radius);
+                let at = if veg || biome { self.cursor } else { self.brush_centre() };
+                let mut p = Float3::new(at.x + a.cos() * radius, 0.0, at.z + a.sin() * radius);
                 p.y = t.terrain_height(p.x, p.z) + 0.4;
                 if i != 0 {
                     o.line(prev, p, gold);
@@ -3307,6 +3313,7 @@ impl TileTool {
         }
 
         self.alt_turn_placing(e);
+        self.alt_adjust_brush(e);
 
         if e.viewport.hovered && !gui::is_mouse_down(1) && pressed("tile.quick_add", false) {
             self.request_quick_add();

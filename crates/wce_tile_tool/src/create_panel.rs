@@ -401,7 +401,7 @@ fn passes(e: &Entry, words: &[String]) -> bool {
 }
 
 /// The turn of Alt + mouse while placing, in degrees per pixel the mouse goes left or right.
-const ALT_TURN_DEG_PER_PX: f32 = 0.5;
+pub(crate) const ALT_TURN_DEG_PER_PX: f32 = 0.5;
 
 /// What is placed being turned with Alt held (`TileTool::alt_turn_placing`): where it stays, whether that is on the terrain, and the
 /// mouse's x and the turn when Alt went down.
@@ -424,7 +424,7 @@ const ALT_SCALE_PX_PER_DOUBLE: f32 = 200.0;
 
 /// The scale factor of Ctrl + Alt + the mouse `dx` pixels to the right (density-free); with `step` (Shift, the gizmo's scale snap) in
 /// whole steps of it, never 0.
-fn alt_scale_factor(dx: f32, step: Option<f32>) -> f32 {
+pub(crate) fn alt_scale_factor(dx: f32, step: Option<f32>) -> f32 {
     let f = (dx / ALT_SCALE_PX_PER_DOUBLE).exp2();
     match step.filter(|s| *s > 0.0) {
         Some(s) => ((f / s).round() * s).max(s),
