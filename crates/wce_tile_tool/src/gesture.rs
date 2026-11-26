@@ -9,7 +9,7 @@ use wce_foundation::math::Float3;
 use wce_scene::render_scene::{DocumentId, SourceRef};
 use wce_tile_editor::tile_document::TileDocument;
 
-use crate::create_panel::AltRotate;
+use crate::create_panel::{AltRotate, AltScale};
 use crate::tool::{TileTool, document_id};
 use crate::veg_brush::Stroke;
 
@@ -79,6 +79,9 @@ pub(crate) enum Gesture {
     /// Alt + a left drag in Select mode: the selection turning around its centre.
     AltRotate(AltRotate),
 
+    /// Ctrl + Alt + a left drag in Select mode: the selection growing or shrinking, each item about its own place.
+    AltScale(AltScale),
+
     /// A selected river's ford: one of its handles dragged along the river (its start, its middle, its end), or a new one drawn from
     /// where the press was (`anchor`, metres along). `history`: where the history was when it began (a drawn ford is one undo entry).
     Ford {
@@ -110,6 +113,7 @@ impl Gesture {
             Self::TerrainStroke | Self::VegStroke(_) | Self::AreaStroke => "the brush stroke",
             Self::Point { .. } | Self::LightRadius { .. } | Self::ShelterTarget { .. } | Self::Ford { .. } => "the handle drag",
             Self::AltRotate(_) => "the rotation",
+            Self::AltScale(_) => "the scaling",
         }
     }
 }

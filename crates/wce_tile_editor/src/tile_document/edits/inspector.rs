@@ -1177,6 +1177,11 @@ impl TileDocument {
     /// The gizmo: moves (and turns) the items by a world-space delta.
     /// The `scale` property of an element the Scale gizmo works on: every type that has one, while the Inspector can edit it (a building only
     /// as a prop).
+    /// An item the Scale gizmo (and Ctrl + Alt + drag) changes: an element, not a building's piece, whose type has a scale it may edit.
+    pub fn item_scalable(&self, item: SourceRef) -> bool {
+        item.doc == self.id() && piece_of(item.item).is_none() && elem_of(item.item).is_some_and(|e| self.scale_prop(e).is_some())
+    }
+
     pub(super) fn scale_prop(&self, e: usize) -> Option<Prop> {
         let schema = wce_tile::properties::schema(self.tile().tscene().type_of(e))?;
         let prop = *schema.iter().find(|p| p.attr == "scale")?;

@@ -1360,6 +1360,27 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
+        "hold_mods",
+        "hold_mods [ctrl] [shift] [alt] | hold_mods off",
+        "script: keep modifiers down (for a `mouse` drag) until changed",
+        |e, a| {
+            let mut held = [false; 3];
+            for w in a {
+                match w.to_lowercase().as_str() {
+                    "ctrl" => held[0] = true,
+                    "shift" => held[1] = true,
+                    "alt" => held[2] = true,
+                    "off" => {}
+                    _ => return fail("usage: hold_mods [ctrl] [shift] [alt] | hold_mods off"),
+                }
+            }
+
+            e.held_mods = held;
+            ok("")
+        },
+    );
+
+    c.add(
         "key",
         "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab|Up|Down|PageUp|PageDown>",
         "press a key combination (held for two frames), as the keyboard would",

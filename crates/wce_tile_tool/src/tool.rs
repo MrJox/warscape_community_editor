@@ -4969,6 +4969,11 @@ impl TileTool {
             return true;
         }
 
+        // Ctrl + Alt + a left drag on a selection grows or shrinks it (each item about its own place, as the Scale gizmo).
+        if ev.alt && ev.ctrl && self.mode == TileMode::Select && self.alt_scale_begin(e, ev.x) {
+            return true;
+        }
+
         // Alt + a click on the selected polygon or spline: on a point removes it, near an edge inserts one.
         if ev.alt && self.mode == TileMode::Select && self.alt_point_edit(e, ray) {
             return true;
@@ -5119,6 +5124,7 @@ impl TileTool {
     fn on_drag(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
         match self.gesture {
             Some(Gesture::AltRotate(_)) => self.alt_rotate_drag(e, ev.x, ev.shift),
+            Some(Gesture::AltScale(_)) => self.alt_scale_drag(e, ev.x, ev.shift),
             Some(Gesture::VegStroke(_)) => {
                 self.on_hover(e, ev);
                 if self.terrain_hit {
