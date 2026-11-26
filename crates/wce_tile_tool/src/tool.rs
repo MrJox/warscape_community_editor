@@ -1221,10 +1221,11 @@ impl TileTool {
         }
     }
 
+    /// A brush mode stops what was being placed, drawn or painted (a tree set's brush took the press before the mode's brush).
     pub fn set_mode(&mut self, m: TileMode) {
         self.mode = m;
         if m != TileMode::Select {
-            self.drawing = false;
+            self.stop_making();
         }
     }
 
