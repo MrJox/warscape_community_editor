@@ -412,7 +412,8 @@ to fill a scene), then asked for the Tile tool's ways of making and editing thin
       traced). The definitions weight an alternative by listing it again, so the pick among them stays even.
     - A unit's command group (`land_units.officers` -> `land_units_officers`: officers, standard bearers, musicians, each a
       `battle_personalities` row with its own variant and animations) stands at its place: before the front rank or behind the last
-      (`personality_location`), side by side. *Command group* in the unit's Inspector (on by default; the duel's men have it off).
+      (`personality_location`), side by side. *Command group* in the unit's Inspector (on by default); a unit of one man has none (user,
+      2026-11-26: a man alone came with an officer and a standard bearer).
     - A unit can be one *Character* alone in its place (`SceneUnit::character`): a `battle_personalities` man (`personality:<key>`,
       on his own animations) or a general's battle variant (`uniform:<agent_uniforms.battle_filename>`, on the unit's animations);
       both ride the unit's mount. The picker lists the unit's own command group first. A battle has the unit.
