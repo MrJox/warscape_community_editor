@@ -13,7 +13,7 @@ use wce_cinematic::scene::Project;
 use wce_editor::editor::Editor;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 use wce_render::unit_animation::SequenceClip;
-use wce_render::unit_animation::{UnitInstance, UnitModel};
+use wce_render::unit_animation::{UnitInstance, UnitModel, Who};
 use wce_render::unit_catalog::{UnitCatalog, formation, ranks_for_width};
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, blend_environments, read_environment};
@@ -51,12 +51,55 @@ fn decode_run(key: &str) -> Option<Vec<(String, f64, Option<[f32; 3]>)>> {
 
 const RUN_KEY: &str = "RUN";
 
-/// Soldiers made per unit, slot: the men take them in turn.
-const VARIATIONS: u64 = 6;
+/// Soldiers made per unit, slot: each man is one of them, by his place.
+const VARIATIONS: u64 = 12;
+/// Men of a command group or characters made per key: one man each.
+const CHARACTER_VARIATIONS: u64 = 1;
+/// Time offsets among the men of one soldier, so that they don't move as one (seconds): a loop's are spread over its clips, a run's
+/// a short delay.
+const LOOP_OFFSETS: [f32; 4] = [0.0, 0.37, 0.71, 1.13];
+const RUN_OFFSETS: [f32; 4] = [0.0, 0.06, 0.12, 0.18];
+/// Metres between the men of a command group, side by side, and from the formation's front or back.
+const COMMAND_SPACING: f32 = 1.6;
+const COMMAND_GAP: f32 = 2.0;
 /// The ground: grass, as the weather tool's sample map has it.
 const GROUND: &str = "terrain/textures/battle/default/grass/0_su_diffuse.dds";
 
-type ModelKey = (String, String, String);
+/// (unit, faction, slot or run, who: empty for the soldiers, else a character's [`wce_cinematic::scene::SceneUnit::character`]).
+type ModelKey = (String, String, String, String);
+
+/// Who a model key's figure is.
+fn who_of(character: &str) -> Who {
+    use wce_cinematic::scene::{CHARACTER_PERSONALITY, CHARACTER_UNIFORM};
+    if let Some(k) = character.strip_prefix(CHARACTER_PERSONALITY) {
+        Who::Personality(k.to_owned())
+    } else if let Some(v) = character.strip_prefix(CHARACTER_UNIFORM) {
+        Who::Uniform(v.to_owned())
+    } else {
+        Who::Soldier
+    }
+}
+
+/// splitmix64 of a man's unit seed and place: which soldier he is, which time offset.
+fn man_hash(seed: u32, k: usize) -> u64 {
+    let mut z = ((u64::from(seed) << 32) | k as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Where a command group's men stand about the unit's middle (metres, front towards +z): side by side, the first in the middle,
+/// before the front rank or behind the last.
+fn command_places(count: usize, ranks: u32, rank_spacing: f32, front: bool) -> Vec<[f32; 2]> {
+    let half_depth = ranks.saturating_sub(1) as f32 * 0.5 * rank_spacing.max(0.5);
+    let z = if front { half_depth + COMMAND_GAP } else { -half_depth - COMMAND_GAP };
+    (0..count)
+        .map(|i| {
+            let side = if i % 2 == 1 { 1.0 } else { -1.0 };
+            [i.div_ceil(2) as f32 * COMMAND_SPACING * side, z]
+        })
+        .collect()
+}
 
 #[derive(Default)]
 pub struct Preview {
@@ -134,9 +177,10 @@ impl Preview {
                 self.loading = None;
                 match r {
                     Ok(m) if !m.is_empty() => {
-                        // A rider's: his own (`RIDER_`) slots alone.
+                        // A rider's: his own (`RIDER_`) slots alone. A character on animations of his own has his.
                         let mounted = m[0].mount.is_some();
-                        self.slots.entry(key.0.clone()).or_insert_with(|| {
+                        let known = if matches!(who_of(&key.3), Who::Personality(_)) { key.3.clone() } else { key.0.clone() };
+                        self.slots.entry(known).or_insert_with(|| {
                             Arc::new(m[0].slots().into_iter().filter(|s| !mounted || s.starts_with("RIDER_")).map(str::to_owned).collect())
                         });
                         self.models.insert(key, Arc::new(m));
@@ -159,9 +203,11 @@ impl Preview {
         let k = key.clone();
         std::thread::spawn(move || {
             let read = |p: &str| vfs.read(p).ok();
-            let models: Result<Vec<UnitModel>, String> = (0..VARIATIONS)
+            let who = who_of(&k.3);
+            let count = if who == Who::Soldier { VARIATIONS } else { CHARACTER_VARIATIONS };
+            let models: Result<Vec<UnitModel>, String> = (0..count)
                 .map(|v| {
-                    let mut m = UnitModel::load(&read, &catalog, &k.0, &k.1, seed.wrapping_add(v))?;
+                    let mut m = UnitModel::load_as(&read, &catalog, &k.0, &k.1, &who, seed.wrapping_add(v))?;
                     // The key's slot, or one of its family's variants a soldier (the men take the soldiers in turn: not in step); a slot
                     // the unit's animations don't have keeps its standing pose. A rider plays his own (`RIDER_`) slots; the horse follows.
                     let own: Vec<String> = m.slots().into_iter().map(str::to_owned).collect();
@@ -287,55 +333,85 @@ impl Preview {
             self.lit = Some(lit);
         }
 
-        // The men: each unit's formation at its place and facing, each man a soldier of the unit's slot, posed at the slot's time.
+        // The men: each unit's formation at its place and facing, each man a soldier of the unit's slot, posed at the slot's time, its
+        // command group before or behind it; or one character in its place.
         let mut figures: Vec<(Float4x4, UnitInstance)> = vec![];
         let mut wanted: Option<(ModelKey, u64)> = None;
-        let mut poses: HashMap<(ModelKey, usize), Vec<UnitInstance>> = HashMap::new();
+        let mut poses: HashMap<(ModelKey, usize, usize), Vec<UnitInstance>> = HashMap::new();
         if let Some(catalog) = self.catalog.clone() {
             for s in frame.units.iter().filter(|s| s.visible && s.men > 0) {
                 let Some(u) = project.unit(s.unit) else { continue };
+                let Some(land) = catalog.land_units.get(&u.unit) else { continue };
                 let faction = project.armies.get(u.army).map_or(String::new(), |a| a.faction.clone());
                 // A run of action keys: one model playing the run (its key the run's clips), timed from the run's first key.
-                let key: ModelKey = (u.unit.clone(), faction.clone(), if s.run.is_empty() { s.slot.clone() } else { encode_run(&s.run) });
-                let stand: ModelKey = (u.unit.clone(), faction, "STAND".into());
-                let models = match self.models.get(&key).or_else(|| self.models.get(&stand)) {
-                    Some(m) => m.clone(),
-                    None => {
-                        if wanted.is_none() && !self.failed.contains(&stand) {
-                            wanted = Some((stand, u.seed as u64));
-                        }
-                        continue;
-                    }
-                };
-                if !self.models.contains_key(&key) && !self.failed.contains(&key) && wanted.is_none() {
-                    wanted = Some((key.clone(), u.seed as u64));
-                }
-                let used = if self.models.contains_key(&key) { key.clone() } else { stand.clone() };
-                let Some(land) = catalog.land_units.get(&u.unit) else { continue };
-                // A moving slot's clips play by the ground covered (their own travel over their length), so feet don't slide; other
-                // slots by the time since they started.
-                let anim_t = match natural_speed(&models[0]) {
-                    Some(v) if used.2 == s.slot && s.speed > 0.05 => s.slot_distance / v,
-                    _ => (frame.t - s.slot_start).max(0.0) as f32,
-                };
-                let place = translation(Float3::new(s.position[0] / units, 0.0, s.position[1] / units)) * rotation_y(s.facing);
-                for (k, [x, z]) in formation(s.men, ranks_for_width(s.men, u.width, land.spacing[0]), land.spacing).into_iter().enumerate()
-                {
-                    let variation = (k * 7) % models.len();
-                    let pose = poses.entry((used.clone(), variation)).or_insert_with(|| models[variation].instances(anim_t, true));
-                    let mut man = place * translation(Float3::new(x / units, 0.0, z / units));
-                    if let Some(h) = ground {
-                        man.m[1][3] = h(man.m[0][3] * units, man.m[2][3] * units) / units;
-                    }
-                    for f in pose.iter() {
-                        let mut world = man;
-                        let scale = f.scale / units;
-                        for row in 0..3 {
-                            for col in 0..3 {
-                                world.m[row][col] *= scale;
+                let slot = if s.run.is_empty() { s.slot.clone() } else { encode_run(&s.run) };
+                let mut groups: Vec<(String, Vec<[f32; 2]>)> = vec![];
+                if u.character.is_empty() {
+                    let ranks = ranks_for_width(s.men, u.width, land.spacing[0]);
+                    groups.push((String::new(), formation(s.men, ranks, land.spacing)));
+                    if u.command
+                        && let Some(g) = catalog.command_of(&u.unit)
+                    {
+                        let men: Vec<&String> = g.men().collect();
+                        let places = command_places(men.len(), ranks.clamp(1, s.men.max(1)), land.spacing[1], g.front);
+                        for (key, at) in men.into_iter().zip(places) {
+                            let who = format!("{}{key}", wce_cinematic::scene::CHARACTER_PERSONALITY);
+                            match groups.iter_mut().find(|(w, _)| *w == who) {
+                                Some((_, list)) => list.push(at),
+                                None => groups.push((who, vec![at])),
                             }
                         }
-                        figures.push((world * f.local, f.clone()));
+                    }
+                } else {
+                    groups.push((u.character.clone(), vec![[0.0, 0.0]]));
+                }
+
+                let place = translation(Float3::new(s.position[0] / units, 0.0, s.position[1] / units)) * rotation_y(s.facing);
+                for (g, (who, at)) in groups.into_iter().enumerate() {
+                    let key: ModelKey = (u.unit.clone(), faction.clone(), slot.clone(), who.clone());
+                    let stand: ModelKey = (u.unit.clone(), faction.clone(), "STAND".into(), who);
+                    let models = match self.models.get(&key).or_else(|| self.models.get(&stand)) {
+                        Some(m) => m.clone(),
+                        None => {
+                            if wanted.is_none() && !self.failed.contains(&stand) {
+                                wanted = Some((stand, u.seed as u64));
+                            }
+                            continue;
+                        }
+                    };
+                    if !self.models.contains_key(&key) && !self.failed.contains(&key) && wanted.is_none() {
+                        wanted = Some((key.clone(), u.seed as u64));
+                    }
+                    let used = if self.models.contains_key(&key) { key } else { stand };
+                    // A moving slot's clips play by the ground covered (their own travel over their length), so feet don't slide; other
+                    // slots by the time since they started.
+                    let anim_t = match natural_speed(&models[0]) {
+                        Some(v) if used.2 == s.slot && s.speed > 0.05 => s.slot_distance / v,
+                        _ => (frame.t - s.slot_start).max(0.0) as f32,
+                    };
+                    let offsets = if s.run.is_empty() { &LOOP_OFFSETS } else { &RUN_OFFSETS };
+                    let alone = at.len() == 1;
+                    for (k, [x, z]) in at.into_iter().enumerate() {
+                        // Each man one of the soldiers and a little out of step, by his place (a man alone: the first, in time).
+                        let h = man_hash(u.seed.wrapping_add(g as u32 * 7919), k);
+                        let variation = (h % models.len() as u64) as usize;
+                        let offset = if alone { 0 } else { ((h >> 32) % offsets.len() as u64) as usize };
+                        let t = if s.run.is_empty() { anim_t + offsets[offset] } else { (anim_t - offsets[offset]).max(0.0) };
+                        let pose = poses.entry((used.clone(), variation, offset)).or_insert_with(|| models[variation].instances(t, true));
+                        let mut man = place * translation(Float3::new(x / units, 0.0, z / units));
+                        if let Some(h) = ground {
+                            man.m[1][3] = h(man.m[0][3] * units, man.m[2][3] * units) / units;
+                        }
+                        for f in pose.iter() {
+                            let mut world = man;
+                            let scale = f.scale / units;
+                            for row in 0..3 {
+                                for col in 0..3 {
+                                    world.m[row][col] *= scale;
+                                }
+                            }
+                            figures.push((world * f.local, f.clone()));
+                        }
                     }
                 }
             }
@@ -401,6 +477,11 @@ impl Preview {
         }
     }
 
+    /// The units' tables, once read.
+    pub fn catalog(&self) -> Option<Arc<UnitCatalog>> {
+        self.catalog.clone()
+    }
+
     /// True while the units' models or tables are still loading (a movie waits for them).
     pub fn busy(&self) -> bool {
         self.catalog_rx.is_some() || self.loading.is_some()
@@ -436,5 +517,32 @@ pub fn camera_of(c: &wce_cinematic::eval::CameraState, units: f32) -> Camera {
         znear: 1.0 / units,
         zfar: 13000.0 / units,
         ortho_height: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{COMMAND_GAP, command_places, man_hash};
+
+    #[test]
+    fn the_command_group_stands_before_or_behind() {
+        let front = command_places(3, 5, 1.4, true);
+        assert_eq!(front.iter().map(|p| p[0]).collect::<Vec<_>>(), [0.0, 1.6, -1.6], "the first in the middle, then each side");
+        assert!(front.iter().all(|p| (p[1] - (2.0 * 1.4 + COMMAND_GAP)).abs() < 1e-5), "before the front rank: {front:?}");
+        assert!(command_places(1, 5, 1.4, false)[0][1] < -2.0 * 1.4, "behind the last rank");
+    }
+
+    #[test]
+    fn the_men_are_mixed_not_striped() {
+        // 120 men of 12 soldiers: each soldier among them, and no rank repeating the one before.
+        let of = |k: usize| (man_hash(7, k) % 12) as usize;
+        let mut seen = [0; 12];
+        for k in 0..120 {
+            seen[of(k)] += 1;
+        }
+        assert!(seen.iter().all(|&n| n > 0), "{seen:?}");
+        let files = 20;
+        let same = (files..120).filter(|&k| of(k) == of(k - files)).count();
+        assert!(same < 20, "{same} men like the man before them in the file");
     }
 }

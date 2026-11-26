@@ -584,6 +584,8 @@ mod tests {
             men: 120,
             seed: 7,
             general: false,
+            command: true,
+            character: String::new(),
         });
         (p, id)
     }

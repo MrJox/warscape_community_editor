@@ -40,6 +40,8 @@ pub fn sample() -> Project {
             men: 160,
             seed: id,
             general: false,
+            command: true,
+            character: String::new(),
         });
         id
     };

@@ -53,10 +53,11 @@ pub fn formation_depth(men: u32, width: f32) -> f32 {
 }
 
 /// A unit's formation on the ground: its four corners (metres) from its men and width (ranks 1.4 m apart, files 1.1 m).
+/// A character alone: one man's.
 pub fn footprint(u: &SceneUnit, at: [f32; 2], facing: f32) -> [[f32; 2]; 4] {
-    let depth = formation_depth(u.men, u.width);
+    let (width, depth) = if u.character.is_empty() { (u.width, formation_depth(u.men, u.width)) } else { (1.5, 1.5) };
     let (sin, cos) = facing.sin_cos();
-    let (hw, hd) = (u.width * 0.5, depth * 0.5);
+    let (hw, hd) = (width * 0.5, depth * 0.5);
     let c = |x: f32, z: f32| [at[0] + x * cos + z * sin, at[1] - x * sin + z * cos];
     [c(-hw, -hd), c(hw, -hd), c(hw, hd), c(-hw, hd)]
 }
@@ -551,6 +552,8 @@ impl SceneView {
                             men,
                             seed: 0,
                             general: false,
+                            command: true,
+                            character: String::new(),
                         };
                         let corners = footprint(&ghost, g, f);
                         let pts: Vec<gui::Vec2> = corners.iter().filter_map(|c| scr(e, [c[0], ground.height(c[0], c[1]), c[1]])).collect();

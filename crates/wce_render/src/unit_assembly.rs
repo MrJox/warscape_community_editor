@@ -4,8 +4,8 @@
 //! then one alternative; a `VARIANT_MESH_REFERENCE` stands for the file it names. The picks here use the editor's own generator: the same seed
 //! gives the same soldier in the editor, not the soldier the game would pick. Each node draws from a generator of its own (the seed and its
 //! place in the tree), so [`Pins`] that force one slot leave the others as they were. **ASSUMPTION** (by their names and values, not traced): the
-//! probability is how often a slot is filled, every alternative is as likely, `maskN` is the faction colour the mask's channel N takes, and a
-//! tint applies to the mask's first channel.
+//! probability is how often a slot is filled, every alternative is as likely (the files weight one by listing it again), `maskN` is the faction
+//! colour the mask's channel N takes, and a tint applies to the mask's first channel, varied by its `random_range` from soldier to soldier.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -328,12 +328,21 @@ impl Assembler<'_> {
             let decal_pick = at.pin(&self.pins.decals).copied().unwrap_or(decal_pick);
             let tint_pick = rng.below(mesh.tints.len());
             let tint = mesh.tints.get(at.pin(&self.pins.tints).copied().unwrap_or(tint_pick));
+            // Each soldier's tint off the mesh's by its random range: brighter or darker, a little warmer or cooler. **ASSUMPTION**: the
+            // engine's use of `random_range` isn't traced; the soldiers of a unit differ by it (1.0 on the shields' wood of Attila's units).
+            let shade = rng.unit().mul_add(2.0, -1.0);
+            let hue: [f32; 3] = std::array::from_fn(|_| rng.unit().mul_add(2.0, -1.0));
             self.out.parts.push(AssembledPart {
                 model: model.clone(),
                 decal_diffuse: decal(self.read, mesh.decal_diffuse.as_deref(), decal_pick),
                 decal_normal: decal(self.read, mesh.decal_normal.as_deref(), decal_pick),
                 masks: std::array::from_fn(|i| mesh.masks[i].filter(|m| *m < 3).unwrap_or(i as u8)),
-                tint: tint.map_or([0.0; 4], |t| [t.red, t.green, t.blue, 1.0]),
+                tint: tint.map_or([0.0; 4], |t| {
+                    let r = t.random_range.clamp(0.0, 1.0);
+                    let c = [t.red, t.green, t.blue].map(|v| v * (1.0 + 0.3 * r * shade));
+                    let c: [f32; 3] = std::array::from_fn(|i| (c[i] * (1.0 + 0.1 * r * hue[i])).clamp(0.0, 1.0));
+                    [c[0], c[1], c[2], 1.0]
+                }),
                 attach: attach.clone(),
                 node: at.path.clone(),
             });

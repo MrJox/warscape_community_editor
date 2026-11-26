@@ -109,6 +109,29 @@ pub struct SceneUnit {
     pub seed: u32,
     #[serde(default)]
     pub general: bool,
+    /// Its command group (officers, standard bearer, musician: the unit's `land_units_officers`) drawn at their places in a movie.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub command: bool,
+    /// A character alone in its place, its men aside, in a movie ([`CHARACTER_PERSONALITY`] or [`CHARACTER_UNIFORM`] and the key);
+    /// empty: the unit's men. A battle has the unit.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub character: String,
+}
+
+impl SceneUnit {
+    /// What its animation slots are known by: its kind, or a character on animations of his own (a `battle_personalities` row).
+    pub fn slots_key(&self) -> &str {
+        if self.character.starts_with(CHARACTER_PERSONALITY) { &self.character } else { &self.unit }
+    }
+}
+
+/// A character that is a `battle_personalities` row: `personality:<key>`.
+pub const CHARACTER_PERSONALITY: &str = "personality:";
+/// A character that is a general's battle variant (`agent_uniforms.battle_filename`), on the unit's animations: `uniform:<variant>`.
+pub const CHARACTER_UNIFORM: &str = "uniform:";
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -301,7 +324,19 @@ pub fn resolve_slot<'a>(slot: &str, own: &'a [String], mounted: bool) -> Vec<&'a
 
 #[cfg(test)]
 mod slot_tests {
-    use super::{resolve_slot, slot_family, slot_variants};
+    use super::{CHARACTER_PERSONALITY, SceneUnit, resolve_slot, slot_family, slot_variants};
+
+    #[test]
+    fn a_unit_of_before_has_its_command_group_and_no_character() {
+        let json = r#"{"id":1,"name":"a","unit":"u","army":0,"start":[0,0],"facing":0,"width":10,"men":20,"seed":1}"#;
+        let u: SceneUnit = serde_json::from_str(json).unwrap();
+        assert!(u.command && u.character.is_empty());
+        assert_eq!(u.slots_key(), "u");
+        let back = serde_json::to_string(&u).unwrap();
+        assert!(!back.contains("command") && !back.contains("character"), "defaults are left out: {back}");
+        let officer = SceneUnit { character: format!("{CHARACTER_PERSONALITY}rom_officer"), ..u };
+        assert_eq!(officer.slots_key(), "personality:rom_officer", "a character on his own animations");
+    }
 
     #[test]
     fn a_rider_plays_his_own() {

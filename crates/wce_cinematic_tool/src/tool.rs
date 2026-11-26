@@ -118,6 +118,8 @@ impl CinematicTool {
             self.catalog_loading = Some(rx);
             self.library_loading = None;
             self.preview.game_changed(e);
+            self.scene.catalog = None;
+            self.scene.characters = std::sync::Arc::default();
             let (tx, rx) = channel();
             let f = files.clone();
             std::thread::spawn(move || {
@@ -1675,7 +1677,7 @@ impl Tool for CinematicTool {
                 let Some(id) = a.first().and_then(|x| x.parse::<u32>().ok()) else {
                     return CommandResult::fail("usage: unit_slots <unit id> [min count]");
                 };
-                let Some(key) = scene_doc(e).and_then(|d| d.project().unit(id).map(|u| u.unit.clone())) else {
+                let Some(key) = scene_doc(e).and_then(|d| d.project().unit(id).map(|u| u.slots_key().to_owned())) else {
                     return CommandResult::fail(format!("no unit {id}"));
                 };
                 let slots = e.with_tool::<CinematicTool, _>(|t, _| t.scene.slots.get(&key).cloned()).flatten();
@@ -2254,6 +2256,12 @@ impl Tool for CinematicTool {
                 self.preview.update(e, doc, &p, &frame, heights.as_ref().map(|h| h as &dyn Fn(f32, f32) -> f32));
                 if self.scene.slots.len() != self.preview.slots.len() {
                     self.scene.slots = self.preview.slots.clone();
+                }
+                if self.scene.catalog.is_none()
+                    && let Some(c) = self.preview.catalog()
+                {
+                    self.scene.characters = std::sync::Arc::new(crate::pickers::character_items(&c));
+                    self.scene.catalog = Some(c);
                 }
             }
         } else {

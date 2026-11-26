@@ -528,6 +528,8 @@ impl Create {
                         men,
                         seed: id,
                         general: d.general,
+                        command: true,
+                        character: String::new(),
                     });
                     made = id;
                 });

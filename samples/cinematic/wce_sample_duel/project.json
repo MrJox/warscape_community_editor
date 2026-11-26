@@ -76,7 +76,8 @@
       "width": 1.0,
       "men": 1,
       "seed": 3,
-      "general": false
+      "general": false,
+      "command": false
     },
     {
       "id": 4,
@@ -91,7 +92,8 @@
       "width": 1.0,
       "men": 1,
       "seed": 4,
-      "general": false
+      "general": false,
+      "command": false
     }
   ],
   "clips": [
