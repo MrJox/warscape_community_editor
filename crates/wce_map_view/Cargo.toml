@@ -3,7 +3,7 @@ name = "wce_map_view"
 description = "A battle map on the scene, streamed around the camera (the map context's streamer driven for a tool: chunks on the scene once their GPU side is ready, the sea, the far ring, snow regions, the overview map), and the battle maps a view shows (the game's and the kits'). Shared by the Tile tool's map context and the Terrain tool."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 wce_editor = { path = "../wce_editor" }

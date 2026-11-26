@@ -102,7 +102,5 @@ are their trademarks. The editor ships no game content: it reads it from your ow
 
 ## License
 
-The editor's original code and documentation are licensed under the [WCE Noncommercial Share-Alike License](LICENSE). It permits
-noncommercial use, modification and redistribution. Distributed forks must provide their corresponding source under the same terms.
-Commercial use or closed-source distribution requires prior written permission from the relevant copyright holders. This is a
-source-available license and is not an OSI-approved open source license. Third-party components remain under their own licenses.
+The editor's original code and documentation are licensed under the GNU General Public License version 3 only. See [LICENSE](LICENSE).
+Third-party components remain under their own licenses.

@@ -3,7 +3,7 @@ name = "wce_weather_tool"
 description = "The Weather / Lighting tool: weather files as documents, the live preview on the sample map with cross-fades, the weather picker and the variation database editor."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true

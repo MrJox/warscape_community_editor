@@ -3,7 +3,7 @@ name = "wce_audio"
 description = "The headless audio layer: decoding the game's sound files, the names of sounds, what an event plays. Shared by the Audio tool and, later, the Cinematic tool."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 # Pure Rust Vorbis decoding of the packets rebuilt from Wwise Vorbis (no Ogg container, so no default features).

@@ -3,7 +3,7 @@ name = "wce_scene"
 description = "The shared render and editor scene: entities and layers, the camera, the environment parameters and the cloud planes."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 wce_formats = { path = "../wce_formats" }

@@ -3,7 +3,7 @@ name = "wce_walls"
 description = "Procedural walls: buildings generated from a base wall piece, bent, mitred and stepped along a wall's spline, and the pack they go into (docs/plans/procedural_walls.md)."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 nalgebra = "0.35"

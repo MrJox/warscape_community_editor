@@ -3,7 +3,7 @@ name = "wce_foundation"
 description = "Basics shared by every layer of the editor: math, the simulation clock, the log, machine settings and the profiler."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 directories = "6"

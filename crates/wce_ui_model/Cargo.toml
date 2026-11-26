@@ -3,7 +3,7 @@ name = "wce_ui_model"
 description = "The editable model of a Total War UI layout: the XML as a tree that prints back to the same text, the entries with their rectangles, the edit operations and the draw list the canvas and the CLI render."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true
