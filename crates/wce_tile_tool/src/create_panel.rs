@@ -414,6 +414,31 @@ pub(crate) struct AltTurn {
     pub normal: wce_foundation::math::Double3,
     pub mouse_x: f32,
     pub yaw: f32,
+
+    /// Ctrl + Alt: the scale (`TileDocument::draft_scale`) when the mouse's x was taken, which it grows or shrinks; None: Alt alone turns.
+    pub scale: Option<[f32; 3]>,
+}
+
+/// The pixels Ctrl + Alt + the mouse goes right to double the scale (left: halve it).
+const ALT_SCALE_PX_PER_DOUBLE: f32 = 200.0;
+
+/// The scale factor of Ctrl + Alt + the mouse `dx` pixels to the right (density-free); with `step` (Shift, the gizmo's scale snap) in
+/// whole steps of it, never 0.
+fn alt_scale_factor(dx: f32, step: Option<f32>) -> f32 {
+    let f = (dx / ALT_SCALE_PX_PER_DOUBLE).exp2();
+    match step.filter(|s| *s > 0.0) {
+        Some(s) => ((f / s).round() * s).max(s),
+        None => f,
+    }
+}
+
+/// Ctrl + Alt + a left drag in Select mode (`TileTool::alt_scale_begin`): the items that have a scale, the press's x and the drag's undo
+/// gesture.
+#[derive(Clone, Debug)]
+pub(crate) struct AltScale {
+    pub items: Vec<wce_scene::render_scene::SourceRef>,
+    pub x0: i32,
+    pub gesture: u64,
 }
 
 /// Alt + a left drag in Select mode (`TileTool::alt_rotate_begin`): the selection, the centre it turns around (the gizmo's space: world
@@ -1004,6 +1029,34 @@ impl TileTool {
         true
     }
 
+    /// Ctrl + Alt pressed with the left button over the viewport in Select mode: the selected items that have a scale start growing (the
+    /// mouse right) or shrinking (left), each about its own place, as the Scale gizmo does. False when none has a scale.
+    pub(crate) fn alt_scale_begin(&mut self, e: &mut Editor, x: i32) -> bool {
+        let Some(id) = crate::tool::document_id(e) else { return false };
+        let Some(d) = e.docs.find_as_mut::<wce_tile_editor::tile_document::TileDocument>(id) else { return false };
+        let items = e.selection.items().iter().copied().filter(|&r| d.item_scalable(r)).collect::<Vec<_>>();
+        if items.is_empty() {
+            return false;
+        }
+
+        let gesture = d.next_gesture();
+        self.gesture = Some(crate::gesture::Gesture::AltScale(AltScale { items, x0: x, gesture }));
+        self.status = "scaling the selection (Ctrl + Alt + drag: right grows, left shrinks; Shift: by the scale snap)".to_owned();
+        true
+    }
+
+    /// The drag of `alt_scale_begin`: the scale since the press, one undo entry for the drag (the document scales from what each had then).
+    pub(crate) fn alt_scale_drag(&mut self, e: &mut Editor, x: i32, shift: bool) {
+        let Some(crate::gesture::Gesture::AltScale(s)) = &self.gesture else { return };
+        let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+        let f = alt_scale_factor((x - s.x0) as f32 / density, shift.then_some(e.viewport.snap_scale));
+        if let Some(d) = e.docs.find_mut(s.items[0].doc) {
+            d.scale_items(&s.items, [f; 3], &wce_foundation::math::Float4x4::IDENTITY, s.gesture);
+        }
+
+        self.status = format!("scaled x{f:.2} (Ctrl + Alt + drag; Shift: steps of {})", e.viewport.snap_scale);
+    }
+
     /// The drag of `alt_rotate_begin`: the selection turned about the vertical through its centre by the mouse's way left or right since the
     /// press (0.5 degree a pixel; Shift: whole rotate steps), one undo entry for the drag.
     pub(crate) fn alt_rotate_drag(&mut self, e: &mut Editor, x: i32, shift: bool) {
@@ -1033,28 +1086,57 @@ impl TileTool {
     }
 
     /// Per frame while placing: Alt held keeps what is placed where it was when Alt went down and turns it with the mouse (left / right;
-    /// Shift: by the rotate step), so that it is placed already turned; a click places it there, letting Alt go puts it back under the
-    /// mouse, turned.
+    /// Shift: by the rotate step), so that it is placed already turned; with Ctrl too it grows (right) or shrinks (left) instead (Shift:
+    /// by the gizmo's scale snap), what has a scale. A click places it there, letting Alt go puts it back under the mouse.
     pub(crate) fn alt_turn_placing(&mut self, e: &Editor) {
         let io = gui::io();
-        let Some(yaw) = self.placing_yaw().filter(|_| io.KeyAlt && !io.KeyCtrl && (e.viewport.hovered || self.alt_turn.is_some())) else {
+        let Some(yaw) = self.placing_yaw().filter(|_| io.KeyAlt && (e.viewport.hovered || self.alt_turn.is_some())) else {
             self.alt_turn = None;
             return;
         };
 
+        let doc = crate::tool::document_id(e).and_then(|id| e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id));
+        let scale_now = (io.KeyCtrl && matches!(self.placing, Some(crate::tool::Placing::Draft)))
+            .then(|| self.draft.as_ref().zip(doc).and_then(|(dr, d)| d.draft_scale(dr)))
+            .flatten();
+        if io.KeyCtrl && scale_now.is_none() {
+            // Nothing to scale (a prefab, or a type without a scale): Ctrl + Alt does nothing.
+            self.status = "this has no scale to change (Ctrl + Alt + mouse)".to_owned();
+            return;
+        }
+
+        // Ctrl pressed or let go while Alt is held: the other change starts from here, where the item already is.
+        let x = io.MousePos.x;
+        if let Some(t) = &mut self.alt_turn
+            && t.scale.is_some() != io.KeyCtrl
+        {
+            (t.mouse_x, t.yaw, t.scale) = (x, yaw, scale_now);
+        }
+
         // Alt with the mouse is not a trip to the menu bar.
         gui::cancel_alt_menu_toggle();
-        let x = io.MousePos.x;
         let Some(t) = self.alt_turn else {
             if self.terrain_hit {
                 let (point, on_terrain) = self.place_point();
                 let d = crate::tool::document_id(e).and_then(|id| e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id));
                 let normal = d.map_or(wce_foundation::math::Double3::new(0.0, 1.0, 0.0), |d| self.surface_normal(d));
-                self.alt_turn = Some(AltTurn { point, on_terrain, normal, mouse_x: x, yaw });
+                self.alt_turn = Some(AltTurn { point, on_terrain, normal, mouse_x: x, yaw, scale: scale_now });
             }
 
             return;
         };
+
+        if let Some(base) = t.scale {
+            let density = io.DisplayFramebufferScale.x.max(1e-3);
+            let f = alt_scale_factor((x - t.mouse_x) / density, io.KeyShift.then_some(e.viewport.snap_scale));
+            if let (Some(dr), Some(d)) = (&mut self.draft, doc) {
+                d.set_draft_scale(dr, base.map(|v| v * f));
+            }
+
+            self.keep_draft();
+            self.status = format!("scale x{f:.2} (Ctrl + Alt + mouse; Shift: steps of {}; click places it here)", e.viewport.snap_scale);
+            return;
+        }
 
         let mut turned = t.yaw + (x - t.mouse_x) * ALT_TURN_DEG_PER_PX;
         if io.KeyShift && self.angle_step > 0.0 {

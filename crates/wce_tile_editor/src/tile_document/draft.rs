@@ -173,6 +173,37 @@ impl TileDocument {
 
     /// The Inspector of a draft: the type's properties (TEd's Property Editor rows) with the draft's values, else the kit's defaults; an edit
     /// changes the draft (`turnable`: a placed type, with its turn). Not shown: what a click decides (position, flags) and the key (the Create panel's entry). Returns whether it changed.
+    /// The value a new one of the draft's kind gets for `attr` without the draft's own: its kind's own (an effect's scale) over the
+    /// type's defaults.
+    fn draft_default(&self, kind: &str, key: &str, attr: &str) -> Option<String> {
+        let own = point_instance(kind, Double3::ZERO, key, self.tile().unit()).map(|n| n.attrs).unwrap_or_default();
+        own.get(attr).cloned().or_else(|| {
+            let template = wce_tile::new_instances::template(kind)?;
+            template.attrs.iter().find(|(k, _)| *k == attr).map(|(_, v)| (*v).to_owned())
+        })
+    }
+
+    /// The draft's scale (its own, else what a new one gets) as three axes, when its kind has an editable scale.
+    pub fn draft_scale(&self, d: &Draft) -> Option<[f32; 3]> {
+        let prop = schema(&d.kind)?.iter().find(|p| p.attr == "scale")?;
+        let text = d.attrs.get("scale").cloned().or_else(|| self.draft_default(&d.kind, &d.key, "scale")).unwrap_or_else(|| "1".to_owned());
+        match prop.kind {
+            Kind::Vec3 => wce_tile::properties::parse_vec3_text(&text),
+            _ => text.trim().parse::<f32>().ok().map(|s| [s; 3]),
+        }
+    }
+
+    /// Sets the draft's scale (`draft_scale`'s axes; a single number takes the first, within its range).
+    pub fn set_draft_scale(&self, d: &mut Draft, v: [f32; 3]) {
+        let Some(prop) = schema(&d.kind).and_then(|s| s.iter().find(|p| p.attr == "scale")) else { return };
+        let text = match prop.kind {
+            Kind::Vec3 => wce_tile::properties::format_vec3(v),
+            Kind::Slider(lo, hi) => wce_tile::properties::format_float(v[0].clamp(lo, hi)),
+            _ => wce_tile::properties::format_float(v[0]),
+        };
+        d.attrs.insert("scale".to_owned(), text);
+    }
+
     pub fn inspect_draft(&self, d: &mut Draft, turnable: bool, ins: &mut dyn Inspector) -> bool {
         ins.section(&format!("New {}", d.kind));
         if !d.key.is_empty() {
@@ -181,11 +212,8 @@ impl TileDocument {
 
         let Some(props) = schema(&d.kind) else { return false };
         // The values a new one gets without the draft's: its kind's own (an effect's scale) over the type's defaults.
-        let template = wce_tile::new_instances::template(&d.kind);
-        let own = point_instance(&d.kind, Double3::ZERO, &d.key, self.tile().unit()).map(|n| n.attrs).unwrap_or_default();
-        let default = |attr: &str| {
-            own.get(attr).cloned().or_else(|| template.and_then(|t| t.attrs.iter().find(|(k, _)| *k == attr)).map(|(_, v)| (*v).to_owned()))
-        };
+        let (kind, key) = (d.kind.clone(), d.key.clone());
+        let default = |attr: &str| self.draft_default(&kind, &key, attr);
         let before = d.yaw;
         let mut yaw = d.yaw;
         if turnable {

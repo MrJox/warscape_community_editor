@@ -185,6 +185,10 @@ pub struct Editor {
     pub(crate) mouse_cur: MouseState,
     mouse_active: bool,
 
+    /// The modifiers `hold_mods` keeps down in scripted runs (Ctrl, Shift, Alt), and those last sent.
+    pub(crate) held_mods: [bool; 3],
+    held_mods_sent: [bool; 3],
+
     /// Keys the `key` command holds down for a couple of frames.
     pub(crate) test_keys: Vec<(i32, i32)>,
     first_run_game: String,
@@ -313,6 +317,8 @@ impl Editor {
             mouse_queue: VecDeque::new(),
             mouse_cur: MouseState::default(),
             mouse_active: false,
+            held_mods: [false; 3],
+            held_mods_sent: [false; 3],
             test_keys: vec![],
             first_run_game: String::new(),
             first_run_message: String::new(),
@@ -1380,6 +1386,14 @@ impl Editor {
             return;
         }
 
+        // The modifiers a script holds (`hold_mods`): down every frame while held, let go once.
+        for (i, m) in [gui::MOD_CTRL, gui::MOD_SHIFT, gui::MOD_ALT].into_iter().enumerate() {
+            if self.held_mods[i] || self.held_mods_sent[i] {
+                gui::add_key_event(m, self.held_mods[i]);
+            }
+        }
+
+        self.held_mods_sent = self.held_mods;
         if !self.mouse_active {
             // The real cursor is ignored.
             gui::add_mouse_pos_event(-f32::MAX, -f32::MAX);
