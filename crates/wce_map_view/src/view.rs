@@ -71,6 +71,10 @@ fn add_range(scene: &mut RenderScene, layer: LayerId, doc: DocumentId, entities:
     first..scene.next_id()
 }
 
+/// The longest a change waits for its neighbours (`MapView::apply`): past it, a chunk goes on and a removed one off whatever comes. Long:
+/// a fast move from far away queues hundreds of chunks, and at 3 s the held ones went before their replacements came (the holes again).
+const GONE_HOLD: std::time::Duration = std::time::Duration::from_secs(15);
+
 #[derive(Default)]
 pub struct MapView {
     /// The streamer, the scene layer of the view and the document it belongs to.
@@ -82,12 +86,14 @@ pub struct MapView {
     /// goes at the horizon.
     far_view: i32,
 
-    /// Each chunk's entities on the layer (added in a row: a range of ids), and the sea's (with the focus it is around).
-    chunks: HashMap<ChunkKey, std::ops::Range<EntityId>>,
+    /// Each chunk's entities on the layer (added in a row: a range of ids) and its side (chunks), and the sea's (with the focus it is
+    /// around).
+    chunks: HashMap<ChunkKey, (std::ops::Range<EntityId>, i32)>,
 
-    /// The streamer's chunks waiting for the renderer to have their terrains' GPU side, and the ones to take off.
-    waiting: Vec<(ChunkKey, Vec<(Float4x4, Payload)>)>,
-    gone: Vec<ChunkKey>,
+    /// The streamer's chunks waiting for the renderer to have their terrains' GPU side and for their neighbours (with their sides and since
+    /// when: `apply`), and the ones to take off (since when: `apply` keeps one until what replaces it is there).
+    waiting: Vec<(ChunkKey, i32, std::time::Instant, Vec<(Float4x4, Payload)>)>,
+    gone: Vec<(ChunkKey, std::time::Instant)>,
     sea: Option<EntityId>,
     sea_at: (f64, f64),
 
@@ -325,6 +331,9 @@ impl MapView {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
+
+        // The chunks kept for what was coming over them: everything is there now.
+        self.apply(e, None);
     }
 
     /// The streamer's changes: the chunks it removed go now (with what was waiting of them), the ones it built wait for their terrains.
@@ -336,20 +345,25 @@ impl MapView {
                 ChunkChange::Set(k, ..) | ChunkChange::Remove(k) => *k,
             })
             .collect::<std::collections::HashSet<_>>();
-        self.waiting.retain(|(w, _)| !touched.contains(w));
+        self.waiting.retain(|(w, _, _, _)| !touched.contains(w));
 
-        // The batch's own last word per chunk, in its order.
-        let mut set: Vec<(ChunkKey, Vec<(Float4x4, Payload)>)> = vec![];
+        // The batch's own last word per chunk, in its order. A chunk set again is no longer to take off: its new version replaces it (taken
+        // off later, the new one went with it).
+        let mut set: Vec<(ChunkKey, i32, std::time::Instant, Vec<(Float4x4, Payload)>)> = vec![];
+        let now = std::time::Instant::now();
         for c in changes {
             match c {
-                ChunkChange::Set(k, _, entities) => {
-                    set.retain(|(w, _)| *w != k);
-                    set.push((k, entities));
+                ChunkChange::Set(k, lod, entities) => {
+                    set.retain(|(w, _, _, _)| *w != k);
+                    self.gone.retain(|(g, _)| *g != k);
+                    set.push((k, lod.side(), now, entities));
                 }
 
                 ChunkChange::Remove(k) => {
-                    set.retain(|(w, _)| *w != k);
-                    self.gone.push(k);
+                    set.retain(|(w, _, _, _)| *w != k);
+                    if !self.gone.iter().any(|(g, _)| *g == k) {
+                        self.gone.push((k, now));
+                    }
                 }
             }
         }
@@ -362,14 +376,45 @@ impl MapView {
     pub fn apply(&mut self, e: &mut Editor, budget: Option<std::time::Duration>) -> bool {
         wce_prof!("context.apply");
         let t0 = std::time::Instant::now();
-        let mut gone: Vec<std::ops::Range<EntityId>> =
-            std::mem::take(&mut self.gone).into_iter().filter_map(|k| self.chunks.remove(&k)).collect();
-        // One pass, the order kept: the ready ones out (until the budget is spent), the rest waiting (taking each out of the middle of the
-        // list was quadratic).
+
+        // What is still coming: the streamer's chunks not built yet and the ones waiting here, a chunk at a time (the larger squares,
+        // blocks and distant pieces, in a list of their own). A chunk's content hangs on its neighbours': a tile that starts in one reaches
+        // into those right and down of it, and a chunk draws the LF ground under the tiles of its neighbours that a block holds
+        // (`Frame::build_chunk`). Put on the scene alone, a chunk built for the new state beside a neighbour still in the old one left
+        // the cells of their shared tiles to nobody: tile-shaped holes down to the sea as the camera dived and the blocks gave way.
+        let band = self.streamer.as_deref().map_or(0, Streamer::reach_chunks);
+        let mut coming: std::collections::HashSet<ChunkKey> = std::collections::HashSet::new();
+        let mut coming_squares: Vec<(ChunkKey, i32)> = vec![];
+        let mut note = |coming: &mut std::collections::HashSet<ChunkKey>, k: ChunkKey, side: i32| {
+            if side == 1 {
+                coming.insert(k);
+            } else {
+                coming_squares.push((k, side));
+            }
+        };
+        for (k, side) in self.streamer.as_deref().map(Streamer::pending).unwrap_or_default() {
+            note(&mut coming, k, side);
+        }
+        for (k, side, _, _) in &self.waiting {
+            note(&mut coming, *k, *side);
+        }
+
+        // Whether anything still coming lies over the chunks [x0, x1) x [y0, y1) but `own`.
+        let any_coming = |coming: &std::collections::HashSet<ChunkKey>, squares: &[(ChunkKey, i32)], r: [i32; 4], own: ChunkKey| {
+            (r[1]..r[3]).any(|y| (r[0]..r[2]).any(|x| (x, y) != own && coming.contains(&(x, y))))
+                || squares.iter().any(|&(k, s)| k != own && k.0 < r[2] && r[0] < k.0 + s && k.1 < r[3] && r[1] < k.1 + s)
+        };
+
+        // The ready ones (their terrains' GPU side made) in the map's order, top left first: a chunk goes on once nothing still coming
+        // can reach into it (those up and left of it by a tile's reach), and is no longer coming for the next, so a run of them goes
+        // on in one pass. Until the budget is spent (one at least); after GONE_HOLD, whatever else.
+        let mut gone: Vec<std::ops::Range<EntityId>> = vec![];
         let mut ready = vec![];
         let mut kept = Vec::with_capacity(self.waiting.len());
         let mut spent = false;
-        for (key, entities) in std::mem::take(&mut self.waiting) {
+        let mut waiting = std::mem::take(&mut self.waiting);
+        waiting.sort_by_key(|(k, _, _, _)| (k.1, k.0));
+        for (key, side, since, entities) in waiting {
             let terrains_ready = !spent
                 && e.renderer.as_mut().is_none_or(|r| {
                     entities.iter().all(|(_, p)| match p {
@@ -377,27 +422,45 @@ impl MapView {
                         _ => true,
                     })
                 });
-
-            if terrains_ready {
-                gone.extend(self.chunks.remove(&key));
-                ready.push((key, entities));
+            let around = [key.0 - band, key.1 - band, key.0 + side, key.1 + side];
+            let held = since.elapsed() < GONE_HOLD && any_coming(&coming, &coming_squares, around, key);
+            if terrains_ready && !held {
+                coming.remove(&key);
+                coming_squares.retain(|(k, _)| *k != key);
+                gone.extend(self.chunks.remove(&key).map(|c| c.0));
+                ready.push((key, side, entities));
                 spent = budget.is_some_and(|b| t0.elapsed() > b);
             } else {
-                kept.push((key, entities));
+                kept.push((key, side, since, entities));
             }
         }
 
         self.waiting = kept;
+
+        // The chunks to take off, once nothing still coming lies where they or their tiles reach (right and down by a tile's reach), or
+        // after GONE_HOLD whatever comes.
+        let mut held = vec![];
+        for (k, since) in std::mem::take(&mut self.gone) {
+            let side = self.chunks.get(&k).map_or(1, |c| c.1);
+            let reach = [k.0, k.1, k.0 + side + band, k.1 + side + band];
+            if since.elapsed() < GONE_HOLD && any_coming(&coming, &coming_squares, reach, k) {
+                held.push((k, since));
+            } else {
+                gone.extend(self.chunks.remove(&k).map(|c| c.0));
+            }
+        }
+
+        self.gone = held;
         if gone.is_empty() && ready.is_empty() {
             return false;
         }
 
         let scene = &mut e.scene;
         scene.remove_ranges(&gone);
-        scene.reserve(ready.iter().map(|(_, v)| v.len()).sum());
-        for (key, entities) in ready {
+        scene.reserve(ready.iter().map(|(_, _, v)| v.len()).sum());
+        for (key, side, entities) in ready {
             let ids = add_range(scene, self.layer, self.doc, entities);
-            self.chunks.insert(key, ids);
+            self.chunks.insert(key, (ids, side));
         }
 
         true
