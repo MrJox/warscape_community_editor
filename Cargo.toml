@@ -6,7 +6,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-license = "MIT"
+license-file = "LICENSE"
 
 # Clippy runs in CI with its warnings as errors (`cargo clippy --workspace -- -D warnings`). Allowed here, for the whole workspace:
 # - neg_cmp_op_on_partial_ord: `!(x > 0.0)` is written on purpose where a NaN must count as "not more" (a density, a step);
