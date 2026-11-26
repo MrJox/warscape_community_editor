@@ -44,9 +44,6 @@ pub struct CampaignTrees {
 /// The side of a tree bucket (cells).
 const BUCKET: f32 = 16.0;
 
-/// The key bit of a tree among the drawn models (a prop's key is its `.terry` id).
-const TREE_KEY: u64 = 1 << 63;
-
 /// The key bit of a settlement's building among the drawn models.
 const CITY_KEY: u64 = 1 << 62;
 
@@ -67,6 +64,27 @@ impl CampaignTrees {
                 (t.1 - cx).hypot(t.2 - cy) <= r
             },
         )
+    }
+
+    /// The indices of the trees within `r` cells of `at` and further than `r` from `not` (a disc's that its neighbour leaves out: what a
+    /// move of the disc brings in, or with the two swapped what it leaves). The buckets wholly inside the other disc are not looked into.
+    fn near_not(&self, at: (f32, f32), not: (f32, f32), r: f32) -> impl Iterator<Item = u32> + '_ {
+        let (b0, b1) = (((at.0 - r) / BUCKET).floor() as i32, ((at.0 + r) / BUCKET).floor() as i32);
+        let (c0, c1) = (((at.1 - r) / BUCKET).floor() as i32, ((at.1 + r) / BUCKET).floor() as i32);
+        let inside = move |x: f32, y: f32| (x - not.0).hypot(y - not.1) <= r;
+        (c0..=c1)
+            .flat_map(move |by| (b0..=b1).map(move |bx| (bx, by)))
+            .filter(move |&(bx, by)| {
+                let (x0, y0, x1, y1) = (bx as f32 * BUCKET, by as f32 * BUCKET, (bx + 1) as f32 * BUCKET, (by + 1) as f32 * BUCKET);
+                !(inside(x0, y0) && inside(x1, y0) && inside(x0, y1) && inside(x1, y1))
+            })
+            .filter_map(|b| self.buckets.get(&b))
+            .flatten()
+            .copied()
+            .filter(move |&i| {
+                let t = &self.trees[i as usize];
+                (t.1 - at.0).hypot(t.2 - at.1) <= r && !inside(t.1, t.2)
+            })
     }
 
     /// The trees of a file on a map `w` x `h` cells; none for a file that does not read.
@@ -287,9 +305,21 @@ pub struct PropModels {
     pub radius_cells: f64,
     layer: LayerId,
 
-    /// The drawn models by key (a prop's `.terry` id; TREE_KEY | a tree's index): a camera move adds and removes only the difference.
+    /// The drawn models by key (a prop's `.terry` id, an effect's, a settlement building's; the trees: `trees_drawn`): a camera move adds
+    /// and removes only the difference.
     drawn: wce_foundation::id_hash::IdMap<u64, EntityId>,
     built: Option<Built>,
+
+    /// What the models were last drawn for besides the camera: (document, `.terry` revision and season), which draws them all again,
+    /// and the ground (tiles loaded, the settlements read), which stands the settlements' buildings again (the only ones on it: the
+    /// props, effects and trees stand at their own heights). Drawn all again as tiles came, a pan's rebuilds took 25 - 40 ms.
+    built_full: Option<(DocumentId, u64)>,
+    built_ground: Option<u64>,
+
+    /// The trees drawn by their index in the list, and the disc they were drawn for (centre cell, radius in cells): a move adds and
+    /// removes those of the two discs' difference (looking at every tree of the disc each rebuild was most of its time).
+    trees_drawn: wce_foundation::id_hash::IdMap<u32, EntityId>,
+    tree_disc: Option<(f32, f32, f32)>,
     pub count: usize,
 
     /// The shown map's props (document, `.terry` revision; per prop its key, `.terry` position, model and transform), made again when the
@@ -344,6 +374,10 @@ impl Default for PropModels {
             radius_cells: 96.0,
             layer: 0,
             drawn: Default::default(),
+            built_full: None,
+            built_ground: None,
+            trees_drawn: Default::default(),
+            tree_disc: None,
             built: None,
             count: 0,
             props: None,
@@ -399,10 +433,10 @@ impl PropModels {
         let quarter = (self.radius_cells / 4.0).max(1.0) * tf.cell;
         // The settlements arriving (read on a thread) build the models again.
         let cities_ready = self.cities.as_ref().is_some_and(|(id, c)| *id == doc && c.get().is_some());
-        let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed) * 2 + u64::from(cities_ready);
-        // Again as tiles come (in steps: each brings the ground its props stand on).
-        let revision = revision * 1_000_003 + (loaded / LOADED_STEP) as u64;
-        let revision = revision * 16 + u64::from(self.season_bit & 15);
+        let full = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed) * 16 + u64::from(self.season_bit & 15);
+        // The settlements' buildings again as tiles come (in steps: each brings the ground they stand on).
+        let ground_rev = (loaded / LOADED_STEP) as u64 * 2 + u64::from(cities_ready);
+        let revision = full * 1_000_003 + ground_rev;
         // The season's snow mask (the scene's), which decides the effects' snow zone.
         let mask = e.scene.campaign_snow.as_ref().map(|s| s.mask.clone());
         if self.snow.as_ref().map(|s| &s.0) != mask.as_ref() {
@@ -528,7 +562,8 @@ impl PropModels {
         // (key, world, payload, the item a click selects); no payload: already in the scene as it is (a tree kept from the last build).
         let mut out: Vec<(u64, Float4x4, Option<Payload>, u64)> = vec![];
         // A `.terry` edit (or another document) draws every model again (below); otherwise those drawn stay.
-        let again = self.built.is_none_or(|b| b.0 != key.0 || b.1 != key.1);
+        let again = self.built.is_none() || self.built_full != Some((doc, full));
+        let ground_again = self.built_ground != Some(ground_rev);
         let mut animated: Vec<(u64, Float4x4, String)> = vec![];
         let files = e.files();
         let props = self.props.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
@@ -621,10 +656,13 @@ impl PropModels {
             *self.effect_names.entry(fx.effect.clone()).or_default() += 1;
         }
 
-        // The forests near the camera: by cells (the trees' own frame), within the same radius.
+        // The forests near the camera: by cells (the trees' own frame), within the same radius. Those of the new disc not drawn come, those
+        // of the old one outside the new go; all again for a `.terry` edit or another radius.
         let trees_scope = wce_foundation::profile::Scope::new(TREES_SLOT.get_or_init(|| wce_foundation::profile::slot("props.trees")));
-        self.tree_count = 0;
         self.heights.clear();
+        let mut trees_new: Vec<(u32, Float4x4, Payload)> = vec![];
+        let mut trees_gone: Vec<u32> = vec![];
+        let mut trees_all = again;
         if let Some((_, Some(trees))) = &self.trees {
             let (cx, cy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
             let rc = self.radius_cells as f32;
@@ -638,28 +676,14 @@ impl PropModels {
             let size = 0.4 / e.scene.game_units.max(1e-9);
             let (cx, cy) = (cx as f32, cy as f32);
             let reach = (TREE_REACH * trees.cells_per_unit).max(rc);
-            for i in trees.near(cx, cy, reach) {
+            let tree = |i: u32| {
                 let (m, x, y, turn, file_y) = trees.trees[i as usize];
                 let (fx, fz) = frame.from_map.apply(f64::from(x), f64::from(y));
-                self.tree_count += 1;
-                // The diagnostic's sample: those near the target (the LF read under all of them was a third of a rebuild).
-                if (x - cx).hypot(y - cy) <= rc {
-                    self.heights.push((file_y, frame.lift(fx, fz) / unit));
-                }
-                // Drawn already (its place is the list's, fixed): kept without a payload made again (70 000 trees around, a pan's rebuild
-                // took 35 ms making them).
-                let key = TREE_KEY | u64::from(i);
-                if !again && self.drawn.contains_key(&key) {
-                    out.push((key, Float4x4::IDENTITY, None, u64::MAX));
-                    continue;
-                }
-
                 let (s, c) = (f32::from(turn) * std::f32::consts::FRAC_PI_3).sin_cos();
                 let mut world = Float4x4::IDENTITY;
                 world.m[0] = [c * size, 0.0, s * size, fx as f32];
                 // At the list's own height, as the props at their markers'.
-                let gy = file_y * unit;
-                world.m[1] = [0.0, size, 0.0, gy];
+                world.m[1] = [0.0, size, 0.0, file_y * unit];
                 world.m[2] = [-s * size, 0.0, c * size, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
@@ -673,8 +697,31 @@ impl PropModels {
                     burning: false,
                     faction_colours: None,
                 };
-                out.push((key, world, Some(Payload::MeshInstance(mesh)), u64::MAX));
+                (i, world, Payload::MeshInstance(mesh))
+            };
+
+            match self.tree_disc.filter(|d| !trees_all && d.2 == reach) {
+                Some((ox, oy, _)) if (ox, oy) == (cx, cy) => {}
+                Some((ox, oy, _)) => {
+                    trees_new.extend(trees.near_not((cx, cy), (ox, oy), reach).filter(|i| !self.trees_drawn.contains_key(i)).map(tree));
+                    trees_gone.extend(trees.near_not((ox, oy), (cx, cy), reach));
+                }
+                None => {
+                    trees_all = true;
+                    trees_new.extend(trees.near(cx, cy, reach).map(tree));
+                }
             }
+
+            self.tree_disc = Some((cx, cy, reach));
+            // The diagnostic's sample: those near the target (the LF read under all of them was a third of a rebuild).
+            for i in trees.near(cx, cy, rc) {
+                let (_, x, y, _, file_y) = trees.trees[i as usize];
+                let (fx, fz) = frame.from_map.apply(f64::from(x), f64::from(y));
+                self.heights.push((file_y, frame.lift(fx, fz) / unit));
+            }
+        } else {
+            trees_all = true;
+            self.tree_disc = None;
         }
 
         drop(trees_scope);
@@ -784,6 +831,7 @@ impl PropModels {
         if self.layer == 0 || e.scene.layer(self.layer).is_none() {
             self.layer = e.scene.add_layer(doc, "prop models");
             self.drawn.clear();
+            self.trees_drawn.clear();
         }
 
         wce_foundation::wce_prof!("props.scene");
@@ -792,6 +840,24 @@ impl PropModels {
         let mut gone: Vec<std::ops::Range<EntityId>> = vec![];
         if again {
             gone.extend(self.drawn.drain().map(|(_, ent)| ent..ent + 1));
+        } else if ground_again {
+            // The settlements' buildings on the ground as it is now.
+            self.drawn.retain(|k, ent| {
+                let city = k & CITY_KEY != 0;
+                if city {
+                    gone.push(*ent..*ent + 1);
+                }
+
+                !city
+            });
+        }
+
+        if trees_all {
+            gone.extend(self.trees_drawn.drain().map(|(_, ent)| ent..ent + 1));
+        }
+
+        for i in trees_gone {
+            gone.extend(self.trees_drawn.remove(&i).map(|ent| ent..ent + 1));
         }
 
         let keep: wce_foundation::id_hash::IdSet<u64> = out.iter().map(|o| o.0).collect();
@@ -805,7 +871,7 @@ impl PropModels {
         });
         e.scene.remove_ranges(&gone);
 
-        self.count = out.len() - self.tree_count - self.city_count - self.effect_count;
+        self.count = out.len() - self.city_count - self.effect_count;
         for (k, world, payload, item) in out {
             let Some(payload) = payload.filter(|_| !self.drawn.contains_key(&k)) else { continue };
 
@@ -820,8 +886,20 @@ impl PropModels {
             self.drawn.insert(k, ent);
         }
 
+        // The trees can't be picked (nothing of the document's to select).
+        for (i, world, payload) in trees_new {
+            let ent = e.scene.add(self.layer, world, payload, SourceRef { doc, item: u64::MAX });
+            if let Some(en) = e.scene.find_mut(ent) {
+                en.locked = true;
+            }
+
+            self.trees_drawn.insert(i, ent);
+        }
+
+        self.tree_count = self.trees_drawn.len();
         self.animated = animated;
         self.built = Some(key);
+        (self.built_full, self.built_ground) = (Some((doc, full)), Some(ground_rev));
     }
 
     /// The props that move, posed for the editor's clock: their clips loaded as they come (once a model), each at a phase of its own.
@@ -871,7 +949,9 @@ impl PropModels {
         }
 
         (self.layer, self.built, self.count) = (0, None, 0);
+        (self.built_full, self.built_ground, self.tree_disc) = (None, None, None);
         self.drawn.clear();
+        self.trees_drawn.clear();
         self.animated_drawn.clear();
         self.animated.clear();
     }
