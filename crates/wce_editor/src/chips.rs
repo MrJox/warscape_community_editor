@@ -215,7 +215,14 @@ fn draw_camera_chip(e: &mut Editor) {
     gui::set_next_item_width(160.0);
     gui::slider_float("Smoothing##camerachip", &mut o.smoothing, 0.0, 1.0, "%.2f");
     gui::set_next_item_width(160.0);
-    gui::slider_float("Ground clearance##camerachip", &mut o.ground_clearance, 0.0, 10.0, "%.1f m");
+    let campaign = e.scene.campaign;
+    gui::slider_float("Ground clearance##camerachip", &mut o.ground_clearance, 0.0, 10.0, if campaign { "%.1f units" } else { "%.1f m" });
+    if gui::is_item_hovered() {
+        gui::set_tooltip(
+            "How far above the ground the camera stays. On a battle map in metres; on a campaign map in the campaign world's units (the game's \
+             campaign camera comes no closer than 9 of them), so that the same value keeps the ground clear on both.",
+        );
+    }
     gui::checkbox("Edge scrolling##camerachip", &mut e.viewport.edge_scroll);
 
     e.with_active_tool(|t, e| t.camera_chip(e));

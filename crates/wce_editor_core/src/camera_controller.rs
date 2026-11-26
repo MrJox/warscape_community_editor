@@ -57,7 +57,8 @@ pub struct CameraOptions {
     /// The game's battle camera limits (the `battle_cameras` table's land row: 2 to 90 game units above the ground).
     pub game_limits: bool,
 
-    /// The eye stays `ground_clearance` above the ground (the terrain or the sea).
+    /// The eye stays `ground_clearance` above the ground (the terrain or the sea): scene units on a battle map, the campaign world's units on a
+    /// campaign map (`CameraWorld::clearance_scale`), each its lens's near plane at 1.
     pub respect_ground: bool,
     pub ground_clearance: f32,
 
@@ -91,6 +92,12 @@ pub trait CameraWorld {
 
     /// Game units per unit of this world: the game's limits are in game units.
     fn game_units(&self) -> f32 {
+        1.0
+    }
+
+    /// What the ground clearance is counted in, in this world's units: 1 on a battle map, a campaign world unit (`1 / game_units`, the
+    /// campaign lens's near plane) on a campaign map, where a scene unit is a 128th of a cell and a clearance of a few of them is nothing.
+    fn clearance_scale(&self) -> f32 {
         1.0
     }
 }
@@ -244,7 +251,7 @@ fn constrain(p: Float3, opts: &CameraOptions, world: &mut dyn CameraWorld) -> Fl
     if opts.respect_ground
         && let Some(g) = world.ground(p.x, p.z)
     {
-        p.y = p.y.max(g + opts.ground_clearance);
+        p.y = p.y.max(g + opts.ground_clearance * world.clearance_scale());
     }
 
     p

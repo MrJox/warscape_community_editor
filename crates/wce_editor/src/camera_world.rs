@@ -312,4 +312,8 @@ impl CameraWorld for ViewportWorld<'_> {
     fn game_units(&self) -> f32 {
         self.scene.game_units
     }
+
+    fn clearance_scale(&self) -> f32 {
+        if self.scene.campaign { 1.0 / self.scene.game_units.max(1e-9) } else { 1.0 }
+    }
 }
