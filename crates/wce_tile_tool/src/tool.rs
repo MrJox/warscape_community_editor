@@ -1221,11 +1221,14 @@ impl TileTool {
         }
     }
 
-    /// A brush mode stops what was being placed, drawn or painted (a tree set's brush took the press before the mode's brush).
+    /// A brush mode stops what was being placed, drawn or painted (a tree set's brush took the press before the mode's brush), and takes
+    /// the Inspector for its settings: the texture rules, the biomes and Flip close (Paint mode's Edit opens the rules over it afterwards).
     pub fn set_mode(&mut self, m: TileMode) {
         self.mode = m;
         if m != TileMode::Select {
             self.stop_making();
+            self.close_detail_panels();
+            self.flip = None;
         }
     }
 

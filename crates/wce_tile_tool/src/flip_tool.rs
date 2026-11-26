@@ -67,7 +67,10 @@ impl TileTool {
             sel.iter().map(|&s| t.world_position(s)).fold((0.0, 0.0), |(x, z), p| (x + p.x / n, z + p.z / n))
         };
 
+        // Flip takes the Inspector: the texture rules, the biomes and a brush mode close.
         self.stop_making();
+        self.close_detail_panels();
+        self.mode = crate::tool::TileMode::Select;
         self.flip = Some(FlipMode { plane: FlipPlane { x, z, angle: 0.0 }, copy: false, dragging: false, gizmo_height: 0.0 });
         Ok("flip: its gizmo moves and turns the plane, a press on the ground puts it there; the Inspector flips".to_owned())
     }
