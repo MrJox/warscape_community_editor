@@ -3,7 +3,7 @@ name = "wce_assets"
 description = "Game assets the editor builds GPU data from: vfx definitions, particle emitter constants and the weather effects."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 wce_formats = { path = "../wce_formats" }

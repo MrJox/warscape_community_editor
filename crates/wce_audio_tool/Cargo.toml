@@ -3,7 +3,7 @@ name = "wce_audio_tool"
 description = "The Audio tool: the game's sound banks as readable trees (names instead of IDs), a search across every bank, and playback."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 wce_audio = { path = "../wce_audio" }

@@ -3,7 +3,7 @@ name = "wce_tile_tool"
 description = "The Tile tool: battle and campaign tiles (tile.ted and the height map) on the shared editor, with terrain brushes, instances, layers, polygons and AI hints, the tile browser and the weather picker for the tile's map."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg"] }

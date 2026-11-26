@@ -3,7 +3,7 @@ name = "wce_unit_tool"
 description = "The Unit tool: variant mesh definitions as documents, a unit wearing them in the renderer, and the DB rows that decide a unit's looks."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true

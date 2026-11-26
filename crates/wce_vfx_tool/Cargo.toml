@@ -3,7 +3,7 @@ name = "wce_vfx_tool"
 description = "The VFX tool: vfx/*.xml effects edited visually, played on the sample map with playback, solo / mute, viewport handles and curve editing."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 wce_assets = { path = "../wce_assets" }

@@ -3,7 +3,7 @@ name = "wce_audio_format"
 description = "The game's sound files: Wwise banks (.bnk), sound files (.wem), event_data.dat, .snd.meta, campaign ambience (.amb). Read and written byte for byte."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 thiserror = "2"

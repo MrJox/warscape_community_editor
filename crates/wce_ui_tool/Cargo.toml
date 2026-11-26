@@ -3,7 +3,7 @@ name = "wce_ui_tool"
 description = "The UI tool: Total War UI layouts as documents, with a canvas to edit them visually, the raw XML next to it, and the fields of every component."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 dear-imgui-sys = "0.20"

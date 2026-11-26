@@ -3,7 +3,7 @@ name = "wce_launch"
 description = "The game launched on a tile or a battle map: the battle XML, the launch pack and what it ships, the game started (Proton on Linux) and watched."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
