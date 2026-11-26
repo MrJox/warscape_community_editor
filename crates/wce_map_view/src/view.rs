@@ -91,9 +91,11 @@ pub struct MapView {
     chunks: HashMap<ChunkKey, (std::ops::Range<EntityId>, i32)>,
 
     /// The streamer's chunks waiting for the renderer to have their terrains' GPU side and for their neighbours (with their sides and since
-    /// when: `apply`), and the ones to take off (since when: `apply` keeps one until what replaces it is there).
+    /// when: `apply`), and the ones to take off: their square (key, side), entities and since when (`apply` keeps one until what
+    /// replaces it is there). Held by their entities, not their keys: a block's first chunk, or a distant square's first quarter, has
+    /// the larger piece's key, and put on, it took the whole piece off (the rest of it a hole until its other parts came).
     waiting: Vec<(ChunkKey, i32, std::time::Instant, Vec<(Float4x4, Payload)>)>,
-    gone: Vec<(ChunkKey, std::time::Instant)>,
+    gone: Vec<(ChunkKey, i32, std::ops::Range<EntityId>, std::time::Instant)>,
     sea: Option<EntityId>,
     sea_at: (f64, f64),
 
@@ -347,22 +349,20 @@ impl MapView {
             .collect::<std::collections::HashSet<_>>();
         self.waiting.retain(|(w, _, _, _)| !touched.contains(w));
 
-        // The batch's own last word per chunk, in its order. A chunk set again is no longer to take off: its new version replaces it (taken
-        // off later, the new one went with it).
+        // The batch's own last word per chunk, in its order.
         let mut set: Vec<(ChunkKey, i32, std::time::Instant, Vec<(Float4x4, Payload)>)> = vec![];
         let now = std::time::Instant::now();
         for c in changes {
             match c {
                 ChunkChange::Set(k, lod, entities) => {
                     set.retain(|(w, _, _, _)| *w != k);
-                    self.gone.retain(|(g, _)| *g != k);
                     set.push((k, lod.side(), now, entities));
                 }
 
                 ChunkChange::Remove(k) => {
                     set.retain(|(w, _, _, _)| *w != k);
-                    if !self.gone.iter().any(|(g, _)| *g == k) {
-                        self.gone.push((k, now));
+                    if let Some((range, side)) = self.chunks.remove(&k) {
+                        self.gone.push((k, side, range, now));
                     }
                 }
             }
@@ -427,7 +427,12 @@ impl MapView {
             if terrains_ready && !held {
                 coming.remove(&key);
                 coming_squares.retain(|(k, _)| *k != key);
-                gone.extend(self.chunks.remove(&key).map(|c| c.0));
+                // What it replaces: off now when as large (or smaller: it covers it), else held as a removed piece.
+                match self.chunks.remove(&key) {
+                    Some((range, was)) if was > side => self.gone.push((key, was, range, std::time::Instant::now())),
+                    Some((range, _)) => gone.push(range),
+                    None => {}
+                }
                 ready.push((key, side, entities));
                 spent = budget.is_some_and(|b| t0.elapsed() > b);
             } else {
@@ -440,13 +445,14 @@ impl MapView {
         // The chunks to take off, once nothing still coming lies where they or their tiles reach (right and down by a tile's reach), or
         // after GONE_HOLD whatever comes.
         let mut held = vec![];
-        for (k, since) in std::mem::take(&mut self.gone) {
-            let side = self.chunks.get(&k).map_or(1, |c| c.1);
+        // (Its own key counts: a new version of it still coming is what replaces it.)
+        let none = (i32::MIN, i32::MIN);
+        for (k, side, range, since) in std::mem::take(&mut self.gone) {
             let reach = [k.0, k.1, k.0 + side + band, k.1 + side + band];
-            if since.elapsed() < GONE_HOLD && any_coming(&coming, &coming_squares, reach, k) {
-                held.push((k, since));
+            if since.elapsed() < GONE_HOLD && any_coming(&coming, &coming_squares, reach, none) {
+                held.push((k, side, range, since));
             } else {
-                gone.extend(self.chunks.remove(&k).map(|c| c.0));
+                gone.push(range);
             }
         }
 
