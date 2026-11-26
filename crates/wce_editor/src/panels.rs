@@ -602,6 +602,7 @@ pub struct PanelState {
     command_line: String,
     show_commands: bool,
     focus_command_line: bool,
+    history: CommandHistory,
 }
 
 impl Default for PanelState {
@@ -624,6 +625,7 @@ impl Default for PanelState {
             command_line: String::new(),
             show_commands: false,
             focus_command_line: false,
+            history: CommandHistory::default(),
         }
     }
 }
@@ -867,19 +869,141 @@ pub fn log(e: &mut Editor) {
         gui::set_keyboard_focus_here(0);
     }
 
+    // Up / Down walk the lines run before (kept between sessions in the settings folder, `HISTORY_FILE`).
+    let file = e.settings_ref().paths().config_dir().join(HISTORY_FILE);
+    let history = &mut e.panel_data.history;
+    history.load_once(&file);
     let mut line = std::mem::take(&mut e.panel_data.command_line);
-    let hint = "command, e.g. help or select 1   (Enter runs it)";
-    if gui::input_text("##cmd", Some(hint), &mut line, 256, gui::INPUT_ENTER_RETURNS_TRUE) {
-        if !line.trim().is_empty() {
-            run_command_line(e, line.trim());
+    let hint = "command, e.g. help or select 1   (Enter runs it; Up / Down: the ones run before)";
+    let entered =
+        gui::input_text_history("##cmd", hint, &mut line, 256, gui::INPUT_ENTER_RETURNS_TRUE, &mut |up, now| history.step(up, now));
+    if entered {
+        let run = line.trim().to_owned();
+        line.clear();
+        if !run.is_empty() {
+            e.panel_data.history.push(&run);
+            e.panel_data.history.save(&file);
+            run_command_line(e, &run);
         }
 
-        line.clear();
         gui::set_keyboard_focus_here(-1);
     }
 
     e.panel_data.command_line = line;
     gui::end();
+}
+
+/// The settings folder's file of the command line's history, a line each, the oldest first.
+const HISTORY_FILE: &str = "command_history.txt";
+
+/// The lines run from the Log's command line, and where Up / Down are in them.
+#[derive(Debug, Default)]
+struct CommandHistory {
+    /// The oldest first; no two the same in a row; at most `MAX`.
+    lines: Vec<String>,
+    /// The line shown (an index into `lines`), or None: the line being typed.
+    at: Option<usize>,
+    /// What was typed before Up was first pressed, back after Down past the newest.
+    draft: String,
+    loaded: bool,
+}
+
+impl CommandHistory {
+    const MAX: usize = 200;
+
+    /// Reads the history file the first time (a missing or unreadable one: none).
+    fn load_once(&mut self, file: &std::path::Path) {
+        if std::mem::replace(&mut self.loaded, true) {
+            return;
+        }
+
+        if let Ok(text) = std::fs::read_to_string(file) {
+            for line in text.lines() {
+                self.push(line);
+            }
+        }
+    }
+
+    /// Writes the history file; a failure is logged.
+    fn save(&self, file: &std::path::Path) {
+        let text = self.lines.iter().map(|l| format!("{l}\n")).collect::<String>();
+        if let Err(err) = std::fs::write(file, text) {
+            log::warn(format!("cannot write the command history {}: {err}", file.display()));
+        }
+    }
+
+    /// A line run: it becomes the newest (unless it is the newest already), and Up starts again from the newest.
+    fn push(&mut self, line: &str) {
+        let line = line.trim();
+        if !line.is_empty() && self.lines.last().is_none_or(|l| l != line) {
+            self.lines.push(line.to_owned());
+            let over = self.lines.len().saturating_sub(Self::MAX);
+            self.lines.drain(..over);
+        }
+
+        self.at = None;
+        self.draft.clear();
+    }
+
+    /// Up (`up`) or Down, the field holding `now`: the text to show, or None when there is nowhere to go.
+    fn step(&mut self, up: bool, now: &str) -> Option<String> {
+        let next = match (self.at, up) {
+            (None, true) if !self.lines.is_empty() => {
+                self.draft = now.to_owned();
+                Some(self.lines.len() - 1)
+            }
+            (Some(i), true) if i > 0 => Some(i - 1),
+            (Some(i), false) if i + 1 < self.lines.len() => Some(i + 1),
+            (Some(_), false) => {
+                self.at = None;
+                return Some(std::mem::take(&mut self.draft));
+            }
+            _ => return None,
+        };
+
+        self.at = next;
+        next.map(|i| self.lines[i].clone())
+    }
+}
+
+#[cfg(test)]
+mod command_history_tests {
+    use super::CommandHistory;
+
+    #[test]
+    fn up_walks_back_down_walks_forward_to_what_was_typed() {
+        let mut h = CommandHistory::default();
+        for l in ["a", "b", "b", " c "] {
+            h.push(l);
+        }
+
+        assert_eq!(h.lines, ["a", "b", "c"]);
+        assert_eq!(h.step(false, "typing"), None);
+        assert_eq!(h.step(true, "typing").as_deref(), Some("c"));
+        assert_eq!(h.step(true, "c").as_deref(), Some("b"));
+        assert_eq!(h.step(true, "b").as_deref(), Some("a"));
+        assert_eq!(h.step(true, "a"), None);
+        assert_eq!(h.step(false, "a").as_deref(), Some("b"));
+        assert_eq!(h.step(false, "b").as_deref(), Some("c"));
+        assert_eq!(h.step(false, "c").as_deref(), Some("typing"));
+        assert_eq!(h.step(false, "typing"), None);
+
+        // Running a line starts again from the newest.
+        h.step(true, "");
+        h.push("d");
+        assert_eq!(h.step(true, "").as_deref(), Some("d"));
+    }
+
+    #[test]
+    fn it_keeps_the_newest_lines() {
+        let mut h = CommandHistory::default();
+        for i in 0..CommandHistory::MAX + 5 {
+            h.push(&i.to_string());
+        }
+
+        assert_eq!(h.lines.len(), CommandHistory::MAX);
+        assert_eq!(h.lines[0], "5");
+    }
 }
 
 /// Runs a line typed in the Log's command line: the line, then what the command answers, go to the log, which scrolls to them.

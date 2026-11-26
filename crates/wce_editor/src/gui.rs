@@ -644,6 +644,53 @@ pub fn input_text(label: &str, hint: Option<&str>, value: &mut String, capacity:
     changed
 }
 
+/// What Up / Down in `input_text_history` asks for: `true` the older entry, and the field's text now. Returns the text to put in the
+/// field, or None to keep it.
+pub type HistoryStep<'a> = &'a mut dyn FnMut(bool, &str) -> Option<String>;
+
+extern "C" fn history_callback(data: *mut sys::ImGuiInputTextCallbackData) -> i32 {
+    // SAFETY: Dear ImGui passes its callback data; UserData is the `HistoryStep` of `input_text_history`, alive for the call.
+    unsafe {
+        let d = &mut *data;
+        if d.EventFlag == sys::ImGuiInputTextFlags_CallbackHistory {
+            let step = &mut *d.UserData.cast::<HistoryStep>();
+            let now = std::slice::from_raw_parts(d.Buf.cast::<u8>(), d.BufTextLen.max(0) as usize);
+            if let Some(text) = step(d.EventKey == sys::ImGuiKey_UpArrow, &String::from_utf8_lossy(now)) {
+                let len = d.BufTextLen;
+                sys::ImGuiInputTextCallbackData_DeleteChars(data, 0, len);
+                let r = text.as_bytes().as_ptr_range();
+                sys::ImGuiInputTextCallbackData_InsertChars(data, 0, r.start.cast(), r.end.cast());
+            }
+        }
+    }
+
+    0
+}
+
+/// `input_text` with a history: Up and Down call `step` (true: Up), whose text replaces the field's.
+pub fn input_text_history(label: &str, hint: &str, value: &mut String, capacity: usize, flags: i32, mut step: HistoryStep) -> bool {
+    let mut buf = value.as_bytes().to_vec();
+    buf.resize(capacity.max(buf.len() + 1), 0);
+    let (l, h) = (cs(label), cs(hint));
+    let changed = call!(sys::igInputTextWithHint(
+        l.as_ptr(),
+        h.as_ptr(),
+        buf.as_mut_ptr().cast(),
+        buf.len(),
+        flags | sys::ImGuiInputTextFlags_CallbackHistory,
+        Some(history_callback),
+        (&raw mut step).cast(),
+    ));
+
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let text = String::from_utf8_lossy(&buf[..end]).into_owned();
+    if *value != text {
+        *value = text;
+    }
+
+    changed
+}
+
 pub fn begin_combo(label: &str, preview: &str) -> bool {
     let (l, p) = (cs(label), cs(preview));
     call!(sys::igBeginCombo(l.as_ptr(), p.as_ptr(), 0))
