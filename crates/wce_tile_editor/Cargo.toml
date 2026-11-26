@@ -3,7 +3,7 @@ name = "wce_tile_editor"
 description = "The tile as a document of the editor: tile.ted and the height map on the shared command stack, publishing into the render scene, and the ground colour and material of a tile."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 lz4_flex = "0.14"

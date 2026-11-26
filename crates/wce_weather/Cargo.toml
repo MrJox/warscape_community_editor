@@ -3,7 +3,7 @@ name = "wce_weather"
 description = "The weather tool's pieces that need no window: the sample map, and the weather files as documents (XmlDoc with undo)."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true

@@ -3,7 +3,7 @@ name = "wce_app"
 description = "Warscape Community Editor (wce): the window, the D3D11 device, Dear ImGui with docking, the tool registry and the frame loop."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [[bin]]
 name = "wce"

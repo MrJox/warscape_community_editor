@@ -3,7 +3,7 @@ name = "wce_terrain"
 description = "A map as data (the Terrain tool's model, docs/plans/terrain_editor.md): paged LF height fields, palette-indexed cell layers, explicit tiles, the .terry scene and the files carried along, independent of any game's files (wce_terrain_io reads and writes them)."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 rayon = "1"

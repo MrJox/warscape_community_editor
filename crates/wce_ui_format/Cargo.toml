@@ -3,7 +3,7 @@ name = "wce_ui_format"
 description = "Total War UI layout files (Version0xx, .cml, .fc, .twui.images) to XML and back, byte for byte. A port of the ui converter of taw/etwng (MIT)."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 
