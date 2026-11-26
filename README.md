@@ -99,3 +99,10 @@ interface and [DXVK](https://github.com/doitsujin/dxvk) on Linux; the full list 
 
 Warscape Community Editor is a fan project, not affiliated with or endorsed by Creative Assembly or SEGA. Total War and the games' names
 are their trademarks. The editor ships no game content: it reads it from your own installation.
+
+## License
+
+The editor's original code and documentation are licensed under the [WCE Noncommercial Share-Alike License](LICENSE). It permits
+noncommercial use, modification and redistribution. Distributed forks must provide their corresponding source under the same terms.
+Commercial use or closed-source distribution requires prior written permission from the relevant copyright holders. This is a
+source-available license and is not an OSI-approved open source license. Third-party components remain under their own licenses.
