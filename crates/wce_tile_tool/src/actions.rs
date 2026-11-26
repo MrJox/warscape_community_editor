@@ -1,18 +1,19 @@
 //! The Tile tool's actions outside its panels: the terrain brushes in the toolbar, the snapping in the viewport's snap chip (the brush's settings in the Inspector
 //! while one is active), and what can be done to the selection, in the viewport's right-click menu and in the Edit menu.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use wce_editor::editor::Editor;
 use wce_editor::steam_detect::file_dialog;
-use wce_editor::{gui, icons};
-use wce_editor_core::document::Document;
+use wce_editor::{gui, icons, theme};
 use wce_editor_core::inspector::Inspector;
 use wce_scene::render_scene::SourceRef;
 use wce_tile::blend_field::PaintMode;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile_editor::tile_document::{GROUND_ERASE, Placement, elem_of};
 
+use crate::styled;
 use crate::tool::{TileMode, TileTool, document, document_id, primary, selected};
 
 /// What Level the ground along the selected line does (its tooltip).
@@ -252,12 +253,17 @@ impl TileTool {
         (!parts.is_empty()).then(|| parts.join(", "))
     }
 
-    /// The Inspector while a terrain brush is active: its settings and the height under the cursor. False otherwise.
-    pub(crate) fn inspect_brush(&mut self, e: &mut Editor, ins: &mut dyn Inspector) -> bool {
+    /// The brush's settings in the Inspector, in the style of the texture rules' panel (`styled`): a header with the brush's icon and what
+    /// it does (its close button goes back to selecting), a label column and a value column, the paint's textures as swatches, the ground
+    /// types as coloured chips, then its shape, its filters and the strokes along a line.
+    pub(crate) fn inspect_brush(&mut self, e: &mut Editor, _ins: &mut dyn Inspector) -> bool {
         if self.mode == TileMode::Select {
             return false;
         }
 
+        let prefab = self.profile == crate::tool::Profile::Prefab;
+        let brush = self.mode.index().saturating_sub(1).min(BRUSHES.len() - 1);
+        let swatches = if self.mode == TileMode::Paint { self.ground_swatches(e) } else { Default::default() };
         let mut curve = self.brush_curve(e);
         let mut curve_changed = false;
         let mut image = self.image_brush(e);
@@ -266,170 +272,142 @@ impl TileTool {
         let Some(d) = document(e) else { return false };
         let line = sel.filter(|&s| d.tile().is_polygon(s));
         let mut edit_rules = false;
-        ins.begin(d.id(), u64::MAX - 9);
-        ins.section(&format!("{} brush", mode_name(self.mode)));
-        ins.edit_slider("radius", "radius (m)", &mut self.brush.radius_m, 1.0, 120.0);
-        if self.mode == TileMode::Ground && self.profile == crate::tool::Profile::Prefab {
-            // The footprint: painted or not.
-            let mut i = i32::from(self.ground_type != GROUND_ERASE);
-            ins.edit_choice("footprint", "footprint", &mut i, &["erase".to_owned(), "paint".to_owned()]);
-            self.ground_type = if i == 0 { GROUND_ERASE } else { FOOTPRINT_GROUND };
-        } else if self.mode == TileMode::Ground {
-            // Hard values: no strength or falloff. The eraser is Ctrl, or "none".
-            let mut names = vec!["none (erase)".to_owned()];
-            names.extend(GROUND_TYPES.iter().map(|(n, _)| (*n).to_owned()));
-            let mut i = if self.ground_type == GROUND_ERASE { 0 } else { i32::from(self.ground_type) + 1 };
-            ins.edit_choice("ground_type", "ground type", &mut i, &names);
-            self.ground_type = if i <= 0 { GROUND_ERASE } else { (i - 1).min(GROUND_TYPES.len() as i32 - 1) as u8 };
-        } else if self.mode == TileMode::Paint {
-            ins.edit_slider("opacity", "strength", &mut self.brush.opacity, 0.01, 1.0);
 
-            // The texture rules lie under what is painted: how many, and where they are edited.
-            let shown = match d.texture_rules() {
-                Some(r) => format!("{} rule(s) under your paint", r.rules.iter().filter(|r| r.enabled).count()),
-                None => "none".to_owned(),
-            };
-            ins.text("texture_rules", "texture rules", &shown);
-            if ins.button("edit_texture_rules", "Texture rules...", true) {
-                edit_rules = true;
-            }
-        } else {
-            ins.edit_slider("strength", "strength", &mut self.brush.strength, 0.5, 30.0);
+        if styled::inspector_header(&format!("{}  {} brush", BRUSHES[brush].0, mode_name(self.mode)), self.brush_tip(brush, prefab)) {
+            self.set_mode(TileMode::Select);
+            return true;
         }
 
-        if self.mode != TileMode::Ground {
-            // An image as the brush, else the falloff slider or the curve of the Brush Falloff window.
-            ins.edit_bool("image", "image brush", &mut image.on);
-            if image.on {
-                let name = Path::new(&image.path).file_name().map_or_else(|| "(none)".to_owned(), |n| n.to_string_lossy().into_owned());
-                ins.text("image_file", "image", &name);
-                load_image = ins.button("load_image", "Load image...", true);
-                ins.edit_bool("random_angle", "random turn", &mut image.random_angle);
-                if !image.random_angle {
-                    ins.edit_slider("angle", "turn (deg)", &mut image.angle, 0.0, 360.0);
-                }
-            } else {
-                curve_changed = ins.edit_bool("curve", "falloff curve", &mut curve.on);
-                if !curve.on {
-                    ins.edit_slider("falloff", "falloff", &mut self.brush.falloff, 0.0, 1.0);
-                }
+        let row = styled::row("Radius", "The brush's reach from its middle, metres (an image brush spans a square this far each way)");
+        gui::set_next_item_width(row.width);
+        gui::slider_float("##radius", &mut self.brush.radius_m, 1.0, 120.0, "%.1f m");
 
-                if ins.button("edit_curve", if self.falloff_open { "Close the curve editor" } else { "Edit the curve..." }, true) {
-                    self.falloff_open = !self.falloff_open;
-                }
+        if self.mode == TileMode::Ground && prefab {
+            // The footprint: painted or not.
+            let row = styled::row("Footprint", FOOTPRINT_TIP);
+            let current = usize::from(self.ground_type != GROUND_ERASE);
+            if let Some(i) = styled::segmented("footprint", &["Erase", "Paint"], Some(current), row.width) {
+                self.ground_type = if i == 0 { GROUND_ERASE } else { FOOTPRINT_GROUND };
             }
+        } else if self.mode == TileMode::Ground {
+            // Hard values: no strength or falloff. The eraser is Ctrl, or "none".
+            self.ground_type_chips();
+        } else if self.mode == TileMode::Paint {
+            let row = styled::row("Strength", "How fast the paint covers: at 1 a second of painting lays 98 % under the brush's middle");
+            gui::set_next_item_width(row.width);
+            gui::slider_float("##opacity", &mut self.brush.opacity, 0.01, 1.0, "%.2f");
+        } else {
+            let row = styled::row("Strength", "How fast the brush works: metres a second at its middle");
+            gui::set_next_item_width(row.width);
+            gui::slider_float("##strength", &mut self.brush.strength, 0.5, 30.0, "%.1f");
+        }
+
+        if self.mode == TileMode::Flatten {
+            let row = styled::row("Height", "The height the brush flattens to, metres");
+            gui::set_next_item_width(row.width);
+            gui::drag_float("##flatten", &mut self.brush.flatten_height, 0.1, -1.0e6, 1.0e6, "%.2f m");
+        }
+
+        if self.mode == TileMode::Stamp {
+            let row = styled::row(
+                "Height",
+                "What a click adds at the brush's middle (negative: a hollow); the rest follows the brush's shape: the image brush's picture when \
+                 it is on, else the falloff.",
+            );
+            gui::set_next_item_width(row.width);
+            gui::drag_float("##stamp_height", &mut self.brush.stamp_height_m, 0.1, -500.0, 500.0, "%.2f m");
+        }
+
+        if self.mode == TileMode::Noise {
+            let row = styled::row(
+                "Feature size",
+                "How far apart the noise's bumps are: small for rough, stony ground, large for rolling hills. The strength is metres a second \
+                 at the brush's middle.",
+            );
+            gui::set_next_item_width(row.width);
+            gui::slider_float("##noise_scale", &mut self.brush.noise_scale_m, 2.0, 200.0, "%.0f m");
         }
 
         let mut paint_whole = false;
         if self.mode == TileMode::Paint {
-            // What the stroke does: TEd's Blend Map operations (docs/re/terrain.md), explained, since nobody knew what they did.
-            let mut m = match self.brush.paint_mode {
-                PaintMode::Normal => 0,
-                PaintMode::AutoFlange { .. } => 1,
-                PaintMode::Rock => 2,
-                PaintMode::Grouped { .. } => 3,
-                PaintMode::Blur => 4,
-            };
+            paint_whole = self.paint_rows(d, &swatches, &mut edit_rules);
+        }
 
-            let names = ["normal", "auto-flange", "rock painting", "normal (grouped)", "blur"].map(str::to_owned);
-            let tips = PAINT_MODE_TIPS.map(str::to_owned);
-            ins.edit_choice_tips("paint_mode", "mode", &mut m, &names, &tips);
-            self.brush.paint_mode = match m {
-                1 => PaintMode::AutoFlange { threshold: self.flange_threshold },
-                2 => PaintMode::Rock,
-                3 => PaintMode::Grouped { variation: self.grouped_variation },
-                4 => PaintMode::Blur,
-                _ => PaintMode::Normal,
-            };
+        // The shape: an image as the brush, else the falloff slider or the curve of the Brush Falloff window.
+        if self.mode != TileMode::Ground {
+            gui::separator_text("Shape");
+            let (row, _) = styled::toggle_row(
+                "imagebrush",
+                "Image",
+                &mut image.on,
+                "A picture's brightness as the brush's weight (TEd's Load Brush; its brushes are in the Assembly Kit's \
+                 editor_working_data/EditorBrushes), stretched over the square the radius spans",
+            );
+            if image.on {
+                let name = Path::new(&image.path).file_name().map_or_else(|| "none".to_owned(), |n| n.to_string_lossy().into_owned());
+                let load = format!("{}  Load...", icons::FOLDER_OPEN);
+                let load_w = gui::button_width(&load);
+                gui::text(&name);
+                if gui::is_item_hovered() && !image.path.is_empty() {
+                    gui::set_tooltip(&image.path);
+                }
 
-            // The entry's four texture groups, each with four variations (Auto-Flange picks the variations itself).
-            let g = d.project().entry.as_ref().map(|en| en.texture_group()).unwrap_or_default();
-            let names = [g.red, g.green, g.blue, g.alpha]
-                .iter()
-                .enumerate()
-                .map(|(i, n)| if n.is_empty() { format!("({}: none)", i + 1) } else { n.clone() })
-                .collect::<Vec<_>>();
-            let (mut group, mut variation) = (i32::from(self.paint_channel / 4), i32::from(self.paint_channel % 4));
-            if m != 4 {
-                ins.edit_choice("group", "texture group", &mut group, &names);
-            }
+                gui::same_line_at(row.x + row.width - load_w);
+                load_image = gui::button(&load);
+                let row = styled::row("Turn", "The picture's turn: an angle, or a new one at random at every step of a stroke");
+                let current = usize::from(image.random_angle);
+                if let Some(i) = styled::segmented("turnkind", &["Fixed", "Random"], Some(current), row.width) {
+                    image.random_angle = i == 1;
+                }
 
-            if m == 3 {
-                ins.edit_slider("grouped_variation", "variation", &mut self.grouped_variation, 0.0, 3.0);
-                ins.tooltip(GROUPED_VARIATION_TIP);
-                self.brush.paint_mode = PaintMode::Grouped { variation: self.grouped_variation };
-            } else if m == 4 {
-                // The blur needs no channel.
-            } else if m == 1 {
-                ins.edit_slider("flange_threshold", "threshold", &mut self.flange_threshold, 0.0, 0.95);
-                ins.tooltip(FLANGE_THRESHOLD_TIP);
-                self.brush.paint_mode = PaintMode::AutoFlange { threshold: self.flange_threshold };
+                if !image.random_angle {
+                    row.next_line();
+                    gui::set_next_item_width(row.width);
+                    gui::slider_float("##angle", &mut image.angle, 0.0, 360.0, "%.0f deg");
+                }
             } else {
-                ins.edit_choice("variation", "variation", &mut variation, &["0", "1", "2", "3"].map(str::to_owned));
-            }
+                gui::text_disabled("off: the falloff below");
+                let (row, clicked) =
+                    styled::toggle_row("curve", "Curve", &mut curve.on, "The falloff as a curve drawn in the Brush Falloff window");
+                curve_changed = clicked;
+                let label = if self.falloff_open { "Close the curve editor" } else { "Edit the curve..." };
+                if styled::wide_button(label, row.width, true, "Opens the Brush Falloff window, where the curve is drawn") {
+                    self.falloff_open = !self.falloff_open;
+                }
 
-            self.paint_channel = (group.clamp(0, 3) * 4 + variation.clamp(0, 3)) as u8;
-            paint_whole = ins.button("paint_whole_tile", "Paint the whole tile", true);
-            ins.tooltip(PAINT_WHOLE_TILE_TIP);
+                if !curve.on {
+                    let row = styled::row("Falloff", "0: a hard edge; 1: a soft bell from the middle to the edge");
+                    gui::set_next_item_width(row.width);
+                    gui::slider_float("##falloff", &mut self.brush.falloff, 0.0, 1.0, "%.2f");
+                }
+            }
         }
 
         if self.mode == TileMode::Paint {
-            // TEd's Blendmap Filters: the paint lands only on the heights and slopes in range.
-            ins.section("Blendmap filters");
-            ins.edit_bool("filter_height_on", "height filter", &mut self.filter_height_on);
-            if self.filter_height_on {
-                let [mut lo, mut hi] = self.filter_height;
-                ins.edit_float("filter_height_min", "min height (m)", &mut lo, 0.1, -1000.0, 1000.0);
-                ins.edit_float("filter_height_max", "max height (m)", &mut hi, 0.1, -1000.0, 1000.0);
-                self.filter_height = if lo != self.filter_height[0] { [lo, hi.max(lo)] } else { [lo.min(hi), hi] };
-            }
-
-            ins.edit_bool("filter_slope_on", "slope filter", &mut self.filter_slope_on);
-            if self.filter_slope_on {
-                let [mut lo, mut hi] = self.filter_slope;
-                ins.edit_slider("filter_slope_min", "min slope (deg)", &mut lo, 0.0, 90.0);
-                ins.edit_slider("filter_slope_max", "max slope (deg)", &mut hi, 0.0, 90.0);
-                self.filter_slope = if lo != self.filter_slope[0] { [lo, hi.max(lo)] } else { [lo.min(hi), hi] };
-            }
-
-            if ins.button("filter_nogo", "Use the no-go range (impassable slopes)", true) {
-                (self.filter_slope_on, self.filter_slope) = (true, [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0]);
-            }
-
-            self.sync_paint_filter();
+            self.paint_filter_rows();
         }
 
-        if self.mode == TileMode::Flatten {
-            ins.edit_float("flatten", "flatten height (m)", &mut self.brush.flatten_height, 0.1, -1.0e6, 1.0e6);
-        }
-
-        if self.mode == TileMode::Stamp {
-            ins.edit_float("stamp_height", "stamp height (m)", &mut self.brush.stamp_height_m, 0.1, -500.0, 500.0);
-            ins.tooltip("What a click adds at the brush's middle (negative: a hollow); the rest follows the brush's shape: the image brush's picture when it is on, else the falloff.");
-        }
-
-        if self.mode == TileMode::Noise {
-            ins.edit_slider("noise_scale", "feature size (m)", &mut self.brush.noise_scale_m, 2.0, 200.0);
-            ins.tooltip("How far apart the noise's bumps are: small for rough, stony ground, large for rolling hills. The strength is metres a second at the brush's middle.");
-        }
-
+        // TEd's Spline Paint Stroke and Spline Road along the selected line; the cursor's place.
+        gui::separator_text("Along a line");
+        let width = gui::content_region_avail().x;
+        let along = styled::wide_button(
+            "Stroke along the selected line",
+            width,
+            line.is_some(),
+            "The brush, as it is set, stroked along the selected spline, polygon or line in one go (one undo step); a closed polygon all \
+             round. A spline whose points have a width (rivers, roads) is painted as wide as it is at each point, as TEd's Spline splat \
+             does; other lines with the brush's radius. Select the line first, then pick the brush.",
+        );
+        let level = styled::wide_button("Level the ground along the selected line", width, line.is_some(), LEVEL_ALONG_TIP);
         let cursor = if self.terrain_hit {
             format!("{:.1}, {:.1}  height {:.2} m", self.cursor.x, self.cursor.z, d.tile().terrain_height(self.cursor.x, self.cursor.z))
         } else {
             "-".to_owned()
         };
 
-        ins.text("cursor", "cursor", &cursor);
+        styled::row("Cursor", "The ground under the mouse");
+        gui::text_disabled(&cursor);
 
-        // TEd's Spline Paint Stroke: the brush along the selected spline, polygon or line.
-        let along = ins.button("stroke_along", "Stroke along the selected line", line.is_some());
-        ins.tooltip(
-            "The brush, as it is set, stroked along the selected spline, polygon or line in one go (one undo step); a closed polygon all \
-             round. A spline whose points have a width (rivers, roads) is painted as wide as it is at each point, as TEd's Spline splat \
-             does; other lines with the brush's radius. Select the line first, then pick the brush.",
-        );
-        let level = ins.button("level_along", "Level the ground along the selected line", line.is_some());
-        ins.tooltip(LEVEL_ALONG_TIP);
         if level && let Some(line) = line {
             let d = document(e).expect("a tile");
             let msg = match d.level_along(line, &self.brush) {
@@ -467,7 +445,8 @@ impl TileTool {
 
         if load_image {
             let filters = [("Grey image (PNG, DDS)".to_owned(), "*.png *.dds".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
-            if let Some(p) = file_dialog(false, Path::new(&image.path), &filters) {
+            let start = if image.path.is_empty() { self.ted_brushes_folder(e) } else { Path::new(&image.path).to_path_buf() };
+            if let Some(p) = file_dialog(false, &start, &filters) {
                 image.path = p.display().to_string();
             }
         }
@@ -485,6 +464,200 @@ impl TileTool {
         }
 
         true
+    }
+
+    /// TEd's brushes (the first Assembly Kit's editor_working_data/EditorBrushes), where Load... starts without a picture yet.
+    fn ted_brushes_folder(&self, e: &Editor) -> std::path::PathBuf {
+        e.settings_ref()
+            .assembly_kit_dirs()
+            .into_iter()
+            .map(|k| k.join("editor_working_data").join("EditorBrushes"))
+            .find(|p| p.is_dir())
+            .unwrap_or_default()
+    }
+
+    /// The ground types as coloured chips, three to a line, "none" (the eraser) first.
+    fn ground_type_chips(&mut self) {
+        gui::separator_text("Ground type");
+        let cols = 3;
+        let width = (gui::content_region_avail().x - gui::item_spacing().x * (cols - 1) as f32) / cols as f32;
+        let erase = theme::mix(theme::palette_background(), theme::text(), 0.3);
+        let all = std::iter::once(("none (erase)", erase, GROUND_ERASE)).chain(GROUND_TYPES.iter().enumerate().map(|(i, (name, rgb))| {
+            (*name, [f32::from(rgb[0]) / 255.0, f32::from(rgb[1]) / 255.0, f32::from(rgb[2]) / 255.0, 1.0], i as u8)
+        }));
+        for (k, (name, colour, value)) in all.enumerate() {
+            if k % cols != 0 {
+                gui::same_line();
+            }
+
+            let tip = if value == GROUND_ERASE { "Takes the painted ground type away (Ctrl erases with any type)" } else { "" };
+            if styled::colour_chip(&format!("gt{k}"), name, colour, self.ground_type == value, width, tip) {
+                self.ground_type = value;
+            }
+        }
+    }
+
+    /// The paint brush's rows: its mode, the texture group and variation as swatches (or Grouped's and Auto-Flange's numbers), the
+    /// texture rules under the paint and Paint the whole tile. True when Paint the whole tile was clicked.
+    fn paint_rows(
+        &mut self,
+        d: &wce_tile_editor::tile_document::TileDocument,
+        swatches: &HashMap<(String, u8), u64>,
+        edit_rules: &mut bool,
+    ) -> bool {
+        // What the stroke does: TEd's Blend Map operations (docs/re/terrain.md), explained, since nobody knew what they did.
+        const NAMES: [&str; 5] = ["Normal", "Auto-flange", "Rock painting", "Normal (grouped)", "Blur"];
+        let mut m = match self.brush.paint_mode {
+            PaintMode::Normal => 0,
+            PaintMode::AutoFlange { .. } => 1,
+            PaintMode::Rock => 2,
+            PaintMode::Grouped { .. } => 3,
+            PaintMode::Blur => 4,
+        };
+
+        let row = styled::row("Mode", "What a stroke does to the ground's textures (hover a mode for what it does)");
+        gui::set_next_item_width(row.width);
+        if gui::begin_combo("##paint_mode", NAMES[m]) {
+            for (i, name) in NAMES.iter().enumerate() {
+                if gui::selectable(name, i == m, 0) {
+                    m = i;
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(PAINT_MODE_TIPS[i]);
+                }
+            }
+
+            gui::end_combo();
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(PAINT_MODE_TIPS[m]);
+        }
+
+        self.brush.paint_mode = match m {
+            1 => PaintMode::AutoFlange { threshold: self.flange_threshold },
+            2 => PaintMode::Rock,
+            3 => PaintMode::Grouped { variation: self.grouped_variation },
+            4 => PaintMode::Blur,
+            _ => PaintMode::Normal,
+        };
+
+        // The tile's four texture groups, each with four variations (Auto-Flange picks the variations itself; the blur needs none).
+        let groups = d.texture_group_slots();
+        let (mut group, mut variation) = (usize::from(self.paint_channel / 4), usize::from(self.paint_channel % 4));
+        if m != 4 {
+            let row = styled::row("Texture", "The texture group the brush paints (the tile's four)");
+            let size = styled::swatch_size(4, row.width, 64.0);
+            for i in 0..4 {
+                if i > 0 {
+                    styled::swatch_gap();
+                }
+
+                let name = groups.get(i).filter(|g| !g.is_empty()).cloned();
+                let image = name.as_ref().and_then(|g| swatches.get(&(g.clone(), 0)).copied());
+                let caption = name.clone().unwrap_or_else(|| format!("{}: none", i + 1));
+                if styled::swatch(&format!("pgroup{i}"), image, size, group == i, &caption, &caption) {
+                    group = i;
+                }
+            }
+        }
+
+        match m {
+            1 => {
+                let row = styled::row("Threshold", FLANGE_THRESHOLD_TIP);
+                gui::set_next_item_width(row.width);
+                gui::slider_float("##flange_threshold", &mut self.flange_threshold, 0.0, 0.95, "%.2f");
+                self.brush.paint_mode = PaintMode::AutoFlange { threshold: self.flange_threshold };
+            }
+
+            3 => {
+                let row = styled::row("Variation", GROUPED_VARIATION_TIP);
+                gui::set_next_item_width(row.width);
+                gui::slider_float("##grouped_variation", &mut self.grouped_variation, 0.0, 3.0, "%.2f");
+                self.brush.paint_mode = PaintMode::Grouped { variation: self.grouped_variation };
+            }
+
+            0 | 2 => {
+                let g = groups.get(group).cloned().unwrap_or_default();
+                let row = styled::row("Variation", "Which of the group's four textures");
+                let size = styled::swatch_size(4, row.width, 64.0);
+                for v in 0..4u8 {
+                    if v > 0 {
+                        styled::swatch_gap();
+                    }
+
+                    let image = swatches.get(&(g.clone(), v)).copied();
+                    let tip = format!("{g}, texture {}", v + 1);
+                    if styled::swatch(&format!("pvar{v}"), image, size, variation == usize::from(v), &format!("{}", v + 1), &tip) {
+                        variation = usize::from(v);
+                    }
+                }
+            }
+
+            _ => {}
+        }
+
+        self.paint_channel = (group.min(3) * 4 + variation.min(3)) as u8;
+
+        // The texture rules lie under what is painted: how many, and where they are edited.
+        let shown = match d.texture_rules() {
+            Some(r) => format!("{} under your paint", r.rules.iter().filter(|r| r.enabled).count()),
+            None => "none".to_owned(),
+        };
+        let row = styled::row("Texture rules", "The textures the terrain lays by itself, under what you paint");
+        let edit = format!("{}  Edit...", icons::LAYERS);
+        let edit_w = gui::button_width(&edit);
+        gui::text_disabled(&shown);
+        gui::same_line_at(row.x + row.width - edit_w);
+        if gui::button(&edit) {
+            *edit_rules = true;
+        }
+
+        gui::spacing();
+        styled::wide_button(&format!("{}  Paint the whole tile", icons::BRUSH), gui::content_region_avail().x, true, PAINT_WHOLE_TILE_TIP)
+    }
+
+    /// TEd's Blendmap Filters: the paint lands only on the heights and slopes in range.
+    fn paint_filter_rows(&mut self) {
+        gui::separator_text("Filters");
+        let (row, _) =
+            styled::toggle_row("fheight", "Height", &mut self.filter_height_on, "Paint only where the ground is between these heights");
+        if self.filter_height_on {
+            let half = (row.width - gui::item_spacing().x) * 0.5;
+            let [mut lo, mut hi] = self.filter_height;
+            gui::set_next_item_width(half);
+            gui::drag_float("##fh_lo", &mut lo, 0.1, -1000.0, 1000.0, "from %.1f m");
+            gui::same_line();
+            gui::set_next_item_width(half);
+            gui::drag_float("##fh_hi", &mut hi, 0.1, -1000.0, 1000.0, "to %.1f m");
+            self.filter_height = if lo != self.filter_height[0] { [lo, hi.max(lo)] } else { [lo.min(hi), hi] };
+        } else {
+            gui::text_disabled("any height");
+        }
+
+        let (row, _) =
+            styled::toggle_row("fslope", "Slope", &mut self.filter_slope_on, "Paint only where the ground's slope is between these angles");
+        if self.filter_slope_on {
+            let half = (row.width - gui::item_spacing().x) * 0.5;
+            let [mut lo, mut hi] = self.filter_slope;
+            gui::set_next_item_width(half);
+            gui::slider_float("##fs_lo", &mut lo, 0.0, 90.0, "from %.0f deg");
+            gui::same_line();
+            gui::set_next_item_width(half);
+            gui::slider_float("##fs_hi", &mut hi, 0.0, 90.0, "to %.0f deg");
+            self.filter_slope = if lo != self.filter_slope[0] { [lo, hi.max(lo)] } else { [lo.min(hi), hi] };
+            row.next_line();
+        } else {
+            gui::text_disabled("any slope");
+            gui::set_cursor_pos_x(row.x);
+        }
+
+        if styled::wide_button("Use the no-go range (impassable slopes)", row.width, true, "The slopes units cannot cross") {
+            (self.filter_slope_on, self.filter_slope) = (true, [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0]);
+        }
+
+        self.sync_paint_filter();
     }
 
     /// A right click in the viewport: what is under the cursor joins the selection when it is not in it (the menu acts on the selection), and

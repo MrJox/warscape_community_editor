@@ -161,6 +161,41 @@ pub fn segmented(id: &str, options: &[&str], current: Option<usize>, width: f32)
     picked
 }
 
+/// A chip with a colour mark before its label (a ground type), lit when `on`, over `width`; true when clicked.
+pub fn colour_chip(id: &str, label: &str, colour: [f32; 4], on: bool, width: f32, tip: &str) -> bool {
+    let h = gui::frame_height();
+    let at = gui::cursor_screen_pos();
+    let clicked = gui::invisible_button(&format!("##{id}"), gui::v2(width.max(h), h), 0);
+    let (hovered, held) = (gui::is_item_hovered(), gui::is_item_active());
+    if hovered && !tip.is_empty() {
+        gui::set_tooltip(tip);
+    }
+
+    let dl = gui::window_draw_list();
+    let max = gui::v2(at.x + width.max(h), at.y + h);
+    let (fill, text) = chip_colours(on, hovered, held);
+    dl.rect_filled(at, max, theme::u32(fill), ROUNDING);
+    let s = h * 0.45;
+    let (m0, m1) = (gui::v2(at.x + 5.0, at.y + (h - s) * 0.5), gui::v2(at.x + 5.0 + s, at.y + (h + s) * 0.5));
+    dl.rect_filled(m0, m1, theme::u32(colour), ROUNDING);
+    dl.push_clip_rect(at, max);
+    dl.text(gui::v2(m1.x + 5.0, at.y + (h - gui::text_line_height()) * 0.5), theme::u32(text), label);
+    dl.pop_clip_rect();
+    clicked
+}
+
+/// A button over a row's (or the line's) width, with a tooltip shown disabled too; true when clicked.
+pub fn wide_button(label: &str, width: f32, enabled: bool, tip: &str) -> bool {
+    gui::begin_disabled(!enabled);
+    let clicked = gui::button_sized(label, gui::v2(width, 0.0));
+    gui::end_disabled();
+    if !tip.is_empty() && gui::is_item_hovered_allow_disabled() {
+        gui::set_tooltip(tip);
+    }
+
+    clicked
+}
+
 /// How a range bar shows and edits its range.
 pub struct Bar<'a> {
     /// The values across the bar, low to high.
