@@ -3276,7 +3276,7 @@ impl TileTool {
 
         // Copy / cut / paste (at the mouse, or where they were).
         if !grabbing {
-            if pressed("tile.copy", false) {
+            if pressed("tile.copy", false) && !e.log_has_keys() {
                 self.copy_selection(e, false);
             }
 

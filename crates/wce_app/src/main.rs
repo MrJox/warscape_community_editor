@@ -1,7 +1,7 @@
 //! Warscape Community Editor (wce): window, D3D11 device, Dear ImGui docking, the tool registry and the frame loop. An SDL3 window, on the
 //! system D3D11 on Windows and on DXVK-native (D3D11 over Vulkan) on Linux.
 //!
-//! Command line (everything is a registry command underneath, see `help` in the Commands panel):
+//! Command line (everything is a registry command underneath, see `help` in the Log's command line):
 //!   --tool <id>             start in a tool (weather, tile, ...)
 //!   --open <path>           open a file of the game packs (--open-disk for a file on disk)
 //!   --cam <yaw> <pitch> <dist> [target_y]

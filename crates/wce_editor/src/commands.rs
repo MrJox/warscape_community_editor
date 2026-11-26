@@ -71,8 +71,8 @@ fn resolve_doc(e: &Editor, spec: &str) -> Option<DocumentId> {
     })
 }
 
-const PANELS: [&str; 6] = ["viewport", "inspector", "assets", "log", "history", "commands"];
-const PANEL_TITLES: [&str; 6] = ["Viewport", "Inspector", "Assets", "Log", "History", "Commands"];
+const PANELS: [&str; 5] = ["viewport", "inspector", "assets", "log", "history"];
+const PANEL_TITLES: [&str; 5] = ["Viewport", "Inspector", "Assets", "Log", "History"];
 
 fn panel_flag<'a>(e: &'a mut Editor, name: &str) -> Option<&'a mut bool> {
     let p = &mut e.panels;
@@ -82,7 +82,6 @@ fn panel_flag<'a>(e: &'a mut Editor, name: &str) -> Option<&'a mut bool> {
         "assets" => &mut p.assets,
         "log" => &mut p.log,
         "history" => &mut p.history,
-        "commands" => &mut p.commands,
         _ => return None,
     })
 }
@@ -1456,8 +1455,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add("show_panel", "show_panel <name>", "show a panel and bring it to the front of its tab group", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: show_panel <viewport|inspector|assets|log|history|commands>") };
-        let n = name.to_lowercase();
+        let Some(name) = a.first() else { return fail("usage: show_panel <viewport|inspector|assets|log|history>") };
+        // The Commands panel is the Log's command line now.
+        let n = match name.to_lowercase() {
+            n if n == "commands" => "log".to_owned(),
+            n => n,
+        };
         if let Some(i) = PANELS.iter().position(|p| *p == n) {
             *panel_flag(e, PANELS[i]).expect("a panel") = true;
             gui::set_window_focus(PANEL_TITLES[i]);

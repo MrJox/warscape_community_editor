@@ -1,4 +1,4 @@
-//! The shared panels (inspector, assets, log, history, commands) and the Dear ImGui implementation of the inspector framework.
+//! The shared panels (inspector, assets, the log with its command line, history) and the Dear ImGui implementation of the inspector framework.
 
 use wce_editor_core::command_registry::CommandRegistry;
 use wce_editor_core::inspector::{InspectTarget, Inspector};
@@ -590,9 +590,18 @@ pub struct PanelState {
     show_warn: bool,
     show_error: bool,
     log_seen: u64,
+    /// The picked lines (by their sequence) and the last one clicked (Shift+click picks from it).
+    log_selected: std::collections::BTreeSet<u64>,
+    log_anchor: Option<u64>,
+    /// The log's lines have the keyboard: Ctrl+C copies them, not what the tool has selected.
+    pub(crate) log_focused: bool,
+    /// Scroll to the end on the next frame (a command was run).
+    log_follow: bool,
 
-    // Commands.
+    // The command line (under the log).
     command_line: String,
+    show_commands: bool,
+    focus_command_line: bool,
 }
 
 impl Default for PanelState {
@@ -608,7 +617,13 @@ impl Default for PanelState {
             show_warn: true,
             show_error: true,
             log_seen: 0,
+            log_selected: Default::default(),
+            log_anchor: None,
+            log_focused: false,
+            log_follow: false,
             command_line: String::new(),
+            show_commands: false,
+            focus_command_line: false,
         }
     }
 }
@@ -775,10 +790,14 @@ pub fn assets(e: &mut Editor) {
     e.panel_data = st;
 }
 
-// ---- log
+// ---- log (and the command line under it)
+
+/// The most commands listed above the command line at once (the list scrolls past them).
+const COMMAND_ROWS: usize = 8;
 
 pub fn log(e: &mut Editor) {
     if !gui::begin("Log", Some(&mut e.panels.log), 0) {
+        e.panel_data.log_focused = false;
         gui::end();
         return;
     }
@@ -792,46 +811,208 @@ pub fn log(e: &mut Editor) {
     gui::same_line();
     if gui::small_button("Clear") {
         log::clear();
+        st.log_selected.clear();
+        st.log_anchor = None;
     }
+
+    gui::same_line();
+    gui::checkbox("commands", &mut st.show_commands);
+    if gui::is_item_hovered() {
+        gui::set_tooltip("Lists every command the line at the bottom runs (typing a word there lists the ones that match)");
+    }
+
+    // The command line's first word filters the commands as it is typed (`command_matches`); with nothing typed, the list only shows when
+    // asked for.
+    let word = st.command_line.split_whitespace().next().unwrap_or_default().to_owned();
+    let listed = st.show_commands || !word.is_empty();
+    let matches = if listed { command_matches(&word, e.commands().entries().map(|c| (c.name.as_str(), c.help.as_str()))) } else { vec![] };
+
+    let row_h = gui::text_line_height_with_spacing();
+    let list_h = if listed { matches.len().clamp(1, COMMAND_ROWS) as f32 * row_h + gui::item_spacing().y * 2.0 + 1.0 } else { 0.0 };
+    let footer = gui::frame_height_with_spacing() + list_h;
 
     gui::separator();
-    if gui::begin_child("##log", gui::v2(0.0, 0.0), 0, gui::WINDOW_HORIZONTAL_SCROLLBAR) {
-        let at_bottom = gui::scroll_y() >= gui::scroll_max_y() - 4.0;
-        crate::theme::push_mono();
-        for entry in log::entries() {
-            let shown = match entry.level {
-                LogLevel::Info => st.show_info,
-                LogLevel::Warning => st.show_warn,
-                LogLevel::Error => st.show_error,
-            };
+    log_lines(&mut e.panel_data, footer);
 
-            if !shown {
-                continue;
+    if listed {
+        gui::separator();
+        let entries = e.commands().entries().map(|c| (c.name.clone(), c.usage.clone(), c.help.clone())).collect::<Vec<_>>();
+        if gui::begin_child("##commands", gui::v2(0.0, list_h - gui::item_spacing().y * 2.0 - 1.0), 0, 0) {
+            if matches.is_empty() {
+                gui::text_disabled(&format!("No command matches '{word}'"));
             }
 
-            let colour = match entry.level {
-                LogLevel::Error => crate::theme::v4(crate::theme::error()),
-                LogLevel::Warning => crate::theme::v4(crate::theme::warning()),
-                LogLevel::Info => gui::style_color(gui::COL_TEXT),
-            };
+            for &i in &matches {
+                let (name, usage, help) = &entries[i];
+                if gui::selectable(&format!("{usage}##cmd_{name}"), false, 0) {
+                    e.panel_data.command_line = format!("{name} ");
+                    e.panel_data.focus_command_line = true;
+                }
 
-            gui::push_style_color(gui::COL_TEXT, colour);
-            gui::text(&entry.text);
-            gui::pop_style_color(1);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Click: put it in the command line");
+                }
+
+                gui::same_line_at(300.0);
+                gui::text_disabled(help);
+            }
         }
 
-        crate::theme::pop_font();
-
-        let now = log::sequence();
-        if now != st.log_seen && at_bottom {
-            gui::set_scroll_here_y(1.0);
-        }
-
-        st.log_seen = now;
+        gui::end_child();
     }
 
-    gui::end_child();
+    // The command line: what it runs and what that answers go to the log above.
+    gui::set_next_item_width(-1.0);
+    if std::mem::take(&mut e.panel_data.focus_command_line) {
+        gui::set_keyboard_focus_here(0);
+    }
+
+    let mut line = std::mem::take(&mut e.panel_data.command_line);
+    let hint = "command, e.g. help or select 1   (Enter runs it)";
+    if gui::input_text("##cmd", Some(hint), &mut line, 256, gui::INPUT_ENTER_RETURNS_TRUE) {
+        if !line.trim().is_empty() {
+            run_command_line(e, line.trim());
+        }
+
+        line.clear();
+        gui::set_keyboard_focus_here(-1);
+    }
+
+    e.panel_data.command_line = line;
     gui::end();
+}
+
+/// Runs a line typed in the Log's command line: the line, then what the command answers, go to the log, which scrolls to them.
+fn run_command_line(e: &mut Editor, line: &str) {
+    log::info(format!("> {line}"));
+    let r = CommandRegistry::run(e, line);
+    if !r.message.is_empty() {
+        log::add(if r.ok { LogLevel::Info } else { LogLevel::Error }, r.message);
+    } else if !r.ok {
+        log::error(format!("{line}: failed"));
+    }
+
+    e.panel_data.log_follow = true;
+}
+
+/// The log's lines, leaving `footer` points under them: each one selectable (a click picks it, Ctrl+click adds or removes it, Shift+click a
+/// run of them), Ctrl+C or the right-click menu copies the picked ones, Ctrl+A picks them all.
+fn log_lines(st: &mut PanelState, footer: f32) {
+    let entries = log::entries();
+    let shown = entries
+        .iter()
+        .filter(|entry| match entry.level {
+            LogLevel::Info => st.show_info,
+            LogLevel::Warning => st.show_warn,
+            LogLevel::Error => st.show_error,
+        })
+        .collect::<Vec<_>>();
+
+    let open = gui::begin_child("##log", gui::v2(0.0, -footer), 0, gui::WINDOW_HORIZONTAL_SCROLLBAR);
+    st.log_focused = open && gui::is_window_focused_with_children();
+    if !open {
+        gui::end_child();
+        return;
+    }
+
+    let at_bottom = gui::scroll_y() >= gui::scroll_max_y() - 4.0;
+    let mut copy = false;
+    crate::theme::push_mono();
+    for (k, entry) in shown.iter().enumerate() {
+        let seq = entry.sequence;
+        let selected = st.log_selected.contains(&seq);
+        let pos = gui::cursor_screen_pos();
+        let height = gui::calc_text_size(&entry.text).y;
+        if gui::selectable_sized(&format!("##log{seq}"), selected, 0, gui::v2(0.0, height)) {
+            let io = gui::io();
+            let anchor = st.log_anchor.and_then(|a| shown.iter().position(|x| x.sequence == a));
+            match anchor {
+                Some(a) if io.KeyShift => {
+                    if !io.KeyCtrl {
+                        st.log_selected.clear();
+                    }
+
+                    st.log_selected.extend(shown[a.min(k)..=a.max(k)].iter().map(|x| x.sequence));
+                }
+
+                _ if io.KeyCtrl => {
+                    if !st.log_selected.remove(&seq) {
+                        st.log_selected.insert(seq);
+                    }
+
+                    st.log_anchor = Some(seq);
+                }
+
+                _ => {
+                    st.log_selected.clear();
+                    st.log_selected.insert(seq);
+                    st.log_anchor = Some(seq);
+                }
+            }
+        }
+
+        if gui::begin_popup_context_item(&format!("##log_menu{seq}")) {
+            if !selected {
+                st.log_selected.clear();
+                st.log_selected.insert(seq);
+                st.log_anchor = Some(seq);
+            }
+
+            if gui::menu_item("Copy", Some("Ctrl+C"), false, true) {
+                copy = true;
+            }
+
+            if gui::menu_item("Copy all", None, false, true) {
+                gui::set_clipboard_text(&shown.iter().map(|x| x.text.as_str()).collect::<Vec<_>>().join("\n"));
+            }
+
+            if gui::menu_item("Select all", Some("Ctrl+A"), false, true) {
+                st.log_selected.extend(shown.iter().map(|x| x.sequence));
+            }
+
+            gui::end_popup();
+        }
+
+        let colour = match entry.level {
+            LogLevel::Error => crate::theme::v4(crate::theme::error()),
+            LogLevel::Warning => crate::theme::v4(crate::theme::warning()),
+            LogLevel::Info => gui::style_color(gui::COL_TEXT),
+        };
+
+        gui::set_cursor_screen_pos(pos);
+        gui::push_style_color(gui::COL_TEXT, colour);
+        gui::text(&entry.text);
+        gui::pop_style_color(1);
+    }
+
+    crate::theme::pop_font();
+
+    if st.log_focused && gui::io().KeyCtrl {
+        copy |= gui::is_key_pressed(gui::KEY_C, false);
+        if gui::is_key_pressed(gui::KEY_A, false) {
+            st.log_selected.extend(shown.iter().map(|x| x.sequence));
+        }
+    }
+
+    if copy {
+        let picked = shown.iter().filter(|x| st.log_selected.contains(&x.sequence)).map(|x| x.text.as_str()).collect::<Vec<_>>();
+        if !picked.is_empty() {
+            gui::set_clipboard_text(&picked.join("\n"));
+        }
+    }
+
+    // The picked lines the log has since dropped are forgotten.
+    if let Some(first) = entries.first().map(|x| x.sequence) {
+        st.log_selected.retain(|&s| s >= first);
+    }
+
+    let now = log::sequence();
+    if (now != st.log_seen && at_bottom) || std::mem::take(&mut st.log_follow) {
+        gui::set_scroll_here_y(1.0);
+    }
+
+    st.log_seen = now;
+    gui::end_child();
 }
 
 // ---- history
@@ -881,54 +1062,6 @@ pub fn history(e: &mut Editor) {
         if !applied {
             gui::pop_style_color(1);
         }
-    }
-
-    gui::end();
-}
-
-// ---- commands (help + console)
-
-pub fn commands(e: &mut Editor) {
-    if !gui::begin("Commands", Some(&mut e.panels.commands), 0) {
-        gui::end();
-        return;
-    }
-
-    gui::set_next_item_width(-1.0);
-    let mut line = std::mem::take(&mut e.panel_data.command_line);
-    if gui::input_text("##cmd", Some("command, e.g. select 1   (Enter runs it)"), &mut line, 256, gui::INPUT_ENTER_RETURNS_TRUE) {
-        let r = CommandRegistry::run(e, &line);
-        if !r.message.is_empty() || !r.ok {
-            log::add(if r.ok { LogLevel::Info } else { LogLevel::Error }, format!("{line} -> {}", r.message));
-        }
-
-        line.clear();
-        gui::set_keyboard_focus_here(-1);
-    }
-
-    // The line's first word filters the list as it is typed (`command_matches`); a click on a command puts it in the line.
-    let word = line.split_whitespace().next().unwrap_or_default().to_owned();
-    let shown = command_matches(&word, e.commands().entries().map(|c| (c.name.as_str(), c.help.as_str())));
-    let total = e.commands().entries().count();
-    if !word.is_empty() {
-        gui::text_disabled(&format!("{} of {total} commands match '{word}'", shown.len()));
-    }
-
-    e.panel_data.command_line = line;
-    gui::separator();
-    let entries = e.commands().entries().map(|c| (c.name.clone(), c.usage.clone(), c.help.clone())).collect::<Vec<_>>();
-    for &i in &shown {
-        let (name, usage, help) = &entries[i];
-        if gui::selectable(&format!("{usage}##cmd_{name}"), false, 0) {
-            e.panel_data.command_line = format!("{name} ");
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Click: put it in the command line");
-        }
-
-        gui::same_line_at(300.0);
-        gui::text_disabled(help);
     }
 
     gui::end();
