@@ -33,4 +33,8 @@ Use "grill me" technique when a feature implementation request is submitted.
   copies, diffs, their outputs as oracles), short spikes only where that does not settle a question.
 - **No machine paths in code:** defaults come from the settings and the first-run dialog; test scripts may default to this machine but
   accept environment-variable overrides.
+- **UI style:** new UI matches the styled parts of the app, not the older unstyled ones. Before adding a panel, menu, chip or dialog, look
+  at how its neighbours (and the recently restyled parts) do the same thing, and reuse their helpers: the shared `gui` wrappers, the
+  theme's named colours (`theme::palette()`, `theme::error()` and the rest, never fixed colours), Lucide icons from `icons` in labels, and
+  the existing patterns for tooltips, chips and right-click menus. When unsure which part is the reference, ask.
 - **Shell:** Bash heredocs mangle backslash escapes, so write code and scripts containing `\n` or `\\` with the file tools.
