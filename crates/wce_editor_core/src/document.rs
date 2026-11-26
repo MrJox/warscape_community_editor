@@ -252,7 +252,8 @@ pub trait Document: Any {
         None
     }
 
-    /// An item the mouse must not move (TEd's draggable flag off): the gizmo is not shown for it, and a move of a selection leaves it.
+    /// An item the mouse must not move (TEd's draggable flag off): its Move gizmo is greyed out and a move of a selection leaves it
+    /// (the Rotate and Scale gizmos still turn and scale it).
     fn item_locked(&self, item: SourceRef) -> bool {
         let _ = item;
         false

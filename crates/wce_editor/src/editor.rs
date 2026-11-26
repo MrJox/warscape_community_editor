@@ -75,12 +75,11 @@ pub struct Panels {
     pub assets: bool,
     pub log: bool,
     pub history: bool,
-    pub commands: bool,
 }
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { viewport: true, inspector: true, assets: true, log: true, history: true, commands: false }
+        Self { viewport: true, inspector: true, assets: true, log: true, history: true }
     }
 }
 
@@ -683,8 +682,65 @@ impl Editor {
         &mut self.settings
     }
 
+    /// The Log's lines have the keyboard (one was clicked): Ctrl+C there copies them, so a tool's own Ctrl+C waits.
+    pub fn log_has_keys(&self) -> bool {
+        self.panel_data.log_focused
+    }
+
     pub fn settings_ref(&self) -> &Settings {
         &self.settings
+    }
+
+    /// The folders File > Open folder lists, by group: the game's (its folder, the Assembly Kits, the projects), then the editor's own.
+    /// The game's that are not there are listed as None (shown disabled); the editor's own are made when opened.
+    fn open_folder_entries(&self) -> Vec<(String, Option<PathBuf>)> {
+        let s = &self.settings;
+        let there = |p: PathBuf| p.is_dir().then_some(p);
+        let mut out = vec![("Game folder".to_owned(), s.game_dir().and_then(there))];
+        let kits = s.assembly_kit_dirs();
+        if kits.is_empty() {
+            out.push(("Assembly Kit".to_owned(), None));
+        }
+
+        for (i, kit) in kits.iter().enumerate() {
+            let name = if kits.len() == 1 { "Assembly Kit".to_owned() } else { format!("Assembly Kit {}", i + 1) };
+            out.push((name, there(kit.clone())));
+        }
+
+        out.push(("Projects".to_owned(), Some(s.projects_dir())));
+        let paths = s.paths();
+        out.push((String::new(), None));
+        out.push(("Settings".to_owned(), Some(paths.config_dir().to_path_buf())));
+        out.push(("Your files".to_owned(), Some(paths.data_dir().to_path_buf())));
+        out.push(("Caches".to_owned(), Some(paths.cache_dir().to_path_buf())));
+        out.push(("Log files".to_owned(), Some(paths.log_dir().to_path_buf())));
+        out
+    }
+
+    /// File > Open folder: shows one of the folders the editor reads or keeps its files in, in the system's file manager.
+    fn open_folder_menu(&mut self) {
+        if !gui::begin_menu(&format!("{}  Open folder", icons::FOLDER_OPEN)) {
+            return;
+        }
+
+        for (name, path) in self.open_folder_entries() {
+            if name.is_empty() {
+                gui::separator();
+                continue;
+            }
+
+            if gui::menu_item(&name, None, false, path.is_some())
+                && let Some(p) = &path
+            {
+                crate::settings_window::open_folder(p);
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(&path.map_or_else(|| "Not set, or not there: Settings > Game".to_owned(), |p| p.display().to_string()));
+            }
+        }
+
+        gui::end_menu();
     }
 
     /// Writes the settings file; a failure is logged.
@@ -2190,10 +2246,6 @@ impl Editor {
             crate::panels::history(self);
         }
 
-        if self.panels.commands {
-            crate::panels::commands(self);
-        }
-
         wce_prof!("panel.tool");
         self.with_tool_at(self.active_tool, |t, e| t.draw_panels(e));
     }
@@ -2606,6 +2658,7 @@ impl Editor {
             }
 
             gui::separator();
+            self.open_folder_menu();
             if gui::menu_item(&format!("{}  Settings...", icons::SETTINGS), None, false, true) {
                 self.show_settings_window(true);
             }
@@ -2664,7 +2717,6 @@ impl Editor {
             gui::menu_item_toggle("Assets", &mut self.panels.assets);
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
-            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::separator();
             if gui::menu_item(
                 &format!("{}  Focus selection", icons::FOCUS),

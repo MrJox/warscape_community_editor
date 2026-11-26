@@ -462,6 +462,12 @@ pub fn set_keyboard_focus_here(offset: i32) {
     call!(sys::igSetKeyboardFocusHere(offset))
 }
 
+/// Puts text on the system clipboard (through the platform's backend).
+pub fn set_clipboard_text(text: &str) {
+    let c = cs(text);
+    call!(sys::igSetClipboardText(c.as_ptr()))
+}
+
 // ---- widgets
 
 pub fn button(label: &str) -> bool {

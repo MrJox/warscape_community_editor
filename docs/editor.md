@@ -661,7 +661,7 @@ Everything becomes a script: `--tool` and `--open` first, then `--cmd` / `--scri
 `capture` (the scene offscreen, no window involved), then `quit`. Shots, captures and scripts run on the fixed-step clock (1/60 s per rendered frame), so the same
 script gives the same pixels. Exit code 1 when a script line fails.
 
-Script format: one command per line, `#` comments, double quotes group, a leading `-` lets a line fail, `frames N` waits N rendered frames. `help` in the Commands panel (or as a command)
+Script format: one command per line, `#` comments, double quotes group, a leading `-` lets a line fail, `frames N` waits N rendered frames. `help` in the Log's command line (or as a command)
 lists them all; any other `--name args` on the command line runs the command `name args`. Test commands (`assert_*`) fail the script when they do not hold; `key Ctrl+2`, `click_item 13`, `move 3 5 0 2` drive the same code paths as the keyboard,
 mouse and gizmo.
 

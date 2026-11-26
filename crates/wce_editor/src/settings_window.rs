@@ -152,8 +152,8 @@ pub fn folder_list(id: &str, folders: &mut Vec<PathBuf>) -> bool {
     changed
 }
 
-/// Shows a folder in the system's file manager.
-fn open_folder(path: &Path) {
+/// Shows a folder in the system's file manager (made first if missing: the editor's own folders).
+pub(crate) fn open_folder(path: &Path) {
     let _ = std::fs::create_dir_all(path);
     let opener = if cfg!(windows) {
         "explorer"
