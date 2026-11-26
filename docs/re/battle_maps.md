@@ -148,6 +148,10 @@ plains (aa .. ad) elsewhere.
   the camera sees (its far plane from its eye, whatever the focus, in whole chunks), so that no chunk comes and goes at the horizon; a
   chunk keeps its level within 2 cells past its ring's edge. Four worker threads build the chunks nearest first (a queued chunk no longer wanted is dropped); each
   frame the panel puts what they finished on one scene layer (a chunk's entities are a range of ids, removed in one pass).
+  A change waits for its neighbours (`MapView::apply`, 2026-11-26): a chunk's content hangs on theirs (a tile reaches right and down
+  out of the chunk it starts in; a chunk draws LF ground under the tiles a block holds), so a built chunk goes on only once nothing up
+  and left of it by a tile's reach is still coming, and a removed chunk (or block) goes off only once nothing where it and its tiles
+  reach is; at most 15 s. Each alone, a fast move from far away left tile-shaped holes down to the sea for a second or more.
 - **Ownership**: a chunk owns the placements whose origin cell it holds; every cell has one owner (the open tile, the first placement over
   it, or nobody), so the levels never overlap: a far chunk draws LF ground over the cells it owns (its own placements' too, which reach out
   of it by up to the largest tile), merged into a few rectangles. The placements over the open tile's cells are not drawn.

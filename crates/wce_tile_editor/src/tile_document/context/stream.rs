@@ -72,7 +72,7 @@ impl Lod {
     }
 
     /// Chunks a side of what it covers.
-    fn side(self) -> i32 {
+    pub fn side(self) -> i32 {
         match self {
             Self::Block | Self::Merged => BLOCK,
             Self::Distant(n) => BLOCK << n,
@@ -1168,6 +1168,17 @@ impl Streamer {
     pub fn rebuild_far(&mut self) {
         self.settled = None;
         self.wanted.retain(|_, l| !l.is_block() && *l != Lod::Far);
+    }
+
+    /// The chunks wanted and not built at their level yet, each with its side (chunks): what is still coming (`MapView::apply` holds the
+    /// changes around them until it is there).
+    pub fn pending(&self) -> Vec<(ChunkKey, i32)> {
+        self.wanted.iter().filter(|(k, l)| self.shown.get(k) != Some(l)).map(|(k, l)| (*k, l.side())).collect()
+    }
+
+    /// How many chunks a tile reaches past the one it starts in (right and down: `Frame::reach`, whole chunks).
+    pub fn reach_chunks(&self) -> i32 {
+        (self.frame().reach() + CHUNK - 1) / CHUNK
     }
 
     /// The chunks wanted and not on the scene at their level yet.
