@@ -3,7 +3,7 @@ name = "wce_editor"
 description = "The editor shell: dockspace, menus, toolbar, tool switching with a layout per tool, the viewport with gizmos, the shared panels, built-in commands and scripts, first run."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 dear-imgui-rs = "0.20"

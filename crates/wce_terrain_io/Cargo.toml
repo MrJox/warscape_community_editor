@@ -3,7 +3,7 @@ name = "wce_terrain_io"
 description = "Reads maps into the Terrain tool's model (wce_terrain) and writes them out of it, one module per game format: Attila's battle and campaign map folders (the cell layer PNGs, the LF TIFFs, explicit_tiles.txt, the .terry project, the XML settings), byte for byte."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true

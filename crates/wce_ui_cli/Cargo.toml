@@ -3,7 +3,7 @@ name = "wce_ui_cli"
 description = "wce-ui: command line and MCP server for Total War UI layouts. Opens layouts from the game's packs, converts them to XML and back, edits and renders them, and saves them into a mod pack."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "wce-ui"

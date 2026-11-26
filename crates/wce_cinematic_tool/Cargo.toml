@@ -3,7 +3,7 @@ name = "wce_cinematic_tool"
 description = "The Cinematic tool (docs/plans/cinematic.md): the movie viewer, then the keyed scene editor and its exports."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 wce_audio = { path = "../wce_audio" }

@@ -3,7 +3,7 @@ name = "wce_cinematic"
 description = "The Cinematic tool's headless layer (docs/plans/cinematic.md): the game's movies with their audio events and subtitles, the keyed scene model, its evaluation and the compilers to movies and historical battles."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true

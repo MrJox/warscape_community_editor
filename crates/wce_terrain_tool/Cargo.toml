@@ -3,7 +3,7 @@ name = "wce_terrain_tool"
 description = "The Terrain tool (Terry's replacement, docs/plans/terrain_editor.md): battle maps opened as documents and shown whole, streamed around the camera with the game's terrain shaders."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [dependencies]
 rpfm_lib.workspace = true
