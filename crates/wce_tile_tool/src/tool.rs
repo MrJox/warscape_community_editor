@@ -2316,6 +2316,61 @@ impl TileTool {
         (length(c.eye - c.target) * 0.012).max(0.8)
     }
 
+    /// The image brush at the cursor as the strokes lay it: the square its picture spans (dim) and the outline of where it weighs a
+    /// quarter or more (marching squares on a 48 x 48 grid), turned by the brush's turn, on the ground.
+    fn image_brush_outline(&self, t: &wce_tile_editor::tile_document::Tile, image: &wce_tile::brush_image::BrushImage, o: &mut Overlay) {
+        const N: usize = 48;
+        const LEVEL: f64 = 0.25;
+        let r = f64::from(self.brush.radius_m);
+        let angle = f64::from(self.brush.image_angle).to_radians();
+        let (cx, cz) = (self.cursor.x, self.cursor.z);
+        let on_ground = |dx: f64, dz: f64| {
+            let (x, z) = (cx + dx as f32, cz + dz as f32);
+            Float3::new(x, t.terrain_height(x, z) + 0.4, z)
+        };
+
+        // The square, turned as the picture is (`BrushImage::at` turns the offset the other way to sample).
+        let (s, c) = angle.sin_cos();
+        let corner = |u: f64, v: f64| on_ground(u * r * c - v * r * s, u * r * s + v * r * c);
+        let dim = overlay_colour(1.0, 0.85, 0.2, 0.35);
+        let corners = [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)];
+        for i in 0..4 {
+            o.line(corners[i], corners[(i + 1) % 4], dim);
+        }
+
+        // The weights on a grid over the square (world offsets), then the level's crossings cell by cell.
+        let step = 2.0 * r / N as f64;
+        let at = |i: usize, j: usize| (-r + i as f64 * step, -r + j as f64 * step);
+        let w = (0..=N).flat_map(|j| (0..=N).map(move |i| (i, j))).map(|(i, j)| {
+            let (dx, dz) = at(i, j);
+            image.at(dx, dz, r, angle)
+        });
+        let w = w.collect::<Vec<_>>();
+        let val = |i: usize, j: usize| w[j * (N + 1) + i];
+        let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
+        for j in 0..N {
+            for i in 0..N {
+                // The cell's corners in order round it, and where the level crosses each edge.
+                let k = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
+                let mut crossings = Vec::with_capacity(4);
+                for e in 0..4 {
+                    let (a, b) = (k[e], k[(e + 1) % 4]);
+                    let (va, vb) = (val(a.0, a.1), val(b.0, b.1));
+                    if (va >= LEVEL) != (vb >= LEVEL) {
+                        let f = (LEVEL - va) / (vb - va);
+                        let (pa, pb) = (at(a.0, a.1), at(b.0, b.1));
+                        crossings.push((pa.0 + (pb.0 - pa.0) * f, pa.1 + (pb.1 - pa.1) * f));
+                    }
+                }
+
+                // Two crossings: one line; four (a saddle): two, paired along the cell's edges.
+                for pair in crossings.chunks_exact(2) {
+                    o.line(on_ground(pair[0].0, pair[0].1), on_ground(pair[1].0, pair[1].1), gold);
+                }
+            }
+        }
+    }
+
     fn tool_overlay(&self, e: &Editor, d: &TileDocument) -> Overlay {
         let mut o = Overlay { depth_test: false, pickable: false, ..Default::default() };
         let t = d.tile();
@@ -2334,7 +2389,14 @@ impl TileTool {
         } else {
             self.brush.radius_m
         };
-        if (self.mode != TileMode::Select || veg || biome) && self.terrain_hit && e.viewport.hovered {
+        // An image brush (the height and paint brushes): its own shape, not the circle.
+        let image = self.brush.image.as_ref().filter(|_| !veg && !biome && !matches!(self.mode, TileMode::Select | TileMode::Ground));
+        if let Some(image) = image
+            && self.terrain_hit
+            && e.viewport.hovered
+        {
+            self.image_brush_outline(t, image, &mut o);
+        } else if (self.mode != TileMode::Select || veg || biome) && self.terrain_hit && e.viewport.hovered {
             let n = 64;
             let mut prev = Float3::default();
             for i in 0..=n {
