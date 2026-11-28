@@ -254,11 +254,6 @@ pub const CLIFF_FRONT_DEPTH: f64 = 1.0;
 pub const CLIFF_FOOT: f64 = CLIFF_PIECE_OUT - 1.0;
 pub const CLIFF_CLIMB: f64 = 2.0;
 pub const CLIFF_TOP: f64 = 5.0;
-
-/// How far over its pieces' top ([`CLIFF_TOP`]) the ground behind a cliff is raised (metres): their tops are bare rock, and level with
-/// the ground they showed as a shelf with the grass starting behind it (more where they lean along a ramp); a little over, the ground
-/// buries them and meets their face's edge.
-pub const CLIFF_GROUND_OVER: f64 = 0.5;
 pub const CLIFF_BACK: f64 = 8.0;
 pub const CLIFF_FALL: f64 = 25.0;
 pub const CLIFF_RAMP: f64 = 24.0;
@@ -578,7 +573,7 @@ impl Channel {
             self.blend_cliffs(&mut out, &along, origin, step, (w, h));
             let v = if self.vertical > 0.0 { self.vertical } else { 1.0 };
             for c in &mut out {
-                c.cliff = if c.cliff_hold > 0.0 { c.water + (CLIFF_TOP + CLIFF_GROUND_OVER) * v * c.cliff } else { f64::NEG_INFINITY };
+                c.cliff = if c.cliff_hold > 0.0 { c.water + CLIFF_TOP * v * c.cliff } else { f64::NEG_INFINITY };
             }
         }
 
@@ -1017,7 +1012,7 @@ mod tests {
             let cell = cells[((z + 80.0) as usize) * 201 + x as usize];
             bed.height_of(x, z, -5.5, cell).unwrap_or(-5.5)
         };
-        let top = -6.0 + CLIFF_TOP + CLIFF_GROUND_OVER;
+        let top = -6.0 + CLIFF_TOP;
         assert!((at(100.0, 20.0 + CLIFF_FOOT + CLIFF_CLIMB + 4.0) - top).abs() < 1e-6, "its top: {}", at(100.0, 31.0));
         assert!(at(100.0, 10.0) < -6.0, "the river's bed in front of it: {}", at(100.0, 10.0));
         let front = at(100.0, 20.0 + CLIFF_FOOT - 1.0);
