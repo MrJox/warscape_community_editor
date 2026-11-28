@@ -598,12 +598,12 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "river_cliff",
-        "river_cliff <point>|all left|right|outer|off | list",
-        "mark the selected river's point (or all) a cliff bank on a side (outer: the outer bank of its bend), or none (one undo entry each); \
-         list: its cliff stretches (metres along it, the side)",
+        "river_cliff <point>|all none|left|right|both|outer|river | list",
+        "the selected river's point's (or all its points') own cliff banks (outer: the outer bank of its bend; river: as the river), one \
+         undo entry; list: its cliff stretches (metres along it, the side)",
         |e, a| {
             use wce_tile_editor::tile_document::river_cliffs::cliff_mark;
-            const USAGE: &str = "usage: river_cliff <point>|all left|right|outer|off | list";
+            const USAGE: &str = "usage: river_cliff <point>|all none|left|right|both|outer|river | list";
             let sel = primary(e);
             let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
             if a.first().is_some_and(|w| w == "list") {
@@ -612,27 +612,114 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 return ok(if text.is_empty() { "no cliff banks".to_owned() } else { text.join("; ") });
             }
 
-            let n = d.tile().tscene().polygon_points(r).len();
-            let points = match a.first().map(String::as_str) {
-                Some("all") => (0..n).collect::<Vec<_>>(),
-                Some(v) => match v.parse::<usize>() {
-                    Ok(i) if i < n => vec![i],
-                    _ => return fail(format!("no point {v} (the river has {n})")),
-                },
-                None => return fail(USAGE),
-            };
-            for p in points {
-                let side = match a.get(1).map(String::as_str) {
-                    Some("left") => Some(1.0),
-                    Some("right") => Some(-1.0),
-                    Some("outer") => Some(d.tile().river_outer_side(r, p)),
-                    Some("off") => None,
-                    _ => return fail(USAGE),
-                };
-                d.set_river_cliff(r, p, side);
+            let Some(points) = river_points(d, r, a.first()) else { return fail(USAGE) };
+            match a.get(1).map(String::as_str) {
+                Some("outer") => {
+                    let marks = points.iter().map(|&p| cliff_mark(d.tile().river_outer_side(r, p))).collect::<Vec<_>>();
+                    for mark in ["left", "right"] {
+                        let of = points.iter().zip(&marks).filter(|(_, m)| **m == mark).map(|(p, _)| *p).collect::<Vec<_>>();
+                        if !of.is_empty() {
+                            d.set_river_cliff(r, &of, Some(mark));
+                        }
+                    }
+                }
+
+                Some("river") => {
+                    d.set_river_cliff(r, &points, None);
+                }
+
+                Some(m) if d.set_river_cliff(r, &points, Some(m)) => {}
+                _ => return fail(USAGE),
             }
 
             ok("")
+        },
+    );
+
+    c.add(
+        "river_cliffs",
+        "river_cliffs none|outer|left|right|both",
+        "the selected river's own cliff banks, where its points do not say (outer: the outer bank of its bends), one undo entry",
+        |e, a| {
+            let sel = primary(e);
+            let (Some(d), Some(r), Some(m)) = (document(e), sel, a.first()) else {
+                return fail("usage: river_cliffs none|outer|left|right|both");
+            };
+            if d.set_river_cliffs_mode(r, m) { ok("") } else { fail("usage: river_cliffs none|outer|left|right|both") }
+        },
+    );
+
+    c.add(
+        "river_shore",
+        "river_shore <point>|all reeds|stones|decals|bed_decals none|few|some|thick|river",
+        "the selected river's point's (or all its points') own amount of a shore's reeds, stones, shore decals or bed decals (river: as \
+         the river), one undo entry",
+        |e, a| {
+            use wce_tile_editor::tile_document::shores::{BED_DECALS_ATTR, DECALS_ATTR, REEDS_ATTR, STONES_ATTR};
+            const USAGE: &str = "usage: river_shore <point>|all reeds|stones|decals|bed_decals none|few|some|thick|river";
+            let sel = primary(e);
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            let Some(points) = river_points(d, r, a.first()) else { return fail(USAGE) };
+            let attr = match a.get(1).map(String::as_str) {
+                Some("reeds") => REEDS_ATTR,
+                Some("stones") => STONES_ATTR,
+                Some("decals") => DECALS_ATTR,
+                Some("bed_decals") => BED_DECALS_ATTR,
+                _ => return fail(USAGE),
+            };
+            let value = match a.get(2).map(String::as_str) {
+                Some("river") => None,
+                Some(v) if wce_tile::shores::amount(v).is_some() => Some(v),
+                _ => return fail(USAGE),
+            };
+            if d.set_river_point_shore(r, &points, attr, value, "Point shore") { ok("") } else { fail(USAGE) }
+        },
+    );
+
+    c.add(
+        "river_shore_random",
+        "river_shore_random <cliff runs %> <amount changes %> <seed> | reset | list",
+        "the selected river's shore variation: its points' cliffs and amounts drawn by the seed (those set by hand kept), or taken away \
+         (reset), one undo entry; list: each point's own shore values (* the variation's)",
+        |e, a| {
+            use wce_tile_editor::tile_document::river_point_shores::{POINT_SHORE_ATTRS, ShoreVariation};
+            const USAGE: &str = "usage: river_shore_random <cliff runs %> <amount changes %> <seed> | reset | list";
+            let sel = primary(e);
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            match a.first().map(String::as_str) {
+                Some("reset") => match d.reset_river_shore(r) {
+                    Ok(n) => ok(format!("{n} point(s) put back")),
+                    Err(why) => fail(why),
+                },
+                Some("list") => {
+                    let sc = d.tile().tscene();
+                    let lines = sc
+                        .polygon_points(r)
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &p)| {
+                            let own = POINT_SHORE_ATTRS
+                                .iter()
+                                .filter_map(|a| sc.get(p, a).filter(|v| !v.trim().is_empty()).map(|v| format!("{a}={v}")))
+                                .collect::<Vec<_>>();
+                            let star = if d.tile().river_point_random(r, i) { "*" } else { "" };
+                            format!("{i}{star}: {}", if own.is_empty() { "as the river".to_owned() } else { own.join(" ") })
+                        })
+                        .collect::<Vec<_>>();
+                    ok(lines.join("\n"))
+                }
+
+                _ => {
+                    let n = |i: usize| a.get(i).and_then(|v| v.parse::<f64>().ok());
+                    let (Some(cliffs), Some(amounts), Some(seed)) = (n(0), n(1), a.get(2).and_then(|v| v.parse::<u64>().ok())) else {
+                        return fail(USAGE);
+                    };
+                    match d.randomize_river_shore(r, ShoreVariation { cliffs, amounts, seed }) {
+                        Ok(n) => ok(format!("{n} point(s) varied")),
+                        Err(why) => fail(why),
+                    }
+                }
+            }
         },
     );
 
@@ -1321,4 +1408,14 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             if got == a[2] { ok("") } else { fail(format!("ground type {got} ({rgb:?})")) }
         },
     );
+}
+
+/// A river's points a script names: `all`, or one by its index; none for anything else.
+fn river_points(d: &wce_tile_editor::tile_document::TileDocument, river: usize, which: Option<&String>) -> Option<Vec<usize>> {
+    let n = d.tile().tscene().polygon_points(river).len();
+    match which.map(String::as_str) {
+        Some("all") => Some((0..n).collect()),
+        Some(v) => v.parse::<usize>().ok().filter(|&i| i < n).map(|i| vec![i]),
+        None => None,
+    }
 }

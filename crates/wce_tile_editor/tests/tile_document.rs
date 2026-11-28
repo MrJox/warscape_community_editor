@@ -3803,7 +3803,7 @@ fn a_cliff_bank_raises_its_ground_and_lays_its_pieces() {
     let before_right = right_bank(&d);
 
     // Points 2 and 3 on the left bank (+z, the river running along +x): one stretch from 75 to 185 m along (the line from x 20: halfway to x 70 and to x 240).
-    assert!(d.set_river_cliff(r, 2, Some(1.0)) && d.set_river_cliff(r, 3, Some(1.0)));
+    assert!(d.set_river_cliff(r, &[2, 3], Some("left")));
     let cliffs = d.tile().river_cliffs(r);
     assert_eq!(cliffs.len(), 1, "{cliffs:?}");
     assert!((cliffs[0].from - 75.0).abs() < 1.0 && (cliffs[0].to - 185.0).abs() < 1.0 && cliffs[0].side == 1.0, "{cliffs:?}");
@@ -3822,15 +3822,71 @@ fn a_cliff_bank_raises_its_ground_and_lays_its_pieces() {
     let others = pieces.iter().filter(|p| !p.contains("attila_cliff_") && !end_rock(p) && p.contains("BUILDING_INSTANCE")).count();
     assert!(others <= 1, "no stones on its bank: {pieces:#?}");
 
-    // Its marks taken back in two undo entries (one each).
-    assert_eq!(d.history().position(), before + 2);
-    d.history_mut().undo();
+    // Its marks taken back in one undo entry.
+    assert_eq!(d.history().position(), before + 1);
     d.history_mut().undo();
     assert!(d.tile().river_cliffs(r).is_empty());
     d.tile_mut().finish_road_jobs();
     d.finish_shores();
     assert!((ground(&d) - before_ground).abs() < 1e-3, "the ground as it was");
     assert!(d.tile().shore_items_in([0.0, 0.0, 256.0, 256.0]).iter().all(|p| !p.contains("attila_cliff_")));
+}
+
+/// A river's own cliff setting (both banks, the outer bank of its bends) under its points' own marks; a point's own amounts make its
+/// stretch's shore; the shore variation gives points values of its own and takes them away, the points set by hand kept.
+#[test]
+fn a_rivers_cliffs_and_point_shores_go_over_one_another() {
+    use wce_tile_editor::tile_document::river_point_shores::ShoreVariation;
+    use wce_tile_editor::tile_document::shores::REEDS_ATTR;
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    // Straight along x but a bend at point 3 (x 150), turning to +z (left): its outer bank the right.
+    let pts = [(20.0f32, 128.0f32), (60.0, 128.0), (100.0, 128.0), (150.0, 128.0), (190.0, 170.0), (230.0, 212.0)];
+    let line = pts.map(|(x, z)| Float3::new(x, y(&d, x, z), z)).to_vec();
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    d.set_attribute(r, "wce_shores", "1");
+
+    // Both banks along it all: two stretches, its whole length each.
+    assert!(d.set_river_cliffs_mode(r, "both"));
+    let c = d.tile().river_cliffs(r);
+    assert_eq!(c.len(), 2, "{c:?}");
+    // A point's own none parts them.
+    assert!(d.set_river_cliff(r, &[2], Some("none")));
+    assert_eq!(d.tile().river_cliffs(r).len(), 4);
+    // The outer bank of its bends: point 3's, its right; point 2's own none no matter.
+    assert!(d.set_river_cliffs_mode(r, "outer"));
+    let c = d.tile().river_cliffs(r);
+    assert!(c.len() == 1 && c[0].side == -1.0, "{c:?}");
+    // As the river again: the same.
+    assert!(d.set_river_cliff(r, &[2], None));
+    assert_eq!(d.tile().river_cliffs(r), c);
+
+    // A point's own reeds: none in its stretch, the river's thick elsewhere.
+    d.set_attribute(r, REEDS_ATTR, "thick");
+    assert!(d.set_river_point_shore(r, &[1], REEDS_ATTR, Some("none"), "Point shore"));
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    let reeds = |d: &TileDocument, x0: f32, x1: f32| {
+        d.tile().shore_items_in([x0, 100.0, x1, 156.0]).iter().filter(|p| p.starts_with("VEGETATION_INSTANCE")).count()
+    };
+    assert_eq!(reeds(&d, 48.0, 72.0), 0, "none by point 1");
+    assert!(reeds(&d, 100.0, 124.0) > 10, "thick by point 2: {}", reeds(&d, 100.0, 124.0));
+
+    // The variation: every point a cliff run's or a changed amount's at 100 %, but point 1 (set by hand).
+    let before = d.history().position();
+    let n = d.randomize_river_shore(r, ShoreVariation { cliffs: 100.0, amounts: 100.0, seed: 7 }).unwrap();
+    assert_eq!(d.history().position(), before + 1, "one undo entry");
+    assert_eq!(n, 5, "all but point 1");
+    assert_eq!(d.tile().river_point_amount(r, 1, REEDS_ATTR), Some("none"), "set by hand, kept");
+    assert!(!d.tile().river_point_random(r, 1) && d.tile().river_point_random(r, 2));
+    assert!(d.tile().river_point_cliff(r, 2).is_some() || d.tile().river_point_cliff(r, 3).is_some(), "a cliff run");
+    // Set by hand afterwards: no longer the variation's, and a reset keeps it.
+    assert!(d.set_river_point_shore(r, &[4], REEDS_ATTR, Some("few"), "Point shore"));
+    assert_eq!(d.reset_river_shore(r).unwrap(), 4, "points 0, 2, 3 and 5");
+    assert_eq!(d.tile().river_point_amount(r, 4, REEDS_ATTR), Some("few"));
+    assert!((0..6).filter(|&i| i != 1 && i != 4).all(|i| d.tile().river_point_amount(r, i, REEDS_ATTR).is_none()));
+    assert!((0..6).filter(|&i| i != 1 && i != 4).all(|i| d.tile().river_point_cliff(r, i).is_none()));
 }
 
 /// A generated river tile with no road has a ford near its middle, clear of its cliff: the river's bed there at wading depth.

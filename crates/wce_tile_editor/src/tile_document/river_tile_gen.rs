@@ -264,7 +264,8 @@ impl TileDocument {
                 })
                 .collect::<Vec<_>>();
             if points.len() >= 2 {
-                let marked = points.into_iter().filter(|&i| self.set_river_cliff(river, i, Some(b.side))).count();
+                let marked = points.len();
+                self.set_river_cliff(river, &points, Some(super::river_cliffs::cliff_mark(b.side)));
                 let mid = valley.line[(b.from + b.to) / 2];
                 made.push(format!("a cliff bank by {:.0}, {:.0} ({marked} point(s))", mid[0], mid[1]));
             } else {
