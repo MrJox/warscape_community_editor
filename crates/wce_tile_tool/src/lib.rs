@@ -8,6 +8,7 @@ mod area_brush;
 pub mod areas_chip;
 mod biomes_panel;
 mod bridge_check;
+mod brush_slots;
 mod building_effects_fix;
 mod building_spline_ui;
 mod camera_views;

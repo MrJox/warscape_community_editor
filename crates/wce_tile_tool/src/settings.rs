@@ -97,6 +97,10 @@ pub struct TileSettings {
     /// The image brush.
     pub brush_image: ImageBrush,
 
+    /// Each terrain brush's own settings as last used, by its mode's name (`MODE_NAMES`: raise, smooth, paint...; `brush_slots.rs`).
+    /// `brush_curve` and `brush_image` are the last curve and image of any brush: where a brush first starts from.
+    pub brushes: BTreeMap<String, SavedBrush>,
+
     /// Each tile's saved camera views (bookmarks), by the tile's folder (lower case, `/` separators).
     pub camera_views: BTreeMap<String, Vec<CameraView>>,
 
@@ -234,6 +238,40 @@ pub struct ImageBrush {
     pub random_angle: bool,
 }
 
+/// A terrain brush's settings as kept (`brush_slots.rs`): `BrushSettings`' numbers, its falloff curve and its image brush.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedBrush {
+    pub radius_m: f32,
+    pub strength: f32,
+    pub falloff: f32,
+    pub flatten_height: f32,
+    pub opacity: f32,
+    pub smooth_strength: f32,
+    pub noise_scale_m: f32,
+    pub stamp_height_m: f32,
+    pub curve: BrushCurve,
+    pub image: ImageBrush,
+}
+
+impl Default for SavedBrush {
+    fn default() -> Self {
+        let b = wce_tile_editor::tile_document::BrushSettings::default();
+        Self {
+            radius_m: b.radius_m,
+            strength: b.strength,
+            falloff: b.falloff,
+            flatten_height: b.flatten_height,
+            opacity: b.opacity,
+            smooth_strength: b.smooth_strength,
+            noise_scale_m: b.noise_scale_m,
+            stamp_height_m: b.stamp_height_m,
+            curve: BrushCurve::default(),
+            image: ImageBrush::default(),
+        }
+    }
+}
+
 /// A saved camera view of a tile: where the camera is and what it looks at (world metres).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -302,6 +340,7 @@ impl Default for TileSettings {
             veg_brush: VegBrush::default(),
             brush_curve: BrushCurve::default(),
             brush_image: ImageBrush::default(),
+            brushes: BTreeMap::new(),
             camera_views: BTreeMap::new(),
             reference_images: BTreeMap::new(),
             screenshot_folder: None,
