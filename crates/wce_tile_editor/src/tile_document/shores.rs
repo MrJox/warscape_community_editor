@@ -28,9 +28,23 @@ pub const DECALS_ATTR: &str = "wce_shore_decals";
 pub const BED_DECALS_ATTR: &str = "wce_bed_decals";
 
 /// The attributes the Inspector shows as rows of their own.
-pub(crate) const SHORE_ROW_ATTRS: [&str; 6] = [SHORES_ATTR, REEDS_ATTR, STONES_ATTR, SPLASHES_ATTR, DECALS_ATTR, BED_DECALS_ATTR];
+pub(crate) const SHORE_ROW_ATTRS: [&str; 10] = [
+    SHORES_ATTR,
+    REEDS_ATTR,
+    STONES_ATTR,
+    SPLASHES_ATTR,
+    DECALS_ATTR,
+    BED_DECALS_ATTR,
+    super::river_cliffs::CLIFFS_ATTR,
+    super::river_point_shores::VAR_CLIFFS_ATTR,
+    super::river_point_shores::VAR_AMOUNTS_ATTR,
+    super::river_point_shores::VAR_SEED_ATTR,
+];
 
 const DEFAULT_DECALS: &str = "some";
+
+/// Every amount's default (a river's or a lake's without one).
+pub(crate) const DEFAULT_AMOUNT: &str = "some";
 
 /// The layer an export puts the shores in.
 pub const EXPORT_LAYER: &str = "WCE shores";
@@ -82,7 +96,7 @@ impl Tile {
                 continue;
             }
 
-            let water = Water::River {
+            let mut water = Water::River {
                 line: samples.iter().map(|s| [s.x as f32, s.z as f32]).collect(),
                 water: samples.iter().map(|s| s.y as f32).collect(),
                 half: samples.iter().map(|s| (s.width * 0.5) as f32).collect(),
@@ -92,8 +106,14 @@ impl Tile {
                     .map(|&(at, length)| wce_tile::river_bed::Ford { at, length, depth: wce_tile::river_bed::FORD_DEPTH })
                     .collect(),
                 cliffs,
+                stretches: vec![],
             };
             let settings = if shore { settings(e) } else { ShoreSettings::of(0.0, 0.0) };
+            // Its points' own amounts (with its shore on).
+            if shore && let Water::River { stretches, .. } = &mut water {
+                *stretches = self.river_shore_stretches(e, &samples, &settings);
+            }
+
             let splashes = sc.get(e, SPLASHES_ATTR).as_deref().map(str::trim) != Some("0");
             out.push(ShoreWater { elem: e, water, settings, seed: seed(e), splashes });
         }
@@ -383,19 +403,18 @@ impl TileDocument {
         self.tile_mut().refresh_shores(true);
     }
 
-    /// A river's or a lake's shore in the Inspector: on or off, and how thick its reeds and stones are.
+    /// A river's or a lake's shore in the Inspector: on or off, how thick its reeds and stones are; a river's cliff banks and shore
+    /// variation.
     pub(crate) fn shore_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
         let sc = self.tile().tscene();
+        let river = sc.type_of(e) == "SplineRiverInstance";
         let on = sc.get(e, SHORES_ATTR).as_deref().map(str::trim) == Some("1");
         let has_fords = !super::river_beds::river_fords(sc.get(e, super::river_beds::FORDS_ATTR).as_deref().unwrap_or_default()).is_empty();
         let splashing = sc.get(e, SPLASHES_ATTR).as_deref().map(str::trim) != Some("0");
         ins.section("Shores");
         if has_fords {
             let mut s = splashing;
-            ins.hint(
-                "Splashes over the fords' edges (the game's battle water splash, a loop on the water). The fords' edges are lined \
-                 with stones whether or not the river has a shore.",
-            );
+            ins.hint("Splashes over the fords' edges (the game's water splash). Their edges are lined with stones either way.");
             if ins.edit_bool(SPLASHES_ATTR, "ford splashes", &mut s) && s != splashing {
                 self.set_attribute(e, SPLASHES_ATTR, if s { "1" } else { "0" });
             }
@@ -403,54 +422,103 @@ impl TileDocument {
 
         let mut shores = on;
         ins.hint(
-            "Reed beds in the shallows and on the wet bank, water lilies, small stones along the waterline; made again as the water or \
-             the ground changes and written in their own layer at export. On for the rivers and lakes the editor makes.",
+            "Reed beds, water lilies, stones and decals along the water, made again as the water or the ground changes and written in \
+             their own layer at export. A river's points can have their own amounts (the point's rows).",
         );
         if ins.edit_bool(SHORES_ATTR, "shores", &mut shores) && shores != on {
             self.set_attribute(e, SHORES_ATTR, if shores { "1" } else { "0" });
         }
 
-        if !shores {
-            return;
+        if shores {
+            let names = AMOUNTS.iter().map(|a| a.0.to_owned()).collect::<Vec<_>>();
+            for (attr, label, default, hint) in [
+                (REEDS_ATTR, "reeds", DEFAULT_REEDS, "How much of the shore reed beds take, with a few water lilies further out."),
+                (
+                    STONES_ATTR,
+                    "stones",
+                    DEFAULT_STONES,
+                    "How much of the waterline small stones line, with a boulder on the bank now and then and, rarely, a flat rock or a \
+                     mound along a river's bank.",
+                ),
+                (DECALS_ATTR, "shore decals", DEFAULT_DECALS, "How many muddy rock decals lie over a river's waterline."),
+                (BED_DECALS_ATTR, "bed decals", DEFAULT_DECALS, "How many mud decals lie on a river's bed by its edges."),
+            ] {
+                let sc = self.tile().tscene();
+                let current = sc.get(e, attr).unwrap_or_else(|| default.to_owned());
+                let mut idx = AMOUNTS.iter().position(|a| a.0 == current.trim()).unwrap_or(0) as i32;
+                let before = idx;
+                ins.hint(hint);
+                if ins.edit_choice(attr, label, &mut idx, &names) && idx != before {
+                    self.set_attribute(e, attr, AMOUNTS[idx.clamp(0, AMOUNTS.len() as i32 - 1) as usize].0);
+                }
+            }
         }
 
-        let names = AMOUNTS.iter().map(|a| a.0.to_owned()).collect::<Vec<_>>();
-        for (attr, label, default, hint) in [
-            (
-                REEDS_ATTR,
-                "reeds",
-                DEFAULT_REEDS,
-                "How much of the shore its reed beds take (bulrush, calamus, marsh plants; in the shallows and on the wet bank), with a \
-                 few water lilies further out.",
-            ),
-            (
-                STONES_ATTR,
-                "stones",
-                DEFAULT_STONES,
-                "How much of the waterline small stones line, with a small boulder on the bank now and then, and a long flat rock or a low \
-                 mound laid along a river's bank rarely (not by its fords).",
-            ),
-            (
-                DECALS_ATTR,
-                "shore decals",
-                DEFAULT_DECALS,
-                "How many muddy rock decals lie over a river's waterline, where its water meets the land (not by its fords).",
-            ),
-            (
-                BED_DECALS_ATTR,
-                "bed decals",
-                DEFAULT_DECALS,
-                "How many mud decals lie on a river's bed by its edges, under the water (not by its fords).",
-            ),
-        ] {
-            let sc = self.tile().tscene();
-            let current = sc.get(e, attr).unwrap_or_else(|| default.to_owned());
-            let mut idx = AMOUNTS.iter().position(|a| a.0 == current.trim()).unwrap_or(0) as i32;
-            let before = idx;
-            ins.hint(hint);
-            if ins.edit_choice(attr, label, &mut idx, &names) && idx != before {
-                self.set_attribute(e, attr, AMOUNTS[idx.clamp(0, AMOUNTS.len() as i32 - 1) as usize].0);
-            }
+        if river {
+            self.river_cliff_and_variation_rows(e, ins);
+        }
+    }
+
+    /// A river's cliff banks and its shore variation in the Inspector.
+    fn river_cliff_and_variation_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
+        use super::river_cliffs::{CLIFFS_ATTR, RIVER_CLIFFS};
+        use super::river_point_shores::{ShoreVariation, VAR_AMOUNTS_ATTR, VAR_CLIFFS_ATTR, VAR_SEED_ATTR};
+        let labels = ["none", "outer bends", "left bank", "right bank", "both banks"].map(str::to_owned);
+        let mode = self.tile().river_cliffs_mode(e);
+        let mut idx = RIVER_CLIFFS.iter().position(|m| *m == mode).unwrap_or(0) as i32;
+        let before = idx;
+        ins.hint(
+            "Rock cliff pieces along a bank, the ground behind raised to their top, nothing else of the shore under them: none, the \
+             outer bank where the river bends sharply, or a side (as the river runs) along it all. A point's own cliff setting (its \
+             rows) goes over this, from halfway to the point before to halfway to the one after.",
+        );
+        if ins.edit_choice(CLIFFS_ATTR, "cliffs", &mut idx, &labels) && idx != before {
+            self.set_river_cliffs_mode(e, RIVER_CLIFFS[idx.clamp(0, RIVER_CLIFFS.len() as i32 - 1) as usize]);
+        }
+
+        // The shore variation: its settings kept on the river.
+        let v = self.tile().river_shore_variation(e);
+        let num = |x: f64| wce_tile::ted_scene::format_number(x);
+        let mut cliffs = v.cliffs as f32;
+        ins.hint("How likely each point starts a run of two or three points with a cliff (the outer bank of its bend), in percent.");
+        if ins.edit_float(VAR_CLIFFS_ATTR, "cliff runs (%)", &mut cliffs, 0.5, 0.0, 100.0) && f64::from(cliffs) != v.cliffs {
+            self.set_attribute(e, VAR_CLIFFS_ATTR, &num(f64::from(cliffs).round()));
+        }
+
+        let mut amounts = v.amounts as f32;
+        ins.hint("How likely each point's reeds, stones and decals are a step more or less than the river's, each, in percent.");
+        if ins.edit_float(VAR_AMOUNTS_ATTR, "amount changes (%)", &mut amounts, 0.5, 0.0, 100.0) && f64::from(amounts) != v.amounts {
+            self.set_attribute(e, VAR_AMOUNTS_ATTR, &num(f64::from(amounts).round()));
+        }
+
+        let mut seed = v.seed as i64;
+        ins.hint("The draw: another seed, other points.");
+        if ins.edit_int(VAR_SEED_ATTR, "variation seed", &mut seed, 0.2) && seed.max(0) as u64 != v.seed {
+            self.set_attribute(e, VAR_SEED_ATTR, &seed.max(0).to_string());
+        }
+
+        // Lucide's refresh (`wce_editor::icons::REFRESH_CW`).
+        let mut apply = None;
+        if ins.row_buttons(&[("shore_var_reroll", "\u{e145}", "Another seed, and randomize with it", true)], "") == Some(0) {
+            let seed = (v.seed.wrapping_mul(2_654_435_761).wrapping_add(1)) % 1_000_000;
+            apply = Some(ShoreVariation { seed, ..v });
+        }
+
+        ins.hint(
+            "Gives the points cliffs and amounts of their own by the settings above, in place of those it gave before; the points set \
+             by hand keep theirs. One undo entry.",
+        );
+        if ins.button("shore_var_apply", "Randomize shore", true) {
+            apply = Some(v);
+        }
+
+        if let Some(v) = apply {
+            let _ = self.randomize_river_shore(e, v);
+        }
+
+        ins.hint("Takes the values the variation gave the points away (those set by hand stay).");
+        if ins.button("shore_var_reset", "Reset shore variation", true) {
+            let _ = self.reset_river_shore(e);
         }
     }
 }

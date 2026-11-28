@@ -105,6 +105,11 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    as a wall on the bisector: now blended over 20 m from the other leg, behind its own bank (`Channel::blend_cliffs`). The bank's offset
    line folded by the inside of a tight bend and piled pieces there, turned every way: its folded samples are left out. Two rocks at each
    end where the face is half its height (`cliff_ends`, `attila_rock_01/03/04`).
+   **Reworked 2026-11-28** (user): a one-point cliff (27 m) had 9 m ramps tilting its pieces 30-40° and a shoulder 28 m past its ends:
+   ramps are 24 m always, the shoulder 0.3 m a metre back. Shores by point (user's choices): the river's *cliffs* in its Shores (none,
+   outer bends, left, right, both) with each point's own over it (as the river, none, left, right, both); each point's own reeds, stones
+   and decals too (`ShoreStretch`, blended over 10 m); a seeded *Shore variation* (cliff runs of 2-3 points on the outer bank, amounts a
+   step up or down; hand-set points kept, `wce_shore_random`); the river panel's long notes moved into tooltips.
 7. **Batch**: every crossing and ford tile the spots use, N variations each (by seed), exported into one pack with the battle tile
    database (TDD's, the variations added).
 8. **The map patch**: TDD's battle map placements at the spots replaced: a crossing (its variation by seed) where roads arrive at one end

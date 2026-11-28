@@ -312,12 +312,13 @@ impl TileTool {
 
         self.river_ui.from = self.river_ui.from.clamp(0, n - 1);
         gui::separator_text("Gradual change along the river");
-        gui::push_text_wrap_pos(0.0);
-        gui::text_disabled(
-            "Changes one setting of the river's points gradually from one point to another, by their distance along it: a river widening \
-             towards its mouth, its current slowing as it widens, its foam fading.",
-        );
-        gui::pop_text_wrap_pos();
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Changes one setting of the river's points gradually from one point to another, by their distance along it: a river \
+                 widening towards its mouth, its current slowing as it widens, its foam fading.",
+            );
+        }
+
         let labels = RAMPS.iter().map(|r| r.1).collect::<Vec<_>>();
         gui::row_tip("setting", "What changes: the water's width (the game's metres), its flow speed, its foam or its terrain offset.");
         gui::set_next_item_width(-1.0);
@@ -364,13 +365,14 @@ impl TileTool {
         }
 
         gui::separator_text("Width variation");
-        gui::push_text_wrap_pos(0.0);
-        gui::text_disabled(
-            "Each point's width changed by a deviation drawn between the two percentages by the seed: the same seed, the same river. \
-             Randomizing again starts from the widths it had before (no piling up); the points joined to a river link keep theirs. Its \
-             points' widths are also dragged in the viewport, by the squares on the edges of its water.",
-        );
-        gui::pop_text_wrap_pos();
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Each point's width changed by a deviation drawn between the two percentages by the seed: the same seed, the same river. \
+                 Randomizing again starts from the widths it had before (no piling up); the points joined to a river link keep theirs. \
+                 Its points' widths are also dragged in the viewport, by the squares on the edges of its water.",
+            );
+        }
+
         gui::row_tip(
             "deviation (%)",
             "How much narrower (the first, negative) to how much wider (the second) a point may get, in percent.",

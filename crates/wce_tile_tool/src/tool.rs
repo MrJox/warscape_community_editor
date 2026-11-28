@@ -4773,54 +4773,63 @@ impl TileTool {
         self.spline_value_rows(d, s, shown, &targets);
     }
 
-    /// A river point's cliff bank (`shown`'s, set on `targets`): a checkbox (on: the outer bank of the bend there), then which bank.
-    fn river_cliff_rows(&mut self, d: &mut TileDocument, s: usize, shown: usize, targets: &[usize]) {
-        let side = d.tile().river_point_cliff(s, shown);
-        let mut on = side.is_some();
-        if gui::checkbox("cliff bank", &mut on) {
-            let before = d.history().position();
-            for &t in targets {
-                let side = on.then(|| d.tile().river_outer_side(s, t));
-                d.set_river_cliff(s, t, side);
-            }
-
-            let n = d.history().position() - before;
-            if n > 1 {
-                d.join_last(n, if on { "Cliff bank" } else { "No cliff bank" });
-            }
-        }
-
+    /// A river point's own shore (its reeds, stones, decals and cliff banks over the river's, from halfway to the point before to
+    /// halfway to the one after): `shown`'s, edited into `targets`, one undo entry each.
+    fn river_point_shore_rows(&mut self, d: &mut TileDocument, s: usize, shown: usize, targets: &[usize]) {
+        use wce_tile_editor::tile_document::river_cliffs::{CLIFF_ATTR, CLIFF_MARKS};
+        use wce_tile_editor::tile_document::river_point_shores::POINT_AMOUNT_ATTRS;
+        gui::separator_text("Shore at this point");
         if gui::is_item_hovered() {
             gui::set_tooltip(
-                "The bank on one side is a cliff from halfway to the point before to halfway to the one after (marked neighbours on one \
-                 side: one cliff): rock cliff pieces along it, the ground behind raised to their top, no reeds or stones under them. \
-                 Ticked, the outer bank of the river's bend here.",
+                "The shore from halfway to the point before to halfway to the one after: as the river (its Shores section), or its own. \
+                 With all points ticked, every point's. The river's shore variation gives points values of their own too; one set here \
+                 is kept by it.",
             );
         }
 
-        let Some(side) = side else { return };
-        gui::same_line();
-        for (label, value) in [("left bank", 1.0), ("right bank", -1.0)] {
-            if gui::radio_button(label, side == value) && side != value {
-                let before = d.history().position();
-                for &t in targets {
-                    d.set_river_cliff(s, t, Some(value));
-                }
-
-                let n = d.history().position() - before;
-                if n > 1 {
-                    d.join_last(n, "Cliff bank side");
-                }
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Which bank is the cliff, as the river runs (downstream: its first point to its last).");
-            }
-
-            gui::same_line();
+        let t = d.tile();
+        let random = t.river_point_random(s, shown);
+        let amounts = wce_tile::shores::AMOUNTS.map(|a| a.0);
+        let sc = t.tscene();
+        let river_amount = |attr: &str| sc.get(s, attr).unwrap_or_else(|| "some".to_owned());
+        let mut rows: Vec<(&str, &str, Option<&str>, String, Vec<&str>)> = vec![];
+        for (attr, label) in POINT_AMOUNT_ATTRS.into_iter().zip(["reeds", "stones", "shore decals", "bed decals"]) {
+            rows.push((attr, label, t.river_point_amount(s, shown, attr), river_amount(attr), amounts.to_vec()));
         }
 
-        gui::new_line();
+        let sides = t.river_point_cliff_sides(s, shown);
+        let effective = match sides.as_slice() {
+            [] => "none",
+            [a] if *a > 0.0 => "left",
+            [_] => "right",
+            _ => "both",
+        };
+        rows.push((CLIFF_ATTR, "cliffs", t.river_point_cliff(s, shown), effective.to_owned(), CLIFF_MARKS.to_vec()));
+        for (attr, label, own, river, values) in rows {
+            let mut names = vec![format!("as the river ({river})")];
+            names.extend(values.iter().map(|v| (*v).to_owned()));
+            let mut idx = own.and_then(|o| values.iter().position(|v| *v == o)).map_or(0, |i| i as i32 + 1);
+            let before = idx;
+            let labels = names.iter().map(String::as_str).collect::<Vec<_>>();
+            let shown_label = if random && own.is_some() { format!("{label} (varied)") } else { label.to_owned() };
+            gui::set_next_item_width(gui::content_region_avail().x * 0.55);
+            gui::combo(&format!("{shown_label}##point_shore_{attr}"), &mut idx, &labels);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(match attr {
+                    CLIFF_ATTR => {
+                        "Rock cliff pieces along a bank (left or right as the river runs, or both), the ground behind raised to \
+                                   their top, nothing else of the shore under them; neighbouring points' cliffs on one side make one."
+                    }
+                    _ => "How much of it the shore has here (the river's Shores amounts).",
+                });
+            }
+
+            if idx != before {
+                let value = (idx > 0).then(|| values[(idx - 1) as usize]);
+                let name = if attr == CLIFF_ATTR { "Point cliff bank" } else { "Point shore" };
+                d.set_river_point_shore(s, targets, attr, value, name);
+            }
+        }
     }
 
     /// A spline's per-point values (a river's width, foam, flow...): `shown`'s, edited into `targets`. False when its kind has none.
@@ -4828,7 +4837,7 @@ impl TileTool {
         let points = d.tile().tscene().polygon_points(s);
         let kind = d.tile().tscene().type_of(s).to_owned();
         if kind == "SplineRiverInstance" {
-            self.river_cliff_rows(d, s, shown, targets);
+            self.river_point_shore_rows(d, s, shown, targets);
         }
 
         let Some(t) = wce_tile::instance_templates::template(&kind) else { return false };

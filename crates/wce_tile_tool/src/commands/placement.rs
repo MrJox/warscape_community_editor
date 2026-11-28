@@ -359,6 +359,11 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
             rows.lines.push(format!("#{el} {}", d.tile().tscene().type_of(el)));
             let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
             d.inspect(src, &mut rows);
+            // A river's bed and shores, below its profile.
+            if a.get(1).is_none() {
+                d.inspect_river_tail(el, &mut rows);
+            }
+
             for l in &rows.lines {
                 wce_foundation::log::info(l.clone());
             }

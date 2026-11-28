@@ -212,20 +212,77 @@ impl ShoreSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Water {
     /// A river: its middle line's samples (x, z), the water's height there and its half width; its fords' held stretches (where each
-    /// starts and ends along it, metres); its cliff banks.
+    /// starts and ends along it, metres); its cliff banks; its stretches whose shore is not the river's (its points' own settings).
     River {
         line: Vec<[f32; 2]>,
         water: Vec<f32>,
         half: Vec<f32>,
         fords: Vec<crate::river_bed::Ford>,
         cliffs: Vec<crate::river_bed::CliffBank>,
+        stretches: Vec<ShoreStretch>,
     },
 
     /// A lake: its outline (x, z) and its water's height.
     Lake { outline: Vec<[f32; 2]>, water: f32 },
 }
 
+/// A stretch of a river (metres along its line) whose shore has its own settings (a river point's, from halfway to the point before to
+/// halfway to the one after).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShoreStretch {
+    pub from: f32,
+    pub to: f32,
+    pub settings: ShoreSettings,
+}
+
+/// How far a stretch's settings blend into its neighbours' over its ends (metres, half each side): the shore changes over a few metres,
+/// not at a line.
+pub const STRETCH_BLEND: f32 = 10.0;
+
+impl ShoreSettings {
+    /// These amounts moved `w` of the way to `o`'s (0 .. 1; the reach of the water's edge kept).
+    fn towards(self, o: &Self, w: f32) -> Self {
+        let l = |a: f32, b: f32| a + (b - a) * w;
+        Self {
+            reeds: l(self.reeds, o.reeds),
+            stones: l(self.stones, o.stones),
+            decals: l(self.decals, o.decals),
+            bed_decals: l(self.bed_decals, o.bed_decals),
+            ..self
+        }
+    }
+}
+
 impl Water {
+    /// The shore's settings `along` a river: the river's (`s`), or a stretch's of its own, blended over [`STRETCH_BLEND`] at its ends;
+    /// a lake's, `s`.
+    #[must_use]
+    pub fn settings_at(&self, along: f32, s: &ShoreSettings) -> ShoreSettings {
+        let Self::River { stretches, .. } = self else { return *s };
+        let mut out = *s;
+        for st in stretches {
+            let inside = (along - st.from).min(st.to - along);
+            let w = ((inside + STRETCH_BLEND * 0.5) / STRETCH_BLEND).clamp(0.0, 1.0);
+            if w > 0.0 {
+                let delta = s.towards(&st.settings, w);
+                out = Self::add_delta(out, s, &delta);
+            }
+        }
+
+        out
+    }
+
+    /// `out` plus how far `to` is from `base` (each stretch's share added: two meeting halfway give their mean).
+    fn add_delta(out: ShoreSettings, base: &ShoreSettings, to: &ShoreSettings) -> ShoreSettings {
+        ShoreSettings {
+            reeds: out.reeds + to.reeds - base.reeds,
+            stones: out.stones + to.stones - base.stones,
+            decals: out.decals + to.decals - base.decals,
+            bed_decals: out.bed_decals + to.bed_decals - base.bed_decals,
+            ..out
+        }
+    }
+
     /// The water's edge from a place: how far outside it (negative: inside), the water's height at the nearest place, how far along a
     /// river that place is and where across it (-1 at one edge of the water, 1 at the other; NaN for a lake).
     fn edge(&self, x: f32, z: f32) -> (f32, f32, f32, f32) {
@@ -725,6 +782,7 @@ pub fn place(
             let [a, b, c, d] = cell_numbers(seed, i, j);
             let (x, z) = ((i as f32 + b) * CELL, (j as f32 + c) * CELL);
             let (edge, level, along, u) = water.edge(x, z);
+            let s = &water.settings_at(along, s);
             // A ford: across its river, the stretch held shallow, and its two curved ends (where it slopes down to the deep water).
             let fords: &[crate::river_bed::Ford] = if let Water::River { fords, .. } = water { fords } else { &[] };
             let in_water = edge <= 0.5;
@@ -833,6 +891,7 @@ pub fn place(
         let mut along = BANK_STEP * 0.5;
         let mut k = 0i64;
         while along < length {
+            let s = &water.settings_at(along, s);
             if let Some((p, dir, h)) = at_along(line, half, along) {
                 for side in [-1.0f32, 1.0] {
                     let near_ford = fords.iter().any(|f| {
@@ -996,6 +1055,7 @@ mod tests {
             half: vec![5.0, 5.0],
             fords: vec![],
             cliffs: vec![],
+            stretches: vec![],
         };
         (w, |_: f32, z: f32| ((z - 50.0).abs() - 6.0) * 0.4)
     }
@@ -1027,6 +1087,7 @@ mod tests {
             half: vec![10.0, 10.0],
             fords: vec![ford],
             cliffs: vec![],
+            stretches: vec![],
         };
         // Deep but at the ford (its held stretch, curved), a quarter metre there.
         let g = move |x: f32, z: f32| {
@@ -1079,6 +1140,7 @@ mod tests {
             half: vec![10.0, 10.0],
             fords: vec![ford],
             cliffs: vec![],
+            stretches: vec![],
         };
         let g = |_: f32, z: f32| ((z - 50.0).abs() - 11.0) * 0.5;
         let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85, 0.85), &ShoreKeys::default(), &g, &|_, _| false, 9);
@@ -1123,6 +1185,7 @@ mod tests {
             half: vec![10.0, 10.0],
             fords: vec![],
             cliffs: vec![cliff],
+            stretches: vec![],
         };
         let keys = ShoreKeys { cliffs: vec!["cliff_a".into(), "cliff_b".into()], cliff_ends: vec![], ..ShoreKeys::default() };
         let g = |_: f32, z: f32| if (z - 50.0).abs() < 8.0 { -1.0 } else { 0.5 };
@@ -1153,11 +1216,35 @@ mod tests {
             half: vec![10.0, 10.0],
             fords: vec![],
             cliffs: vec![CliffBank { side: -1.0, ..cliff }],
+            stretches: vec![],
         };
         let shore = place(&right, &ShoreSettings::of(0.0, 0.0), &keys, &g, &|_, _| false, 3);
         assert!(
             shore.cliffs.iter().all(|c| (c.placed.z - (100.0 - out)).abs() < 1e-3 && (c.placed.yaw.rem_euclid(360.0) - 180.0).abs() < 1e-3)
         );
+    }
+
+    #[test]
+    fn a_stretch_of_its_own_changes_the_shore_there_only() {
+        // Thick reeds along the river but none from 80 to 160 m along.
+        let none = ShoreSettings::of(0.0, 0.25);
+        let w = Water::River {
+            line: vec![[0.0, 50.0], [240.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![10.0, 10.0],
+            fords: vec![],
+            cliffs: vec![],
+            stretches: vec![ShoreStretch { from: 80.0, to: 160.0, settings: none }],
+        };
+        let base = ShoreSettings::of(0.85, 0.25);
+        assert_eq!(w.settings_at(120.0, &base).reeds, 0.0);
+        assert_eq!(w.settings_at(20.0, &base).reeds, 0.85);
+        assert!((w.settings_at(80.0, &base).reeds - 0.425).abs() < 1e-6, "halfway at its end");
+        let g = |_: f32, z: f32| if (z - 50.0).abs() < 9.0 { -1.0 } else { 0.5 };
+        let shore = place(&w, &base, &ShoreKeys::default(), &g, &|_, _| false, 3);
+        let reeds = |a: f32, b: f32| shore.reeds.iter().filter(|p| p.x > a && p.x < b).count();
+        assert_eq!(reeds(90.0, 150.0), 0, "none in its stretch");
+        assert!(reeds(10.0, 70.0) > 20 && reeds(170.0, 230.0) > 20, "thick either side: {} {}", reeds(10.0, 70.0), reeds(170.0, 230.0));
     }
 
     #[test]
