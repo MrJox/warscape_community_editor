@@ -137,7 +137,7 @@ run_ui.sh), `~/.cache/wce_cli/` (corpus manifests, C++ harnesses), `/tmp/wce_rs/
 | Rust Scene panel | rows 23 px instead of 19 (the Dummy replacing the C++ cursor move added the item spacing) | `29ff1d6` |
 | Rust app | blurry on scaled HiDPI displays | high pixel density window (`6acfa25`) |
 | C++ `libs/vfs/rpfm_client.cpp` | use-after-free: the server version was read through a pointer into a destroyed temporary `Json` (only with a server that answers `/version`, i.e. rpfm_server 5.2) | `5fffec9` |
-| DXVK 3.1.1 | `ResizeBuffers` gave the presenter the old size; on Wayland a maximized window kept its first swapchain (blurry) | one-line backport of the upstream master fix in `cmake/linux_deps.cmake`, noted in THIRD_PARTY.md (`cd17a9c`) |
+| DXVK 3.1.1 | `ResizeBuffers` gave the presenter the old size; on Wayland a maximized window kept its first swapchain (blurry) | one-line backport of the upstream master fix in `cmake/linux_deps.cmake`, noted in THIRD_PARTY.md (`cd17a9c`); fixed upstream in 3.2, backport dropped |
 | C++ build tree | stale objects ninja did not rebuild after header changes ("double free", `std::bad_alloc`) | `cmake --build build --clean-first`; not a source change |
 
 ## 5. Running the C++ app for comparisons on Linux

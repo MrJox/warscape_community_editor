@@ -4,9 +4,10 @@
 # development files.
 
 # The Flatpak (packaging/flatpak) fetches the same releases itself: a new tag here goes into its manifest too.
-set(WCE_DXVK_TAG "v3.1.1" CACHE STRING "DXVK-native release to build")
-set(WCE_VKD3D_TAG "vkd3d-2.1" CACHE STRING "vkd3d release to build")
-set(WCE_SPIRV_HEADERS_TAG "vulkan-sdk-1.4.321.0" CACHE STRING "SPIRV-Headers tag (vkd3d needs them)")
+# Plain variables, not cache entries: a build tree configured before a bump would keep the old tag in CMakeCache.txt.
+set(WCE_DXVK_TAG "v3.2")
+set(WCE_VKD3D_TAG "vkd3d-2.1")
+set(WCE_SPIRV_HEADERS_TAG "vulkan-sdk-1.4.321.0") # vkd3d needs them
 
 set(WCE_DEPS_DIR "${CMAKE_BINARY_DIR}/_deps")
 set(WCE_DEPS_PREFIX "${WCE_DEPS_DIR}/prefix")
@@ -20,7 +21,13 @@ endfunction()
 
 function(wce_dep_clone name url tag)
     set(dir "${WCE_DEPS_DIR}/${name}")
-    if(NOT EXISTS "${dir}/.wce_cloned")
+    # A clone of another tag (the pin changed) is cloned again.
+    set(cloned "")
+    if(EXISTS "${dir}/.wce_cloned")
+        file(READ "${dir}/.wce_cloned" cloned)
+        string(STRIP "${cloned}" cloned)
+    endif()
+    if(NOT cloned STREQUAL tag)
         file(REMOVE_RECURSE "${dir}")
         message(STATUS "Fetching ${name} ${tag}")
         wce_dep_run("git clone ${name}" git -c advice.detachedHead=false clone --quiet --depth 1 --branch ${tag} --recurse-submodules --shallow-submodules ${url} "${dir}")
@@ -38,13 +45,10 @@ if(WCE_JOBS EQUAL 0)
 endif()
 
 # ---- DXVK-native: libdxvk_d3d11.so, libdxvk_dxgi.so and the Windows/D3D headers (include/dxvk)
-# Local changes (`wce_dxvk_patch`; each applies once, and a source that has it already is left alone):
-# - backported from upstream master (not in a release yet): D3D11SwapChain::ChangeProperties gave the presenter the old size on
-#   ResizeBuffers. Windows and X11 surfaces report their size, so it did not matter there; a Wayland surface does not, and a maximized
-#   window kept its first swapchain, stretched by the compositor;
-# - Presenter::getSupportedFormats / getSupportedPresentModes ask again when the second call returns VK_INCOMPLETE (the count changed
-#   between the two calls, as the spec allows: seen on NVIDIA under Wayland while the window was resized). DXVK took it as a failure,
-#   kept no swapchain, and the next Present crashed in D3D11SwapChain::PresentImage (2026-11-12).
+# Local change (`wce_dxvk_patch`; it applies once, and a source that has it already is left alone):
+# Presenter::getSupportedFormats / getSupportedPresentModes ask again when the second call returns VK_INCOMPLETE (the count changed
+# between the two calls, as the spec allows: seen on NVIDIA under Wayland while the window was resized). DXVK took it as a failure,
+# kept no swapchain, and the next Present crashed in D3D11SwapChain::PresentImage (2026-11-12). Still needed in v3.2.
 function(wce_dxvk_patch file old new what)
     set(path "${WCE_DEPS_DIR}/dxvk/${file}")
     file(READ "${path}" src)
@@ -60,13 +64,9 @@ function(wce_dxvk_patch file old new what)
     endif()
 endfunction()
 
-set(WCE_DXVK_STAMP "${WCE_DEPS_PREFIX}/.dxvk-${WCE_DXVK_TAG}-resize-incomplete")
+set(WCE_DXVK_STAMP "${WCE_DEPS_PREFIX}/.dxvk-${WCE_DXVK_TAG}-incomplete")
 if(NOT EXISTS "${WCE_DXVK_STAMP}")
     wce_dep_clone(dxvk https://github.com/doitsujin/dxvk.git ${WCE_DXVK_TAG})
-    wce_dxvk_patch(src/d3d11/d3d11_swapchain.cpp
-        "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ m_desc.Width, m_desc.Height });"
-        "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ pDesc->Width, pDesc->Height });"
-        "the swapchain resize backport")
     foreach(query "formats|getSupportedFormats(formats)|surface formats" "modes|getSupportedPresentModes(modes)|present modes")
         string(REPLACE "|" ";" query "${query}")
         list(GET query 1 call)
