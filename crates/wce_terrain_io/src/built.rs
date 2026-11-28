@@ -16,6 +16,7 @@
 //! alone does not give: with them kept, 110 of its 111 maps' CHMFs come out byte for byte from their DDS, `built_lf_check`). A shipped
 //! CHMF of another region layout is kept as it was (`settlement_preset`). ASSUMPTION: a lowered region keeps its old tag maximum.
 
+pub mod campaign_heights;
 pub mod scene;
 
 use std::collections::BTreeMap;
