@@ -1,7 +1,8 @@
 //! A river's shore by its points: a point's own reeds, stones, shore decals, bed decals (the river's attributes' names, on the point:
 //! an amount's name; missing: as the river) and cliff banks (`river_cliffs.rs`) over the river's, from halfway to the point before to
 //! halfway to the one after (`wce_tile::shores::ShoreStretch`); and the shore variation, which gives the points such values by a seed:
-//! runs of points with a cliff on the outer bank of their bend, and amounts a step more or less than the river's. A point set by hand
+//! runs of points unlike the river's cliffs (a cliff on the outer bank of their bend where it has none, a break in it where it has
+//! one), and amounts a step more or less than the river's. A point set by hand
 //! keeps its values; the variation's are marked `wce_shore_random` and drawn again (or taken away) whole.
 
 use wce_tile::shores::{AMOUNTS, ShoreSettings, ShoreStretch, amount};
@@ -9,15 +10,18 @@ use wce_tile::shores::{AMOUNTS, ShoreSettings, ShoreStretch, amount};
 use super::commands::{ABSENT, TedPointAttrsCommand};
 use super::river_cliffs::{CLIFF_ATTR, OUTER_BEND_DEG, cliff_mark};
 use super::river_links::RIVER_ID_ATTR;
-use super::shores::{BED_DECALS_ATTR, DECALS_ATTR, REEDS_ATTR, STONES_ATTR};
+use super::shores::{BED_DECALS_ATTR, DECALS_ATTR, RAPIDS_ATTR, REEDS_ATTR, STONES_ATTR};
 use super::view::RiverSample;
 use super::{Tile, TileDocument};
 
 /// The amounts a point can have of its own, the Inspector's order.
-pub const POINT_AMOUNT_ATTRS: [&str; 4] = [REEDS_ATTR, STONES_ATTR, DECALS_ATTR, BED_DECALS_ATTR];
+pub const POINT_AMOUNT_ATTRS: [&str; 5] = [REEDS_ATTR, STONES_ATTR, DECALS_ATTR, BED_DECALS_ATTR, RAPIDS_ATTR];
+
+/// The amounts the shore variation changes (not the rapids: a step up from none put them everywhere).
+pub const VARIED_ATTRS: [&str; 4] = [REEDS_ATTR, STONES_ATTR, DECALS_ATTR, BED_DECALS_ATTR];
 
 /// Every attribute of a point's own shore.
-pub const POINT_SHORE_ATTRS: [&str; 5] = [REEDS_ATTR, STONES_ATTR, DECALS_ATTR, BED_DECALS_ATTR, CLIFF_ATTR];
+pub const POINT_SHORE_ATTRS: [&str; 6] = [REEDS_ATTR, STONES_ATTR, DECALS_ATTR, BED_DECALS_ATTR, RAPIDS_ATTR, CLIFF_ATTR];
 
 /// A point whose shore values are the variation's (`1`), not set by hand.
 pub const RANDOM_ATTR: &str = "wce_shore_random";
@@ -73,12 +77,13 @@ impl Tile {
                 continue;
             }
 
-            let [reeds, stones, decals, bed_decals] = own;
+            let [reeds, stones, decals, bed_decals, rapids] = own;
             let settings = ShoreSettings {
                 reeds: reeds.unwrap_or(base.reeds),
                 stones: stones.unwrap_or(base.stones),
                 decals: decals.unwrap_or(base.decals),
                 bed_decals: bed_decals.unwrap_or(base.bed_decals),
+                rapids: rapids.unwrap_or(base.rapids),
                 ..*base
             };
             out.push(ShoreStretch { from: from as f32, to: to as f32, settings });
@@ -105,8 +110,9 @@ impl Tile {
     }
 
     /// The shore values the variation gives a river's points (each point's attribute and value; none: the river's), by its seed:
-    /// runs of two or three points (not its ends) started at a point by its cliff chance, a cliff on the outer bank of the run's middle
-    /// point's bend (a side by the seed where it runs straight), and each amount a step more or less than the river's by its amount
+    /// runs of two or three points (not its ends) started at a point by its cliff chance, unlike the river's own cliffs at the run's middle
+    /// point (none there: a cliff on the outer bank of its bend, a side by the seed where it runs straight; one there: a break, `none`),
+    /// and each amount a step more or less than the river's by its amount
     /// chance.
     fn shore_variation_values(&self, river: usize, v: &ShoreVariation, river_amounts: &[&str; 4]) -> Vec<Vec<(&'static str, String)>> {
         let n = self.tscene().polygon_points(river).len();
@@ -117,15 +123,21 @@ impl Tile {
                 let run = if unit(v.seed, (i * 8 + 1) as u64) < 0.5 { 2 } else { 3 };
                 let last = (i + run - 1).min(n - 2);
                 let mid = (i + last) / 2;
-                let side = if self.river_bend_deg(river, mid) >= OUTER_BEND_DEG * 0.5 {
-                    self.river_outer_side(river, mid)
-                } else if unit(v.seed, (i * 8 + 2) as u64) < 0.5 {
-                    1.0
+                // Where the river has a cliff, a break in it; where it has none, a cliff.
+                let mark = if self.river_mode_cliff_sides(river, mid).is_empty() {
+                    let side = if self.river_bend_deg(river, mid) >= OUTER_BEND_DEG * 0.5 {
+                        self.river_outer_side(river, mid)
+                    } else if unit(v.seed, (i * 8 + 2) as u64) < 0.5 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    cliff_mark(side)
                 } else {
-                    -1.0
+                    "none"
                 };
                 for values in &mut out[i..=last] {
-                    values.push((CLIFF_ATTR, cliff_mark(side).to_owned()));
+                    values.push((CLIFF_ATTR, mark.to_owned()));
                 }
 
                 // A gap of a point at least before the next run.
@@ -136,7 +148,7 @@ impl Tile {
         }
 
         for (i, values) in out.iter_mut().enumerate() {
-            for (k, attr) in POINT_AMOUNT_ATTRS.iter().enumerate() {
+            for (k, attr) in VARIED_ATTRS.iter().enumerate() {
                 let draw = (i * 8 + 3 + k) as u64;
                 if unit(v.seed, draw) * 100.0 >= v.amounts {
                     continue;
@@ -225,7 +237,7 @@ impl TileDocument {
             return Err("select a river".to_owned());
         }
 
-        let river_amounts = POINT_AMOUNT_ATTRS.map(|a| {
+        let river_amounts = VARIED_ATTRS.map(|a| {
             let current = sc.get(river, a).unwrap_or_default();
             AMOUNTS.iter().map(|x| x.0).find(|x| *x == current.trim()).unwrap_or(super::shores::DEFAULT_AMOUNT)
         });

@@ -116,6 +116,9 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    18 m slab, so the last piece stood up to 1.25 m over it and the one before sank 1.5 m under it; the ground now follows the pieces'
    tops (`CliffShape`, `shores::cliff_spans`), easing into the ramp behind them; the shoulder is gone; a bank line looping back round
    a kink of the river (two pieces on one spot) is left out.
+   Then (user): cliffs only with the river's shore on (their rows under it); the variation's cliff runs are unlike the river's
+   cliffs (a break where it has one: at 0 % a river with both banks' cliffs kept them all, read as a fault); *rapids*, rocks out on
+   the water in clumps with splashes (`shores::rapids`).
 7. **Batch**: every crossing and ford tile the spots use, N variations each (by seed), exported into one pack with the battle tile
    database (TDD's, the variations added).
 8. **The map patch**: TDD's battle map placements at the spots replaced: a crossing (its variation by seed) where roads arrive at one end

@@ -22,6 +22,7 @@
 #   splash        an effect (vfx): the looping splash over a ford's ends.
 #   cliffs        buildings: a river's cliff bank's pieces (none here: the ground behind is raised alone).
 #   cliff_ends    buildings: the rocks at a cliff bank's ends (none here).
+#   rapids        buildings: a river's rapids' rocks, `{ key, top }` (none here).
 
 reeds = ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"]
 lilies = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"]
