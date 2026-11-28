@@ -9,7 +9,17 @@ fn main() {
     for (n, rows) in wce_tile_io::attila::river::river_rows(&block).iter().enumerate() {
         println!("river {n}: {} rows", rows.len());
         for r in rows.iter().step_by((rows.len() / 8).max(1)) {
-            println!("  centre {:8.2} {:6.2} {:8.2} width {:.1}", r.centre[0], r.centre[1], r.centre[2], r.width);
+            println!(
+                "  centre {:8.2} {:6.2} {:8.2} width {:.1} flow {:.2} alpha {:.2} foam {:.2}{}",
+                r.centre[0],
+                r.centre[1],
+                r.centre[2],
+                r.width,
+                r.flow,
+                r.alpha,
+                r.foam,
+                if r.marked { " (the editor's)" } else { "" }
+            );
         }
     }
 }

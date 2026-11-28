@@ -282,6 +282,33 @@ impl Spline {
 /// square, (next c, this c, next c + 1) and (this c, this c + 1, next c + 1). The vertices in `format`'s order (Rome 2's: the same
 /// rows, ASSUMPTION: its BOB lerps the foam as the other values).
 pub fn tessellate(rivers: &[Vec<RiverSegment>], format: RiverFormat) -> RiverMesh {
+    tessellate_marked(rivers, format, &[])
+}
+
+/// Where an Attila river vertex's last value (BOB's position across, which the game's battle river shader passes on and never reads)
+/// carries the river's foam instead, it is this plus the foam (0 to 1): the editor's river shader (docs/re/water.md, "The editor's river
+/// shader") reads a value from 1.5 up as a river of the editor's, whose foam, flow speed and alpha fade it draws, and leaves the others
+/// as the game draws them.
+pub const MARKED_FOAM_BASE: f32 = 2.0;
+
+/// The rivers of a tile the editor's river shader draws (one of `river_files::SHADER_RIVER_ATTRS` on their `SplineRiverInstance`: made by
+/// the editor, or their foam, flow or fade edited in it), by their files' numbers (the instances in document order).
+pub fn editor_rivers(raw: &Tile) -> Vec<bool> {
+    let mut out = vec![];
+    if let Some(scene) = raw.scene.as_ref() {
+        scene.walk(&mut |n| {
+            if n.class == "SplineRiverInstance" {
+                out.push(wce_tile::river_files::SHADER_RIVER_ATTRS.iter().any(|a| n.get(a).is_some()));
+            }
+        });
+    }
+
+    out
+}
+
+/// [`tessellate`], the rivers `marked` (by their number) carrying [`MARKED_FOAM_BASE`] plus their foam as an Attila vertex's last value
+/// in place of the position across.
+pub fn tessellate_marked(rivers: &[Vec<RiverSegment>], format: RiverFormat, marked: &[bool]) -> RiverMesh {
     const ACROSS: usize = 5;
     let fixed = (0..7).scan(0.0f32, |v, _| {
         let out = *v;
@@ -290,7 +317,8 @@ pub fn tessellate(rivers: &[Vec<RiverSegment>], format: RiverFormat) -> RiverMes
     });
     let fixed = fixed.collect::<Vec<_>>();
     let mut mesh = RiverMesh { format, ..Default::default() };
-    for river in rivers {
+    for (number, river) in rivers.iter().enumerate() {
+        let marked = marked.get(number).copied().unwrap_or(false);
         let mut spline = Spline::new();
         for s in river {
             spline.push(s.points);
@@ -328,7 +356,10 @@ pub fn tessellate(rivers: &[Vec<RiverSegment>], format: RiverFormat) -> RiverMes
                 let off_x = s * dz + 0.0 * dz;
                 let (x, z) = (p[0] + off_x, p[2] + off_z);
                 mesh.vertices.push(match format {
-                    RiverFormat::Attila => [x, p[1], z, flow, across * width, u * spline.total, alpha, across],
+                    RiverFormat::Attila => {
+                        let last = if marked { MARKED_FOAM_BASE + foam.clamp(0.0, 1.0) } else { across };
+                        [x, p[1], z, flow, across * width, u * spline.total, alpha, last]
+                    }
                     RiverFormat::Rome2 => [x, p[1], z, flow, across, u, alpha, foam],
                 });
             }
@@ -356,6 +387,9 @@ pub struct RiverRow {
     pub flow: f32,
     pub alpha: f32,
     pub foam: f32,
+
+    /// An Attila row whose foam was carried by a river of the editor's ([`MARKED_FOAM_BASE`]): the river is marked again.
+    pub marked: bool,
 }
 
 /// The foam of a river whose block has none (Attila's): TEd's default.
@@ -382,9 +416,10 @@ pub fn river_rows(mesh: &RiverMesh) -> Vec<Vec<RiverRow>> {
         }
     }
 
-    // A vertex's place across (0 to 1) and along (Attila's in metres, Rome 2's 0 to 1).
+    // A vertex's place across (Attila's in metres from the first edge, its last value being the foam of a marked river; Rome 2's 0 to 1)
+    // and along (Attila's in metres, Rome 2's 0 to 1).
     let place = |v: &RiverVertex| match mesh.format {
-        RiverFormat::Attila => (v[7], v[5]),
+        RiverFormat::Attila => (v[4], v[5]),
         RiverFormat::Rome2 => (v[4], v[5]),
     };
     let used = mesh.triangles.iter().flatten().map(|&i| i as usize).collect::<std::collections::BTreeSet<_>>();
@@ -418,11 +453,14 @@ pub fn river_rows(mesh: &RiverMesh) -> Vec<Vec<RiverRow>> {
 
                     let (c, e0, e4) = (row[2], row[0], row[4]);
                     let width = (e4[0] - e0[0]).hypot(e4[2] - e0[2]);
+                    let marked = mesh.format == RiverFormat::Attila && c[7] >= MARKED_FOAM_BASE - 0.5;
                     let (along, foam) = match mesh.format {
-                        RiverFormat::Attila => (if total > 0.0 { c[5] / total } else { 0.0 }, DEFAULT_FOAM),
+                        RiverFormat::Attila => {
+                            (if total > 0.0 { c[5] / total } else { 0.0 }, if marked { c[7] - MARKED_FOAM_BASE } else { DEFAULT_FOAM })
+                        }
                         RiverFormat::Rome2 => (c[5], c[7]),
                     };
-                    Some(RiverRow { centre: [c[0], c[1], c[2]], along, width, flow: c[3], alpha: c[6], foam })
+                    Some(RiverRow { centre: [c[0], c[1], c[2]], along, width, flow: c[3], alpha: c[6], foam, marked })
                 })
                 .collect::<Vec<_>>();
             rows.sort_by(|a, b| a.along.total_cmp(&b.along));
@@ -928,6 +966,28 @@ mod tests {
                 width: [20.0; 2],
             },
         ]
+    }
+
+    #[test]
+    fn a_marked_river_carries_its_foam_in_place_of_the_position_across() {
+        let plain = tessellate(&[bend()], RiverFormat::Attila);
+        let marked = tessellate_marked(&[bend()], RiverFormat::Attila, &[true]);
+        assert_eq!(plain.triangles, marked.triangles);
+        for (p, m) in plain.vertices.iter().zip(&marked.vertices) {
+            assert_eq!(p[..7], m[..7], "all else as BOB's");
+            assert!((0.0..=1.0).contains(&p[7]));
+            assert!(m[7] == MARKED_FOAM_BASE + 0.1 || m[7] == MARKED_FOAM_BASE + 0.2, "{}", m[7]);
+        }
+
+        // Read back: the same rows, the foam the river's.
+        let (rp, rm) = (river_rows(&plain), river_rows(&marked));
+        assert_eq!(rp.len(), rm.len());
+        for (a, b) in rp[0].iter().zip(&rm[0]) {
+            assert_eq!((a.centre, a.along, a.width, a.flow, a.alpha), (b.centre, b.along, b.width, b.flow, b.alpha));
+            assert_eq!(a.foam, DEFAULT_FOAM);
+            assert!(!a.marked && b.marked);
+            assert!((b.foam - 0.1).abs() < 1e-5 || (b.foam - 0.2).abs() < 1e-5, "{}", b.foam);
+        }
     }
 
     #[test]

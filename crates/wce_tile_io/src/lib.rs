@@ -81,7 +81,7 @@ impl TileFiles {
 
         // The editor's tile.wce is read as the tile.ted TEd would get ("Save for Assembly Kit").
         if let Some(blob) = files.folder.remove(wce_tile::project_files::WCE_FILE) {
-            let ted = wce_tile::project_files::to_ted(blob.bytes()?.to_vec()).map_err(std::io::Error::other)?.0;
+            let ted = wce_tile::project_files::to_ted_for_compile(blob.bytes()?.to_vec()).map_err(std::io::Error::other)?.0;
             files.folder.insert(wce_tile::project_files::TED_FILE.to_owned(), Blob::Bytes(ted.into()));
         }
 

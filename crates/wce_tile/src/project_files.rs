@@ -443,8 +443,15 @@ pub fn expand_prefabs(mut text: Vec<u8>, contents: &dyn Fn(&str) -> Option<Vec<u
 }
 
 /// The editor's attributes a polyfill turns into what TEd holds (reported as polyfilled, not as dropped).
-const POLYFILLED_ATTRS: [&str; 6] =
-    [PREFAB_ATTR, SURFACE_ATTR, ROTATION_ATTR, crate::river_files::RIVER_HEIGHT_ATTR, crate::biomes::BIOME_ATTR, crate::biomes::SEED_ATTR];
+const POLYFILLED_ATTRS: [&str; 7] = [
+    PREFAB_ATTR,
+    SURFACE_ATTR,
+    ROTATION_ATTR,
+    crate::river_files::RIVER_HEIGHT_ATTR,
+    crate::river_files::RIVER_SHADER_ATTR,
+    crate::biomes::BIOME_ATTR,
+    crate::biomes::SEED_ATTR,
+];
 
 /// An item placed on another thing ("Entity: Above"): `wce_surface="entity"`, kept as freeform at the height it was put at.
 pub const SURFACE_ATTR: &str = "wce_surface";
@@ -500,6 +507,23 @@ impl TedReport {
 ///
 /// The text does not read.
 pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
+    to_ted_keeping(wce, &[])
+}
+
+/// The `wce_` attributes the editor's own compile reads, which [`to_ted_for_compile`] keeps: a river of the editor's
+/// (`river_files::SHADER_RIVER_ATTRS`) carries its foam in its vertices for the editor's river shader (`wce_tile_io::attila::river`).
+pub const COMPILE_ATTRS: [&str; 2] = crate::river_files::SHADER_RIVER_ATTRS;
+
+/// [`to_ted`] for the editor's own compile (an export, a launch), not for TEd: the attributes of [`COMPILE_ATTRS`] stay.
+///
+/// # Errors
+///
+/// The text does not read.
+pub fn to_ted_for_compile(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
+    to_ted_keeping(wce, &COMPILE_ATTRS)
+}
+
+fn to_ted_keeping(wce: Vec<u8>, keep: &[&str]) -> Result<(Vec<u8>, TedReport), String> {
     let mut scene = TedScene::parse_any(wce)?;
     let mut report = TedReport::default();
 
@@ -576,7 +600,7 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
                 continue;
             }
 
-            if a.name.starts_with("wce_") {
+            if a.name.starts_with("wce_") && !keep.contains(&a.name.as_str()) {
                 let unset_mark = a.name == crate::export_as_prop::EXPORT_AS_PROP_ATTR && fresh.get(e, &a.name).as_deref() != Some("true");
                 if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) && !unset_mark {
                     report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
@@ -637,6 +661,15 @@ fn entry_with_location_mark(entry: &str, mark: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_compile_keeps_a_rivers_mark_and_ted_does_not() {
+        let wce = b"<project version=\"16\" wce_version=\"1\">\n    <scene>\n        <SplineRiverInstance name=\"r\" wce_river_height=\"game\" wce_shores=\"1\"/>\n    </scene>\n</project>\n".to_vec();
+        let ted = String::from_utf8(to_ted(wce.clone()).unwrap().0).unwrap();
+        assert!(!ted.contains("wce_"), "{ted}");
+        let compile = String::from_utf8(to_ted_for_compile(wce).unwrap().0).unwrap();
+        assert!(compile.contains("wce_river_height=\"game\"") && !compile.contains("wce_shores"), "{compile}");
+    }
 
     #[test]
     fn the_extracted_flag_is_on_the_root_and_old_projects_move() {

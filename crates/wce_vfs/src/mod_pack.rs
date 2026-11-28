@@ -57,11 +57,21 @@ pub fn write_files(game: &GameProfile, pack_path: &Path, replace: &[&str], files
 ///
 /// rpfm doesn't know the game, or the pack can't be written.
 pub fn write_new(game: &GameProfile, pack_path: &Path, files: &[(String, Vec<u8>)]) -> Result<(), String> {
+    write_new_of_type(game, pack_path, files, PFHFileType::Mod)
+}
+
+/// [`write_new`] of a pack type: a movie pack (`PFHFileType::Movie`) loads whatever the mod list says, and before the graphics device is
+/// made, which is the only way the game reads shaders or effects from a pack (docs/re/game_command_line.md).
+///
+/// # Errors
+///
+/// rpfm doesn't know the game, or the pack can't be written.
+pub fn write_new_of_type(game: &GameProfile, pack_path: &Path, files: &[(String, Vec<u8>)], kind: PFHFileType) -> Result<(), String> {
     let games = SupportedGames::default();
     let info = games.game(game.key).ok_or_else(|| format!("rpfm does not know {}", game.key))?;
     let name = pack_path.file_name().and_then(|n| n.to_str()).unwrap_or("mod.pack");
-    let mut pack = Pack::new_with_name_and_version(name, info.pfh_version_by_file_type(PFHFileType::Mod));
-    pack.set_pfh_file_type(PFHFileType::Mod);
+    let mut pack = Pack::new_with_name_and_version(name, info.pfh_version_by_file_type(kind));
+    pack.set_pfh_file_type(kind);
     for (inside, data) in files {
         pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
     }

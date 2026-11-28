@@ -1168,7 +1168,11 @@ pub fn water_fields(
 
     let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
     super::tile_links::blend_links(raw, roots, &linking, &mut heights, w, h)?;
-    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t), super::river::RiverFormat::Attila);
+    let river = super::river::tessellate_marked(
+        &super::river::river_splines(raw, (h - 1) / t),
+        super::river::RiverFormat::Attila,
+        &super::river::editor_rivers(raw),
+    );
     let planes = super::compile::water_planes(raw);
     let water = (!river.triangles.is_empty() || !planes.is_empty()).then(|| {
         let verts = river
@@ -1228,7 +1232,8 @@ pub fn terrain_files(
     let prot = protection_map(raw);
     let prot = prot.as_ref().map(|(p, pw, ph)| (p.as_slice(), *pw, *ph));
     let cos = cos_degrees(angle);
-    let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t), river_format);
+    let river =
+        super::river::tessellate_marked(&super::river::river_splines(raw, (h - 1) / t), river_format, &super::river::editor_rivers(raw));
     let g = Grid { w, h, t, mask: links.mask.clone() };
     // The outfield's step: 1 << ((density == 128) + 3).
     let outfield = MeshKind { step: if t == CELL { 16 } else { 8 }, ..OUTFIELD };

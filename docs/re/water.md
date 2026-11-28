@@ -113,6 +113,40 @@ battle sea of a coastal battle" below).
   believed to use.
 - **A lesson about the listings**: the packs' `glsl_sm_*` files are the GL path and differ from the D3D shaders the game runs on Windows in orientation details (the screen-to-NDC y flip is missing in them: `ndc.y = 1 - 2 v` in the DXBC). Where orientation or a constant matters, read the disassembly of the real `dx11_*.fxc` (`wce_render`'s `fxc_dump` example: `<fxc dir> <out> <asm dir>`), not the GLSL.
 
+## The editor's river shader (2026-11-28)
+
+The vanilla battle river shader drops the river's foam, flow speed and alpha fade (above). The editor's is the game's own
+`ps30_main_battle_river`, its 10 dx11 variants (shadow kinds and shader models) patched in their bytecode by
+`scripts/river_shader.py`, packed into a **movie-type** pack by `scripts/river_shader.sh <game> <out.pack>`: the game reads shaders
+before it mounts mod packs, so only a movie pack's are used (docs/re/game_command_line.md, seen in game). What it adds:
+
+- **Which rivers**: only the editor's: those it made (`wce_river_height`) and those whose foam, flow or fade was edited in it (an
+  Attila battle tile's edit marks the river `wce_river_shader="1"`, `set_spline_value`; not the height mark, which would change the
+  heights a kit river is exported at). Their vertices' last value (BOB's place across, 0 to 1, passed to the pixel shader as
+  `TEXCOORD4.z` and never read) is 2 + foam (docs/formats/tile_compile.md); the shader reads `v4.z >= 2` as one of the editor's
+  (`saturate(v4.z - 1)`, 1) and draws the others exactly as the game does. The Assembly Kit's rivers keep their looks: 37 of the
+  kit's 139 river files have `flow_speed` 0.1 beside others' 0.5, which the game never showed, and flow on them would break the
+  seams between tiles.
+- **Flow speed** (`TEXCOORD7.y`, the vertex's flow): the ripples' scroll down the river (vanilla's `0.05 x time` in uv, every layer)
+  gets `(2 flow - 1) x 0.05` uv a second more: 0.5 is vanilla's speed, 0 still, negative upstream. As a flow map does it: the three
+  normal-map samples are made twice, offset by `speed x 3 s x (phase - 0.5)` with phases half a 3 s cycle apart, weighed by
+  `1 - |2 phase - 1|` and normalised, so that a speed changing along the river doesn't stretch the ripples as time goes on. On a
+  river of speed 0.5 both offsets are 0: the vanilla normal.
+- **Alpha fade** (`TEXCOORD7.x`, the vertex's alpha): the final colour goes towards the refraction texture (the scene behind the
+  water, undistorted) as alpha goes to 0: a river's ends fade into the bed.
+- **Foam** (the vertex's 2 + foam): on the colour before the fog, where the ripple texture (`battleterrain/river/river_normal.dds`,
+  its g and a, sampled at 5 m a repeat, moved with the two flow layers) is steeper than a threshold that falls from 0.32 to 0.12 as
+  the foam goes from 0 to 1, sharpened by 8, at most 75% opaque; the foam counts in full in the shallows and 45% less from 1.2 m deep
+  (the shader's own water depth). Its colour: the sun's (half of it grey), times `0.25 + 0.6 x` the sun's height, in the HDR scale
+  (`g_hdr_on`: 0.004). TEd's default foam, 0.1, shows almost none.
+
+The patch finds its places in vkd3d's disassembly (the screen uv, the block from the first ripple sample to the normalised normal,
+the water's depth, the lighting buffer, the refraction sample, the colour before the fog and `o3`), which the variants share up to
+register and slot numbers; the block is read for its registers per variant, and the temporaries it adds come after the shader's own.
+The checksum is vkd3d-dxbc's. The editor draws an Attila battle river's vertices in the game's layout (`rebuild_water`: flow in P0.w,
+alpha and the place across or the foam in P1.zw), so with the pack in its mod list (or the patched files in an overlay folder) it
+draws what the game does. Tuned in the editor only; the game's look (the foam's colour under its lighting) is to be checked.
+
 ## The battle sea of a coastal battle (2026-10-19: decompiled empire.retail.dll + a memory dump)
 
 The editor's sea plane (waterplane `ps30_battle_*_water_quality`) has no foam input, but the game draws a band of breaking-wave foam

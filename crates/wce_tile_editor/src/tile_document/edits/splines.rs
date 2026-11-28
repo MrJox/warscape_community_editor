@@ -285,6 +285,17 @@ impl TileDocument {
             return false;
         }
 
+        // A river's foam, flow or fade edited in an Attila battle tile: the river marked for the editor's river shader, which draws them
+        // (`river_files::RIVER_SHADER_ATTR`; the game's shader ignores them).
+        let shader_value = matches!(attr, "foam_amount" | "flow_speed" | "alpha_fade");
+        if shader_value
+            && sc.type_of(elem) == "SplineRiverInstance"
+            && !self.tile().river_point_values_drawn()
+            && !wce_tile::river_files::SHADER_RIVER_ATTRS.iter().any(|a| sc.get(elem, a).is_some())
+        {
+            self.set_attribute(elem, wce_tile::river_files::RIVER_SHADER_ATTR, "1");
+        }
+
         self.history.push(Box::new(TedPointAttrsCommand { name: format!("Set {attr}"), elem, steps, gesture }));
         true
     }

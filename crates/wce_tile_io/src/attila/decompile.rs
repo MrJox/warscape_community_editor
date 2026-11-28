@@ -1882,6 +1882,11 @@ fn river_nodes(mesh: &[u8], extent_z: f64, unit: f64) -> (Vec<Node>, Vec<wce_til
                 ("orientation", Value::Euler([0.0; 3])),
             ],
         );
+        // A river the editor's river shader draws (its foam in its block): marked again, so an export keeps its foam, flow and fade drawn.
+        if rows.first().is_some_and(|r| r.marked) {
+            river.set(wce_tile::river_files::RIVER_SHADER_ATTR, s("1"));
+        }
+
         let points = river.wrapped_mut("points");
         for k in 0..=segments.len() {
             let (values, alpha, at, control_out) = match segments.get(k) {

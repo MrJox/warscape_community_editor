@@ -28,6 +28,10 @@ use crate::terrain_bake::{
 };
 use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, patch_terrain_normal, terrain_normal_image};
 
+/// What a river of the editor's carries in its vertices' last value, plus its foam (`wce_tile_io::attila::river::MARKED_FOAM_BASE`, the
+/// same number: the export's and the editor's water alike).
+const MARKED_FOAM_BASE: f64 = 2.0;
+
 /// A river's water at a place along it (world metres): its surface's height, its width, and how it is drawn there.
 pub(super) struct RiverSample {
     pub(super) x: f64,
@@ -37,6 +41,10 @@ pub(super) struct RiverSample {
     flow: f64,
     foam: f64,
     alpha: f64,
+
+    /// A river the editor's river shader draws (`river_files::SHADER_RIVER_ATTRS`): its vertices carry its foam as an export's do
+    /// (`wce_tile_io::attila::river::MARKED_FOAM_BASE`), which the editor's river shader reads.
+    marked: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -738,6 +746,7 @@ impl Tile {
             // file's factor (today's TEd 0.5: the kit's points are 90 for the game's 45).
             let wide = if campaign { 1.0 / across } else { self.river_width_factor(e) };
             let w = world_transform(sc, e);
+            let marked = wce_tile::river_files::SHADER_RIVER_ATTRS.iter().any(|a| sc.get(e, a).is_some());
             let mut pts = from_file.unwrap_or_default();
             let ted = pts.is_empty();
             for &c in els[e].children.iter().filter(|&&c| ted && els[c].name == "points") {
@@ -792,6 +801,7 @@ impl Tile {
                         flow: a.flow + (b.flow - a.flow) * t,
                         foam: a.foam + (b.foam - a.foam) * t,
                         alpha: a.fade + (b.fade - a.fade) * t,
+                        marked,
                     });
                 }
             }
@@ -825,6 +835,7 @@ impl Tile {
 
         let u = self.unit();
         let rome2 = self.files.as_ref().and_then(|f| f.game()).is_some_and(|g| g.key == "rome_2");
+        let campaign = wce_tile::tile_project::is_campaign_tile(&self.project.dir);
         let (mut rivers, mut ribbons) = (0, 0);
         let mut new_water = vec![];
         let drawn = if self.display.show_water { self.river_ribbons() } else { vec![] };
@@ -873,6 +884,19 @@ impl Tile {
                         v: (cum[i] / total.max(1e-9)) as f32,
                         flow: s.alpha as f32,
                         fade: s.foam as f32,
+                    },
+                    // An Attila battle river as the game's block has it (BOB's vertex, `wce_tile_io::attila::river::tessellate`): the
+                    // flow in P0.w, the alpha in P1.z and the place across (0 to 1) in P1.w, or the foam of a river of the editor's;
+                    // the vanilla shader reads none of them, the editor's river shader (a movie pack) the last three.
+                    false if !campaign => WaterVertex {
+                        x: at(sign).0,
+                        y,
+                        z: at(sign).1,
+                        across: s.flow as f32,
+                        u: (sign * hw) as f32,
+                        v: cum[i] as f32,
+                        flow: s.alpha as f32,
+                        fade: if s.marked { (MARKED_FOAM_BASE + s.foam.clamp(0.0, 1.0)) as f32 } else { (0.5 + 0.5 * sign) as f32 },
                     },
                     false => WaterVertex {
                         x: at(sign).0,
