@@ -3921,6 +3921,17 @@ fn a_rivers_cliffs_and_point_shores_go_over_one_another() {
     assert_eq!(d.tile().river_point_amount(r, 4, REEDS_ATTR), Some("few"));
     assert!((0..6).filter(|&i| i != 1 && i != 4).all(|i| d.tile().river_point_amount(r, i, REEDS_ATTR).is_none()));
     assert!((0..6).filter(|&i| i != 1 && i != 4).all(|i| d.tile().river_point_cliff(r, i).is_none()));
+
+    // Where the river has a cliff, a run is a break in it.
+    assert!(d.set_river_cliffs_mode(r, "both"));
+    let whole = d.tile().river_cliffs(r).len();
+    d.randomize_river_shore(r, ShoreVariation { cliffs: 100.0, amounts: 0.0, seed: 7 }).unwrap();
+    assert!((1..5).any(|i| d.tile().river_point_cliff(r, i) == Some("none")), "a break");
+    assert!(d.tile().river_cliffs(r).len() > whole, "parted by it");
+
+    // A cliff is a part of the shore: none with it off.
+    d.set_attribute(r, "wce_shores", "0");
+    assert!(d.tile().river_cliffs(r).is_empty(), "no cliffs with the shore off");
 }
 
 /// A generated river tile with no road has a ford near its middle, clear of its cliff: the river's bed there at wading depth.

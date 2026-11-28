@@ -651,12 +651,12 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "river_shore",
-        "river_shore <point>|all reeds|stones|decals|bed_decals none|few|some|thick|river",
+        "river_shore <point>|all reeds|stones|decals|bed_decals|rapids none|few|some|thick|river",
         "the selected river's point's (or all its points') own amount of a shore's reeds, stones, shore decals or bed decals (river: as \
          the river), one undo entry",
         |e, a| {
-            use wce_tile_editor::tile_document::shores::{BED_DECALS_ATTR, DECALS_ATTR, REEDS_ATTR, STONES_ATTR};
-            const USAGE: &str = "usage: river_shore <point>|all reeds|stones|decals|bed_decals none|few|some|thick|river";
+            use wce_tile_editor::tile_document::shores::{BED_DECALS_ATTR, DECALS_ATTR, RAPIDS_ATTR, REEDS_ATTR, STONES_ATTR};
+            const USAGE: &str = "usage: river_shore <point>|all reeds|stones|decals|bed_decals|rapids none|few|some|thick|river";
             let sel = primary(e);
             let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
             let Some(points) = river_points(d, r, a.first()) else { return fail(USAGE) };
@@ -665,6 +665,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 Some("stones") => STONES_ATTR,
                 Some("decals") => DECALS_ATTR,
                 Some("bed_decals") => BED_DECALS_ATTR,
+                Some("rapids") => RAPIDS_ATTR,
                 _ => return fail(USAGE),
             };
             let value = match a.get(2).map(String::as_str) {

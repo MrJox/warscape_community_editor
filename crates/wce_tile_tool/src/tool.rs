@@ -4791,9 +4791,12 @@ impl TileTool {
         let random = t.river_point_random(s, shown);
         let amounts = wce_tile::shores::AMOUNTS.map(|a| a.0);
         let sc = t.tscene();
-        let river_amount = |attr: &str| sc.get(s, attr).unwrap_or_else(|| "some".to_owned());
+        let river_amount = |attr: &str| {
+            let default = if attr == wce_tile_editor::tile_document::shores::RAPIDS_ATTR { "none" } else { "some" };
+            sc.get(s, attr).unwrap_or_else(|| default.to_owned())
+        };
         let mut rows: Vec<(&str, &str, Option<&str>, String, Vec<&str>)> = vec![];
-        for (attr, label) in POINT_AMOUNT_ATTRS.into_iter().zip(["reeds", "stones", "shore decals", "bed decals"]) {
+        for (attr, label) in POINT_AMOUNT_ATTRS.into_iter().zip(["reeds", "stones", "shore decals", "bed decals", "rapids"]) {
             rows.push((attr, label, t.river_point_amount(s, shown, attr), river_amount(attr), amounts.to_vec()));
         }
 
@@ -4819,6 +4822,9 @@ impl TileTool {
                     CLIFF_ATTR => {
                         "Rock cliff pieces along a bank (left or right as the river runs, or both), the ground behind raised to \
                                    their top, nothing else of the shore under them; neighbouring points' cliffs on one side make one."
+                    }
+                    a if a == wce_tile_editor::tile_document::shores::RAPIDS_ATTR => {
+                        "Rapids here: big rocks out on the water, alone or in clumps, splashing (none by a ford)."
                     }
                     _ => "How much of it the shore has here (the river's Shores amounts).",
                 });

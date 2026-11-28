@@ -93,13 +93,24 @@ impl Tile {
     }
 
     /// The sides a river point's banks are cliffs on: its own mark, else the river's setting (`outer`: the outer bank where it turns
-    /// [`OUTER_BEND_DEG`] or more).
+    /// [`OUTER_BEND_DEG`] or more); none with the river's shore off.
     #[must_use]
     pub fn river_point_cliff_sides(&self, river: usize, point: usize) -> Vec<f64> {
+        // A cliff bank is a part of its shore: none with its shore off.
+        if self.tscene().get(river, super::shores::SHORES_ATTR).as_deref().map(str::trim) != Some("1") {
+            return vec![];
+        }
+
         if let Some(own) = self.river_point_cliff(river, point).and_then(cliff_sides) {
             return own;
         }
 
+        self.river_mode_cliff_sides(river, point)
+    }
+
+    /// The sides the river's own cliff setting gives a point (its own mark aside).
+    #[must_use]
+    pub fn river_mode_cliff_sides(&self, river: usize, point: usize) -> Vec<f64> {
         match self.river_cliffs_mode(river) {
             "outer" if self.river_bend_deg(river, point) >= OUTER_BEND_DEG => vec![self.river_outer_side(river, point)],
             "outer" | "none" => vec![],

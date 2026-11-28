@@ -27,9 +27,14 @@ pub const SPLASHES_ATTR: &str = "wce_ford_splashes";
 pub const DECALS_ATTR: &str = "wce_shore_decals";
 pub const BED_DECALS_ATTR: &str = "wce_bed_decals";
 
+/// How many rapids a river has (rocks out on its water, splashing): an amount's name; missing: `none`.
+pub const RAPIDS_ATTR: &str = "wce_shore_rapids";
+const DEFAULT_RAPIDS: &str = "none";
+
 /// The attributes the Inspector shows as rows of their own.
-pub(crate) const SHORE_ROW_ATTRS: [&str; 10] = [
+pub(crate) const SHORE_ROW_ATTRS: [&str; 11] = [
     SHORES_ATTR,
+    RAPIDS_ATTR,
     REEDS_ATTR,
     STONES_ATTR,
     SPLASHES_ATTR,
@@ -76,6 +81,7 @@ impl Tile {
             let read = |a: &str, d: &str| amount(sc.get(e, a).as_deref().unwrap_or(d)).unwrap_or_else(|| amount(d).unwrap_or(0.0));
             ShoreSettings::of(read(REEDS_ATTR, DEFAULT_REEDS), read(STONES_ATTR, DEFAULT_STONES))
                 .with_decals(read(DECALS_ATTR, DEFAULT_DECALS), read(BED_DECALS_ATTR, DEFAULT_DECALS))
+                .with_rapids(read(RAPIDS_ATTR, DEFAULT_RAPIDS))
         };
         let seed = |e: usize| sc.get(e, RIVER_ID_ATTR).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(e as u64);
         let mut out = vec![];
@@ -266,7 +272,9 @@ impl Tile {
                     ("VEGETATION_INSTANCE", shore.reeds.as_slice()),
                     ("BUILDING_INSTANCE", &shore.stones),
                     ("BUILDING_INSTANCE", &shore.bank_pieces),
+                    ("BUILDING_INSTANCE", &shore.rapids),
                     ("VFXInstance", splashes),
+                    ("VFXInstance", &shore.rapid_splashes),
                 ] {
                     for p in list {
                         let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
@@ -442,7 +450,17 @@ impl TileDocument {
                 ),
                 (DECALS_ATTR, "shore decals", DEFAULT_DECALS, "How many muddy rock decals lie over a river's waterline."),
                 (BED_DECALS_ATTR, "bed decals", DEFAULT_DECALS, "How many mud decals lie on a river's bed by its edges."),
+                (
+                    RAPIDS_ATTR,
+                    "rapids",
+                    DEFAULT_RAPIDS,
+                    "How many rapids a river has: big rocks out on its water, alone or in clumps, splashing (none by its fords).",
+                ),
             ] {
+                if attr == RAPIDS_ATTR && !river {
+                    continue;
+                }
+
                 let sc = self.tile().tscene();
                 let current = sc.get(e, attr).unwrap_or_else(|| default.to_owned());
                 let mut idx = AMOUNTS.iter().position(|a| a.0 == current.trim()).unwrap_or(0) as i32;
@@ -452,10 +470,10 @@ impl TileDocument {
                     self.set_attribute(e, attr, AMOUNTS[idx.clamp(0, AMOUNTS.len() as i32 - 1) as usize].0);
                 }
             }
-        }
 
-        if river {
-            self.river_cliff_and_variation_rows(e, ins);
+            if river {
+                self.river_cliff_and_variation_rows(e, ins);
+            }
         }
     }
 
@@ -483,8 +501,9 @@ impl TileDocument {
         let mut ended = false;
         let mut cliffs = v.cliffs.round() as i64;
         ins.hint(
-            "How likely each point starts a run of two or three points with a cliff on the outer bank of its bend, in percent. The \
-             points are drawn again as it changes; those set by hand keep their own.",
+            "How likely each point starts a run of two or three points unlike the river's cliffs above: where it has none, a cliff on \
+             the outer bank of the bend; where it has one, a break in it. 0: the river's cliffs as they are. The points are drawn \
+             again as it changes; those set by hand keep their own.",
         );
         if ins.edit_int_slider(VAR_CLIFFS_ATTR, "cliff runs (%)", &mut cliffs, 0, 100) {
             v.cliffs = cliffs as f64;

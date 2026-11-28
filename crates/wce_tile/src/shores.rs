@@ -34,6 +34,18 @@ pub struct ShoreKeys {
     /// The rocks at a cliff bank's ends (buildings, a few metres big), over where its face meets the bank; none: no rocks.
     #[serde(default)]
     pub cliff_ends: Vec<String>,
+
+    /// A river's rapids' rocks (buildings) and how tall each is over its origin (metres: sunk by it, so that it stands a metre or two
+    /// out of the water); none: no rapids.
+    #[serde(default)]
+    pub rapids: Vec<RapidRock>,
+}
+
+/// A rock of a river's rapids: its building and how far its top stands over its origin (metres).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RapidRock {
+    pub key: String,
+    pub top: f32,
 }
 
 impl Default for ShoreKeys {
@@ -67,6 +79,7 @@ struct Custom {
     bank_rocks: Option<Vec<String>>,
     cliffs: Option<Vec<String>>,
     cliff_ends: Option<Vec<String>>,
+    rapids: Option<Vec<RapidRock>>,
     bank_mounds: Option<Vec<String>>,
     shore_decals: Option<Vec<String>>,
     bed_decals: Option<Vec<String>>,
@@ -102,6 +115,10 @@ pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<
         if let Some(splash) = c.splash {
             k.splash = splash;
         }
+
+        if let Some(rapids) = c.rapids {
+            k.rapids = rapids;
+        }
     }
 
     for (name, list) in [
@@ -135,6 +152,10 @@ pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<
         if list.iter().any(|v| v.trim().is_empty()) {
             return Err(format!("{FILE_NAME}: {name} has an empty key"));
         }
+    }
+
+    if k.rapids.iter().any(|r| r.key.trim().is_empty() || r.top.is_nan() || r.top <= 0.0) {
+        return Err(format!("{FILE_NAME}: rapids has an empty key or a top not over 0"));
     }
 
     if k.splash.trim().is_empty() {
@@ -180,11 +201,14 @@ pub struct ShoreSettings {
     pub bed_decals: f32,
     pub shallows: f32,
     pub wet_bank: f32,
+
+    /// How many rapids a river has: clumps of rocks out on its water, splashing (0 .. 1, [`AMOUNTS`]).
+    pub rapids: f32,
 }
 
 impl Default for ShoreSettings {
     fn default() -> Self {
-        Self { reeds: 0.5, stones: 0.25, decals: 0.5, bed_decals: 0.5, shallows: 0.8, wet_bank: 2.5 }
+        Self { reeds: 0.5, stones: 0.25, decals: 0.5, bed_decals: 0.5, shallows: 0.8, wet_bank: 2.5, rapids: 0.0 }
     }
 }
 
@@ -205,6 +229,11 @@ impl ShoreSettings {
     /// With decals along the shore and on the bed ([`AMOUNTS`]).
     pub fn with_decals(self, decals: f32, bed_decals: f32) -> Self {
         Self { decals, bed_decals, ..self }
+    }
+
+    /// With rapids ([`AMOUNTS`]).
+    pub fn with_rapids(self, rapids: f32) -> Self {
+        Self { rapids, ..self }
     }
 }
 
@@ -248,6 +277,7 @@ impl ShoreSettings {
             stones: l(self.stones, o.stones),
             decals: l(self.decals, o.decals),
             bed_decals: l(self.bed_decals, o.bed_decals),
+            rapids: l(self.rapids, o.rapids),
             ..self
         }
     }
@@ -279,6 +309,7 @@ impl Water {
             stones: out.stones + to.stones - base.stones,
             decals: out.decals + to.decals - base.decals,
             bed_decals: out.bed_decals + to.bed_decals - base.bed_decals,
+            rapids: out.rapids + to.rapids - base.rapids,
             ..out
         }
     }
@@ -367,6 +398,11 @@ pub struct Shore {
 
     /// A river's cliff banks' pieces (buildings, freeform at their height), each tilted along the bank where its face falls at its ends.
     pub cliffs: Vec<CliffPiece>,
+
+    /// A river's rapids: rocks out on its water (buildings, freeform at their height), and a splash on each one's upstream side (the
+    /// table's `splash`, at the water's height).
+    pub rapids: Vec<Placed>,
+    pub rapid_splashes: Vec<Placed>,
 }
 
 /// A cliff bank's piece: where it goes, and its up (x, y, z, of length 1; straight up but along its ends' ramps, where it leans along
@@ -431,6 +467,8 @@ impl Shore {
         clear(&mut self.reeds);
         clear(&mut self.stones);
         clear(&mut self.bank_pieces);
+        clear(&mut self.rapids);
+        clear(&mut self.rapid_splashes);
     }
 }
 
@@ -661,6 +699,73 @@ const CLIFF_END_ROCK_ALONG: [f32; 2] = [0.0, 6.0];
 const CLIFF_END_ROCK_OUT: [f32; 2] = [3.0, -3.0];
 const CLIFF_END_ROCK_DEEPEST: f32 = 2.0;
 const CLIFF_END_ROCK_SINK: f32 = 0.3;
+
+/// How far apart along a river its rapids are looked for (metres), how likely a look makes a clump at the thickest (by a coarse noise
+/// along it, so that they gather in stretches), how far its rocks keep from the water's drawn edges and from a ford's ends (metres).
+const RAPID_STEP: f32 = 8.0;
+const RAPID_CHANCE: f32 = 0.45;
+const RAPID_EDGE: f32 = 6.0;
+const RAPID_FORD: f32 = 12.0;
+
+/// A river's rapids: along it every [`RAPID_STEP`], where its settings there have them, now and then a rock or a clump of two to four
+/// across its water (a place across it by the seed), each sunk to stand 0.6 to 2 m out of the water (its table's top), turned by the
+/// seed, a splash on its upstream side; none by a ford, nor where `blocked` says.
+fn rapids(out: &mut Shore, water: &Water, s: &ShoreSettings, keys: &ShoreKeys, blocked: &dyn Fn(f32, f32) -> bool, seed: u64) {
+    let Water::River { line, water: levels, half, fords, .. } = water else { return };
+    if keys.rapids.is_empty() || line.len() < 2 {
+        return;
+    }
+
+    let length = line.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f32>();
+    let mut along = RAPID_STEP * 0.5;
+    let mut k = 0i64;
+    while along < length {
+        let here = along;
+        along += RAPID_STEP;
+        k += 1;
+        let amount = water.settings_at(here, s).rapids;
+        let by_ford = fords.iter().any(|f| {
+            let (s0, s1) = f.ends(0.0);
+            f64::from(here) >= s0 - f64::from(RAPID_FORD) && f64::from(here) <= s1 + f64::from(RAPID_FORD)
+        });
+        let [a, b, c, d] = cell_numbers(seed ^ 0x7a91_d5e3, k, 50);
+        let gather = noise(seed ^ 0x51ab_93e1, here, 0.0, 40.0);
+        if amount <= 0.0 || by_ford || a >= amount * RAPID_CHANCE * (0.3 + gather) {
+            continue;
+        }
+
+        let Some((p, dir, h)) = at_along(line, half, here) else { continue };
+        let reach = (h - RAPID_EDGE).max(0.0);
+        let level = level_along(line, levels, here);
+        let across = (b * 2.0 - 1.0) * reach;
+        let count = if c < 0.45 { 1 } else { 2 + (d * 3.0) as i64 };
+        let river_yaw = -dir[1].atan2(dir[0]).to_degrees();
+        for j in 0..count {
+            let [e1, e2, e3, e4] = cell_numbers(seed ^ 0x3d4f_1b27, k, 60 + j);
+            let (angle, dist) = (e1 * std::f32::consts::TAU, if count == 1 { 0.0 } else { 2.5 + 4.5 * e2 });
+            let off = (across + angle.sin() * dist).clamp(-reach, reach);
+            let ahead = angle.cos() * dist;
+            let (x, z) = (p[0] + dir[0] * ahead - dir[1] * off, p[1] + dir[1] * ahead + dir[0] * off);
+            if blocked(x, z) {
+                continue;
+            }
+
+            let rock = &keys.rapids[((e4 * 977.0) as usize) % keys.rapids.len()];
+            let y = level - rock.top + 0.6 + 1.4 * e3;
+            out.rapids.push(Placed { key: rock.key.clone(), x, y, z, scale: 1.0, yaw: 360.0 * e4 });
+            if !keys.splash.trim().is_empty() {
+                out.rapid_splashes.push(Placed {
+                    key: keys.splash.clone(),
+                    x: x - dir[0] * 2.5,
+                    y: level,
+                    z: z - dir[1] * 2.5,
+                    scale: 1.0,
+                    yaw: river_yaw,
+                });
+            }
+        }
+    }
+}
 
 /// A cliff bank's line, where its pieces' middles go: its places a metre along the river apart (where, how far along the bank, the water
 /// there, how far along the river), the folded ones left out (nearer another part of the river than its offset); its length.
@@ -1062,6 +1167,11 @@ pub fn place(
         }
     }
 
+    // The rapids.
+    if let Water::River { .. } = water {
+        rapids(&mut out, water, s, keys, blocked, seed);
+    }
+
     // The splashes: across each ford's two curved ends, every few metres, on the water.
     if let Water::River { line, half, fords, .. } = water {
         for f in fords {
@@ -1270,6 +1380,38 @@ mod tests {
         assert!(
             shore.cliffs.iter().all(|c| (c.placed.z - (100.0 - out)).abs() < 1e-3 && (c.placed.yaw.rem_euclid(360.0) - 180.0).abs() < 1e-3)
         );
+    }
+
+    #[test]
+    fn a_rivers_rapids_stand_out_of_its_water_with_a_splash_each_and_none_by_a_ford() {
+        let ford = crate::river_bed::Ford { at: 300.0, length: 30.0, depth: crate::river_bed::FORD_DEPTH };
+        let w = Water::River {
+            line: vec![[0.0, 100.0], [600.0, 100.0]],
+            water: vec![0.0, 0.0],
+            half: vec![20.0, 20.0],
+            fords: vec![ford],
+            cliffs: vec![],
+            stretches: vec![],
+        };
+        let keys = ShoreKeys::default();
+        assert!(!keys.rapids.is_empty(), "Attila's table lists rapids");
+        let g = |_: f32, z: f32| if (z - 100.0).abs() < 18.0 { -3.0 } else { 0.5 };
+        let none = place(&w, &ShoreSettings::of(0.0, 0.0), &keys, &g, &|_, _| false, 5);
+        assert!(none.rapids.is_empty(), "none by default");
+        let shore = place(&w, &ShoreSettings::of(0.0, 0.0).with_rapids(0.85), &keys, &g, &|_, _| false, 5);
+        assert!(shore.rapids.len() >= 10, "{} rock(s)", shore.rapids.len());
+        assert_eq!(shore.rapid_splashes.len(), shore.rapids.len(), "a splash each");
+        for r in &shore.rapids {
+            let top = keys.rapids.iter().find(|k| k.key == r.key).unwrap().top;
+            let out = r.y + top;
+            assert!((0.5..=2.1).contains(&out), "{r:?} stands {out} m out");
+            assert!((r.z - 100.0).abs() <= 20.0 - RAPID_EDGE + 1e-3, "on the water, off its edges: {r:?}");
+            assert!((r.x - 300.0).abs() > 15.0 + RAPID_FORD - 8.0, "not by the ford: {r:?}");
+        }
+
+        // Some alone, some in clumps.
+        let near = |a: &Placed| shore.rapids.iter().filter(|b| (a.x - b.x).hypot(a.z - b.z) < 12.0).count();
+        assert!(shore.rapids.iter().any(|a| near(a) == 1) && shore.rapids.iter().any(|a| near(a) >= 3));
     }
 
     #[test]
