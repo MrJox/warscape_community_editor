@@ -3482,9 +3482,6 @@ impl TileTool {
         gui::separator();
         self.draw_problems_section(e, id);
         gui::separator();
-        gui::separator();
-        self.draw_polygon_panel(e, id);
-        gui::separator();
         self.draw_debug_section(e, id);
         if !self.status.is_empty() {
             gui::separator();
@@ -4486,43 +4483,42 @@ impl TileTool {
         self.draw_tile_properties(e, id);
     }
 
-    /// The selected polygon's or spline's points (shown while one is selected; new ones are made in the Create panel).
-    fn draw_polygon_panel(&mut self, e: &mut Editor, id: DocumentId) {
-        let sel = primary(e);
-        let is_polygon = e.docs.find_as::<TileDocument>(id).is_some_and(|d| sel.is_some_and(|s| d.tile().is_polygon(s)));
-        if is_polygon && gui::collapsing_header("Points", gui::TREE_DEFAULT_OPEN) {
-            self.show_selected_polygon(e, id);
-        }
-    }
-
-    /// The selected polygon's points and area.
-    fn show_selected_polygon(&mut self, e: &mut Editor, id: DocumentId) {
-        let sel = primary(e);
-        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
-        if let Some(s) = sel.filter(|&s| d.is_spline(s)) {
-            self.show_selected_spline(d, s);
+    /// Below the Inspector of a selected line (a polygon, spline, road or wall; one alone, no point picked): how many points it has (and
+    /// a polygon's area), how its points are edited, a spline's *Level the ground* and *Flip direction*, a wall's layout. Its points'
+    /// values are the Inspector's when one is picked (`inspect_point`); user 2026-11-28: this was the Tile panel's *Points* section.
+    pub(crate) fn inspect_line(&mut self, e: &mut Editor, id: DocumentId) {
+        if e.selection.items().len() != 1 {
             return;
         }
 
-        if let Some(s) = sel.filter(|&s| d.tile().is_polygon(s)) {
-            let sc = d.tile().tscene();
-            gui::text(&format!("selected: {} points, area {:.1}", sc.polygon_points(s).len(), sc.polygon_area(s)));
-            match self.poly_point {
-                Some(pt) if d.has_handles(s) => gui::text(&format!(
-                    "point {pt} (its values in the Inspector): drag it or its blue handles; Alt+click a point removes it, Alt+click an edge \
-                     inserts one"
-                )),
-                Some(pt) => gui::text(&format!(
-                    "point {pt} (its values in the Inspector): drag to move; Alt+click (or Delete) removes, Alt+click an edge inserts"
-                )),
-                None => gui::text_disabled(
-                    "click a point to edit it in the Inspector; Alt+click a point removes it, Alt+click near an edge inserts one",
-                ),
-            }
+        let Some(s) = primary(e) else { return };
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        if !d.tile().is_polygon(s) {
+            return;
+        }
 
-            if d.tile().is_wall(s) {
-                self.draw_wall_rows(e, id, s);
-            }
+        gui::separator_text("Points");
+        let sc = d.tile().tscene();
+        let n = sc.polygon_points(s).len();
+        if d.is_spline(s) {
+            gui::text(&format!("{n} points"));
+        } else {
+            gui::text(&format!("{n} points, area {:.1}", sc.polygon_area(s)));
+        }
+
+        gui::text_wrapped(if d.has_handles(s) {
+            "Click a point to edit it (all points ticked there: every point's); drag it or its blue handles to bend; Alt+click a point \
+             removes it, Alt+click an edge inserts one (shift+click beyond an end: grows)."
+        } else {
+            "Click a point to edit it; drag to move; Alt+click a point (or Delete) removes it, Alt+click near an edge inserts one."
+        });
+
+        if d.is_spline(s) {
+            self.spline_line_actions(d, s);
+        }
+
+        if d.tile().is_wall(s) {
+            self.draw_wall_rows(e, id, s);
         }
     }
 
@@ -4738,11 +4734,8 @@ impl TileTool {
         }
     }
 
-    /// A river's or road's points: how to edit them, and the line's own actions (a point's values are in the Inspector, `inspect_point`).
-    fn show_selected_spline(&mut self, d: &mut TileDocument, s: usize) {
-        let sc = d.tile().tscene();
-        let points = sc.polygon_points(s);
-        gui::text(&format!("selected: {} points", points.len()));
+    /// A spline's own actions: *Level the ground* along it, *Flip direction* (a river has its own *Reverse river* in its panel).
+    fn spline_line_actions(&mut self, d: &mut TileDocument, s: usize) {
         if gui::button("Level the ground") {
             self.status = d.level_along(s, &self.brush).map_or_else(|why| why, |n| format!("ground levelled along the spline: {n} dabs"));
             return;
@@ -4752,28 +4745,20 @@ impl TileTool {
             gui::set_tooltip(crate::actions::LEVEL_ALONG_TIP);
         }
 
+        if d.tile().tscene().type_of(s) == "SplineRiverInstance" {
+            return;
+        }
+
         gui::same_line();
         if gui::button("Flip direction") {
             self.status = d.flip_spline(s).map_or_else(|why| why, |()| "flipped: the spline runs the other way".to_owned());
-            return;
         }
 
         if gui::is_item_hovered() {
             gui::set_tooltip(
-                "Reverses the spline: a river flows the other way (a road runs the other way). The points keep their places and values \
-                 (width, foam, flow speed, ...) in the other order, each point's handles swapped; one undo step.",
+                "Reverses the spline: a road runs the other way. The points keep their places and values in the other order, each \
+                 point's handles swapped; one undo step.",
             );
-        }
-
-        match self.poly_point.filter(|&p| p < points.len()) {
-            Some(pt) => gui::text_wrapped(&format!(
-                "point {pt} (its values in the Inspector): drag it or its blue handles; Alt+click a point removes it, Alt+click an edge \
-                 inserts one (shift+click beyond an end: grows)"
-            )),
-            None => gui::text_wrapped(
-                "Click a point to edit its values in the Inspector (all points ticked there: every point's); drag the blue handles to \
-                 bend; Alt+click a point removes it, Alt+click an edge inserts one",
-            ),
         }
     }
 
@@ -6542,6 +6527,7 @@ impl Tool for TileTool {
             self.inspect_measure(e, id);
             self.inspect_angle(e, id);
             self.inspect_building_spline(e, id);
+            self.inspect_line(e, id);
             self.inspect_river(e, id);
             self.inspect_river_tail(e, id);
         }
