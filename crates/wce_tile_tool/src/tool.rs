@@ -353,6 +353,9 @@ pub struct TileTool {
     pub(crate) brush_slots: HashMap<&'static str, crate::brush_slots::BrushSlot>,
     pub(crate) brush_mode: TileMode,
     pub(crate) brush_slots_read: bool,
+
+    /// Where the last brush stroke on a tile ended: Shift + a click with a brush strokes a straight line from there (`stroke_line`).
+    pub(crate) last_stroke_end: Option<(DocumentId, Float3)>,
     pub(crate) brushes_saved: std::collections::BTreeMap<String, crate::settings::SavedBrush>,
     pub(crate) snap_grid: bool,
     pub(crate) grid_m: f32,
@@ -951,6 +954,7 @@ impl Default for TileTool {
             brush_slots: HashMap::new(),
             brush_mode: TileMode::Select,
             brush_slots_read: false,
+            last_stroke_end: None,
             brushes_saved: Default::default(),
             snap_grid: false,
             grid_m: 6.0,
@@ -2449,6 +2453,25 @@ impl TileTool {
                 }
 
                 prev = p;
+            }
+        }
+
+        // Shift held with a brush: the straight stroke a click would paint, from where the last stroke ended to the brush.
+        if let Some((_, from)) = self.last_stroke_end.filter(|&(doc, _)| Some(doc) == document_id(e))
+            && gui::io().KeyShift
+            && self.mode.brush().is_some()
+            && self.mode != TileMode::Stamp
+            && self.terrain_hit
+            && e.viewport.hovered
+        {
+            let to = self.brush_centre();
+            let n = ((to.x - from.x).hypot(to.z - from.z) / 2.0).ceil().clamp(1.0, 400.0) as usize;
+            let at = |f: f32| {
+                let (x, z) = (from.x + (to.x - from.x) * f, from.z + (to.z - from.z) * f);
+                Float3::new(x, t.terrain_height(x, z) + 0.4, z)
+            };
+            for i in 0..n {
+                o.line(at(i as f32 / n as f32), at((i + 1) as f32 / n as f32), gold);
             }
         }
 
@@ -5215,7 +5238,21 @@ impl TileTool {
             let dt = e.clock.dt();
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             if self.terrain_hit && d.project().has_height() {
+                // Shift + a click: a straight stroke from where the last one ended to here, as in Substance Painter (a stamp is a click).
+                let from = self.last_stroke_end.filter(|&(doc, _)| doc == id).map(|(_, p)| p);
+                if let (true, Some(from), false) = (ev.shift, from, self.mode == TileMode::Stamp) {
+                    let to = self.cursor;
+                    let n = d.stroke_line(kind, (from.x, from.z), (to.x, to.z), &self.stroke_brush());
+                    self.last_stroke_end = Some((id, to));
+                    self.status = format!(
+                        "a straight stroke of {n} dabs, {:.1} m (Shift + click: on from here)",
+                        (to.x - from.x).hypot(to.z - from.z)
+                    );
+                    return true;
+                }
+
                 self.gesture = Some(Gesture::TerrainStroke);
+                self.last_stroke_end = Some((id, self.cursor));
                 d.brush_step(kind, self.cursor.x, self.cursor.z, self.stroke_brush(), dt);
 
                 // A stamp is one click.
@@ -5389,6 +5426,7 @@ impl TileTool {
                 self.turn_image_brush();
                 if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
                     d.brush_step(kind, self.cursor.x, self.cursor.z, self.stroke_brush(), dt);
+                    self.last_stroke_end = Some((id, self.cursor));
                 }
             }
 
