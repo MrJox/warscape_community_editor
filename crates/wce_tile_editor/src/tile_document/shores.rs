@@ -54,6 +54,11 @@ pub(crate) const DEFAULT_AMOUNT: &str = "some";
 /// The layer an export puts the shores in.
 pub const EXPORT_LAYER: &str = "WCE shores";
 
+/// The reeds' exclusion polygons (`Tile::reed_exclusions`): the squares the reeds are grouped by, and how far each outline reaches
+/// past its reeds (metres).
+const REED_COVER_CELL_M: f64 = 12.0;
+const REED_COVER_PAD_M: f64 = 1.5;
+
 const DEFAULT_REEDS: &str = "some";
 const DEFAULT_STONES: &str = "some";
 
@@ -347,10 +352,40 @@ impl Tile {
 
         let mut scene = TedScene::parse_any(text)?;
         let layer = scene.add_layer(scene.scene_graph(), EXPORT_LAYER)?;
-        let texts = self.shore_items.iter().map(|i| i.text.clone()).collect::<Vec<_>>();
+        let mut texts = self.shore_items.iter().map(|i| i.text.clone()).collect::<Vec<_>>();
+        texts.extend(self.reed_exclusions());
         scene.insert_elements_text(layer, &texts)?;
 
         Ok(scene.save())
+    }
+
+    /// Vegetation exclusion polygons round the reeds (`wce_tile::vegetation::cover_polygons`): BOB keeps a placed plant only inside
+    /// one, so without them no reed reached the game (user 2026-11-28). Small shapes per patch of reeds, so little of the game's own
+    /// vegetation beside the river is kept off.
+    fn reed_exclusions(&self) -> Vec<Vec<u8>> {
+        use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
+        let unit = self.unit();
+        let reeds = self
+            .shore_items
+            .iter()
+            .filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE"))
+            .map(|i| [i.position[0], i.position[2]])
+            .collect::<Vec<_>>();
+        wce_tile::vegetation::cover_polygons(&reeds, REED_COVER_CELL_M * unit, REED_COVER_PAD_M * unit)
+            .into_iter()
+            .filter_map(|poly| {
+                let c = poly.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / poly.len() as f64, a[1] + p[1] / poly.len() as f64]);
+                let local = poly.iter().map(|p| Double3::new(p[0] - c[0], 0.0, p[1] - c[1])).collect::<Vec<_>>();
+                let mut g = NewInstance::new("VegetationExclusionPolygonInstance")
+                    .position(Double3::new(c[0], 0.0, c[1]))
+                    .attr("name", "River reeds")
+                    .attr("polygon_closed", "1")
+                    .attr("surface_mode", "MSM_LANDSCAPE")
+                    .attr("area", wce_tile::ted_scene::format_number(wce_tile::new_instances::polygon_area(&local)));
+                g.points = local.into_iter().map(NewPoint::at).collect();
+                element_text(&g).ok()
+            })
+            .collect()
     }
 
     /// How many reeds and stones the shores hold now.

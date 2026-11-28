@@ -535,9 +535,79 @@ pub fn generated_vfx(inputs: &TileInputs, params: &GenerationParams, category: u
     by_key(generate::to_vfx_list(inputs, &chosen).into_iter(), |v| v.key.clone())
 }
 
+/// Exclusion polygons that keep `points` (x, z) in the game: BOB leaves out a placed tree outside every exclusion polygon
+/// ([`trees_outside_exclusions`]), so generated plants (a river's reeds) need some round them. The points are grouped by squares of
+/// `cell`, and each group gets its convex outline grown by `pad` (an octagon round each point): small shapes hugging the plants, so
+/// that little else of the game's own vegetation is kept off. Counter-clockwise, in the points' units.
+pub fn cover_polygons(points: &[[f64; 2]], cell: f64, pad: f64) -> Vec<Vec<[f64; 2]>> {
+    let mut groups: std::collections::BTreeMap<(i64, i64), Vec<[f64; 2]>> = std::collections::BTreeMap::new();
+    for p in points.iter().filter(|p| p[0].is_finite() && p[1].is_finite()) {
+        let key = ((p[0] / cell).floor() as i64, (p[1] / cell).floor() as i64);
+        let g = groups.entry(key).or_default();
+        for k in 0..8 {
+            let a = std::f64::consts::FRAC_PI_4 * f64::from(k);
+            g.push([p[0] + pad * a.cos(), p[1] + pad * a.sin()]);
+        }
+    }
+
+    groups.into_values().map(convex_hull).filter(|h| h.len() >= 3).collect()
+}
+
+/// The convex hull of points, counter-clockwise (Andrew's monotone chain), collinear points left out.
+fn convex_hull(mut pts: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    pts.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    pts.dedup();
+    if pts.len() < 3 {
+        return pts;
+    }
+
+    let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    let mut hull: Vec<[f64; 2]> = vec![];
+    for pass in 0..2 {
+        let start = hull.len();
+        let iter: Box<dyn Iterator<Item = &[f64; 2]>> = if pass == 0 { Box::new(pts.iter()) } else { Box::new(pts.iter().rev()) };
+        for &p in iter {
+            while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+                hull.pop();
+            }
+
+            hull.push(p);
+        }
+
+        hull.pop();
+    }
+
+    hull
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cover_polygons_hold_every_point_in_small_shapes() {
+        // Two reed beds along a bank 40 m apart, and one reed alone.
+        let mut pts = (0..20).map(|k| [f64::from(k) * 0.9, 0.3 * f64::from(k % 3)]).collect::<Vec<_>>();
+        pts.extend((0..10).map(|k| [40.0 + f64::from(k), 5.0]));
+        pts.push([-30.0, -30.0]);
+        let polys = cover_polygons(&pts, 12.0, 1.5);
+        assert!(polys.len() >= 3 && polys.len() <= 6, "{} polygons", polys.len());
+        let f32s = polys.iter().map(|p| p.iter().map(|q| (q[0] as f32, q[1] as f32)).collect::<Vec<_>>()).collect::<Vec<_>>();
+        for p in &pts {
+            assert!(f32s.iter().any(|poly| generate::point_in(poly, p[0] as f32, p[1] as f32)), "{p:?} uncovered");
+        }
+
+        // Small: none much over a cell grown by the pad.
+        for poly in &polys {
+            let (lo, hi) = poly.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), q| {
+                ([lo[0].min(q[0]), lo[1].min(q[1])], [hi[0].max(q[0]), hi[1].max(q[1])])
+            });
+            assert!(hi[0] - lo[0] <= 15.1 && hi[1] - lo[1] <= 15.1);
+        }
+
+        // Far from any point: not covered.
+        assert!(!f32s.iter().any(|poly| generate::point_in(poly, 25.0, 30.0)));
+    }
 
     #[test]
     fn a_tree_outside_every_exclusion_polygon_is_left_out() {
