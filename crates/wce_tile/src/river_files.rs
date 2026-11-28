@@ -39,6 +39,14 @@ pub fn rivers(scene: &TedScene) -> Vec<usize> {
 /// The rivers the editor makes have it; those without it keep their file's factor, as they join their neighbours at those heights.
 pub const RIVER_HEIGHT_ATTR: &str = "wce_river_height";
 
+/// A river whose foam, flow speed and alpha fade the editor's river shader draws in an Attila battle (`wce_river_shader="1"`;
+/// docs/re/water.md): set when one of them is edited on a river the editor didn't make (those with [`RIVER_HEIGHT_ATTR`] are drawn so
+/// already). A mark of its own: the height mark would change the heights a kit river is exported at.
+pub const RIVER_SHADER_ATTR: &str = "wce_river_shader";
+
+/// The marks that make a river one the editor's river shader draws ([`RIVER_HEIGHT_ATTR`], [`RIVER_SHADER_ATTR`]).
+pub const SHADER_RIVER_ATTRS: [&str; 2] = [RIVER_HEIGHT_ATTR, RIVER_SHADER_ATTR];
+
 /// How a file's numbers relate to tile.ted: the file's width is the point's times `width`, its height the scene height divided by `height`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Factors {

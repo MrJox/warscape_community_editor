@@ -354,6 +354,11 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     - Five vertices across, b / 4 on the x87. The offset is `s = (hw - -hw) c + -hw` along the tangent's ground direction normalised,
       turned left (x + s dz, z - s dx).
     - Vertex: x, y, z, flow, c x width, u x total, alpha, c.
+    - The editor's own rivers (`wce_river_height` or `wce_river_shader` on their `SplineRiverInstance`, `river::editor_rivers`; the
+      export's compile keeps both, `project_files::to_ted_for_compile`): the last value is
+      2 + the foam (0 to 1) instead of c (`river::MARKED_FOAM_BASE`, `tessellate_marked`), for the editor's river shader
+      (docs/re/water.md); the game's shader never reads c. The Assembly Kit's rivers keep BOB's bytes. A decompile reads the
+      foam back and marks the river again.
     - Triangles per square: (next c, this c, next c + 1) and (this c, this c + 1, next c + 1).
   - **The block**: vertices numbered by first use, 8 f32 each.
     - Header: 0x5a, size, 0x50, vertex count, index offset, index count.

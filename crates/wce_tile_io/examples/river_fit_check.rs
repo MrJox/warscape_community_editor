@@ -22,7 +22,7 @@ fn dense(segments: &[RiverSegment]) -> Vec<RiverRow> {
             let w = [u * u * u, 3.0 * t * u * u, 3.0 * t * t * u, t * t * t];
             let centre = [0, 1, 2].map(|c| (0..4).map(|j| w[j] * s.points[j][c]).sum());
             let alpha = s.alpha[0] + (s.alpha[1] - s.alpha[0]) * t;
-            out.push(RiverRow { centre, along: k as f32 + t, width: s.width[0], flow: s.flow[0], alpha, foam: s.foam[0] });
+            out.push(RiverRow { centre, along: k as f32 + t, width: s.width[0], flow: s.flow[0], alpha, foam: s.foam[0], marked: false });
         }
     }
 

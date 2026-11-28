@@ -4061,3 +4061,41 @@ fn a_drawn_river_exports_its_ai_hints() {
     let text = String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
     assert!(!text.contains("AIH_RIVER_EDGE") && !text.contains("AIH_BRIDGE_CROSSING"), "a river for its water alone: none");
 }
+
+/// A kit river's foam, flow or fade edited in an Attila battle tile: the river is marked for the editor's river shader (which draws
+/// them; the game's ignores them), not given the editor's height mark (its export heights stay its file's); width marks nothing.
+#[test]
+fn editing_a_kit_rivers_foam_marks_it_for_the_river_shader() {
+    use wce_tile::river_files::{RIVER_HEIGHT_ATTR, RIVER_SHADER_ATTR};
+    let text = TED.replace(
+        r#"<AI_HINT_POLYGON_INSTANCE"#,
+        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="r" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)">
+                            <points>
+                                <point position="0,0,0" controlIn="0,0,0" controlOut="4,0,0" width="90" foam_amount="0.1" alpha_fade="1" flow_speed="0.5"/>
+                                <point position="20,0,0" controlIn="16,0,0" controlOut="0,0,0" width="90" foam_amount="0.1" alpha_fade="1" flow_speed="0.5"/>
+                            </points>
+                        </SplineRiverInstance>
+                        <AI_HINT_POLYGON_INSTANCE"#,
+    );
+    let (dir, _) = open();
+    std::fs::write(dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let river = d.tile().tscene().find_all("SplineRiverInstance")[0];
+    assert!(!d.tile().river_point_values_drawn(), "an Attila battle tile");
+
+    let g = d.next_gesture();
+    assert!(d.set_spline_value(river, &[0, 1], "width", "80", g));
+    assert_eq!(d.tile().tscene().get(river, RIVER_SHADER_ATTR), None, "the width: no mark");
+
+    let g = d.next_gesture();
+    assert!(d.set_spline_value(river, &[0, 1], "foam_amount", "0.6", g));
+    assert_eq!(d.tile().tscene().get(river, RIVER_SHADER_ATTR).as_deref(), Some("1"));
+    assert_eq!(d.tile().tscene().get(river, RIVER_HEIGHT_ATTR), None, "its heights as they were");
+
+    // The compile keeps the mark, TEd's copy doesn't.
+    let export = d.text_for_export(false).unwrap();
+    let compile = String::from_utf8(wce_tile::project_files::to_ted_for_compile(export.clone()).unwrap().0).unwrap();
+    assert!(compile.contains("wce_river_shader=\"1\""));
+    let ted = String::from_utf8(wce_tile::project_files::to_ted(export).unwrap().0).unwrap();
+    assert!(!ted.contains("wce_river_shader"));
+}

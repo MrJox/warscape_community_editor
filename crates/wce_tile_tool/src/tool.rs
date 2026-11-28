@@ -300,7 +300,7 @@ impl ExportInputs {
                 continue;
             }
 
-            let (scene, _) = wce_tile::project_files::to_ted(text)?;
+            let (scene, _) = wce_tile::project_files::to_ted_for_compile(text)?;
             let (saved, notes) = wce_tile_io::attila::workflow::save_exported_scene(&game, &project_dir, Some(scene), out)?;
             for n in &notes.notes {
                 log::info(format!("{}: {n}", saved.display()));
@@ -1999,7 +1999,7 @@ impl TileTool {
                 let schema = walls_schema(e)?;
                 wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack, &kit_walls)?
             } else {
-                let (scene, _) = wce_tile::project_files::to_ted(text)?;
+                let (scene, _) = wce_tile::project_files::to_ted_for_compile(text)?;
                 let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;
                 (folder, notes.notes)
             };
@@ -4846,21 +4846,19 @@ impl TileTool {
 
         let Some(t) = wce_tile::instance_templates::template(&kind) else { return false };
         let river = kind == "SplineRiverInstance";
-        let drawn = d.tile().river_point_values_drawn();
+        // An Attila battle river's foam, flow and fade are drawn by the editor's river shader (a movie pack, scripts/river_shader.py): on
+        // the rivers the editor made, and on any other once one of them is edited (`set_spline_value` marks it); Rome 2's and the campaign
+        // map's water draws them on its own (user 2026-11-28: they stayed greyed out on a kit river).
+        let editors = river && !d.tile().river_point_values_drawn();
         let mut any = false;
         for &(attr, _) in t.point_attrs.iter().filter(|(a, _)| !matches!(*a, "position" | "controlIn" | "controlOut")) {
             any = true;
-            // A river's values the game does nothing with here, shown greyed out with why (user 2026-11-28: they seemed to do nothing).
+            // A river's value nothing reads, shown greyed out with why (user 2026-11-28: they seemed to do nothing).
             let unused = river
                 && match attr {
                     "terrain_offset" => Some(
                         "TEd's height of the point over the ground under it when TEd placed it. The game takes the river's height from its \
                          points (their file has no terrain_offset), so it changes nothing; kept as TEd stores it.",
-                    ),
-                    "foam_amount" | "flow_speed" | "alpha_fade" if !drawn => Some(
-                        "Written to the river's file, but Attila's battle water shader reads only where the water is, not its foam, flow \
-                         speed or fade: in a battle it changes nothing (Rome 2's rivers and the campaign map's do use it). Kept as TEd \
-                         stores it.",
                     ),
                     _ => None,
                 }
@@ -4888,8 +4886,25 @@ impl TileTool {
             }
 
             if gui::is_item_hovered() {
+                let how = match attr {
+                    "foam_amount" if editors => {
+                        "\nFoam on the water (0 to 1; 0.1, TEd's default, shows almost none), more in the shallows."
+                    }
+                    "flow_speed" if editors => {
+                        "\nHow fast the ripples run down the river: 0.5 as the game's own, 0 still, negative upstream."
+                    }
+                    "alpha_fade" if editors => "\nThe water fades into the bed under it as this goes to 0 (a river's ends).",
+                    _ => "",
+                };
+                let shader = if !how.is_empty() && !d.tile().river_point_values_drawn() {
+                    "\nIn an Attila battle, drawn by the editor's river shader (a movie pack in the game's data folder, built by \
+                     scripts/river_shader.sh; in the editor too with the pack in its mod list); without it the game ignores it. Editing it \
+                     marks the river for that shader (wce_river_shader)."
+                } else {
+                    ""
+                };
                 gui::set_tooltip(&format!(
-                    "The point's {attr} attribute, as TEd stores it; with all points ticked, every point's. Drag or Ctrl+click to type."
+                    "The point's {attr} attribute, as TEd stores it; with all points ticked, every point's. Drag or Ctrl+click to type.{how}{shader}"
                 ));
             }
 
