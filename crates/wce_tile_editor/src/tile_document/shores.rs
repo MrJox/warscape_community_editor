@@ -77,7 +77,8 @@ impl Tile {
                 vec![]
             };
             let shore = on(e);
-            if (!shore && fords.is_empty()) || !self.shown(e) || !self.of_tile_variation(e) || samples.len() < 2 {
+            let cliffs = if patch { self.river_cliffs_on(e, &samples) } else { vec![] };
+            if (!shore && fords.is_empty() && cliffs.is_empty()) || !self.shown(e) || !self.of_tile_variation(e) || samples.len() < 2 {
                 continue;
             }
 
@@ -90,6 +91,7 @@ impl Tile {
                     .iter()
                     .map(|&(at, length)| wce_tile::river_bed::Ford { at, length, depth: wce_tile::river_bed::FORD_DEPTH })
                     .collect(),
+                cliffs,
             };
             let settings = if shore { settings(e) } else { ShoreSettings::of(0.0, 0.0) };
             let splashes = sc.get(e, SPLASHES_ATTR).as_deref().map(str::trim) != Some("0");
@@ -256,6 +258,18 @@ impl Tile {
 
                         out.push(BiomeItem { area: w.elem, text, position: [at.x, at.y, at.z] });
                     }
+                }
+
+                // The cliff banks' pieces: freeform at their height, leaning with their face's top at its ends.
+                for c in &shore.cliffs {
+                    let p = &c.placed;
+                    let at = Double3::new(f64::from(p.x) * unit, f64::from(p.y) * unit, f64::from(p.z) * unit);
+                    let Some(mut text) = item_text("BUILDING_INSTANCE", &p.key, at, p.scale, p.yaw, unit) else { continue };
+                    if c.up[1] < 1.0 - 1e-6 {
+                        text = super::draft::tilted(&text, Double3::new(f64::from(c.up[0]), f64::from(c.up[1]), f64::from(c.up[2])));
+                    }
+
+                    out.push(BiomeItem { area: w.elem, text, position: [at.x, at.y, at.z] });
                 }
             }
 

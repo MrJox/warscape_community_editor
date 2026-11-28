@@ -19,6 +19,9 @@
 #                 normal in alpha and green (the decal shader reads it there; mud_stone01 and stones1 do not and draw lit from one side).
 #   bed_decals    decals: mud and dirt from the waterline into the shallow water, and in clumps over a ford's floor.
 #   splash        an effect (vfx): the looping splash over a ford's ends.
+#   cliffs        buildings: a river's cliff bank's pieces, chained along it (their long side, x, along the bank, their rock face on
+#                 their -z side to the water; about 18 m long, 11.5 m apart). None (or no list): the ground behind is raised, no pieces.
+#   cliff_ends    buildings: the rocks at a cliff bank's ends, over where its face meets the bank (5 to 6 m big). None: no rocks.
 
 reeds = ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"]
 lilies = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"]
@@ -49,3 +52,5 @@ bed_decals = [
     'rigidmodels\decals\battle\dirt_2.rigid_model_v2',
 ]
 splash = "enviro_vfx_watersplashes"
+cliffs = ["attila_cliff_01", "attila_cliff_02", "attila_cliff_03"]
+cliff_ends = ["attila_rock_01", "attila_rock_03", "attila_rock_04"]

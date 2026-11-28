@@ -25,6 +25,15 @@ pub struct ShoreKeys {
     pub shore_decals: Vec<String>,
     pub bed_decals: Vec<String>,
     pub splash: String,
+
+    /// A river's cliff banks' pieces (buildings, chained along the bank, their rock face on their -z side); none: no pieces, the ground
+    /// raised alone.
+    #[serde(default)]
+    pub cliffs: Vec<String>,
+
+    /// The rocks at a cliff bank's ends (buildings, a few metres big), over where its face meets the bank; none: no rocks.
+    #[serde(default)]
+    pub cliff_ends: Vec<String>,
 }
 
 impl Default for ShoreKeys {
@@ -56,6 +65,8 @@ struct Custom {
     ford_stones: Option<Vec<String>>,
     bank_stones: Option<Vec<String>>,
     bank_rocks: Option<Vec<String>>,
+    cliffs: Option<Vec<String>>,
+    cliff_ends: Option<Vec<String>>,
     bank_mounds: Option<Vec<String>>,
     shore_decals: Option<Vec<String>>,
     bed_decals: Option<Vec<String>>,
@@ -80,6 +91,8 @@ pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<
             (&mut k.bank_mounds, c.bank_mounds),
             (&mut k.shore_decals, c.shore_decals),
             (&mut k.bed_decals, c.bed_decals),
+            (&mut k.cliffs, c.cliffs),
+            (&mut k.cliff_ends, c.cliff_ends),
         ] {
             if let Some(over) = over {
                 *list = over;
@@ -116,6 +129,8 @@ pub fn parse_with(vanilla: &str, extras: &[crate::user_files::Extra]) -> Result<
         ("bank_mounds", &k.bank_mounds),
         ("shore_decals", &k.shore_decals),
         ("bed_decals", &k.bed_decals),
+        ("cliffs", &k.cliffs),
+        ("cliff_ends", &k.cliff_ends),
     ] {
         if list.iter().any(|v| v.trim().is_empty()) {
             return Err(format!("{FILE_NAME}: {name} has an empty key"));
@@ -197,8 +212,14 @@ impl ShoreSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Water {
     /// A river: its middle line's samples (x, z), the water's height there and its half width; its fords' held stretches (where each
-    /// starts and ends along it, metres).
-    River { line: Vec<[f32; 2]>, water: Vec<f32>, half: Vec<f32>, fords: Vec<crate::river_bed::Ford> },
+    /// starts and ends along it, metres); its cliff banks.
+    River {
+        line: Vec<[f32; 2]>,
+        water: Vec<f32>,
+        half: Vec<f32>,
+        fords: Vec<crate::river_bed::Ford>,
+        cliffs: Vec<crate::river_bed::CliffBank>,
+    },
 
     /// A lake: its outline (x, z) and its water's height.
     Lake { outline: Vec<[f32; 2]>, water: f32 },
@@ -286,6 +307,17 @@ pub struct Shore {
     /// then a long flat rock or a low ground mound laid along the bank (buildings).
     pub decals: Vec<Placed>,
     pub bank_pieces: Vec<Placed>,
+
+    /// A river's cliff banks' pieces (buildings, freeform at their height), each tilted along the bank where its face falls at its ends.
+    pub cliffs: Vec<CliffPiece>,
+}
+
+/// A cliff bank's piece: where it goes, and its up (x, y, z, of length 1; straight up but along its ends' ramps, where it leans along
+/// the bank with its face's top).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CliffPiece {
+    pub placed: Placed,
+    pub up: [f32; 3],
 }
 
 /// What stands over a shore, seen from above (world metres): a building's footprint (its model's bounds, turned and scaled: four corners
@@ -393,6 +425,213 @@ fn at_along(line: &[[f32; 2]], half: &[f32], along: f32) -> Option<([f32; 2], [f
     }
 
     None
+}
+
+/// How far apart a cliff bank's pieces are along it at most (metres; the kit's pieces are 18 m long, its settlements chain them about
+/// 11.3 m apart, overlapping), and how far over the water their middle stands (their foot 2 m under it, their top 4.15 m over: the foot
+/// under the water, the top just over the ground raised behind them, [`crate::river_bed::CLIFF_TOP`]); how far past the water's edge:
+/// [`crate::river_bed::CLIFF_PIECE_OUT`].
+pub const CLIFF_STEP: f32 = 11.5;
+pub const CLIFF_PIECE_LIFT: f32 = 1.0;
+
+/// Whether a place is on a river's cliff bank: on its side (`u`, or a side: its sign), within its stretch, from a few metres out on the
+/// water (`edge`, metres past the water's drawn edge; the waterline, at the cliff's face, is some metres inside it) up.
+fn on_cliff(water: &Water, along: f32, u: f32, edge: f32) -> bool {
+    let Water::River { cliffs, .. } = water else { return false };
+    edge > -8.0 && cliffs.iter().any(|c| (u > 0.0) == (c.side > 0.0) && f64::from(along) >= c.from - 2.0 && f64::from(along) <= c.to + 2.0)
+}
+
+/// A cliff bank's pieces: as many as cover its stretch [`CLIFF_STEP`] apart at most along the bank's own line (the outer bank of a bend
+/// is longer than the river's middle line: spaced along that, they parted there), evenly, each along the bank there with its face to the
+/// water, its key by the seed. Along its ends' ramps ([`crate::river_bed::CliffBank::face`]) each sinks and leans with the face's top
+/// over its length. Where the bank's line folds (its side the inside of a bend tighter than its offset) its folded part is left out:
+/// pieces piled up there, turned every way.
+#[must_use]
+pub fn cliff_pieces(
+    line: &[[f32; 2]],
+    water: &[f32],
+    half: &[f32],
+    c: &crate::river_bed::CliffBank,
+    keys: &[String],
+    seed: u64,
+) -> Vec<CliffPiece> {
+    let mut out = vec![];
+    let Some((bank, bank_length)) = cliff_bank_line(line, water, half, c) else { return out };
+    if keys.is_empty() {
+        return out;
+    }
+
+    let n = (bank_length / CLIFF_STEP).ceil().max(1.0) as usize;
+    let top = crate::river_bed::CLIFF_TOP as f32;
+    for k in 0..n {
+        let at = bank_length * (k as f32 + 0.5) / n as f32;
+        let (q, i, level, _) = bank_at(&bank, at);
+        // Its long side (x) along the bank (the bank's way there, a few metres either side), its face (-z) to the water.
+        let (j0, j1) = (i.saturating_sub(3), (i + 2).min(bank.len() - 1));
+        let dir = [bank[j1].0[0] - bank[j0].0[0], bank[j1].0[1] - bank[j0].0[1]];
+        let yaw = -dir[1].atan2(dir[0]).to_degrees() + if c.side > 0.0 { CLIFF_FACE_TURN } else { CLIFF_FACE_TURN + 180.0 };
+        // Its face's top at its two ends (along the bank): it stands at their middle, leaning from one to the other.
+        let (.., a0) = bank_at(&bank, at - CLIFF_PIECE_HALF);
+        let (.., a1) = bank_at(&bank, at + CLIFF_PIECE_HALF);
+        let (h0, h1) = (top * c.face(f64::from(a0)) as f32, top * c.face(f64::from(a1)) as f32);
+        let slope = (h1 - h0) / (2.0 * CLIFF_PIECE_HALF);
+        let l = dir[0].hypot(dir[1]).max(1e-6);
+        let (dx, dz) = (dir[0] / l, dir[1] / l);
+        let u = [-dx * slope, 1.0, -dz * slope];
+        let ul = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+        let [r, ..] = cell_numbers(seed ^ 0xc11f_f000, k as i64, 0);
+        let key = pick(keys, (r * keys.len() as f32) as usize);
+        let y = level + CLIFF_PIECE_LIFT - top + (h0 + h1) * 0.5;
+        out.push(CliffPiece {
+            placed: Placed { key: key.to_owned(), x: q[0], y, z: q[1], scale: 1.0, yaw },
+            up: [u[0] / ul, u[1] / ul, u[2] / ul],
+        });
+    }
+
+    out
+}
+
+/// Half a cliff piece's length (metres; the kit's are 18 m long).
+const CLIFF_PIECE_HALF: f32 = 9.0;
+
+/// A cliff bank's rocks at its ends, off its pieces' line (not the water's drawn edge: past a cliff's end a river may run wider than it
+/// is drawn), where its face has fallen to half its height along its ramp (past that it is too low to show, and rocks at its very end
+/// stood off by themselves): one at its face's foot, one on the bank a little further on (over where its face meets the bank and the
+/// raised land's shoulder starts), a little sunk into the ground, none in open water; their keys and turns by the seed. `height`: the
+/// ground's.
+#[must_use]
+pub fn cliff_end_rocks(
+    line: &[[f32; 2]],
+    water: &[f32],
+    half: &[f32],
+    c: &crate::river_bed::CliffBank,
+    keys: &[String],
+    height: &dyn Fn(f32, f32) -> f32,
+    seed: u64,
+) -> Vec<Placed> {
+    let mut out = vec![];
+    let Some((bank, bank_length)) = cliff_bank_line(line, water, half, c) else { return out };
+    if keys.is_empty() {
+        return out;
+    }
+
+    let length = line.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f32>();
+    let side = if c.side > 0.0 { 1.0f32 } else { -1.0 };
+    for (end, (tip, outward)) in [(0.0f32, -1.0f32), (bank_length, 1.0)].into_iter().enumerate() {
+        // Not at a river's own ends (the tile's edge, or where it meets another).
+        let (.., along) = bank_at(&bank, tip);
+        if along <= 0.5 || along >= length - 0.5 {
+            continue;
+        }
+
+        // Where its face is half its height, in from this end.
+        let half_up = |b: &([f32; 2], f32, f32, f32)| c.face(f64::from(b.3)) >= 0.5;
+        let at = if outward < 0.0 { bank.iter().find(|b| half_up(b)) } else { bank.iter().rev().find(|b| half_up(b)) }.map_or(tip, |b| b.1);
+        let (_, _, level, _) = bank_at(&bank, at);
+
+        // The bank's way at its end (as the river runs), and to the water from it.
+        let (p, ..) = bank_at(&bank, at);
+        let (q, ..) = bank_at(&bank, at - outward * 4.0);
+        let l = (p[0] - q[0]).hypot(p[1] - q[1]).max(1e-6);
+        let way = [(p[0] - q[0]) / l * outward, (p[1] - q[1]) / l * outward];
+        let to_water = [way[1] * side, -way[0] * side];
+        // (how far past its end along its way, how far to the water)
+        for (n, (past, wet)) in
+            [(CLIFF_END_ROCK_ALONG[0], CLIFF_END_ROCK_OUT[0]), (CLIFF_END_ROCK_ALONG[1], CLIFF_END_ROCK_OUT[1])].into_iter().enumerate()
+        {
+            let s = past * outward;
+            let (x, z) = (p[0] + way[0] * s + to_water[0] * wet, p[1] + way[1] * s + to_water[1] * wet);
+            let ground = height(x, z);
+            if ground < level - CLIFF_END_ROCK_DEEPEST {
+                continue;
+            }
+
+            let [a, b, ..] = cell_numbers(seed ^ 0xc11f_e4d0, end as i64, n as i64);
+            let key = pick(keys, (a * keys.len() as f32) as usize);
+            out.push(Placed { key: key.to_owned(), x, y: ground - CLIFF_END_ROCK_SINK, z, scale: 1.0, yaw: 360.0 * b });
+        }
+    }
+
+    out
+}
+
+/// Where a cliff bank's end rocks go from where its face is half its height (metres): how far on along the bank (negative: back along it) and
+/// how far towards the water (negative: inland), the one at its face's foot and the one on the bank; how deep under the water the
+/// ground may be for one (deeper: open water, none); how deep they sink (the kit's rocks are 5 to 6 m tall, their middle 2 m over their
+/// foot).
+const CLIFF_END_ROCK_ALONG: [f32; 2] = [0.0, 6.0];
+const CLIFF_END_ROCK_OUT: [f32; 2] = [3.0, -3.0];
+const CLIFF_END_ROCK_DEEPEST: f32 = 2.0;
+const CLIFF_END_ROCK_SINK: f32 = 0.3;
+
+/// A cliff bank's line, where its pieces' middles go: its places a metre along the river apart (where, how far along the bank, the water
+/// there, how far along the river), the folded ones left out (nearer another part of the river than its offset); its length.
+#[allow(clippy::type_complexity)]
+fn cliff_bank_line(
+    line: &[[f32; 2]],
+    water: &[f32],
+    half: &[f32],
+    c: &crate::river_bed::CliffBank,
+) -> Option<(Vec<([f32; 2], f32, f32, f32)>, f32)> {
+    if line.len() < 2 {
+        return None;
+    }
+
+    let length = line.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f32>();
+    let (from, to) = ((c.from as f32).max(0.0), (c.to as f32).min(length));
+    if to <= from {
+        return None;
+    }
+
+    let side = if c.side > 0.0 { 1.0f32 } else { -1.0 };
+    let steps = (to - from).ceil().max(1.0) as usize;
+    let mut bank: Vec<([f32; 2], f32, f32, f32)> = vec![];
+    for k in 0..=steps {
+        let along = from + (to - from) * k as f32 / steps as f32;
+        let Some((p, dir, h)) = at_along(line, half, along) else { continue };
+        // To the side (the left of the way the river runs: (-dz, dx)).
+        let off = h + crate::river_bed::CLIFF_PIECE_OUT as f32;
+        let r = off * side;
+        let q = [p[0] - dir[1] * r, p[1] + dir[0] * r];
+        let nearest = line.windows(2).map(|w| segment_distance(q, w[0], w[1])).fold(f32::INFINITY, f32::min);
+        if nearest < off - 0.5 {
+            continue;
+        }
+
+        let walked = bank.last().map_or(0.0, |&(b, w, ..)| w + (q[0] - b[0]).hypot(q[1] - b[1]));
+        bank.push((q, walked, level_along(line, water, along), along));
+    }
+
+    let length = bank.last()?.1;
+    (bank.len() >= 2).then_some((bank, length))
+}
+
+/// A place `at` metres along a cliff bank's line (clamped to it): where, the index of the sample past it, the water and how far along
+/// the river.
+fn bank_at(bank: &[([f32; 2], f32, f32, f32)], at: f32) -> ([f32; 2], usize, f32, f32) {
+    let i = bank.iter().position(|b| b.1 >= at).unwrap_or(bank.len() - 1).max(1);
+    let ((a, wa, la, aa), (b, wb, lb, ab)) = (bank[i - 1], bank[i]);
+    let t = ((at - wa) / (wb - wa).max(1e-6)).clamp(0.0, 1.0);
+    ([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], i, la + (lb - la) * t, aa + (ab - aa) * t)
+}
+
+/// The turn (degrees) that puts a cliff piece's face to the water on a river's left bank, with its long side along the river.
+const CLIFF_FACE_TURN: f32 = 0.0;
+
+/// The water's height `along` metres along a river's line.
+fn level_along(line: &[[f32; 2]], water: &[f32], along: f32) -> f32 {
+    let mut walked = 0.0;
+    for i in 0..line.len().saturating_sub(1) {
+        let l = (line[i + 1][0] - line[i][0]).hypot(line[i + 1][1] - line[i][1]);
+        if l > 1e-6 && walked + l >= along {
+            let t = ((along - walked) / l).clamp(0.0, 1.0);
+            return water[i] + (water[i + 1] - water[i]) * t;
+        }
+
+        walked += l;
+    }
+
+    water.last().copied().unwrap_or(0.0)
 }
 
 /// Four numbers in [0, 1) of a grid cell and a seed (a hash: the same cell gives the same numbers).
@@ -509,6 +748,11 @@ pub fn place(
                 continue;
             }
 
+            // A cliff bank: its face stands at the water, nothing of the shore's under or over it.
+            if on_cliff(water, along, u, edge) {
+                continue;
+            }
+
             let g = height(x, z);
             let depth = level - g;
 
@@ -598,6 +842,10 @@ pub fn place(
                     });
                     let [a, b, c, d] = cell_numbers(seed ^ 0x6c07_8965, k, if side < 0.0 { 1 } else { 2 });
                     let yaw = -dir[1].atan2(dir[0]).to_degrees();
+                    if on_cliff(water, along, side, 0.0) {
+                        continue;
+                    }
+
                     // Out from the middle line: past the water's edge a little (on the bank's top).
                     let at = |off: f32| {
                         let r = (h + off) * side;
@@ -698,6 +946,15 @@ pub fn place(
         }
     }
 
+    // The cliff banks' pieces.
+    if let Water::River { line, water: levels, half, cliffs, .. } = water {
+        for (n, c) in cliffs.iter().enumerate() {
+            let seed = seed ^ (n as u64).wrapping_mul(0x9e37_79b9);
+            out.cliffs.extend(cliff_pieces(line, levels, half, c, &keys.cliffs, seed));
+            out.bank_pieces.extend(cliff_end_rocks(line, levels, half, c, &keys.cliff_ends, height, seed));
+        }
+    }
+
     // The splashes: across each ford's two curved ends, every few metres, on the water.
     if let Water::River { line, half, fords, .. } = water {
         for f in fords {
@@ -733,7 +990,13 @@ mod tests {
     /// A straight river along x at z 50, 10 m wide, its water at 0; the ground 2.4 m under it in the middle, rising 0.4 a metre to the
     /// sides (the water's edge at 6 m from the middle).
     fn river() -> (Water, impl Fn(f32, f32) -> f32) {
-        let w = Water::River { line: vec![[0.0, 50.0], [200.0, 50.0]], water: vec![0.0, 0.0], half: vec![5.0, 5.0], fords: vec![] };
+        let w = Water::River {
+            line: vec![[0.0, 50.0], [200.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![5.0, 5.0],
+            fords: vec![],
+            cliffs: vec![],
+        };
         (w, |_: f32, z: f32| ((z - 50.0).abs() - 6.0) * 0.4)
     }
 
@@ -758,7 +1021,13 @@ mod tests {
     #[test]
     fn a_fords_edges_are_lined_with_stones_and_splashes() {
         let ford = crate::river_bed::Ford { at: 100.0, length: 20.0, depth: 0.5 };
-        let w = Water::River { line: vec![[0.0, 50.0], [200.0, 50.0]], water: vec![0.0, 0.0], half: vec![10.0, 10.0], fords: vec![ford] };
+        let w = Water::River {
+            line: vec![[0.0, 50.0], [200.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![10.0, 10.0],
+            fords: vec![ford],
+            cliffs: vec![],
+        };
         // Deep but at the ford (its held stretch, curved), a quarter metre there.
         let g = move |x: f32, z: f32| {
             let (s0, s1) = ford.ends(f64::from((z - 50.0) / 10.0));
@@ -804,7 +1073,13 @@ mod tests {
     #[test]
     fn a_rivers_banks_take_decals_its_fords_bed_decals_and_now_and_then_a_rock_not_at_them() {
         let ford = crate::river_bed::Ford { at: 300.0, length: 30.0, depth: 0.5 };
-        let w = Water::River { line: vec![[0.0, 50.0], [600.0, 50.0]], water: vec![0.0, 0.0], half: vec![10.0, 10.0], fords: vec![ford] };
+        let w = Water::River {
+            line: vec![[0.0, 50.0], [600.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![10.0, 10.0],
+            fords: vec![ford],
+            cliffs: vec![],
+        };
         let g = |_: f32, z: f32| ((z - 50.0).abs() - 11.0) * 0.5;
         let shore = place(&w, &ShoreSettings::of(0.0, 0.85).with_decals(0.85, 0.85), &ShoreKeys::default(), &g, &|_, _| false, 9);
         let (shore_d, bed_d): (Vec<_>, Vec<_>) = shore.decals.iter().partition(|d| ShoreKeys::default().shore_decals.contains(&d.key));
@@ -835,6 +1110,84 @@ mod tests {
         let at_ford = |x: f32| x > 270.0 && x < 330.0;
         assert!(shore.bank_pieces.iter().all(|p| !at_ford(p.x)), "no rocks or mounds at the ford's banks");
         assert!(place(&w, &ShoreSettings::of(0.0, 0.0), &ShoreKeys::default(), &g, &|_, _| false, 9).decals.is_empty(), "none asked");
+    }
+
+    #[test]
+    fn a_cliff_banks_pieces_line_its_side_and_nothing_else_grows_there() {
+        use crate::river_bed::{CLIFF_PIECE_OUT, CliffBank};
+        // Along +x at z 50, 20 m wide; a cliff on its left (+z) from 50 to 150 m along.
+        let cliff = CliffBank { from: 50.0, to: 150.0, side: 1.0 };
+        let w = Water::River {
+            line: vec![[0.0, 50.0], [200.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![10.0, 10.0],
+            fords: vec![],
+            cliffs: vec![cliff],
+        };
+        let keys = ShoreKeys { cliffs: vec!["cliff_a".into(), "cliff_b".into()], cliff_ends: vec![], ..ShoreKeys::default() };
+        let g = |_: f32, z: f32| if (z - 50.0).abs() < 8.0 { -1.0 } else { 0.5 };
+        let shore = place(&w, &ShoreSettings::of(0.85, 0.85), &keys, &g, &|_, _| false, 3);
+        assert_eq!(shore.cliffs.len(), (100.0 / CLIFF_STEP).ceil() as usize, "{:?}", shore.cliffs);
+        let out = 50.0 + 10.0 + CLIFF_PIECE_OUT as f32;
+        for c in &shore.cliffs {
+            let p = &c.placed;
+            assert!((p.z - out).abs() < 1e-3 && p.x > 50.0 && p.x < 150.0 && p.y <= CLIFF_PIECE_LIFT + 1e-6, "{p:?}");
+            // Its long side along the river, its face (-z) turned to it (to -z here: no turn).
+            assert!(p.yaw.rem_euclid(360.0) < 1e-3 || (p.yaw.rem_euclid(360.0) - 360.0).abs() < 1e-3, "{p:?}");
+        }
+
+        // Whole and upright in the middle; sunk at its ends, leaning up towards the middle along the river.
+        let mid = shore.cliffs.iter().find(|c| (c.placed.x - 100.0).abs() < CLIFF_STEP).expect("a middle piece");
+        assert!((mid.placed.y - CLIFF_PIECE_LIFT).abs() < 1e-4 && (mid.up[1] - 1.0).abs() < 1e-6, "{mid:?}");
+        let (first, last) = (&shore.cliffs[0], &shore.cliffs[shore.cliffs.len() - 1]);
+        assert!(first.placed.y < CLIFF_PIECE_LIFT - 1.0 && first.up[0] < -0.05, "{first:?}");
+        assert!(last.placed.y < CLIFF_PIECE_LIFT - 1.0 && last.up[0] > 0.05, "{last:?}");
+
+        let on_bank = |p: &&Placed| p.z > 52.5 && p.x > 52.0 && p.x < 148.0;
+        assert!(shore.reeds.iter().chain(&shore.stones).chain(&shore.bank_pieces).filter(on_bank).count() == 0, "nothing on its bank");
+        assert!(shore.reeds.iter().chain(&shore.stones).any(|p| p.z < 50.0 && p.x > 52.0 && p.x < 148.0), "the other bank as ever");
+        // The right bank: its pieces turned round.
+        let right = Water::River {
+            line: vec![[0.0, 50.0], [200.0, 50.0]],
+            water: vec![0.0, 0.0],
+            half: vec![10.0, 10.0],
+            fords: vec![],
+            cliffs: vec![CliffBank { side: -1.0, ..cliff }],
+        };
+        let shore = place(&right, &ShoreSettings::of(0.0, 0.0), &keys, &g, &|_, _| false, 3);
+        assert!(
+            shore.cliffs.iter().all(|c| (c.placed.z - (100.0 - out)).abs() < 1e-3 && (c.placed.yaw.rem_euclid(360.0) - 180.0).abs() < 1e-3)
+        );
+    }
+
+    #[test]
+    fn a_cliff_bank_has_rocks_at_its_ends_and_no_pieces_where_its_bank_folds() {
+        use crate::river_bed::{CLIFF_PIECE_OUT, CliffBank};
+        // Its ends' rocks: two by each end on its side, none at the river's own end.
+        let line = vec![[0.0, 50.0], [200.0, 50.0]];
+        let (water, half) = (vec![0.0, 0.0], vec![10.0, 10.0]);
+        let keys = vec!["rock".to_owned()];
+        let rocks = cliff_end_rocks(&line, &water, &half, &CliffBank { from: 50.0, to: 150.0, side: 1.0 }, &keys, &|_, _| 2.0, 1);
+        assert_eq!(rocks.len(), 4, "{rocks:?}");
+        // Off its pieces' line (z 59) where their face is half its height (half its ramp, 24 m, in): one at their foot, one on the bank on.
+        let near = |x: f32, z: f32| rocks.iter().any(|p| (p.x - x).abs() < 1e-3 && (p.z - z).abs() < 1e-3);
+        assert!(near(62.0, 56.0) && near(56.0, 62.0) && near(138.0, 56.0) && near(144.0, 62.0), "{rocks:?}");
+        assert!(rocks.iter().all(|p| p.y < 2.0), "sunk into the ground: {rocks:?}");
+        let deep = cliff_end_rocks(&line, &water, &half, &CliffBank { from: 50.0, to: 150.0, side: 1.0 }, &keys, &|_, _| -5.0, 1);
+        assert!(deep.is_empty(), "none in open water: {deep:?}");
+        let to_end = cliff_end_rocks(&line, &water, &half, &CliffBank { from: 50.0, to: 200.0, side: 1.0 }, &keys, &|_, _| 2.0, 1);
+        assert_eq!(to_end.len(), 2, "{to_end:?}");
+
+        // A tight bend (a right angle) with its cliff on the inside: no piece nearer the river than its offset.
+        let line = vec![[0.0, 0.0], [100.0, 0.0], [100.0, -100.0]];
+        let c = CliffBank { from: 40.0, to: 160.0, side: -1.0 };
+        let pieces = cliff_pieces(&line, &[0.0; 3], &[20.0; 3], &c, &keys, 1);
+        let off = 20.0 + CLIFF_PIECE_OUT as f32;
+        assert!(!pieces.is_empty());
+        for p in &pieces {
+            let d = line.windows(2).map(|w| segment_distance([p.placed.x, p.placed.z], w[0], w[1])).fold(f32::INFINITY, f32::min);
+            assert!(d > off - 1.0, "{p:?} is {d} m from the river");
+        }
     }
 
     #[test]

@@ -597,6 +597,46 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "river_cliff",
+        "river_cliff <point>|all left|right|outer|off | list",
+        "mark the selected river's point (or all) a cliff bank on a side (outer: the outer bank of its bend), or none (one undo entry each); \
+         list: its cliff stretches (metres along it, the side)",
+        |e, a| {
+            use wce_tile_editor::tile_document::river_cliffs::cliff_mark;
+            const USAGE: &str = "usage: river_cliff <point>|all left|right|outer|off | list";
+            let sel = primary(e);
+            let (Some(d), Some(r)) = (document(e), sel) else { return fail("select a river") };
+            if a.first().is_some_and(|w| w == "list") {
+                let cliffs = d.tile().river_cliffs(r);
+                let text = cliffs.iter().map(|c| format!("{:.0}..{:.0} {}", c.from, c.to, cliff_mark(c.side))).collect::<Vec<_>>();
+                return ok(if text.is_empty() { "no cliff banks".to_owned() } else { text.join("; ") });
+            }
+
+            let n = d.tile().tscene().polygon_points(r).len();
+            let points = match a.first().map(String::as_str) {
+                Some("all") => (0..n).collect::<Vec<_>>(),
+                Some(v) => match v.parse::<usize>() {
+                    Ok(i) if i < n => vec![i],
+                    _ => return fail(format!("no point {v} (the river has {n})")),
+                },
+                None => return fail(USAGE),
+            };
+            for p in points {
+                let side = match a.get(1).map(String::as_str) {
+                    Some("left") => Some(1.0),
+                    Some("right") => Some(-1.0),
+                    Some("outer") => Some(d.tile().river_outer_side(r, p)),
+                    Some("off") => None,
+                    _ => return fail(USAGE),
+                };
+                d.set_river_cliff(r, p, side);
+            }
+
+            ok("")
+        },
+    );
+
+    c.add(
         "water_planes",
         "water_planes",
         "log the tile's water planes: their model's bounds, place, scale and the world rectangle they cover",

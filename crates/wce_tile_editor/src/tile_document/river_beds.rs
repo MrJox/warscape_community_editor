@@ -369,6 +369,11 @@ fn signature_of(bed: &RiverBed, texture: Option<usize>) -> u64 {
         }
 
         c.cuts.hash(&mut h);
+        for cl in &c.cliffs {
+            for v in [cl.from, cl.to, cl.side] {
+                v.to_bits().hash(&mut h);
+            }
+        }
         for f in &c.fords {
             for v in [f.at, f.length, f.depth] {
                 v.to_bits().hash(&mut h);
@@ -447,7 +452,8 @@ impl Tile {
             let fords = river_fords(sc.get(e, FORDS_ATTR).as_deref().unwrap_or_default());
             let num = |a: &str| sc.get(e, a).and_then(|v| v.trim().parse::<f64>().ok());
             let ford_depth = num(FORD_DEPTH_ATTR).map_or(wce_tile::river_bed::FORD_DEPTH, |d| d * unit);
-            let channel = (cuts || !fords.is_empty()).then(|| ribbons.remove(&e)).flatten().map(|(_, samples)| {
+            let cliffs = ribbons.get(&e).map_or_else(Vec::new, |(_, samples)| self.river_cliffs_on(e, samples));
+            let channel = (cuts || !fords.is_empty() || !cliffs.is_empty()).then(|| ribbons.remove(&e)).flatten().map(|(_, samples)| {
                 let width = samples.iter().map(|s| s.width).sum::<f64>() / samples.len().max(1) as f64;
                 Channel {
                     line: samples.iter().map(|s| [s.x, s.z]).collect(),
@@ -458,6 +464,7 @@ impl Tile {
                     vertical: unit,
                     fords: fords.iter().map(|&(at, length)| Ford { at, length, depth: ford_depth }).collect(),
                     cuts,
+                    cliffs,
                 }
             });
             let bed = RiverBed { channel, joins, basin: None };

@@ -218,7 +218,88 @@ pub struct Channel {
 
     /// Whether it cuts its bed along its whole line; else only its fords change the ground.
     pub cuts: bool,
+
+    /// Its cliff banks: the ground behind them raised to their top.
+    pub cliffs: Vec<CliffBank>,
 }
+
+/// A cliff bank (docs/plans/river_bridges.md, step 6.5): a stretch of a river (metres along its line, `from` to `to`) whose bank on one
+/// side (`side`: 1 to the left as the river runs, -1 to the right) stands a cliff, its pieces along it (`wce_tile::shores`) and the ground
+/// behind them raised to their top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CliffBank {
+    pub from: f64,
+    pub to: f64,
+    pub side: f64,
+}
+
+/// A cliff bank's shape (metres; the kit's `attila_cliff_01..03` are 18 m long, 2 m under their middle to 4.15 m over it, their rock face
+/// sloping from their foot 3.5 m in front of their middle up to their top's edge near it): their middles stand [`CLIFF_PIECE_OUT`] past
+/// the water's drawn edge (negative: inside it; the river's bank meets its water some metres inside its drawn edge, the kit's profile
+/// about 5 m for a 45 m river: their faces at the water); the ground keeps the river's bank in front of them, climbs from [`CLIFF_FOOT`]
+/// over [`CLIFF_CLIMB`] (inside the pieces, under their grassy top) to [`CLIFF_TOP`] over the water, is held so for [`CLIFF_BACK`], and
+/// eases back down to the land over [`CLIFF_FALL`]. (Climbing from the water, it buried their faces.)
+///
+/// Along the river its face falls to the water over [`CLIFF_RAMP`] at each end of its stretch (a third of the stretch at most), inside
+/// it: its pieces sink and tilt with it ([`CliffBank::face`]), and nothing is raised past its ends at the water (raised ground there
+/// stood with no face in front of it). Behind its face the raised land reaches past its ends [`CLIFF_SHOULDER`] metres a metre back, so
+/// that its end slopes off as a shoulder rather than a wall across the bank.
+pub const CLIFF_PIECE_OUT: f64 = -1.0;
+pub const CLIFF_FOOT: f64 = CLIFF_PIECE_OUT - 1.0;
+pub const CLIFF_CLIMB: f64 = 2.0;
+pub const CLIFF_TOP: f64 = 5.0;
+pub const CLIFF_BACK: f64 = 8.0;
+pub const CLIFF_FALL: f64 = 25.0;
+pub const CLIFF_RAMP: f64 = 24.0;
+pub const CLIFF_SHOULDER: f64 = 0.8;
+
+impl CliffBank {
+    /// How much of the cliff's top the ground stands at (0 .. 1) `past` metres past the water's edge on its side and `along` the river.
+    #[must_use]
+    pub fn rise(&self, past: f64, along: f64) -> f64 {
+        self.rise_and_hold(past, along).0
+    }
+
+    /// How much of its top its face stands at `along` the river (0 .. 1): whole along its stretch but its ends' ramps, none past them.
+    #[must_use]
+    pub fn face(&self, along: f64) -> f64 {
+        self.ramp_share(along, 0.0)
+    }
+
+    /// Its ramps' share `along` the river, `behind` metres back from its face's top (reaching past its ends [`CLIFF_SHOULDER`] a metre).
+    fn ramp_share(&self, along: f64, behind: f64) -> f64 {
+        let ramp = CLIFF_RAMP.min((self.to - self.from) / 3.0).max(1e-6);
+        let inside = (along - self.from).min(self.to - along) + behind.max(0.0) * CLIFF_SHOULDER;
+        smooth((inside / ramp).clamp(0.0, 1.0))
+    }
+
+    /// [`Self::rise`], and how much the land behind its face is kept from the river's bank cut (0 .. 1: whole along its stretch, from
+    /// its climb's start on however far, less along its ramps, none past its ends at the water).
+    #[must_use]
+    pub fn rise_and_hold(&self, past: f64, along: f64) -> (f64, f64) {
+        if past < CLIFF_FOOT {
+            return (0.0, 0.0);
+        }
+
+        let p = past - CLIFF_FOOT;
+        let along_share = self.ramp_share(along, p - CLIFF_CLIMB);
+        if along_share <= 0.0 {
+            return (0.0, 0.0);
+        }
+
+        let across = if p < CLIFF_CLIMB {
+            smooth(p / CLIFF_CLIMB)
+        } else if p < CLIFF_CLIMB + CLIFF_BACK {
+            1.0
+        } else {
+            1.0 - smooth(((p - CLIFF_CLIMB - CLIFF_BACK) / CLIFF_FALL).min(1.0))
+        };
+        (across * along_share, along_share)
+    }
+}
+
+/// How far past the water's edge a cliff bank changes the ground (metres).
+pub const CLIFF_REACH: f64 = CLIFF_FOOT.max(0.0) + CLIFF_CLIMB + CLIFF_BACK + CLIFF_FALL;
 
 /// A place of a bed's grid ([`Channel::fill_cells`]): the lowest bed over it (infinite where none reaches), how much of a ford is there
 /// (at the nearest place of the line) and whether it is under the river's water (within half its width of its line), and how far the
@@ -233,11 +314,25 @@ pub struct BedCell {
 
     /// The water at the nearest place of the line (NaN where none reaches).
     pub water: f64,
+
+    /// The height a cliff bank raises the ground to (the game's units; minus infinity where none), and how much of it holds there (0 .. 1):
+    /// its bank is not cut so much (the land behind a cliff's face stays as high as it is).
+    pub cliff: f64,
+    pub cliff_hold: f64,
 }
 
 impl Default for BedCell {
     fn default() -> Self {
-        Self { bed: f64::INFINITY, ford: 0.0, wet: false, near: f64::INFINITY, half: 0.0, water: f64::NAN }
+        Self {
+            bed: f64::INFINITY,
+            ford: 0.0,
+            wet: false,
+            near: f64::INFINITY,
+            half: 0.0,
+            water: f64::NAN,
+            cliff: f64::NEG_INFINITY,
+            cliff_hold: 0.0,
+        }
     }
 }
 
@@ -365,7 +460,8 @@ impl Channel {
     /// How far from the centre it reaches at a width (metres).
     pub fn reach(&self, width: f64) -> f64 {
         let k = (width / DEEP.width).max(0.05);
-        (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.rise()
+        let bed = (KIT_BED.len() - 1) as f64 * PROFILE_STEP * k + BANK_RISE / self.rise();
+        if self.cliffs.is_empty() { bed } else { bed.max(width * 0.5 + CLIFF_REACH) }
     }
 
     /// How far the banks climb a metre across (the game's units).
@@ -435,8 +531,10 @@ impl Channel {
                         c.bed = v;
                     }
 
-                    // The ford and the water of the nearest place of the line.
+                    // The ford, the water and a cliff bank's ground of the nearest place of the line (a cliff by a farther stretch's
+                    // measure would rise out of the water at a bend; its rise here, its height once all is seen).
                     if r < c.near {
+                        (c.cliff, c.cliff_hold) = self.cliff_rise_and_hold(r - width * 0.5, at, side);
                         c.near = r;
                         c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at, r * side / (width * 0.5).max(1e-6)).0 };
                         c.wet = r <= width * 0.5;
@@ -447,9 +545,75 @@ impl Channel {
             }
         }
 
+        if !self.cliffs.is_empty() {
+            self.blend_cliffs(&mut out, &along, origin, step, (w, h));
+            let v = if self.vertical > 0.0 { self.vertical } else { 1.0 };
+            for c in &mut out {
+                c.cliff = if c.cliff_hold > 0.0 { c.water + CLIFF_TOP * v * c.cliff } else { f64::NEG_INFINITY };
+            }
+        }
+
         out
     }
+
+    /// The cliff banks' rise and hold at a place `past` metres past the water's edge on a `side` of the line, `along` it (the most of
+    /// them).
+    fn cliff_rise_and_hold(&self, past: f64, along: f64, side: f64) -> (f64, f64) {
+        self.cliffs
+            .iter()
+            .filter(|cl| cl.side == side)
+            .map(|cl| cl.rise_and_hold(past, along))
+            .fold((0.0, 0.0), |a: (f64, f64), b| (a.0.max(b.0), a.1.max(b.1)))
+    }
+
+    /// A cliff bank's raised land over the seam of two places of the line: by the inside of a bend, the cells nearest one leg and those
+    /// nearest the next part on the bend's bisector, and a cliff ending at the bend stood as a wall along it. Each cell takes the rise of
+    /// the line's other places within [`CLIFF_BLEND`] of its nearest, the less the farther, and only behind the bank of its nearest place
+    /// ([`CLIFF_BLEND_BACK`] from its water's drawn edge on: none rises out of its water or stands at its bank with no cliff in front).
+    /// `out`'s cliffs hold their rise (0 .. 1), not their height yet.
+    fn blend_cliffs(&self, out: &mut [BedCell], along: &[f64], origin: [f64; 2], step: [f64; 2], (w, h): (usize, usize)) {
+        for i in 0..self.line.len() - 1 {
+            let (a, b) = (self.line[i], self.line[i + 1]);
+            let reach = self.reach(self.width[i].max(self.width[i + 1]));
+            let (lo_x, hi_x) = (a[0].min(b[0]) - reach, a[0].max(b[0]) + reach);
+            let (lo_z, hi_z) = (a[1].min(b[1]) - reach, a[1].max(b[1]) + reach);
+            let col = |v: f64| ((v - origin[0]) / step[0]).clamp(0.0, w as f64) as usize;
+            let row = |v: f64| ((v - origin[1]) / step[1]).clamp(0.0, h as f64) as usize;
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+            for j in row(lo_z)..(row(hi_z) + 1).min(h) {
+                for k in col(lo_x)..(col(hi_x) + 1).min(w) {
+                    let c = &mut out[j * w + k];
+                    let behind = c.near - c.half;
+                    if !c.near.is_finite() || behind <= 0.0 {
+                        continue;
+                    }
+
+                    let p = [origin[0] + k as f64 * step[0], origin[1] + j as f64 * step[1]];
+                    let t = if len2 > 1e-12 { (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                    let r = (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t);
+                    let off = r - c.near;
+                    if off <= 1e-9 || off >= CLIFF_BLEND {
+                        continue;
+                    }
+
+                    let side = if ab[0] * (p[1] - a[1]) - ab[1] * (p[0] - a[0]) < 0.0 { -1.0 } else { 1.0 };
+                    let width = self.width[i] + (self.width[i + 1] - self.width[i]) * t;
+                    let at = along[i] + (along[i + 1] - along[i]) * t;
+                    let (rise, hold) = self.cliff_rise_and_hold(r - width * 0.5, at, side);
+                    let k = smooth(1.0 - off / CLIFF_BLEND) * smooth((behind / CLIFF_BLEND_BACK).min(1.0));
+                    c.cliff = c.cliff.max(rise * k);
+                    c.cliff_hold = c.cliff_hold.max(hold * k);
+                }
+            }
+        }
+    }
 }
+
+/// How far from its nearest place of the line a cell takes a cliff bank's rise of another (metres), and how far behind its own water's
+/// drawn edge it takes it whole ([`Channel::blend_cliffs`]).
+pub const CLIFF_BLEND: f64 = 20.0;
+pub const CLIFF_BLEND_BACK: f64 = 14.0;
 
 /// A lake's ground: its basin dug inside its outline (x, z) to `depth` under its `water` (the game's units; 0: none), its sides
 /// climbing `rise` a metre in from the outline (the game's units); and its shore, the ground outside the outline lower than `rim` over
@@ -597,6 +761,13 @@ impl RiverBed {
             }
         }
 
+        // A cliff bank raises the ground behind it, and keeps its bank from being cut as it holds (higher land stays behind its face).
+        if cell.cliff_hold > 0.0 {
+            let cut = out.unwrap_or(below).max(cell.cliff);
+            let h = cut + (below.max(cell.cliff) - cut) * cell.cliff_hold;
+            out = (h != below).then_some(h);
+        }
+
         out
     }
 
@@ -731,6 +902,7 @@ mod tests {
             vertical: 1.0,
             fords: vec![],
             cuts: true,
+            cliffs: vec![],
         };
         let bed = RiverBed { channel: Some(c), ..Default::default() };
         let wet = BedCell { wet: true, water: -6.2, ..BedCell::default() };
@@ -787,6 +959,46 @@ mod tests {
     }
 
     #[test]
+    fn a_cliff_bank_raises_the_ground_behind_it_on_its_side_only() {
+        // A river along +x, 40 m wide, its water at -6; a cliff on its left (+z) from 60 to 140 m along.
+        let c = Channel {
+            line: vec![[0.0, 0.0], [100.0, 0.0], [200.0, 0.0]],
+            water: vec![-6.0; 3],
+            width: vec![40.0; 3],
+            depth: 5.7,
+            bank_slope: 30.0,
+            vertical: 1.0,
+            cuts: true,
+            cliffs: vec![CliffBank { from: 60.0, to: 140.0, side: 1.0 }],
+            ..Default::default()
+        };
+        let bed = RiverBed { channel: Some(c.clone()), ..Default::default() };
+        let cells = c.fill_cells([0.0, -80.0], [1.0, 1.0], (201, 161));
+        let at = |x: f64, z: f64| {
+            let cell = cells[((z + 80.0) as usize) * 201 + x as usize];
+            bed.height_of(x, z, -5.5, cell).unwrap_or(-5.5)
+        };
+        let top = -6.0 + CLIFF_TOP;
+        assert!((at(100.0, 20.0 + CLIFF_FOOT + CLIFF_CLIMB + 4.0) - top).abs() < 1e-6, "its top: {}", at(100.0, 31.0));
+        assert!(at(100.0, 10.0) < -6.0, "the river's bed in front of it: {}", at(100.0, 10.0));
+        assert!(at(100.0, -31.0) < -5.0, "the other bank as it was: {}", at(100.0, -31.0));
+        let fall = at(100.0, 20.0 + CLIFF_FOOT + CLIFF_CLIMB + CLIFF_BACK + CLIFF_FALL * 0.5);
+        assert!(fall > -5.5 && fall < top, "easing down behind: {fall}");
+        assert!(at(100.0, 20.0 + CLIFF_REACH + 2.0) <= -5.5 + 1e-9, "the land past it");
+        // Its ends: its face falls along its ramps inside its stretch, nothing raised past them at its face; behind it, a shoulder.
+        let face = 20.0 + CLIFF_FOOT + CLIFF_CLIMB;
+        let ramp = at(140.0 - CLIFF_RAMP * 0.5, face + 0.5);
+        assert!(ramp < top - 1.0 && ramp > -5.5 + 1.0, "its ramp: {ramp}");
+        assert!(at(140.0 + 2.0, face + 0.5) <= -5.5 + 1e-9, "none past its end at its face");
+        let shoulder = at(140.0 + 5.0, face + 15.0);
+        assert!(shoulder > -5.5 + 0.2 && shoulder < top, "its shoulder past its end behind it: {shoulder}");
+        assert!(at(140.0 + 5.0 + 15.0 * CLIFF_SHOULDER + 1.0, face + 15.0) <= -5.5 + 1e-9, "none further along behind it");
+        // Higher land stays.
+        let cell = cells[(31 + 80) * 201 + 100];
+        assert_eq!(bed.height_of(100.0, 31.0, 20.0, cell), None, "never lowered");
+    }
+
+    #[test]
     fn a_join_holds_the_connection_then_fades() {
         // A link at the west edge (x 0), its cell's centre at z 192, the tile to the east.
         let j = Join { at: [0.0, 192.0], inward: [1.0, 0.0], connection: DEEP };
@@ -813,6 +1025,7 @@ mod tests {
             vertical: 1.0,
             fords: vec![],
             cuts: true,
+            cliffs: vec![],
         };
         // The kit's river: its profile.
         assert!((c.across(0.0, -6.2, 45.0) - DEEP.profile[0]).abs() < 0.11);
@@ -844,6 +1057,7 @@ mod tests {
             vertical: 1.0,
             fords: vec![Ford { at: 150.0, length: 40.0, depth: FORD_DEPTH }],
             cuts: false,
+            cliffs: vec![],
         };
         assert!((c.across_at(0.0, -6.2, 45.0, 150.0) - (-6.2 + KIT_BED[0] * FORD_DEPTH / KIT_DEPTH)).abs() < 1e-9, "the ford's bed");
         assert!((c.across_at(0.0, -6.2, 45.0, 10.0) - (-6.2 + KIT_BED[0])).abs() < 1e-9, "the river's own away from it");

@@ -1,13 +1,13 @@
 //! A river tile made by a seed on the open tile (docs/plans/river_bridges.md, step 3; `wce_tile::river_tile_gen`): fresh relief as its
 //! heights, and a river from its entry link to its exit link along a natural line, snapped to the links (its bed carved and its shore on,
-//! as a drawn river's), its widths varied; then dressed (step 4): a cliff on the outer side of its sharpest bend with rocks on its face, and
-//! woods away from it; a road (step 5) from road link to road link, or from its one link over the river (bridged where deep); with no road
-//! a ford (step 6) near the middle. One undo entry.
+//! as a drawn river's), its widths varied; then dressed (step 4): a cliff bank on the outer side of its sharpest bend (step 6.5: its points
+//! marked, `river_cliffs.rs`) and woods away from it; a road (step 5) from road link to road link, or from its one link over the river
+//! (bridged where deep); with no road a ford (step 6) near the middle. One undo entry.
 
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_tile::river_tile_gen::{
-    ForestSettings, LineSettings, LinkEnd, ReliefSettings, Valley, across_line, cliff_rock_places, ford_place, forest_areas, outer_bend_cliff,
+    ForestSettings, LineSettings, LinkEnd, ReliefSettings, Valley, across_line, ford_place, forest_areas, nearest_on_line, outer_bend,
     relief_in_valley, river_line, smooth_line,
 };
 
@@ -34,18 +34,10 @@ const VALLEY_HALF_WIDTH_M: f64 = 70.0;
 /// How much a generated river's widths vary (percent of the width, from and to).
 const WIDTH_VARIATION: (f64, f64) = (-20.0, 30.0);
 
-/// The cliff on the outer side of the river's sharpest bend: how many of the smoothed line's samples it runs along, how far past the
-/// river's widest water its foot is, how wide its climb and how high (metres).
+/// The cliff bank on the outer side of the river's sharpest bend: how many of the smoothed line's samples it runs along, and how far past
+/// the river's widest water a road's place counts as its crossing (the cliff stops short of it, `FORD_CLEAR_OF_CLIFF` samples).
 const CLIFF_SAMPLES: usize = 18;
-const CLIFF_FOOT_PAST_WATER_M: f64 = 3.0;
-const CLIFF_RUN_M: f64 = 9.0;
-const CLIFF_HEIGHT_M: f64 = 9.0;
-
-/// The rocks along the cliff's face: their keys (Attila's kit rocks, as the built-in biomes use them), how far past its foot, how far
-/// apart (metres).
-const CLIFF_ROCKS: [&str; 2] = ["gaul_rock_01", "gaul_rock_02"];
-const CLIFF_ROCK_OFF_M: f64 = 6.0;
-const CLIFF_ROCK_STEP_M: f64 = 9.0;
+const CLIFF_CLEAR_OF_ROAD_M: f64 = 20.0;
 
 /// How far past the river's widest water the woods keep (metres).
 const WOODS_PAST_WATER_M: f64 = 15.0;
@@ -154,8 +146,7 @@ impl TileDocument {
         // The relief with the river's valley in it: the ground along the river a metre over the links' water (their connections'
         // water, in the game's units), hills beyond; an image of the height map's size, each pixel the relief at its place.
         let water = (links[0].connection.water + links[1].connection.water) * 0.5 / unit;
-        let mut valley =
-            Valley { line: smooth_line(&line, 8), floor: water + VALLEY_FLOOR_M, half_width: VALLEY_HALF_WIDTH_M, cliff: None };
+        let valley = Valley { line: smooth_line(&line, 8), floor: water + VALLEY_FLOOR_M, half_width: VALLEY_HALF_WIDTH_M };
         let (w, h) = p.height.as_ref().map(|hf| (hf.width(), hf.height())).ok_or("the tile has no height map")?;
         let relief_image = |valley: &Valley| {
             let s = ReliefSettings::default();
@@ -208,44 +199,19 @@ impl TileDocument {
             .flat_map(|(c, a, b)| [a, b].map(|e| f64::from((e.x - c.x).hypot(e.z - c.z))))
             .fold(0.0, f64::max);
 
-        // Every other seed has a cliff, on the outer side of the river's sharpest bend: the relief made again with it.
-        valley.cliff = seed
-            .is_multiple_of(2)
-            .then(|| outer_bend_cliff(&valley.line, CLIFF_SAMPLES, water_half + CLIFF_FOOT_PAST_WATER_M, CLIFF_RUN_M, CLIFF_HEIGHT_M))
-            .flatten();
+        // Every other seed has a cliff bank on the outer side of the river's sharpest bend (its points there marked, after the road).
+        let mut bend = seed.is_multiple_of(2).then(|| outer_bend(&valley.line, CLIFF_SAMPLES)).flatten();
         // A tile with no road gets a ford: near the middle on a straight stretch, clear of the cliff (the cliff left out when it has the
         // only place).
         let ford = (road == RiverTileRoad::None || self.tile().road_link_points().is_empty())
             .then(|| {
-                let avoid = valley.cliff.map(|c| (c.from, c.to));
+                let avoid = bend.map(|b| (b.from, b.to));
                 ford_place(&valley.line, (ex, ez), avoid, FORD_CLEAR_OF_CLIFF, seed).or_else(|| {
-                    valley.cliff = None;
+                    bend = None;
                     ford_place(&valley.line, (ex, ez), None, 0, seed)
                 })
             })
             .flatten();
-        if let Some(c) = valley.cliff {
-            let (image, lo, hi) = relief_image(&valley);
-            self.import_height_image(&image, lo as f32, hi as f32)?;
-
-            // Its rocks, on its face (where it stands at least half its height).
-            let mut rocks = 0;
-            for (k, (q, rise)) in cliff_rock_places(&valley.line, &c, CLIFF_ROCK_OFF_M, CLIFF_ROCK_STEP_M).into_iter().enumerate() {
-                if rise < 0.5 {
-                    continue;
-                }
-
-                let at = Float3::new(q[0] as f32, self.tile().terrain_height(q[0] as f32, q[1] as f32), q[1] as f32);
-                let key = CLIFF_ROCKS[(seed as usize + k) % CLIFF_ROCKS.len()];
-                match self.add_building_in(key, None, Some(at), super::Placement::Landscape, Some(graph)) {
-                    Ok(_) => rocks += 1,
-                    Err(e) => wce_foundation::log::warn(format!("river tile: a cliff rock {key}: {e}")),
-                }
-            }
-
-            let mid = valley.line[(c.from + c.to) / 2];
-            made.push(format!("a cliff by {:.0}, {:.0} ({rocks} rock(s))", mid[0], mid[1]));
-        }
 
         // The road: from road link to road link, or from the one over the river to somewhere on the far side.
         let road = self.generate_river_tile_road(seed, road, &valley.line, water_half, (ex, ez), graph);
@@ -275,6 +241,37 @@ impl TileDocument {
 
         // Woods away from the river, the road and the ford's way over: broadleaf, or pine on some seeds.
         let road_line = road.ok().flatten().map(|(l, _)| l).unwrap_or_default();
+
+        // The cliff bank: the river's points along the bend marked on its outer side, but those by the road's crossing (two at least, or
+        // none).
+        if let Some(b) = bend {
+            // Where along the line the road is by the river.
+            let crossing = road_line
+                .iter()
+                .map(|&q| nearest_on_line(q, &valley.line))
+                .filter(|(d, ..)| *d < water_half + CLIFF_CLEAR_OF_ROAD_M)
+                .map(|(_, at, _)| at)
+                .fold(None, |r: Option<(f64, f64)>, at| Some(r.map_or((at, at), |(lo, hi)| (lo.min(at), hi.max(at)))));
+            let clear = FORD_CLEAR_OF_CLIFF as f64;
+            let world = self.tile().polygon_world_points(river);
+            let points = world
+                .iter()
+                .enumerate()
+                .filter_map(|(i, q)| {
+                    let (_, at, _) = nearest_on_line([f64::from(q.x), f64::from(q.z)], &valley.line);
+                    let by_road = crossing.is_some_and(|(lo, hi)| at >= lo - clear && at <= hi + clear);
+                    (at >= b.from as f64 && at <= b.to as f64 && !by_road).then_some(i)
+                })
+                .collect::<Vec<_>>();
+            if points.len() >= 2 {
+                let marked = points.into_iter().filter(|&i| self.set_river_cliff(river, i, Some(b.side))).count();
+                let mid = valley.line[(b.from + b.to) / 2];
+                made.push(format!("a cliff bank by {:.0}, {:.0} ({marked} point(s))", mid[0], mid[1]));
+            } else {
+                made.push("no cliff bank: the road crosses there".to_owned());
+            }
+        }
+
         let mut keep: Vec<(&[[f64; 2]], f64)> = vec![(&valley.line, water_half + WOODS_PAST_WATER_M)];
         if road_line.len() >= 2 {
             keep.push((&road_line, WOODS_OFF_ROAD_M));

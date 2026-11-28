@@ -20,6 +20,8 @@
 #                 normal in alpha and green (the decal shader reads it there; mud_stone01 and stones1 do not and draw lit from one side).
 #   bed_decals    decals: mud and dirt from the waterline into the shallow water, and in clumps over a ford's floor.
 #   splash        an effect (vfx): the looping splash over a ford's ends.
+#   cliffs        buildings: a river's cliff bank's pieces (none here: the ground behind is raised alone).
+#   cliff_ends    buildings: the rocks at a cliff bank's ends (none here).
 
 reeds = ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"]
 lilies = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"]

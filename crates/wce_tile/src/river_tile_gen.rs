@@ -74,28 +74,22 @@ pub fn relief(seed: u64, x: f64, z: f64, extent: (f64, f64), s: &ReliefSettings)
     fbm(seed, x, z, s.scale) * s.amplitude * edge_weight(x, z, extent, s.edge_fade)
 }
 
-/// A river's valley in the relief: the ground near its line pulled to `floor` (a little over its water), smoothly out to `half_width`;
-/// and maybe a cliff on one bank of a stretch.
+/// A river's valley in the relief: the ground near its line pulled to `floor` (a little over its water), smoothly out to `half_width`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Valley {
     /// The river's line, smoothed (`smooth_line`).
     pub line: Vec<[f64; 2]>,
     pub floor: f64,
     pub half_width: f64,
-    pub cliff: Option<Cliff>,
 }
 
-/// A cliff on one bank of a river's stretch: from `foot` metres off the river's line the ground climbs `height` over the valley's floor
-/// within `run` metres, on the `side` of the line (1: its left, going along it; -1: its right), between the line's samples `from` and
-/// `to` (tapering over the first and last fifth).
+/// The outer bank of a line's bend: between the line's samples `from` and `to`, on its `side` (1: its left, going along it; -1: its
+/// right). A generated tile's cliff bank (the river's points there marked, `river_bed::CliffBank`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Cliff {
+pub struct Bend {
     pub from: usize,
     pub to: usize,
     pub side: f64,
-    pub foot: f64,
-    pub run: f64,
-    pub height: f64,
 }
 
 /// The nearest place of a line to a point: its distance, the line's sample index there (with the share along that segment), and the
@@ -118,10 +112,10 @@ pub fn nearest_on_line(p: [f64; 2], line: &[[f64; 2]]) -> (f64, f64, f64) {
     best
 }
 
-/// The cliff on the outer side of a line's sharpest bend (its middle half only: the ends run square to the tile's edges): `length`
-/// samples long, centred there. None when the line hardly bends.
+/// The outer bank of a line's sharpest bend (its middle half only: the ends run square to the tile's edges): `length` samples long,
+/// centred there. None when the line hardly bends.
 #[must_use]
-pub fn outer_bend_cliff(line: &[[f64; 2]], length: usize, foot: f64, run: f64, height: f64) -> Option<Cliff> {
+pub fn outer_bend(line: &[[f64; 2]], length: usize) -> Option<Bend> {
     let n = line.len();
     if n < 8 {
         return None;
@@ -142,47 +136,7 @@ pub fn outer_bend_cliff(line: &[[f64; 2]], length: usize, foot: f64, run: f64, h
 
     // The outer side of a left turn is the right.
     let half = length / 2;
-    Some(Cliff { from: at.saturating_sub(half), to: (at + half).min(n - 1), side: -angle.signum(), foot, run, height })
-}
-
-/// How much of a cliff stands at a place (0 .. 1): on its side of the line, within its stretch (tapered at the ends), and how far past its
-/// foot.
-fn cliff_rise(c: &Cliff, d: f64, at: f64, side: f64) -> f64 {
-    if side != c.side || at < c.from as f64 || at > c.to as f64 || d < c.foot {
-        return 0.0;
-    }
-
-    let span = (c.to - c.from).max(1) as f64;
-    let along = (at - c.from as f64) / span;
-    let taper = (along.min(1.0 - along) / 0.2).clamp(0.0, 1.0);
-    let t = ((d - c.foot) / c.run.max(1e-6)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t) * taper
-}
-
-/// Where a cliff's rocks go: along its stretch on its side, `off` metres past its foot, about `step` metres apart (x, z, and the share
-/// of the cliff standing there).
-#[must_use]
-pub fn cliff_rock_places(line: &[[f64; 2]], c: &Cliff, off: f64, step: f64) -> Vec<([f64; 2], f64)> {
-    let mut out = vec![];
-    let mut since = f64::INFINITY;
-    for i in c.from..c.to.min(line.len() - 1) {
-        let (a, b) = (line[i], line[i + 1]);
-        let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
-        let len = dx.hypot(dz).max(1e-6);
-        since += len;
-        if since < step {
-            continue;
-        }
-
-        since = 0.0;
-        // Left of the way along: (-dz, dx).
-        let n = [-dz / len * c.side, dx / len * c.side];
-        let d = c.foot + off;
-        let p = [a[0] + n[0] * d, a[1] + n[1] * d];
-        out.push((p, cliff_rise(c, d, i as f64, c.side)));
-    }
-
-    out
+    Some(Bend { from: at.saturating_sub(half), to: (at + half).min(n - 1), side: -angle.signum() })
 }
 
 /// Where a ford goes on a river's line (docs/plans/river_bridges.md, step 6): the sample nearest the tile's middle on a straight stretch
@@ -229,20 +183,12 @@ const FORD_SALT: u64 = 0xf04d_0000_0000_0006;
 #[must_use]
 pub fn relief_in_valley(seed: u64, x: f64, z: f64, extent: (f64, f64), s: &ReliefSettings, valley: &Valley) -> f64 {
     let hills = fbm(seed, x, z, s.scale) * s.amplitude;
-    let (d, at, side) = nearest_on_line([x, z], &valley.line);
+    let (d, ..) = nearest_on_line([x, z], &valley.line);
     let t = (d / valley.half_width.max(1e-6)).clamp(0.0, 1.0);
     let w = 1.0 - t * t * (3.0 - 2.0 * t);
     // The hills never down to the valley's floor (the river's water would stand in the dips as ponds, its shores round them).
     let hills = hills.max(valley.floor + HILLS_OVER_FLOOR_M);
-    let mut h = hills + (valley.floor - hills) * w;
-    // A cliff: the bank climbing to its height over the floor, whatever the valley would have there.
-    if let Some(c) = &valley.cliff {
-        let rise = cliff_rise(c, d, at, side);
-        if rise > 0.0 {
-            h = h.max(valley.floor + c.height * rise);
-        }
-    }
-
+    let h = hills + (valley.floor - hills) * w;
     h * edge_weight(x, z, extent, s.edge_fade)
 }
 
@@ -459,7 +405,7 @@ mod tests {
         let s = ReliefSettings::default();
         let e = (256.0, 256.0);
         let line = smooth_line(&[[0.0, 128.0], [90.0, 120.0], [170.0, 140.0], [256.0, 128.0]], 8);
-        let valley = Valley { line: line.clone(), floor: -2.0, half_width: 60.0, cliff: None };
+        let valley = Valley { line: line.clone(), floor: -2.0, half_width: 60.0 };
         for p in line.iter().filter(|p| p[0] > 80.0 && p[0] < 176.0) {
             assert!((relief_in_valley(5, p[0], p[1], e, &s, &valley) + 2.0).abs() < 1e-9, "at its floor on the river: {p:?}");
         }
@@ -478,30 +424,25 @@ mod tests {
     }
 
     #[test]
-    fn a_cliff_rises_on_the_outer_side_of_the_bend_only() {
-        let s = ReliefSettings { amplitude: 0.0, edge_fade: 0.0, ..ReliefSettings::default() };
-        let e = (256.0, 256.0);
+    fn the_outer_bank_of_a_bend_is_away_from_its_inside() {
         // A bend to the left (seen going along): west to east, then turning north (-z) round x 128.
         let line = smooth_line(&[[0.0, 200.0], [60.0, 200.0], [110.0, 190.0], [140.0, 150.0], [150.0, 90.0], [150.0, 0.0]], 10);
-        let cliff = outer_bend_cliff(&line, 16, 20.0, 10.0, 8.0).expect("it bends");
-        // Going east then turning to -z: the bend's inside towards (60, 100), the cliff on the side away from it.
-        let valley = Valley { line: line.clone(), floor: -2.0, half_width: 70.0, cliff: Some(cliff) };
-        let mid = (cliff.from + cliff.to) / 2;
+        let bend = outer_bend(&line, 16).expect("it bends");
+        let mid = (bend.from + bend.to) / 2;
         let (a, b) = (line[mid], line[mid + 1]);
         let len = (b[0] - a[0]).hypot(b[1] - a[1]);
         let left = [-(b[1] - a[1]) / len, (b[0] - a[0]) / len];
         let at = |d: f64| [a[0] + left[0] * d, a[1] + left[1] * d];
-        let h = |p: [f64; 2]| relief_in_valley(1, p[0], p[1], e, &s, &valley);
-        let (out, inn) = (at(35.0 * cliff.side), at(-35.0 * cliff.side));
+        let (out, inn) = (at(35.0 * bend.side), at(-35.0 * bend.side));
         let inside = [60.0, 100.0];
         let far = |p: [f64; 2]| (p[0] - inside[0]).hypot(p[1] - inside[1]);
-        assert!(far(out) > far(inn), "the cliff on the outside of the bend");
-        assert!((h(out) - (-2.0 + 8.0)).abs() < 0.5, "the cliff's top on the outside: {}", h(out));
-        assert!(h(inn) < -1.0, "the floor on the inside: {}", h(inn));
-        assert!(h(at(10.0 * cliff.side)) < -1.0, "its foot clear of the river: {}", h(at(10.0 * cliff.side)));
-        let rocks = cliff_rock_places(&line, &cliff, 6.0, 9.0);
-        assert!(rocks.iter().filter(|(_, rise)| *rise >= 0.5).count() >= 2, "rocks up its face: {rocks:?}");
-        assert!(!rocks.is_empty() && rocks.iter().all(|(p, _)| nearest_on_line(*p, &line).2 == cliff.side), "on its side: {rocks:?}");
+        assert!(far(out) > far(inn), "the outer bank away from the bend's inside");
+        assert_eq!(nearest_on_line(out, &line).2, bend.side);
+        assert!(bend.to - bend.from == 16 || bend.to == line.len() - 1);
+        assert_eq!(
+            outer_bend(&[[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0], [40.0, 0.0], [50.0, 0.0], [60.0, 0.0], [70.0, 0.0]], 4),
+            None
+        );
     }
 
     #[test]
@@ -519,7 +460,10 @@ mod tests {
         let i = ford_place(&line, e, Some((m - 8, m + 8)), 4, 1).expect("a place");
         assert!(i + 4 < m - 8 || i > m + 12, "clear of the cliff: {i} by {m}");
         let across = across_line(&line, i, 30.0);
-        let (u, w) = ([across[1][0] - across[0][0], across[1][1] - across[0][1]], [line[i + 1][0] - line[i - 1][0], line[i + 1][1] - line[i - 1][1]]);
+        let (u, w) = (
+            [across[1][0] - across[0][0], across[1][1] - across[0][1]],
+            [line[i + 1][0] - line[i - 1][0], line[i + 1][1] - line[i - 1][1]],
+        );
         let cos = (u[0] * w[0] + u[1] * w[1]) / (u[0].hypot(u[1]) * w[0].hypot(w[1]));
         assert!(cos.abs() < 0.01 && (u[0].hypot(u[1]) - 60.0).abs() < 1e-6, "square across it: {across:?}");
     }
