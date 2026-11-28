@@ -75,6 +75,13 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    from its links for 50 m (it bent sharply inside its own width), and the clear takes the kit tile's exclusion areas too.
    Open: on some seeds the river's line still bends hard near a link (seed 23).
 6. **Ford tiles**: the river and dressing as above, a ford across the middle.
+   **Built 2026-11-26**: a tile with no road (no road link, or `road=none`) gets a ford (`add_river_ford`: the bed held at wading depth,
+   its edges lined with stones and splash, its crossing and go hints on export) where the river's line runs straight nearest the tile's
+   middle (`wce_tile::river_tile_gen::ford_place`: the distance from the middle, plus 80 m a radian of turn over a few samples, plus up to
+   24 m by the seed), 6 samples clear of the cliff's stretch (the cliff left out if it has the only place); 24 .. 40 m long by the seed;
+   the woods keep half its length and 14 m off the line across the river there (70 m past the water to either side). Checked on the six
+   ford kinds the spots use (`2x2_lt_rt`, `lt_rb`, `lb_rt`, `bl_rt`, `br_rt`, `lt_bl`; seeds 22, 23): the bed 0.27 m under the water at
+   the ford (the kit's 0.25), 3 m away from it.
 7. **Batch**: every crossing and ford tile the spots use, N variations each (by seed), exported into one pack with the battle tile
    database (TDD's, the variations added).
 8. **The map patch**: TDD's battle map placements at the spots replaced: a crossing (its variation by seed) where roads arrive at one end

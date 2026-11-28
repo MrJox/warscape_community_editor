@@ -1,14 +1,14 @@
 //! A river tile made by a seed on the open tile (docs/plans/river_bridges.md, step 3; `wce_tile::river_tile_gen`): fresh relief as its
 //! heights, and a river from its entry link to its exit link along a natural line, snapped to the links (its bed carved and its shore on,
 //! as a drawn river's), its widths varied; then dressed (step 4): a cliff on the outer side of its sharpest bend with rocks on its face, and
-//! woods away from it; a road (step 5) from road link to road link, or from its one link over the river (bridged where deep). One undo
-//! entry.
+//! woods away from it; a road (step 5) from road link to road link, or from its one link over the river (bridged where deep); with no road
+//! a ford (step 6) near the middle. One undo entry.
 
 use wce_editor_core::document::Document;
 use wce_foundation::math::Float3;
 use wce_tile::river_tile_gen::{
-    ForestSettings, LineSettings, LinkEnd, ReliefSettings, Valley, cliff_rock_places, forest_areas, outer_bend_cliff, relief_in_valley,
-    river_line, smooth_line,
+    ForestSettings, LineSettings, LinkEnd, ReliefSettings, Valley, across_line, cliff_rock_places, ford_place, forest_areas, outer_bend_cliff,
+    relief_in_valley, river_line, smooth_line,
 };
 
 use super::{BrushKind, BrushSettings, Create, TileDocument};
@@ -53,6 +53,12 @@ const WOODS_PAST_WATER_M: f64 = 15.0;
 /// How far the woods keep off the road's line (metres).
 const WOODS_OFF_ROAD_M: f64 = 14.0;
 
+/// A ford (a tile with no road): how long it is (metres, from and to, by the seed), how many of the smoothed line's samples it keeps
+/// off the cliff's stretch, and how far past the water its way over keeps the woods off (metres).
+const FORD_LENGTH_M: (f64, f64) = (24.0, 40.0);
+const FORD_CLEAR_OF_CLIFF: usize = 6;
+const FORD_WAY_M: f64 = 70.0;
+
 /// How far past the river's water a road from one link ends, at least (metres).
 const ROAD_END_PAST_WATER_M: f64 = 30.0;
 
@@ -72,7 +78,7 @@ pub enum RiverTileRoad {
     /// road arrives.
     FromLink(usize),
 
-    /// No road.
+    /// No road: a ford (as on a tile with no road link).
     None,
 }
 
@@ -207,6 +213,17 @@ impl TileDocument {
             .is_multiple_of(2)
             .then(|| outer_bend_cliff(&valley.line, CLIFF_SAMPLES, water_half + CLIFF_FOOT_PAST_WATER_M, CLIFF_RUN_M, CLIFF_HEIGHT_M))
             .flatten();
+        // A tile with no road gets a ford: near the middle on a straight stretch, clear of the cliff (the cliff left out when it has the
+        // only place).
+        let ford = (road == RiverTileRoad::None || self.tile().road_link_points().is_empty())
+            .then(|| {
+                let avoid = valley.cliff.map(|c| (c.from, c.to));
+                ford_place(&valley.line, (ex, ez), avoid, FORD_CLEAR_OF_CLIFF, seed).or_else(|| {
+                    valley.cliff = None;
+                    ford_place(&valley.line, (ex, ez), None, 0, seed)
+                })
+            })
+            .flatten();
         if let Some(c) = valley.cliff {
             let (image, lo, hi) = relief_image(&valley);
             self.import_height_image(&image, lo as f32, hi as f32)?;
@@ -241,11 +258,30 @@ impl TileDocument {
             Err(e) => made.push(format!("no road: {e}")),
         }
 
-        // Woods away from the river and the road: broadleaf, or pine on some seeds.
+        // The ford, its length by the seed.
+        let length = FORD_LENGTH_M.0 + (FORD_LENGTH_M.1 - FORD_LENGTH_M.0) * ((seed % 5) as f64 / 4.0);
+        let ford_across = ford.map(|i| across_line(&valley.line, i, water_half + FORD_WAY_M)).unwrap_or_default();
+        if let Some(i) = ford {
+            let p = valley.line[i];
+            let along = self.river_along_at(river, p[0] as f32, p[1] as f32).map(|(a, _)| a);
+            match along {
+                Some(along) => {
+                    self.add_river_ford(river, along, length);
+                    made.push(format!("a ford {length:.0} m long by {:.0}, {:.0}", p[0], p[1]));
+                }
+                None => made.push("no ford: the river is not drawn".to_owned()),
+            }
+        }
+
+        // Woods away from the river, the road and the ford's way over: broadleaf, or pine on some seeds.
         let road_line = road.ok().flatten().map(|(l, _)| l).unwrap_or_default();
         let mut keep: Vec<(&[[f64; 2]], f64)> = vec![(&valley.line, water_half + WOODS_PAST_WATER_M)];
         if road_line.len() >= 2 {
             keep.push((&road_line, WOODS_OFF_ROAD_M));
+        }
+
+        if ford_across.len() >= 2 {
+            keep.push((&ford_across, length * 0.5 + WOODS_OFF_ROAD_M));
         }
 
         let woods = forest_areas(seed, (ex, ez), &keep, &ForestSettings::default());

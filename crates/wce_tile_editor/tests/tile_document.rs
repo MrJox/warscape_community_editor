@@ -3784,6 +3784,28 @@ fn a_generated_river_tile_is_one_undo_entry() {
     assert_eq!(grounds(&d), ground_types, "the ground types as they were");
 }
 
+/// A generated river tile with no road has a ford near its middle, clear of its cliff: the river's bed there at wading depth.
+#[test]
+fn a_generated_river_tile_with_no_road_has_a_ford() {
+    let (_dir, mut d) = open_with_river_links_and(true);
+    for seed in [4, 5] {
+        let made = d.generate_river_tile(seed, true, RiverTileRoad::None).unwrap();
+        assert!(made.contains("a ford") && !made.contains("a road of"), "seed {seed}: {made}");
+        d.tile_mut().finish_road_jobs();
+        let r = d.tile().tscene().find_all("SplineRiverInstance")[0];
+        let fords = d.tile().tscene().get(r, "wce_fords").unwrap_or_default();
+        assert_eq!(fords.split(';').count(), 1, "seed {seed}: {fords}");
+        let at = fords.split(':').next().unwrap().parse::<f64>().unwrap();
+        let shape = &d.river_ford_shapes(r)[0];
+        let mid = shape.handles[1];
+        assert!((f64::from(mid.x) - 128.0).abs() < 90.0 && (f64::from(mid.z) - 128.0).abs() < 90.0, "seed {seed}: by the middle: {mid:?}");
+        // The ribbon's own water at its middle (this tile's links differ in height, so its water slopes over the ford's level bed).
+        assert!(d.tile().water_level(mid.x, mid.z).is_some(), "seed {seed}: on the water");
+        let (water, bed) = (mid.y, d.tile().terrain_height(mid.x, mid.z));
+        assert!(water - bed > 0.05 && water - bed < 0.6, "seed {seed}: wading depth at {at}: water {water}, bed {bed}");
+    }
+}
+
 /// A ford's edges are lined with stones and splash, whether or not its river has a shore.
 #[test]
 fn a_fords_edges_are_marked_with_stones_and_splashes() {

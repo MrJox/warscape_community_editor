@@ -426,7 +426,8 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         "river_tile_gen",
         "river_tile_gen <seed> [clear] [road=all|none|<link>]",
         "make the open tile's relief, its river from link to link and its road by a seed (clear: its instances taken away first; road: \
-         the road from link to link, none, or from that road link alone over the river; one undo entry)",
+         the road from link to link, none (a ford instead, as on a tile with no road link), or from that road link alone over the river; one \
+         undo entry)",
         |e, a| {
             use wce_tile_editor::tile_document::river_tile_gen::RiverTileRoad;
             const USAGE: &str = "usage: river_tile_gen <seed> [clear] [road=all|none|<link>]";
