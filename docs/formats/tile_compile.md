@@ -356,10 +356,8 @@ run (`~/wce_re/scripts/bob_tile.sh Tile <tile>`).
     - Vertex: x, y, z, flow, c x width, u x total, alpha, c.
     - The editor's own rivers (`wce_river_height` or `wce_river_shader` on their `SplineRiverInstance`, `river::editor_rivers`; the
       export's compile keeps both, `project_files::to_ted_for_compile`): the last value is
-      2 + the foam (0 to 1) times the editor's foam map there (`river_foam.rs`, `wce_river_foam.bin` in the project; 0 without it)
-      instead of c (`river::MARKED_FOAM_BASE`, `tessellate_marked`, `foam_lookup`), for the editor's river shader (docs/re/water.md);
-      the game's shader never reads c. Such a river is dense: rows at most 2 m apart (BOB's samples cut), an odd number of vertices
-      across at most 1.5 m apart (5 at least); `river_rows` reads rows of any odd length back. The Assembly Kit's rivers keep BOB's bytes. A decompile reads the
+      2 + the foam (0 to 1) instead of c (`river::MARKED_FOAM_BASE`, `tessellate_marked`), for the editor's river shader
+      (docs/re/water.md); the game's shader never reads c. The Assembly Kit's rivers keep BOB's bytes. A decompile reads the
       foam back and marks the river again.
     - Triangles per square: (next c, this c, next c + 1) and (this c, this c + 1, next c + 1).
   - **The block**: vertices numbered by first use, 8 f32 each.

@@ -12,12 +12,6 @@ impl TileDocument {
     /// from a kit is saved into its project (kit.rs), which the document is from then on.
     pub(crate) fn save_tile(&mut self, target: &SaveTarget) -> Result<String, String> {
         let msg = self.write_tile(target)?;
-        // The rivers' foam map beside the river files (the export's river mesh reads it).
-        if target.path.as_os_str().is_empty()
-            && let Err(why) = self.tile().save_river_foam()
-        {
-            wce_foundation::log::warn(format!("the rivers' foam map: {why}"));
-        }
 
         // What the game will not have, said at every save.
         Ok(match self.exclusion_warning() {

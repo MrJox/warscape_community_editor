@@ -282,23 +282,7 @@ impl Spline {
 /// square, (next c, this c, next c + 1) and (this c, this c + 1, next c + 1). The vertices in `format`'s order (Rome 2's: the same
 /// rows, ASSUMPTION: its BOB lerps the foam as the other values).
 pub fn tessellate(rivers: &[Vec<RiverSegment>], format: RiverFormat) -> RiverMesh {
-    tessellate_marked(rivers, format, &[], None)
-}
-
-/// A marked river's rows at most this far apart (m) and its columns across at most this far apart: dense enough for the foam map
-/// (`wce_tile::river_foam`, a cell a metre), as the editor draws it.
-pub const DENSE_ROW_M: f32 = 2.0;
-pub const DENSE_COLUMN_M: f32 = 1.5;
-
-/// How much foam the tile's foam map (`river_foam::FILE`, written by the editor) has at a place of the mesh (x, z in the mesh's frame,
-/// z the other way from the files': `cells_y` is the tile's cells along z); none without a map.
-pub fn foam_lookup(raw: &Tile, cells_y: usize) -> Option<impl Fn(f32, f32) -> f32 + use<>> {
-    use wce_tile::river_foam::{FILE, FoamMap};
-    let bytes = raw.files.iter().find(|f| f.path.eq_ignore_ascii_case(FILE))?.data.bytes().ok()?.to_vec();
-    let map = FoamMap::from_bytes(&bytes)?;
-    // The mesh's z is the files' turned over (`river_splines`' flip, its own inverse); the map is in the files' metres.
-    let extent = (cells_y * 128) as f32;
-    Some(move |x: f32, z: f32| map.at(f64::from(x), f64::from(extent - z)) as f32)
+    tessellate_marked(rivers, format, &[])
 }
 
 /// Where an Attila river vertex's last value (BOB's position across, which the game's battle river shader passes on and never reads)
@@ -322,15 +306,10 @@ pub fn editor_rivers(raw: &Tile) -> Vec<bool> {
     out
 }
 
-/// [`tessellate`], the rivers `marked` (by their number) carrying [`MARKED_FOAM_BASE`] plus their foam times `foam_at` there (the foam
-/// map, [`foam_lookup`]; 0 without one) as an Attila vertex's last value in place of the position across, and made dense for it (rows
-/// [`DENSE_ROW_M`] and columns [`DENSE_COLUMN_M`] apart at most, an odd number across) where BOB has five vertices across.
-pub fn tessellate_marked(
-    rivers: &[Vec<RiverSegment>],
-    format: RiverFormat,
-    marked: &[bool],
-    foam_at: Option<&dyn Fn(f32, f32) -> f32>,
-) -> RiverMesh {
+/// [`tessellate`], the rivers `marked` (by their number) carrying [`MARKED_FOAM_BASE`] plus their foam as an Attila vertex's last value
+/// in place of the position across.
+pub fn tessellate_marked(rivers: &[Vec<RiverSegment>], format: RiverFormat, marked: &[bool]) -> RiverMesh {
+    const ACROSS: usize = 5;
     let fixed = (0..7).scan(0.0f32, |v, _| {
         let out = *v;
         *v += 1.0 / 8.0;
@@ -349,35 +328,7 @@ pub fn tessellate_marked(
             continue;
         }
 
-        let mut samples = spline.optimise(20.0, &fixed, f32::from_bits(0x3ca3_d70a));
-        let dense = marked && format == RiverFormat::Attila;
-        let values = |u: f32| {
-            let i = spline.find(u);
-            let c = ((f64::from(u * spline.total - spline.starts[i])) / f64::from(spline.lengths[i])) as f32;
-            (i, c.clamp(0.0, 1.0))
-        };
-        let across_count = if dense {
-            // Rows at most DENSE_ROW_M apart; as many columns as the widest place needs.
-            samples.dedup();
-            let mut more = vec![];
-            for w in samples.windows(2) {
-                let n = ((w[1] - w[0]) * spline.total / DENSE_ROW_M).ceil().max(1.0) as usize;
-                more.extend((0..n).map(|k| w[0] + (w[1] - w[0]) * k as f32 / n as f32));
-            }
-
-            more.extend(samples.last().copied());
-            samples = more;
-            let widest = samples
-                .iter()
-                .map(|&u| {
-                    let (i, c) = values(u);
-                    (river[i].width[1] - river[i].width[0]) * c + river[i].width[0]
-                })
-                .fold(0.0f32, f32::max);
-            (((widest / DENSE_COLUMN_M).ceil() as usize + 1) | 1).max(5)
-        } else {
-            5
-        };
+        let samples = spline.optimise(20.0, &fixed, f32::from_bits(0x3ca3_d70a));
         let base = mesh.vertices.len() as u32;
         for &u in &samples {
             let i = spline.find(u);
@@ -398,16 +349,15 @@ pub fn tessellate_marked(
                 dz *= inv;
             }
 
-            for b in 0..across_count {
-                let across = (f64::from(b as u32) / f64::from((across_count - 1) as u32)) as f32;
+            for b in 0..ACROSS {
+                let across = (f64::from(b as u32) / f64::from((ACROSS - 1) as u32)) as f32;
                 let s = (half - -half) * across + -half;
                 let off_z = s * -dx + 0.0 * dx;
                 let off_x = s * dz + 0.0 * dz;
                 let (x, z) = (p[0] + off_x, p[2] + off_z);
                 mesh.vertices.push(match format {
                     RiverFormat::Attila => {
-                        let here = foam_at.map_or(0.0, |f| f(x, z).clamp(0.0, 1.0));
-                        let last = if marked { MARKED_FOAM_BASE + foam.clamp(0.0, 1.0) * here } else { across };
+                        let last = if marked { MARKED_FOAM_BASE + foam.clamp(0.0, 1.0) } else { across };
                         [x, p[1], z, flow, across * width, u * spline.total, alpha, last]
                     }
                     RiverFormat::Rome2 => [x, p[1], z, flow, across, u, alpha, foam],
@@ -415,7 +365,7 @@ pub fn tessellate_marked(
             }
         }
 
-        let a = across_count as u32;
+        let a = ACROSS as u32;
         for row in 0..samples.len() as u32 - 1 {
             for c in 0..a - 1 {
                 let (this, next) = (base + row * a + c, base + (row + 1) * a + c);
@@ -497,12 +447,11 @@ pub fn river_rows(mesh: &RiverMesh) -> Vec<Vec<RiverRow>> {
                 .filter_map(|mut row| {
                     row.sort_by(|a, b| place(a).0.total_cmp(&place(b).0));
                     row.dedup_by(|a, b| place(a).0 == place(b).0);
-                    // BOB's five across, or a marked river's dense rows (an odd number).
-                    if row.len() < 3 || row.len() % 2 == 0 {
+                    if row.len() != 5 {
                         return None;
                     }
 
-                    let (c, e0, e4) = (row[row.len() / 2], row[0], row[row.len() - 1]);
+                    let (c, e0, e4) = (row[2], row[0], row[4]);
                     let width = (e4[0] - e0[0]).hypot(e4[2] - e0[2]);
                     let marked = mesh.format == RiverFormat::Attila && c[7] >= MARKED_FOAM_BASE - 0.5;
                     let (along, foam) = match mesh.format {
@@ -1020,33 +969,25 @@ mod tests {
     }
 
     #[test]
-    fn a_marked_river_is_dense_and_carries_its_foam_times_the_map() {
+    fn a_marked_river_carries_its_foam_in_place_of_the_position_across() {
         let plain = tessellate(&[bend()], RiverFormat::Attila);
-        // The map: foam on the half of the mesh with x over 10.
-        let map = |x: f32, _z: f32| if x > 10.0 { 1.0 } else { 0.0 };
-        let marked = tessellate_marked(&[bend()], RiverFormat::Attila, &[true], Some(&map));
-        assert!(marked.vertices.len() > plain.vertices.len() * 2, "{} vs {}", marked.vertices.len(), plain.vertices.len());
-        for v in &marked.vertices {
-            let foam = v[7] - MARKED_FOAM_BASE;
-            assert!((0.0..=1.0).contains(&foam), "{}", v[7]);
-            if v[0] <= 10.0 {
-                assert_eq!(foam, 0.0, "off the map's foam");
-            } else {
-                assert!(foam == 0.1 || foam == 0.2 || (foam - 0.1).abs() < 1e-6 || (foam - 0.2).abs() < 1e-6, "{foam}");
-            }
+        let marked = tessellate_marked(&[bend()], RiverFormat::Attila, &[true]);
+        assert_eq!(plain.triangles, marked.triangles);
+        for (p, m) in plain.vertices.iter().zip(&marked.vertices) {
+            assert_eq!(p[..7], m[..7], "all else as BOB's");
+            assert!((0.0..=1.0).contains(&p[7]));
+            assert!(m[7] == MARKED_FOAM_BASE + 0.1 || m[7] == MARKED_FOAM_BASE + 0.2, "{}", m[7]);
         }
 
-        // Read back: the same river (its rows' centres on the plain one's line, its length), marked, its foam the map's at the middle.
+        // Read back: the same rows, the foam the river's.
         let (rp, rm) = (river_rows(&plain), river_rows(&marked));
-        assert_eq!((rp.len(), rm.len()), (1, 1));
-        assert!(rm[0].len() > rp[0].len() && rm[0].iter().all(|r| r.marked) && rp[0].iter().all(|r| !r.marked));
-        let (a, b) = (rp[0].last().expect("rows"), rm[0].last().expect("rows"));
-        assert!((a.centre[0] - b.centre[0]).abs() < 1e-3 && (a.centre[2] - b.centre[2]).abs() < 1e-3 && (a.width - b.width).abs() < 1e-3);
-        assert_eq!(a.foam, DEFAULT_FOAM);
-
-        // Without a map: no foam (the editor always writes one for its rivers).
-        let none = tessellate_marked(&[bend()], RiverFormat::Attila, &[true], None);
-        assert!(none.vertices.iter().all(|v| v[7] == MARKED_FOAM_BASE));
+        assert_eq!(rp.len(), rm.len());
+        for (a, b) in rp[0].iter().zip(&rm[0]) {
+            assert_eq!((a.centre, a.along, a.width, a.flow, a.alpha), (b.centre, b.along, b.width, b.flow, b.alpha));
+            assert_eq!(a.foam, DEFAULT_FOAM);
+            assert!(!a.marked && b.marked);
+            assert!((b.foam - 0.1).abs() < 1e-5 || (b.foam - 0.2).abs() < 1e-5, "{}", b.foam);
+        }
     }
 
     #[test]

@@ -41,22 +41,11 @@ pub struct ShoreKeys {
     pub rapids: Vec<RapidRock>,
 }
 
-/// A rock of a river's rapids: its building, how far its top stands over its origin, and how far it reaches round at the water (metres;
-/// the river's foam trails behind it from that, `river_foam`; unset: a third of its top).
+/// A rock of a river's rapids: its building and how far its top stands over its origin (metres).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RapidRock {
     pub key: String,
     pub top: f32,
-    #[serde(default)]
-    pub radius: Option<f32>,
-}
-
-impl RapidRock {
-    /// How far it reaches round at the water (metres).
-    #[must_use]
-    pub fn radius(&self) -> f32 {
-        self.radius.unwrap_or(self.top / 3.0)
-    }
 }
 
 impl Default for ShoreKeys {
