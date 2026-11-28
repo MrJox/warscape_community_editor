@@ -513,40 +513,80 @@ pub fn cliff_pieces(
     keys: &[String],
     seed: u64,
 ) -> Vec<CliffPiece> {
-    let mut out = vec![];
-    let Some((bank, bank_length)) = cliff_bank_line(line, water, half, c) else { return out };
     if keys.is_empty() {
-        return out;
+        return vec![];
     }
 
-    let n = (bank_length / CLIFF_STEP).ceil().max(1.0) as usize;
     let top = crate::river_bed::CLIFF_TOP as f32;
-    for k in 0..n {
-        let at = bank_length * (k as f32 + 0.5) / n as f32;
-        let (q, i, level, _) = bank_at(&bank, at);
-        // Its long side (x) along the bank (the bank's way there, a few metres either side), its face (-z) to the water.
-        let (j0, j1) = (i.saturating_sub(3), (i + 2).min(bank.len() - 1));
-        let dir = [bank[j1].0[0] - bank[j0].0[0], bank[j1].0[1] - bank[j0].0[1]];
-        let yaw = -dir[1].atan2(dir[0]).to_degrees() + if c.side > 0.0 { CLIFF_FACE_TURN } else { CLIFF_FACE_TURN + 180.0 };
-        // Its face's top at its two ends (along the bank): it stands at their middle, leaning from one to the other.
-        let (.., a0) = bank_at(&bank, at - CLIFF_PIECE_HALF);
-        let (.., a1) = bank_at(&bank, at + CLIFF_PIECE_HALF);
-        let (h0, h1) = (top * c.face(f64::from(a0)) as f32, top * c.face(f64::from(a1)) as f32);
-        let slope = (h1 - h0) / (2.0 * CLIFF_PIECE_HALF);
-        let l = dir[0].hypot(dir[1]).max(1e-6);
-        let (dx, dz) = (dir[0] / l, dir[1] / l);
-        let u = [-dx * slope, 1.0, -dz * slope];
+    let mut out = vec![];
+    for (k, p) in cliff_slabs(line, water, half, c).into_iter().enumerate() {
+        // Its long side (x) along the bank, its face (-z) to the water.
+        let yaw = -p.dir[1].atan2(p.dir[0]).to_degrees() + if c.side > 0.0 { CLIFF_FACE_TURN } else { CLIFF_FACE_TURN + 180.0 };
+        // It stands at the middle of its face's top at its two ends, leaning from one to the other.
+        let slope = (p.h[1] - p.h[0]) / (2.0 * CLIFF_PIECE_HALF);
+        let u = [-p.dir[0] * slope, 1.0, -p.dir[1] * slope];
         let ul = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
         let [r, ..] = cell_numbers(seed ^ 0xc11f_f000, k as i64, 0);
         let key = pick(keys, (r * keys.len() as f32) as usize);
-        let y = level + CLIFF_PIECE_LIFT - top + (h0 + h1) * 0.5;
+        let y = p.level + CLIFF_PIECE_LIFT - top + (p.h[0] + p.h[1]) * 0.5;
         out.push(CliffPiece {
-            placed: Placed { key: key.to_owned(), x: q[0], y, z: q[1], scale: 1.0, yaw },
+            placed: Placed { key: key.to_owned(), x: p.at[0], y, z: p.at[1], scale: 1.0, yaw },
             up: [u[0] / ul, u[1] / ul, u[2] / ul],
         });
     }
 
     out
+}
+
+/// A cliff piece as it is laid: its middle, its way along the bank (of length 1, as the river runs), the water there, its two ends'
+/// places along the river and its face's top there (metres over the water).
+struct CliffSlab {
+    at: [f32; 2],
+    dir: [f32; 2],
+    level: f32,
+    along: [f32; 2],
+    h: [f32; 2],
+}
+
+/// A cliff bank's pieces as they are laid: as many as cover its stretch [`CLIFF_STEP`] apart at most along the bank's own line,
+/// evenly, each standing at its face's top ([`crate::river_bed::CliffBank::face`]) at its two ends.
+fn cliff_slabs(line: &[[f32; 2]], water: &[f32], half: &[f32], c: &crate::river_bed::CliffBank) -> Vec<CliffSlab> {
+    let Some((bank, bank_length)) = cliff_bank_line(line, water, half, c) else { return vec![] };
+    let top = crate::river_bed::CLIFF_TOP as f32;
+    let n = (bank_length / CLIFF_STEP).ceil().max(1.0) as usize;
+    let mut out = vec![];
+    for k in 0..n {
+        let at = bank_length * (k as f32 + 0.5) / n as f32;
+        let (q, i, level, _) = bank_at(&bank, at);
+        // The bank's way there, a few metres either side.
+        let (j0, j1) = (i.saturating_sub(3), (i + 2).min(bank.len() - 1));
+        let dir = [bank[j1].0[0] - bank[j0].0[0], bank[j1].0[1] - bank[j0].0[1]];
+        let l = dir[0].hypot(dir[1]).max(1e-6);
+        // Its ends along the river: past the bank line's ends, on as far as they reach.
+        let end = |s: f32| {
+            let want = at + s * CLIFF_PIECE_HALF;
+            let (.., a) = bank_at(&bank, want);
+            a + (want - want.clamp(0.0, bank_length))
+        };
+        let along = [end(-1.0), end(1.0)];
+        let h = along.map(|a| top * c.face(f64::from(a)) as f32);
+        out.push(CliffSlab { at: q, dir: [dir[0] / l, dir[1] / l], level, along, h });
+    }
+
+    out
+}
+
+/// A cliff bank's pieces' tops along the river: each piece's two ends' places along it and how much of the cliff's top they stand at
+/// (0 .. 1), as [`cliff_pieces`] lays them (whatever pieces a game has): the ground behind is raised to them
+/// ([`crate::river_bed::CliffShape`]).
+#[must_use]
+pub fn cliff_spans(line: &[[f32; 2]], half: &[f32], c: &crate::river_bed::CliffBank) -> Vec<[f64; 4]> {
+    let water = vec![0.0; line.len()];
+    let top = crate::river_bed::CLIFF_TOP;
+    cliff_slabs(line, &water, half, c)
+        .into_iter()
+        .map(|p| [f64::from(p.along[0]), f64::from(p.along[1]), f64::from(p.h[0]) / top, f64::from(p.h[1]) / top])
+        .collect()
 }
 
 /// Half a cliff piece's length (metres; the kit's are 18 m long).
@@ -653,6 +693,13 @@ fn cliff_bank_line(
         let q = [p[0] - dir[1] * r, p[1] + dir[0] * r];
         let nearest = line.windows(2).map(|w| segment_distance(q, w[0], w[1])).fold(f32::INFINITY, f32::min);
         if nearest < off - 0.5 {
+            continue;
+        }
+
+        // Nor where it runs back against the river (a loop round a kink of its line, as far from it as its offset).
+        if let Some(&(b, ..)) = bank.last()
+            && (q[0] - b[0]) * dir[0] + (q[1] - b[1]) * dir[1] <= 0.0
+        {
             continue;
         }
 
