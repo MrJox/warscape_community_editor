@@ -52,7 +52,6 @@ pub mod lakes;
 mod river_beds;
 mod river_checks;
 pub mod river_cliffs;
-mod river_foam;
 pub mod river_fords;
 mod river_joins;
 pub mod river_links;

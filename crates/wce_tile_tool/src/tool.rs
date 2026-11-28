@@ -1954,12 +1954,8 @@ impl TileTool {
         let kits = kit_raws(e);
         let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files) && g.made_for(&kits));
         let id = document_id(e).ok_or("no tile is open")?;
-        // The roads being made finished first: what they change is in the maps the save writes and the compile reads. The rivers' foam
-        // map written as the tile is now (its shores made first: their rocks are in it), for the compile's river mesh.
-        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
-        d.tile_mut().finish_road_jobs();
-        d.finish_shores();
-        d.tile().save_river_foam()?;
+        // The roads being made finished first: what they change is in the maps the save writes and the compile reads.
+        e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         if d.modified() {
             e.docs.save_one(id)?;
