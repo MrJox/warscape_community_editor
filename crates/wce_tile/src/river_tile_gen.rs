@@ -185,6 +185,44 @@ pub fn cliff_rock_places(line: &[[f64; 2]], c: &Cliff, off: f64, step: f64) -> V
     out
 }
 
+/// Where a ford goes on a river's line (docs/plans/river_bridges.md, step 6): the sample nearest the tile's middle on a straight stretch
+/// (its turn over a few samples either side counted as metres off the middle), not within `clear` samples of the stretch `avoid` (a
+/// cliff's), nudged by the seed; none on a line too short or with every sample taken.
+#[must_use]
+pub fn ford_place(line: &[[f64; 2]], extent: (f64, f64), avoid: Option<(usize, usize)>, clear: usize, seed: u64) -> Option<usize> {
+    let n = line.len();
+    let k = 3;
+    if n < 2 * k + 2 {
+        return None;
+    }
+
+    let mid = [extent.0 * 0.5, extent.1 * 0.5];
+    let (lo, hi) = (n / 5, n - n / 5);
+    (lo.max(k)..hi.min(n - k))
+        .filter(|&i| avoid.is_none_or(|(a, b)| i + clear < a || i > b + clear))
+        .map(|i| {
+            let (a, b, c) = (line[i - k], line[i], line[i + k]);
+            let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs();
+            let nudge = (corner(seed ^ FORD_SALT, i as i64, 0) + 1.0) * 12.0;
+            (i, (b[0] - mid[0]).hypot(b[1] - mid[1]) + turn * 80.0 + nudge)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// The line across a river at its line's sample `at`: `reach` metres to either side, square to its way there.
+#[must_use]
+pub fn across_line(line: &[[f64; 2]], at: usize, reach: f64) -> Vec<[f64; 2]> {
+    let (a, b) = (line[at.saturating_sub(1)], line[(at + 1).min(line.len() - 1)]);
+    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+    let len = dx.hypot(dz).max(1e-6);
+    let (n, p) = ([-dz / len, dx / len], line[at]);
+    vec![[p[0] - n[0] * reach, p[1] - n[1] * reach], [p[0] + n[0] * reach, p[1] + n[1] * reach]]
+}
+
+const FORD_SALT: u64 = 0xf04d_0000_0000_0006;
+
 /// The relief with a river's valley in it: within `half_width` of the river's line the ground goes to the valley's floor (all of it on
 /// the line, smoothly less out to the edge of the valley), so that the river runs between banks over its water, not over hills; still
 /// faded to 0 at the tile's edges; the hills [`HILLS_OVER_FLOOR_M`] or more over the floor.
@@ -464,6 +502,26 @@ mod tests {
         let rocks = cliff_rock_places(&line, &cliff, 6.0, 9.0);
         assert!(rocks.iter().filter(|(_, rise)| *rise >= 0.5).count() >= 2, "rocks up its face: {rocks:?}");
         assert!(!rocks.is_empty() && rocks.iter().all(|(p, _)| nearest_on_line(*p, &line).2 == cliff.side), "on its side: {rocks:?}");
+    }
+
+    #[test]
+    fn a_ford_goes_near_the_middle_on_a_straight_stretch_clear_of_the_cliff() {
+        let e = (256.0, 256.0);
+        // Straight west to east through the middle, then a hard bend north near the east edge.
+        let line = smooth_line(&[[0.0, 128.0], [60.0, 128.0], [128.0, 128.0], [180.0, 128.0], [215.0, 100.0], [230.0, 0.0]], 10);
+        for seed in 0..8 {
+            let i = ford_place(&line, e, None, 4, seed).expect("a place");
+            assert!((line[i][0] - 128.0).abs() < 40.0 && (line[i][1] - 128.0).abs() < 1.0, "seed {seed}: by the middle: {:?}", line[i]);
+        }
+
+        // With the middle taken (a cliff's stretch), elsewhere, clear of it.
+        let m = line.iter().position(|p| p[0] >= 128.0).unwrap();
+        let i = ford_place(&line, e, Some((m - 8, m + 8)), 4, 1).expect("a place");
+        assert!(i + 4 < m - 8 || i > m + 12, "clear of the cliff: {i} by {m}");
+        let across = across_line(&line, i, 30.0);
+        let (u, w) = ([across[1][0] - across[0][0], across[1][1] - across[0][1]], [line[i + 1][0] - line[i - 1][0], line[i + 1][1] - line[i - 1][1]]);
+        let cos = (u[0] * w[0] + u[1] * w[1]) / (u[0].hypot(u[1]) * w[0].hypot(w[1]));
+        assert!(cos.abs() < 0.01 && (u[0].hypot(u[1]) - 60.0).abs() < 1e-6, "square across it: {across:?}");
     }
 
     #[test]
