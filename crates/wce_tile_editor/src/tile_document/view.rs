@@ -38,7 +38,7 @@ pub(super) struct RiverSample {
     pub(super) z: f64,
     pub(super) y: f64,
     pub(super) width: f64,
-    flow: f64,
+    pub(super) flow: f64,
     foam: f64,
     alpha: f64,
 
@@ -814,6 +814,11 @@ impl Tile {
         out
     }
 
+    /// The samples of the rivers the editor's river shader draws (`river_files::SHADER_RIVER_ATTRS`), each river's.
+    pub(super) fn river_ribbons_marked(&self) -> Vec<Vec<RiverSample>> {
+        self.river_ribbons().into_iter().filter(|(_, s)| s.first().is_some_and(|s| s.marked)).map(|(_, s)| s).collect()
+    }
+
     /// Rivers: every SplineRiverInstance is a chain of Bezier segments (point i's position and controlOut, point i+1's controlIn and position,
     /// all local to the instance in scene units); the ribbon follows it with the point's width, at the height the game has it, landscape or
     /// freeform: the exported river_spline*.xml the game reads has the points' stored heights over its factor and no terrain_offset. terrain_offset is the point's height
@@ -841,9 +846,20 @@ impl Tile {
         let (mut rivers, mut ribbons) = (0, 0);
         let mut new_water = vec![];
         let drawn = if self.display.show_water { self.river_ribbons() } else { vec![] };
+        // The editor's rivers in an Attila battle: dense, their foam where the foam map has it, as the export's mesh has them.
+        let foam_map = (!rome2 && !campaign && drawn.iter().any(|(_, s)| s.first().is_some_and(|s| s.marked)))
+            .then(|| self.river_foam_map())
+            .flatten();
         for (pts, samples) in drawn {
             rivers += 1;
             if samples.len() < 2 {
+                continue;
+            }
+
+            if !rome2 && !campaign && samples[0].marked {
+                let wt = dense_river_water(&samples, foam_map.as_ref());
+                ribbons += wt.verts.len();
+                new_water.push(wt);
                 continue;
             }
 
@@ -2655,6 +2671,79 @@ impl Tile {
     pub fn models(&self) -> &BTreeMap<String, super::BuildingModel> {
         &self.models
     }
+}
+
+/// Rows this far apart at most (m), and columns across at most this far apart, on a river the editor's river shader draws: dense enough
+/// for its foam map (`river_foam`), as the export's mesh (`wce_tile_io::attila::river::tessellate_marked`).
+const DENSE_ROW_M: f64 = 2.0;
+const DENSE_COLUMN_M: f64 = 1.5;
+
+/// The dense water of a river the editor's river shader draws: its samples cut into rows at most [`DENSE_ROW_M`] apart, each an odd
+/// number of vertices across, in the game's layout (flow in P0.w, alpha in P1.z, 2 + its foam times the map in P1.w).
+fn dense_river_water(samples: &[RiverSample], map: Option<&wce_tile::river_foam::FoamMap>) -> Water {
+    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+    let mut rows: Vec<(f64, f64, f64, f64, f64, f64, f64)> = vec![]; // x, z, y, width, flow, foam, alpha
+    for w in samples.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        let n = ((a.x - b.x).hypot(a.z - b.z) / DENSE_ROW_M).ceil().max(1.0) as usize;
+        for k in 0..n {
+            let t = k as f64 / n as f64;
+            rows.push((
+                lerp(a.x, b.x, t),
+                lerp(a.z, b.z, t),
+                lerp(a.y, b.y, t),
+                lerp(a.width, b.width, t),
+                lerp(a.flow, b.flow, t),
+                lerp(a.foam, b.foam, t),
+                lerp(a.alpha, b.alpha, t),
+            ));
+        }
+    }
+
+    let l = samples.last().expect("two samples");
+    rows.push((l.x, l.z, l.y, l.width, l.flow, l.foam, l.alpha));
+    let widest = rows.iter().map(|r| r.3).fold(0.0, f64::max);
+    let columns = (((widest / DENSE_COLUMN_M).ceil() as usize + 1) | 1).max(3);
+    let mut wt = Water { river: true, ..Default::default() };
+    let mut along = 0.0;
+    let mut foam_sum = 0.0;
+    for (i, r) in rows.iter().enumerate() {
+        if i > 0 {
+            along += (r.0 - rows[i - 1].0).hypot(r.1 - rows[i - 1].1);
+        }
+
+        let (p0, p1) = (&rows[i.saturating_sub(1)], &rows[(i + 1).min(rows.len() - 1)]);
+        let (mut tx, mut tz) = (p1.0 - p0.0, p1.1 - p0.1);
+        let len = tx.hypot(tz);
+        (tx, tz) = if len < 1e-9 { (1.0, 0.0) } else { (tx / len, tz / len) };
+        let (nx, nz, hw) = (-tz, tx, r.3 * 0.5);
+        for c in 0..columns {
+            let off = (2.0 * c as f64 / (columns - 1) as f64 - 1.0) * hw;
+            let (x, z) = (r.0 + nx * off, r.1 + nz * off);
+            let foam = r.5.clamp(0.0, 1.0) * map.map_or(0.0, |m| m.at(x, z));
+            wt.verts.push(WaterVertex {
+                x: x as f32,
+                y: r.2 as f32,
+                z: z as f32,
+                across: r.4 as f32,
+                u: off as f32,
+                v: along as f32,
+                flow: r.6 as f32,
+                fade: (MARKED_FOAM_BASE + foam) as f32,
+            });
+            foam_sum += r.5;
+        }
+
+        if i > 0 {
+            let (a, b) = (((i - 1) * columns) as u32, (i * columns) as u32);
+            for c in 0..(columns - 1) as u32 {
+                wt.indices.extend([a + c, b + c, a + c + 1, a + c + 1, b + c, b + c + 1]);
+            }
+        }
+    }
+
+    wt.foam = (foam_sum / wt.verts.len().max(1) as f64) as f32;
+    wt
 }
 
 #[cfg(test)]

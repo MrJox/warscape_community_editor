@@ -134,18 +134,24 @@ before it mounts mod packs, so only a movie pack's are used (docs/re/game_comman
   river of speed 0.5 both offsets are 0: the vanilla normal.
 - **Alpha fade** (`TEXCOORD7.x`, the vertex's alpha): the final colour goes towards the refraction texture (the scene behind the
   water, undistorted) as alpha goes to 0: a river's ends fade into the bed.
-- **Foam** (the vertex's 2 + foam): only where the water meets something, a bank, a rock or a pier: where the scene under the water
-  (its depth as the shader reconstructs it) is within 0.5 m of the surface, fading out there (2026-11-28). A wake down the river
-  from each rock, found by looking up the river in the screen's depth (points up the river in a fan, projected with
-  `view_projection`, the scene there rebuilt with `inv_view_projection`), was tried and left out: from a low view the face of a
-  tall rock the point is in is met far ahead of it (15 m for a 5 m rock seen at 20 degrees), as a rock in front of it would be, so
-  the wake came and went with the camera. On that
-  water, where the ripple texture (`battleterrain/river/river_normal.dds`, its g and a) is steeper than a threshold. The texture is laid on the foam's own coordinates, the vertex's metres (9 m a repeat
-  along, 1.6 times as often across, averaged with a second look at 0.41 times that scale so its repeats don't line up), moved down
-  the river alone at the ripples' speed plus the two flow layers' offsets: not on the ripples' uv, whose third layer also drifts with
-  the wind at 0.12 uv a second, mostly across the river once made even (the foam went sideways). The threshold falls from 0.32 to 0.12 as
-  the foam goes from 0 to 1, sharpened by 8, at most 75% opaque; the foam counts in full in the shallows and 45% less from 1.2 m deep
-  (the shader's own water depth). Its colour: the sun's (half of it grey), times `0.25 + 0.6 x` the sun's height, in the HDR scale
+- **Foam** (the vertex's 2 + the river's foam times its foam map there): only where the water meets something and in a trail behind
+  what stands in it (2026-11-28). The editor works the map out (`wce_tile::river_foam`, `tile_document/river_foam.rs`): a cell a
+  metre over the tile, saved with the project as `wce_river_foam.bin` (at every save, and before an export or a launch); 1 where the
+  bed is at the surface, falling to 0 at 0.6 m deep (the banks, a ford's edges); round each building standing over 0.3 m deep in the
+  water a 1 m ring, then a trail down the river, 0.8 of its radius wide each side and widening 0.1 m a metre, fading to nothing over
+  20 m at a flow of 0.5 (twice the flow times that, 0.3 to 2.5 times). Its buildings: the tile's (their models' bounds, but not one
+  reaching over 12 m round, a bridge) and the shores' rocks (the rapids' by `radius` in `shores.toml`). The export's river mesh for
+  the editor's rivers is dense for it (rows 2 m and columns 1.5 m apart at most, docs/formats/tile_compile.md), each vertex looking the
+  map up; so is the editor's water. Working the trail out in the shader, by looking up the river in the screen's depth (points up the
+  river in a fan, projected with `view_projection`, the scene there rebuilt with `inv_view_projection`), was tried and left out: from a
+  low view the face of a tall rock the point is in is met far ahead of it (15 m for a 5 m rock seen at 20 degrees), as a rock in front
+  of it would be, so the trail came and went with the camera.
+  The shader draws it where the ripple texture (`battleterrain/river/river_normal.dds`, its g and a) is steeper than a threshold. The
+  texture is laid on the foam's own coordinates, the vertex's metres (9 m a repeat along, 1.6 times as often across, averaged with a
+  second look at 0.41 times that scale so its repeats don't line up), moved down the river alone at the ripples' speed plus the two flow
+  layers' offsets: not on the ripples' uv, whose third layer also drifts with the wind at 0.12 uv a second, mostly across the river once
+  made even (the foam went sideways). The threshold falls from 0.3 to 0.04 as the foam goes from 0 to 1, sharpened by 8, at most 85%
+  opaque (full from a foam of a third). Its colour: the sun's (half of it grey), times `0.25 + 0.6 x` the sun's height, in the HDR scale
   (`g_hdr_on`: 0.004). TEd's default foam, 0.1, shows almost none.
 - **Flow following the width** (the river's *Flow* in its panel, `wce_flow_by_width`, `river_files::width_flows`): each point's flow
   is the river's flow at its mean width (`wce_flow_base`, 0.5) times the mean width over the point's (a quarter to four times), as the

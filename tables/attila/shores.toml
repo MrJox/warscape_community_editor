@@ -23,7 +23,8 @@
 #                 their -z side to the water; about 18 m long, 11.5 m apart). None (or no list): the ground behind is raised, no pieces.
 #   cliff_ends    buildings: the rocks at a cliff bank's ends, over where its face meets the bank (5 to 6 m big). None: no rocks.
 #   rapids        buildings: a river's rapids' rocks, out on its water in clumps with a splash each, and how tall each stands over its
-#                 origin (metres; `top`: it is sunk by it, to stand a metre or two out of the water). None: no rapids.
+#                 origin (metres; `top`: it is sunk by it, to stand a metre or two out of the water), and how far it reaches round at
+#                 the water (metres; `radius`: the river's foam trails behind it that wide; unset, a third of `top`). None: no rapids.
 
 reeds = ["shrubs.shrub_bulrusha", "shrubs.calamus_a", "shrub_calamus.shrub_calamus_a", "shrubs_med.water_a", "shrubs_med.water_b"]
 lilies = ["shrubs.shrub_waterlilya", "shrub_waterlilly.shrub_waterlilly"]
@@ -57,8 +58,8 @@ splash = "enviro_vfx_watersplashes"
 cliffs = ["attila_cliff_01", "attila_cliff_02", "attila_cliff_03"]
 cliff_ends = ["attila_rock_01", "attila_rock_03", "attila_rock_04"]
 rapids = [
-    { key = "rock_01_med", top = 7.5 },
-    { key = "rock_01_large", top = 9.5 },
-    { key = "rock_02_med", top = 11.4 },
-    { key = "rock01_wall", top = 11.5 },
+    { key = "rock_01_med", top = 7.5, radius = 2.0 },
+    { key = "rock_01_large", top = 9.5, radius = 2.8 },
+    { key = "rock_02_med", top = 11.4, radius = 2.5 },
+    { key = "rock01_wall", top = 11.5, radius = 4.0 },
 ]
