@@ -866,6 +866,9 @@ pub struct TileDocument {
     /// The last river profile asked for and what it was made from (`river_profile.rs`): asked for every frame (the Inspector's graph,
     /// the arrows on the water), made again only after an edit or a change of the ground.
     pub(crate) profile_cache: std::cell::RefCell<Option<(u64, river_profile::RiverProfile)>>,
+
+    /// A river's shore variation being dragged in the Inspector (`river_point_shores.rs`): applied when the drag ends.
+    pub(crate) shore_var_draft: Option<(usize, river_point_shores::ShoreVariation)>,
 }
 
 /// What saving a stage does: it writes what the stage holds (a prefab), not the tile under it. Returns what it saved.
@@ -1180,7 +1183,14 @@ impl TileDocument {
             total - t_index - t_models
         );
         log::info(tile.load_info.clone());
-        Self { core, history: CommandStack::new(tile), stage: None, move_batch: None, profile_cache: std::cell::RefCell::new(None) }
+        Self {
+            core,
+            history: CommandStack::new(tile),
+            stage: None,
+            move_batch: None,
+            profile_cache: std::cell::RefCell::new(None),
+            shore_var_draft: None,
+        }
     }
 
     pub fn tile(&self) -> &Tile {

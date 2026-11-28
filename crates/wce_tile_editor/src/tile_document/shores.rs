@@ -476,49 +476,77 @@ impl TileDocument {
             self.set_river_cliffs_mode(e, RIVER_CLIFFS[idx.clamp(0, RIVER_CLIFFS.len() as i32 - 1) as usize]);
         }
 
-        // The shore variation: its settings kept on the river.
-        let v = self.tile().river_shore_variation(e);
-        let num = |x: f64| wce_tile::ted_scene::format_number(x);
-        let mut cliffs = v.cliffs as f32;
-        ins.hint("How likely each point starts a run of two or three points with a cliff (the outer bank of its bend), in percent.");
-        if ins.edit_float(VAR_CLIFFS_ATTR, "cliff runs (%)", &mut cliffs, 0.5, 0.0, 100.0) && f64::from(cliffs) != v.cliffs {
-            self.set_attribute(e, VAR_CLIFFS_ATTR, &num(f64::from(cliffs).round()));
+        // The shore variation: its settings kept on the river, drawn again as one is changed (when its drag ends: one undo entry).
+        let saved = self.tile().river_shore_variation(e);
+        let mut v = self.shore_var_draft.filter(|(r, _)| *r == e).map_or(saved, |(_, v)| v);
+        let mut changed = false;
+        let mut ended = false;
+        let mut cliffs = v.cliffs.round() as i64;
+        ins.hint(
+            "How likely each point starts a run of two or three points with a cliff on the outer bank of its bend, in percent. The \
+             points are drawn again as it changes; those set by hand keep their own.",
+        );
+        if ins.edit_int_slider(VAR_CLIFFS_ATTR, "cliff runs (%)", &mut cliffs, 0, 100) {
+            v.cliffs = cliffs as f64;
+            changed = true;
         }
 
-        let mut amounts = v.amounts as f32;
-        ins.hint("How likely each point's reeds, stones and decals are a step more or less than the river's, each, in percent.");
-        if ins.edit_float(VAR_AMOUNTS_ATTR, "amount changes (%)", &mut amounts, 0.5, 0.0, 100.0) && f64::from(amounts) != v.amounts {
-            self.set_attribute(e, VAR_AMOUNTS_ATTR, &num(f64::from(amounts).round()));
+        ended |= ins.gesture_ended();
+        let mut amounts = v.amounts.round() as i64;
+        ins.hint(
+            "How likely each point's reeds, stones and decals are a step more or less than the river's, each, in percent. The points \
+             are drawn again as it changes; those set by hand keep their own.",
+        );
+        if ins.edit_int_slider(VAR_AMOUNTS_ATTR, "amount changes (%)", &mut amounts, 0, 100) {
+            v.amounts = amounts as f64;
+            changed = true;
         }
 
+        ended |= ins.gesture_ended();
         let mut seed = v.seed as i64;
-        ins.hint("The draw: another seed, other points.");
-        if ins.edit_int(VAR_SEED_ATTR, "variation seed", &mut seed, 0.2) && seed.max(0) as u64 != v.seed {
-            self.set_attribute(e, VAR_SEED_ATTR, &seed.max(0).to_string());
+        ins.hint("The draw: another seed, other points (drawn again as it changes).");
+        if ins.edit_int(VAR_SEED_ATTR, "variation seed", &mut seed, 0.2) {
+            v.seed = seed.max(0) as u64;
+            changed = true;
         }
 
+        ended |= ins.gesture_ended();
         // Lucide's refresh (`wce_editor::icons::REFRESH_CW`).
         let mut apply = None;
         if ins.row_buttons(&[("shore_var_reroll", "\u{e145}", "Another seed, and randomize with it", true)], "") == Some(0) {
-            let seed = (v.seed.wrapping_mul(2_654_435_761).wrapping_add(1)) % 1_000_000;
-            apply = Some(ShoreVariation { seed, ..v });
+            apply = Some(ShoreVariation { seed: (v.seed.wrapping_mul(2_654_435_761).wrapping_add(1)) % 1_000_000, ..v });
         }
 
-        ins.hint(
-            "Gives the points cliffs and amounts of their own by the settings above, in place of those it gave before; the points set \
-             by hand keep theirs. One undo entry.",
-        );
-        if ins.button("shore_var_apply", "Randomize shore", true) {
+        if changed {
+            self.shore_var_draft = Some((e, v));
+        }
+
+        if ended && self.shore_var_draft.is_some_and(|(r, _)| r == e) {
             apply = Some(v);
         }
 
-        if let Some(v) = apply {
-            let _ = self.randomize_river_shore(e, v);
+        match ins.wide_buttons(&[
+            (
+                "shore_var_apply",
+                "Randomize shore",
+                "Gives the points cliffs and amounts of their own by the settings above, in place of those it gave before; the points set \
+                 by hand keep theirs. One undo entry.",
+                true,
+            ),
+            ("shore_var_reset", "Reset variation", "Takes the values the variation gave the points away (those set by hand stay).", true),
+        ]) {
+            Some(0) => apply = Some(v),
+            Some(_) => {
+                self.shore_var_draft = None;
+                let _ = self.reset_river_shore(e);
+            }
+
+            None => {}
         }
 
-        ins.hint("Takes the values the variation gave the points away (those set by hand stay).");
-        if ins.button("shore_var_reset", "Reset shore variation", true) {
-            let _ = self.reset_river_shore(e);
+        if let Some(v) = apply {
+            self.shore_var_draft = None;
+            let _ = self.randomize_river_shore(e, v);
         }
     }
 }

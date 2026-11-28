@@ -130,6 +130,31 @@ impl Inspector for ImGuiInspector {
         self.next_format = Some(format.to_owned());
     }
 
+    fn wide_buttons(&mut self, buttons: &[(&str, &str, &str, bool)]) -> Option<usize> {
+        gui::row("");
+        let n = buttons.len().max(1) as f32;
+        let w = (gui::content_region_avail().x - gui::item_spacing().x * (n - 1.0)) / n;
+        let mut out = None;
+        for (k, &(field, label, tip, enabled)) in buttons.iter().enumerate() {
+            if k > 0 {
+                gui::same_line();
+            }
+
+            gui::begin_disabled(!enabled);
+            if gui::button_sized(&format!("{label}{}", self.id(field)), gui::v2(w, 0.0)) && enabled {
+                out = Some(k);
+            }
+
+            gui::end_disabled();
+            if !tip.is_empty() && gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(tip);
+            }
+        }
+
+        self.next_hint.clear();
+        out
+    }
+
     fn button(&mut self, field: &str, label: &str, enabled: bool) -> bool {
         gui::begin_disabled(!enabled);
         let clicked = gui::small_button(&format!("{label}{}", self.id(field)));
