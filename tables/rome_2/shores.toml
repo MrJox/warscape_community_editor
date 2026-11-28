@@ -19,6 +19,8 @@
 #                 normal in alpha and green (the decal shader reads it there; mud_stone01 and stones1 do not and draw lit from one side).
 #   bed_decals    decals: mud and dirt from the waterline into the shallow water, and in clumps over a ford's floor.
 #   splash        an effect (vfx): the looping splash over a ford's ends.
+#   cliffs        buildings: a river's cliff bank's pieces (none here: the ground behind is raised alone).
+#   cliff_ends    buildings: the rocks at a cliff bank's ends (none here).
 
 # Rome 2 has no low ground mound like Attila's global_ground_pathborder: no mounds; its boulder_small_* lack their textures in its packs
 # (mediterranean_boulder_*: drawn white), and its rock_0*_small are big (12 m): its bank stones are a Gaul rock and the biggest small one.

@@ -3767,7 +3767,7 @@ fn a_generated_river_tile_is_one_undo_entry() {
     let before = d.history().position();
     let biomes = d.tile_biomes().to_vec();
     let made = d.generate_river_tile(4, true, RiverTileRoad::LinkToLink).unwrap();
-    assert!(made.contains("a river of") && made.contains("a cliff by") && made.contains("wood(s) of Broadleaf wood"), "{made}");
+    assert!(made.contains("a river of") && made.contains("a cliff bank by") && made.contains("wood(s) of Broadleaf wood"), "{made}");
     assert!(!d.tile().biome_areas().is_empty(), "woods: {made}");
     assert_eq!(d.history().position(), before + 1, "one undo entry");
     assert_eq!(d.tile().tscene().find_all("SplineRiverInstance").len(), 1);
@@ -3782,6 +3782,55 @@ fn a_generated_river_tile_is_one_undo_entry() {
     assert_eq!(heights(&d), ground, "the ground as it was");
     d.tile_mut().finish_road_jobs();
     assert_eq!(grounds(&d), ground_types, "the ground types as they were");
+}
+
+/// A river point's cliff bank: its stretch (halfway to its neighbours), the ground behind it raised, cliff pieces along it in the shore
+/// and none of its reeds or stones there; one undo entry that takes it back.
+#[test]
+fn a_cliff_bank_raises_its_ground_and_lays_its_pieces() {
+    use wce_editor_core::document::Document;
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let line = [20.0f32, 70.0, 120.0, 170.0, 240.0].map(|x| Float3::new(x, y(&d, x, 128.0), 128.0)).to_vec();
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(line), "").unwrap();
+    d.set_attribute(r, "wce_shores", "1");
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    let ground = |d: &TileDocument| y(d, 120.0, 128.0 + 22.5 + 9.0);
+    let (before_ground, before) = (ground(&d), d.history().position());
+    let right_bank = |d: &TileDocument| y(d, 120.0, 128.0 - 22.5 - 9.0);
+    let before_right = right_bank(&d);
+
+    // Points 2 and 3 on the left bank (+z, the river running along +x): one stretch from 75 to 185 m along (the line from x 20: halfway to x 70 and to x 240).
+    assert!(d.set_river_cliff(r, 2, Some(1.0)) && d.set_river_cliff(r, 3, Some(1.0)));
+    let cliffs = d.tile().river_cliffs(r);
+    assert_eq!(cliffs.len(), 1, "{cliffs:?}");
+    assert!((cliffs[0].from - 75.0).abs() < 1.0 && (cliffs[0].to - 185.0).abs() < 1.0 && cliffs[0].side == 1.0, "{cliffs:?}");
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    let water = d.tile().water_level(120.0, 128.0).unwrap();
+    let raised = ground(&d);
+    assert!(raised > before_ground + 2.0 && raised > water + 3.0, "raised behind it: {before_ground} -> {raised} (water {water})");
+    assert!((right_bank(&d) - before_right).abs() < 1e-3, "the right bank as it was");
+    let pieces = d.tile().shore_items_in([90.0, 128.0, 190.0, 180.0]);
+    let cliff_pieces = pieces.iter().filter(|p| p.contains("attila_cliff_")).count();
+    assert!(cliff_pieces >= 6, "pieces along it: {pieces:#?}");
+    // Its ends' rocks (attila_rock_01/03/04), and no stones on its bank.
+    let end_rock = |p: &&String| ["attila_rock_01 ", "attila_rock_03 ", "attila_rock_04 "].iter().any(|k| p.contains(k));
+    assert!(pieces.iter().filter(end_rock).count() >= 2, "rocks at its ends: {pieces:#?}");
+    let others = pieces.iter().filter(|p| !p.contains("attila_cliff_") && !end_rock(p) && p.contains("BUILDING_INSTANCE")).count();
+    assert!(others <= 1, "no stones on its bank: {pieces:#?}");
+
+    // Its marks taken back in two undo entries (one each).
+    assert_eq!(d.history().position(), before + 2);
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert!(d.tile().river_cliffs(r).is_empty());
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    assert!((ground(&d) - before_ground).abs() < 1e-3, "the ground as it was");
+    assert!(d.tile().shore_items_in([0.0, 0.0, 256.0, 256.0]).iter().all(|p| !p.contains("attila_cliff_")));
 }
 
 /// A generated river tile with no road has a ford near its middle, clear of its cliff: the river's bed there at wading depth.

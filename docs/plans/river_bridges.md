@@ -82,6 +82,29 @@ variations. On `feature/river_crossings`. RE behind it: [docs/re/river_hints.md]
    the woods keep half its length and 14 m off the line across the river there (70 m past the water to either side). Checked on the six
    ford kinds the spots use (`2x2_lt_rt`, `lt_rb`, `lb_rt`, `bl_rt`, `br_rt`, `lt_bl`; seeds 22, 23): the bed 0.27 m under the water at
    the ford (the kit's 0.25), 3 m away from it.
+6.5. **Cliff banks** (user, 2026-11-28: cliffs of cliff rock buildings, set per river point by a checkbox): a river point's `wce_cliff`
+   (`left` / `right`, as the river runs) makes the bank on that side a cliff from halfway to the point before to halfway to the one after
+   (neighbouring points on one side, one run). The river's bed raises the ground behind the run to the cliff's top (a plateau, tapered at
+   its ends, easing back to the land); the shore lays the kit's cliff pieces along the bank (`attila_cliff_01..03`, the kit's settlements
+   chain them 11.3 m apart (18 m long, 6 m tall), their rock face on their -z side, their top grass blending into the ground; the game's list in
+   `shores.toml`, `cliffs`), and no reeds or stones on that bank. A checkbox in the river point's rows (on: the outer bank of its bend),
+   a script command; the generator ticks its outer bend's points instead of its own raised relief and loose rocks.
+   **Built 2026-11-28** (`river_cliffs.rs`, `river_bed::CliffBank`, `shores::cliff_pieces`; script `river_cliff <point>|all
+   left|right|outer|off | list`): the pieces measured in the editor's metres are 18 m long, 2 m under their middle to 4.15 m over it
+   (the model bounds are in the scene's units, twice the editor's metres on a battle tile), their rock face on -z sloping from their foot
+   3.5 m in front of their middle; they stand a metre inside the water's drawn edge (the bank meets the water some metres inside it: at
+   the edge, a strip of shallow bank with stones lay in front of them), 1 m over the water, one every 11.5 m at most along the bank's own
+   line (along the river's middle line they parted round the outside of a bend). The ground behind climbs inside them (from 2 m inside
+   the edge over 2 m: climbing from the water, it buried their faces) to 5 m over the water, held 8 m, easing down over 25 m, tapering over
+   12 m along; behind them the river's bank cut is kept off the land. The generator marks the river's points along its bend's outer side
+   but those within 6 samples of where its road crosses (two at least, or no cliff); its raised relief and loose rocks are gone.
+   **Fixed 2026-11-28** (user: raised ground with no cliff in front at the ends, gaps, an abrupt border at a bend, rocks wanted at the
+   ends): the ground tapered 12 m past the stretch's ends, a ramp of bare grass with no face; now the face falls inside the stretch over
+   24 m with its pieces sunk and tilted along it (`CliffBank::face`, `shores::CliffPiece::up`), nothing raised past the ends at the water,
+   a shoulder behind. By the inside of a bend the ground's cells take the cliff of their nearest place only, so a cliff ending there stood
+   as a wall on the bisector: now blended over 20 m from the other leg, behind its own bank (`Channel::blend_cliffs`). The bank's offset
+   line folded by the inside of a tight bend and piled pieces there, turned every way: its folded samples are left out. Two rocks at each
+   end where the face is half its height (`cliff_ends`, `attila_rock_01/03/04`).
 7. **Batch**: every crossing and ford tile the spots use, N variations each (by seed), exported into one pack with the battle tile
    database (TDD's, the variations added).
 8. **The map patch**: TDD's battle map placements at the spots replaced: a crossing (its variation by seed) where roads arrive at one end

@@ -4773,10 +4773,64 @@ impl TileTool {
         self.spline_value_rows(d, s, shown, &targets);
     }
 
+    /// A river point's cliff bank (`shown`'s, set on `targets`): a checkbox (on: the outer bank of the bend there), then which bank.
+    fn river_cliff_rows(&mut self, d: &mut TileDocument, s: usize, shown: usize, targets: &[usize]) {
+        let side = d.tile().river_point_cliff(s, shown);
+        let mut on = side.is_some();
+        if gui::checkbox("cliff bank", &mut on) {
+            let before = d.history().position();
+            for &t in targets {
+                let side = on.then(|| d.tile().river_outer_side(s, t));
+                d.set_river_cliff(s, t, side);
+            }
+
+            let n = d.history().position() - before;
+            if n > 1 {
+                d.join_last(n, if on { "Cliff bank" } else { "No cliff bank" });
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The bank on one side is a cliff from halfway to the point before to halfway to the one after (marked neighbours on one \
+                 side: one cliff): rock cliff pieces along it, the ground behind raised to their top, no reeds or stones under them. \
+                 Ticked, the outer bank of the river's bend here.",
+            );
+        }
+
+        let Some(side) = side else { return };
+        gui::same_line();
+        for (label, value) in [("left bank", 1.0), ("right bank", -1.0)] {
+            if gui::radio_button(label, side == value) && side != value {
+                let before = d.history().position();
+                for &t in targets {
+                    d.set_river_cliff(s, t, Some(value));
+                }
+
+                let n = d.history().position() - before;
+                if n > 1 {
+                    d.join_last(n, "Cliff bank side");
+                }
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Which bank is the cliff, as the river runs (downstream: its first point to its last).");
+            }
+
+            gui::same_line();
+        }
+
+        gui::new_line();
+    }
+
     /// A spline's per-point values (a river's width, foam, flow...): `shown`'s, edited into `targets`. False when its kind has none.
     fn spline_value_rows(&mut self, d: &mut TileDocument, s: usize, shown: usize, targets: &[usize]) -> bool {
         let points = d.tile().tscene().polygon_points(s);
         let kind = d.tile().tscene().type_of(s).to_owned();
+        if kind == "SplineRiverInstance" {
+            self.river_cliff_rows(d, s, shown, targets);
+        }
+
         let Some(t) = wce_tile::instance_templates::template(&kind) else { return false };
         let mut any = false;
         for &(attr, _) in t.point_attrs.iter().filter(|(a, _)| !matches!(*a, "position" | "controlIn" | "controlOut")) {
