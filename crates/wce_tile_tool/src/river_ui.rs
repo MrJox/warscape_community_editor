@@ -34,6 +34,9 @@ pub(crate) struct RiverUi {
     width_for: Option<usize>,
     width_dev: [f32; 2],
     width_seed: i32,
+
+    /// The flow at the mean width being dragged (the river, the value), written when let go (one undo entry).
+    flow_draft: Option<(usize, f32)>,
 }
 
 impl Default for RiverUi {
@@ -49,6 +52,7 @@ impl Default for RiverUi {
             width_for: None,
             width_dev: [DEFAULT_WIDTH_DEV.0 as f32, DEFAULT_WIDTH_DEV.1 as f32],
             width_seed: 0,
+            flow_draft: None,
         }
     }
 }
@@ -422,6 +426,57 @@ impl TileTool {
 
         if gui::is_item_hovered() {
             gui::set_tooltip("Puts back the widths the points had before they were randomized (not those set by hand since).");
+        }
+
+        self.river_flow_rows(d, river);
+    }
+
+    /// The river's flow following its widths (`river_files::FLOW_BY_WIDTH_ATTR`): on, each point's flow is the base times the mean
+    /// width over its own, as the export and the water take it (user 2026-11-28).
+    fn river_flow_rows(&mut self, d: &mut TileDocument, river: usize) {
+        use wce_tile::river_files::{DEFAULT_FLOW, FLOW_BASE_ATTR, FLOW_BY_WIDTH_ATTR, width_flows};
+        gui::separator_text("Flow");
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "How fast the river's ripples (and its foam) run down it: each point's flow_speed, 0.5 the game's own speed. Drawn in an \
+                 Attila battle by the editor's river shader (a movie pack).",
+            );
+        }
+
+        let sc = d.tile().tscene();
+        let mut on = sc.get(river, FLOW_BY_WIDTH_ATTR).is_some_and(|v| v.trim() == "1" || v.trim() == "true");
+        if gui::checkbox("follows the width##river_flow_by_width", &mut on) {
+            d.set_attribute(river, FLOW_BY_WIDTH_ATTR, if on { "1" } else { "0" });
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "On: each point's flow is the flow below times the river's mean width over the point's width (a quarter to four times): \
+                 faster through the narrows, slower where it widens, and it follows the widths as they change. Off: each point's own \
+                 flow_speed.",
+            );
+        }
+
+        if !on {
+            return;
+        }
+
+        let base = d.tile().tscene().get(river, FLOW_BASE_ATTR).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(DEFAULT_FLOW as f32);
+        let mut v = self.river_ui.flow_draft.filter(|f| f.0 == river).map_or(base, |f| f.1);
+        gui::row_tip("flow at the mean width", "The flow of a point as wide as the river is on average (0.5: the game's own speed).");
+        gui::set_next_item_width(-1.0);
+        if gui::slider_float("##river_flow_base", &mut v, 0.0, 2.0, "%.2f") {
+            self.river_ui.flow_draft = Some((river, v));
+        }
+
+        if gui::is_item_deactivated_after_edit() {
+            self.river_ui.flow_draft = None;
+            d.set_attribute(river, FLOW_BASE_ATTR, &wce_tile::ted_scene::format_number(f64::from(v)));
+        }
+
+        if let Some(f) = width_flows(d.tile().tscene(), river) {
+            let (lo, hi) = f.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+            gui::text_disabled(&format!("the points' flow: {lo:.2} to {hi:.2}"));
         }
     }
 }

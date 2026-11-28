@@ -24,8 +24,11 @@ import os, re, struct, subprocess, sys, tempfile
 FLOW_CYCLE_S = 3.0
 VANILLA_SCROLL = 0.05
 
-# Foam: the depth (m) from which the deep water has less of it.
-FOAM_SHALLOW_M = 1.2
+# Foam only where the water meets something (user 2026-11-28): a bank, a rock, a pier, where the scene under the water (its depth, as
+# the shader reconstructs it) is within FOAM_CONTACT_M of the surface, fading to none there. (A wake down the river from each rock, found
+# by looking up the river in the screen's depth, was tried: from a low view the face of a rock the point is in and a rock in front of
+# it can't be told apart, so it came and went with the camera.)
+FOAM_CONTACT_M = 0.5
 
 # Foam: metres per repeat of its texture, across and along alike, from the vertex's metres (v4 is them times (0.01, 0.001)); it moves
 # down the river alone, at the ripples' speed (vanilla's 0.05 uv a second on their third layer, 0.177 uv a metre: 0.28 m/s) plus the
@@ -41,9 +44,8 @@ FOAM_UV = (100.0 * FOAM_ACROSS_SQUEEZE / FOAM_REPEAT_M, 1000.0 / FOAM_REPEAT_M)
 FOAM_SECOND = (0.41, (0.37, 0.71))
 RIPPLE_UV_PER_M = 0.177
 
-# Foam: how much less of it the deep water has (0 to 1), the ripples' steepness (|g - 0.5| + |a - 0.5| of `river_normal.dds`: median
+# Foam: the ripples' steepness (|g - 0.5| + |a - 0.5| of `river_normal.dds`: median
 # 0.22, 90% under 0.36) over which a river of foam 0 and of foam 1 shows it, and how sharp its edge is.
-FOAM_DEEP_LESS = 0.45
 FOAM_FROM = (0.32, 0.12)
 FOAM_EDGE = 8.0
 
@@ -290,12 +292,12 @@ def patch_shader(toks, asm):
             continue
 
         if k == tail - 1:
-            # Foam over the colour (before the fog): f = the foam carried (0 on others), more in the shallows; where the ripples of
-            # both layers are steep; lit by the sun, in the HDR scale.
+            # Foam over the colour (before the fog): f = the foam carried (0 on others) where the water meets something; where the
+            # ripples of both layers are steep; lit by the sun, in the HDR scale.
             out += [
                 op(ADD, r(4, 'y', dst=True), reg('v', 4, 'z'), imm(-2.0), sat=True),
-                op(MUL, r(5, 'x', dst=True), r(4, 'x'), imm(1.0 / FOAM_SHALLOW_M), sat=True),
-                op(MAD, r(5, 'x', dst=True), r(5, 'x'), imm(-FOAM_DEEP_LESS), imm(1.0)),
+                op(MUL, r(5, 'x', dst=True), r(4, 'x'), imm(1.0 / FOAM_CONTACT_M), sat=True),
+                op(ADD, r(5, 'x', dst=True), r(5, 'x', neg=True), imm(1.0)),
                 op(MUL, r(4, 'y', dst=True), r(4, 'y'), r(5, 'x')),
             ]
             out += steepness('z', (4, 'z'))

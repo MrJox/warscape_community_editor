@@ -44,6 +44,48 @@ pub const RIVER_HEIGHT_ATTR: &str = "wce_river_height";
 /// already). A mark of its own: the height mark would change the heights a kit river is exported at.
 pub const RIVER_SHADER_ATTR: &str = "wce_river_shader";
 
+/// A river whose points' flow speeds follow their widths (`wce_flow_by_width="1"`, user 2026-11-28): each point's flow is the river's
+/// [`FLOW_BASE_ATTR`] times its mean width over the point's, as water speeds up through a narrow and slows in a wide stretch; the
+/// points' own `flow_speed` are then not used (the export and the editor's water take [`width_flows`]).
+pub const FLOW_BY_WIDTH_ATTR: &str = "wce_flow_by_width";
+
+/// The flow at the river's mean width when it follows the widths ([`FLOW_BY_WIDTH_ATTR`]); [`DEFAULT_FLOW`] without it.
+pub const FLOW_BASE_ATTR: &str = "wce_flow_base";
+
+/// TEd's flow speed, the game's own speed of a river's ripples (the editor's river shader).
+pub const DEFAULT_FLOW: f64 = 0.5;
+
+/// How far a point's flow may get from the base when it follows the widths: from a quarter to four times (a point next to nothing wide).
+const FLOW_BY_WIDTH_RANGE: (f64, f64) = (0.25, 4.0);
+
+/// The points' flow speeds of a river whose flow follows its widths ([`FLOW_BY_WIDTH_ATTR`]), in its points' order; none when it doesn't.
+pub fn width_flows(scene: &TedScene, river: usize) -> Option<Vec<f64>> {
+    let doc = scene.doc();
+    if !doc.get(river, FLOW_BY_WIDTH_ATTR).is_some_and(|v| v.trim() == "1" || v.trim() == "true") {
+        return None;
+    }
+
+    let base = doc.get(river, FLOW_BASE_ATTR).and_then(|v| strtod(&v)).unwrap_or(DEFAULT_FLOW);
+    let els = doc.elements();
+    let widths = els[river]
+        .children
+        .iter()
+        .filter(|&&c| els[c].name == "points")
+        .flat_map(|&c| els[c].children.iter().filter(|&&p| els[p].name == "point").copied().collect::<Vec<_>>())
+        .map(|p| doc.get(p, "width").and_then(|v| strtod(&v)).unwrap_or(0.0))
+        .collect::<Vec<_>>();
+    let mean = widths.iter().sum::<f64>() / widths.len().max(1) as f64;
+    Some(
+        widths
+            .iter()
+            .map(|&w| {
+                let k = if w > 1e-6 { mean / w } else { FLOW_BY_WIDTH_RANGE.1 };
+                base * k.clamp(FLOW_BY_WIDTH_RANGE.0, FLOW_BY_WIDTH_RANGE.1)
+            })
+            .collect(),
+    )
+}
+
 /// The marks that make a river one the editor's river shader draws ([`RIVER_HEIGHT_ATTR`], [`RIVER_SHADER_ATTR`]).
 pub const SHADER_RIVER_ATTRS: [&str; 2] = [RIVER_HEIGHT_ATTR, RIVER_SHADER_ATTR];
 
@@ -107,6 +149,7 @@ pub fn river_file(scene: &TedScene, river: usize, factors: Factors, campaign: bo
         flow: String,
     }
 
+    let flows = width_flows(scene, river);
     let mut points = vec![];
     for &c in els[river].children.iter().filter(|&&c| els[c].name == "points") {
         for &p in els[c].children.iter().filter(|&&p| els[p].name == "point") {
@@ -120,7 +163,7 @@ pub fn river_file(scene: &TedScene, river: usize, factors: Factors, campaign: bo
                 width: printf_g(num("width") * factors.width),
                 foam: printf_g(num("foam_amount")),
                 alpha: printf_g(num("alpha_fade")),
-                flow: printf_g(num("flow_speed")),
+                flow: printf_g(flows.as_ref().and_then(|f| f.get(points.len()).copied()).unwrap_or_else(|| num("flow_speed"))),
             });
         }
     }
@@ -162,4 +205,40 @@ pub fn river_files(scene: &TedScene, dir: Option<&std::path::Path>, campaign: bo
             (name, text)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    fn river(attrs: &str) -> TedScene {
+        TedScene::parse_any(
+            format!(
+                r#"<project version="16"><scene><SplineRiverInstance name="r" position="vector(0,0,0)" orientation="euler(0,0,0)"{attrs}><points>
+<point position="0,0,0" controlIn="0,0,0" controlOut="0,0,0" width="40" foam_amount="0.1" alpha_fade="1" flow_speed="0.5"/>
+<point position="20,0,0" controlIn="20,0,0" controlOut="20,0,0" width="20" foam_amount="0.1" alpha_fade="1" flow_speed="0.5"/>
+<point position="40,0,0" controlIn="40,0,0" controlOut="40,0,0" width="60" foam_amount="0.1" alpha_fade="1" flow_speed="0.5"/>
+</points></SplineRiverInstance></scene></project>"#
+            )
+            .into_bytes(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_rivers_flow_follows_its_widths_when_asked() {
+        let off = river("");
+        let r = rivers(&off)[0];
+        assert_eq!(width_flows(&off, r), None, "off: the points' own");
+
+        let on = river(r#" wce_flow_by_width="1" wce_flow_base="0.6""#);
+        let f = width_flows(&on, r).unwrap();
+        // Mean width 40: as wide, the base; half as wide, twice; one and a half as wide, two thirds.
+        assert!((f[0] - 0.6).abs() < 1e-9 && (f[1] - 1.2).abs() < 1e-9 && (f[2] - 0.4).abs() < 1e-9, "{f:?}");
+
+        // The file the export reads has them (point i's flow on its segment's four points).
+        let text = String::from_utf8(river_file(&on, r, Factors::of(&on, r, None), false)).unwrap();
+        assert!(text.contains("flow_speed=\"0.6\"") && text.contains("flow_speed=\"1.2\""), "{text}");
+        assert!(!text.contains("flow_speed=\"0.5\""));
+    }
 }
