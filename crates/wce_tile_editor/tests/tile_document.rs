@@ -3559,6 +3559,16 @@ fn a_drawn_river_has_reeds_and_stones_along_its_shore() {
     d.finish_shores();
     assert!(d.tile().shore_counts().0 > reeds, "thicker: {:?}", d.tile().shore_counts());
 
+    // In the game: BOB keeps a placed plant only inside a vegetation exclusion polygon, so an export puts the reeds in some.
+    let text = d.text_for_export(false).unwrap();
+    let scene = wce_tile::ted_scene::TedScene::parse_any(text).unwrap();
+    let reeds_in = scene.find_all("VEGETATION_INSTANCE").len();
+    assert!(reeds_in >= d.tile().shore_counts().0, "{reeds_in} plants exported");
+    let left_out = wce_tile::vegetation::trees_outside_exclusions(&scene);
+    assert!(left_out.is_empty(), "{} of {reeds_in} reeds left out of the game", left_out.len());
+    let polys = scene.find_all("VegetationExclusionPolygonInstance").len();
+    assert!(polys > 0 && polys < reeds_in, "{polys} polygons for {reeds_in} reeds");
+
     d.set_attribute(r, "wce_shores", "0");
     d.finish_shores();
     assert_eq!(d.tile().shore_counts(), (0, 0), "off");
