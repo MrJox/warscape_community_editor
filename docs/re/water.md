@@ -135,7 +135,10 @@ before it mounts mod packs, so only a movie pack's are used (docs/re/game_comman
 - **Alpha fade** (`TEXCOORD7.x`, the vertex's alpha): the final colour goes towards the refraction texture (the scene behind the
   water, undistorted) as alpha goes to 0: a river's ends fade into the bed.
 - **Foam** (the vertex's 2 + foam): on the colour before the fog, where the ripple texture (`battleterrain/river/river_normal.dds`,
-  its g and a, sampled at 5 m a repeat, moved with the two flow layers) is steeper than a threshold that falls from 0.32 to 0.12 as
+  its g and a) is steeper than a threshold. The texture is laid on the foam's own coordinates, the vertex's metres (9 m a repeat
+  along, 1.6 times as often across, averaged with a second look at 0.41 times that scale so its repeats don't line up), moved down
+  the river alone at the ripples' speed plus the two flow layers' offsets: not on the ripples' uv, whose third layer also drifts with
+  the wind at 0.12 uv a second, mostly across the river once made even (the foam went sideways). The threshold falls from 0.32 to 0.12 as
   the foam goes from 0 to 1, sharpened by 8, at most 75% opaque; the foam counts in full in the shallows and 45% less from 1.2 m deep
   (the shader's own water depth). Its colour: the sun's (half of it grey), times `0.25 + 0.6 x` the sun's height, in the HDR scale
   (`g_hdr_on`: 0.004). TEd's default foam, 0.1, shows almost none.

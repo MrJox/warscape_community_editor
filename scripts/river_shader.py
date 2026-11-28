@@ -27,10 +27,19 @@ VANILLA_SCROLL = 0.05
 # Foam: the depth (m) from which the deep water has less of it.
 FOAM_SHALLOW_M = 1.2
 
-# Foam: metres per repeat of its texture, across and along alike (the ripples' third layer is 8.5 m across by 2.8 m along: its uv is
-# v4 times (5.9, 177), metres times (0.059, 0.177)).
-FOAM_REPEAT_M = 5.0
-FOAM_UV = (1.0 / (0.059 * FOAM_REPEAT_M), 1.0 / (0.177 * FOAM_REPEAT_M))
+# Foam: metres per repeat of its texture, across and along alike, from the vertex's metres (v4 is them times (0.01, 0.001)); it moves
+# down the river alone, at the ripples' speed (vanilla's 0.05 uv a second on their third layer, 0.177 uv a metre: 0.28 m/s) plus the
+# flow's offsets. Not on the ripples' own uv: that layer also drifts with the wind at 0.12 uv a second, mostly across the river once
+# made even (user 2026-11-28: the foam went sideways).
+FOAM_REPEAT_M = 9.0
+# The texture's ripples are longer across than along (it is laid on the river stretched to 17 m across by 5.6 m along):
+# across, it repeats this many times as often, for rounder flecks (3 showed its repeats as rows of rings).
+FOAM_ACROSS_SQUEEZE = 1.6
+FOAM_UV = (100.0 * FOAM_ACROSS_SQUEEZE / FOAM_REPEAT_M, 1000.0 / FOAM_REPEAT_M)
+# A second look at the texture under the foam, at this scale and offset (uv), averaged with the first: one repeat alone showed as a
+# regular pattern of flecks.
+FOAM_SECOND = (0.41, (0.37, 0.71))
+RIPPLE_UV_PER_M = 0.177
 
 # Foam: how much less of it the deep water has (0 to 1), the ripples' steepness (|g - 0.5| + |a - 0.5| of `river_normal.dds`: median
 # 0.22, 90% under 0.36) over which a river of foam 0 and of foam 1 shows it, and how sharp its edge is.
@@ -194,6 +203,25 @@ def patch_shader(toks, asm):
     block = body[s0:e0 + 1]
 
     r = lambda k, sel, **kw: reg('r', N[k], sel, **kw)
+
+    def steepness(phase, into):
+        """The ripples' steepness under the foam for a flow layer (`phase`: N2's z or w, its offset) into `into` (N's register, comp):
+        the mean of the texture at the foam's scale and at FOAM_SECOND times it (its repeats then don't line up)."""
+        return [
+            op(MUL, r(5, 'xy', dst=True), reg('v', 4, 'xyxx'), imm(*FOAM_UV)),
+            op(MAD, r(5, 'y', dst=True), time, imm(-VANILLA_SCROLL / RIPPLE_UV_PER_M / FOAM_REPEAT_M), r(5, 'y')),
+            op(MAD, r(5, 'y', dst=True), r(2, phase), imm(-1.0 / (RIPPLE_UV_PER_M * FOAM_REPEAT_M)), r(5, 'y')),
+            with_dst(noise, r(6, 'xyzw', dst=True), r(5, 'xyxx'), identity=True),
+            op(ADD, r(6, 'xy', dst=True), r(6, 'ywyy'), imm(-0.5)),
+            op(ADD, r(3, 'x', dst=True), r(6, 'x', abs_=True), r(6, 'y', abs_=True)),
+            op(MAD, r(5, 'xy', dst=True), r(5, 'xyxx'), imm(FOAM_SECOND[0]), imm(*FOAM_SECOND[1])),
+            with_dst(noise, r(6, 'xyzw', dst=True), r(5, 'xyxx'), identity=True),
+            op(ADD, r(6, 'xy', dst=True), r(6, 'ywyy'), imm(-0.5)),
+            op(ADD, r(6, 'x', dst=True), r(6, 'x', abs_=True), r(6, 'y', abs_=True)),
+            op(ADD, r(3, 'x', dst=True), r(3, 'x'), r(6, 'x')),
+            op(MUL, r(into[0], into[1], dst=True), r(3, 'x'), imm(0.5)),
+        ]
+
     out = []
     for k, ins in enumerate(body):
         code = ins[0] & 0x7ff
@@ -269,18 +297,10 @@ def patch_shader(toks, asm):
                 op(MUL, r(5, 'x', dst=True), r(4, 'x'), imm(1.0 / FOAM_SHALLOW_M), sat=True),
                 op(MAD, r(5, 'x', dst=True), r(5, 'x'), imm(-FOAM_DEEP_LESS), imm(1.0)),
                 op(MUL, r(4, 'y', dst=True), r(4, 'y'), r(5, 'x')),
-                op(MOV, r(5, 'xy', dst=True), r(0, 'xyxx')),
-                op(ADD, r(5, 'y', dst=True), r(5, 'y'), r(2, 'z', neg=True)),
-                op(MUL, r(5, 'xy', dst=True), r(5, 'xyxx'), imm(*FOAM_UV)),
-                with_dst(noise, r(6, 'xyzw', dst=True), r(5, 'xyxx'), identity=True),
-                op(ADD, r(6, 'xy', dst=True), r(6, 'ywyy'), imm(-0.5)),
-                op(ADD, r(4, 'z', dst=True), r(6, 'x', abs_=True), r(6, 'y', abs_=True)),
-                op(MOV, r(5, 'xy', dst=True), r(0, 'xyxx')),
-                op(ADD, r(5, 'y', dst=True), r(5, 'y'), r(2, 'w', neg=True)),
-                op(MUL, r(5, 'xy', dst=True), r(5, 'xyxx'), imm(*FOAM_UV)),
-                with_dst(noise, r(6, 'xyzw', dst=True), r(5, 'xyxx'), identity=True),
-                op(ADD, r(6, 'xy', dst=True), r(6, 'ywyy'), imm(-0.5)),
-                op(ADD, r(6, 'x', dst=True), r(6, 'x', abs_=True), r(6, 'y', abs_=True)),
+            ]
+            out += steepness('z', (4, 'z'))
+            out += steepness('w', (6, 'x'))
+            out += [
                 op(ADD, r(4, 'z', dst=True), r(4, 'z'), r(6, 'x', neg=True)),
                 op(MAD, r(4, 'z', dst=True), r(4, 'z'), r(4, 'w'), r(6, 'x')),
                 op(MAD, r(5, 'x', dst=True), r(4, 'y'), imm(FOAM_FROM[1] - FOAM_FROM[0]), imm(FOAM_FROM[0])),
