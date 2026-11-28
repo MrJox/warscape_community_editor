@@ -103,6 +103,9 @@ pub enum TileMode {
 
     /// Paints ground_type_map.png (the ground types).
     Ground,
+
+    /// Softens the ground's textures (the blend map) as Smooth softens the heights.
+    SmoothTextures,
 }
 
 /// A building key's category.
@@ -137,8 +140,9 @@ const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freefo
 /// A row of a list of items (the Problems, the off-terrain report): what its click does.
 const SELECT_AND_FRAME_TIP: &str = "Click: selects it and frames it in the viewport.";
 
-pub const MODE_NAMES: [&str; 10] = ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "stamp", "paint", "ground"];
-const MODES: [TileMode; 10] = [
+pub const MODE_NAMES: [&str; 11] =
+    ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "stamp", "paint", "ground", "smooth_textures"];
+const MODES: [TileMode; 11] = [
     TileMode::Select,
     TileMode::Raise,
     TileMode::Lower,
@@ -149,6 +153,7 @@ const MODES: [TileMode; 10] = [
     TileMode::Stamp,
     TileMode::Paint,
     TileMode::Ground,
+    TileMode::SmoothTextures,
 ];
 
 impl TileMode {
@@ -164,7 +169,7 @@ impl TileMode {
     fn brush(self) -> Option<BrushKind> {
         match self {
             Self::Select => None,
-            Self::Paint => Some(BrushKind::Paint(0)),
+            Self::Paint | Self::SmoothTextures => Some(BrushKind::Paint(0)),
             Self::Ground => Some(BrushKind::Ground(GROUND_ERASE)),
             Self::Raise => Some(BrushKind::Raise),
             Self::Lower => Some(BrushKind::Lower),
@@ -1229,6 +1234,18 @@ impl TileTool {
             BrushKind::Ground(_) => Some(BrushKind::Ground(if self.paint_erase { GROUND_ERASE } else { self.ground_type })),
             kind => Some(kind),
         }
+    }
+
+    /// The brush's settings as a stroke takes them: Smooth textures is the paint brush in `PaintMode::Smooth`, everywhere (the paint
+    /// brush's filters are its own).
+    pub(crate) fn stroke_brush(&self) -> BrushSettings {
+        let mut b = self.brush.clone();
+        if self.mode == TileMode::SmoothTextures {
+            b.paint_mode = wce_tile::blend_field::PaintMode::Smooth;
+            b.filter = None;
+        }
+
+        b
     }
 
     /// A brush mode stops what was being placed, drawn or painted (a tree set's brush took the press before the mode's brush), and takes
@@ -5187,7 +5204,7 @@ impl TileTool {
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             if self.terrain_hit && d.project().has_height() {
                 self.gesture = Some(Gesture::TerrainStroke);
-                d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+                d.brush_step(kind, self.cursor.x, self.cursor.z, self.stroke_brush(), dt);
 
                 // A stamp is one click.
                 if self.mode == TileMode::Stamp {
@@ -5359,7 +5376,7 @@ impl TileTool {
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 self.turn_image_brush();
                 if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
-                    d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+                    d.brush_step(kind, self.cursor.x, self.cursor.z, self.stroke_brush(), dt);
                 }
             }
 

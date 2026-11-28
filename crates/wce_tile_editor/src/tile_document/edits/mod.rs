@@ -267,7 +267,7 @@ impl Tile {
             }
 
             BrushKind::Smooth => {
-                b.strength = soft;
+                b.strength = s.smooth_amount(dt);
                 hf.smooth(&b)
             }
 
@@ -323,8 +323,12 @@ impl Tile {
 
     /// A step of a paint stroke on the blend map, which covers the bordered tile.
     fn apply_paint(&mut self, channel: usize, x: f32, z: f32, s: &BrushSettings, dt: f32) {
-        // At strength 1 a second of painting lays 98 % (1 - e^-4).
-        let amount = (4.0 * f64::from(s.opacity) * f64::from(dt.min(0.05))).min(1.0);
+        // At strength 1 a second of painting lays 98 % (1 - e^-4); smoothing has its own strength.
+        let amount = if s.paint_mode == wce_tile::blend_field::PaintMode::Smooth {
+            s.smooth_amount(dt)
+        } else {
+            (4.0 * f64::from(s.opacity) * f64::from(dt.min(0.05))).min(1.0)
+        };
         self.paint_blend(channel, Some((x, z)), s, amount);
     }
 
