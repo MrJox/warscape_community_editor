@@ -4503,18 +4503,19 @@ impl TileTool {
             gui::text(&format!("selected: {} points, area {:.1}", sc.polygon_points(s).len(), sc.polygon_area(s)));
             match self.poly_point {
                 Some(pt) if d.has_handles(s) => gui::text(&format!(
-                    "point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one"
+                    "point {pt} (its values in the Inspector): drag it or its blue handles; Alt+click a point removes it, Alt+click an edge \
+                     inserts one"
                 )),
-                Some(pt) => gui::text(&format!("point {pt}: drag to move; Alt+click (or Delete) removes, Alt+click an edge inserts")),
-                None => gui::text_disabled("click a point to edit it; Alt+click a point removes it, Alt+click near an edge inserts one"),
+                Some(pt) => gui::text(&format!(
+                    "point {pt} (its values in the Inspector): drag to move; Alt+click (or Delete) removes, Alt+click an edge inserts"
+                )),
+                None => gui::text_disabled(
+                    "click a point to edit it in the Inspector; Alt+click a point removes it, Alt+click near an edge inserts one",
+                ),
             }
 
             if d.tile().is_wall(s) {
                 self.draw_wall_rows(e, id, s);
-            } else if d.tile().is_road(s)
-                && let Some(pt) = self.poly_point
-            {
-                self.draw_point_rows(d, s, pt);
             }
         }
     }
@@ -4540,7 +4541,7 @@ impl TileTool {
         let kind = d.tile().tscene().type_of(s).to_owned();
         gui::text(&format!("Point {pt} of {} ({kind})", if name.is_empty() { "the line" } else { &name }));
         gui::same_line();
-        if gui::small_button("Whole line") {
+        if gui::button("Whole line") {
             self.poly_point = None;
             return true;
         }
@@ -4552,6 +4553,13 @@ impl TileTool {
         gui::separator();
         if let Some(w) = d.tile().polygon_world_points(s).get(pt) {
             gui::text(&format!("at x {:.2}  y {:.2}  z {:.2} m", w.x, w.y, w.z));
+        }
+
+        if d.is_spline(s) {
+            gui::checkbox("all points", &mut self.spline_all);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The values below go to every point of the line (they show this point's); off: this point's alone.");
+            }
         }
 
         if !self.draw_point_rows(d, s, pt) {
@@ -4592,7 +4600,8 @@ impl TileTool {
 
             true
         } else if d.is_spline(s) {
-            self.spline_value_rows(d, s, pt, &[pt])
+            let targets = if self.spline_all { (0..points.len()).collect::<Vec<_>>() } else { vec![pt] };
+            self.spline_value_rows(d, s, pt, &targets)
         } else {
             false
         }
@@ -4721,18 +4730,14 @@ impl TileTool {
         for w in l.plan.warnings.iter().chain(&skipped).chain(&defences_skipped) {
             gui::text_colored([1.0, 0.6, 0.2, 1.0], w);
         }
-
-        let Some(pt) = self.poly_point else { return };
-        self.draw_point_rows(d, wall, pt);
     }
 
-    /// A river's or road's points: how to edit them, and the values of the selected point (or of all of them).
+    /// A river's or road's points: how to edit them, and the line's own actions (a point's values are in the Inspector, `inspect_point`).
     fn show_selected_spline(&mut self, d: &mut TileDocument, s: usize) {
         let sc = d.tile().tscene();
         let points = sc.polygon_points(s);
         gui::text(&format!("selected: {} points", points.len()));
-        gui::same_line();
-        if gui::small_button("Level the ground") {
+        if gui::button("Level the ground") {
             self.status = d.level_along(s, &self.brush).map_or_else(|why| why, |n| format!("ground levelled along the spline: {n} dabs"));
             return;
         }
@@ -4742,7 +4747,7 @@ impl TileTool {
         }
 
         gui::same_line();
-        if gui::small_button("Flip direction") {
+        if gui::button("Flip direction") {
             self.status = d.flip_spline(s).map_or_else(|why| why, |()| "flipped: the spline runs the other way".to_owned());
             return;
         }
@@ -4755,22 +4760,15 @@ impl TileTool {
         }
 
         match self.poly_point.filter(|&p| p < points.len()) {
-            Some(pt) => gui::text(&format!(
-                "point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one (shift+click beyond an end: grows)"
+            Some(pt) => gui::text_wrapped(&format!(
+                "point {pt} (its values in the Inspector): drag it or its blue handles; Alt+click a point removes it, Alt+click an edge \
+                 inserts one (shift+click beyond an end: grows)"
             )),
-            None => gui::text_disabled(
-                "click a point to edit it; drag the blue handles to bend; Alt+click a point removes it, Alt+click an edge inserts one",
+            None => gui::text_wrapped(
+                "Click a point to edit its values in the Inspector (all points ticked there: every point's); drag the blue handles to \
+                 bend; Alt+click a point removes it, Alt+click an edge inserts one",
             ),
         }
-
-        gui::checkbox("all points", &mut self.spline_all);
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The values below go to every point of the spline (they show the first point's); off: the selected point's.");
-        }
-
-        let Some(shown) = (if self.spline_all { Some(0) } else { self.poly_point.filter(|&p| p < points.len()) }) else { return };
-        let targets = if self.spline_all { (0..points.len()).collect::<Vec<_>>() } else { vec![shown] };
-        self.spline_value_rows(d, s, shown, &targets);
     }
 
     /// A river point's own shore (its reeds, stones, decals and cliff banks over the river's, from halfway to the point before to
@@ -4847,9 +4845,40 @@ impl TileTool {
         }
 
         let Some(t) = wce_tile::instance_templates::template(&kind) else { return false };
+        let river = kind == "SplineRiverInstance";
+        let drawn = d.tile().river_point_values_drawn();
         let mut any = false;
         for &(attr, _) in t.point_attrs.iter().filter(|(a, _)| !matches!(*a, "position" | "controlIn" | "controlOut")) {
             any = true;
+            // A river's values the game does nothing with here, shown greyed out with why (user 2026-11-28: they seemed to do nothing).
+            let unused = river
+                && match attr {
+                    "terrain_offset" => Some(
+                        "TEd's height of the point over the ground under it when TEd placed it. The game takes the river's height from its \
+                         points (their file has no terrain_offset), so it changes nothing; kept as TEd stores it.",
+                    ),
+                    "foam_amount" | "flow_speed" | "alpha_fade" if !drawn => Some(
+                        "Written to the river's file, but Attila's battle water shader reads only where the water is, not its foam, flow \
+                         speed or fade: in a battle it changes nothing (Rome 2's rivers and the campaign map's do use it). Kept as TEd \
+                         stores it.",
+                    ),
+                    _ => None,
+                }
+                .inspect(|why| {
+                    let sc = d.tile().tscene();
+                    let v = sc.get(points[shown], attr).unwrap_or_default();
+                    gui::begin_disabled(true);
+                    gui::text(&format!("{attr}  {}  (unused here)", v.trim()));
+                    gui::end_disabled();
+                    if gui::is_item_hovered_allow_disabled() {
+                        gui::set_tooltip(why);
+                    }
+                })
+                .is_some();
+            if unused {
+                continue;
+            }
+
             let sc = d.tile().tscene();
             let mut v = sc.get(points[shown], attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
             let speed = if matches!(attr, "width" | "terrain_offset") { 0.1 } else { 0.01 };
