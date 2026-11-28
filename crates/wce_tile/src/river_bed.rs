@@ -240,8 +240,8 @@ pub struct CliffBank {
 /// over [`CLIFF_CLIMB`] (inside the pieces, under their grassy top) to [`CLIFF_TOP`] over the water, is held so for [`CLIFF_BACK`], and
 /// eases back down to the land over [`CLIFF_FALL`]. (Climbing from the water, it buried their faces.)
 ///
-/// Along the river its face falls to the water over [`CLIFF_RAMP`] at each end of its stretch (a third of the stretch at most), inside
-/// it: its pieces sink and tilt with it ([`CliffBank::face`]), and nothing is raised past its ends at the water (raised ground there
+/// Along the river its face falls to the water over [`CLIFF_RAMP`] at each end of its stretch, inside it (a stretch shorter than two
+/// ramps never stands its whole height: shorter ramps tilted its pieces 30 to 40 degrees): its pieces sink and tilt with it ([`CliffBank::face`]), and nothing is raised past its ends at the water (raised ground there
 /// stood with no face in front of it). Behind its face the raised land reaches past its ends [`CLIFF_SHOULDER`] metres a metre back, so
 /// that its end slopes off as a shoulder rather than a wall across the bank.
 pub const CLIFF_PIECE_OUT: f64 = -1.0;
@@ -251,7 +251,7 @@ pub const CLIFF_TOP: f64 = 5.0;
 pub const CLIFF_BACK: f64 = 8.0;
 pub const CLIFF_FALL: f64 = 25.0;
 pub const CLIFF_RAMP: f64 = 24.0;
-pub const CLIFF_SHOULDER: f64 = 0.8;
+pub const CLIFF_SHOULDER: f64 = 0.3;
 
 impl CliffBank {
     /// How much of the cliff's top the ground stands at (0 .. 1) `past` metres past the water's edge on its side and `along` the river.
@@ -268,7 +268,7 @@ impl CliffBank {
 
     /// Its ramps' share `along` the river, `behind` metres back from its face's top (reaching past its ends [`CLIFF_SHOULDER`] a metre).
     fn ramp_share(&self, along: f64, behind: f64) -> f64 {
-        let ramp = CLIFF_RAMP.min((self.to - self.from) / 3.0).max(1e-6);
+        let ramp = CLIFF_RAMP;
         let inside = (along - self.from).min(self.to - along) + behind.max(0.0) * CLIFF_SHOULDER;
         smooth((inside / ramp).clamp(0.0, 1.0))
     }
@@ -990,9 +990,12 @@ mod tests {
         let ramp = at(140.0 - CLIFF_RAMP * 0.5, face + 0.5);
         assert!(ramp < top - 1.0 && ramp > -5.5 + 1.0, "its ramp: {ramp}");
         assert!(at(140.0 + 2.0, face + 0.5) <= -5.5 + 1e-9, "none past its end at its face");
-        let shoulder = at(140.0 + 5.0, face + 15.0);
-        assert!(shoulder > -5.5 + 0.2 && shoulder < top, "its shoulder past its end behind it: {shoulder}");
-        assert!(at(140.0 + 5.0 + 15.0 * CLIFF_SHOULDER + 1.0, face + 15.0) <= -5.5 + 1e-9, "none further along behind it");
+        let shoulder = at(140.0 - 2.0, face + 15.0);
+        assert!(shoulder > -5.5 + 0.2 && shoulder < top, "its shoulder by its end behind it: {shoulder}");
+        assert!(at(140.0 + 15.0 * CLIFF_SHOULDER + 1.0, face + 15.0) <= -5.5 + 1e-9, "none further along behind it");
+        // A short stretch: lower, never its whole height.
+        let short = Channel { cliffs: vec![CliffBank { from: 90.0, to: 117.0, side: 1.0 }], ..c.clone() };
+        assert!(short.cliffs[0].face(103.5) < 0.75 && short.cliffs[0].face(103.5) > 0.4, "{}", short.cliffs[0].face(103.5));
         // Higher land stays.
         let cell = cells[(31 + 80) * 201 + 100];
         assert_eq!(bed.height_of(100.0, 31.0, 20.0, cell), None, "never lowered");
