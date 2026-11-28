@@ -62,7 +62,9 @@ impl DumpInspector {
         }
 
         let v = v.clone();
+        // A scripted edit is a whole gesture: it ends with it.
         self.applied = true;
+        self.ended = true;
         Some(v)
     }
 }

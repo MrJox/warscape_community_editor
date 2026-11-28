@@ -28,6 +28,9 @@ pub const RIVER_CLIFFS: [&str; 5] = ["none", "outer", "left", "right", "both"];
 pub const BRIDGE_BANK_M: f64 = 15.0;
 pub const BRIDGE_CLEAR_M: f64 = 8.0;
 
+/// The shortest part of a cliff bank a bridge leaves (metres): a sliver is left out (an 18 m piece sunk in it, standing alone).
+pub const MIN_PART_M: f64 = 12.0;
+
 /// How sharply a river turns at a point for its outer bank to be a cliff (`outer`; degrees between the line before it and after it).
 pub const OUTER_BEND_DEG: f64 = 20.0;
 
@@ -216,7 +219,7 @@ impl Tile {
                             return vec![p];
                         }
 
-                        [CliffBank { to: a, ..p }, CliffBank { from: b, ..p }].into_iter().filter(|q| q.to - q.from > 1.0).collect()
+                        [CliffBank { to: a, ..p }, CliffBank { from: b, ..p }].into_iter().filter(|q| q.to - q.from >= MIN_PART_M).collect()
                     })
                     .collect();
             }
