@@ -495,7 +495,8 @@ pub const CLIFF_PIECE_LIFT: f32 = 1.0;
 /// water (`edge`, metres past the water's drawn edge; the waterline, at the cliff's face, is some metres inside it) up.
 fn on_cliff(water: &Water, along: f32, u: f32, edge: f32) -> bool {
     let Water::River { cliffs, .. } = water else { return false };
-    edge > -8.0 && cliffs.iter().any(|c| (u > 0.0) == (c.side > 0.0) && f64::from(along) >= c.from - 2.0 && f64::from(along) <= c.to + 2.0)
+    f64::from(edge) > crate::river_bed::CLIFF_FOOT - crate::river_bed::CLIFF_FRONT_BAND
+        && cliffs.iter().any(|c| (u > 0.0) == (c.side > 0.0) && f64::from(along) >= c.from - 2.0 && f64::from(along) <= c.to + 2.0)
 }
 
 /// A cliff bank's pieces: as many as cover its stretch [`CLIFF_STEP`] apart at most along the bank's own line (the outer bank of a bend
@@ -1256,9 +1257,9 @@ mod tests {
         let keys = vec!["rock".to_owned()];
         let rocks = cliff_end_rocks(&line, &water, &half, &CliffBank { from: 50.0, to: 150.0, side: 1.0 }, &keys, &|_, _| 2.0, 1);
         assert_eq!(rocks.len(), 4, "{rocks:?}");
-        // Off its pieces' line (z 59) where their face is half its height (half its ramp, 24 m, in): one at their foot, one on the bank on.
+        // Off its pieces' line (z 57) where their face is half its height (half its ramp, 24 m, in): one at their foot, one on the bank on.
         let near = |x: f32, z: f32| rocks.iter().any(|p| (p.x - x).abs() < 1e-3 && (p.z - z).abs() < 1e-3);
-        assert!(near(62.0, 56.0) && near(56.0, 62.0) && near(138.0, 56.0) && near(144.0, 62.0), "{rocks:?}");
+        assert!(near(62.0, 54.0) && near(56.0, 60.0) && near(138.0, 54.0) && near(144.0, 60.0), "{rocks:?}");
         assert!(rocks.iter().all(|p| p.y < 2.0), "sunk into the ground: {rocks:?}");
         let deep = cliff_end_rocks(&line, &water, &half, &CliffBank { from: 50.0, to: 150.0, side: 1.0 }, &keys, &|_, _| -5.0, 1);
         assert!(deep.is_empty(), "none in open water: {deep:?}");

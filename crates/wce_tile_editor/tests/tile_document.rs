@@ -3784,6 +3784,40 @@ fn a_generated_river_tile_is_one_undo_entry() {
     assert_eq!(grounds(&d), ground_types, "the ground types as they were");
 }
 
+/// A cliff bank stops at a bridge over its river: no pieces under the deck, its stretch parted round it.
+#[test]
+fn a_cliff_bank_is_parted_round_a_bridge() {
+    let (_dir, mut d) = open_with_river_links_and(true);
+    d.set_road_prefabs(std::sync::Arc::new(wce_tile::prefabs::PrefabLibrary::default()));
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    assert!(d.set_river_cliffs_mode(r, "left"));
+    assert_eq!(d.tile().river_cliffs(r).len(), 1);
+    d.add_polygon(
+        None,
+        wce_tile::new_instances::ROAD_SPLINE,
+        "",
+        &[Float3::new(130.0, 0.0, 40.0), Float3::new(130.0, 0.0, 128.0), Float3::new(130.0, 0.0, 216.0)],
+    )
+    .unwrap();
+    let mut scene = wce_scene::render_scene::RenderScene::default();
+    let scene_layer = scene.add_layer(1, "tile");
+    wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    assert!(!d.tile().road_bridge_lines().is_empty(), "the road bridges the river");
+    let cliffs = d.tile().river_cliffs(r);
+    assert_eq!(cliffs.len(), 2, "parted round the bridge: {cliffs:?}");
+    // The river runs from x 20: the bridge at 110 m along.
+    assert!(cliffs[0].to < 100.0 && cliffs[1].from > 120.0, "{cliffs:?}");
+    // The deck about 4 m either side of x 130, the pieces 18 m long: none whose middle is within 12 m of it.
+    let pieces = d.tile().shore_items_in([118.0, 128.0, 142.0, 170.0]);
+    assert!(pieces.iter().all(|p| !p.contains("attila_cliff_")), "no pieces under the deck: {pieces:#?}");
+    assert!(d.tile().shore_items_in([30.0, 128.0, 90.0, 170.0]).iter().any(|p| p.contains("attila_cliff_")), "pieces up the river");
+}
+
 /// A river point's cliff bank: its stretch (halfway to its neighbours), the ground behind it raised, cliff pieces along it in the shore
 /// and none of its reeds or stones there; one undo entry that takes it back.
 #[test]

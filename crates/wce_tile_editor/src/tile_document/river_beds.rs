@@ -568,6 +568,8 @@ impl Tile {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             (self.history_version, self.structure_version, self.road_variation(), self.display.show_water).hash(&mut h);
+            // The bridges' footprints (a model loading, a road's bridge made): a cliff bank stops at a bridge.
+            format!("{:?}", self.bridge_covers()).hash(&mut h);
             h.finish()
         };
         if !wait && key == self.rivers_key && !self.rivers_stale && self.river_terrain_job.is_none() {
