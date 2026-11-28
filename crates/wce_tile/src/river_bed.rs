@@ -241,9 +241,8 @@ pub struct CliffBank {
 /// eases back down to the land over [`CLIFF_FALL`]. (Climbing from the water, it buried their faces.)
 ///
 /// Along the river its face falls to the water over [`CLIFF_RAMP`] at each end of its stretch, inside it (a stretch shorter than two
-/// ramps never stands its whole height: shorter ramps tilted its pieces 30 to 40 degrees): its pieces sink and tilt with it ([`CliffBank::face`]), and nothing is raised past its ends at the water (raised ground there
-/// stood with no face in front of it). Behind its face the raised land reaches past its ends [`CLIFF_SHOULDER`] metres a metre back, so
-/// that its end slopes off as a shoulder rather than a wall across the bank.
+/// ramps never stands its whole height: shorter ramps tilted its pieces 30 to 40 degrees): its pieces sink and tilt with it
+/// ([`CliffBank::face`]), and the ground behind follows their tops ([`CliffShape`]); nothing is raised past their ends.
 ///
 /// In front of its foot, over [`CLIFF_FRONT_BAND`], the river's bank is cut [`CLIFF_FRONT_DEPTH`] under the water (along its ramps the
 /// less): the bank meets the water some metres inside the drawn edge, more the wider the river (10 m for a 90 m one), and it stood as a
@@ -257,54 +256,39 @@ pub const CLIFF_TOP: f64 = 5.0;
 pub const CLIFF_BACK: f64 = 8.0;
 pub const CLIFF_FALL: f64 = 25.0;
 pub const CLIFF_RAMP: f64 = 24.0;
-pub const CLIFF_SHOULDER: f64 = 0.3;
 
 impl CliffBank {
-    /// How much it cuts the bank in front of its foot under the water (0 .. 1) `past` metres past the water's edge, `along` the river.
+    /// How much it cuts the bank in front of its foot under the water (0 .. 1) `past` metres past the water's edge, `share`: how much of
+    /// its top its face stands at there ([`CliffShape::share`]).
     #[must_use]
-    pub fn front(&self, past: f64, along: f64) -> f64 {
+    pub fn front_at(past: f64, share: f64) -> f64 {
         if past >= CLIFF_FOOT || past < CLIFF_FOOT - CLIFF_FRONT_BAND {
             return 0.0;
         }
 
         // Fading out over its last 2 m towards the river's middle (its bed is deeper there anyway).
         let fade = ((past - (CLIFF_FOOT - CLIFF_FRONT_BAND)) / 2.0).min(1.0);
-        self.face(along) * smooth(fade)
-    }
-
-    /// How much of the cliff's top the ground stands at (0 .. 1) `past` metres past the water's edge on its side and `along` the river.
-    #[must_use]
-    pub fn rise(&self, past: f64, along: f64) -> f64 {
-        self.rise_and_hold(past, along).0
+        share * smooth(fade)
     }
 
     /// How much of its top its face stands at `along` the river (0 .. 1): whole along its stretch but its ends' ramps, none past them.
+    /// Its pieces stand by it, the ground by its pieces' tops ([`CliffShape`]).
     #[must_use]
     pub fn face(&self, along: f64) -> f64 {
-        self.ramp_share(along, 0.0)
+        let inside = (along - self.from).min(self.to - along);
+        smooth((inside / CLIFF_RAMP).clamp(0.0, 1.0))
     }
 
-    /// Its ramps' share `along` the river, `behind` metres back from its face's top (reaching past its ends [`CLIFF_SHOULDER`] a metre).
-    fn ramp_share(&self, along: f64, behind: f64) -> f64 {
-        let ramp = CLIFF_RAMP;
-        let inside = (along - self.from).min(self.to - along) + behind.max(0.0) * CLIFF_SHOULDER;
-        smooth((inside / ramp).clamp(0.0, 1.0))
-    }
-
-    /// [`Self::rise`], and how much the land behind its face is kept from the river's bank cut (0 .. 1: whole along its stretch, from
-    /// its climb's start on however far, less along its ramps, none past its ends at the water).
+    /// How much of the cliff's top the ground stands at (0 .. 1) `past` metres past the water's edge on its side, its face standing at
+    /// `share` of its top there; and how much the land behind its face is kept from the river's bank cut (0 .. 1: `share`, from its
+    /// climb's start on however far).
     #[must_use]
-    pub fn rise_and_hold(&self, past: f64, along: f64) -> (f64, f64) {
-        if past < CLIFF_FOOT {
+    pub fn rise_and_hold_at(past: f64, share: f64) -> (f64, f64) {
+        if past < CLIFF_FOOT || share <= 0.0 {
             return (0.0, 0.0);
         }
 
         let p = past - CLIFF_FOOT;
-        let along_share = self.ramp_share(along, p - CLIFF_CLIMB);
-        if along_share <= 0.0 {
-            return (0.0, 0.0);
-        }
-
         let across = if p < CLIFF_CLIMB {
             smooth(p / CLIFF_CLIMB)
         } else if p < CLIFF_CLIMB + CLIFF_BACK {
@@ -312,9 +296,64 @@ impl CliffBank {
         } else {
             1.0 - smooth(((p - CLIFF_CLIMB - CLIFF_BACK) / CLIFF_FALL).min(1.0))
         };
-        (across * along_share, along_share)
+        (across * share, share)
     }
 }
+
+/// A cliff bank as its ground is raised: how much of its top its face stands at along the river is its pieces' tops' (each piece a
+/// straight slab from one of its ends to the other: the ground by a smooth ramp stood over some and under others by up to 1.5 m at its
+/// ends), where no piece stands its own ramps' ([`CliffBank::face`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CliffShape {
+    pub bank: CliffBank,
+
+    /// Its pieces' tops: each piece's ends' places along the river and how much of the top they stand at
+    /// ([`crate::shores::cliff_spans`]).
+    pub spans: Vec<[f64; 4]>,
+}
+
+impl CliffShape {
+    /// A cliff bank's shape along a river's line (x, z) and its half widths.
+    #[must_use]
+    pub fn of(bank: CliffBank, line: &[[f64; 2]], half: &[f64]) -> Self {
+        let line = line.iter().map(|p| [p[0] as f32, p[1] as f32]).collect::<Vec<_>>();
+        let half = half.iter().map(|&h| h as f32).collect::<Vec<_>>();
+        Self { bank, spans: crate::shores::cliff_spans(&line, &half, &bank) }
+    }
+
+    /// How much of its top its face stands at `along` the river: the highest of its pieces' tops there, else its ramps'.
+    #[must_use]
+    pub fn share(&self, along: f64) -> f64 {
+        let mut best: Option<f64> = None;
+        for &[a0, a1, s0, s1] in &self.spans {
+            let (lo, hi) = (a0.min(a1), a0.max(a1));
+            if along < lo || along > hi {
+                continue;
+            }
+
+            let t = if (a1 - a0).abs() > 1e-9 { (along - a0) / (a1 - a0) } else { 0.5 };
+            let v = s0 + (s1 - s0) * t.clamp(0.0, 1.0);
+            best = Some(best.map_or(v, |b: f64| b.max(v)));
+        }
+
+        best.unwrap_or_else(|| self.bank.face(along)).clamp(0.0, 1.0)
+    }
+
+    /// [`Self::share`] `past` metres past the water's edge: its pieces' tops where they lie, their ramps' smooth line from
+    /// [`CLIFF_SHAPE_BLEND`] behind them on (their slabs' steps ran inland as ridges and ditches).
+    #[must_use]
+    pub fn share_at(&self, along: f64, past: f64) -> f64 {
+        let behind = past - CLIFF_FOOT - CLIFF_CLIMB - CLIFF_SHAPE_BLEND[0];
+        let w = smooth((behind / CLIFF_SHAPE_BLEND[1]).clamp(0.0, 1.0));
+        // Their tops evened over a few metres: where one piece's top hands over to the next's, a notch.
+        let pieces = (-2..=2).map(|k| self.share(along + f64::from(k))).sum::<f64>() / 5.0;
+        pieces + (self.bank.face(along) - pieces) * w
+    }
+}
+
+/// How far behind the top of a cliff's climb its ground leaves its pieces' tops (their back edge, metres), and over how far it eases
+/// into its ramps' smooth line.
+pub const CLIFF_SHAPE_BLEND: [f64; 2] = [2.5, 6.0];
 
 /// How far past the water's edge a cliff bank changes the ground (metres).
 pub const CLIFF_REACH: f64 = CLIFF_FOOT.max(0.0) + CLIFF_CLIMB + CLIFF_BACK + CLIFF_FALL;
@@ -524,6 +563,8 @@ impl Channel {
             along[i] = along[i - 1] + (self.line[i][0] - self.line[i - 1][0]).hypot(self.line[i][1] - self.line[i - 1][1]);
         }
 
+        let half = self.width.iter().map(|w| w * 0.5).collect::<Vec<_>>();
+        let shapes = self.cliffs.iter().map(|&c| CliffShape::of(c, &self.line, &half)).collect::<Vec<_>>();
         for i in 0..self.line.len() - 1 {
             let (a, b) = (self.line[i], self.line[i + 1]);
             let reach = self.reach(self.width[i].max(self.width[i + 1]));
@@ -556,9 +597,12 @@ impl Channel {
                     // The ford, the water and a cliff bank's ground of the nearest place of the line (a cliff by a farther stretch's
                     // measure would rise out of the water at a bend; its rise here, its height once all is seen).
                     if r < c.near {
-                        (c.cliff, c.cliff_hold) = self.cliff_rise_and_hold(r - width * 0.5, at, side);
-                        c.cliff_front =
-                            self.cliffs.iter().filter(|cl| cl.side == side).map(|cl| cl.front(r - width * 0.5, at)).fold(0.0, f64::max);
+                        (c.cliff, c.cliff_hold) = Self::cliff_rise_and_hold(&shapes, r - width * 0.5, at, side);
+                        c.cliff_front = shapes
+                            .iter()
+                            .filter(|cl| cl.bank.side == side)
+                            .map(|cl| CliffBank::front_at(r - width * 0.5, cl.share(at)))
+                            .fold(0.0, f64::max);
                         c.near = r;
                         c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at, r * side / (width * 0.5).max(1e-6)).0 };
                         c.wet = r <= width * 0.5;
@@ -570,7 +614,7 @@ impl Channel {
         }
 
         if !self.cliffs.is_empty() {
-            self.blend_cliffs(&mut out, &along, origin, step, (w, h));
+            self.blend_cliffs(&shapes, &mut out, &along, origin, step, (w, h));
             let v = if self.vertical > 0.0 { self.vertical } else { 1.0 };
             for c in &mut out {
                 c.cliff = if c.cliff_hold > 0.0 { c.water + CLIFF_TOP * v * c.cliff } else { f64::NEG_INFINITY };
@@ -582,11 +626,11 @@ impl Channel {
 
     /// The cliff banks' rise and hold at a place `past` metres past the water's edge on a `side` of the line, `along` it (the most of
     /// them).
-    fn cliff_rise_and_hold(&self, past: f64, along: f64, side: f64) -> (f64, f64) {
-        self.cliffs
+    fn cliff_rise_and_hold(shapes: &[CliffShape], past: f64, along: f64, side: f64) -> (f64, f64) {
+        shapes
             .iter()
-            .filter(|cl| cl.side == side)
-            .map(|cl| cl.rise_and_hold(past, along))
+            .filter(|cl| cl.bank.side == side)
+            .map(|cl| CliffBank::rise_and_hold_at(past, cl.share_at(along, past)))
             .fold((0.0, 0.0), |a: (f64, f64), b| (a.0.max(b.0), a.1.max(b.1)))
     }
 
@@ -595,7 +639,15 @@ impl Channel {
     /// the line's other places within [`CLIFF_BLEND`] of its nearest, the less the farther, and only behind the bank of its nearest place
     /// ([`CLIFF_BLEND_BACK`] from its water's drawn edge on: none rises out of its water or stands at its bank with no cliff in front).
     /// `out`'s cliffs hold their rise (0 .. 1), not their height yet.
-    fn blend_cliffs(&self, out: &mut [BedCell], along: &[f64], origin: [f64; 2], step: [f64; 2], (w, h): (usize, usize)) {
+    fn blend_cliffs(
+        &self,
+        shapes: &[CliffShape],
+        out: &mut [BedCell],
+        along: &[f64],
+        origin: [f64; 2],
+        step: [f64; 2],
+        (w, h): (usize, usize),
+    ) {
         for i in 0..self.line.len() - 1 {
             let (a, b) = (self.line[i], self.line[i + 1]);
             let reach = self.reach(self.width[i].max(self.width[i + 1]));
@@ -624,7 +676,7 @@ impl Channel {
                     let side = if ab[0] * (p[1] - a[1]) - ab[1] * (p[0] - a[0]) < 0.0 { -1.0 } else { 1.0 };
                     let width = self.width[i] + (self.width[i + 1] - self.width[i]) * t;
                     let at = along[i] + (along[i + 1] - along[i]) * t;
-                    let (rise, hold) = self.cliff_rise_and_hold(r - width * 0.5, at, side);
+                    let (rise, hold) = Self::cliff_rise_and_hold(shapes, r - width * 0.5, at, side);
                     let k = smooth(1.0 - off / CLIFF_BLEND) * smooth((behind / CLIFF_BLEND_BACK).min(1.0));
                     c.cliff = c.cliff.max(rise * k);
                     c.cliff_hold = c.cliff_hold.max(hold * k);
@@ -1021,14 +1073,23 @@ mod tests {
         let fall = at(100.0, 20.0 + CLIFF_FOOT + CLIFF_CLIMB + CLIFF_BACK + CLIFF_FALL * 0.5);
         assert!(fall > -5.5 && fall < top, "easing down behind: {fall}");
         assert!(at(100.0, 20.0 + CLIFF_REACH + 2.0) <= -5.5 + 1e-9, "the land past it");
-        // Its ends: its face falls along its ramps inside its stretch, nothing raised past them at its face; behind it, a shoulder.
+        // Its ends: its face falls along its ramps inside its stretch, nothing raised past its pieces' ends.
         let face = 20.0 + CLIFF_FOOT + CLIFF_CLIMB;
         let ramp = at(140.0 - CLIFF_RAMP * 0.5, face + 0.5);
         assert!(ramp < top - 1.0 && ramp > -5.5 + 1.0, "its ramp: {ramp}");
-        assert!(at(140.0 + 2.0, face + 0.5) <= -5.5 + 1e-9, "none past its end at its face");
-        let shoulder = at(140.0 - 2.0, face + 15.0);
-        assert!(shoulder > -5.5 + 0.2 && shoulder < top, "its shoulder by its end behind it: {shoulder}");
-        assert!(at(140.0 + 15.0 * CLIFF_SHOULDER + 1.0, face + 15.0) <= -5.5 + 1e-9, "none further along behind it");
+        assert!(at(140.0 + 12.0, face + 0.5) <= -5.5 + 1e-9, "none past its pieces' ends");
+        // The ground just behind each piece's middle stands at its top (its middle 4.15 m under it), ramps and all: its slabs and a
+        // smooth ramp parted by up to 1.5 m at its ends.
+        let line = c.line.iter().map(|p| [p[0] as f32, p[1] as f32]).collect::<Vec<_>>();
+        let pieces = crate::shores::cliff_pieces(&line, &[-6.0; 3], &[20.0; 3], &c.cliffs[0], &["p".to_owned()], 1);
+        assert!(pieces.len() >= 6);
+        for p in &pieces {
+            let (x, z) = (f64::from(p.placed.x), f64::from(p.placed.z) + 4.0);
+            let top = f64::from(p.placed.y) + 4.15;
+            let ground = at(x.round(), z.round());
+            assert!((ground - (top - 0.15)).abs() < 0.25, "a piece's top {top:.2}, the ground behind it {ground:.2}: {p:?}");
+        }
+
         // A short stretch: lower, never its whole height.
         let short = Channel { cliffs: vec![CliffBank { from: 90.0, to: 117.0, side: 1.0 }], ..c.clone() };
         assert!(short.cliffs[0].face(103.5) < 0.75 && short.cliffs[0].face(103.5) > 0.4, "{}", short.cliffs[0].face(103.5));
