@@ -47,7 +47,7 @@ modules:
     buildsystem: simple
     build-commands:
       # The sources below are where cmake/linux_deps.cmake would clone them: marked as cloned, it builds them as they are.
-      - echo v3.1.1 > build/_deps/dxvk/.wce_cloned
+      - echo v3.2 > build/_deps/dxvk/.wce_cloned
       - echo vkd3d-2.1 > build/_deps/vkd3d/.wce_cloned
       - echo vulkan-sdk-1.4.321.0 > build/_deps/spirv-headers/.wce_cloned
       - cmake -S . -B build -G Ninja
@@ -81,8 +81,8 @@ modules:
 
       - type: git
         url: https://github.com/doitsujin/dxvk.git
-        tag: v3.1.1
-        commit: b1a1c99ab52b687cf950d62c88bc2fa316b41663
+        tag: v3.2
+        commit: 1011dd97474a1c8c2608f3466429e4df45b36b7c
         dest: build/_deps/dxvk
 
       # The release tarball, not git: it has the headers that a git checkout makes with Wine's widl, which the SDK does not have.
