@@ -347,6 +347,13 @@ pub struct TileTool {
     pub(crate) layers: crate::layers_panel::LayersUi,
     pub(crate) mode: TileMode,
     pub(crate) brush: BrushSettings,
+
+    /// Each brush's own settings (`brush_slots.rs`): the other modes' brushes by their names, the mode whose brush `brush` is (Select:
+    /// none yet), whether the saved ones were read, and what was saved last.
+    pub(crate) brush_slots: HashMap<&'static str, crate::brush_slots::BrushSlot>,
+    pub(crate) brush_mode: TileMode,
+    pub(crate) brush_slots_read: bool,
+    pub(crate) brushes_saved: std::collections::BTreeMap<String, crate::settings::SavedBrush>,
     pub(crate) snap_grid: bool,
     pub(crate) grid_m: f32,
 
@@ -941,6 +948,10 @@ impl Default for TileTool {
             layers: Default::default(),
             mode: TileMode::Select,
             brush: BrushSettings::default(),
+            brush_slots: HashMap::new(),
+            brush_mode: TileMode::Select,
+            brush_slots_read: false,
+            brushes_saved: Default::default(),
             snap_grid: false,
             grid_m: 6.0,
             snap_tolerance: 0.0,
@@ -1252,6 +1263,7 @@ impl TileTool {
     /// the Inspector for its settings: the texture rules, the biomes and Flip close (Paint mode's Edit opens the rules over it afterwards).
     pub fn set_mode(&mut self, m: TileMode) {
         self.mode = m;
+        self.switch_brush(m);
         if m != TileMode::Select {
             self.stop_making();
             self.close_detail_panels();
@@ -5874,6 +5886,7 @@ impl Tool for TileTool {
         self.weather.follow_campaign(e, campaign.as_deref());
         self.weather.update(e);
 
+        self.sync_brush_slots(e);
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
         self.update_water_depth(e, id);
