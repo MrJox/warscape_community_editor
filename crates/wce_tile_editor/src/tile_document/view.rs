@@ -747,6 +747,8 @@ impl Tile {
             let wide = if campaign { 1.0 / across } else { self.river_width_factor(e) };
             let w = world_transform(sc, e);
             let marked = wce_tile::river_files::SHADER_RIVER_ATTRS.iter().any(|a| sc.get(e, a).is_some());
+            // Flow speeds that follow the widths, as the export writes them.
+            let flows = wce_tile::river_files::width_flows(sc, e);
             let mut pts = from_file.unwrap_or_default();
             let ted = pts.is_empty();
             for &c in els[e].children.iter().filter(|&&c| ted && els[c].name == "points") {
@@ -769,7 +771,7 @@ impl Tile {
                         width: num("width", 1.0) * wide,
                         foam: num("foam_amount", 0.1),
                         fade: num("alpha_fade", 1.0),
-                        flow: num("flow_speed", 0.5),
+                        flow: flows.as_ref().and_then(|f| f.get(pts.len()).copied()).unwrap_or_else(|| num("flow_speed", 0.5)),
                     });
                 }
             }

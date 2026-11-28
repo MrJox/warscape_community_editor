@@ -134,14 +134,22 @@ before it mounts mod packs, so only a movie pack's are used (docs/re/game_comman
   river of speed 0.5 both offsets are 0: the vanilla normal.
 - **Alpha fade** (`TEXCOORD7.x`, the vertex's alpha): the final colour goes towards the refraction texture (the scene behind the
   water, undistorted) as alpha goes to 0: a river's ends fade into the bed.
-- **Foam** (the vertex's 2 + foam): on the colour before the fog, where the ripple texture (`battleterrain/river/river_normal.dds`,
-  its g and a) is steeper than a threshold. The texture is laid on the foam's own coordinates, the vertex's metres (9 m a repeat
+- **Foam** (the vertex's 2 + foam): only where the water meets something, a bank, a rock or a pier: where the scene under the water
+  (its depth as the shader reconstructs it) is within 0.5 m of the surface, fading out there (2026-11-28). A wake down the river
+  from each rock, found by looking up the river in the screen's depth (points up the river in a fan, projected with
+  `view_projection`, the scene there rebuilt with `inv_view_projection`), was tried and left out: from a low view the face of a
+  tall rock the point is in is met far ahead of it (15 m for a 5 m rock seen at 20 degrees), as a rock in front of it would be, so
+  the wake came and went with the camera. On that
+  water, where the ripple texture (`battleterrain/river/river_normal.dds`, its g and a) is steeper than a threshold. The texture is laid on the foam's own coordinates, the vertex's metres (9 m a repeat
   along, 1.6 times as often across, averaged with a second look at 0.41 times that scale so its repeats don't line up), moved down
   the river alone at the ripples' speed plus the two flow layers' offsets: not on the ripples' uv, whose third layer also drifts with
   the wind at 0.12 uv a second, mostly across the river once made even (the foam went sideways). The threshold falls from 0.32 to 0.12 as
   the foam goes from 0 to 1, sharpened by 8, at most 75% opaque; the foam counts in full in the shallows and 45% less from 1.2 m deep
   (the shader's own water depth). Its colour: the sun's (half of it grey), times `0.25 + 0.6 x` the sun's height, in the HDR scale
   (`g_hdr_on`: 0.004). TEd's default foam, 0.1, shows almost none.
+- **Flow following the width** (the river's *Flow* in its panel, `wce_flow_by_width`, `river_files::width_flows`): each point's flow
+  is the river's flow at its mean width (`wce_flow_base`, 0.5) times the mean width over the point's (a quarter to four times), as the
+  river file the export reads and the editor's water have it; the points' own `flow_speed` stay as they were, unused while it is on.
 
 The patch finds its places in vkd3d's disassembly (the screen uv, the block from the first ripple sample to the normalised normal,
 the water's depth, the lighting buffer, the refraction sample, the colour before the fog and `o3`), which the variants share up to

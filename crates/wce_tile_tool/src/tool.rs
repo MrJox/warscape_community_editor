@@ -4877,6 +4877,24 @@ impl TileTool {
                 continue;
             }
 
+            // A river whose flow follows its widths: the point's flow is the river's (shown, not edited here).
+            if river
+                && attr == "flow_speed"
+                && let Some(flows) = wce_tile::river_files::width_flows(d.tile().tscene(), s)
+            {
+                gui::begin_disabled(true);
+                gui::text(&format!("flow_speed  {:.2}  (from the width)", flows.get(shown).copied().unwrap_or_default()));
+                gui::end_disabled();
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "The river's flow follows its widths (its panel's Flow): this point's is the river's flow at its mean width times \
+                         its mean width over this point's. Untick it there to set each point's by hand.",
+                    );
+                }
+
+                continue;
+            }
+
             let sc = d.tile().tscene();
             let mut v = sc.get(points[shown], attr).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
             let speed = if matches!(attr, "width" | "terrain_offset") { 0.1 } else { 0.01 };
