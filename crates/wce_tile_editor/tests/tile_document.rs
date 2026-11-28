@@ -4238,3 +4238,32 @@ fn smooth_textures_spreads_a_texture_and_keeps_going() {
     assert!(n0.0 < n1.0 && n0.1 > n1.1 && n1.1 > n2.1, "{n0:?} {n1:?} {n2:?}: it spreads and keeps softening");
     assert_eq!(d.history().size(), 2);
 }
+
+#[test]
+fn a_straight_stroke_paints_from_one_point_to_the_other_in_one_undo_step() {
+    let (_dir, mut d) = open();
+    let heights = |d: &TileDocument| d.project().height.as_ref().unwrap().samples().to_vec();
+    let h0 = heights(&d);
+    let s = BrushSettings { radius_m: 4.0, falloff: 0.0, ..BrushSettings::default() };
+    let n = d.stroke_line(BrushKind::Raise, (20.0, 40.0), (80.0, 40.0), &s);
+    assert_eq!(n, 61, "a dab every metre (a quarter of the radius), both ends included");
+    assert_eq!(d.history().size(), 1);
+
+    // Raised along the line, from end to end, and not off it.
+    let index = |d: &TileDocument, x: f32, z: f32| {
+        let p = d.project();
+        let (px, pz) = (p.pixel_x(f64::from(x)).round() as usize, p.pixel_z(f64::from(z)).round() as usize);
+        pz * p.height.as_ref().unwrap().width() as usize + px
+    };
+    let raised = heights(&d);
+    for x in [20.0, 50.0, 80.0] {
+        let i = index(&d, x, 40.0);
+        assert!(raised[i] > h0[i], "raised at x {x}");
+    }
+
+    let off = index(&d, 50.0, 60.0);
+    assert_eq!(raised[off], h0[off], "20 m off the line");
+    d.history_mut().undo();
+    assert_eq!(heights(&d), h0);
+    assert_ne!(raised, h0);
+}

@@ -347,25 +347,7 @@ impl TileDocument {
             return Err("the line has fewer than two points".to_owned());
         }
 
-        // A dab every quarter radius, each with the most a frame gives (`apply_brush` takes at most 0.05 s).
-        let spacing = |r: f64| (r * 0.25).max(0.25);
-        let mut dabs = vec![(path[0].x, path[0].z, radii[0], path[0].y)];
-        let mut left = spacing(radii[0]);
-        for (w, r) in path.windows(2).zip(radii.windows(2)) {
-            let (a, b) = (w[0], w[1]);
-            let len = f64::from((b.x - a.x).hypot(b.z - a.z));
-            let mut at = 0.0;
-            while len - at >= left {
-                at += left;
-                let f = at / len;
-                let radius = r[0] + (r[1] - r[0]) * f;
-                dabs.push((a.x + (b.x - a.x) * f as f32, a.z + (b.z - a.z) * f as f32, radius, a.y + (b.y - a.y) * f as f32));
-                left = spacing(radius);
-            }
-
-            left -= len - at;
-        }
-
+        let dabs = dabs_along(&path, &radii);
         self.end_stroke();
         for &(x, z, radius, y) in &dabs {
             let mut s = BrushSettings { radius_m: radius.max(0.25) as f32, ..settings.clone() };
@@ -380,6 +362,27 @@ impl TileDocument {
         Ok(dabs.len())
     }
 
+    /// A straight stroke of the brush from `(x0, z0)` to `(x1, z1)` (metres), as a press there dragged straight to here would paint it
+    /// (Shift + click with a brush, as in Substance Painter): a dab every quarter radius, each with the most a frame gives, one undo entry;
+    /// returns the dabs (the first at the start, the last at the end). The brush's own radius all along.
+    pub fn stroke_line(&mut self, kind: BrushKind, (x0, z0): (f32, f32), (x1, z1): (f32, f32), settings: &BrushSettings) -> usize {
+        let path = [Float3::new(x0, 0.0, z0), Float3::new(x1, 0.0, z1)];
+        let r = f64::from(settings.radius_m);
+        let mut dabs = dabs_along(&path, &[r, r]);
+        // Up to the click itself.
+        if dabs.last().is_some_and(|&(x, z, _, _)| (x - x1).hypot(z - z1) > 1e-3) {
+            dabs.push((x1, z1, r, 0.0));
+        }
+
+        self.end_stroke();
+        for &(x, z, _, _) in &dabs {
+            self.brush_step(kind, x, z, settings.clone(), 0.05);
+        }
+
+        self.end_stroke();
+        dabs.len()
+    }
+
     pub fn end_stroke(&mut self) {
         if !self.tile().stroke_open {
             return;
@@ -388,4 +391,28 @@ impl TileDocument {
         self.tile_mut().end_stroke_edit();
         self.history.break_merge();
     }
+}
+
+/// The dabs of a stroke along `path` (its radius at each point, `radii`): the first point, then one every quarter radius (x, z, radius,
+/// the path's height there).
+fn dabs_along(path: &[Float3], radii: &[f64]) -> Vec<(f32, f32, f64, f32)> {
+    let spacing = |r: f64| (r * 0.25).max(0.25);
+    let mut dabs = vec![(path[0].x, path[0].z, radii[0], path[0].y)];
+    let mut left = spacing(radii[0]);
+    for (w, r) in path.windows(2).zip(radii.windows(2)) {
+        let (a, b) = (w[0], w[1]);
+        let len = f64::from((b.x - a.x).hypot(b.z - a.z));
+        let mut at = 0.0;
+        while len - at >= left {
+            at += left;
+            let f = at / len;
+            let radius = r[0] + (r[1] - r[0]) * f;
+            dabs.push((a.x + (b.x - a.x) * f as f32, a.z + (b.z - a.z) * f as f32, radius, a.y + (b.y - a.y) * f as f32));
+            left = spacing(radius);
+        }
+
+        left -= len - at;
+    }
+
+    dabs
 }
