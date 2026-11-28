@@ -33,6 +33,7 @@ pub mod property_enums;
 pub mod resize;
 pub mod river_bed;
 pub mod river_files;
+pub mod river_foam;
 pub mod river_tile_gen;
 pub mod road_dirt;
 pub mod road_fences;

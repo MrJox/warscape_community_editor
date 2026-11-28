@@ -328,6 +328,8 @@ impl Tile {
         self.shore_items = items;
         self.shore_made = j.signature;
         self.shore_items_shown = false;
+        // Its rocks are in the rivers' foam map (`river_foam`): the water again.
+        self.water_dirty = true;
     }
 
     /// The shores in the viewport, again when they were made again (locked).

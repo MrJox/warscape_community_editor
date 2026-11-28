@@ -5,9 +5,10 @@ and shader models), patched to draw what the vanilla one reads and drops (docs/r
 - flow speed: the ripples run down the river at the speed of the river's `flow_speed` (0.5 = vanilla's; 0 still, negative upstream),
   as two layers half a cycle apart (a flow map's way, so a speed changing along the river doesn't stretch the ripples over time);
 - alpha fade: the water fades into what is under it as `alpha_fade` goes to 0 (a river's ends);
-- foam: `foam_amount` as white foam on the ripples, more in the shallows.
+- foam: the vertex's foam (`foam_amount` times the editor's foam map: where the water meets the bank or a rock, and in a trail behind
+  what stands in it) as white foam on the ripples.
 
-Only on rivers of the editor's: their vertices carry 2 + foam where BOB writes the place across (0 to 1, which the vanilla shader
+Only on rivers of the editor's: their vertices carry 2 + that foam where BOB writes the place across (0 to 1, which the vanilla shader
 passes on and never reads; `wce_tile_io::attila::river::MARKED_FOAM_BASE`). The others are drawn as the game draws them.
 
 The game reads shaders when it makes its graphics device, before the mod packs are mounted: they load from a movie-type pack only
@@ -24,11 +25,10 @@ import os, re, struct, subprocess, sys, tempfile
 FLOW_CYCLE_S = 3.0
 VANILLA_SCROLL = 0.05
 
-# Foam only where the water meets something (user 2026-11-28): a bank, a rock, a pier, where the scene under the water (its depth, as
-# the shader reconstructs it) is within FOAM_CONTACT_M of the surface, fading to none there. (A wake down the river from each rock, found
-# by looking up the river in the screen's depth, was tried: from a low view the face of a rock the point is in and a rock in front of
-# it can't be told apart, so it came and went with the camera.)
-FOAM_CONTACT_M = 0.5
+# Foam only where the water meets something, and in a trail behind what stands in it (user 2026-11-28): worked out by the editor from
+# the ground and the buildings (wce_tile::river_foam), each vertex of the dense river mesh carrying 2 + the river's foam times its map;
+# the shader draws what the vertex says. (Working it out here from the screen's depth was tried: from a low view the face of a rock
+# the point is in and a rock in front of it can't be told apart, so the trail came and went with the camera.)
 
 # Foam: metres per repeat of its texture, across and along alike, from the vertex's metres (v4 is them times (0.01, 0.001)); it moves
 # down the river alone, at the ripples' speed (vanilla's 0.05 uv a second on their third layer, 0.177 uv a metre: 0.28 m/s) plus the
@@ -46,12 +46,12 @@ RIPPLE_UV_PER_M = 0.177
 
 # Foam: the ripples' steepness (|g - 0.5| + |a - 0.5| of `river_normal.dds`: median
 # 0.22, 90% under 0.36) over which a river of foam 0 and of foam 1 shows it, and how sharp its edge is.
-FOAM_FROM = (0.32, 0.12)
+FOAM_FROM = (0.3, 0.04)
 FOAM_EDGE = 8.0
 
 # Foam: how much of the colour under it it hides at most, and its light: the sun's colour (half of it grey), times this plus the sun's
 # height times the next.
-FOAM_OPACITY = 0.75
+FOAM_OPACITY = 0.85
 FOAM_LIGHT = (0.25, 0.6)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -292,13 +292,10 @@ def patch_shader(toks, asm):
             continue
 
         if k == tail - 1:
-            # Foam over the colour (before the fog): f = the foam carried (0 on others) where the water meets something; where the
-            # ripples of both layers are steep; lit by the sun, in the HDR scale.
+            # Foam over the colour (before the fog): f = the foam carried (0 on others); where the ripples of both layers are steep;
+            # lit by the sun, in the HDR scale.
             out += [
                 op(ADD, r(4, 'y', dst=True), reg('v', 4, 'z'), imm(-2.0), sat=True),
-                op(MUL, r(5, 'x', dst=True), r(4, 'x'), imm(1.0 / FOAM_CONTACT_M), sat=True),
-                op(ADD, r(5, 'x', dst=True), r(5, 'x', neg=True), imm(1.0)),
-                op(MUL, r(4, 'y', dst=True), r(4, 'y'), r(5, 'x')),
             ]
             out += steepness('z', (4, 'z'))
             out += steepness('w', (6, 'x'))
@@ -308,7 +305,7 @@ def patch_shader(toks, asm):
                 op(MAD, r(5, 'x', dst=True), r(4, 'y'), imm(FOAM_FROM[1] - FOAM_FROM[0]), imm(FOAM_FROM[0])),
                 op(ADD, r(4, 'z', dst=True), r(4, 'z'), r(5, 'x', neg=True)),
                 op(MUL, r(4, 'z', dst=True), r(4, 'z'), imm(FOAM_EDGE), sat=True),
-                op(MUL, r(5, 'x', dst=True), r(4, 'y'), imm(2.0), sat=True),
+                op(MUL, r(5, 'x', dst=True), r(4, 'y'), imm(3.0), sat=True),
                 op(MUL, r(4, 'z', dst=True), r(4, 'z'), r(5, 'x')),
                 op(MUL, r(4, 'z', dst=True), r(4, 'z'), imm(FOAM_OPACITY)),
                 op(LT, r(5, 'x', dst=True), imm(0.0), cb(light, 11, 'x')),

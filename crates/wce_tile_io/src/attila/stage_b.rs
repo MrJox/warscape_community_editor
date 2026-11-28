@@ -167,7 +167,12 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
         // The tile's cells along z: the grid's (h - 1) / density of `terrain_files`.
         let cells_y =
             raw.entry.as_ref().and_then(|e| e.root.get("height")).and_then(wce_tile_model::Value::as_int).unwrap_or(0).max(0) as usize;
-        super::river::tessellate_marked(&super::river::river_splines(raw, cells_y), river, &super::river::editor_rivers(raw))
+        super::river::tessellate_marked(
+            &super::river::river_splines(raw, cells_y),
+            river,
+            &super::river::editor_rivers(raw),
+            super::river::foam_lookup(raw, cells_y).as_ref().map(|f| f as &dyn Fn(f32, f32) -> f32),
+        )
     });
     for (name, blob) in &carried {
         let Some(g) = group_of(name) else { continue };
