@@ -244,7 +244,13 @@ pub struct CliffBank {
 /// ramps never stands its whole height: shorter ramps tilted its pieces 30 to 40 degrees): its pieces sink and tilt with it ([`CliffBank::face`]), and nothing is raised past its ends at the water (raised ground there
 /// stood with no face in front of it). Behind its face the raised land reaches past its ends [`CLIFF_SHOULDER`] metres a metre back, so
 /// that its end slopes off as a shoulder rather than a wall across the bank.
-pub const CLIFF_PIECE_OUT: f64 = -1.0;
+///
+/// In front of its foot, over [`CLIFF_FRONT_BAND`], the river's bank is cut [`CLIFF_FRONT_DEPTH`] under the water (along its ramps the
+/// less): the bank meets the water some metres inside the drawn edge, more the wider the river (10 m for a 90 m one), and it stood as a
+/// strip of dry ground in front of the face.
+pub const CLIFF_PIECE_OUT: f64 = -3.0;
+pub const CLIFF_FRONT_BAND: f64 = 10.0;
+pub const CLIFF_FRONT_DEPTH: f64 = 1.0;
 pub const CLIFF_FOOT: f64 = CLIFF_PIECE_OUT - 1.0;
 pub const CLIFF_CLIMB: f64 = 2.0;
 pub const CLIFF_TOP: f64 = 5.0;
@@ -254,6 +260,18 @@ pub const CLIFF_RAMP: f64 = 24.0;
 pub const CLIFF_SHOULDER: f64 = 0.3;
 
 impl CliffBank {
+    /// How much it cuts the bank in front of its foot under the water (0 .. 1) `past` metres past the water's edge, `along` the river.
+    #[must_use]
+    pub fn front(&self, past: f64, along: f64) -> f64 {
+        if past >= CLIFF_FOOT || past < CLIFF_FOOT - CLIFF_FRONT_BAND {
+            return 0.0;
+        }
+
+        // Fading out over its last 2 m towards the river's middle (its bed is deeper there anyway).
+        let fade = ((past - (CLIFF_FOOT - CLIFF_FRONT_BAND)) / 2.0).min(1.0);
+        self.face(along) * smooth(fade)
+    }
+
     /// How much of the cliff's top the ground stands at (0 .. 1) `past` metres past the water's edge on its side and `along` the river.
     #[must_use]
     pub fn rise(&self, past: f64, along: f64) -> f64 {
@@ -319,6 +337,9 @@ pub struct BedCell {
     /// its bank is not cut so much (the land behind a cliff's face stays as high as it is).
     pub cliff: f64,
     pub cliff_hold: f64,
+
+    /// How much a cliff bank cuts the bank in front of its face under the water (0 .. 1; [`CLIFF_FRONT_BAND`]).
+    pub cliff_front: f64,
 }
 
 impl Default for BedCell {
@@ -332,6 +353,7 @@ impl Default for BedCell {
             water: f64::NAN,
             cliff: f64::NEG_INFINITY,
             cliff_hold: 0.0,
+            cliff_front: 0.0,
         }
     }
 }
@@ -535,6 +557,8 @@ impl Channel {
                     // measure would rise out of the water at a bend; its rise here, its height once all is seen).
                     if r < c.near {
                         (c.cliff, c.cliff_hold) = self.cliff_rise_and_hold(r - width * 0.5, at, side);
+                        c.cliff_front =
+                            self.cliffs.iter().filter(|cl| cl.side == side).map(|cl| cl.front(r - width * 0.5, at)).fold(0.0, f64::max);
                         c.near = r;
                         c.ford = if self.fords.is_empty() { 0.0 } else { self.ford_at(at, r * side / (width * 0.5).max(1e-6)).0 };
                         c.wet = r <= width * 0.5;
@@ -768,6 +792,16 @@ impl RiverBed {
             out = (h != below).then_some(h);
         }
 
+        // In front of its face, the bank cut under the water.
+        if cell.cliff_front > 0.0 && cell.water.is_finite() {
+            let v = self.channel.as_ref().map_or(1.0, |c| if c.vertical > 0.0 { c.vertical } else { 1.0 });
+            let base = out.unwrap_or(below);
+            let target = cell.water - CLIFF_FRONT_DEPTH * v;
+            if target < base {
+                out = Some(base + (target - base) * cell.cliff_front);
+            }
+        }
+
         out
     }
 
@@ -981,6 +1015,8 @@ mod tests {
         let top = -6.0 + CLIFF_TOP;
         assert!((at(100.0, 20.0 + CLIFF_FOOT + CLIFF_CLIMB + 4.0) - top).abs() < 1e-6, "its top: {}", at(100.0, 31.0));
         assert!(at(100.0, 10.0) < -6.0, "the river's bed in front of it: {}", at(100.0, 10.0));
+        let front = at(100.0, 20.0 + CLIFF_FOOT - 1.0);
+        assert!(front <= -6.0 - CLIFF_FRONT_DEPTH + 1e-6, "under the water in front of its face: {front}");
         assert!(at(100.0, -31.0) < -5.0, "the other bank as it was: {}", at(100.0, -31.0));
         let fall = at(100.0, 20.0 + CLIFF_FOOT + CLIFF_CLIMB + CLIFF_BACK + CLIFF_FALL * 0.5);
         assert!(fall > -5.5 && fall < top, "easing down behind: {fall}");

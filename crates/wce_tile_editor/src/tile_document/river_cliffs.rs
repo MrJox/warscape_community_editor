@@ -23,6 +23,11 @@ pub const CLIFF_MARKS: [&str; 4] = ["none", "left", "right", "both"];
 /// A river's cliff settings, by name, the Inspector's order.
 pub const RIVER_CLIFFS: [&str; 5] = ["none", "outer", "left", "right", "both"];
 
+/// How far onto either bank past the water a bridge's footprint parts a cliff bank (its ramps land there), and how far past it the cliff
+/// stays away (metres).
+pub const BRIDGE_BANK_M: f64 = 15.0;
+pub const BRIDGE_CLEAR_M: f64 = 8.0;
+
 /// How sharply a river turns at a point for its outer bank to be a cliff (`outer`; degrees between the line before it and after it).
 pub const OUTER_BEND_DEG: f64 = 20.0;
 
@@ -60,6 +65,11 @@ impl Tile {
         let mark = self.tscene().get(river, CLIFFS_ATTR).unwrap_or_default();
         RIVER_CLIFFS.into_iter().find(|m| *m == mark.trim()).unwrap_or("none")
     }
+
+    /// How far onto either bank past the water a bridge's footprint parts a cliff bank (its ramps land there), and how far past it the cliff
+    /// stays away (metres).
+    pub const BRIDGE_BANK_M: f64 = 15.0;
+    pub const BRIDGE_CLEAR_M: f64 = 4.0;
 
     /// How sharply a river turns at a point (degrees; 0 at its ends).
     #[must_use]
@@ -153,6 +163,65 @@ impl Tile {
             }
 
             out.extend(open);
+        }
+
+        self.clear_of_bridges(out, samples)
+    }
+
+    /// Cliff banks parted round the bridges over their river (their stretch under a bridge's footprint or a road bridge's deck, across
+    /// the water and [`BRIDGE_BANK_M`] onto either bank, and [`BRIDGE_CLEAR_M`] past it): no pieces under a deck, and the ground behind
+    /// not raised where its ends land. Each part's face falls to the water at the bridge over its ramp.
+    fn clear_of_bridges(&self, cliffs: Vec<CliffBank>, samples: &[RiverSample]) -> Vec<CliffBank> {
+        let covers = self.bridge_covers();
+        if cliffs.is_empty() || covers.is_empty() || samples.len() < 2 {
+            return cliffs;
+        }
+
+        // The stretches under a bridge (metres along the samples).
+        let mut walked = 0.0;
+        let mut under: Vec<(f64, f64)> = vec![];
+        for i in 0..samples.len() {
+            if i > 0 {
+                walked += (samples[i].x - samples[i - 1].x).hypot(samples[i].z - samples[i - 1].z);
+            }
+
+            let (a, b) = (&samples[i.saturating_sub(1)], &samples[(i + 1).min(samples.len() - 1)]);
+            let l = (b.x - a.x).hypot(b.z - a.z).max(1e-9);
+            let (nx, nz) = (-(b.z - a.z) / l, (b.x - a.x) / l);
+            let s = &samples[i];
+            let reach = s.width * 0.5 + BRIDGE_BANK_M;
+            let steps = (reach / 3.0).ceil() as i32;
+            let covered = (-steps..=steps).any(|k| {
+                let off = reach * f64::from(k) / f64::from(steps.max(1));
+                let (x, z) = ((s.x + nx * off) as f32, (s.z + nz * off) as f32);
+                covers.iter().any(|c| c.covers(x, z, wce_tile::shores::BRIDGE_MARGIN))
+            });
+            if covered {
+                match under.last_mut() {
+                    Some(u) if walked - u.1 <= 6.0 => u.1 = walked,
+                    _ => under.push((walked, walked)),
+                }
+            }
+        }
+
+        let mut out = vec![];
+        for c in cliffs {
+            let mut parts = vec![c];
+            for &(a, b) in &under {
+                let (a, b) = (a - BRIDGE_CLEAR_M, b + BRIDGE_CLEAR_M);
+                parts = parts
+                    .into_iter()
+                    .flat_map(|p| {
+                        if b <= p.from || a >= p.to {
+                            return vec![p];
+                        }
+
+                        [CliffBank { to: a, ..p }, CliffBank { from: b, ..p }].into_iter().filter(|q| q.to - q.from > 1.0).collect()
+                    })
+                    .collect();
+            }
+
+            out.extend(parts);
         }
 
         out

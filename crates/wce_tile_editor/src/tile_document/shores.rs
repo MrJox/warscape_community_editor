@@ -137,7 +137,7 @@ impl Tile {
 
     /// The bridges over the tile's waters, seen from above (world metres): the kit's bridges (`bridge` buildings) by their models' bounds
     /// (none until their models load), the roads' by their decks as their pieces were made. Their shores are cleared under them.
-    fn bridge_covers(&self) -> Vec<Cover> {
+    pub(super) fn bridge_covers(&self) -> Vec<Cover> {
         let mut out = vec![];
         for e in self.real_building_elems_of(&|c| c == "bridge") {
             let Some(m) = self.model_of(e).filter(|m| m.ok && m.resolved) else { continue };
