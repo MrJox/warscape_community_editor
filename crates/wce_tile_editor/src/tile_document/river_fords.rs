@@ -104,15 +104,21 @@ impl super::Tile {
             return shapes.clone();
         }
 
-        let shapes = self.make_river_hint_shapes();
+        let shapes = self.make_river_hint_shapes(None);
         *self.river_hint_cache.borrow_mut() = Some((key, shapes.clone()));
         shapes
     }
 
-    fn make_river_hint_shapes(&self) -> Vec<(&'static str, bool, Vec<Float3>)> {
+    /// The hints of the rivers (`only` that one), but those in a Don't Export layer (a baked river's are its baked layer's,
+    /// `river_bake.rs`).
+    fn make_river_hint_shapes(&self, only: Option<usize>) -> Vec<(&'static str, bool, Vec<Float3>)> {
         let sc = self.tscene();
         let mut out = vec![];
-        for e in sc.find_all("SplineRiverInstance") {
+        for e in sc.find_all("SplineRiverInstance").into_iter().filter(|&e| only.is_none_or(|o| o == e)) {
+            if !super::siege::exported(sc, e) {
+                continue;
+            }
+
             let on = super::river_beds::river_patch_on(
                 sc.get(e, super::river_beds::PATCH_ATTR).as_deref(),
                 sc.get(e, super::river_beds::BED_ATTR).as_deref(),
@@ -178,12 +184,17 @@ impl super::Tile {
 
     /// [`Self::river_hint_shapes`] as an export writes them (the file's units).
     pub(super) fn river_hints(&self) -> Vec<Vec<u8>> {
+        self.river_hints_of(None)
+    }
+
+    /// [`Self::river_hints`] of the rivers, or of `only` that one.
+    pub(super) fn river_hints_of(&self, only: Option<usize>) -> Vec<Vec<u8>> {
         use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
         let unit = self.unit();
         let file = |p: &Float3| [f64::from(p.x) * unit, f64::from(p.z) * unit];
         let mut out = vec![];
         // Made now (the cache follows the frames' versions: an export right after an edit would read the old ones).
-        for (kind, closed, pts) in self.make_river_hint_shapes() {
+        for (kind, closed, pts) in self.make_river_hint_shapes(only) {
             let pts = pts.iter().map(file).collect::<Vec<_>>();
             if kind == "GO_REGION" {
                 let c = pts.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / pts.len() as f64, a[1] + p[1] / pts.len() as f64]);

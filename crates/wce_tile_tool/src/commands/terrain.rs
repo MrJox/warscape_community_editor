@@ -650,6 +650,26 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "river_bake",
+        "river_bake [ask]",
+        "bake the selected river (its shore, AI hints and reeds' exclusions made elements of their own in `<name> (autogen)`, the river \
+         moved into a Don't Export layer), one undo entry; `ask`: open the Inspector's question instead",
+        |e, a| {
+            let Some(r) = primary(e) else { return fail("select a river") };
+            if a.first().map(String::as_str) == Some("ask") {
+                return with_tile(e, |t, _| {
+                    t.bake_prompt = Some(r);
+                    t.bake_prompt_open = true;
+                    ok("asking")
+                });
+            }
+
+            let Some(d) = document(e) else { return fail("no tile is open") };
+            d.bake_river(r).map_or_else(fail, ok)
+        },
+    );
+
+    c.add(
         "river_shore",
         "river_shore <point>|all reeds|stones|decals|bed_decals|rapids none|few|some|thick|river",
         "the selected river's point's (or all its points') own amount of a shore's reeds, stones, shore decals or bed decals (river: as \

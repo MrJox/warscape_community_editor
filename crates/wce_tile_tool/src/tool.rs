@@ -613,6 +613,10 @@ pub struct TileTool {
     pub(crate) extract_prompt: Option<crate::extract_prompt::ExtractPrompt>,
     pub(crate) extract_prompt_open: bool,
 
+    /// The river whose baking is being asked about (`river_ui::draw_bake_prompt`), and whether the question opens on the next frame.
+    pub(crate) bake_prompt: Option<usize>,
+    pub(crate) bake_prompt_open: bool,
+
     /// The question which of several kits "Save for Assembly Kit" writes to (`kit_prompt.rs`).
     pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
     pub(crate) kit_prompt_open: bool,
@@ -1044,6 +1048,8 @@ impl Default for TileTool {
             height_import_open: false,
             extract_prompt: None,
             extract_prompt_open: false,
+            bake_prompt: None,
+            bake_prompt_open: false,
             kit_prompt: None,
             kit_prompt_open: false,
             import_prompt: None,
@@ -6035,6 +6041,7 @@ impl Tool for TileTool {
         self.draw_height_import_dialog(e);
         self.draw_falloff_window(e);
         self.draw_extract_prompt(e);
+        self.draw_bake_prompt(e);
         self.draw_kit_prompt(e);
         self.draw_copy_prompt(e);
         self.draw_flip_tile_busy(e);

@@ -81,7 +81,13 @@ impl Tile {
     /// The waters with a shore, as drawn (the viewed variation's rivers, the shown lakes).
     fn shore_waters(&self) -> Vec<ShoreWater> {
         let sc = self.tscene();
-        let on = |e: usize| sc.get(e, SHORES_ATTR).as_deref().map(str::trim) == Some("1") && self.shown(e) && self.of_tile_variation(e);
+        // A water in a Don't Export layer has no shore made: a baked river's are its baked layer's elements (`river_bake.rs`).
+        let on = |e: usize| {
+            sc.get(e, SHORES_ATTR).as_deref().map(str::trim) == Some("1")
+                && self.shown(e)
+                && self.of_tile_variation(e)
+                && super::siege::exported(sc, e)
+        };
         let settings = |e: usize| {
             let read = |a: &str, d: &str| amount(sc.get(e, a).as_deref().unwrap_or(d)).unwrap_or_else(|| amount(d).unwrap_or(0.0));
             ShoreSettings::of(read(REEDS_ATTR, DEFAULT_REEDS), read(STONES_ATTR, DEFAULT_STONES))
@@ -103,7 +109,12 @@ impl Tile {
             };
             let shore = on(e);
             let cliffs = if patch { self.river_cliffs_on(e, &samples) } else { vec![] };
-            if (!shore && fords.is_empty() && cliffs.is_empty()) || !self.shown(e) || !self.of_tile_variation(e) || samples.len() < 2 {
+            if (!shore && fords.is_empty() && cliffs.is_empty())
+                || !self.shown(e)
+                || !self.of_tile_variation(e)
+                || !super::siege::exported(sc, e)
+                || samples.len() < 2
+            {
                 continue;
             }
 
@@ -353,7 +364,7 @@ impl Tile {
         let mut scene = TedScene::parse_any(text)?;
         let layer = scene.add_layer(scene.scene_graph(), EXPORT_LAYER)?;
         let mut texts = self.shore_items.iter().map(|i| i.text.clone()).collect::<Vec<_>>();
-        texts.extend(self.reed_exclusions());
+        texts.extend(self.reed_exclusions(None));
         scene.insert_elements_text(layer, &texts)?;
 
         Ok(scene.save())
@@ -362,13 +373,13 @@ impl Tile {
     /// Vegetation exclusion polygons round the reeds (`wce_tile::vegetation::cover_polygons`): BOB keeps a placed plant only inside
     /// one, so without them no reed reached the game (user 2026-11-28). Small shapes per patch of reeds, so little of the game's own
     /// vegetation beside the river is kept off.
-    fn reed_exclusions(&self) -> Vec<Vec<u8>> {
+    pub(super) fn reed_exclusions(&self, only: Option<usize>) -> Vec<Vec<u8>> {
         use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
         let unit = self.unit();
         let reeds = self
             .shore_items
             .iter()
-            .filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE"))
+            .filter(|i| i.text.starts_with(b"<VEGETATION_INSTANCE") && only.is_none_or(|o| i.area == o))
             .map(|i| [i.position[0], i.position[2]])
             .collect::<Vec<_>>();
         wce_tile::vegetation::cover_polygons(&reeds, REED_COVER_CELL_M * unit, REED_COVER_PAD_M * unit)

@@ -4099,3 +4099,88 @@ fn editing_a_kit_rivers_foam_marks_it_for_the_river_shader() {
     let ted = String::from_utf8(wce_tile::project_files::to_ted(export).unwrap().0).unwrap();
     assert!(!ted.contains("wce_river_shader"));
 }
+
+/// Baking a river: its shore's items, its AI hints and its reeds' exclusions made elements of their own in `<name> (autogen)`, the
+/// river in a Don't Export layer making none of them any more (no doubles in the viewport or an export); one undo entry; not twice.
+#[test]
+fn baking_a_river_makes_its_shore_and_hints_elements_of_their_own() {
+    use wce_tile_editor::tile_document::river_bake::{BAKED_LAYER_SUFFIX, BAKED_RIVER_LAYER_SUFFIX};
+    let (_dir, mut d) = open_with_river_links();
+    let y = |d: &TileDocument, x: f32, z: f32| d.tile().terrain_height(x, z);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (a, b) = (Float3::new(20.0, y(&d, 20.0, 128.0), 128.0), Float3::new(240.0, y(&d, 240.0, 128.0), 128.0));
+    let r = d.create("SplineRiverInstance", graph, &Create::Line(vec![a, b]), "").unwrap();
+    d.rename(r, "Brook");
+    d.add_river_ford(r, 110.0, 30.0);
+    d.tile_mut().finish_road_jobs();
+    d.finish_shores();
+    d.tile_mut().finish_river_jobs();
+    let owned_height = |d: &TileDocument| {
+        d.project()
+            .layers
+            .as_ref()
+            .and_then(|l| l.height.as_ref())
+            .map_or(0, |s| s.layers.iter().filter(|l| l.owner.starts_with("river:")).count())
+    };
+    let named_height = |d: &TileDocument, n: &str| {
+        d.project()
+            .layers
+            .as_ref()
+            .and_then(|l| l.height.as_ref())
+            .is_some_and(|s| s.layers.iter().any(|l| l.name == n && l.owner.is_empty()))
+    };
+    assert_eq!(owned_height(&d), 1, "the river's bed layer");
+    let bed = d.tile().terrain_height(130.0, 128.0);
+    let (reeds, stones) = d.tile().shore_counts();
+    assert!(reeds > 0 && stones > 0);
+    let exported = |d: &mut TileDocument| String::from_utf8(d.text_for_export(false).unwrap()).unwrap();
+    let before = exported(&mut d);
+    let count = |t: &str, what: &str| t.matches(what).count();
+    let (veg, hints) = (count(&before, "<VEGETATION_INSTANCE"), count(&before, "hint_type=\"AIH_RIVER_EDGE\""));
+    assert!(veg >= reeds && hints == 2);
+
+    let steps = d.history().size();
+    let msg = d.bake_river(r).unwrap();
+    assert_eq!(d.history().size(), steps + 1, "one undo entry: {msg}");
+    let sc = d.tile().tscene();
+    let baked = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == format!("Brook {BAKED_LAYER_SUFFIX}")).expect(&msg);
+    let kept = sc.find_all("LayerInstance").into_iter().find(|&l| sc.name(l) == format!("Brook {BAKED_RIVER_LAYER_SUFFIX}")).expect(&msg);
+    assert_eq!(sc.get(kept, "export_type").as_deref(), Some("LayerExportType_Off"));
+    let river = sc.find_all("SplineRiverInstance")[0];
+    let layer_of = |e: usize| {
+        let els = sc.doc().elements();
+        std::iter::successors(els[e].parent, |&p| els[p].parent).find(|&p| sc.type_of(p) == "LayerInstance")
+    };
+    assert_eq!(layer_of(river), Some(kept), "the river in the Don't Export layer");
+    let in_baked = |kind: &str| sc.children(baked).into_iter().filter(|&c| sc.type_of(c) == kind).count();
+    assert_eq!(in_baked("VEGETATION_INSTANCE"), reeds, "{msg}");
+    assert!(
+        in_baked("BUILDING_INSTANCE") >= stones
+            && in_baked("AI_HINT_POLYGON_INSTANCE") >= 2
+            && in_baked("VegetationExclusionPolygonInstance") > 0
+    );
+
+    // Its bed: the user's height layer now, the ground as it was; the river makes none again.
+    assert!(named_height(&d, "Brook (baked) height") && owned_height(&d) == 0, "{msg}");
+    d.tile_mut().finish_river_jobs();
+    assert_eq!(owned_height(&d), 0, "no new bed layer from the baked river");
+    assert!((d.tile().terrain_height(130.0, 128.0) - bed).abs() < 1e-3, "the bed kept");
+
+    // The river makes them no more: no shore of its own, the export has each once (the baked ones), its reeds in the game.
+    d.finish_shores();
+    assert_eq!(d.tile().shore_counts(), (0, 0));
+    let after = exported(&mut d);
+    assert_eq!(count(&after, "<VEGETATION_INSTANCE"), veg, "no doubles");
+    assert_eq!(count(&after, "hint_type=\"AIH_RIVER_EDGE\""), 2);
+    let scene = wce_tile::ted_scene::TedScene::parse_any(after.into_bytes()).unwrap();
+    assert!(wce_tile::vegetation::trees_outside_exclusions(&scene).is_empty());
+    assert!(d.can_bake_river(river).is_err(), "not twice");
+
+    // One undo: as before.
+    d.history_mut().undo();
+    d.finish_shores();
+    d.tile_mut().finish_river_jobs();
+    assert!(owned_height(&d) == 1 && !named_height(&d, "Brook (baked) height"), "the river's layer again");
+    assert_eq!(d.tile().shore_counts(), (reeds, stones));
+    assert_eq!(exported(&mut d), before);
+}
