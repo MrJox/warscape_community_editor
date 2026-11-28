@@ -66,6 +66,11 @@ fn owner_of(id: u32, variation: Option<&str>, signature: u64) -> String {
     }
 }
 
+/// Whether a layer's owner is the river's of this id (`river_bake.rs` hands those to the user).
+pub(super) fn is_owner_of_river(owner: &str, id: u32) -> bool {
+    parse_owner(owner).is_some_and(|o| o.id == id)
+}
+
 /// A river layer's owner read: the river's id, the variation it was made for, its signature.
 #[derive(Clone, Debug, PartialEq)]
 struct Owner {
@@ -401,8 +406,9 @@ fn signature_of(bed: &RiverBed, texture: Option<usize>) -> u64 {
 }
 
 impl Tile {
-    /// The rivers that own a layer, in the document's order: those with an id, of the variation viewed, shown, with what they do to the
-    /// ground (a river doing nothing has no layer).
+    /// The rivers that own a layer, in the document's order: those with an id, of the variation viewed, shown, exported (a baked river,
+    /// in a Don't Export layer, has handed its layers to the user: `river_bake.rs`), with what they do to the ground (a river doing nothing
+    /// has no layer).
     fn river_beds(&self) -> Vec<River> {
         let sc = self.tscene();
         let links = self.river_link_points();
@@ -411,7 +417,7 @@ impl Tile {
         let mut out = vec![];
         for e in sc.find_all("SplineRiverInstance") {
             let Some(id) = sc.get(e, RIVER_ID_ATTR).and_then(|v| v.parse::<u32>().ok()) else { continue };
-            if !self.shown(e) || !self.of_tile_variation(e) {
+            if !self.shown(e) || !self.of_tile_variation(e) || !super::siege::exported(sc, e) {
                 continue;
             }
 

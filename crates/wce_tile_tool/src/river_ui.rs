@@ -9,7 +9,7 @@ use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::river_profile::RAMPS;
 use wce_tile_editor::tile_document::river_widths::DEFAULT_WIDTH_DEV;
 
-use crate::tool::{TileTool, primary};
+use crate::tool::{TileTool, document_id, primary};
 
 /// The profile's height (pixels) and a point's pick radius.
 const GRAPH_HEIGHT: f32 = 170.0;
@@ -246,6 +246,29 @@ impl TileTool {
             );
         }
 
+        // Its shore, hints and reeds' exclusions made elements of their own (asked first: `draw_bake_prompt`).
+        let can_bake = d.can_bake_river(river);
+        gui::same_line();
+        gui::begin_disabled(can_bake.is_err());
+        if gui::button("Bake") {
+            self.bake_prompt = Some(river);
+            self.bake_prompt_open = true;
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(&match &can_bake {
+                Ok(()) => {
+                    "Makes what the editor makes of the river on its own (its shore's reeds, stones, decals, rapids, splashes and cliff \
+                           pieces, its AI hints, its reeds' exclusion polygons) elements of their own you can edit by hand, in a layer \
+                           \"<name> (autogen)\"; the river goes into a Don't Export layer \"<name> (baked river)\" and makes none of them \
+                           any more. Its water and its bed in the ground stay the river's."
+                        .to_owned()
+                }
+                Err(why) => format!("Can't bake: {why}."),
+            });
+        }
+
         let other = selection.into_iter().find(|&s| s != river && d.tile().tscene().type_of(s) == "SplineRiverInstance");
         if let Some(other) = other {
             gui::same_line();
@@ -478,5 +501,54 @@ impl TileTool {
             let (lo, hi) = f.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
             gui::text_disabled(&format!("the points' flow: {lo:.2} to {hi:.2}"));
         }
+    }
+
+    /// The question before a river is baked: its baked elements are its own from then on, and changing or baking the river again may
+    /// leave them out of place or duplicated.
+    pub(crate) fn draw_bake_prompt(&mut self, e: &mut Editor) {
+        const TITLE: &str = "Bake river";
+        if std::mem::take(&mut self.bake_prompt_open) {
+            gui::open_popup(TITLE);
+        }
+
+        if !gui::begin_popup_modal(TITLE, None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            return;
+        }
+
+        let Some(river) = self.bake_prompt else {
+            gui::close_current_popup();
+            gui::end_popup();
+            return;
+        };
+
+        gui::text("Baking makes the river's shore, AI hints and reed exclusions elements of their own, to edit by hand.");
+        gui::text("The river goes into a Don't Export layer and makes none of them any more.");
+        gui::text_colored(
+            wce_editor::theme::warning(),
+            "Changing the river afterwards (or baking it again, or exporting it again) may leave the baked elements out of place or \
+             duplicated:",
+        );
+        gui::text_colored(wce_editor::theme::warning(), "your manual changes to them may be lost.");
+        gui::separator();
+        let mut done = None;
+        if gui::button("Bake") {
+            done = Some(match document_id(e).and_then(|id| e.docs.find_as_mut::<TileDocument>(id)) {
+                Some(d) => d.bake_river(river).unwrap_or_else(|why| format!("bake failed: {why}")),
+                None => "no tile is open".to_owned(),
+            });
+        }
+
+        gui::same_line();
+        if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
+            done = Some("bake cancelled".to_owned());
+        }
+
+        if let Some(msg) = done {
+            e.status(&msg, false);
+            self.bake_prompt = None;
+            gui::close_current_popup();
+        }
+
+        gui::end_popup();
     }
 }
