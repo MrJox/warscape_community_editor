@@ -4184,3 +4184,57 @@ fn baking_a_river_makes_its_shore_and_hints_elements_of_their_own() {
     assert_eq!(d.tile().shore_counts(), (reeds, stones));
     assert_eq!(exported(&mut d), before);
 }
+
+#[test]
+fn a_second_of_smoothing_at_the_default_strength_takes_most_of_a_bump_away() {
+    let (_dir, mut d) = open();
+    let heights = |d: &TileDocument| d.project().height.as_ref().unwrap().samples().to_vec();
+    // The bump's peak over the ground as it was (the samples' units).
+    let peak = |h: &[u16], h0: &[u16]| h.iter().zip(h0).map(|(&a, &b)| i32::from(a) - i32::from(b)).max().unwrap();
+    let h0 = heights(&d);
+    let bump = BrushSettings { radius_m: 4.0, falloff: 0.0, strength: 20.0, ..BrushSettings::default() };
+    for _ in 0..10 {
+        d.brush_step(BrushKind::Raise, 40.0, 40.0, bump.clone(), 0.05);
+    }
+
+    d.end_stroke();
+    let raised = peak(&heights(&d), &h0);
+    assert!(raised > 0);
+    let smooth = BrushSettings { radius_m: 16.0, ..BrushSettings::default() };
+    for _ in 0..60 {
+        d.brush_step(BrushKind::Smooth, 40.0, 40.0, smooth.clone(), 1.0 / 60.0);
+    }
+
+    d.end_stroke();
+    let left = peak(&heights(&d), &h0);
+    assert!(f64::from(left) < 0.5 * f64::from(raised), "{left} of {raised} left");
+}
+
+#[test]
+fn smooth_textures_spreads_a_texture_and_keeps_going() {
+    let (_dir, mut d) = open_with_blend();
+    let weights = |d: &TileDocument| d.project().blend.as_ref().unwrap().weights().to_vec();
+    // How many pixels hold some of the texture, and its most at a pixel.
+    let painted = |d: &TileDocument| {
+        let w = weights(d);
+        (w.chunks(16).filter(|p| p[9] > 0).count(), w.chunks(16).map(|p| p[9]).max().unwrap())
+    };
+    let dab = BrushSettings { radius_m: 4.0, falloff: 0.0, opacity: 1.0, ..BrushSettings::default() };
+    for _ in 0..10 {
+        d.brush_step(BrushKind::Paint(9), 40.0, 40.0, dab.clone(), 0.05);
+    }
+
+    d.end_stroke();
+    let n0 = painted(&d);
+    let smooth = BrushSettings { radius_m: 16.0, paint_mode: wce_tile::blend_field::PaintMode::Smooth, ..BrushSettings::default() };
+    d.brush_step(BrushKind::Paint(0), 40.0, 40.0, smooth.clone(), 1.0 / 60.0);
+    let n1 = painted(&d);
+    for _ in 0..30 {
+        d.brush_step(BrushKind::Paint(0), 40.0, 40.0, smooth.clone(), 1.0 / 60.0);
+    }
+
+    d.end_stroke();
+    let n2 = painted(&d);
+    assert!(n0.0 < n1.0 && n0.1 > n1.1 && n1.1 > n2.1, "{n0:?} {n1:?} {n2:?}: it spreads and keeps softening");
+    assert_eq!(d.history().size(), 2);
+}

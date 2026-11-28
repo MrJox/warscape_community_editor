@@ -64,6 +64,11 @@ pub enum PaintMode {
     /// TEd's blend blur (`QTU::GPOWeightedAverage` "Smooth", radius 2 on the blend map): every channel moves towards its neighbourhood's
     /// weighted average (Gaussian, `exp(-d^2 / 8)`, normalised) as the stroke found it, by the stroke's weight built up dab by dab.
     Blur,
+
+    /// wce's Smooth textures brush: every channel moves towards its box average (`smoothing::kernel_radius` of the brush each way) of
+    /// the map as it is now, by the brush's weight at every dab: unlike the blur, painting longer keeps softening, and a wide brush
+    /// softens wide.
+    Smooth,
 }
 
 /// The blend blur's radius in pixels and kernel (TEd's: `GPOWeightedAverage` built with radius 2, weights `exp(-d^2 / 2^3)`).
@@ -335,6 +340,18 @@ impl BlendField {
             return Err(format!("no blend channel {channel}"));
         }
 
+        // Smooth: the box averages of the pixels under the brush, before this dab.
+        let (bx0, by0, bx1, by1) = self.layer.under_bounds(b.cx, b.cy, b.radius);
+        let smooth = (mode == PaintMode::Smooth && bx0 <= bx1 && by0 <= by1).then(|| {
+            let k = crate::smoothing::kernel_radius(b.radius);
+            let rect = (bx0 as u32, by0 as u32, bx1 as u32, by1 as u32);
+            crate::smoothing::box_average((self.width(), self.height()), rect, k, 16, |x, y, o| {
+                for (o, &c) in o.iter_mut().zip(self.layer.pixel(x, y)) {
+                    *o = f64::from(c);
+                }
+            })
+        });
+
         let w = u64::from(self.width());
         for (x, y, dx, dy) in self.layer.under(b.cx, b.cy, b.radius) {
             let mut a = b.weight(dx, dy).min(1.0);
@@ -391,6 +408,17 @@ impl BlendField {
                     let mut out = [0.0f64; 16];
                     for ((o, &s), &c) in out.iter_mut().zip(&avg).zip(&source) {
                         *o = f64::from(c) + (s / total - f64::from(c)) * acc;
+                    }
+
+                    Some(quantize(&out))
+                }
+
+                PaintMode::Smooth => {
+                    let avg = smooth.as_ref().expect("averaged above");
+                    let i = ((i64::from(y) - by0) * (bx1 - bx0 + 1) + (i64::from(x) - bx0)) as usize * 16;
+                    let mut out = [0.0f64; 16];
+                    for ((o, &s), &c) in out.iter_mut().zip(&avg[i..i + 16]).zip(&p) {
+                        *o = f64::from(c) + (s - f64::from(c)) * a;
                     }
 
                     Some(quantize(&out))
@@ -614,6 +642,34 @@ mod tests {
         assert!(l[0] < FULL && l[4] > 0 && r[4] < FULL && r[0] > 0, "{l:?} {r:?}");
         assert_eq!(f.pixel(0, 2)[0], FULL, "outside the brush");
         assert_eq!(l.iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
+    }
+
+    #[test]
+    fn smoothing_keeps_softening_and_reaches_with_the_brush() {
+        let (w, h) = (40u32, 5u32);
+        let mut px = vec![0u8; (w * h * 32) as usize];
+        for (i, p) in px.chunks_mut(32).enumerate() {
+            let ch = if (i as u32 % w) < 20 { 0 } else { 4 };
+            p[ch * 2..ch * 2 + 2].copy_from_slice(&FULL.to_le_bytes());
+        }
+
+        let mut bytes = TiffFile::ted_header(w, h);
+        bytes.extend_from_slice(&px);
+        let mut f = BlendField::from_tiff(TiffFile::parse(&bytes).unwrap()).unwrap();
+        let b = Brush { cx: 20.0, cy: 2.0, radius: 16.0, strength: 1.0, falloff: 0.0, ..Default::default() };
+        f.begin_edit().unwrap();
+        f.paint_mode(&b, 0, PaintMode::Smooth, &|_, _| true, &|_, _| 0.0).unwrap();
+        // A 16 px brush reaches 2 px each way: 3 px from the edge is still one texture after a dab, closer is mixed.
+        assert!(f.pixel(18, 2)[4] > 0 && f.pixel(16, 2)[4] == 0, "{:?}", f.pixel(16, 2));
+        let once = f.pixel(18, 2)[4];
+        for _ in 0..5 {
+            f.paint_mode(&b, 0, PaintMode::Smooth, &|_, _| true, &|_, _| 0.0).unwrap();
+        }
+
+        f.end_edit();
+        assert!(f.pixel(18, 2)[4] > once && f.pixel(15, 2)[4] > 0, "it keeps softening, and wider");
+        assert_eq!(f.pixel(18, 2).iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
+        assert_eq!(f.pixel(0, 2)[0], FULL, "outside the brush");
     }
 
     #[test]

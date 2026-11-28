@@ -155,6 +155,10 @@ pub struct BrushSettings {
     /// The paint brushes' strength, 0..1: at 1 a second of painting lays 98 % of the paint under the brush's middle.
     pub opacity: f32,
 
+    /// The Smooth brushes' strength (the heights' and the ground textures'), 0..1: how much of the way to the local average a dab goes,
+    /// `smooth_amount` a step.
+    pub smooth_strength: f32,
+
     /// A falloff curve instead of `falloff` (the height and paint brushes).
     pub curve: Option<FalloffLut>,
 
@@ -183,6 +187,7 @@ impl Default for BrushSettings {
             falloff: 0.7,
             flatten_height: 0.0,
             opacity: 0.5,
+            smooth_strength: 0.6,
             curve: None,
             image: None,
             image_angle: 0.0,
@@ -195,6 +200,12 @@ impl Default for BrushSettings {
 }
 
 impl BrushSettings {
+    /// The Smooth brushes' share of the way to the local average in a step of `dt` seconds: 1 - e^(-30 s dt) (at 60 frames a second,
+    /// strength 0.6: a quarter of the way every frame; 1: 40 %).
+    pub fn smooth_amount(&self, dt: f32) -> f64 {
+        1.0 - (-30.0 * f64::from(self.smooth_strength.clamp(0.0, 1.0)) * f64::from(dt.min(0.05))).exp()
+    }
+
     /// The image and its turn as a `Brush` takes them.
     pub fn brush_image(&self) -> Option<(Arc<BrushImage>, f64)> {
         self.image.clone().map(|i| (i, f64::from(self.image_angle).to_radians()))

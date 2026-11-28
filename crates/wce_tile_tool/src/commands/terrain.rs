@@ -29,6 +29,14 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("brush_smooth", "brush_smooth <strength 0-1>", "the Smooth brushes' strength (the heights' and Smooth textures')", |e, a| {
+        let Some(v) = a.first().and_then(|x| number(x)) else { return fail("usage: brush_smooth <strength 0-1>") };
+        with_tile(e, |t, _| {
+            t.brush.smooth_strength = v.clamp(0.0, 1.0);
+            ok("")
+        })
+    });
+
     c.add("paint", "paint raise|lower|smooth|flatten|level|noise|stamp <x m> <z m> <steps> [open]", "a brush stroke at a point of the tile (one undo entry); open: the stroke goes on (as while the mouse is held), the next call without it ends it", |e, a| {
         with_doc(e, |t, e| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
@@ -158,11 +166,11 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "brush_paint",
-        "brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur]",
+        "brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur | smooth]",
         "what the paint brush lays (the entry's texture group and its variation) and how (TEd's Auto-Flange, Rock-painting)",
         |e, a| {
             let usage =
-                "usage: brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur]";
+                "usage: brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur | smooth]";
             let parsed = (a.len() >= 2)
                 .then(|| Some((number(&a[0])?, number(&a[1])?)))
                 .flatten()
@@ -176,6 +184,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                 Some("rock") => wce_tile::blend_field::PaintMode::Rock,
                 Some("grouped") => wce_tile::blend_field::PaintMode::Grouped { variation: value.map_or(1.5, |v| v.clamp(0.0, 3.0)) },
                 Some("blur") => wce_tile::blend_field::PaintMode::Blur,
+                Some("smooth") => wce_tile::blend_field::PaintMode::Smooth,
                 Some(_) => return fail(usage),
             };
 
@@ -911,7 +920,7 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
                     return fail("select a spline, polygon or line, with a brush mode active");
                 };
                 let Some(d) = document(e) else { return no_tile() };
-                match d.stroke_along(kind, sel, &t.brush) {
+                match d.stroke_along(kind, sel, &t.stroke_brush()) {
                     Ok(n) => ok(format!("{n} dabs")),
                     Err(why) => fail(why),
                 }

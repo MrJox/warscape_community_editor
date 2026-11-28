@@ -47,12 +47,13 @@ const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group tak
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
 /// The brushes' names in the mode strip's flyouts, in `BRUSHES`' order.
-const BRUSH_NAMES: [&str; 9] = ["Raise", "Lower", "Smooth", "Flatten", "Level", "Noise", "Stamp", "Ground textures", "Ground types"];
+const BRUSH_NAMES: [&str; 10] =
+    ["Raise", "Lower", "Smooth", "Flatten", "Level", "Noise", "Stamp", "Ground textures", "Ground types", "Smooth textures"];
 
-const BRUSHES: [(&str, &str); 9] = [
+const BRUSHES: [(&str, &str); 10] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"),
     (icons::ARROW_BIG_DOWN, "Lower the terrain"),
-    (icons::WAVES, "Smooth the terrain"),
+    (icons::WAVES, "Smooth the terrain: the heights under the brush move towards their average around (wider with a wider brush)"),
     (icons::MINUS, "Flatten the terrain to a height"),
     (icons::RULER, "Level the terrain"),
     (icons::MOUNTAIN, "Roughen the terrain with noise: the same pattern wherever the brush goes, deeper the longer you paint"),
@@ -62,6 +63,11 @@ const BRUSHES: [(&str, &str); 9] = [
     ),
     (icons::BRUSH, "Paint the ground's textures (Ctrl: erase, painting the first group's first variation)"),
     (icons::PALETTE, "Paint the ground types (shown in the ground types view while painting; Ctrl: erase)"),
+    (
+        icons::WAVES,
+        "Smooth the ground's textures: their edges under the brush soften, each texture's weight moving towards its average around \
+         (wider with a wider brush), more the longer you paint",
+    ),
 ];
 
 /// The Ground brush on a prefab's stage (its tooltip).
@@ -88,7 +94,7 @@ impl TileTool {
 
         let prefab = self.profile == crate::tool::Profile::Prefab;
         let sculpt: Vec<usize> = (0..7).collect();
-        let paint: Vec<usize> = if prefab { vec![8] } else { vec![7, 8] };
+        let paint: Vec<usize> = if prefab { vec![8] } else { vec![7, 9, 8] };
         gui::separator();
         for (name, icon, brushes) in [("Sculpt", icons::MOUNTAIN, sculpt), ("Paint", icons::BRUSH, paint)] {
             let current = brushes.iter().copied().find(|&i| self.mode == TileMode::from_index(i + 1));
@@ -296,6 +302,14 @@ impl TileTool {
             let row = styled::row("Strength", "How fast the paint covers: at 1 a second of painting lays 98 % under the brush's middle");
             gui::set_next_item_width(row.width);
             gui::slider_float("##opacity", &mut self.brush.opacity, 0.01, 1.0, "%.2f");
+        } else if matches!(self.mode, TileMode::Smooth | TileMode::SmoothTextures) {
+            let row = styled::row(
+                "Strength",
+                "How fast the brush smooths: how far towards the average around each pass goes (0.6: a quarter of the way every frame, \
+                 1: 40 %). The average reaches an eighth of the radius each way, so a wider brush evens out wider bumps.",
+            );
+            gui::set_next_item_width(row.width);
+            gui::slider_float("##smooth_strength", &mut self.brush.smooth_strength, 0.05, 1.0, "%.2f");
         } else {
             let row = styled::row("Strength", "How fast the brush works: metres a second at its middle");
             gui::set_next_item_width(row.width);
@@ -431,7 +445,7 @@ impl TileTool {
 
         if along && let (Some(line), Some(kind)) = (line, self.brush_kind()) {
             let d = document(e).expect("a tile");
-            let msg = match d.stroke_along(kind, line, &self.brush) {
+            let msg = match d.stroke_along(kind, line, &self.stroke_brush()) {
                 Ok(n) => format!("stroked along the line: {n} dabs"),
                 Err(why) => why,
             };
@@ -512,7 +526,7 @@ impl TileTool {
             PaintMode::AutoFlange { .. } => 1,
             PaintMode::Rock => 2,
             PaintMode::Grouped { .. } => 3,
-            PaintMode::Blur => 4,
+            PaintMode::Blur | PaintMode::Smooth => 4,
         };
 
         let row = styled::row("Mode", "What a stroke does to the ground's textures (hover a mode for what it does)");
@@ -916,5 +930,6 @@ fn mode_name(m: TileMode) -> &'static str {
         TileMode::Stamp => "Stamp",
         TileMode::Paint => "Paint",
         TileMode::Ground => "Ground types",
+        TileMode::SmoothTextures => "Smooth textures",
     }
 }

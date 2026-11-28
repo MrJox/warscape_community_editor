@@ -427,30 +427,31 @@ impl HeightField {
         Ok(changed)
     }
 
-    /// Blends towards the local average (of the samples before this stroke step).
+    /// Blends towards the local average (of the samples before this stroke step): a box `smoothing::kernel_radius` of the brush's
+    /// radius each way, so that a wide brush evens out wide bumps.
     ///
     /// # Errors
     ///
     /// No edit is open.
     pub fn smooth(&mut self, b: &Brush) -> Result<()> {
-        let src = self.v.clone();
-        let (w, h) = (self.w as i32, self.h as i32);
+        if !self.editing {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        let x0 = ((b.cx - b.radius).floor() as i64).clamp(0, i64::from(self.w) - 1) as u32;
+        let x1 = ((b.cx + b.radius).ceil() as i64).clamp(0, i64::from(self.w) - 1) as u32;
+        let y0 = ((b.cy - b.radius).floor() as i64).clamp(0, i64::from(self.h) - 1) as u32;
+        let y1 = ((b.cy + b.radius).ceil() as i64).clamp(0, i64::from(self.h) - 1) as u32;
+        let k = crate::smoothing::kernel_radius(b.radius);
+        let w = self.w as usize;
+        let avg = crate::smoothing::box_average((self.w, self.h), (x0, y0, x1, y1), k, 1, |x, y, o| {
+            o[0] = f64::from(self.v[y as usize * w + x as usize]);
+        });
+        let ow = (x1 - x0 + 1) as usize;
         self.apply(b, |_, x, y, wgt, cur| {
-            let (mut sum, mut n) = (0.0, 0);
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    let (xx, yy) = (x + dx, y + dy);
-                    if xx < 0 || yy < 0 || xx >= w || yy >= h {
-                        continue;
-                    }
-
-                    sum += f64::from(src[yy as usize * w as usize + xx as usize]);
-                    n += 1;
-                }
-            }
-
-            let avg = sum / f64::from(n);
-            cur + (avg - cur) * wgt.min(1.0)
+            let (ox, oy) = (x as u32 - x0, y as u32 - y0);
+            let a = avg[oy as usize * ow + ox as usize];
+            cur + (a - cur) * wgt.min(1.0)
         })
     }
 

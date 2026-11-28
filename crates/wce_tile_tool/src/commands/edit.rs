@@ -13,10 +13,12 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "tile_mode",
-        "tile_mode select|raise|lower|smooth|flatten|level|paint|ground",
+        "tile_mode select|raise|lower|smooth|flatten|level|noise|stamp|paint|ground|smooth_textures",
         "what the left mouse button does in the viewport",
         |e, a| {
-            let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|paint|ground") };
+            let Some(name) = a.first() else {
+                return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|noise|stamp|paint|ground|smooth_textures");
+            };
             let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };
             with_tile(e, |t, _| {
                 t.set_mode(TileMode::from_index(i));
