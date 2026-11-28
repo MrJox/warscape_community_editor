@@ -676,6 +676,14 @@ impl Tile {
         self.river_factors(elem).height
     }
 
+    /// Whether a river's points' foam_amount, flow_speed and alpha_fade can show: Rome 2's river block reads them, and the campaign
+    /// map has its own river shader (its flow and fade drawn here); Attila's battle river shader reads only the position and uv
+    /// (docs/re/water.md), so in an Attila battle tile they are kept as TEd stores them and change nothing.
+    pub fn river_point_values_drawn(&self) -> bool {
+        let rome2 = self.files.as_ref().and_then(|f| f.game()).is_some_and(|g| g.key == "rome_2");
+        rome2 || wce_tile::tile_project::is_campaign_tile(&self.project.dir)
+    }
+
     /// What a river's point widths are multiplied by in its file, which is the width the game draws it (`river_files::Factors`: today's
     /// TEd 0.5; the kit's standard 45 m connection is a point width of 90). 1 in a campaign tile.
     pub(crate) fn river_width_factor(&self, elem: usize) -> f64 {
